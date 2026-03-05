@@ -40,7 +40,8 @@ export function LeftSidebar() {
               </div>
               <button
                 onClick={toggleLeft}
-                className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                aria-label="Collapse sidebar"
+                className="flex size-8 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
               >
                 <PanelLeft className="size-4" />
               </button>
@@ -79,7 +80,7 @@ export function LeftSidebar() {
 
             {/* Bottom: User */}
             <div className="mt-auto shrink-0 p-3">
-              <button className="flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]">
+              <button aria-label="User settings" className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]">
                 <div className="flex size-9 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent]">
                   <User className="size-5 text-[--sidebar-fg-muted]" />
                 </div>
@@ -96,7 +97,8 @@ export function LeftSidebar() {
             <div className="flex shrink-0 items-center justify-center p-3">
               <button
                 onClick={toggleLeft}
-                className="flex size-9 cursor-pointer items-center justify-center rounded-xl bg-[--color-primary] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                aria-label="Expand sidebar"
+                className="flex size-9 items-center justify-center rounded-xl bg-[--color-primary] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
               >
                 <span className="text-lg font-bold text-white">U</span>
               </button>
@@ -107,7 +109,8 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    className="flex size-10 cursor-pointer items-center justify-center rounded-xl text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                    aria-label="New Chat"
+                    className="flex size-10 items-center justify-center rounded-xl text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
                   >
                     <SquarePen className="size-5" />
                   </button>
@@ -118,8 +121,9 @@ export function LeftSidebar() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label="Sessions"
                     className={cn(
-                      "flex size-10 cursor-pointer items-center justify-center rounded-xl transition-colors",
+                      "flex size-10 items-center justify-center rounded-xl transition-colors",
                       location.pathname.startsWith("/session")
                         ? "bg-[--sidebar-accent] text-[--sidebar-fg]"
                         : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
@@ -135,7 +139,7 @@ export function LeftSidebar() {
             <div className="flex-1" />
 
             <div className="flex shrink-0 flex-col items-center gap-1 px-2 pb-6">
-              <button className="flex size-8 cursor-pointer items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]">
+              <button aria-label="User settings" className="flex size-8 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]">
                 <User className="size-4 text-[--sidebar-fg-muted]" />
               </button>
             </div>

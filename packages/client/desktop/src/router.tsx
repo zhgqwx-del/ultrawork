@@ -1,13 +1,19 @@
 import { createBrowserRouter } from "react-router-dom"
+import { RootLayout } from "@/components/layout"
 import { HomePage, SessionPage } from "@/pages"
 
 export const router = createBrowserRouter([
   {
-    path: "/",
-    element: <HomePage />,
-  },
-  {
-    path: "/session/:id",
-    element: <SessionPage />,
+    element: <RootLayout />,
+    children: [
+      {
+        path: "/",
+        element: <HomePage />,
+      },
+      {
+        path: "/session/:id",
+        element: <SessionPage />,
+      },
+    ],
   },
 ])
