@@ -69,6 +69,10 @@ export class ApiClient {
     return this.request<Session>(`/session/${sessionId}`)
   }
 
+  async getMessages(sessionId: string): Promise<SendMessageResponse[]> {
+    return this.request<SendMessageResponse[]>(`/session/${sessionId}/message`)
+  }
+
   async deleteSession(sessionId: string): Promise<boolean> {
     return this.request<boolean>(`/session/${sessionId}`, {
       method: "DELETE",

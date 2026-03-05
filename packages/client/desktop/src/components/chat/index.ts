@@ -1,1 +1,5 @@
 export { ChatInput } from "./chat-input"
+export { MessageList } from "./message-list"
+export { UserMessage } from "./user-message"
+export { AssistantMessage } from "./assistant-message"
+export { CodeBlock } from "./code-block"

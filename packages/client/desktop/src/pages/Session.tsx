@@ -3,9 +3,10 @@ import { useParams } from "react-router-dom"
 import { useSidebar } from "@/components/layout"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
-import { ChatInput } from "@/components/chat"
+import { ChatInput, MessageList } from "@/components/chat"
 import { cn } from "@/lib/utils"
 import { PanelLeft } from "lucide-react"
+import type { SendMessageResponse } from "@agent/api-client"
 
 export function SessionPage() {
   const { id } = useParams()
@@ -16,13 +17,44 @@ export function SessionPage() {
 
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
+  const [messages, setMessages] = useState<SendMessageResponse[]>([])
+  const [loading, setLoading] = useState(true)
 
   // Find the current session
   const session = sessions.find(s => s.id === id)
 
-  // Placeholder messages for layout validation
-  const messages: Array<{ role: "user" | "assistant"; content: string }> = []
+  // Load messages when session ID changes
+  useEffect(() => {
+    let cancelled = false
 
+    if (!id) {
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    api
+      .getMessages(id)
+      .then((msgs: SendMessageResponse[]) => {
+        if (!cancelled) {
+          setMessages(msgs)
+          setLoading(false)
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          console.error("Failed to load messages:", err)
+          setMessages([])
+          setLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [id, api])
+
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
@@ -65,17 +97,7 @@ export function SessionPage() {
         {/* Messages Area */}
         <div className={cn("relative flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft", "flex justify-center")}>
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
-            {messages.length === 0 ? (
-              <div className="flex min-h-[200px] items-center justify-center py-12">
-                <p className="text-sm text-[--color-fg-muted]">
-                  Send a message to start chatting
-                </p>
-              </div>
-            ) : (
-              <div className="max-w-full min-w-0 space-y-4">
-                {/* Messages will be rendered here in 2.3 */}
-              </div>
-            )}
+            <MessageList messages={messages} isLoading={loading} />
             <div ref={messagesEndRef} />
           </div>
         </div>
