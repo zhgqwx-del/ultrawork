@@ -9,7 +9,8 @@ pub fn run() {
             match app.shell().sidecar("opencode-server") {
                 Ok(sidecar_command) => {
                     match sidecar_command
-                        .args(["serve", "--port", "4096", "--password", "test123"])
+                        .args(["serve", "--port", "4096"])
+                        .env("OPENCODE_SERVER_PASSWORD", "test123")
                         .spawn()
                     {
                         Ok((_rx, _child)) => {

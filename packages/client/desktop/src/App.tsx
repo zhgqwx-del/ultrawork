@@ -13,22 +13,27 @@ function App() {
     createSession()
   }, [])
 
-  const createSession = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/session`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${btoa(`opencode:${PASSWORD}`)}`,
-        },
-        body: JSON.stringify({}),
-      })
-      const data = await res.json()
-      setSessionId(data.id)
-      setStatus("Connected")
-    } catch (error) {
-      setStatus("Connection failed")
+  const createSession = async (retries = 10) => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const res = await fetch(`${API_BASE}/session`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${btoa(`opencode:${PASSWORD}`)}`,
+          },
+          body: JSON.stringify({}),
+        })
+        const data = await res.json()
+        setSessionId(data.id)
+        setStatus("Connected")
+        return
+      } catch {
+        setStatus(`Connecting... (${i + 1}/${retries})`)
+        await new Promise((r) => setTimeout(r, 2000))
+      }
     }
+    setStatus("Connection failed")
   }
 
   const handleSend = async () => {
