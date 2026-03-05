@@ -4,7 +4,7 @@
 
 ```
 Phase 1 MVP: ✅ 完成
-Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ · 2.3 ✅ · 2.4 ✅ → 下一步 2.6)
+Phase 2 UI:  ✅ 完成 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ · 2.3 ✅ · 2.4 ✅ · 2.6 ✅)
 TypeCheck:   ✅ 全部通过
 Vite Build:  ✅ 通过
 ```
@@ -27,7 +27,7 @@ Vite Build:  ✅ 通过
 
 ## Phase 2: 体验优先 + WorkAny UI 1:1 还原 (🔧 进行中)
 
-**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → 2.3 ✅ → 2.4 ✅ → **2.6**
+**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → 2.3 ✅ → 2.4 ✅ → 2.6 ✅
 
 ### ✅ Iteration 2.1: UI 基础设施 + 布局骨架
 - [x] 依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
@@ -193,8 +193,56 @@ src/
 
 ---
 
-### Iteration 2.6: 设置面板 + 配置管理 (2-3h) ← 下一步
-- [ ] SettingsModal + 配置持久化 + 连接状态指示
+### ✅ Iteration 2.6: 设置面板 + 配置管理
+- [x] AppConfig 类型定义 + ConfigStorage 类
+- [x] ConfigProvider: React Context 管理配置
+- [x] SettingsDialog: 设置面板 UI
+  - API Base URL 输入
+  - Username 输入 (可选)
+  - Password 输入
+  - Reset to Default 按钮
+  - Save/Cancel 按钮
+- [x] ConnectionStatus: 连接状态指示器
+  - 监听 SSE 事件
+  - 显示连接/断开状态
+  - Wifi 图标
+  - Tooltip 显示最后事件时间
+- [x] 集成到 LeftSidebar
+  - 设置按钮 (展开 + 折叠)
+  - 连接状态显示
+  - 设置对话框
+
+**文件**:
+- `lib/config.ts` - 配置类型 + 存储类 (42 行)
+- `lib/config-context.tsx` - React Context (36 行)
+- `lib/use-api.ts` - 使用配置 (更新)
+- `components/settings/settings-dialog.tsx` - 设置面板 (120 行)
+- `components/settings/connection-status.tsx` - 连接状态 (42 行)
+- `components/layout/left-sidebar.tsx` - 集成设置 (更新)
+- `main.tsx` - 添加 ConfigProvider
+
+**配置功能**:
+- localStorage 持久化
+- 默认配置 fallback
+- 实时配置更新
+- 表单验证 (基础)
+- Reset to Default 功能
+
+**连接状态**:
+- 监听 SSE 事件判断连接状态
+- 30s 无事件自动断开
+- Wifi/WifiOff 图标
+- 绿色/灰色状态指示
+- Tooltip 显示详细信息
+
+**关键实现**:
+- ConfigStorage 使用 localStorage
+- ConfigProvider 在 main.tsx 最外层
+- use-api.ts 依赖 config 自动更新
+- SettingsDialog 表单状态独立管理
+- ConnectionStatus 使用 useSSE 监听事件
+
+---
 
 ### Phase 2 Scope Out (→ Phase 3)
 - ❌ RightSidebar / 预览面板 / 附件上传
@@ -204,4 +252,4 @@ src/
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 → Iteration 2.6
+**当前阶段**: Phase 2 完成 ✅ → 准备 Phase 3
