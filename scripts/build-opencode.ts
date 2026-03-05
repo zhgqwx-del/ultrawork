@@ -20,7 +20,19 @@ console.log(`Binary built at: ${binaryPath}`)
 const tauriBinDir = path.join(tauriDir, "binaries")
 await $`mkdir -p ${tauriBinDir}`
 
-const targetName = process.platform === "win32" ? "opencode-server.exe" : "opencode-server"
+// Tauri expects platform-specific binary names
+const getTauriTarget = () => {
+  if (process.platform === "darwin") {
+    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin"
+  } else if (process.platform === "win32") {
+    return "x86_64-pc-windows-msvc"
+  } else {
+    return "x86_64-unknown-linux-gnu"
+  }
+}
+
+const tauriTarget = getTauriTarget()
+const targetName = process.platform === "win32" ? `opencode-server-${tauriTarget}.exe` : `opencode-server-${tauriTarget}`
 const targetPath = path.join(tauriBinDir, targetName)
 
 await $`cp ${binaryPath} ${targetPath}`
