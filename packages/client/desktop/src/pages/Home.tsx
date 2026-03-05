@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
-import { Loader2 } from "lucide-react"
+import { ChatInput } from "@/components/chat"
 
 export function HomePage() {
   const [input, setInput] = useState("")
@@ -38,38 +38,16 @@ export function HomePage() {
         </h1>
 
         {/* Input */}
-        <div className="w-full rounded-2xl border border-[--color-border] bg-[--color-bg] p-4 shadow-lg">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask anything..."
-            disabled={sending}
-            className="w-full resize-none border-0 bg-transparent text-base text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none disabled:opacity-50"
-            rows={2}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                handleSend()
-              }
-            }}
-          />
-          <div className="mt-3 flex items-center justify-end">
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || sending}
-              aria-label="Send message"
-              className="flex size-8 items-center justify-center rounded-full bg-[--color-fg] text-[--color-bg] transition-all disabled:opacity-30"
-            >
-              {sending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </div>
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={handleSend}
+          placeholder="Ask anything..."
+          disabled={sending}
+          loading={sending}
+          variant="home"
+          className="w-full"
+        />
       </div>
     </div>
   )

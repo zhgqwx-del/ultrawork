@@ -1,7 +1,9 @@
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
 import { useSidebar } from "@/components/layout"
 import { useSessionsContext } from "@/lib/sessions-context"
+import { useApi } from "@/lib/use-api"
+import { ChatInput } from "@/components/chat"
 import { cn } from "@/lib/utils"
 import { PanelLeft } from "lucide-react"
 
@@ -9,7 +11,11 @@ export function SessionPage() {
   const { id } = useParams()
   const { toggleLeft } = useSidebar()
   const { sessions } = useSessionsContext()
+  const api = useApi()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const [input, setInput] = useState("")
+  const [sending, setSending] = useState(false)
 
   // Find the current session
   const session = sessions.find(s => s.id === id)
@@ -20,6 +26,21 @@ export function SessionPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  const handleSend = async () => {
+    if (!id || !input.trim() || sending) return
+
+    setSending(true)
+    try {
+      // Send message (response comes via SSE in 2.4)
+      await api.sendMessage(id, input.trim())
+      setInput("") // Clear input after successful send
+    } catch (err) {
+      console.error("Failed to send message:", err)
+    } finally {
+      setSending(false)
+    }
+  }
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
@@ -62,25 +83,15 @@ export function SessionPage() {
         {/* Reply Input - Centered */}
         <div className="relative shrink-0 flex justify-center">
           <div className="w-full max-w-[800px] px-4 py-3">
-            {/* Will be replaced with ChatInput in 2.5 */}
-            <div className="rounded-xl border border-[--color-border] bg-[--color-bg] p-3 shadow-sm">
-              <textarea
-                placeholder="Reply..."
-                className="w-full resize-none border-0 bg-transparent px-1 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none"
-                rows={1}
-                style={{ minHeight: "20px", maxHeight: "120px" }}
-              />
-              <div className="mt-2 flex items-center justify-end">
-                <button
-                  aria-label="Send reply"
-                  className="flex size-7 items-center justify-center rounded-full bg-[--color-fg-muted] text-[--color-bg]"
-                >
-                  <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              placeholder="Reply..."
+              disabled={sending}
+              loading={sending}
+              variant="reply"
+            />
           </div>
         </div>
       </div>
