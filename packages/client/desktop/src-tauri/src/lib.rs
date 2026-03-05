@@ -5,10 +5,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let sidecar_command = app.shell().sidecar("opencode-server")?;
-            let (_rx, _child) = sidecar_command
-                .args(["serve", "--port", "4096", "--password", "test123"])
-                .spawn()?;
+            println!("Starting OpenCode Server sidecar...");
+            match app.shell().sidecar("opencode-server") {
+                Ok(sidecar_command) => {
+                    match sidecar_command
+                        .args(["serve", "--port", "4096", "--password", "test123"])
+                        .spawn()
+                    {
+                        Ok((_rx, _child)) => {
+                            println!("OpenCode Server started successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to spawn OpenCode Server: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to create sidecar command: {}", e);
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
