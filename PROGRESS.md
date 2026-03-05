@@ -4,7 +4,7 @@
 
 ```
 Phase 1 MVP: ✅ 完成
-Phase 2 UI:  🔧 进行中 (2.1 ✅ → 下一步 2.2)
+Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ → 下一步 2.5)
 TypeCheck:   ✅ 全部通过
 Vite Build:  ✅ 通过
 ```
@@ -16,90 +16,85 @@ Vite Build:  ✅ 通过
 ### ✅ Milestone 1: OpenCode API 调研
 - 分析 OpenCode 源码 (Hono 框架 + Basic Auth)
 - 发现 api-client 的 4 个实现错误并全部修复
-- 创建详细调研文档 (OPENCODE-API-FINDINGS.md)
-
-| 问题 | 原始实现 | 正确实现 |
-|------|---------|---------|
-| 认证方式 | Bearer token | Basic Auth |
-| API 路径 | `/api/session` | `/session` |
-| 发送消息 | `POST /prompt` | `POST /message` |
-| 事件订阅 | per-session `/events` | 全局 `/event` |
 
 ### ✅ Milestone 2: OpenCode 编译和 Sidecar 集成
-- `scripts/build-opencode.ts` 编译脚本
-- 平台特定命名 (`opencode-server-aarch64-apple-darwin`)
-- Tauri `externalBin` sidecar 配置
-- Rust 侧 sidecar 自动启动 (`lib.rs`)
+- `scripts/build-opencode.ts` + Tauri `externalBin` + Rust sidecar 自动启动
 
-### ✅ Milestone 3: 基础聊天 UI
-- 消息列表、输入框、Enter 键发送、Tailwind CSS
-
-### ✅ Milestone 4: 端到端集成
-- Sidecar 自动启动、连接重试、Session 创建、消息收发
-
-### ✅ 代码质量优化
-- api-client 类型对齐、server-manager 密码修复、自动滚动/loading 指示
+### ✅ Milestone 3: 基础聊天 UI + Milestone 4: 端到端集成
+- 消息收发、连接重试、Session 创建
 
 ---
 
 ## Phase 2: 体验优先 + WorkAny UI 1:1 还原 (🔧 进行中)
 
-**方向**: 体验优先
-**UI 参考**: WorkAny 1:1 还原
-**执行顺序**: 2.1 → 2.2 → 2.5 → 2.3 → 2.4 → 2.6
+**执行顺序**: 2.1 ✅ → 2.2 ✅ → **2.5** → 2.3 → 2.4 → 2.6
 
 ### ✅ Iteration 2.1: UI 基础设施 + 布局骨架
 - [x] 依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
-- [x] `cn()` 工具函数 (`lib/utils.ts`)
-- [x] shadcn/ui 组件: Button, Dialog, DropdownMenu, Tooltip + barrel export
-- [x] RootLayout: SidebarProvider + LeftSidebar + Outlet (共享 sidebar 状态)
-- [x] 三栏布局骨架: LeftSidebar (w-72/w-14) + MainContent + (预留 RightSidebar)
+- [x] `cn()` 工具函数 + shadcn/ui 组件 (Button, Dialog, DropdownMenu, Tooltip)
+- [x] RootLayout → SidebarProvider + SessionsProvider + LeftSidebar + Outlet
+- [x] 三栏布局: LeftSidebar (w-72/w-14 双态) + MainContent + 预留 RightSidebar
 - [x] 路由: `/` (Home) + `/session/:id` (Session)
-- [x] CSS 变量: WorkAny-style design tokens (`index.css`)
-- [x] Review 修复: 删除孤立 App.tsx、修复 editor-default typo、aria-labels (9处)
+- [x] CSS 变量: WorkAny-style design tokens
+- [x] Review: 删除孤立 App.tsx、修复 typo、aria-labels (9处)
 
-**新增文件**:
+**文件结构**:
 ```
 src/
-├── lib/utils.ts                         - cn() 工具
+├── lib/
+│   ├── utils.ts                  - cn()
+│   ├── use-api.ts                - 共享 ApiClient 实例
+│   ├── use-sessions.ts           - session CRUD + 状态
+│   └── sessions-context.tsx      - SessionsProvider (跨路由共享)
 ├── components/
-│   ├── ui/
-│   │   ├── index.ts                     - barrel export
-│   │   ├── button.tsx                   - Button (6 variant × 4 size)
-│   │   ├── dialog.tsx                   - Dialog 弹窗
-│   │   ├── dropdown-menu.tsx            - 下拉菜单
-│   │   └── tooltip.tsx                  - 工具提示
-│   └── layout/
-│       ├── index.ts                     - barrel export
-│       ├── sidebar-context.tsx          - SidebarProvider + useSidebar
-│       ├── left-sidebar.tsx             - 展开/折叠双态侧边栏
-│       └── root-layout.tsx              - 共享布局 (Sidebar + Outlet)
-├── pages/
-│   ├── index.ts                         - barrel export
-│   ├── Home.tsx                         - 居中标题 + 输入占位
-│   └── Session.tsx                      - 聊天页面骨架
-├── router.tsx                           - 路由配置
-├── main.tsx                             - RouterProvider 入口
-└── index.css                            - design tokens + 滚动条样式
+│   ├── ui/{button,dialog,dropdown-menu,tooltip,index}.tsx
+│   └── layout/{sidebar-context,left-sidebar,root-layout,index}.tsx
+├── pages/{Home,Session,index}.tsx
+├── router.tsx
+├── main.tsx
+└── index.css
 ```
 
-### Iteration 2.2: 左侧栏 + Session 管理 (3-4h)
-- [ ] Session 列表 (从 OpenCode API `/session` 获取)
-- [ ] Session 项: 图标 + 标题 + 三点菜单 (Delete)
-- [ ] 折叠态: hover popup 显示 session 列表
-- [ ] 底部用户头像打开 Settings 入口
-- [ ] Home 页输入框创建 session 并跳转
+### ✅ Iteration 2.2: 左侧栏 + Session 管理
+- [x] api-client: `listSessions()` + `deleteSession()` 方法
+- [x] Session 列表 (GET /session?roots=true&limit=50) + loading/empty 状态
+- [x] Session 项: 图标 + 标题 + 相对时间 + 三点菜单 (Delete)
+- [x] New Chat: 创建 session + 跳转 (sidebar + Home 页)
+- [x] Home 页: Enter 发送 → 创建 session → 发消息 → 跳转
+- [x] 中文输入法 composing 处理 (isComposing)
+- [x] 折叠态 Sessions 按钮: 点击展开侧边栏
+- [x] Session.tsx: 从 context 显示真实 title
 
-### Iteration 2.5: ChatInput 组件 (2-3h)
+**Review 修复**:
+- 删除重复 `SessionCreateResponse` 类型 → 统一用 `Session`
+- createSession 乐观更新替代 refresh (修 race condition)
+- useEffect cleanup flag (防 unmount setState)
+- DropdownMenuContent stopPropagation (防事件冒泡)
+- Home.tsx finally block (防 sending 状态卡住)
+
+**已知 Deferred (by-design)**:
+| 项目 | 归属迭代 |
+|------|---------|
+| Session.tsx 加载消息 | 2.3 |
+| 用户级错误提示 (toast) | 后续 |
+| Error Boundary | 后续 |
+| Hardcoded 密码/地址 | 2.6 |
+| SSE 重连/cleanup | 2.4 |
+| Session 实时更新 | 2.4 |
+
+---
+
+### Iteration 2.5: ChatInput 组件 (2-3h) ← 下一步
 - [ ] 统一 ChatInput, 支持 home/reply 两种 variant
 - [ ] Textarea 自动伸缩
 - [ ] Shift+Enter 换行, Enter 发送
 - [ ] 中文输入法 composing 处理
 - [ ] 底部: + 按钮 + 圆形发送/停止按钮
+- [ ] Home 页: 居中大标题 + ChatInput(home variant)
 
 ### Iteration 2.3: Markdown 渲染 + 消息显示 (3-4h)
 - [ ] react-markdown + remark-gfm + @tailwindcss/typography
-- [ ] UserMessage 组件 + AI 消息 Markdown 渲染
+- [ ] UserMessage + AI Markdown 消息
 - [ ] 代码块语法高亮
 - [ ] RunningIndicator + 自动滚动
 
@@ -115,9 +110,8 @@ src/
 - ❌ RightSidebar / 预览面板 / 附件上传
 - ❌ i18n / 暗色模式 / PlanApproval
 - ❌ Library 页面 / Setup 引导页
-- ❌ @agent/connector, workspace, notifier
 
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 → Iteration 2.2
+**当前阶段**: Phase 2 → Iteration 2.5
