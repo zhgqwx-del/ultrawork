@@ -42,17 +42,25 @@ export function SessionPage() {
             const existingIndex = prev.findIndex((m) => m.info.id === messageID)
 
             if (existingIndex >= 0) {
-              // Update existing message
+              // Update existing message (immutable)
               const updated = [...prev]
-              const existing = updated[existingIndex]
-              const textPart = existing.parts.find((p) => p.type === "text")
+              const existing = { ...updated[existingIndex] }
+              const textPartIndex = existing.parts.findIndex((p) => p.type === "text")
 
-              if (textPart) {
-                textPart.text = (textPart.text || "") + delta
+              if (textPartIndex >= 0) {
+                // Update existing text part
+                const textPart = existing.parts[textPartIndex]
+                existing.parts = [
+                  ...existing.parts.slice(0, textPartIndex),
+                  { ...textPart, text: (textPart.text || "") + delta },
+                  ...existing.parts.slice(textPartIndex + 1),
+                ]
               } else {
-                existing.parts.push({ type: "text", text: delta })
+                // Add new text part
+                existing.parts = [...existing.parts, { type: "text", text: delta }]
               }
 
+              updated[existingIndex] = existing
               return updated
             } else {
               // Create new message
@@ -139,12 +147,13 @@ export function SessionPage() {
     if (!id || !input.trim() || sending) return
 
     const userMessage = input.trim()
+    const tempId = `temp-${Date.now()}`
     setSending(true)
 
     // Optimistically add user message to UI
     const tempUserMessage: SendMessageResponse = {
       info: {
-        id: `temp-${Date.now()}`,
+        id: tempId,
         sessionID: id,
         role: "user",
         time: { created: Date.now() },
@@ -156,11 +165,16 @@ export function SessionPage() {
 
     try {
       // Send message (AI response will come via SSE)
-      await api.sendMessage(id, userMessage)
+      const response = await api.sendMessage(id, userMessage)
+
+      // Replace temporary user message with real one from server
+      setMessages((prev) =>
+        prev.map((m) => (m.info.id === tempId ? response : m))
+      )
     } catch (err) {
       console.error("Failed to send message:", err)
       // Remove optimistic message on error
-      setMessages((prev) => prev.filter((m) => m.info.id !== tempUserMessage.info.id))
+      setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
       setInput(userMessage) // Restore input
     } finally {
       setSending(false)
