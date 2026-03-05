@@ -108,8 +108,7 @@ bun run scripts/build-opencode.ts
 
 ### 步骤 2: 启动 Desktop App
 ```bash
-cd packages/client/desktop
-bun run tauri dev
+bun run tauri:dev
 ```
 
 Desktop App 会自动启动 OpenCode Server 作为 sidecar 进程。
@@ -134,18 +133,16 @@ bun run typecheck
 
 ### 编译 OpenCode
 ```bash
-bun run scripts/build-opencode.ts
+bun run build:opencode
 ```
 
 ### 启动 Desktop App
 ```bash
-cd packages/client/desktop
-bun run tauri dev
+bun run tauri:dev
 ```
 
 ### 构建 Desktop App
 ```bash
-cd packages/client/desktop
-bun run tauri build
+bun run tauri:build
 ```
 
