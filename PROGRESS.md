@@ -162,28 +162,34 @@ src/
 - [x] MessageList: streamingMessageId 支持
 - [x] 乐观 UI: 立即显示用户消息
 - [x] 错误处理: 失败时移除乐观消息
+- [x] Code Review: 修复 3 个关键问题 (详见 `REVIEW-2.4.md`)
 
 **文件**:
-- `lib/sse-client.ts` - SSE 客户端类 (120 行)
+- `lib/sse-client.ts` - SSE 客户端类 (172 行)
 - `lib/use-sse.ts` - React Hook (44 行)
 - `api-client/src/client.ts` - 添加 getBaseUrl/getCredentials
 - `components/chat/message-list.tsx` - 支持 streamingMessageId
 - `pages/Session.tsx` - SSE 集成 + 事件处理
 
 **SSE 功能**:
-- EventSource 连接 `/event` 端点
-- Basic Auth 支持 (URL 参数)
+- fetch + ReadableStream 实现 SSE (支持 Basic Auth)
 - 自动重连: 最多 5 次，指数退避
 - 事件类型: server.connected, server.heartbeat, message.delta, message.completed, session.updated
 - 流式文本追加: delta 逐字显示
 - 流式指示器: 当前流式消息显示动画
 
 **关键实现**:
-- SSEClient 管理 EventSource 生命周期
+- SSEClient 使用 fetch 而非 EventSource (支持自定义 headers)
+- 手动解析 SSE 格式: `data: {...}\n\n`
 - useSSE Hook 自动连接/断开 + cleanup
 - handleSSEEvent 使用 useCallback 防止重复订阅
-- 乐观 UI: 发送前添加临时消息，失败时移除
-- 流式更新: 查找或创建消息 → 追加 delta → 标记完成
+- 乐观 UI: 发送前添加临时消息，成功后替换 ID
+- 不可变状态更新: 使用 spread operators
+
+**Review 修复**:
+- SSEClient: EventSource → fetch + ReadableStream (支持 Basic Auth)
+- Session.tsx: 修复状态直接修改 (不可变更新)
+- Session.tsx: 替换临时用户消息 ID (防止重复)
 
 ---
 
