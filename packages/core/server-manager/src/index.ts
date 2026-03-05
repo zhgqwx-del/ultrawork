@@ -1,4 +1,2 @@
-// Placeholder - will implement OpenCode server process management
-export const spawnServer = () => {
-  console.log("Server manager placeholder")
-}
+export { ServerManager, createServerManager } from "./manager"
+export type { ServerConfig, ServerInfo, ServerStatus } from "./types"

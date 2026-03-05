@@ -1,4 +1,9 @@
-// Placeholder - will implement OpenCode REST API client
-export const createApiClient = () => {
-  console.log("API client placeholder")
-}
+export { ApiClient, createApiClient } from "./client"
+export type {
+  ApiClientConfig,
+  SessionCreateRequest,
+  SessionCreateResponse,
+  SessionPromptRequest,
+  Message,
+  Session,
+} from "./types"
