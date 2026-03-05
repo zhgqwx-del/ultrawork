@@ -2,10 +2,12 @@ import type { ApiClientConfig, SessionCreateRequest, SessionCreateResponse, Sess
 
 export class ApiClient {
   private baseUrl: string
+  private username?: string
   private password?: string
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl
+    this.username = config.username
     this.password = config.password
   }
 
@@ -16,7 +18,9 @@ export class ApiClient {
     }
 
     if (this.password) {
-      headers["Authorization"] = `Bearer ${this.password}`
+      const username = this.username || "opencode"
+      const credentials = btoa(`${username}:${this.password}`)
+      headers["Authorization"] = `Basic ${credentials}`
     }
 
     const response = await fetch(`${this.baseUrl}${path}`, {
@@ -32,25 +36,25 @@ export class ApiClient {
   }
 
   async createSession(request: SessionCreateRequest = {}): Promise<SessionCreateResponse> {
-    return this.request<SessionCreateResponse>("/api/session", {
+    return this.request<SessionCreateResponse>("/session", {
       method: "POST",
       body: JSON.stringify(request),
     })
   }
 
   async getSession(sessionId: string): Promise<Session> {
-    return this.request<Session>(`/api/session/${sessionId}`)
+    return this.request<Session>(`/session/${sessionId}`)
   }
 
-  async sendPrompt(sessionId: string, prompt: string): Promise<void> {
-    await this.request(`/api/session/${sessionId}/prompt`, {
+  async sendMessage(sessionId: string, prompt: string): Promise<void> {
+    await this.request(`/session/${sessionId}/message`, {
       method: "POST",
       body: JSON.stringify({ prompt }),
     })
   }
 
-  subscribeToEvents(sessionId: string, onEvent: (data: string) => void): () => void {
-    const eventSource = new EventSource(`${this.baseUrl}/api/session/${sessionId}/events`)
+  subscribeToEvents(onEvent: (data: string) => void): () => void {
+    const eventSource = new EventSource(`${this.baseUrl}/event`)
 
     eventSource.onmessage = (ev) => {
       onEvent(ev.data)

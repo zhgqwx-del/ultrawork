@@ -26,5 +26,6 @@ export interface Session {
 
 export interface ApiClientConfig {
   baseUrl: string
+  username?: string
   password?: string
 }
