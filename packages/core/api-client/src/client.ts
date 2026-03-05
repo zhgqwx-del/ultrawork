@@ -42,6 +42,23 @@ export class ApiClient {
     return response.json() as Promise<T>
   }
 
+  async listSessions(options?: {
+    directory?: string
+    roots?: boolean
+    start?: number
+    search?: string
+    limit?: number
+  }): Promise<Session[]> {
+    const params = new URLSearchParams()
+    if (options?.directory) params.set("directory", options.directory)
+    if (options?.roots) params.set("roots", "true")
+    if (options?.start) params.set("start", options.start.toString())
+    if (options?.search) params.set("search", options.search)
+    if (options?.limit) params.set("limit", options.limit.toString())
+    const query = params.toString()
+    return this.request<Session[]>(`/session${query ? `?${query}` : ""}`)
+  }
+
   async createSession(request: SessionCreateRequest = {}): Promise<SessionCreateResponse> {
     return this.request<SessionCreateResponse>("/session", {
       method: "POST",
@@ -51,6 +68,12 @@ export class ApiClient {
 
   async getSession(sessionId: string): Promise<Session> {
     return this.request<Session>(`/session/${sessionId}`)
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    return this.request<boolean>(`/session/${sessionId}`, {
+      method: "DELETE",
+    })
   }
 
   async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
