@@ -111,26 +111,70 @@ Total: ~542 lines of implementation code
 
 ---
 
-## 🎯 下一步工作 (Phase 2)
+## 🎯 Phase 2: 体验优先 + WorkAny UI 1:1 还原
 
-### 高优先级
-1. **SSE 流式响应** - 使用 `/event` 端点实现实时流式显示
-2. **Markdown 渲染** - 支持代码块、链接等格式化显示
-3. **多 Session 管理** - 侧边栏 session 列表，切换/新建/删除
-4. **参考 WorkAny UI** - 实现更完整的桌面交互界面
+**方向**: 体验优先 (A)
+**UI 参考**: WorkAny 1:1 还原
+**执行顺序**: 2.1 → 2.2 → 2.5 → 2.3 → 2.4 → 2.6
 
-### 中优先级
-5. **@agent/connector** - 统一连接抽象层
-6. **@agent/workspace** - `~/.ultrawork/` 用户级工作空间
-7. **@agent/ui** - 提取共享 UI 组件库
-8. **错误处理增强** - 断线重连、请求重试
+### Iteration 2.1: UI 基础设施 + 布局骨架 (3-4h)
+- [ ] 安装依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
+- [ ] 创建 `cn()` 工具函数
+- [ ] 搬入 shadcn/ui 基础组件: Button, Dialog, DropdownMenu, Tooltip
+- [ ] 三栏布局骨架: LeftSidebar + MainContent + (预留 RightSidebar)
+- [ ] SidebarProvider/Context (展开/折叠)
+- [ ] 路由: `/` (Home) + `/session/:id` (Chat)
 
-### 低优先级 (Phase 3)
-9. **Channel Gateway** - DingTalk/Feishu/Slack IM 集成
-10. **Proactive Services** - 心跳、定时任务
-11. **Notification System** - 通知分发
+### Iteration 2.2: 左侧栏 + Session 管理 (3-4h)
+- [ ] LeftSidebar 完整实现 (展开态 w-72 / 折叠态 w-14)
+- [ ] Logo + App 名称 + 折叠按钮
+- [ ] "New Chat" 按钮
+- [ ] Session 列表 (从 OpenCode API 获取)
+- [ ] Session 项: 图标 + 标题 + 三点菜单 (Delete)
+- [ ] 折叠态: 图标 + hover popup
+- [ ] 底部用户头像 + Settings 入口
+
+### Iteration 2.5: ChatInput 组件 (2-3h)
+- [ ] 统一 ChatInput, 支持 home/reply 两种 variant
+- [ ] Textarea 自动伸缩
+- [ ] Shift+Enter 换行, Enter 发送
+- [ ] 中文输入法 composing 处理
+- [ ] 底部: + 按钮 + 圆形发送/停止按钮
+- [ ] Home 页: 居中大标题 + ChatInput(home variant)
+
+### Iteration 2.3: Markdown 渲染 + 消息显示 (3-4h)
+- [ ] 安装 react-markdown + remark-gfm + @tailwindcss/typography
+- [ ] UserMessage 组件 (右对齐, bg-accent/50)
+- [ ] AI 消息: Markdown + 代码块 + 表格 + 链接
+- [ ] 代码块语法高亮
+- [ ] RunningIndicator (spinner + 活动描述)
+- [ ] 自动滚动 + 手动暂停 + "滚到底部"按钮
+
+### Iteration 2.4: SSE 流式响应 (4-5h)
+- [ ] SSE 客户端连接 `/event`
+- [ ] 解析事件类型 (message.text, tool.call, tool.result 等)
+- [ ] 流式拼接文本, 逐字显示
+- [ ] 工具调用事件显示
+- [ ] 断线重连
+- [ ] api-client `subscribeToEvents()` 支持 Basic Auth
+
+### Iteration 2.6: 设置面板 + 配置管理 (2-3h)
+- [ ] SettingsModal 组件 (Dialog 弹窗)
+- [ ] 配置项: Server 地址, 密码, 端口
+- [ ] 配置持久化 (localStorage / Tauri store)
+- [ ] 连接状态指示
+
+### Phase 2 Scope Out (→ Phase 3)
+- ❌ RightSidebar (Artifacts/文件树/工具历史)
+- ❌ 预览面板 (HTML/代码/文档预览)
+- ❌ 附件/图片上传
+- ❌ i18n 多语言
+- ❌ PlanApproval / QuestionInput
+- ❌ Library 页面 / Setup 引导页
+- ❌ 暗色模式
+- ❌ @agent/connector, workspace, notifier
 
 ---
 
 **最后更新**: 2026-03-05
-**当前阶段**: Phase 1 MVP ✅ 完成
+**当前阶段**: Phase 2 开发中 → Iteration 2.1
