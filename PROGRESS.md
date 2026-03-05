@@ -4,7 +4,7 @@
 
 ```
 Phase 1 MVP: ✅ 完成
-Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ → 下一步 2.5)
+Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ → 下一步 2.3)
 TypeCheck:   ✅ 全部通过
 Vite Build:  ✅ 通过
 ```
@@ -27,7 +27,7 @@ Vite Build:  ✅ 通过
 
 ## Phase 2: 体验优先 + WorkAny UI 1:1 还原 (🔧 进行中)
 
-**执行顺序**: 2.1 ✅ → 2.2 ✅ → **2.5** → 2.3 → 2.4 → 2.6
+**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → **2.3** → 2.4 → 2.6
 
 ### ✅ Iteration 2.1: UI 基础设施 + 布局骨架
 - [x] 依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
@@ -84,15 +84,31 @@ src/
 
 ---
 
-### Iteration 2.5: ChatInput 组件 (2-3h) ← 下一步
-- [ ] 统一 ChatInput, 支持 home/reply 两种 variant
-- [ ] Textarea 自动伸缩
-- [ ] Shift+Enter 换行, Enter 发送
-- [ ] 中文输入法 composing 处理
-- [ ] 底部: + 按钮 + 圆形发送/停止按钮
-- [ ] Home 页: 居中大标题 + ChatInput(home variant)
+### ✅ Iteration 2.5: ChatInput 组件
+- [x] 统一 ChatInput 组件, 支持 `home`/`reply` 两种 variant
+- [x] Textarea 自动伸缩 (home: max 200px, reply: max 120px)
+- [x] Shift+Enter 换行, Enter 发送
+- [x] 中文输入法 composing 处理 (`onCompositionStart/End`)
+- [x] 底部工具栏: + 按钮 + 圆形发送/停止按钮
+- [x] Home 页: 居中大标题 + ChatInput(home variant)
+- [x] Session 页: 替换占位 textarea + 添加 handleSend 逻辑
 
-### Iteration 2.3: Markdown 渲染 + 消息显示 (3-4h)
+**文件**:
+- `components/chat/chat-input.tsx` - 统一输入组件 (146 行)
+- `components/chat/index.ts` - barrel export
+- `pages/Home.tsx` - 使用 ChatInput(home)
+- `pages/Session.tsx` - 使用 ChatInput(reply) + input 状态管理
+
+**关键实现**:
+- `useRef` + `useEffect` 实现 textarea 自动调整高度
+- `isComposing` state 防止中文输入法 Enter 误触发
+- variant 控制样式: home (大字体/大按钮/shadow-lg), reply (小字体/小按钮/shadow-sm)
+- 发送按钮: home 用上箭头, reply 用发送图标
+- loading 状态显示 Loader2 spinner
+
+---
+
+### Iteration 2.3: Markdown 渲染 + 消息显示 (3-4h) ← 下一步
 - [ ] react-markdown + remark-gfm + @tailwindcss/typography
 - [ ] UserMessage + AI Markdown 消息
 - [ ] 代码块语法高亮
@@ -114,4 +130,4 @@ src/
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 → Iteration 2.5
+**当前阶段**: Phase 2 → Iteration 2.3
