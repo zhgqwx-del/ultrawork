@@ -121,6 +121,7 @@ src/
 - [x] AssistantMessage 组件: AI 消息 + Markdown 渲染
 - [x] MessageList 组件: 消息列表容器 + loading 状态
 - [x] Session.tsx: 加载消息 + 显示 + 自动滚动
+- [x] Code Review: 修复 2 个问题 (详见 `REVIEW-2.3.md`)
 
 **文件**:
 - `api-client/src/client.ts` - 添加 getMessages() 方法
@@ -142,6 +143,10 @@ src/
 - 消息格式转换: SendMessageResponse → 提取 text parts
 - 自动滚动: messagesEndRef + scrollIntoView
 - 空状态 + loading 状态处理
+
+**Review 修复**:
+- CodeBlock: 添加 clipboard API 错误处理
+- Session.tsx: 发送消息后刷新列表 (临时方案，2.4 用 SSE 替代)
 
 ---
 
