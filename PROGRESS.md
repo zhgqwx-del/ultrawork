@@ -92,6 +92,7 @@ src/
 - [x] 底部工具栏: + 按钮 + 圆形发送/停止按钮
 - [x] Home 页: 居中大标题 + ChatInput(home variant)
 - [x] Session 页: 替换占位 textarea + 添加 handleSend 逻辑
+- [x] Code Review: 修复 2 个问题 (详见 `REVIEW-2.5.md`)
 
 **文件**:
 - `components/chat/chat-input.tsx` - 统一输入组件 (146 行)
@@ -105,6 +106,10 @@ src/
 - variant 控制样式: home (大字体/大按钮/shadow-lg), reply (小字体/小按钮/shadow-sm)
 - 发送按钮: home 用上箭头, reply 用发送图标
 - loading 状态显示 Loader2 spinner
+
+**Review 修复**:
+- Home.tsx: 发送成功后清空输入 (`setInput("")`)
+- ChatInput: overflow 改为 auto (防止内容截断)
 
 ---
 
