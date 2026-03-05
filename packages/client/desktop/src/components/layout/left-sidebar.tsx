@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import { PanelLeft, SquarePen, Settings, User, MessageSquare, MoreHorizontal, Trash2, Loader2 } from "lucide-react"
+import { PanelLeft, SquarePen, Settings, MessageSquare, MoreHorizontal, Trash2, Loader2 } from "lucide-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import {
   Tooltip,
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "./sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
+import { SettingsDialog, ConnectionStatus } from "@/components/settings"
 
 function formatTime(timestamp: number): string {
   const now = Date.now()
@@ -36,6 +37,7 @@ export function LeftSidebar() {
   const { leftOpen, toggleLeft } = useSidebar()
   const { sessions, loading, createSession, deleteSession } = useSessionsContext()
   const [creating, setCreating] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const handleNewChat = async () => {
     if (creating) return
@@ -147,19 +149,20 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Bottom: User */}
-            <div className="mt-auto shrink-0 p-3">
+            {/* Bottom: User + Settings + Connection Status */}
+            <div className="mt-auto shrink-0 space-y-2 p-3">
+              <ConnectionStatus />
               <button
-                aria-label="User settings"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Settings"
                 className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]"
               >
                 <div className="flex size-9 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent]">
-                  <User className="size-5 text-[--sidebar-fg-muted]" />
+                  <Settings className="size-5 text-[--sidebar-fg-muted]" />
                 </div>
                 <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-medium text-[--sidebar-fg]">User</p>
+                  <p className="truncate text-sm font-medium text-[--sidebar-fg]">Settings</p>
                 </div>
-                <Settings className="size-4 text-[--sidebar-fg-muted]" />
               </button>
             </div>
           </>
@@ -216,17 +219,26 @@ export function LeftSidebar() {
 
             <div className="flex-1" />
 
-            <div className="flex shrink-0 flex-col items-center gap-1 px-2 pb-6">
-              <button
-                aria-label="User settings"
-                className="flex size-8 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
-              >
-                <User className="size-4 text-[--sidebar-fg-muted]" />
-              </button>
+            <div className="flex shrink-0 flex-col items-center gap-2 px-2 pb-6">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    aria-label="Settings"
+                    className="flex size-8 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                  >
+                    <Settings className="size-4 text-[--sidebar-fg-muted]" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Settings</TooltipContent>
+              </Tooltip>
             </div>
           </>
         )}
       </aside>
+
+      {/* Settings Dialog */}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </TooltipProvider>
   )
 }
