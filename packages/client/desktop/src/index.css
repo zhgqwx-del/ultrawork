@@ -1,1 +1,92 @@
 @import "tailwindcss";
+
+/* WorkAny-style design tokens */
+:root {
+  /* Core colors */
+  --color-bg: #ffffff;
+  --color-fg: #0f172a;
+  --color-fg-muted: #94a3b8;
+  --color-border: #e2e8f0;
+  --color-accent: #f1f5f9;
+  --color-accent-fg: #0f172a;
+  --color-primary: #2563eb;
+  --color-primary-fg: #ffffff;
+  --color-destructive: #ef4444;
+  --color-destructive-fg: #ffffff;
+  --color-muted: #f1f5f9;
+  --color-muted-fg: #64748b;
+
+  /* Sidebar */
+  --sidebar-bg: #f8fafc;
+  --sidebar-fg: #0f172a;
+  --sidebar-fg-muted: rgba(15, 23, 42, 0.5);
+  --sidebar-accent: rgba(15, 23, 42, 0.06);
+  --sidebar-accent-hover: rgba(15, 23, 42, 0.04);
+  --sidebar-border: #e2e8f0;
+
+  /* Popover / Dropdown */
+  --color-popover: #ffffff;
+  --color-popover-fg: #0f172a;
+
+  /* Ring */
+  --color-ring: #2563eb;
+}
+
+/* shadcn/ui CSS variable mapping */
+@theme inline {
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-fg);
+  --color-border: var(--color-border);
+  --color-ring: var(--color-ring);
+  --color-primary: var(--color-primary);
+  --color-primary-foreground: var(--color-primary-fg);
+  --color-secondary: var(--color-muted);
+  --color-secondary-foreground: var(--color-fg);
+  --color-destructive: var(--color-destructive);
+  --color-destructive-foreground: var(--color-destructive-fg);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-muted-fg);
+  --color-accent: var(--color-accent);
+  --color-accent-foreground: var(--color-accent-fg);
+  --color-popover: var(--color-popover);
+  --color-popover-foreground: var(--color-popover-fg);
+}
+
+/* Base styles */
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+.scrollbar-soft::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-soft::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-soft::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+.scrollbar-soft::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
