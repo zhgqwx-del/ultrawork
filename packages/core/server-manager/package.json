@@ -1,0 +1,19 @@
+{
+  "name": "@agent/server-manager",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'No linting configured yet'"
+  },
+  "dependencies": {
+    "@agent/api-client": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}
