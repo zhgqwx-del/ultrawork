@@ -3,7 +3,10 @@ export type {
   ApiClientConfig,
   SessionCreateRequest,
   SessionCreateResponse,
-  SessionPromptRequest,
+  SendMessageRequest,
+  SendMessageResponse,
+  MessagePart,
+  MessageInfo,
   Message,
   Session,
 } from "./types"

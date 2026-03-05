@@ -21,8 +21,9 @@ export class ServerManager {
     const port = this.config.port || 4096
     const password = this.config.password || this.generatePassword()
 
-    this.process = spawn(this.config.binaryPath, ["serve", "--port", port.toString(), "--password", password], {
+    this.process = spawn(this.config.binaryPath, ["serve", "--port", port.toString()], {
       cwd: this.config.workingDir,
+      env: { ...process.env, OPENCODE_SERVER_PASSWORD: password },
     })
 
     this.process.on("error", (error) => {

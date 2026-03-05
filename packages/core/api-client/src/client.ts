@@ -1,4 +1,11 @@
-import type { ApiClientConfig, SessionCreateRequest, SessionCreateResponse, Session } from "./types"
+import type {
+  ApiClientConfig,
+  SessionCreateRequest,
+  SessionCreateResponse,
+  Session,
+  SendMessageRequest,
+  SendMessageResponse
+} from "./types"
 
 export class ApiClient {
   private baseUrl: string
@@ -46,10 +53,19 @@ export class ApiClient {
     return this.request<Session>(`/session/${sessionId}`)
   }
 
-  async sendMessage(sessionId: string, prompt: string): Promise<void> {
-    await this.request(`/session/${sessionId}/message`, {
+  async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
+    const requestBody: SendMessageRequest = {
+      parts: [
+        {
+          type: "text",
+          text: message
+        }
+      ]
+    }
+
+    return this.request<SendMessageResponse>(`/session/${sessionId}/message`, {
       method: "POST",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(requestBody),
     })
   }
 

@@ -1,4 +1,11 @@
 // OpenCode API Types
+
+export interface ApiClientConfig {
+  baseUrl: string
+  username?: string
+  password?: string
+}
+
 export interface SessionCreateRequest {
   agent?: string
   workingDirectory?: string
@@ -6,12 +13,52 @@ export interface SessionCreateRequest {
 
 export interface SessionCreateResponse {
   id: string
-  agent: string
-  workingDirectory: string
+  slug: string
+  version: string
+  projectID: string
+  directory: string
+  title: string
+  time: {
+    created: number
+    updated: number
+  }
 }
 
-export interface SessionPromptRequest {
-  prompt: string
+export interface MessagePart {
+  type: string
+  text?: string
+  [key: string]: any
+}
+
+export interface SendMessageRequest {
+  parts: MessagePart[]
+}
+
+export interface MessageInfo {
+  role: "user" | "assistant"
+  time: {
+    created: number
+    completed?: number
+  }
+  parentID?: string
+  modelID?: string
+  providerID?: string
+  mode?: string
+  agent?: string
+  cost?: number
+  tokens?: {
+    input?: number
+    output?: number
+    total?: number
+  }
+  finish?: string
+  id: string
+  sessionID: string
+}
+
+export interface SendMessageResponse {
+  info: MessageInfo
+  parts: MessagePart[]
 }
 
 export interface Message {
@@ -21,11 +68,14 @@ export interface Message {
 
 export interface Session {
   id: string
-  messages: Message[]
-}
-
-export interface ApiClientConfig {
-  baseUrl: string
-  username?: string
-  password?: string
+  slug: string
+  version: string
+  projectID: string
+  directory: string
+  title: string
+  time: {
+    created: number
+    updated: number
+  }
+  messages?: Message[]
 }
