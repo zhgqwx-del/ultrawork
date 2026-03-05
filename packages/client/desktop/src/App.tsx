@@ -40,20 +40,34 @@ function App() {
     if (!input.trim() || !sessionId) return
 
     const userMessage = input
-    setMessages([...messages, { role: "user", content: userMessage }])
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }])
     setInput("")
+    setStatus("Thinking...")
 
     try {
-      await fetch(`${API_BASE}/session/${sessionId}/message`, {
+      const res = await fetch(`${API_BASE}/session/${sessionId}/message`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Basic ${btoa(`opencode:${PASSWORD}`)}`,
         },
-        body: JSON.stringify({ prompt: userMessage }),
+        body: JSON.stringify({ parts: [{ type: "text", text: userMessage }] }),
       })
+      const data = await res.json()
+
+      // Extract text from response parts
+      const textParts = (data.parts || [])
+        .filter((p: { type: string }) => p.type === "text")
+        .map((p: { text: string }) => p.text)
+        .join("\n")
+
+      if (textParts) {
+        setMessages((prev) => [...prev, { role: "assistant", content: textParts }])
+      }
+      setStatus("Connected")
     } catch (error) {
       console.error("Failed to send message:", error)
+      setStatus("Error sending message")
     }
   }
 
