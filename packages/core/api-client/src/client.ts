@@ -1,7 +1,6 @@
 import type {
   ApiClientConfig,
   SessionCreateRequest,
-  SessionCreateResponse,
   Session,
   SendMessageRequest,
   SendMessageResponse
@@ -59,8 +58,8 @@ export class ApiClient {
     return this.request<Session[]>(`/session${query ? `?${query}` : ""}`)
   }
 
-  async createSession(request: SessionCreateRequest = {}): Promise<SessionCreateResponse> {
-    return this.request<SessionCreateResponse>("/session", {
+  async createSession(request: SessionCreateRequest = {}): Promise<Session> {
+    return this.request<Session>("/session", {
       method: "POST",
       body: JSON.stringify(request),
     })

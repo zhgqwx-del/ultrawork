@@ -24,6 +24,7 @@ export function HomePage() {
       navigate(`/session/${session.id}`)
     } catch (err) {
       console.error("Failed to create session:", err)
+    } finally {
       setSending(false)
     }
   }

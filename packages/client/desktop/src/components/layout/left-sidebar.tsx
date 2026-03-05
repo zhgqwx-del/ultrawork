@@ -276,7 +276,7 @@ function SessionItem({
             <MoreHorizontal className="size-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
           <DropdownMenuItem
             onClick={onDelete}
             className="text-[--color-destructive] focus:text-[--color-destructive]"

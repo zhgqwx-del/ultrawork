@@ -11,19 +11,6 @@ export interface SessionCreateRequest {
   workingDirectory?: string
 }
 
-export interface SessionCreateResponse {
-  id: string
-  slug: string
-  version: string
-  projectID: string
-  directory: string
-  title: string
-  time: {
-    created: number
-    updated: number
-  }
-}
-
 export interface MessagePart {
   type: string
   text?: string

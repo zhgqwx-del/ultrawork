@@ -1,13 +1,18 @@
 import { useRef, useEffect } from "react"
 import { useParams } from "react-router-dom"
 import { useSidebar } from "@/components/layout"
+import { useSessionsContext } from "@/lib/sessions-context"
 import { cn } from "@/lib/utils"
 import { PanelLeft } from "lucide-react"
 
 export function SessionPage() {
   const { id } = useParams()
   const { toggleLeft } = useSidebar()
+  const { sessions } = useSessionsContext()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Find the current session
+  const session = sessions.find(s => s.id === id)
 
   // Placeholder messages for layout validation
   const messages: Array<{ role: "user" | "assistant"; content: string }> = []
@@ -31,7 +36,7 @@ export function SessionPage() {
           </button>
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <h1 className="inline-block max-w-full truncate px-2 py-1 text-sm font-normal text-[--color-fg]">
-              Session {id?.slice(0, 8)}
+              {session?.title || "New Chat"}
             </h1>
           </div>
         </header>

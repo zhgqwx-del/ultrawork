@@ -16,20 +16,31 @@ export function useSessions() {
     } catch (err) {
       console.error("Failed to load sessions:", err)
       setError(err instanceof Error ? err.message : "Failed to load sessions")
-    } finally {
-      setLoading(false)
     }
   }, [api])
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    let cancelled = false
+    api.listSessions({ roots: true, limit: 50 }).then(list => {
+      if (!cancelled) {
+        setSessions(list)
+        setError(null)
+        setLoading(false)
+      }
+    }).catch(err => {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : "Failed to load sessions")
+        setLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [api])
 
   const createSession = useCallback(async () => {
     const session = await api.createSession()
-    await refresh()
+    setSessions(prev => [session as Session, ...prev])
     return session
-  }, [api, refresh])
+  }, [api])
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
