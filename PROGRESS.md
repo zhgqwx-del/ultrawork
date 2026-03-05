@@ -14,12 +14,12 @@
 
 ### Phase 3: 核心包实现
 
-#### @agent/api-client ✅
+#### @agent/api-client ✅ (已修复)
 **功能**:
-- REST API 客户端 (createSession, getSession, sendPrompt)
-- SSE 事件流订阅 (subscribeToEvents)
+- REST API 客户端 (createSession, getSession, sendMessage)
+- SSE 事件流订阅 (subscribeToEvents - 全局)
 - 类型安全的 API 接口
-- 支持认证 (Bearer token)
+- 支持 Basic Auth 认证
 
 **文件**:
 - `src/types.ts` - API 类型定义
@@ -73,21 +73,24 @@ TypeCheck: ✅ PASSING
 - 事件订阅: GET `/event` (全局，不是 per-session)
 - 当前 api-client 实现有 4 个主要问题需要修复
 
+### API Client 修复完成
+- ✅ 更新认证方式: Bearer token → Basic Auth
+- ✅ 修复 API 路径: `/api/session` → `/session`
+- ✅ 修复消息端点: `/prompt` → `/message`
+- ✅ 修复事件订阅: per-session → 全局 `/event`
+- ✅ 重命名方法: `sendPrompt()` → `sendMessage()`
+- ✅ 更新类型定义: 添加 username 字段
+- ✅ TypeScript 类型检查通过
+
 ## 🎯 下一步工作
 
 ### 立即需要做
-1. **修复 @agent/api-client**
-   - 更新 API 端点路径
-   - 修改认证方式为 Basic Auth
-   - 调整事件订阅为全局端点
-   - 更新类型定义
+1. **手动测试 OpenCode + api-client**
+   - 启动 OpenCode Server (bun run dev)
+   - 编写测试脚本验证 api-client
+   - 确认所有 API 调用正常工作
 
-2. **手动测试 OpenCode**
-   - 启动 OpenCode Server
-   - 测试修复后的 api-client
-   - 验证所有功能正常
-
-3. **实现 build-opencode.ts 脚本**
+2. **实现 build-opencode.ts 脚本**
    - 编译 OpenCode 到二进制
    - 复制到 Tauri binaries 目录
 
