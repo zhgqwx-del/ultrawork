@@ -4,7 +4,7 @@
 
 ```
 Phase 1 MVP: ✅ 完成
-Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ → 下一步 2.3)
+Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ · 2.3 ✅ → 下一步 2.4)
 TypeCheck:   ✅ 全部通过
 Vite Build:  ✅ 通过
 ```
@@ -27,7 +27,7 @@ Vite Build:  ✅ 通过
 
 ## Phase 2: 体验优先 + WorkAny UI 1:1 还原 (🔧 进行中)
 
-**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → **2.3** → 2.4 → 2.6
+**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → 2.3 ✅ → **2.4** → 2.6
 
 ### ✅ Iteration 2.1: UI 基础设施 + 布局骨架
 - [x] 依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
@@ -113,13 +113,39 @@ src/
 
 ---
 
-### Iteration 2.3: Markdown 渲染 + 消息显示 (3-4h) ← 下一步
-- [ ] react-markdown + remark-gfm + @tailwindcss/typography
-- [ ] UserMessage + AI Markdown 消息
-- [ ] 代码块语法高亮
-- [ ] RunningIndicator + 自动滚动
+### ✅ Iteration 2.3: Markdown 渲染 + 消息显示
+- [x] api-client: 添加 `getMessages(sessionId)` 方法
+- [x] 安装依赖: react-markdown + remark-gfm
+- [x] CodeBlock 组件: 代码块 + 语言标签 + 复制按钮
+- [x] UserMessage 组件: 用户消息 + 头像
+- [x] AssistantMessage 组件: AI 消息 + Markdown 渲染
+- [x] MessageList 组件: 消息列表容器 + loading 状态
+- [x] Session.tsx: 加载消息 + 显示 + 自动滚动
 
-### Iteration 2.4: SSE 流式响应 (4-5h)
+**文件**:
+- `api-client/src/client.ts` - 添加 getMessages() 方法
+- `components/chat/code-block.tsx` - 代码块组件 (65 行)
+- `components/chat/user-message.tsx` - 用户消息 (18 行)
+- `components/chat/assistant-message.tsx` - AI 消息 + Markdown (88 行)
+- `components/chat/message-list.tsx` - 消息列表 (50 行)
+- `pages/Session.tsx` - 集成消息加载和显示
+
+**Markdown 功能**:
+- GFM 支持 (表格、任务列表、删除线)
+- 自定义样式: 标题、列表、引用、链接、表格
+- 代码块: 语言标签 + 复制按钮 + 语法高亮准备
+- 内联代码: 背景色 + 圆角
+- 流式指示器: 3 点动画 (isStreaming)
+
+**关键实现**:
+- useEffect 加载消息 + cleanup flag 防止内存泄漏
+- 消息格式转换: SendMessageResponse → 提取 text parts
+- 自动滚动: messagesEndRef + scrollIntoView
+- 空状态 + loading 状态处理
+
+---
+
+### Iteration 2.4: SSE 流式响应 (4-5h) ← 下一步
 - [ ] SSE 客户端 `/event` + 事件解析
 - [ ] 流式逐字显示 + 工具调用事件
 - [ ] 断线重连 + Basic Auth 支持
@@ -135,4 +161,4 @@ src/
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 → Iteration 2.3
+**当前阶段**: Phase 2 → Iteration 2.4
