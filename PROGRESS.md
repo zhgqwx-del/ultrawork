@@ -1,188 +1,136 @@
 # Ultrawork 开发进度
 
-## ✅ 已完成 (2026-03-05)
-
-### Phase 1: Monorepo 初始化
-- ✅ 根配置文件 (package.json, turbo.json, tsconfig)
-- ✅ 目录结构搭建
-- ✅ Git 仓库初始化
-- ✅ 依赖安装 (468 packages)
-
-### Phase 2: OpenCode 集成
-- ✅ 添加 OpenCode 作为 git submodule (dev branch)
-- ✅ Submodule 配置完成
-
-### Phase 3: 核心包实现
-
-#### @agent/api-client ✅ (已修复)
-**功能**:
-- REST API 客户端 (createSession, getSession, sendMessage)
-- SSE 事件流订阅 (subscribeToEvents - 全局)
-- 类型安全的 API 接口
-- 支持 Basic Auth 认证
-
-**文件**:
-- `src/types.ts` - API 类型定义
-- `src/client.ts` - ApiClient 类实现
-- `src/index.ts` - 导出接口
-
-#### @agent/server-manager ✅
-**功能**:
-- OpenCode 进程启动和管理
-- 健康检查和就绪等待
-- 进程状态跟踪
-- 自动生成密码
-
-**文件**:
-- `src/types.ts` - 服务器配置和状态类型
-- `src/manager.ts` - ServerManager 类实现
-- `src/index.ts` - 导出接口
-
-### Phase 4: 验证
-- ✅ TypeScript 类型检查通过 (3/3 packages)
-- ✅ 所有代码提交到 Git
-
-## 📊 当前状态
+## 📊 总体状态
 
 ```
-Commits: 7
-├── Initial commit: Monorepo setup
-├── Add OpenCode as git submodule
-├── Implement @agent/api-client and @agent/server-manager
-├── Fix @agent/api-client to match OpenCode API
-├── Add OpenCode build script and Tauri sidecar config
-├── Implement basic chat UI
-└── Implement end-to-end integration with OpenCode API
-
-Packages: 3
-├── @agent/api-client (✅ 完成)
-├── @agent/server-manager (✅ 完成)
-└── @agent/client-desktop (✅ MVP 完成)
-
-TypeCheck: ✅ PASSING
-MVP Status: ✅ 完成 - 可以发送消息到 OpenCode
-```
-
-## ✅ Milestone 1 完成 (2026-03-05)
-
-### OpenCode API 调研
-- ✅ 调研 OpenCode 项目结构和技术栈
-- ✅ 理解 API 端点和认证方式
-- ✅ 识别 api-client 实现问题
-- ✅ 创建详细调研文档 (OPENCODE-API-FINDINGS.md)
-
-### 关键发现
-- OpenCode 使用 Hono 框架 + Basic Auth
-- API 端点: `/session` (不是 `/api/session`)
-- 发送消息: POST `/session/:id/message` (不是 `/prompt`)
-- 事件订阅: GET `/event` (全局，不是 per-session)
-- 当前 api-client 实现有 4 个主要问题需要修复
-
-### API Client 修复完成
-- ✅ 更新认证方式: Bearer token → Basic Auth
-- ✅ 修复 API 路径: `/api/session` → `/session`
-- ✅ 修复消息端点: `/prompt` → `/message`
-- ✅ 修复事件订阅: per-session → 全局 `/event`
-- ✅ 重命名方法: `sendPrompt()` → `sendMessage()`
-- ✅ 更新类型定义: 添加 username 字段
-- ✅ TypeScript 类型检查通过
-
-## ✅ Milestone 2 完成 (2026-03-05)
-
-### OpenCode 编译和 Tauri Sidecar 集成
-- ✅ 创建 build-opencode.ts 脚本
-  - 编译 OpenCode 到当前平台二进制
-  - 复制到 Tauri binaries 目录
-  - 自动处理平台差异 (darwin/windows/linux)
-- ✅ 配置 Tauri sidecar
-  - 更新 tauri.conf.json 添加 externalBin
-  - 更新 ServerManager 传递正确的 CLI 参数
-- ✅ TypeScript 类型检查通过
-
-## ✅ Milestone 3 完成 (2026-03-05)
-
-### 基础聊天 UI 实现
-- ✅ 实现消息列表显示
-  - 用户消息右对齐，蓝色背景
-  - 助手消息左对齐，白色背景
-- ✅ 实现输入框和发送按钮
-  - 支持 Enter 键发送
-  - Tailwind CSS 样式
-- ✅ TypeScript 类型检查通过
-
-## ✅ Milestone 4 完成 (2026-03-05)
-
-### 端到端集成
-- ✅ 实现 Session 创建
-  - 组件挂载时自动创建 session
-  - Basic Auth 认证
-- ✅ 实现消息发送
-  - 调用 OpenCode API `/session/:id/message`
-  - 错误处理
-- ✅ 添加连接状态显示
-  - "Connecting..." / "Connected" / "Connection failed"
-- ✅ TypeScript 类型检查通过
-
-## 🎯 MVP 完成！
-
-### 已实现功能
-✅ Desktop App 可以连接 OpenCode Server 并发送消息
-
-### 下一步工作
-1. **测试 MVP**
-   - 运行 build-opencode.ts 编译 OpenCode
-   - 启动 Desktop App
-   - 测试完整对话流程
-
-2. **实现消息接收**
-   - 订阅 SSE 事件流
-   - 显示 AI 响应消息
-   - 处理流式响应
-
-3. **后续增强**
-   - 实现 @agent/connector (统一连接抽象)
-   - 实现 @agent/workspace (用户级工作空间)
-   - 实现 @agent/ui (共享 UI 组件)
-   - Channel Gateway 和 Proactive Services
-
-## 🔧 技术细节
-
-### API Client 实现亮点
-- 使用 fetch API 进行 HTTP 请求
-- 支持 SSE (Server-Sent Events) 流式响应
-- 类型安全的泛型请求方法
-- 简洁的事件订阅接口
-
-### Server Manager 实现亮点
-- 使用 child_process.spawn 启动进程
-- 健康检查轮询机制 (500ms 间隔)
-- 30 秒超时保护
-- 进程生命周期管理
-
-## 📝 代码统计
-
-```
-packages/core/api-client/
-├── src/types.ts      (30 lines)
-├── src/client.ts     (68 lines)
-└── src/index.ts      (9 lines)
-
-packages/core/server-manager/
-├── src/types.ts      (12 lines)
-├── src/manager.ts    (95 lines)
-└── src/index.ts      (2 lines)
-
-packages/client/desktop/
-└── src/App.tsx       (80 lines)
-
-scripts/
-└── build-opencode.ts (30 lines)
-
-Total: ~326 lines of implementation code
+Phase 1 MVP: ✅ 完成
+TypeCheck:   ✅ 全部通过 (3/3 packages)
+Commits:     20+
+Packages:    3 (全部实现)
 ```
 
 ---
 
-**最后更新**: 2026-03-05 17:13 (UTC+8)
-**当前阶段**: MVP 完成 - Desktop App 可以连接 OpenCode Server 并发送消息
+## ✅ Milestone 1: OpenCode API 调研 (2026-03-05)
 
+### 调研成果
+- ✅ 分析 OpenCode 源码 (Hono 框架 + Basic Auth)
+- ✅ 发现 api-client 的 4 个实现错误并全部修复
+- ✅ 创建详细调研文档 (OPENCODE-API-FINDINGS.md)
+
+### 关键发现
+| 问题 | 原始实现 | 正确实现 |
+|------|---------|---------|
+| 认证方式 | Bearer token | Basic Auth |
+| API 路径 | `/api/session` | `/session` |
+| 发送消息 | `POST /prompt` | `POST /message` |
+| 事件订阅 | per-session `/events` | 全局 `/event` |
+
+---
+
+## ✅ Milestone 2: OpenCode 编译和 Sidecar 集成 (2026-03-05)
+
+- ✅ 创建 `scripts/build-opencode.ts` 编译脚本
+- ✅ 处理平台特定命名 (e.g. `opencode-server-aarch64-apple-darwin`)
+- ✅ 配置 Tauri `externalBin` sidecar
+- ✅ 配置 Rust 侧 sidecar 自动启动 (`lib.rs`)
+
+### 踩坑记录
+| 问题 | 原因 | 解决方式 |
+|------|------|---------|
+| 二进制名称不匹配 | Tauri 要求带平台后缀 | 生成 `opencode-server-{target}` 格式 |
+| 图标文件缺失 | 空的 icons 目录 | 用 `tauri icon` 命令生成 |
+| main.rs 缺失 | git restore 未包含此文件 | 手动创建 |
+| `--password` 无效 | OpenCode 不接受 CLI 密码参数 | 改用 `OPENCODE_SERVER_PASSWORD` 环境变量 |
+
+---
+
+## ✅ Milestone 3: 基础聊天 UI (2026-03-05)
+
+- ✅ 消息列表 (用户消息右对齐蓝色, 助手消息左对齐白色)
+- ✅ 输入框 + 发送按钮
+- ✅ Enter 键发送
+- ✅ Tailwind CSS 样式
+
+---
+
+## ✅ Milestone 4: 端到端集成 (2026-03-05)
+
+- ✅ Sidecar 自动启动 OpenCode Server
+- ✅ 连接重试 (10 次, 每次 2 秒间隔)
+- ✅ Session 创建
+- ✅ 消息发送和接收
+
+### 踩坑记录
+| 问题 | 原因 | 解决方式 |
+|------|------|---------|
+| Connection failed | 服务启动需要 ~7 秒 | 添加重试逻辑 |
+| 消息无回复 | 请求体格式错误 (`prompt` → `parts`) | 改用 `{ parts: [{ type: "text", text }] }` |
+| 无 AI 响应 | 未配置 AI Provider | 配置 OpenCode Zen + Big Pickle 模型 |
+
+---
+
+## ✅ 代码质量优化 (2026-03-05)
+
+- ✅ `@agent/api-client` 类型与实际 API 对齐
+  - 更新 `SessionCreateResponse` 匹配真实响应
+  - 新增 `MessagePart`, `SendMessageRequest`, `SendMessageResponse` 类型
+  - `sendMessage()` 使用 parts 数组格式
+- ✅ `@agent/server-manager` 密码传递修复 (CLI → 环境变量)
+- ✅ `App.tsx` 使用 `@agent/api-client` 包代替直接 fetch
+- ✅ 新增 UI 功能：自动滚动、loading 指示、空状态占位、输入禁用
+
+---
+
+## 📁 代码统计
+
+```
+packages/core/api-client/
+├── src/types.ts      (81 lines) - API 类型定义
+├── src/client.ts     (88 lines) - REST 客户端
+└── src/index.ts      (16 lines) - 导出
+
+packages/core/server-manager/
+├── src/types.ts      (16 lines) - 配置和状态类型
+├── src/manager.ts    (98 lines) - 进程管理器
+└── src/index.ts      (3 lines)  - 导出
+
+packages/client/desktop/
+├── src/App.tsx       (150 lines) - 聊天 UI + API 集成
+├── src/main.tsx      (11 lines)  - React 入口
+├── src/index.css     (2 lines)   - Tailwind 导入
+└── src-tauri/
+    ├── src/lib.rs    (31 lines)  - Sidecar 启动
+    └── src/main.rs   (4 lines)   - Rust 入口
+
+scripts/
+└── build-opencode.ts (42 lines) - 编译脚本
+
+Total: ~542 lines of implementation code
+```
+
+---
+
+## 🎯 下一步工作 (Phase 2)
+
+### 高优先级
+1. **SSE 流式响应** - 使用 `/event` 端点实现实时流式显示
+2. **Markdown 渲染** - 支持代码块、链接等格式化显示
+3. **多 Session 管理** - 侧边栏 session 列表，切换/新建/删除
+4. **参考 WorkAny UI** - 实现更完整的桌面交互界面
+
+### 中优先级
+5. **@agent/connector** - 统一连接抽象层
+6. **@agent/workspace** - `~/.ultrawork/` 用户级工作空间
+7. **@agent/ui** - 提取共享 UI 组件库
+8. **错误处理增强** - 断线重连、请求重试
+
+### 低优先级 (Phase 3)
+9. **Channel Gateway** - DingTalk/Feishu/Slack IM 集成
+10. **Proactive Services** - 心跳、定时任务
+11. **Notification System** - 通知分发
+
+---
+
+**最后更新**: 2026-03-05
+**当前阶段**: Phase 1 MVP ✅ 完成
