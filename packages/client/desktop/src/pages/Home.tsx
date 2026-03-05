@@ -21,6 +21,7 @@ export function HomePage() {
       const session = await createSession()
       // Fire and forget: send message (response comes via SSE in 2.4)
       api.sendMessage(session.id, text).catch(console.error)
+      setInput("") // Clear input after successful send
       navigate(`/session/${session.id}`)
     } catch (err) {
       console.error("Failed to create session:", err)

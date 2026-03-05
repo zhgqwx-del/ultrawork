@@ -84,7 +84,7 @@ export function ChatInput({
         style={{
           minHeight: variant === "home" ? "48px" : "20px",
           maxHeight: variant === "home" ? "200px" : "120px",
-          overflow: "hidden",
+          overflow: "auto",
         }}
       />
 
