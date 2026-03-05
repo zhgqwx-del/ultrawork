@@ -17,6 +17,14 @@ export class ApiClient {
     this.password = config.password
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl
+  }
+
+  getCredentials(): { username?: string; password?: string } {
+    return { username: this.username, password: this.password }
+  }
+
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

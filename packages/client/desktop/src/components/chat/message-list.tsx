@@ -5,9 +5,10 @@ import { AssistantMessage } from "./assistant-message"
 interface MessageListProps {
   messages: SendMessageResponse[]
   isLoading?: boolean
+  streamingMessageId?: string | null
 }
 
-export function MessageList({ messages, isLoading = false }: MessageListProps) {
+export function MessageList({ messages, isLoading = false, streamingMessageId = null }: MessageListProps) {
   if (messages.length === 0 && !isLoading) {
     return (
       <div className="flex min-h-[200px] items-center justify-center py-12">
@@ -25,6 +26,8 @@ export function MessageList({ messages, isLoading = false }: MessageListProps) {
           .map((part) => part.text)
           .join("\n\n")
 
+        const isStreaming = message.info.id === streamingMessageId
+
         if (message.info.role === "user") {
           return <UserMessage key={message.info.id || index} content={content} />
         }
@@ -33,7 +36,7 @@ export function MessageList({ messages, isLoading = false }: MessageListProps) {
           <AssistantMessage
             key={message.info.id || index}
             content={content}
-            isStreaming={!message.info.time.completed}
+            isStreaming={isStreaming}
           />
         )
       })}

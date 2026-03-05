@@ -1,8 +1,9 @@
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useState, useCallback } from "react"
 import { useParams } from "react-router-dom"
 import { useSidebar } from "@/components/layout"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
+import { useSSE } from "@/lib/use-sse"
 import { ChatInput, MessageList } from "@/components/chat"
 import { cn } from "@/lib/utils"
 import { PanelLeft } from "lucide-react"
@@ -19,9 +20,84 @@ export function SessionPage() {
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
 
   // Find the current session
   const session = sessions.find(s => s.id === id)
+
+  // Handle SSE events
+  const handleSSEEvent = useCallback(
+    (event: any) => {
+      const { payload } = event
+
+      // Only process events for current session
+      if (payload.properties?.sessionID !== id) return
+
+      switch (payload.type) {
+        case "message.delta": {
+          const { messageID, delta } = payload.properties
+          setStreamingMessageId(messageID)
+          setMessages((prev) => {
+            // Find existing message
+            const existingIndex = prev.findIndex((m) => m.info.id === messageID)
+
+            if (existingIndex >= 0) {
+              // Update existing message
+              const updated = [...prev]
+              const existing = updated[existingIndex]
+              const textPart = existing.parts.find((p) => p.type === "text")
+
+              if (textPart) {
+                textPart.text = (textPart.text || "") + delta
+              } else {
+                existing.parts.push({ type: "text", text: delta })
+              }
+
+              return updated
+            } else {
+              // Create new message
+              return [
+                ...prev,
+                {
+                  info: {
+                    id: messageID,
+                    sessionID: id!,
+                    role: "assistant" as const,
+                    time: { created: Date.now() },
+                  },
+                  parts: [{ type: "text", text: delta }],
+                },
+              ]
+            }
+          })
+          break
+        }
+
+        case "message.completed": {
+          const { messageID } = payload.properties
+          setStreamingMessageId(null)
+          setMessages((prev) => {
+            const updated = [...prev]
+            const message = updated.find((m) => m.info.id === messageID)
+            if (message) {
+              message.info.time.completed = Date.now()
+            }
+            return updated
+          })
+          break
+        }
+
+        case "session.updated": {
+          // Session title updated, will be reflected in sidebar via SessionsContext
+          break
+        }
+      }
+    },
+    [id]
+  )
+
+  // Connect to SSE
+  useSSE(handleSSEEvent)
 
   // Load messages when session ID changes
   useEffect(() => {
@@ -62,17 +138,30 @@ export function SessionPage() {
   const handleSend = async () => {
     if (!id || !input.trim() || sending) return
 
+    const userMessage = input.trim()
     setSending(true)
-    try {
-      // Send message (response comes via SSE in 2.4)
-      await api.sendMessage(id, input.trim())
-      setInput("") // Clear input after successful send
 
-      // Refresh message list (temporary solution until SSE in 2.4)
-      const updatedMessages = await api.getMessages(id)
-      setMessages(updatedMessages)
+    // Optimistically add user message to UI
+    const tempUserMessage: SendMessageResponse = {
+      info: {
+        id: `temp-${Date.now()}`,
+        sessionID: id,
+        role: "user",
+        time: { created: Date.now() },
+      },
+      parts: [{ type: "text", text: userMessage }],
+    }
+    setMessages((prev) => [...prev, tempUserMessage])
+    setInput("") // Clear input immediately
+
+    try {
+      // Send message (AI response will come via SSE)
+      await api.sendMessage(id, userMessage)
     } catch (err) {
       console.error("Failed to send message:", err)
+      // Remove optimistic message on error
+      setMessages((prev) => prev.filter((m) => m.info.id !== tempUserMessage.info.id))
+      setInput(userMessage) // Restore input
     } finally {
       setSending(false)
     }
@@ -101,7 +190,7 @@ export function SessionPage() {
         {/* Messages Area */}
         <div className={cn("relative flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft", "flex justify-center")}>
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
-            <MessageList messages={messages} isLoading={loading} />
+            <MessageList messages={messages} isLoading={loading} streamingMessageId={streamingMessageId} />
             <div ref={messagesEndRef} />
           </div>
         </div>
