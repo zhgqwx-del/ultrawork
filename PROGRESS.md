@@ -4,7 +4,7 @@
 
 ```
 Phase 1 MVP: ✅ 完成
-Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ · 2.3 ✅ → 下一步 2.4)
+Phase 2 UI:  🔧 进行中 (2.1 ✅ · 2.2 ✅ · 2.5 ✅ · 2.3 ✅ · 2.4 ✅ → 下一步 2.6)
 TypeCheck:   ✅ 全部通过
 Vite Build:  ✅ 通过
 ```
@@ -27,7 +27,7 @@ Vite Build:  ✅ 通过
 
 ## Phase 2: 体验优先 + WorkAny UI 1:1 还原 (🔧 进行中)
 
-**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → 2.3 ✅ → **2.4** → 2.6
+**执行顺序**: 2.1 ✅ → 2.2 ✅ → 2.5 ✅ → 2.3 ✅ → 2.4 ✅ → **2.6**
 
 ### ✅ Iteration 2.1: UI 基础设施 + 布局骨架
 - [x] 依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
@@ -150,12 +150,44 @@ src/
 
 ---
 
-### Iteration 2.4: SSE 流式响应 (4-5h) ← 下一步
-- [ ] SSE 客户端 `/event` + 事件解析
-- [ ] 流式逐字显示 + 工具调用事件
-- [ ] 断线重连 + Basic Auth 支持
+### ✅ Iteration 2.4: SSE 流式响应
+- [x] SSEClient 类: 连接 `/event` 端点 + 事件解析
+- [x] 自动重连逻辑: 指数退避 (1s → 2s → 4s → 8s → 16s)
+- [x] useSSE Hook: React 集成 + cleanup
+- [x] ApiClient: 添加 `getBaseUrl()` + `getCredentials()`
+- [x] Session.tsx: SSE 事件处理
+  - message.delta: 流式追加文本
+  - message.completed: 标记消息完成
+  - session.updated: 会话标题更新
+- [x] MessageList: streamingMessageId 支持
+- [x] 乐观 UI: 立即显示用户消息
+- [x] 错误处理: 失败时移除乐观消息
 
-### Iteration 2.6: 设置面板 + 配置管理 (2-3h)
+**文件**:
+- `lib/sse-client.ts` - SSE 客户端类 (120 行)
+- `lib/use-sse.ts` - React Hook (44 行)
+- `api-client/src/client.ts` - 添加 getBaseUrl/getCredentials
+- `components/chat/message-list.tsx` - 支持 streamingMessageId
+- `pages/Session.tsx` - SSE 集成 + 事件处理
+
+**SSE 功能**:
+- EventSource 连接 `/event` 端点
+- Basic Auth 支持 (URL 参数)
+- 自动重连: 最多 5 次，指数退避
+- 事件类型: server.connected, server.heartbeat, message.delta, message.completed, session.updated
+- 流式文本追加: delta 逐字显示
+- 流式指示器: 当前流式消息显示动画
+
+**关键实现**:
+- SSEClient 管理 EventSource 生命周期
+- useSSE Hook 自动连接/断开 + cleanup
+- handleSSEEvent 使用 useCallback 防止重复订阅
+- 乐观 UI: 发送前添加临时消息，失败时移除
+- 流式更新: 查找或创建消息 → 追加 delta → 标记完成
+
+---
+
+### Iteration 2.6: 设置面板 + 配置管理 (2-3h) ← 下一步
 - [ ] SettingsModal + 配置持久化 + 连接状态指示
 
 ### Phase 2 Scope Out (→ Phase 3)
@@ -166,4 +198,4 @@ src/
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 → Iteration 2.4
+**当前阶段**: Phase 2 → Iteration 2.6
