@@ -13,6 +13,8 @@
   "scripts": {
     "dev": "turbo run dev",
     "dev:desktop": "turbo run dev --filter=@agent/client-desktop",
+    "tauri:dev": "cd packages/client/desktop && bun run tauri:dev",
+    "tauri:build": "cd packages/client/desktop && bun run tauri:build",
     "build": "turbo run build",
     "build:opencode": "bun run scripts/build-opencode.ts",
     "typecheck": "turbo run typecheck",
