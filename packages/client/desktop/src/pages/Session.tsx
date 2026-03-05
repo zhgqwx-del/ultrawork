@@ -67,6 +67,10 @@ export function SessionPage() {
       // Send message (response comes via SSE in 2.4)
       await api.sendMessage(id, input.trim())
       setInput("") // Clear input after successful send
+
+      // Refresh message list (temporary solution until SSE in 2.4)
+      const updatedMessages = await api.getMessages(id)
+      setMessages(updatedMessages)
     } catch (err) {
       console.error("Failed to send message:", err)
     } finally {

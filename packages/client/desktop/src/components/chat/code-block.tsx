@@ -14,9 +14,14 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
   const language = className?.replace(/language-/, "") || "text"
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(children)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(children)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error("Failed to copy code:", err)
+      // Fallback: user will see the button didn't change, indicating failure
+    }
   }
 
   // Inline code
