@@ -117,13 +117,15 @@ Total: ~542 lines of implementation code
 **UI 参考**: WorkAny 1:1 还原
 **执行顺序**: 2.1 → 2.2 → 2.5 → 2.3 → 2.4 → 2.6
 
-### Iteration 2.1: UI 基础设施 + 布局骨架 (3-4h)
-- [ ] 安装依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
-- [ ] 创建 `cn()` 工具函数
-- [ ] 搬入 shadcn/ui 基础组件: Button, Dialog, DropdownMenu, Tooltip
-- [ ] 三栏布局骨架: LeftSidebar + MainContent + (预留 RightSidebar)
-- [ ] SidebarProvider/Context (展开/折叠)
-- [ ] 路由: `/` (Home) + `/session/:id` (Chat)
+### Iteration 2.1: UI 基础设施 + 布局骨架 (3-4h) ✅
+- [x] 安装依赖: lucide-react, react-router-dom, @radix-ui/*, cva, clsx, tailwind-merge
+- [x] 创建 `cn()` 工具函数
+- [x] 搬入 shadcn/ui 基础组件: Button, Dialog, DropdownMenu, Tooltip
+- [x] 三栏布局骨架: LeftSidebar + MainContent + (预留 RightSidebar)
+- [x] SidebarProvider/Context (展开/折叠)
+- [x] 路由: `/` (Home) + `/session/:id` (Chat)
+- [x] CSS 变量: WorkAny-style design tokens
+- [x] TypeCheck PASS | Vite Build PASS
 
 ### Iteration 2.2: 左侧栏 + Session 管理 (3-4h)
 - [ ] LeftSidebar 完整实现 (展开态 w-72 / 折叠态 w-14)
@@ -177,4 +179,4 @@ Total: ~542 lines of implementation code
 ---
 
 **最后更新**: 2026-03-05
-**当前阶段**: Phase 2 开发中 → Iteration 2.1
+**当前阶段**: Phase 2 开发中 → Iteration 2.2
