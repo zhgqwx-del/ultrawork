@@ -1,6 +1,5 @@
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Bot } from "lucide-react"
 import { CodeBlock } from "./code-block"
 
 interface AssistantMessageProps {
@@ -10,14 +9,9 @@ interface AssistantMessageProps {
 
 export function AssistantMessage({ content, isStreaming = false }: AssistantMessageProps) {
   return (
-    <div className="flex gap-3 py-4">
-      {/* Avatar */}
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[--color-accent] text-[--color-fg]">
-        <Bot className="size-4" />
-      </div>
-
+    <div className="py-3">
       {/* Content */}
-      <div className="flex-1 space-y-2 pt-1">
+      <div className="space-y-2">
         <div className="prose prose-sm max-w-none dark:prose-invert">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -77,10 +71,13 @@ export function AssistantMessage({ content, isStreaming = false }: AssistantMess
 
         {/* Streaming indicator */}
         {isStreaming && (
-          <div className="flex items-center gap-1 text-xs text-[--color-fg-muted]">
-            <span className="inline-block size-1 animate-pulse rounded-full bg-[--color-fg-muted]" />
-            <span className="inline-block size-1 animate-pulse rounded-full bg-[--color-fg-muted] [animation-delay:0.2s]" />
-            <span className="inline-block size-1 animate-pulse rounded-full bg-[--color-fg-muted] [animation-delay:0.4s]" />
+          <div className="flex items-center gap-2 py-2">
+            <div className="flex items-center gap-1">
+              <span className="inline-block size-2 animate-pulse rounded-full bg-[--color-primary]" />
+              <span className="inline-block size-2 animate-pulse rounded-full bg-[--color-primary] [animation-delay:0.2s]" />
+              <span className="inline-block size-2 animate-pulse rounded-full bg-[--color-primary] [animation-delay:0.4s]" />
+            </div>
+            <span className="text-xs text-[--color-fg-muted]">AI is typing...</span>
           </div>
         )}
       </div>

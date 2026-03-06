@@ -9,6 +9,8 @@ interface SessionsContextType {
   refresh: () => Promise<void>
   createSession: () => Promise<Session>
   deleteSession: (sessionId: string) => Promise<void>
+  updateSession: (id: string, updates: Partial<Session>) => void
+  renameSession: (sessionId: string, newTitle: string) => Promise<void>
 }
 
 const SessionsContext = createContext<SessionsContextType | null>(null)

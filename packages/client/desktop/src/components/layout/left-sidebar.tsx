@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { PanelLeft, SquarePen, Settings, MessageSquare, MoreHorizontal, Trash2, Loader2 } from "lucide-react"
+import { PanelLeft, SquarePen, Settings, MessageSquare, MoreHorizontal, Trash2, Loader2, Pencil, Check, X, Search, Star } from "lucide-react"
 import { useNavigate, useLocation } from "react-router-dom"
+import type { Session } from "@agent/api-client"
 import {
   Tooltip,
   TooltipContent,
@@ -17,6 +18,7 @@ import {
 import { useSidebar } from "./sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsDialog, ConnectionStatus } from "@/components/settings"
+import { useFavorites } from "@/lib/use-favorites"
 
 function formatTime(timestamp: number): string {
   const now = Date.now()
@@ -31,13 +33,52 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString()
 }
 
+interface SessionGroup {
+  label: string
+  sessions: Session[]
+}
+
+function groupSessionsByDate(sessions: Session[]): SessionGroup[] {
+  const now = Date.now()
+  const oneDayMs = 24 * 60 * 60 * 1000
+  const oneWeekMs = 7 * oneDayMs
+
+  const today: Session[] = []
+  const yesterday: Session[] = []
+  const thisWeek: Session[] = []
+  const earlier: Session[] = []
+
+  sessions.forEach((session) => {
+    const diff = now - session.time.created
+    if (diff < oneDayMs) {
+      today.push(session)
+    } else if (diff < 2 * oneDayMs) {
+      yesterday.push(session)
+    } else if (diff < oneWeekMs) {
+      thisWeek.push(session)
+    } else {
+      earlier.push(session)
+    }
+  })
+
+  const groups: SessionGroup[] = []
+  if (today.length > 0) groups.push({ label: "Today", sessions: today })
+  if (yesterday.length > 0) groups.push({ label: "Yesterday", sessions: yesterday })
+  if (thisWeek.length > 0) groups.push({ label: "This Week", sessions: thisWeek })
+  if (earlier.length > 0) groups.push({ label: "Earlier", sessions: earlier })
+
+  return groups
+}
+
 export function LeftSidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { leftOpen, toggleLeft } = useSidebar()
-  const { sessions, loading, createSession, deleteSession } = useSessionsContext()
+  const { sessions, loading, createSession, deleteSession, renameSession } = useSessionsContext()
   const [creating, setCreating] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const { toggleFavorite, isFavorite } = useFavorites()
 
   const handleNewChat = async () => {
     if (creating) return
@@ -65,9 +106,24 @@ export function LeftSidebar() {
     }
   }
 
+  const handleRenameSession = async (sessionId: string, newTitle: string) => {
+    try {
+      await renameSession(sessionId, newTitle)
+    } catch (err) {
+      console.error("Failed to rename session:", err)
+    }
+  }
+
   const currentSessionId = location.pathname.startsWith("/session/")
     ? location.pathname.split("/session/")[1]
     : null
+
+  // Filter sessions by search query
+  const filteredSessions = sessions.filter((session) =>
+    session.title.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const sessionGroups = groupSessionsByDate(filteredSessions)
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -126,25 +182,72 @@ export function LeftSidebar() {
                   SESSIONS
                 </span>
               </div>
+
+              {/* Search Input */}
+              <div className="mb-2 shrink-0">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[--sidebar-fg-muted]" />
+                  <input
+                    type="text"
+                    placeholder="Search sessions..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full rounded-lg border border-[--color-border] bg-[--color-bg] py-1.5 pl-9 pr-3 text-sm text-[--sidebar-fg] placeholder:text-[--sidebar-fg-muted] focus:border-[--color-primary] focus:outline-none focus:ring-1 focus:ring-[--color-primary]"
+                  />
+                </div>
+              </div>
+
               <div className="scrollbar-soft mt-1 flex-1 space-y-0.5 overflow-y-auto">
                 {loading ? (
                   <div className="flex items-center justify-center py-6">
                     <Loader2 className="size-4 animate-spin text-[--sidebar-fg-muted]" />
                   </div>
-                ) : sessions.length === 0 ? (
+                ) : filteredSessions.length === 0 ? (
                   <div className="px-2 py-4 text-center text-xs text-[--sidebar-fg-muted]">
-                    No sessions yet
+                    {searchQuery ? "No matching sessions" : "No sessions yet"}
                   </div>
                 ) : (
-                  sessions.map((session) => (
-                    <SessionItem
-                      key={session.id}
-                      session={session}
-                      isActive={currentSessionId === session.id}
-                      onNavigate={() => navigate(`/session/${session.id}`)}
-                      onDelete={(e) => handleDeleteSession(e, session.id)}
-                    />
-                  ))
+                  <div className="space-y-4">
+                    {sessionGroups.map((group) => {
+                      // Separate pinned and unpinned sessions
+                      const pinnedSessions = group.sessions.filter((s) => isFavorite(s.id))
+                      const unpinnedSessions = group.sessions.filter((s) => !isFavorite(s.id))
+
+                      return (
+                        <div key={group.label} className="space-y-0.5">
+                          <h3 className="px-2 py-1 text-xs font-medium tracking-wider text-[--sidebar-fg-muted] opacity-70">
+                            {group.label}
+                          </h3>
+                          {/* Pinned sessions first */}
+                          {pinnedSessions.map((session) => (
+                            <SessionItem
+                              key={session.id}
+                              session={session}
+                              isActive={currentSessionId === session.id}
+                              isPinned={true}
+                              onNavigate={() => navigate(`/session/${session.id}`)}
+                              onDelete={(e) => handleDeleteSession(e, session.id)}
+                              onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
+                              onTogglePin={() => toggleFavorite(session.id)}
+                            />
+                          ))}
+                          {/* Unpinned sessions */}
+                          {unpinnedSessions.map((session) => (
+                            <SessionItem
+                              key={session.id}
+                              session={session}
+                              isActive={currentSessionId === session.id}
+                              isPinned={false}
+                              onNavigate={() => navigate(`/session/${session.id}`)}
+                              onDelete={(e) => handleDeleteSession(e, session.id)}
+                              onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
+                              onTogglePin={() => toggleFavorite(session.id)}
+                            />
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             </div>
@@ -246,15 +349,105 @@ export function LeftSidebar() {
 function SessionItem({
   session,
   isActive,
+  isPinned,
   onNavigate,
   onDelete,
+  onRename,
+  onTogglePin,
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
   isActive: boolean
+  isPinned: boolean
   onNavigate: () => void
   onDelete: (e: React.MouseEvent) => void
+  onRename: (newTitle: string) => void
+  onTogglePin: () => void
 }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editValue, setEditValue] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
   const title = session.title || `Session ${session.id.slice(0, 8)}`
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const handleStartEdit = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditValue(title)
+    setIsEditing(true)
+  }
+
+  const handleSaveEdit = () => {
+    const trimmed = editValue.trim()
+    if (trimmed && trimmed !== title) {
+      onRename(trimmed)
+    }
+    setIsEditing(false)
+  }
+
+  const handleCancelEdit = () => {
+    setIsEditing(false)
+    setEditValue("")
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleSaveEdit()
+    } else if (e.key === "Escape") {
+      handleCancelEdit()
+    }
+  }
+
+  if (isEditing) {
+    return (
+      <div
+        className={cn(
+          "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
+          isActive
+            ? "bg-[--sidebar-accent] font-medium text-[--sidebar-fg]"
+            : "bg-[--sidebar-accent-hover] text-[--sidebar-fg]"
+        )}
+      >
+        <MessageSquare className="size-4 shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleSaveEdit}
+          className="min-w-0 flex-1 bg-transparent outline-none"
+          onClick={(e) => e.stopPropagation()}
+        />
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              handleSaveEdit()
+            }}
+            className="flex size-6 items-center justify-center rounded-md hover:bg-[--sidebar-accent]"
+            aria-label="Save"
+          >
+            <Check className="size-3.5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              handleCancelEdit()
+            }}
+            className="flex size-6 items-center justify-center rounded-md hover:bg-[--sidebar-accent]"
+            aria-label="Cancel"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -263,9 +456,27 @@ function SessionItem({
         "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-150 cursor-pointer",
         isActive
           ? "bg-[--sidebar-accent] font-medium text-[--sidebar-fg]"
-          : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent-hover] hover:text-[--sidebar-fg]"
+          : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent-hover] hover:text-[--sidebar-fg]",
+        isPinned && "border-l-2 border-[--color-primary]"
       )}
     >
+      {/* Pin/Star icon */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onTogglePin()
+        }}
+        className={cn(
+          "flex size-4 shrink-0 items-center justify-center transition-opacity",
+          isPinned
+            ? "opacity-100 text-[--color-primary]"
+            : "opacity-0 group-hover:opacity-60 hover:opacity-100"
+        )}
+        aria-label={isPinned ? "Unpin" : "Pin"}
+      >
+        <Star className={cn("size-3.5", isPinned && "fill-current")} />
+      </button>
+
       <MessageSquare className="size-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="truncate">{title}</p>
@@ -289,6 +500,19 @@ function SessionItem({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onTogglePin()
+            }}
+          >
+            <Star className="mr-2 size-4" />
+            {isPinned ? "Unpin" : "Pin"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleStartEdit}>
+            <Pencil className="mr-2 size-4" />
+            Rename
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={onDelete}
             className="text-[--color-destructive] focus:text-[--color-destructive]"

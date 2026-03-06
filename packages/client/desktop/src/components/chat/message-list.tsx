@@ -18,7 +18,7 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
   }
 
   return (
-    <div className="max-w-full min-w-0 space-y-0 divide-y divide-[--color-border]">
+    <div className="max-w-full min-w-0 space-y-1">
       {messages.map((message, index) => {
         // Combine all text parts into a single content string
         const content = message.parts

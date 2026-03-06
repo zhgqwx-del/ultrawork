@@ -17,14 +17,18 @@ export function HomePage() {
 
     setSending(true)
     try {
-      // Create session → send first message → navigate
+      // Create session
       const session = await createSession()
-      // Fire and forget: send message (response comes via SSE in 2.4)
-      api.sendMessage(session.id, text).catch(console.error)
-      setInput("") // Clear input after successful send
+
+      // Send first message and wait for confirmation
+      await api.sendMessage(session.id, text)
+
+      // Clear input and navigate
+      setInput("")
       navigate(`/session/${session.id}`)
     } catch (err) {
-      console.error("Failed to create session:", err)
+      console.error("Failed to send message:", err)
+      // TODO: Show error toast to user
     } finally {
       setSending(false)
     }

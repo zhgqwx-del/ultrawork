@@ -32,6 +32,38 @@
   --color-ring: #2563eb;
 }
 
+/* Dark mode colors */
+.dark {
+  /* Core colors */
+  --color-bg: #0f172a;
+  --color-fg: #f1f5f9;
+  --color-fg-muted: #64748b;
+  --color-border: #1e293b;
+  --color-accent: #1e293b;
+  --color-accent-fg: #f1f5f9;
+  --color-primary: #3b82f6;
+  --color-primary-fg: #ffffff;
+  --color-destructive: #ef4444;
+  --color-destructive-fg: #ffffff;
+  --color-muted: #1e293b;
+  --color-muted-fg: #94a3b8;
+
+  /* Sidebar */
+  --sidebar-bg: #0a0f1a;
+  --sidebar-fg: #f1f5f9;
+  --sidebar-fg-muted: rgba(241, 245, 249, 0.5);
+  --sidebar-accent: rgba(241, 245, 249, 0.06);
+  --sidebar-accent-hover: rgba(241, 245, 249, 0.04);
+  --sidebar-border: #1e293b;
+
+  /* Popover / Dropdown */
+  --color-popover: #1e293b;
+  --color-popover-fg: #f1f5f9;
+
+  /* Ring */
+  --color-ring: #3b82f6;
+}
+
 /* shadcn/ui CSS variable mapping */
 @theme inline {
   --color-background: var(--color-bg);
@@ -81,6 +113,14 @@ body {
 }
 .scrollbar-soft::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.25);
+}
+
+/* Dark mode scrollbar */
+.dark .scrollbar-soft::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+.dark .scrollbar-soft::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .scrollbar-hide::-webkit-scrollbar {

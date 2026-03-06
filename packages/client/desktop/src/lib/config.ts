@@ -2,12 +2,16 @@ export interface AppConfig {
   apiBaseUrl: string
   apiPassword: string
   apiUsername?: string
+  theme: "light" | "dark" | "system"
+  language: "en" | "zh"
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   apiBaseUrl: "http://localhost:4096",
   apiPassword: "test123",
   apiUsername: "opencode",
+  theme: "system",
+  language: "en",
 }
 
 const CONFIG_STORAGE_KEY = "ultrawork-config"

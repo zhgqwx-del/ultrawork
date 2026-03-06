@@ -12,7 +12,7 @@ import type { SendMessageResponse } from "@agent/api-client"
 export function SessionPage() {
   const { id } = useParams()
   const { toggleLeft } = useSidebar()
-  const { sessions } = useSessionsContext()
+  const { sessions, updateSession } = useSessionsContext()
   const api = useApi()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -21,21 +21,31 @@ export function SessionPage() {
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Find the current session
   const session = sessions.find(s => s.id === id)
 
+  // Check if user is at bottom
+  const checkIfAtBottom = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return true
+
+    const threshold = 100 // pixels from bottom
+    const isBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold
+    setIsAtBottom(isBottom)
+  }, [])
+
   // Handle SSE events
   const handleSSEEvent = useCallback(
     (event: any) => {
-      const { payload } = event
-
       // Only process events for current session
-      if (payload.properties?.sessionID !== id) return
+      if (event.properties?.sessionID !== id) return
 
-      switch (payload.type) {
+      switch (event.type) {
         case "message.delta": {
-          const { messageID, delta } = payload.properties
+          const { messageID, delta } = event.properties
           setStreamingMessageId(messageID)
           setMessages((prev) => {
             // Find existing message
@@ -82,7 +92,7 @@ export function SessionPage() {
         }
 
         case "message.completed": {
-          const { messageID } = payload.properties
+          const { messageID } = event.properties
           setStreamingMessageId(null)
           setMessages((prev) => {
             const updated = [...prev]
@@ -96,12 +106,17 @@ export function SessionPage() {
         }
 
         case "session.updated": {
-          // Session title updated, will be reflected in sidebar via SessionsContext
+          const { sessionID, title } = event.properties
+
+          // Update session in context
+          if (title) {
+            updateSession(sessionID, { title })
+          }
           break
         }
       }
     },
-    [id]
+    [id, updateSession]
   )
 
   // Connect to SSE
@@ -138,10 +153,25 @@ export function SessionPage() {
     }
   }, [id, api])
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change (only if user is at bottom)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (isAtBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [messages, isAtBottom])
+
+  // Add scroll listener to messages container
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const handleScroll = () => {
+      checkIfAtBottom()
+    }
+
+    container.addEventListener("scroll", handleScroll)
+    return () => container.removeEventListener("scroll", handleScroll)
+  }, [checkIfAtBottom])
 
   const handleSend = async () => {
     if (!id || !input.trim() || sending) return
@@ -164,13 +194,30 @@ export function SessionPage() {
     setInput("") // Clear input immediately
 
     try {
-      // Send message (AI response will come via SSE)
+      // Send message (AI response will come via SSE or directly in response)
       const response = await api.sendMessage(id, userMessage)
 
-      // Replace temporary user message with real one from server
-      setMessages((prev) =>
-        prev.map((m) => (m.info.id === tempId ? response : m))
-      )
+      // Check if server returned user message or assistant message
+      if (response.info.role === "user") {
+        // Server returned the user message, replace temp with real one
+        setMessages((prev) => prev.map((m) => (m.info.id === tempId ? response : m)))
+      } else if (response.info.role === "assistant") {
+        // Server returned assistant message directly (no SSE streaming)
+        // Keep the temp user message, add assistant message
+        setMessages((prev) => {
+          // First replace temp user message with a proper one (generate ID)
+          const userMessageWithId = {
+            ...tempUserMessage,
+            info: {
+              ...tempUserMessage.info,
+              id: `user-${Date.now()}`, // Generate a proper ID
+            },
+          }
+
+          // Replace temp and add assistant message
+          return prev.map((m) => (m.info.id === tempId ? userMessageWithId : m)).concat(response)
+        })
+      }
     } catch (err) {
       console.error("Failed to send message:", err)
       // Remove optimistic message on error
@@ -202,7 +249,10 @@ export function SessionPage() {
         </header>
 
         {/* Messages Area */}
-        <div className={cn("relative flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft", "flex justify-center")}>
+        <div
+          ref={scrollContainerRef}
+          className={cn("relative flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft", "flex justify-center")}
+        >
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
             <MessageList messages={messages} isLoading={loading} streamingMessageId={streamingMessageId} />
             <div ref={messagesEndRef} />

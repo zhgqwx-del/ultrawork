@@ -1,12 +1,7 @@
 import type { ApiClientConfig } from "@agent/api-client"
 
 // SSE Event types from OpenCode
-export interface SSEEvent {
-  directory: string
-  payload: EventPayload
-}
-
-export type EventPayload =
+export type SSEEvent =
   | { type: "server.connected"; properties: Record<string, never> }
   | { type: "server.heartbeat"; properties: Record<string, never> }
   | { type: "message.delta"; properties: MessageDeltaProperties }
@@ -39,6 +34,7 @@ export class SSEClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000 // Start with 1s
   private isConnected = false
+  private shouldReconnect = true // Track if we should reconnect
 
   constructor(private config: ApiClientConfig) {}
 
@@ -47,6 +43,8 @@ export class SSEClient {
       console.warn("SSE already connected")
       return
     }
+
+    this.shouldReconnect = true // Enable reconnection when connecting
 
     const url = new URL("/event", this.config.baseUrl)
 
@@ -124,13 +122,15 @@ export class SSEClient {
       this.abortController = null
     }
 
-    // Reconnect if not manually disconnected
-    if (this.abortController === null) {
+    // Reconnect if we should reconnect (not manually disconnected)
+    if (this.shouldReconnect) {
       this.scheduleReconnect()
     }
   }
 
   disconnect(): void {
+    this.shouldReconnect = false // Disable reconnection on manual disconnect
+
     if (this.abortController) {
       this.abortController.abort()
       this.abortController = null
@@ -145,6 +145,11 @@ export class SSEClient {
   }
 
   private scheduleReconnect(): void {
+    if (!this.shouldReconnect) {
+      console.log("Reconnection disabled, not reconnecting")
+      return
+    }
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error("Max reconnect attempts reached, giving up")
       return

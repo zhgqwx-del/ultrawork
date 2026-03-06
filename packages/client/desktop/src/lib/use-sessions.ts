@@ -50,5 +50,25 @@ export function useSessions() {
     [api]
   )
 
-  return { sessions, loading, error, refresh, createSession, deleteSession }
+  const updateSession = useCallback((id: string, updates: Partial<Session>) => {
+    setSessions((prev) =>
+      prev.map((session) =>
+        session.id === id ? { ...session, ...updates } : session
+      )
+    )
+  }, [])
+
+  const renameSession = useCallback(
+    async (sessionId: string, newTitle: string) => {
+      await api.updateSession(sessionId, { title: newTitle })
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === sessionId ? { ...session, title: newTitle } : session
+        )
+      )
+    },
+    [api]
+  )
+
+  return { sessions, loading, error, refresh, createSession, deleteSession, updateSession, renameSession }
 }

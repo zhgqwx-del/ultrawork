@@ -87,6 +87,13 @@ export class ApiClient {
     })
   }
 
+  async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {
+    return this.request<Session>(`/session/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    })
+  }
+
   async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
     const requestBody: SendMessageRequest = {
       parts: [
