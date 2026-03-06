@@ -1,3 +1,4 @@
+import { toast } from "sonner"
 import type { ApiClientConfig } from "@agent/api-client"
 
 // SSE Event types from OpenCode
@@ -152,6 +153,7 @@ export class SSEClient {
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error("Max reconnect attempts reached, giving up")
+      toast.error("Connection lost. Please check the server and refresh.")
       return
     }
 

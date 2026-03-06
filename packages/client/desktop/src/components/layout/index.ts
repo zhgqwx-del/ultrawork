@@ -1,3 +1,4 @@
 export { SidebarProvider, useSidebar } from "./sidebar-context"
 export { LeftSidebar } from "./left-sidebar"
 export { RootLayout } from "./root-layout"
+export { TopBar } from "./top-bar"

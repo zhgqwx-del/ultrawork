@@ -8,8 +8,8 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   apiBaseUrl: "http://localhost:4096",
-  apiPassword: "test123",
-  apiUsername: "opencode",
+  apiPassword: "",
+  apiUsername: "",
   theme: "system",
   language: "en",
 }

@@ -3,15 +3,14 @@
 ## 📊 总体状态
 
 ```
-Phase 1 MVP: ✅ 完成
-Phase 2 UI:  ✅ 完成 (2.1-2.9 全部完成)
-Phase 2.7:   ✅ 关键 Bug 修复
-Phase 2.8:   ✅ 设置面板升级
-Phase 2.9:   ✅ Session 管理增强
-Phase 2.10:  ✅ 用户测试修复
-TypeCheck:   ✅ 全部通过
-Vite Build:  ✅ 通过 (612 KB, gzipped: 192 KB)
-测试状态:    ✅ 桌面应用运行正常
+Phase 1 MVP:  ✅ 完成
+Phase 2 UI:   ✅ 完成 (2.1-2.10 全部完成)
+Round 0 加固: ✅ 完成 (Error Boundary, Toast, 环境修复)
+Round 1 重构: ✅ 完成 (UI 架构对齐设计稿, 17 个文件变更)
+Round 2:      🔜 下一步 (任务执行过程展示)
+TypeCheck:    ✅ 3/3 通过
+Vite Dev:     ✅ 正常启动
+Tauri Dev:    ✅ 修复 (bun --bun 绕过 Node.js v14)
 ```
 
 ---
@@ -507,49 +506,255 @@ src/
 
 ---
 
-### Phase 2 Scope Out (→ Phase 3)
+### Phase 2 Scope Out (→ 新设计稿)
 - ❌ RightSidebar / 预览面板 / 附件上传
 - ❌ PlanApproval / Library 页面 / Setup 引导页
 
 ---
 
-## Phase 3: 功能扩展 (🔜 待开始)
+## Round 0: 环境修复 + 基础加固 (✅ 已完成)
 
-### Phase 3.1: 工具调用展示
-- 解析 SSE 中的 tool_use/tool_result 事件
-- 折叠式工具组（类似 WorkAny）
-- 文件操作可视化（Read/Write/Edit diff）
-- Bash 工具调用显示终端输出
+**完成日期**: 2026-03-06
 
-### Phase 3.2: 右侧边栏 + Artifact
-- 文件树面板
-- Artifact 系统（代码/HTML 预览）
-- 语法高亮
+### ✅ 环境修复
+- Node.js v14 不兼容现代语法（??=），改用 `bun run --bun` 全流程运行
+- 更新 `start.sh` 使用 bun 替代 npm/node
+- TypeCheck 和 Build 均通过
 
-### Phase 3.3: 文件附件
-- 图片上传 + 预览
-- 文件拖拽上传
-- 粘贴板图片支持
+### ✅ React Error Boundary
+- 新增 `components/error-boundary.tsx` — 通用 ErrorBoundary 组件
+- `root-layout.tsx` — 在 Outlet 外包裹 ErrorBoundary，防止页面崩溃白屏
+- `router.tsx` — 添加 RouteErrorFallback（使用 useRouteError），处理路由级异常
 
-### Phase 3.4: 核心包实现
-- @agent/connector（本地/远程连接抽象）
-- @agent/workspace（~/.ultrawork/ 目录管理）
-- @agent/notifier（通知分发）
-- @agent/ui（共享 UI 组件库）
+### ✅ Toast 通知系统
+- 集成 `sonner` 库（v2.0.7）
+- `main.tsx` — 添加 ThemedToaster 组件，自动跟随暗色/亮色主题
+- 替换 7 处 console.error 为用户可见 toast 通知：
+  - `Home.tsx` — 发送消息失败
+  - `Session.tsx` — 加载消息失败、发送消息失败
+  - `left-sidebar.tsx` — 创建/删除/重命名会话失败
+  - `sse-client.ts` — SSE 重连耗尽
 
-### Phase 3.5: 智能体验
-- Smart Scroll（"滚到底部" FAB 按钮）
-- 计划审批流程
-- Clarification 交互
-- 错误恢复
+### ✅ 消息 ID 碰撞修复
+- `Session.tsx` — `temp-${Date.now()}` → `temp-${crypto.randomUUID()}`
+- `Session.tsx` — `user-${Date.now()}` → `user-${crypto.randomUUID()}`
+
+### ✅ Review 修复（第二轮）
+- `router.tsx` — 修复 errorElement，使用 useRouteError + 独立 RouteErrorFallback 组件
+- `main.tsx` — Toaster 适配暗色主题（抽取 ThemedToaster 组件使用 useTheme）
+- `Session.tsx` — 修复 message.completed 处理中的可变状态更新（直接赋值 → 不可变 map）
+- `Session.tsx` — handleSSEEvent 参数类型从 `any` 改为 `SSEEvent`
+
+**修改文件清单**:
+- `start.sh` — 改用 bun
+- `src/components/error-boundary.tsx` — 新建
+- `src/components/layout/root-layout.tsx` — 添加 ErrorBoundary
+- `src/router.tsx` — 添加 RouteErrorFallback
+- `src/main.tsx` — 添加 ThemedToaster
+- `src/pages/Home.tsx` — toast 通知
+- `src/pages/Session.tsx` — toast + UUID + 类型修复 + 不可变更新
+- `src/components/layout/left-sidebar.tsx` — toast 通知
+- `src/lib/sse-client.ts` — toast 通知
+
+**修复: 默认配置**:
+- `config.ts` — 默认密码从 `test123` 改为空字符串（匹配 OpenCode 无密码模式）
+
+**构建验证**: TypeCheck 3/3 ✅ | Build 649 KB (gzip: 203 KB) ✅
+
+### ✅ 端到端测试验证
+
+**OpenCode 服务端**:
+- 二进制: `src-tauri/binaries/opencode-server-aarch64-apple-darwin`
+- 启动命令: `opencode serve --port 4096`
+- Health: `GET /global/health` → `{"healthy":true}`
+- 配置文件: `~/.config/opencode/opencode.json`
+
+**LLM Provider 配置**:
+
+| 场景 | 可用模型 | 说明 |
+|------|---------|------|
+| 无 API key | 3 个免费模型 (big-pickle, gpt-5-nano, minimax-m2.5-free) | 自动使用 `apiKey: "public"` |
+| 有 API key | 35 个模型 (Claude/GPT/Gemini/GLM/Kimi 全系列) | 付费模型需账户有余额 |
+| 当前默认 | `opencode/big-pickle` (免费) | 通过配置文件指定 |
+
+OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
+```json
+{
+  "provider": {
+    "opencode": {
+      "options": {
+        "apiKey": "sk-xxx..."
+      }
+    }
+  },
+  "model": "opencode/big-pickle"
+}
+```
+
+**API 端到端测试结果**:
+
+| 测试项 | 结果 | 说明 |
+|--------|------|------|
+| Bun 环境 | ✅ | bun v1.3.10，`bun run --bun` 全流程运行 |
+| TypeCheck | ✅ | 3/3 包通过 |
+| Vite Build | ✅ | 649 KB (gzip 203 KB) |
+| Dev Server | ✅ | localhost:1420，267ms 启动 |
+| 模块编译 | ✅ | main.tsx / router.tsx / error-boundary.tsx 无编译错误 |
+| OpenCode 启动 | ✅ | health check 通过 |
+| POST /session (创建会话) | ✅ | 正常返回 session ID |
+| GET /session (列表会话) | ✅ | 正常返回列表 |
+| GET /event (SSE) | ✅ | 返回 `server.connected` 事件 |
+| POST /session/:id/message (发消息) | ✅ | big-pickle 模型正常回复中文 |
+| GET /session/:id/message (获取消息) | ✅ | 返回 user + assistant 消息 |
+| DELETE /session/:id (删除会话) | ✅ | 正常删除 |
+| CORS (localhost:1420 → :4096) | ✅ | `Access-Control-Allow-Origin` 已允许 |
+| Auth (无密码模式) | ✅ | 带/不带 auth header 均可访问 |
+
+**消息格式验证** — OpenCode 返回的 assistant 消息包含 4 种 part 类型：
+```
+[step-start] → [reasoning] 思考过程 → [text] 正式回复 → [step-finish] reason=stop
+```
+当前前端仅提取 `text` 类型显示，`reasoning` 和 `step-start/finish` 将在 Round 2 实现。
+
+**发现的注意事项（非阻断）**:
+1. `server-manager` 中 health 路径为 `/health`，实际应为 `/global/health`（当前未使用，后续修复）
+2. 付费模型 (如 gemini-3-pro) 在 API key 无余额时返回 `CreditsError`，免费模型不受影响
+3. OpenCode 的消息 API 是同步返回完整回复（非真正流式），SSE 仅用于事件通知
+
+---
+
+## 新设计稿对齐计划
+
+> 基于 `product-uxd-design/` 中的设计稿和功能清单（第一版本），在当前 Phase 2 基础上重构 UI。
+> Phase 1/2 遗留问题在重构过程中一并修复。原 Phase 3 规划内容自然融入新设计稿实现。
+
+### Round 1: UI 架构重构 - 对齐设计稿布局 (✅ 已完成)
+
+**完成日期**: 2026-03-06
+
+#### 环境修复
+- **tauri:dev 启动失败**: 系统 Node.js v14 不支持 `node:fs` 前缀，`@tauri-apps/cli@2.10.x` 无法加载
+- **修复**: 所有 tauri 脚本改用 `bun run --bun tauri dev`，绕过系统 Node.js
+- **修改文件**: `package.json`, `packages/client/desktop/package.json`, `start.sh`
+
+#### Step 1: 设计令牌更新
+- 新增 `--color-brand: #ea580c` (橙色 CTA)
+- 新增 `--color-brand-gradient: linear-gradient(135deg, #7c3aed, #2563eb)` (Logo 渐变)
+- 新增 `--color-bg-subtle` (卡片背景)
+- 侧边栏背景: light=`#ffffff`, dark=`#000000` (纯黑白)
+- **修改文件**: `src/index.css`
+
+#### Step 2: 共享 TopBar 组件 (NEW)
+- 左侧: 侧栏切换按钮 + 可选前进/后退 (disabled 占位)
+- 中间: 标题 (prop 驱动)
+- 右侧: 可选操作插槽 + 关闭按钮
+- **新建文件**: `src/components/layout/top-bar.tsx`
+
+#### Step 3: 左侧栏重设计
+- **品牌**: 渐变 Sparkles 图标 + "无影 UltraWork" 文字
+- **操作按钮**: 新建任务 / 搜索 / 定时任务(占位) / 自定义(占位) — 4 个图标按钮
+- **搜索**: 点击搜索按钮切换搜索输入框 (autoFocus)
+- **任务状态指示器**: 30s 内活跃=旋转橙色 Loader，有内容=绿色 Check，其他=MessageSquare
+- **底部**: 用户头像 "Y" + 用户名 + Settings 图标 → 触发 SettingsPopover
+- **折叠态**: `w-12` (48px)，品牌渐变图标 + 新建 + Sessions + 头像
+- **修改文件**: `src/components/layout/left-sidebar.tsx`
+
+#### Step 3b: SettingsPopover (NEW)
+- 基于 DropdownMenu 的弹出菜单
+- 菜单项: 通用设置(→/settings) / 语言 / 模型管理 / 工作区 / 渠道 / 远程服务 / 帮助文档 / 关于
+- 仅"通用设置"可点击导航，其余 disabled 占位
+- **新建文件**: `src/components/settings/settings-popover.tsx`
+
+#### Step 4: Home 页重设计
+- TopBar (侧栏切换)
+- 标题: "聊天办公，简单轻松" + 副标题
+- **能力卡片**: 3 列网格 — 文件整理 / 内容创作 / 文档处理
+  - 每张卡片: 图标(橙色) + 标题 + 描述，点击填充示例 prompt
+- ChatInput 新增橙色 "马上开始" CTA 按钮 (home variant)
+- **修改文件**: `src/pages/Home.tsx`, `src/components/chat/chat-input.tsx`
+
+#### Step 5: Settings 全页路由 (NEW)
+- TopBar 标题 "设置" + 关闭(X)按钮 → navigate("/")
+- 两栏布局: 左侧导航 (通用/隐私/能力配置) + 右侧内容面板
+- **GeneralSection**: 主题切换 + 语言选择 (从 dialog 迁移)
+- **PrivacySection**: 占位 ("Coming soon")
+- **CapabilitiesSection**: 连接设置 (API URL / 用户名 / 密码 / 测试连接)
+- **新建文件**: `src/pages/Settings.tsx`
+- **修改文件**: `src/router.tsx` (添加 `/settings` 路由)
+
+#### Step 6: Session 页右侧栏骨架
+- 右侧栏切换按钮 (PanelRight 图标在 TopBar)
+- `w-80` 展开面板，border-left 分隔
+- 5 个折叠区段: 计划执行进度 / 工作区 / 产物 / MCP服务 / 技能
+- 每个区段可点击展开/折叠 (ChevronRight/Down)
+- 内容占位 "Coming in Round 2"
+- **修改文件**: `src/pages/Session.tsx`
+
+#### Step 7: 路由 & 导航更新
+- sidebar-context: 新增 `rightOpen` / `toggleRight` / `setRightOpen`
+- 路由: 添加 `/settings` → `SettingsPage`
+- 导出: 更新 `pages/index.ts`, `layout/index.ts`, `settings/index.ts`
+- **修改文件**: `src/components/layout/sidebar-context.tsx`, `src/router.tsx`, 各 index.ts
+
+#### i18n 扩展
+- 新增 ~40 个翻译键 (中英双语)
+- 覆盖: 品牌、侧栏、设置弹窗、首页、设置页、右侧栏
+- **修改文件**: `src/lib/i18n-context.tsx`
+
+#### Review 修复 (3 个问题)
+1. **StatusIcon 逻辑修正**: 原 `updated > created + 1000` 几乎所有会话都满足 → 改为 `age < 30s = running, updated - created > 5s = completed`
+2. **Session TopBar 布局**: children 内 `flex-1` 在 `gap-1` 容器不生效 → 改为 `title` prop
+3. **Settings 关闭导航**: `navigate(-1)` 无历史时离开应用 → 改为 `navigate("/")`
+
+#### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `src/index.css` | 更新 - 设计令牌 |
+| `src/components/layout/top-bar.tsx` | **新建** - 共享导航栏 |
+| `src/components/layout/left-sidebar.tsx` | 重构 - 品牌/操作/状态/头像 |
+| `src/components/layout/sidebar-context.tsx` | 更新 - 右侧栏状态 |
+| `src/components/layout/index.ts` | 更新 - 导出 TopBar |
+| `src/components/settings/settings-popover.tsx` | **新建** - 弹出菜单 |
+| `src/components/settings/index.ts` | 更新 - 导出 SettingsPopover |
+| `src/components/chat/chat-input.tsx` | 更新 - CTA 按钮 |
+| `src/pages/Home.tsx` | 重构 - 能力卡片/标题 |
+| `src/pages/Settings.tsx` | **新建** - 全页设置 |
+| `src/pages/Session.tsx` | 更新 - 右侧栏骨架 |
+| `src/pages/index.ts` | 更新 - 导出 SettingsPage |
+| `src/router.tsx` | 更新 - /settings 路由 |
+| `src/lib/i18n-context.tsx` | 更新 - 新翻译键 |
+| `package.json` (root) | 更新 - tauri 脚本 |
+| `packages/client/desktop/package.json` | 更新 - tauri 脚本 |
+| `start.sh` | 更新 - cargo PATH |
+
+**验证**: TypeCheck 3/3 ✅ | Vite Dev ✅ | Review 3/3 修复 ✅
+
+---
+
+### Round 2: 核心体验 - 任务执行过程 (🔜 下一步)
+- [ ] 解析 OpenCode message parts（step-start / reasoning / text / tool_use 等）
+- [ ] 执行节点展示（think / search / execute）+ 折叠/展开
+- [ ] 右侧边栏：产物 preview + 工作目录 + 文件快速访问
+- [ ] 停止/暂停按钮
+- [ ] 文件/图片上传基础支持
+
+### Round 3: 模型和扩展能力 (📋 规划中)
+- [ ] 多模型支持（Provider 管理 + 模型切换 + 思考模式）
+- [ ] MCP 服务管理（列表 / 开关 / 搜索 / 管理入口）
+- [ ] Skills 管理
+- [ ] Plugins 管理
+- [ ] 消息通道（钉钉配置入口）
+
+### 后续迭代 (📋 规划中)
+- 引导页（首次安装后展示）
+- 定时任务系统
+- 数据导入/导出
+- 记忆管理
 - 键盘快捷键
-
-### Phase 3.6: 主动服务
-- Heartbeat 服务（后台进度监控）
-- Cron 任务（定时 LLM 任务）
-- 通知推送
+- 性能优化（消息虚拟化、代码分割）
 
 ---
 
 **最后更新**: 2026-03-06
-**当前阶段**: Phase 2 完成 ✅ → 准备 Phase 3
+**当前阶段**: Round 1 完成 ✅ → 准备 Round 2

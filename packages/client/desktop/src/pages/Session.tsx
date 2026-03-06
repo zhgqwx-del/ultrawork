@@ -1,20 +1,23 @@
 import { useRef, useEffect, useState, useCallback } from "react"
 import { useParams } from "react-router-dom"
-import { useSidebar } from "@/components/layout"
+import { toast } from "sonner"
+import { TopBar } from "@/components/layout/top-bar"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useSSE } from "@/lib/use-sse"
 import { ChatInput, MessageList } from "@/components/chat"
 import { cn } from "@/lib/utils"
-import { PanelLeft } from "lucide-react"
+import { PanelRight, ChevronDown, ChevronRight } from "lucide-react"
+import { useI18n } from "@/lib/i18n-context"
 import type { SendMessageResponse } from "@agent/api-client"
+import type { SSEEvent } from "@/lib/sse-client"
 
 export function SessionPage() {
   const { id } = useParams()
-  const { toggleLeft } = useSidebar()
   const { sessions, updateSession } = useSessionsContext()
   const api = useApi()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const { t } = useI18n()
 
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
@@ -22,25 +25,21 @@ export function SessionPage() {
   const [loading, setLoading] = useState(true)
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [rightOpen, setRightOpen] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // Find the current session
   const session = sessions.find(s => s.id === id)
 
-  // Check if user is at bottom
   const checkIfAtBottom = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return true
-
-    const threshold = 100 // pixels from bottom
+    const threshold = 100
     const isBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold
     setIsAtBottom(isBottom)
   }, [])
 
-  // Handle SSE events
   const handleSSEEvent = useCallback(
-    (event: any) => {
-      // Only process events for current session
+    (event: SSEEvent) => {
       if (event.properties?.sessionID !== id) return
 
       switch (event.type) {
@@ -48,17 +47,12 @@ export function SessionPage() {
           const { messageID, delta } = event.properties
           setStreamingMessageId(messageID)
           setMessages((prev) => {
-            // Find existing message
             const existingIndex = prev.findIndex((m) => m.info.id === messageID)
-
             if (existingIndex >= 0) {
-              // Update existing message (immutable)
               const updated = [...prev]
               const existing = { ...updated[existingIndex] }
               const textPartIndex = existing.parts.findIndex((p) => p.type === "text")
-
               if (textPartIndex >= 0) {
-                // Update existing text part
                 const textPart = existing.parts[textPartIndex]
                 existing.parts = [
                   ...existing.parts.slice(0, textPartIndex),
@@ -66,14 +60,11 @@ export function SessionPage() {
                   ...existing.parts.slice(textPartIndex + 1),
                 ]
               } else {
-                // Add new text part
                 existing.parts = [...existing.parts, { type: "text", text: delta }]
               }
-
               updated[existingIndex] = existing
               return updated
             } else {
-              // Create new message
               return [
                 ...prev,
                 {
@@ -90,25 +81,20 @@ export function SessionPage() {
           })
           break
         }
-
         case "message.completed": {
           const { messageID } = event.properties
           setStreamingMessageId(null)
-          setMessages((prev) => {
-            const updated = [...prev]
-            const message = updated.find((m) => m.info.id === messageID)
-            if (message) {
-              message.info.time.completed = Date.now()
-            }
-            return updated
-          })
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.info.id === messageID
+                ? { ...m, info: { ...m.info, time: { ...m.info.time, completed: Date.now() } } }
+                : m
+            )
+          )
           break
         }
-
         case "session.updated": {
           const { sessionID, title } = event.properties
-
-          // Update session in context
           if (title) {
             updateSession(sessionID, { title })
           }
@@ -119,18 +105,14 @@ export function SessionPage() {
     [id, updateSession]
   )
 
-  // Connect to SSE
   useSSE(handleSSEEvent)
 
-  // Load messages when session ID changes
   useEffect(() => {
     let cancelled = false
-
     if (!id) {
       setLoading(false)
       return
     }
-
     setLoading(true)
     api
       .getMessages(id)
@@ -143,44 +125,34 @@ export function SessionPage() {
       .catch((err: Error) => {
         if (!cancelled) {
           console.error("Failed to load messages:", err)
+          toast.error("Failed to load messages")
           setMessages([])
           setLoading(false)
         }
       })
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [id, api])
 
-  // Auto-scroll to bottom when messages change (only if user is at bottom)
   useEffect(() => {
     if (isAtBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }
   }, [messages, isAtBottom])
 
-  // Add scroll listener to messages container
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return
-
-    const handleScroll = () => {
-      checkIfAtBottom()
-    }
-
+    const handleScroll = () => checkIfAtBottom()
     container.addEventListener("scroll", handleScroll)
     return () => container.removeEventListener("scroll", handleScroll)
   }, [checkIfAtBottom])
 
   const handleSend = async () => {
     if (!id || !input.trim() || sending) return
-
     const userMessage = input.trim()
-    const tempId = `temp-${Date.now()}`
+    const tempId = `temp-${crypto.randomUUID()}`
     setSending(true)
 
-    // Optimistically add user message to UI
     const tempUserMessage: SendMessageResponse = {
       info: {
         id: tempId,
@@ -191,38 +163,26 @@ export function SessionPage() {
       parts: [{ type: "text", text: userMessage }],
     }
     setMessages((prev) => [...prev, tempUserMessage])
-    setInput("") // Clear input immediately
+    setInput("")
 
     try {
-      // Send message (AI response will come via SSE or directly in response)
       const response = await api.sendMessage(id, userMessage)
-
-      // Check if server returned user message or assistant message
       if (response.info.role === "user") {
-        // Server returned the user message, replace temp with real one
         setMessages((prev) => prev.map((m) => (m.info.id === tempId ? response : m)))
       } else if (response.info.role === "assistant") {
-        // Server returned assistant message directly (no SSE streaming)
-        // Keep the temp user message, add assistant message
         setMessages((prev) => {
-          // First replace temp user message with a proper one (generate ID)
           const userMessageWithId = {
             ...tempUserMessage,
-            info: {
-              ...tempUserMessage.info,
-              id: `user-${Date.now()}`, // Generate a proper ID
-            },
+            info: { ...tempUserMessage.info, id: `user-${crypto.randomUUID()}` },
           }
-
-          // Replace temp and add assistant message
           return prev.map((m) => (m.info.id === tempId ? userMessageWithId : m)).concat(response)
         })
       }
     } catch (err) {
       console.error("Failed to send message:", err)
-      // Remove optimistic message on error
+      toast.error("Failed to send message")
       setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
-      setInput(userMessage) // Restore input
+      setInput(userMessage)
     } finally {
       setSending(false)
     }
@@ -231,27 +191,27 @@ export function SessionPage() {
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
       {/* Left Panel - Chat */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <header className="z-10 flex shrink-0 items-center gap-2 border-none px-4 py-3">
+        <TopBar title={session?.title || "New Chat"}>
           <button
-            onClick={toggleLeft}
-            aria-label="Toggle sidebar"
-            className="flex items-center justify-center rounded-lg p-2 text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg] md:hidden"
+            onClick={() => setRightOpen(!rightOpen)}
+            aria-label="Toggle right sidebar"
+            className={cn(
+              "flex size-8 items-center justify-center rounded-lg transition-colors",
+              rightOpen
+                ? "bg-[--color-accent] text-[--color-fg]"
+                : "text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+            )}
           >
-            <PanelLeft className="size-5" />
+            <PanelRight className="size-4" />
           </button>
-          <div className="flex min-w-0 flex-1 items-center gap-1">
-            <h1 className="inline-block max-w-full truncate px-2 py-1 text-sm font-normal text-[--color-fg]">
-              {session?.title || "New Chat"}
-            </h1>
-          </div>
-        </header>
+        </TopBar>
 
         {/* Messages Area */}
         <div
           ref={scrollContainerRef}
-          className={cn("relative flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft", "flex justify-center")}
+          className={cn("relative flex flex-1 justify-center overflow-x-hidden overflow-y-auto scrollbar-soft")}
         >
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
             <MessageList messages={messages} isLoading={loading} streamingMessageId={streamingMessageId} />
@@ -259,8 +219,8 @@ export function SessionPage() {
           </div>
         </div>
 
-        {/* Reply Input - Centered */}
-        <div className="relative shrink-0 flex justify-center">
+        {/* Reply Input */}
+        <div className="relative flex shrink-0 justify-center">
           <div className="w-full max-w-[800px] px-4 py-3">
             <ChatInput
               value={input}
@@ -275,7 +235,39 @@ export function SessionPage() {
         </div>
       </div>
 
-      {/* Right Sidebar placeholder (Phase 3) */}
+      {/* Right Sidebar */}
+      {rightOpen && (
+        <aside className="flex w-80 shrink-0 flex-col border-l border-[--color-border] bg-[--color-bg]">
+          <div className="flex-1 overflow-y-auto p-3 scrollbar-soft">
+            <RightSidebarSection title={t("session.rightSidebar.plan")} />
+            <RightSidebarSection title={t("session.rightSidebar.workspace")} />
+            <RightSidebarSection title={t("session.rightSidebar.artifacts")} />
+            <RightSidebarSection title={t("session.rightSidebar.mcp")} />
+            <RightSidebarSection title={t("session.rightSidebar.skills")} />
+          </div>
+        </aside>
+      )}
+    </div>
+  )
+}
+
+function RightSidebarSection({ title }: { title: string }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="border-b border-[--color-border] last:border-b-0">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 py-3 text-sm font-medium text-[--color-fg] hover:text-[--color-fg]"
+      >
+        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        {title}
+      </button>
+      {open && (
+        <div className="pb-3 text-xs text-[--color-fg-muted]">
+          Coming in Round 2
+        </div>
+      )}
     </div>
   )
 }

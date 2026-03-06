@@ -11,6 +11,7 @@ interface ChatInputProps {
   loading?: boolean
   variant?: "home" | "reply"
   className?: string
+  ctaLabel?: string
 }
 
 export function ChatInput({
@@ -22,6 +23,7 @@ export function ChatInput({
   loading = false,
   variant = "reply",
   className,
+  ctaLabel = "Start Now",
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isComposing, setIsComposing] = useState(false)
@@ -100,40 +102,56 @@ export function ChatInput({
           <Plus className="size-4" />
         </button>
 
-        {/* Right: Send/Stop button */}
-        <button
-          type="button"
-          onClick={handleSendClick}
-          disabled={!canSend}
-          aria-label={loading ? "Stop generating" : "Send message"}
-          className={cn(
-            "flex items-center justify-center rounded-full transition-all",
-            variant === "home" ? "size-8" : "size-7",
-            canSend
-              ? "bg-[--color-fg] text-[--color-bg] hover:opacity-90"
-              : "bg-[--color-fg-muted] text-[--color-bg] opacity-30"
-          )}
-        >
-          {loading ? (
-            <Loader2 className={cn("animate-spin", variant === "home" ? "size-4" : "size-3")} />
-          ) : (
-            <svg
-              viewBox="0 0 24 24"
-              className={cn(variant === "home" ? "size-4" : "size-3")}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              {variant === "home" ? (
-                // Arrow up icon for home
-                <path d="M12 19V5M5 12l7-7 7 7" />
-              ) : (
-                // Send icon for reply
-                <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+        {/* Right: Send/Stop + CTA button */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSendClick}
+            disabled={!canSend}
+            aria-label={loading ? "Stop generating" : "Send message"}
+            className={cn(
+              "flex items-center justify-center rounded-full transition-all",
+              variant === "home" ? "size-8" : "size-7",
+              canSend
+                ? "bg-[--color-fg] text-[--color-bg] hover:opacity-90"
+                : "bg-[--color-fg-muted] text-[--color-bg] opacity-30"
+            )}
+          >
+            {loading ? (
+              <Loader2 className={cn("animate-spin", variant === "home" ? "size-4" : "size-3")} />
+            ) : (
+              <svg
+                viewBox="0 0 24 24"
+                className={cn(variant === "home" ? "size-4" : "size-3")}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                {variant === "home" ? (
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                ) : (
+                  <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                )}
+              </svg>
+            )}
+          </button>
+
+          {variant === "home" && (
+            <button
+              type="button"
+              onClick={handleSendClick}
+              disabled={!canSend}
+              className={cn(
+                "rounded-lg px-4 py-1.5 text-sm font-medium transition-all",
+                canSend
+                  ? "bg-[--color-brand] text-white hover:opacity-90"
+                  : "bg-[--color-brand] text-white opacity-40"
               )}
-            </svg>
+            >
+              {loading ? <Loader2 className="size-4 animate-spin" /> : ctaLabel}
+            </button>
           )}
-        </button>
+        </div>
       </div>
     </div>
   )

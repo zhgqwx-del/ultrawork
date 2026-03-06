@@ -14,6 +14,56 @@ const I18nContext = createContext<I18nContextValue | undefined>(undefined)
 // Translation dictionary
 const translations: Record<Language, Record<string, string>> = {
   en: {
+    // Brand
+    "brand.name": "UltraWork",
+
+    // Sidebar
+    "sidebar.newTask": "New Task",
+    "sidebar.search": "Search",
+    "sidebar.scheduled": "Scheduled Tasks",
+    "sidebar.custom": "Custom",
+    "sidebar.searchPlaceholder": "Search sessions...",
+    "sidebar.noMatch": "No matching sessions",
+    "sidebar.noSessions": "No sessions yet",
+    "sidebar.user": "User",
+
+    // Settings popover
+    "settingsPopover.general": "General Settings",
+    "settingsPopover.language": "Language",
+    "settingsPopover.models": "Model Management",
+    "settingsPopover.workspace": "Workspace",
+    "settingsPopover.channels": "Channels",
+    "settingsPopover.remote": "Remote Services",
+    "settingsPopover.help": "Help Docs",
+    "settingsPopover.about": "About",
+
+    // Home
+    "home.headline": "Chat & Work, Simple & Easy",
+    "home.subtitle": "Your AI-powered productivity assistant",
+    "home.startNow": "Start Now",
+    "home.card.files": "File Organization",
+    "home.card.files.desc": "Automatically sort, rename and organize your files",
+    "home.card.content": "Content Creation",
+    "home.card.content.desc": "Generate articles, emails and creative content",
+    "home.card.docs": "Document Processing",
+    "home.card.docs.desc": "Analyze, summarize and transform documents",
+
+    // Settings page
+    "settingsPage.title": "Settings",
+    "settingsPage.general": "General",
+    "settingsPage.privacy": "Privacy",
+    "settingsPage.capabilities": "Capabilities",
+    "settingsPage.privacy.title": "Data & Privacy",
+    "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
+    "settingsPage.capabilities.title": "Connection Settings",
+
+    // Session right sidebar
+    "session.rightSidebar.plan": "Plan Progress",
+    "session.rightSidebar.workspace": "Workspace",
+    "session.rightSidebar.artifacts": "Artifacts",
+    "session.rightSidebar.mcp": "MCP Services",
+    "session.rightSidebar.skills": "Skills",
+
     // Settings
     "settings.title": "Settings",
     "settings.description": "Configure your application preferences",
@@ -62,6 +112,56 @@ const translations: Record<Language, Record<string, string>> = {
     "common.error": "Error",
   },
   zh: {
+    // Brand
+    "brand.name": "无影 UltraWork",
+
+    // Sidebar
+    "sidebar.newTask": "新建任务",
+    "sidebar.search": "搜索",
+    "sidebar.scheduled": "定时任务",
+    "sidebar.custom": "自定义",
+    "sidebar.searchPlaceholder": "搜索会话...",
+    "sidebar.noMatch": "没有匹配的会话",
+    "sidebar.noSessions": "暂无会话",
+    "sidebar.user": "用户",
+
+    // Settings popover
+    "settingsPopover.general": "通用设置",
+    "settingsPopover.language": "语言",
+    "settingsPopover.models": "模型管理",
+    "settingsPopover.workspace": "工作区",
+    "settingsPopover.channels": "渠道",
+    "settingsPopover.remote": "远程服务",
+    "settingsPopover.help": "帮助文档",
+    "settingsPopover.about": "关于",
+
+    // Home
+    "home.headline": "聊天办公，简单轻松",
+    "home.subtitle": "AI 驱动的智能办公助手",
+    "home.startNow": "马上开始",
+    "home.card.files": "文件整理",
+    "home.card.files.desc": "自动分类、重命名和整理您的文件",
+    "home.card.content": "内容创作",
+    "home.card.content.desc": "生成文章、邮件和创意内容",
+    "home.card.docs": "文档处理",
+    "home.card.docs.desc": "分析、总结和转换各类文档",
+
+    // Settings page
+    "settingsPage.title": "设置",
+    "settingsPage.general": "通用",
+    "settingsPage.privacy": "隐私",
+    "settingsPage.capabilities": "能力配置",
+    "settingsPage.privacy.title": "数据与隐私",
+    "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
+    "settingsPage.capabilities.title": "连接设置",
+
+    // Session right sidebar
+    "session.rightSidebar.plan": "计划执行进度",
+    "session.rightSidebar.workspace": "工作区",
+    "session.rightSidebar.artifacts": "产物",
+    "session.rightSidebar.mcp": "MCP服务",
+    "session.rightSidebar.skills": "技能",
+
     // Settings
     "settings.title": "设置",
     "settings.description": "配置您的应用程序偏好",

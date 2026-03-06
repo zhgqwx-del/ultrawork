@@ -1,6 +1,23 @@
 import { useState, useRef, useEffect } from "react"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { PanelLeft, SquarePen, Settings, MessageSquare, MoreHorizontal, Trash2, Loader2, Pencil, Check, X, Search, Star } from "lucide-react"
+import {
+  PanelLeft,
+  Plus,
+  Settings,
+  MessageSquare,
+  MoreHorizontal,
+  Trash2,
+  Loader2,
+  Pencil,
+  Check,
+  X,
+  Search,
+  Star,
+  Clock,
+  Briefcase,
+  Sparkles,
+} from "lucide-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import type { Session } from "@agent/api-client"
 import {
@@ -17,8 +34,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "./sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { SettingsDialog, ConnectionStatus } from "@/components/settings"
+import { SettingsPopover } from "@/components/settings/settings-popover"
+import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
+import { useI18n } from "@/lib/i18n-context"
 
 function formatTime(timestamp: number): string {
   const now = Date.now()
@@ -76,9 +95,10 @@ export function LeftSidebar() {
   const { leftOpen, toggleLeft } = useSidebar()
   const { sessions, loading, createSession, deleteSession, renameSession } = useSessionsContext()
   const [creating, setCreating] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+  const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
+  const { t } = useI18n()
 
   const handleNewChat = async () => {
     if (creating) return
@@ -88,6 +108,7 @@ export function LeftSidebar() {
       navigate(`/session/${session.id}`)
     } catch (err) {
       console.error("Failed to create session:", err)
+      toast.error("Failed to create session")
     } finally {
       setCreating(false)
     }
@@ -97,12 +118,12 @@ export function LeftSidebar() {
     e.stopPropagation()
     try {
       await deleteSession(sessionId)
-      // If we're viewing the deleted session, go home
       if (location.pathname === `/session/${sessionId}`) {
         navigate("/")
       }
     } catch (err) {
       console.error("Failed to delete session:", err)
+      toast.error("Failed to delete session")
     }
   }
 
@@ -111,6 +132,7 @@ export function LeftSidebar() {
       await renameSession(sessionId, newTitle)
     } catch (err) {
       console.error("Failed to rename session:", err)
+      toast.error("Failed to rename session")
     }
   }
 
@@ -118,7 +140,6 @@ export function LeftSidebar() {
     ? location.pathname.split("/session/")[1]
     : null
 
-  // Filter sessions by search query
   const filteredSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
@@ -130,19 +151,22 @@ export function LeftSidebar() {
       <aside
         className={cn(
           "flex h-full shrink-0 flex-col bg-[--sidebar-bg] transition-all duration-300",
-          leftOpen ? "w-72" : "w-14"
+          leftOpen ? "w-72" : "w-12"
         )}
       >
         {leftOpen ? (
           <>
-            {/* Expanded: Logo + Toggle */}
+            {/* Expanded: Brand + Toggle */}
             <div className="flex shrink-0 items-center justify-between gap-3 p-4">
               <div className="flex items-center gap-2.5">
-                <div className="flex size-9 items-center justify-center rounded-xl bg-[--color-primary]">
-                  <span className="text-lg font-bold text-white">U</span>
+                <div
+                  className="flex size-8 items-center justify-center rounded-lg"
+                  style={{ background: "var(--color-brand-gradient)" }}
+                >
+                  <Sparkles className="size-4 text-white" />
                 </div>
-                <span className="font-mono text-lg font-medium tracking-wide text-[--sidebar-fg]">
-                  Ultrawork
+                <span className="text-sm font-semibold tracking-wide text-[--sidebar-fg]">
+                  {t("brand.name")}
                 </span>
               </div>
               <button
@@ -154,62 +178,94 @@ export function LeftSidebar() {
               </button>
             </div>
 
-            {/* New Chat */}
-            <nav className="flex shrink-0 flex-col gap-1 px-3">
-              <button
-                onClick={handleNewChat}
-                disabled={creating}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200",
-                  location.pathname === "/" && !creating
-                    ? "bg-[--sidebar-accent] font-semibold text-[--sidebar-fg] shadow-sm"
-                    : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent-hover] hover:text-[--sidebar-fg]"
-                )}
-              >
-                {creating ? (
-                  <Loader2 className="size-5 animate-spin" />
-                ) : (
-                  <SquarePen className="size-5" />
-                )}
-                <span className="flex-1 text-left">New Chat</span>
-              </button>
+            {/* Action buttons */}
+            <nav className="flex shrink-0 items-center gap-1 px-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleNewChat}
+                    disabled={creating}
+                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                  >
+                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("sidebar.newTask")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowSearch(!showSearch)}
+                    className={cn(
+                      "flex size-9 items-center justify-center rounded-lg transition-colors",
+                      showSearch
+                        ? "bg-[--sidebar-accent] text-[--sidebar-fg]"
+                        : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                    )}
+                  >
+                    <Search className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("sidebar.search")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    disabled
+                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] opacity-50"
+                  >
+                    <Clock className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("sidebar.scheduled")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    disabled
+                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] opacity-50"
+                  >
+                    <Briefcase className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("sidebar.custom")}</TooltipContent>
+              </Tooltip>
             </nav>
 
-            {/* Sessions Section */}
-            <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden px-3">
-              <div className="flex shrink-0 items-center justify-between px-2 py-1.5">
-                <span className="text-xs font-medium tracking-wider text-[--sidebar-fg-muted]">
-                  SESSIONS
-                </span>
-              </div>
-
-              {/* Search Input */}
-              <div className="mb-2 shrink-0">
+            {/* Search Input (conditional) */}
+            {showSearch && (
+              <div className="shrink-0 px-3 pt-2">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[--sidebar-fg-muted]" />
+                  <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[--sidebar-fg-muted]" />
                   <input
                     type="text"
-                    placeholder="Search sessions..."
+                    placeholder={t("sidebar.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    autoFocus
                     className="w-full rounded-lg border border-[--color-border] bg-[--color-bg] py-1.5 pl-9 pr-3 text-sm text-[--sidebar-fg] placeholder:text-[--sidebar-fg-muted] focus:border-[--color-primary] focus:outline-none focus:ring-1 focus:ring-[--color-primary]"
                   />
                 </div>
               </div>
+            )}
 
-              <div className="scrollbar-soft mt-1 flex-1 space-y-0.5 overflow-y-auto">
+            {/* Task/Sessions list */}
+            <div className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden px-3">
+              <div className="scrollbar-soft flex-1 space-y-0.5 overflow-y-auto">
                 {loading ? (
                   <div className="flex items-center justify-center py-6">
                     <Loader2 className="size-4 animate-spin text-[--sidebar-fg-muted]" />
                   </div>
                 ) : filteredSessions.length === 0 ? (
                   <div className="px-2 py-4 text-center text-xs text-[--sidebar-fg-muted]">
-                    {searchQuery ? "No matching sessions" : "No sessions yet"}
+                    {searchQuery ? t("sidebar.noMatch") : t("sidebar.noSessions")}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {sessionGroups.map((group) => {
-                      // Separate pinned and unpinned sessions
                       const pinnedSessions = group.sessions.filter((s) => isFavorite(s.id))
                       const unpinnedSessions = group.sessions.filter((s) => !isFavorite(s.id))
 
@@ -218,7 +274,6 @@ export function LeftSidebar() {
                           <h3 className="px-2 py-1 text-xs font-medium tracking-wider text-[--sidebar-fg-muted] opacity-70">
                             {group.label}
                           </h3>
-                          {/* Pinned sessions first */}
                           {pinnedSessions.map((session) => (
                             <SessionItem
                               key={session.id}
@@ -231,7 +286,6 @@ export function LeftSidebar() {
                               onTogglePin={() => toggleFavorite(session.id)}
                             />
                           ))}
-                          {/* Unpinned sessions */}
                           {unpinnedSessions.map((session) => (
                             <SessionItem
                               key={session.id}
@@ -252,53 +306,54 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Bottom: User + Settings + Connection Status */}
+            {/* Footer: Connection + User avatar + Settings */}
             <div className="mt-auto shrink-0 space-y-2 p-3">
               <ConnectionStatus />
-              <button
-                onClick={() => setSettingsOpen(true)}
-                aria-label="Settings"
-                className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]"
-              >
-                <div className="flex size-9 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent]">
-                  <Settings className="size-5 text-[--sidebar-fg-muted]" />
-                </div>
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-medium text-[--sidebar-fg]">Settings</p>
-                </div>
-              </button>
+              <SettingsPopover>
+                <button
+                  aria-label="User settings"
+                  className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]"
+                >
+                  <div className="flex size-8 items-center justify-center rounded-full bg-[--color-brand] text-sm font-semibold text-white">
+                    Y
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="truncate text-sm font-medium text-[--sidebar-fg]">
+                      {t("sidebar.user")}
+                    </p>
+                  </div>
+                  <Settings className="size-4 text-[--sidebar-fg-muted]" />
+                </button>
+              </SettingsPopover>
             </div>
           </>
         ) : (
           <>
             {/* Collapsed: Icon-only */}
-            <div className="flex shrink-0 items-center justify-center p-3">
+            <div className="flex shrink-0 items-center justify-center p-2 pt-3">
               <button
                 onClick={toggleLeft}
                 aria-label="Expand sidebar"
-                className="flex size-9 items-center justify-center rounded-xl bg-[--color-primary] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                className="flex size-8 items-center justify-center rounded-lg transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                style={{ background: "var(--color-brand-gradient)" }}
               >
-                <span className="text-lg font-bold text-white">U</span>
+                <Sparkles className="size-4 text-white" />
               </button>
             </div>
 
-            <div className="flex shrink-0 flex-col items-center gap-1 px-2">
+            <div className="flex shrink-0 flex-col items-center gap-1 px-1 pt-2">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
                     disabled={creating}
-                    aria-label="New Chat"
-                    className="flex size-10 items-center justify-center rounded-xl text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                    aria-label={t("sidebar.newTask")}
+                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
                   >
-                    {creating ? (
-                      <Loader2 className="size-5 animate-spin" />
-                    ) : (
-                      <SquarePen className="size-5" />
-                    )}
+                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right">New Chat</TooltipContent>
+                <TooltipContent side="right">{t("sidebar.newTask")}</TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -307,13 +362,13 @@ export function LeftSidebar() {
                     aria-label="Sessions"
                     onClick={toggleLeft}
                     className={cn(
-                      "flex size-10 items-center justify-center rounded-xl transition-colors",
+                      "flex size-9 items-center justify-center rounded-lg transition-colors",
                       location.pathname.startsWith("/session")
                         ? "bg-[--sidebar-accent] text-[--sidebar-fg]"
                         : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
                     )}
                   >
-                    <MessageSquare className="size-5" />
+                    <MessageSquare className="size-4" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">Sessions</TooltipContent>
@@ -322,26 +377,19 @@ export function LeftSidebar() {
 
             <div className="flex-1" />
 
-            <div className="flex shrink-0 flex-col items-center gap-2 px-2 pb-6">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setSettingsOpen(true)}
-                    aria-label="Settings"
-                    className="flex size-8 items-center justify-center overflow-hidden rounded-lg bg-[--sidebar-accent] transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
-                  >
-                    <Settings className="size-4 text-[--sidebar-fg-muted]" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">Settings</TooltipContent>
-              </Tooltip>
+            <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-4">
+              <SettingsPopover>
+                <button
+                  aria-label="Settings"
+                  className="flex size-8 items-center justify-center rounded-full bg-[--color-brand] text-xs font-semibold text-white transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                >
+                  Y
+                </button>
+              </SettingsPopover>
             </div>
           </>
         )}
       </aside>
-
-      {/* Settings Dialog */}
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </TooltipProvider>
   )
 }
@@ -402,6 +450,21 @@ function SessionItem({
     }
   }
 
+  // Status icon based on session state
+  const StatusIcon = () => {
+    const age = Date.now() - session.time.updated
+
+    // Active within last 30 seconds = running
+    if (age < 30000) {
+      return <Loader2 className="size-3.5 shrink-0 animate-spin text-[--color-brand]" />
+    }
+    // Has meaningful content (updated significantly after creation) = completed
+    if (session.time.updated - session.time.created > 5000) {
+      return <Check className="size-3.5 shrink-0 text-green-500" />
+    }
+    return <MessageSquare className="size-3.5 shrink-0" />
+  }
+
   if (isEditing) {
     return (
       <div
@@ -412,7 +475,7 @@ function SessionItem({
             : "bg-[--sidebar-accent-hover] text-[--sidebar-fg]"
         )}
       >
-        <MessageSquare className="size-4 shrink-0" />
+        <StatusIcon />
         <input
           ref={inputRef}
           type="text"
@@ -453,7 +516,7 @@ function SessionItem({
     <div
       onClick={onNavigate}
       className={cn(
-        "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-150 cursor-pointer",
+        "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-150",
         isActive
           ? "bg-[--sidebar-accent] font-medium text-[--sidebar-fg]"
           : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent-hover] hover:text-[--sidebar-fg]",
@@ -469,7 +532,7 @@ function SessionItem({
         className={cn(
           "flex size-4 shrink-0 items-center justify-center transition-opacity",
           isPinned
-            ? "opacity-100 text-[--color-primary]"
+            ? "text-[--color-primary] opacity-100"
             : "opacity-0 group-hover:opacity-60 hover:opacity-100"
         )}
         aria-label={isPinned ? "Unpin" : "Pin"}
@@ -477,7 +540,7 @@ function SessionItem({
         <Star className={cn("size-3.5", isPinned && "fill-current")} />
       </button>
 
-      <MessageSquare className="size-4 shrink-0" />
+      <StatusIcon />
       <div className="min-w-0 flex-1">
         <p className="truncate">{title}</p>
         <p className="truncate text-xs opacity-60">{formatTime(session.time.updated)}</p>
