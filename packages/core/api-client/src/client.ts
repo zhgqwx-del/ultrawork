@@ -26,11 +26,13 @@ export class ApiClient {
   private baseUrl: string
   private username?: string
   private password?: string
+  private workingDirectory?: string
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl
     this.username = config.username
     this.password = config.password
+    this.workingDirectory = config.workingDirectory
   }
 
   getBaseUrl(): string {
@@ -51,6 +53,10 @@ export class ApiClient {
       const username = this.username || "opencode"
       const credentials = btoa(`${username}:${this.password}`)
       headers["Authorization"] = `Basic ${credentials}`
+    }
+
+    if (this.workingDirectory) {
+      headers["x-opencode-directory"] = encodeURIComponent(this.workingDirectory)
     }
 
     return headers
@@ -336,7 +342,10 @@ export class ApiClient {
   }
 
   subscribeToEvents(onEvent: (data: string) => void): () => void {
-    const eventSource = new EventSource(`${this.baseUrl}/event`)
+    const params = new URLSearchParams()
+    if (this.workingDirectory) params.set("directory", this.workingDirectory)
+    const query = params.toString()
+    const eventSource = new EventSource(`${this.baseUrl}/event${query ? `?${query}` : ""}`)
 
     eventSource.onmessage = (ev) => {
       onEvent(ev.data)

@@ -16,6 +16,8 @@ Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low �
 手动测试 4.1:  ✅ 完成 (E1-E10 全部通过, E5 bugfix)
 手动测试 4.2:  ✅ 完成 (U1-U12 全部通过)
 手动测试 4.3:  ✅ 完成 (M1-M4 全部通过, 11 个 bugfix)
+手动测试 4.4:  ✅ 完成 (MCP disconnect/reconnect/delete/persist + C1-C4 命令)
+Round 5 工作区: ✅ 完成 (工作区选择 + session 子目录隔离 + Review 3 修复)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -1817,5 +1819,257 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
+---
+
+## Round 5: 工作区管理 (✅ 已完成)
+
+### 背景与目标
+
+当前 OpenCode sidecar 启动后默认使用进程 cwd（`packages/client/desktop`）作为工作目录，所有 session 产物混在一起。Round 5 目标：
+
+1. **启动时选择工作区**：每次启动 App 先进入工作区选择页面
+2. **Session 级产物隔离**：每个 session 在工作区下拥有独立子目录（`workspace/<shortId>/`）
+3. **不重启 server**：通过 `x-opencode-directory` header 传递目录（OpenCode server 原生支持）
+
+### 技术调研结论
+
+- OpenCode server `server.ts:200` 全局中间件：`c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()`
+- `Instance.provide()` 按 directory 做 lazy 初始化 + 缓存，切换目录无需重启 server
+- 项目配置（opencode.json、.opencode/）会跟随 directory 自动加载
+- Tauri Shell 插件 Command 支持 `.current_dir()` 但本方案不需要改 sidecar
+- `SessionCreateRequest.workingDirectory` 已定义，API 已支持
+
+### 整体架构
+
+```
+App 启动
+  ↓
+始终先进入 WorkspaceSelector 页面
+  ↓
+├── 有历史路径 → 显示当前路径 + [继续使用] + 最近列表 + [选择新文件夹]
+└── 无历史路径 → 显示 [选择文件夹]
+  ↓
+确认工作区 → workspace_path 注入 ApiClient
+  ↓
+所有 API 请求带 x-opencode-directory header
+  ↓
+进入 Home，正常使用
+```
+
+### 关键决策
+
+| 决策项 | 结论 | 原因 |
+|--------|------|------|
+| 工作区数量 | 一次一个，重启才能换 | 简化逻辑 |
+| 目录传递方式 | `x-opencode-directory` header | server.ts:200 原生支持 |
+| Server 改动 | 不改 lib.rs / sidecar | header 方式无需后端改动 |
+| Server 重启 | 不需要 | Instance.provide() 按 directory lazy 初始化 |
+| Session 隔离 | `workspace/<shortId>/` 子目录 | WorkspacePanel 天然只显示该目录 |
+| shortId 生成 | 客户端 nanoid(8) 预生成 | 绕过鸡生蛋问题 |
+| 启动流程 | 每次启动都过 WorkspaceSelector | 避免路径锁死，一键继续不增负担 |
+
+### 文件系统结构
+
+```
+~/my-workspace/                          ← 用户选择的工作区根目录
+├── a8k2m9p4/                            ← session A (shortId)
+│   ├── app.py
+│   └── utils.py
+├── b3x7n1q5/                            ← session B (shortId)
+│   └── server.py
+├── opencode.json                        ← 可选：工作区级配置（server 自动识别）
+└── .opencode/                           ← 可选：工作区级 agents/commands
+```
+
+### 流程设计
+
+#### 启动流程
+
+```
+App 启动 → 始终进入 WorkspaceSelector
+  ↓
+┌────────────────────────────────────────┐
+│  选择工作区                              │
+│  所有会话产物将保存在此目录                │
+│                                         │
+│  (有历史路径时显示)                       │
+│  当前: ~/Documents/ai-workspace         │
+│         [ ✓ 继续使用 ]                   │
+│                                         │
+│  ───────────────────────                │
+│  最近使用                                │
+│  ├── ~/Documents/ai-workspace   ✕      │
+│  ├── ~/projects/demo            ✕      │
+│                                         │
+│         [ 📁 选择新文件夹 ]              │
+└────────────────────────────────────────┘
+```
+
+#### 发送消息（创建 session）
+
+```
+Home.tsx handleSend()
+  ↓
+1. shortId = nanoid(8)
+2. sessionDir = `${workspacePath}/${shortId}`
+3. await mkdir(sessionDir)                           // Tauri FS API
+4. session = await createSession({ workingDirectory: sessionDir })
+5. localStorage 存映射: session.id → shortId
+6. navigate(`/session/${session.id}`)
+7. promptAsync(session.id, text)                     // fire-and-forget
+```
+
+#### Session 页面
+
+```
+Session.tsx
+  ↓
+session.directory = "~/my-workspace/x7k2m9p4"       ← createSession 时已设好
+  ↓
+WorkspacePanel directory={session.directory}
+  ↓
+├── agent 未开始工作 → 显示"等待 Agent 生成文件..."（友好空状态）
+└── agent 工作中/完成 → 显示该子目录下的文件树
+```
+
+### 改动清单
+
+#### 新增文件（2 个）
+
+| 文件 | 说明 | 预估 |
+|------|------|------|
+| `src/pages/WorkspaceSelector.tsx` | 启动选择页：当前路径 + 继续使用 + 最近列表 + 选择新文件夹 | ~100 行 |
+| `src/lib/workspace-context.tsx` | WorkspaceProvider：path state + localStorage + 最近路径列表 | ~70 行 |
+
+#### 修改文件（9 个）
+
+| 文件 | 改动内容 | 预估 |
+|------|---------|------|
+| `api-client/src/types.ts` | `ApiClientConfig` 加 `workingDirectory?: string` | ~2 行 |
+| `api-client/src/client.ts` | `buildHeaders()` 加 `x-opencode-directory` header | ~5 行 |
+| `src/main.tsx` | Provider 层加 `WorkspaceProvider` | ~5 行 |
+| `src/router.tsx` | 加 `/workspace` 路由 | ~5 行 |
+| `src/components/layout/root-layout.tsx` | 未确认 workspace 时 redirect 到 `/workspace` | ~10 行 |
+| `src/lib/config-context.tsx` | ApiClient 实例化时传入 workingDirectory | ~5 行 |
+| `src/pages/Home.tsx` | handleSend 中加 shortId + mkdir + workingDirectory | ~15 行 |
+| `src/components/session/workspace-panel.tsx` | 空目录提示改为"等待 Agent 生成文件..." | ~5 行 |
+| `src/lib/i18n-context.tsx` | 新增约 12 个 i18n key（中英文） | ~24 行 |
+
+#### 不需要改的
+
+| 文件 | 原因 |
+|------|------|
+| `src-tauri/src/lib.rs` | 不改 sidecar，用 header |
+| `artifacts-panel.tsx` | 数据来自 messages，天然按 session 隔离 |
+| `artifact-preview.tsx` | 无改动 |
+| OpenCode server | 原生支持 `x-opencode-directory` |
+
+### 实施步骤
+
+| 步骤 | 内容 | 依赖 |
+|------|------|------|
+| **Step 0** | 检查 Tauri 插件：确认 `tauri-plugin-dialog` 和 `tauri-plugin-fs` | 无 |
+| **Step 1** | `api-client` 改造：`ApiClientConfig.workingDirectory` + `buildHeaders()` 加 header | 无 |
+| **Step 2** | `workspace-context.tsx`：WorkspaceProvider + localStorage + 最近路径列表 | 无 |
+| **Step 3** | `WorkspaceSelector.tsx`：页面 UI + Tauri dialog + 继续使用/最近列表/选择 | Step 2 |
+| **Step 4** | 串联：router 加路由、main.tsx 加 Provider、root-layout redirect、config-context 传参 | Step 1+2 |
+| **Step 5** | Session 创建改造：Home.tsx 中 shortId + mkdir + workingDirectory | Step 1+2 |
+| **Step 6** | WorkspacePanel 空状态优化 + i18n 补全 | Step 3-5 |
+| **Step 7** | 联调测试 | 全部 |
+
+### Tauri 依赖
+
+| 插件 | 用途 | 状态 |
+|------|------|------|
+| `tauri-plugin-dialog` | 文件夹选择对话框 | 需 Step 0 确认 |
+| `tauri-plugin-fs` | mkdir 创建 session 子目录 | 需 Step 0 确认 |
+| `tauri-plugin-shell` | sidecar 启动 | 已安装 ✅ |
+
+### localStorage 数据结构
+
+```
+workspace_path    = "/Users/xxx/my-workspace"           // 当前工作区
+workspace_recent  = ["/Users/xxx/my-workspace", ...]    // 最近列表（最多 5 条）
+session_dir_map   = { "sess_abc123": "a8k2m9p4", ... }  // session → shortId 映射
+```
+
+### 风险与应对
+
+| 风险 | 应对 |
+|------|------|
+| Tauri dialog/fs 插件未装 | Step 0 检查并安装 |
+| shortId 碰撞 | nanoid(8) ≈ 2^40 组合，不会碰撞 |
+| 旧 session 无 shortId | 兼容：直接用 session.directory 原值 |
+| 路径含特殊字符 | server 已有 decodeURIComponent |
+| 工作区路径被删/移动 | WorkspaceSelector 启动时校验，不存在则提示重新选择 |
+| 最近列表路径失效 | 灰色标记不可点击，或自动清理 |
+
+### 实施结果 (2026-03-08)
+
+#### 新增文件（3 个）
+
+| 文件 | 说明 |
+|------|------|
+| `src/pages/WorkspaceSelector.tsx` | 启动工作区选择页（继续使用 / 最近列表 / 选择新文件夹） |
+| `src/lib/workspace-context.tsx` | WorkspaceProvider（path + confirmed + recent + sessionMap） |
+| `src-tauri/capabilities/default.json` | Tauri 插件权限声明（dialog + fs + shell） |
+
+#### 修改文件（13 个）
+
+| 文件 | 改动 |
+|------|------|
+| `api-client/src/types.ts` | `ApiClientConfig` 加 `workingDirectory` |
+| `api-client/src/client.ts` | `buildHeaders()` 加 `x-opencode-directory` header + SSE 加 `directory` query |
+| `src-tauri/Cargo.toml` | 加 `tauri-plugin-dialog` + `tauri-plugin-fs` |
+| `src-tauri/src/lib.rs` | 注册 dialog + fs 插件 |
+| `src/main.tsx` | 加 `WorkspaceProvider` |
+| `src/router.tsx` | 加 `/workspace` 路由（顶层，不在 RootLayout 内） |
+| `src/components/layout/root-layout.tsx` | 未确认 workspace 时 redirect 到 `/workspace` |
+| `src/lib/use-api.ts` | ApiClient 传入 `workingDirectory` |
+| `src/lib/use-sse.ts` | SSEClient 传入 `workingDirectory` |
+| `src/lib/sse-client.ts` | SSE 连接加 `x-opencode-directory` header + query param |
+| `src/pages/Home.tsx` | shortId 生成 + mkdir + workingDirectory 参数 |
+| `src/lib/use-sessions.ts` + `sessions-context.tsx` | `createSession` 接受 `workingDirectory` |
+| `src/lib/i18n-context.tsx` | 新增 8 个工作区 i18n key（中英文） |
+| `src/components/session/workspace-panel.tsx` | 空目录提示改为"等待 Agent 生成文件..." |
+| `src/pages/index.ts` | 导出 `WorkspaceSelectorPage` |
+
+#### Review 修复（3 项）
+
+| # | 严重度 | 问题 | 修复 |
+|---|--------|------|------|
+| 1 | 高 | SSE client 缺 `workingDirectory`，SSE 连接没有 directory context | `sse-client.ts` 加 header + query；`use-sse.ts` 传入 workspacePath |
+| 2 | 中 | WorkspaceSelector Tauri dialog 无 try-catch | 加 try-catch 防止浏览器 dev 模式崩溃 |
+| 3 | 低 | mkdir 静默失败无日志 | 改为 console.warn |
+
+**验证**: TypeCheck 3/3 ✅，Cargo check ✅，Vite dev ✅
+
+### 手动测试修复（2 项）
+
+#### 5.1 设置菜单工作区按钮启用
+
+`settings-popover.tsx` 中"工作区"菜单项从 `disabled` 改为 `onClick={() => navigate("/workspace")}`，用户可在应用内随时切换工作区。
+
+#### 5.2 Session 列表按工作区隔离
+
+**问题**：切换工作区后 session 列表互通，workspace1 的 session 在 workspace2 中可见。
+
+**根因分析**：
+- OpenCode server `routes/session.ts` 的 `GET /session` handler 只从 query param 取 `directory`，不读 middleware 设置的 Instance context
+- `Session.list()` 对 directory 做精确匹配（`eq`），而 session 目录是 `/workspace/shortId` 子目录，传工作区根路径无法匹配
+- 即使改 server（vendor 不可改）也无法用前缀匹配
+
+**方案决策**：保持子目录隔离 + 客户端过滤（方案 A），放弃去掉子目录方案（方案 B 会丢失 per-session 文件隔离）
+
+**修复**：`use-sessions.ts` 加 `filterByWorkspace()` 函数，用 `startsWith` 过滤只保留 `session.directory` 属于当前工作区的 session。
+
+**改动文件**：
+- `src/components/settings/settings-popover.tsx` — 启用工作区按钮
+- `src/lib/use-sessions.ts` — 加 `filterByWorkspace` + `useWorkspace` 依赖
+
+**验证**: TypeCheck 3/3 ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2/4.3/4.4 完成 ✅
+**当前阶段**: Round 5 工作区管理 ✅ 完成（含手动测试修复）

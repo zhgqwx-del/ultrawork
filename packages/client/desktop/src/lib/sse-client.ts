@@ -83,9 +83,14 @@ export class SSEClient {
 
     this.shouldReconnect = true
 
-    const url = this.config.baseUrl
+    // Build URL with optional directory query parameter
+    const baseEventUrl = this.config.baseUrl
       ? new URL("/event", this.config.baseUrl).toString()
       : "/event"
+    const params = new URLSearchParams()
+    if (this.config.workingDirectory) params.set("directory", this.config.workingDirectory)
+    const query = params.toString()
+    const url = query ? `${baseEventUrl}?${query}` : baseEventUrl
 
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
@@ -95,6 +100,10 @@ export class SSEClient {
       const username = this.config.username || "opencode"
       const credentials = btoa(`${username}:${this.config.password}`)
       headers["Authorization"] = `Basic ${credentials}`
+    }
+
+    if (this.config.workingDirectory) {
+      headers["x-opencode-directory"] = encodeURIComponent(this.config.workingDirectory)
     }
 
     console.log("Connecting to SSE:", url)

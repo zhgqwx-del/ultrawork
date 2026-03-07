@@ -1,9 +1,19 @@
 import { useState, useEffect, useCallback } from "react"
 import type { Session } from "@agent/api-client"
 import { useApi } from "./use-api"
+import { useWorkspace } from "./workspace-context"
+
+/** Filter sessions to only those belonging to the current workspace */
+function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
+  if (!workspacePath) return list
+  return list.filter(
+    (s) => s.directory === workspacePath || s.directory?.startsWith(workspacePath + "/")
+  )
+}
 
 export function useSessions() {
   const api = useApi()
+  const { workspacePath } = useWorkspace()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -11,19 +21,19 @@ export function useSessions() {
   const refresh = useCallback(async () => {
     try {
       const list = await api.listSessions({ roots: true, limit: 50 })
-      setSessions(list)
+      setSessions(filterByWorkspace(list, workspacePath))
       setError(null)
     } catch (err) {
       console.error("Failed to load sessions:", err)
       setError(err instanceof Error ? err.message : "Failed to load sessions")
     }
-  }, [api])
+  }, [api, workspacePath])
 
   useEffect(() => {
     let cancelled = false
     api.listSessions({ roots: true, limit: 50 }).then(list => {
       if (!cancelled) {
-        setSessions(list)
+        setSessions(filterByWorkspace(list, workspacePath))
         setError(null)
         setLoading(false)
       }
@@ -34,10 +44,10 @@ export function useSessions() {
       }
     })
     return () => { cancelled = true }
-  }, [api])
+  }, [api, workspacePath])
 
-  const createSession = useCallback(async () => {
-    const session = await api.createSession()
+  const createSession = useCallback(async (options?: { workingDirectory?: string }) => {
+    const session = await api.createSession(options ? { workingDirectory: options.workingDirectory } : {})
     setSessions(prev => [session as Session, ...prev])
     return session
   }, [api])

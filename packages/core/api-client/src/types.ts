@@ -4,6 +4,7 @@ export interface ApiClientConfig {
   baseUrl: string
   username?: string
   password?: string
+  workingDirectory?: string
 }
 
 export interface SessionCreateRequest {

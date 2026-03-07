@@ -48,7 +48,7 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           {t("settingsPopover.models")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={() => navigate("/workspace")}>
           <FolderOpen className="mr-2 size-4" />
           {t("settingsPopover.workspace")}
         </DropdownMenuItem>

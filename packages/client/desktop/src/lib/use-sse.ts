@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react"
 import { SSEClient, type SSEEvent, type SSEEventHandler } from "./sse-client"
 import { useApi } from "./use-api"
+import { useWorkspace } from "./workspace-context"
 
 export function useSSE(handler: SSEEventHandler) {
   const api = useApi()
+  const { workspacePath } = useWorkspace()
   const clientRef = useRef<SSEClient | null>(null)
   const handlerRef = useRef(handler)
 
@@ -13,12 +15,13 @@ export function useSSE(handler: SSEEventHandler) {
   }, [handler])
 
   useEffect(() => {
-    // Create SSE client
+    // Create SSE client with workspace directory
     const credentials = api.getCredentials()
     const client = new SSEClient({
       baseUrl: api.getBaseUrl(),
       username: credentials.username || "user",
       password: credentials.password || "password",
+      workingDirectory: workspacePath || undefined,
     })
 
     clientRef.current = client
@@ -37,7 +40,7 @@ export function useSSE(handler: SSEEventHandler) {
       client.disconnect()
       clientRef.current = null
     }
-  }, [api])
+  }, [api, workspacePath])
 
   return clientRef.current
 }

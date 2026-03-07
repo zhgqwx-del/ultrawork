@@ -7,7 +7,7 @@ interface SessionsContextType {
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
-  createSession: () => Promise<Session>
+  createSession: (options?: { workingDirectory?: string }) => Promise<Session>
   deleteSession: (sessionId: string) => Promise<void>
   updateSession: (id: string, updates: Partial<Session>) => void
   renameSession: (sessionId: string, newTitle: string) => Promise<void>

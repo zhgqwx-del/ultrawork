@@ -182,7 +182,7 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
         <p className="py-2 text-xs text-red-500">{t("workspace.loadError")}</p>
       )}
       {files && files.length === 0 && (
-        <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("workspace.emptyDir")}</p>
+        <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("workspace.awaitingAgent")}</p>
       )}
       {files && files.length > 0 && (
         <div className="max-h-64 overflow-y-auto scrollbar-soft">

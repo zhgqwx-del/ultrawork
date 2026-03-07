@@ -6,6 +6,7 @@ import { ConfigProvider } from "./lib/config-context"
 import { ThemeProvider, useTheme } from "./lib/theme-context"
 import { I18nProvider } from "./lib/i18n-context"
 import { ModelProvider, useModel } from "./lib/model-context"
+import { WorkspaceProvider } from "./lib/workspace-context"
 import { ModelDialog } from "./components/settings/model-dialog"
 import { router } from "./router"
 import "./index.css"
@@ -41,10 +42,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ConfigProvider>
       <ThemeProvider>
         <I18nProvider>
-          <ModelProvider>
-            <RouterProvider router={router} />
-            <ModelDialogSingleton />
-          </ModelProvider>
+          <WorkspaceProvider>
+            <ModelProvider>
+              <RouterProvider router={router} />
+              <ModelDialogSingleton />
+            </ModelProvider>
+          </WorkspaceProvider>
           <ThemedToaster />
         </I18nProvider>
       </ThemeProvider>

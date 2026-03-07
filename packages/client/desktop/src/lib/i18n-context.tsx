@@ -225,6 +225,16 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.noContent": "No content",
     "artifact.diff": "Diff",
 
+    // Workspace selector
+    "workspace.selectTitle": "Select Workspace",
+    "workspace.selectSubtitle": "All session artifacts will be saved in this directory",
+    "workspace.current": "Current workspace",
+    "workspace.continue": "Continue",
+    "workspace.recent": "Recent",
+    "workspace.selectNew": "Select New Folder",
+    "workspace.removeRecent": "Remove from recent",
+    "workspace.awaitingAgent": "Waiting for Agent to generate files...",
+
     // Workspace file tree
     "workspace.fileTree": "File Tree",
     "workspace.gitModified": "Modified",
@@ -474,6 +484,16 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.loadError": "加载失败",
     "artifact.noContent": "无内容",
     "artifact.diff": "差异",
+
+    // Workspace selector
+    "workspace.selectTitle": "选择工作区",
+    "workspace.selectSubtitle": "所有会话产物将保存在此目录",
+    "workspace.current": "当前工作区",
+    "workspace.continue": "继续使用",
+    "workspace.recent": "最近使用",
+    "workspace.selectNew": "选择新文件夹",
+    "workspace.removeRecent": "从最近列表移除",
+    "workspace.awaitingAgent": "等待 Agent 生成文件...",
 
     // Workspace file tree
     "workspace.fileTree": "文件树",

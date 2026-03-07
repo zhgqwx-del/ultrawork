@@ -1,13 +1,21 @@
-import { Outlet } from "react-router-dom"
+import { Outlet, Navigate } from "react-router-dom"
 import { SidebarProvider, LeftSidebar } from "@/components/layout"
 import { SessionsProvider } from "@/lib/sessions-context"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { useWorkspace } from "@/lib/workspace-context"
 
 /**
  * Root layout - wraps all pages with shared sidebar context and sidebar UI.
- * This ensures sidebar state (open/closed) and sessions persist across route changes.
+ * Redirects to workspace selector if no workspace has been confirmed for this session.
  */
 export function RootLayout() {
+  const { confirmed } = useWorkspace()
+
+  // Redirect to workspace selector if not yet confirmed this app session
+  if (!confirmed) {
+    return <Navigate to="/workspace" replace />
+  }
+
   return (
     <SessionsProvider>
       <SidebarProvider>
