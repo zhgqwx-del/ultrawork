@@ -260,6 +260,9 @@ function MCPServerItem({
         <p className={`text-[10px] ${isFailed ? "text-red-400" : needsAuth ? "text-amber-400" : "text-[var(--color-fg-muted)]"}`}>
           {"error" in status && status.error ? status.error : statusLabel}
         </p>
+        {isFailed && "error" in status && typeof status.error === "string" && status.error.includes("Connection closed") && (
+          <p className="text-[10px] text-amber-500">{t("mcp.hintBunx")}</p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <button
@@ -358,9 +361,13 @@ function AddMCPForm({
         <input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          placeholder="python -m mcp_server"
+          placeholder="bunx --bun @mcp/server"
           className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none"
         />
+      )}
+
+      {type === "local" && (
+        <p className="text-[10px] text-[var(--color-fg-muted)]">{t("mcp.hintBunx")}</p>
       )}
 
       <button

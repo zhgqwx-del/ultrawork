@@ -19,6 +19,7 @@ Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low �
 手动测试 4.4:  ✅ 完成 (MCP disconnect/reconnect/delete/persist + C1-C4 命令)
 Round 5 工作区: ✅ 完成 (工作区选择 + session 子目录隔离 + Review 3 修复)
 Round 5 联调:  ✅ 完成 (SSE 全局化 + 产物/文件树/预览 6 bugfix + 死代码清理)
+Round 7 预览优化: ✅ 完成 (4 优化 + 2 review 修复 + MCP bunx 提示)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -2243,5 +2244,56 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+---
+
+## Round 7: 预览优化 + MCP 诊断 (✅ 完成)
+
+**背景**: 对比上游 OpenCode 桌面端实现，参考优化文件预览交互；排查 MCP local server 连接失败根因。
+
+### Step 1: 文件预览 4 项优化
+
+参考上游 OpenCode (anomalyco/opencode) 文件预览实现，做了以下小优化：
+
+1. **文件树点击 → 预览**: WorkspacePanel 新增 `onFileClick` 回调，点击文件直接打开 ArtifactPreview
+2. **Escape 关闭预览**: ArtifactPreview 监听 Escape 键调用 onClose
+3. **空 Diff 提示优化**: patch 类型空内容显示 "暂无变更" 而非通用 "无内容"
+4. **DiffView 行号**: 每行左侧添加灰色行号列（w-10, opacity-50, select-none）
+
+### Step 2: Review 发现 2 缺陷并修复
+
+1. **Escape 与 CommandSelector 冲突**: CommandSelector 的 Escape 在 capture 阶段调用 `preventDefault()`，ArtifactPreview 的 Escape 在 bubble 阶段未检查 `defaultPrevented` → 两个同时关闭。修复：加 `!e.defaultPrevented` 检查
+2. **文件树点击图片无法渲染**: `handleFileTreeClick` 只传 `{ type, path }` 无 mime，`isImageMime()` 只检查 mime 前缀 → 图片走代码高亮显示 base64 乱码。修复：`isImage()` 增加扩展名检测 + `resolvedMime` 从 `FileContentResponse.mimeType` 获取
+
+### Step 3: MCP local server 连接失败诊断
+
+**现象**: `npx -y @modelcontextprotocol/server-everything` → `MCP error -32000: Connection closed`
+
+**排查过程**:
+- 终端直接运行 npx → 正常启动（"Starting default (STDIO) server..."）
+- JSON-RPC 手动握手 → 正常响应
+- 检查 sidecar PATH → 发现 `/private/tmp/bun-node-30e609e08` Bun Node 兼容层在 PATH 首位
+- 用 `bunx --bun` 测试 → **连接成功**
+
+**根因**: Sidecar 运行在 Bun 编译的二进制中。spawn `npx` 时，npx 再 spawn Node.js 子进程运行 MCP server，多层进程嵌套导致 Bun 环境下 stdio pipe 断裂。`bunx --bun` 直接在 Bun 内运行，无中间层。
+
+**修复**: MCP 面板增加 bunx 提示
+- Local 类型表单 placeholder 改为 `bunx --bun @mcp/server`
+- 表单下方显示提示文字引导用户用 bunx
+- 连接失败且错误含 "Connection closed" 时显示 amber 色 bunx 提示
+
+### 改动文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `src/components/session/artifact-preview.tsx` | 修改（Escape 键 + 行号 + 空 diff + isImage 扩展名 + resolvedMime） |
+| `src/components/session/workspace-panel.tsx` | 修改（onFileClick 回调，文件点击预览） |
+| `src/components/session/mcp-panel.tsx` | 修改（bunx placeholder + hint） |
+| `src/pages/Session.tsx` | 修改（handleFileTreeClick 接线） |
+| `src/lib/i18n-context.tsx` | 修改（+3 i18n keys: artifact.noChanges, mcp.hintBunx） |
+
+**验证**: TypeCheck ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 6 设置页面增强 ✅ 完成（语言子菜单 + About 页面 + review 修复 2 缺陷）
+**当前阶段**: Round 7 预览优化 ✅ 完成（4 优化 + 2 review 修复 + MCP bunx 提示）

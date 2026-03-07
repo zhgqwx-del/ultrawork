@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { cn } from "@/lib/utils"
 import { CodeBlock } from "@/components/chat/code-block"
 
 export interface Artifact {
@@ -32,8 +33,12 @@ function getLanguageFromPath(path: string): string {
   return map[ext] || "text"
 }
 
-function isImageMime(mime?: string): boolean {
-  return !!mime?.startsWith("image/")
+const IMAGE_EXTS = /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i
+
+function isImage(mime?: string, path?: string): boolean {
+  if (mime?.startsWith("image/")) return true
+  if (path && IMAGE_EXTS.test(path)) return true
+  return false
 }
 
 function isMarkdown(path: string): boolean {
@@ -50,8 +55,9 @@ function DiffView({ content }: { content: string }) {
         else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-red-600 bg-red-500/10"
         else if (line.startsWith("@@")) cls = "text-blue-500 bg-blue-500/10"
         return (
-          <div key={i} className={cls}>
-            {line}
+          <div key={i} className={cn(cls, "flex")}>
+            <span className="inline-block w-10 shrink-0 select-none pr-3 text-right text-[var(--color-fg-muted)] opacity-50">{i + 1}</span>
+            <span className="flex-1">{line}</span>
           </div>
         )
       })}
@@ -61,7 +67,7 @@ function DiffView({ content }: { content: string }) {
 
 function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-4 shrink-0 text-blue-500" />
-  if (isImageMime(artifact.mime)) return <FileImage className="size-4 shrink-0 text-purple-500" />
+  if (isImage(artifact.mime, artifact.path)) return <FileImage className="size-4 shrink-0 text-purple-500" />
   if (artifact.path.endsWith(".md") || artifact.path.endsWith(".mdx")) return <FileText className="size-4 shrink-0 text-orange-500" />
   return <File className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
 }
@@ -77,12 +83,15 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  /** MIME type resolved from API response (fallback for file-tree clicks with no mime) */
+  const [resolvedMime, setResolvedMime] = useState<string | undefined>(artifact.mime)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     setContent(null)
+    setResolvedMime(artifact.mime)
 
     async function load() {
       try {
@@ -96,6 +105,7 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
           const resp = await api.getFileContent(artifact.path)
           if (!cancelled) {
             setContent(resp.content)
+            if (resp.mimeType) setResolvedMime(resp.mimeType)
             setLoading(false)
           }
         }
@@ -119,6 +129,15 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
       setTimeout(() => setCopied(false), 2000)
     } catch {}
   }
+
+  // Escape key to close preview (skip if another handler already consumed the event)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose()
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [onClose])
 
   const language = getLanguageFromPath(artifact.path)
 
@@ -164,14 +183,14 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
           </div>
         ) : content === null || content === "" ? (
           <div className="flex items-center justify-center py-12 text-sm text-[var(--color-fg-muted)]">
-            {t("artifact.noContent")}
+            {artifact.type === "patch" ? t("artifact.noChanges") : t("artifact.noContent")}
           </div>
         ) : artifact.type === "patch" ? (
           <DiffView content={content} />
-        ) : isImageMime(artifact.mime) ? (
+        ) : isImage(resolvedMime, artifact.path) ? (
           <div className="flex items-center justify-center p-8">
             <img
-              src={`data:${artifact.mime || "image/png"};base64,${content}`}
+              src={`data:${resolvedMime || "image/png"};base64,${content}`}
               alt={basename(artifact.path)}
               className="max-h-full max-w-full object-contain"
             />

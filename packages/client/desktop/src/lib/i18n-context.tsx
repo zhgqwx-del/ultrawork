@@ -226,6 +226,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.typeLocal": "Local",
     "mcp.add": "Add",
     "mcp.remove": "Remove",
+    "mcp.hintBunx": "Local servers: use bunx instead of npx (e.g. bunx --bun @mcp/server)",
 
     // Skills / Commands
     "skills.noItems": "No commands or skills available",
@@ -237,6 +238,7 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.loading": "Loading...",
     "artifact.loadError": "Failed to load",
     "artifact.noContent": "No content",
+    "artifact.noChanges": "No changes",
     "artifact.diff": "Diff",
 
     // Workspace selector
@@ -500,6 +502,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.typeLocal": "本地",
     "mcp.add": "添加",
     "mcp.remove": "移除",
+    "mcp.hintBunx": "本地服务：请用 bunx 代替 npx（如 bunx --bun @mcp/server）",
 
     // Skills / Commands
     "skills.noItems": "暂无命令或技能",
@@ -511,6 +514,7 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.loading": "加载中...",
     "artifact.loadError": "加载失败",
     "artifact.noContent": "无内容",
+    "artifact.noChanges": "暂无变更",
     "artifact.diff": "差异",
 
     // Workspace selector

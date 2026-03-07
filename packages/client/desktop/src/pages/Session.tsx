@@ -535,6 +535,10 @@ export function SessionPage() {
     setSelectedArtifact({ ...artifact, sessionId: id })
   }, [id])
 
+  const handleFileTreeClick = useCallback((path: string) => {
+    setSelectedArtifact({ type: "file", path })
+  }, [])
+
   const handleClosePreview = useCallback(() => {
     setSelectedArtifact(null)
   }, [])
@@ -633,7 +637,7 @@ export function SessionPage() {
               <ProgressPanel messages={messages} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.workspace")}>
-              <WorkspacePanel directory={session?.directory} refreshKey={workspaceRefreshKey} />
+              <WorkspacePanel directory={session?.directory} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
               <ArtifactsPanel

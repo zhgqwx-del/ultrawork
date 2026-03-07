@@ -8,6 +8,8 @@ interface WorkspacePanelProps {
   directory?: string
   /** Changes to this value trigger a file tree refresh */
   refreshKey?: number
+  /** Called when a file (not directory) is clicked in the tree */
+  onFileClick?: (path: string) => void
 }
 
 function GitStatusDot({ status }: { status: string }) {
@@ -21,10 +23,12 @@ function FileTreeItem({
   entry,
   gitStatusMap,
   depth = 0,
+  onFileClick,
 }: {
   entry: FileEntry
   gitStatusMap: Map<string, string>
   depth?: number
+  onFileClick?: (path: string) => void
 }) {
   const api = useApi()
   const { t } = useI18n()
@@ -36,8 +40,11 @@ function FileTreeItem({
   const gitStatus = gitStatusMap.get(entry.path)
 
   const fetchIdRef = useRef(0)
-  const handleToggle = useCallback(async () => {
-    if (!isDir) return
+  const handleClick = useCallback(async () => {
+    if (!isDir) {
+      onFileClick?.(entry.path)
+      return
+    }
     if (expanded) {
       setExpanded(false)
       return
@@ -58,13 +65,13 @@ function FileTreeItem({
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false)
     }
-  }, [isDir, expanded, children, api, entry.path])
+  }, [isDir, expanded, children, api, entry.path, onFileClick])
 
   return (
     <div>
       <div
-        onClick={handleToggle}
-        className={`flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-[var(--color-accent)] ${isDir ? "cursor-pointer" : ""}`}
+        onClick={handleClick}
+        className={`flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-[var(--color-accent)] ${isDir || onFileClick ? "cursor-pointer" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
         {isDir ? (
@@ -100,6 +107,7 @@ function FileTreeItem({
               entry={child}
               gitStatusMap={gitStatusMap}
               depth={depth + 1}
+              onFileClick={onFileClick}
             />
           ))}
         </div>
@@ -108,7 +116,7 @@ function FileTreeItem({
   )
 }
 
-export function WorkspacePanel({ directory, refreshKey }: WorkspacePanelProps) {
+export function WorkspacePanel({ directory, refreshKey, onFileClick }: WorkspacePanelProps) {
   const api = useApi()
   const { t } = useI18n()
   const [files, setFiles] = useState<FileEntry[] | null>(null)
@@ -195,6 +203,7 @@ export function WorkspacePanel({ directory, refreshKey }: WorkspacePanelProps) {
               key={entry.path}
               entry={entry}
               gitStatusMap={gitStatusMap}
+              onFileClick={onFileClick}
             />
           ))}
         </div>
