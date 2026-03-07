@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from "react"
 import { useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { TopBar } from "@/components/layout/top-bar"
+import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useSSE } from "@/lib/use-sse"
@@ -25,7 +26,7 @@ export function SessionPage() {
   const [loading, setLoading] = useState(true)
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const [rightOpen, setRightOpen] = useState(false)
+  const { rightOpen, toggleRight } = useSidebar()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const session = sessions.find(s => s.id === id)
@@ -195,7 +196,7 @@ export function SessionPage() {
         {/* Header */}
         <TopBar title={session?.title || "New Chat"}>
           <button
-            onClick={() => setRightOpen(!rightOpen)}
+            onClick={toggleRight}
             aria-label="Toggle right sidebar"
             className={cn(
               "flex size-8 items-center justify-center rounded-lg transition-colors",
@@ -239,11 +240,11 @@ export function SessionPage() {
       {rightOpen && (
         <aside className="flex w-80 shrink-0 flex-col border-l border-[--color-border] bg-[--color-bg]">
           <div className="flex-1 overflow-y-auto p-3 scrollbar-soft">
-            <RightSidebarSection title={t("session.rightSidebar.plan")} />
-            <RightSidebarSection title={t("session.rightSidebar.workspace")} />
-            <RightSidebarSection title={t("session.rightSidebar.artifacts")} />
-            <RightSidebarSection title={t("session.rightSidebar.mcp")} />
-            <RightSidebarSection title={t("session.rightSidebar.skills")} />
+            <RightSidebarSection title={t("session.rightSidebar.plan")} placeholder={t("placeholder.comingInRound2")} />
+            <RightSidebarSection title={t("session.rightSidebar.workspace")} placeholder={t("placeholder.comingInRound2")} />
+            <RightSidebarSection title={t("session.rightSidebar.artifacts")} placeholder={t("placeholder.comingInRound2")} />
+            <RightSidebarSection title={t("session.rightSidebar.mcp")} placeholder={t("placeholder.comingInRound2")} />
+            <RightSidebarSection title={t("session.rightSidebar.skills")} placeholder={t("placeholder.comingInRound2")} />
           </div>
         </aside>
       )}
@@ -251,7 +252,7 @@ export function SessionPage() {
   )
 }
 
-function RightSidebarSection({ title }: { title: string }) {
+function RightSidebarSection({ title, placeholder }: { title: string; placeholder: string }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -265,7 +266,7 @@ function RightSidebarSection({ title }: { title: string }) {
       </button>
       {open && (
         <div className="pb-3 text-xs text-[--color-fg-muted]">
-          Coming in Round 2
+          {placeholder}
         </div>
       )}
     </div>

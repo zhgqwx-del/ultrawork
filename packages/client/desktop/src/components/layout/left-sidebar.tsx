@@ -39,16 +39,16 @@ import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
 
-function formatTime(timestamp: number): string {
+function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
   const diff = now - timestamp
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return "just now"
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 1) return t("time.justNow")
+  if (minutes < 60) return t("time.mAgo").replace("{n}", String(minutes))
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return t("time.hAgo").replace("{n}", String(hours))
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
+  if (days < 7) return t("time.dAgo").replace("{n}", String(days))
   return new Date(timestamp).toLocaleDateString()
 }
 
@@ -57,10 +57,11 @@ interface SessionGroup {
   sessions: Session[]
 }
 
-function groupSessionsByDate(sessions: Session[]): SessionGroup[] {
-  const now = Date.now()
-  const oneDayMs = 24 * 60 * 60 * 1000
-  const oneWeekMs = 7 * oneDayMs
+function groupSessionsByDate(sessions: Session[], t: (key: string) => string): SessionGroup[] {
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
+  const weekStart = todayStart - 6 * 24 * 60 * 60 * 1000
 
   const today: Session[] = []
   const yesterday: Session[] = []
@@ -68,12 +69,12 @@ function groupSessionsByDate(sessions: Session[]): SessionGroup[] {
   const earlier: Session[] = []
 
   sessions.forEach((session) => {
-    const diff = now - session.time.created
-    if (diff < oneDayMs) {
+    const created = session.time.created
+    if (created >= todayStart) {
       today.push(session)
-    } else if (diff < 2 * oneDayMs) {
+    } else if (created >= yesterdayStart) {
       yesterday.push(session)
-    } else if (diff < oneWeekMs) {
+    } else if (created >= weekStart) {
       thisWeek.push(session)
     } else {
       earlier.push(session)
@@ -81,10 +82,10 @@ function groupSessionsByDate(sessions: Session[]): SessionGroup[] {
   })
 
   const groups: SessionGroup[] = []
-  if (today.length > 0) groups.push({ label: "Today", sessions: today })
-  if (yesterday.length > 0) groups.push({ label: "Yesterday", sessions: yesterday })
-  if (thisWeek.length > 0) groups.push({ label: "This Week", sessions: thisWeek })
-  if (earlier.length > 0) groups.push({ label: "Earlier", sessions: earlier })
+  if (today.length > 0) groups.push({ label: t("dateGroup.today"), sessions: today })
+  if (yesterday.length > 0) groups.push({ label: t("dateGroup.yesterday"), sessions: yesterday })
+  if (thisWeek.length > 0) groups.push({ label: t("dateGroup.thisWeek"), sessions: thisWeek })
+  if (earlier.length > 0) groups.push({ label: t("dateGroup.earlier"), sessions: earlier })
 
   return groups
 }
@@ -144,7 +145,7 @@ export function LeftSidebar() {
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const sessionGroups = groupSessionsByDate(filteredSessions)
+  const sessionGroups = groupSessionsByDate(filteredSessions, t)
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -284,6 +285,7 @@ export function LeftSidebar() {
                               onDelete={(e) => handleDeleteSession(e, session.id)}
                               onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
                               onTogglePin={() => toggleFavorite(session.id)}
+                              t={t}
                             />
                           ))}
                           {unpinnedSessions.map((session) => (
@@ -296,6 +298,7 @@ export function LeftSidebar() {
                               onDelete={(e) => handleDeleteSession(e, session.id)}
                               onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
                               onTogglePin={() => toggleFavorite(session.id)}
+                              t={t}
                             />
                           ))}
                         </div>
@@ -371,7 +374,7 @@ export function LeftSidebar() {
                     <MessageSquare className="size-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right">Sessions</TooltipContent>
+                <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
               </Tooltip>
             </div>
 
@@ -402,6 +405,7 @@ function SessionItem({
   onDelete,
   onRename,
   onTogglePin,
+  t,
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
   isActive: boolean
@@ -410,6 +414,7 @@ function SessionItem({
   onDelete: (e: React.MouseEvent) => void
   onRename: (newTitle: string) => void
   onTogglePin: () => void
+  t: (key: string) => string
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
@@ -535,7 +540,7 @@ function SessionItem({
             ? "text-[--color-primary] opacity-100"
             : "opacity-0 group-hover:opacity-60 hover:opacity-100"
         )}
-        aria-label={isPinned ? "Unpin" : "Pin"}
+        aria-label={isPinned ? t("session.unpin") : t("session.pin")}
       >
         <Star className={cn("size-3.5", isPinned && "fill-current")} />
       </button>
@@ -543,7 +548,7 @@ function SessionItem({
       <StatusIcon />
       <div className="min-w-0 flex-1">
         <p className="truncate">{title}</p>
-        <p className="truncate text-xs opacity-60">{formatTime(session.time.updated)}</p>
+        <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>
 
       {/* Three-dot menu */}
@@ -570,18 +575,18 @@ function SessionItem({
             }}
           >
             <Star className="mr-2 size-4" />
-            {isPinned ? "Unpin" : "Pin"}
+            {isPinned ? t("session.unpin") : t("session.pin")}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleStartEdit}>
             <Pencil className="mr-2 size-4" />
-            Rename
+            {t("session.rename")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={onDelete}
             className="text-[--color-destructive] focus:text-[--color-destructive]"
           >
             <Trash2 className="mr-2 size-4" />
-            Delete
+            {t("session.delete")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

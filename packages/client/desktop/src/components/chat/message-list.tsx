@@ -1,6 +1,7 @@
 import type { SendMessageResponse } from "@agent/api-client"
 import { UserMessage } from "./user-message"
 import { AssistantMessage } from "./assistant-message"
+import { useI18n } from "@/lib/i18n-context"
 
 interface MessageListProps {
   messages: SendMessageResponse[]
@@ -9,10 +10,12 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, isLoading = false, streamingMessageId = null }: MessageListProps) {
+  const { t } = useI18n()
+
   if (messages.length === 0 && !isLoading) {
     return (
       <div className="flex min-h-[200px] items-center justify-center py-12">
-        <p className="text-sm text-[--color-fg-muted]">Send a message to start chatting</p>
+        <p className="text-sm text-[--color-fg-muted]">{t("placeholder.sendMessage")}</p>
       </div>
     )
   }

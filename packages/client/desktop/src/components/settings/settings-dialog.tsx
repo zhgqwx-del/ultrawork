@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useConfig } from "@/lib/config-context"
+import { DEFAULT_CONFIG } from "@/lib/config"
 import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
 import {
@@ -45,10 +46,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const handleReset = () => {
     resetConfig()
-    // Force reload from storage after reset
-    setTimeout(() => {
-      setFormData(config)
-    }, 0)
+    setFormData(DEFAULT_CONFIG)
   }
 
   const handleCancel = () => {
@@ -62,7 +60,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     setConnectionMessage("")
 
     try {
-      const url = `${formData.apiBaseUrl}/api/health`
+      const url = `${formData.apiBaseUrl}/global/health`
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -276,7 +274,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <div className="space-y-2">
                 <div className="space-y-2">
                   <a
-                    href="https://github.com/your-repo/ultrawork"
+                    href="https://github.com/anomalyco/opencode"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] hover:bg-[--color-bg-subtle] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
@@ -284,7 +282,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     {t("about.github")}
                   </a>
                   <a
-                    href="https://docs.ultrawork.dev"
+                    href="https://opencode.ai/docs/zh-cn/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] hover:bg-[--color-bg-subtle] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"

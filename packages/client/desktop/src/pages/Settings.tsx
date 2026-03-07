@@ -114,7 +114,7 @@ function PrivacySection() {
       <h2 className="text-lg font-semibold text-[--color-fg]">{t("settingsPage.privacy.title")}</h2>
       <p className="text-sm text-[--color-fg-muted]">{t("settingsPage.privacy.desc")}</p>
       <div className="rounded-lg border border-[--color-border] bg-[--color-bg-subtle] p-6 text-center text-sm text-[--color-fg-muted]">
-        More privacy settings coming soon.
+        {t("placeholder.privacyComingSoon")}
       </div>
     </div>
   )
@@ -140,7 +140,7 @@ function CapabilitiesSection() {
     setTestingConnection(true)
     setConnectionStatus("idle")
     try {
-      const url = `${formData.apiBaseUrl}/api/health`
+      const url = `${formData.apiBaseUrl}/global/health`
       const response = await fetch(url, {
         method: "GET",
         headers: {

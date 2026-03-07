@@ -2,11 +2,13 @@ import { useState, useEffect, useRef } from "react"
 import { useSSE } from "@/lib/use-sse"
 import { Wifi, WifiOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useI18n } from "@/lib/i18n-context"
 
 export function ConnectionStatus() {
   const [isConnected, setIsConnected] = useState(false)
   const [lastEvent, setLastEvent] = useState<Date | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { t } = useI18n()
 
   // Monitor SSE events to determine connection status
   useSSE(() => {
@@ -33,9 +35,11 @@ export function ConnectionStatus() {
     }
   }, [])
 
+  const connectedLabel = t("connectionStatus.connected")
+  const disconnectedLabel = t("connectionStatus.disconnected")
   const statusText = isConnected
-    ? `Connected${lastEvent ? ` • Last event: ${lastEvent.toLocaleTimeString()}` : ""}`
-    : "Disconnected"
+    ? `${connectedLabel}${lastEvent ? ` • ${lastEvent.toLocaleTimeString()}` : ""}`
+    : disconnectedLabel
 
   return (
     <Tooltip>
@@ -47,7 +51,7 @@ export function ConnectionStatus() {
             <WifiOff className="size-3.5 text-[--color-fg-muted]" />
           )}
           <span className={isConnected ? "text-green-500" : "text-[--color-fg-muted]"}>
-            {isConnected ? "Connected" : "Disconnected"}
+            {isConnected ? connectedLabel : disconnectedLabel}
           </span>
         </div>
       </TooltipTrigger>

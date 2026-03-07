@@ -7,10 +7,11 @@ Phase 1 MVP:  ✅ 完成
 Phase 2 UI:   ✅ 完成 (2.1-2.10 全部完成)
 Round 0 加固: ✅ 完成 (Error Boundary, Toast, 环境修复)
 Round 1 重构: ✅ 完成 (UI 架构对齐设计稿, 17 个文件变更)
-Round 2:      🔜 下一步 (任务执行过程展示)
+Review 修复:  ✅ 完成 (6 个问题: health路径/reset bug/i18n/sidebar state/日期分组/链接)
+Round 2:      📋 规划完成 (4 Steps: 结构化消息/执行状态/进度面板/产物)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
-Tauri Dev:    ✅ 修复 (bun --bun 绕过 Node.js v14)
+Tauri Dev:    ✅ 修复 (bun --bun 绕过 Node.js v14, Vite Proxy 解决 CORS)
 ```
 
 ---
@@ -732,12 +733,163 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
-### Round 2: 核心体验 - 任务执行过程 (🔜 下一步)
-- [ ] 解析 OpenCode message parts（step-start / reasoning / text / tool_use 等）
-- [ ] 执行节点展示（think / search / execute）+ 折叠/展开
-- [ ] 右侧边栏：产物 preview + 工作目录 + 文件快速访问
-- [ ] 停止/暂停按钮
-- [ ] 文件/图片上传基础支持
+### Round 2: 核心体验 - 任务执行过程展示 (🔜 下一步)
+
+> **目标**: 将 OpenCode 返回的结构化消息（12 种 Part 类型）从当前的 "只提取 text" 升级为可视化执行过程展示，对齐设计稿 ChatDetail 交互。
+
+#### 背景: OpenCode MessagePart 类型 (12 种)
+
+| Part 类型 | Round 2 优先级 | 说明 |
+|-----------|---------------|------|
+| `text` | ✅ 已有 | 文本内容 (Markdown) |
+| `reasoning` | **高** | AI 思考过程，设计稿 "Thought process" 折叠区 |
+| `tool` | **高** | 工具调用，有 pending/running/completed/error 4 种状态 |
+| `step-start` | **高** | 执行步骤开始标记 |
+| `step-finish` | **高** | 执行步骤结束 + token/cost 统计 |
+| `file` | 中 | 文件附件（图片/PDF），产物来源 |
+| `patch` | 中 | 文件变更 diff，产物来源 |
+| `subtask` | 低→Round 3 | 子任务（agent 调度） |
+| `agent` | 低 | agent 引用，暂不渲染 |
+| `compaction` | 低 | 消息压缩标记，暂不渲染 |
+| `retry` | 低 | 重试记录，暂不渲染 |
+| `snapshot` | 低 | 状态快照，暂不渲染 |
+
+#### 当前差距
+
+- `message-list.tsx`: 仅 `.filter(p => p.type === "text")` 提取文本，丢弃所有其他 part
+- `assistant-message.tsx`: 接收 flat `content: string`，纯 Markdown 渲染
+- `api-client/types.ts`: `MessagePart` 是松散类型 `{ type: string; [key: string]: any }`
+- 右侧栏: Round 1 仅有折叠区段骨架，无真实数据
+
+#### Step 2.1: API 类型补全 + 结构化消息渲染
+
+**目标**: 重构消息渲染管线，按 part 类型分别渲染
+
+**类型更新** (`packages/core/api-client/src/types.ts`):
+- 新增具体 Part 类型: `TextPart`, `ReasoningPart`, `ToolPart`, `StepStartPart`, `StepFinishPart`, `FilePart`, `PatchPart`
+- `ToolPart` 包含 `ToolState` 联合类型: `pending | running | completed | error`
+- 保留 `[key: string]: any` 兼容性，逐步收紧
+
+**消息渲染重构**:
+- `message-list.tsx`: 传递完整 `parts` 数组给 `AssistantMessage`（不再 join text）
+- `assistant-message.tsx`: 改为接收 `parts: MessagePart[]`，遍历渲染:
+  - `TextPart` → 现有 `ReactMarkdown` 渲染
+  - `ReasoningPart` → 新组件 `ReasoningBlock`
+  - `ToolPart` → 新组件 `ToolCallBlock`
+  - `StepStartPart` / `StepFinishPart` → 新组件 `StepIndicator`
+  - 其他类型 → 不渲染 (skip)
+
+**新组件**:
+- `components/chat/reasoning-block.tsx` — 可折叠 "思考过程" 区块
+  - 默认折叠，ChevronRight 切换展开
+  - 展开后显示 reasoning 文本（淡色/斜体样式）
+- `components/chat/tool-call-block.tsx` — 工具调用卡片
+  - 显示: 工具名 + 标题 + 状态图标 (pending=灰色, running=旋转橙色, completed=绿色, error=红色)
+  - 可折叠: 展开显示 input/output 详情
+  - completed: 显示输出摘要 (截断)
+  - error: 显示错误信息 (红色)
+- `components/chat/step-indicator.tsx` — 步骤分隔线
+  - `step-finish`: 显示 token 统计 (input/output/reasoning) + cost
+
+**文件变更**:
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/types.ts` | 更新 - 补全 Part 类型 |
+| `src/components/chat/assistant-message.tsx` | 重构 - 接收 parts 数组 |
+| `src/components/chat/message-list.tsx` | 更新 - 传递 parts |
+| `src/components/chat/reasoning-block.tsx` | **新建** |
+| `src/components/chat/tool-call-block.tsx` | **新建** |
+| `src/components/chat/step-indicator.tsx` | **新建** |
+| `src/components/chat/index.ts` | 更新 - 导出新组件 |
+
+#### Step 2.2: 执行状态显示 + 停止按钮
+
+**目标**: 在消息区域显示执行状态栏，对齐设计稿交互
+
+**执行状态栏** (在 assistant 消息末尾):
+- Streaming 中: `Loader2` 旋转橙色 + "Working on it..." + "停止执行" 按钮
+- 完成: `Check` 绿色 + "执行完成"
+- 错误: `XCircle` 红色 + 错误信息
+
+**停止按钮**:
+- 需确认 OpenCode API 是否有 cancel endpoint (`DELETE /session/:id/message` 或类似)
+- 如无 cancel API: 前端断开 SSE + 标记为已停止（视觉状态）
+- 如有 cancel API: 调用 API 真正中断后端执行
+
+**文件变更**:
+| 文件 | 操作 |
+|------|------|
+| `src/components/chat/execution-status.tsx` | **新建** - 执行状态栏 |
+| `src/pages/Session.tsx` | 更新 - 集成执行状态 |
+| `packages/core/api-client/src/client.ts` | 更新 - 添加 cancelMessage API (如有) |
+
+#### Step 2.3: 右侧栏 - 计划执行进度
+
+**目标**: 从消息 parts 中提取 tool 调用列表，在右侧栏显示步骤进度
+
+**数据提取**:
+- 遍历当前 session 所有 assistant 消息的 parts
+- 提取 `type === "tool"` 的 parts，构建步骤列表
+- 每个步骤: 状态图标 + 工具名 + 标题 + 时间
+
+**进度面板**:
+- 标题栏: "计划执行进度" + 进度计数 "3 of 5"
+- 步骤列表:
+  - `completed` → Check 绿色 + 工具名
+  - `running` → Loader2 旋转橙色 + 工具名
+  - `pending` → Circle 灰色 + 工具名
+  - `error` → XCircle 红色 + 工具名 + 错误摘要
+
+**文件变更**:
+| 文件 | 操作 |
+|------|------|
+| `src/components/session/progress-panel.tsx` | **新建** - 进度面板组件 |
+| `src/pages/Session.tsx` | 更新 - 替换右侧栏占位内容 |
+
+#### Step 2.4: 右侧栏 - 产物 & 工作区
+
+**目标**: 从消息中提取文件产物，显示在右侧栏
+
+**产物列表** (从消息 parts 提取):
+- `type === "file"` → 文件附件 (图片/PDF/etc)
+- `type === "patch"` → 变更的文件列表
+- 显示: 文件图标 + 文件名，可点击
+
+**工作区**:
+- 显示 session 的 `directory` (工作目录)
+- 文件树占位 (Round 3 完善)
+
+**产物预览** (点击产物时):
+- 主区域分屏 50/50: 左=对话, 右=预览
+- Markdown 文件: 渲染 Markdown
+- 代码文件: 语法高亮
+- 图片: 图片查看器
+- 关闭按钮恢复全宽对话
+
+**注意**: 产物预览分屏是较大的布局变更，如时间紧张可只做产物列表，预览推到 Round 3。
+
+**文件变更**:
+| 文件 | 操作 |
+|------|------|
+| `src/components/session/artifacts-panel.tsx` | **新建** - 产物列表 |
+| `src/components/session/workspace-panel.tsx` | **新建** - 工作区面板 |
+| `src/components/session/artifact-preview.tsx` | **新建** - 产物预览 (可选) |
+| `src/pages/Session.tsx` | 更新 - 集成产物/工作区面板 |
+
+#### Scope 决策
+
+| 功能 | 归属 | 说明 |
+|------|------|------|
+| 结构化消息渲染 | ✅ Step 2.1 | 核心功能 |
+| 思考过程折叠 | ✅ Step 2.1 | 设计稿核心交互 |
+| 工具调用卡片 | ✅ Step 2.1 | 设计稿核心交互 |
+| 执行状态栏 | ✅ Step 2.2 | 设计稿核心交互 |
+| 停止按钮 | ✅ Step 2.2 | 需确认 API 支持 |
+| 右侧栏进度 | ✅ Step 2.3 | 设计稿核心交互 |
+| 右侧栏产物列表 | ✅ Step 2.4 | 设计稿核心交互 |
+| 产物预览分屏 | ⚠️ Step 2.4 可选 | 布局复杂，可推 Round 3 |
+| 文件上传 | ❌ → Round 3 | 需 Tauri 文件选择器 + multipart API |
+| MCP/Skills 面板 | ❌ → Round 3 | 需后端 API 支持 |
 
 ### Round 3: 模型和扩展能力 (📋 规划中)
 - [ ] 多模型支持（Provider 管理 + 模型切换 + 思考模式）
@@ -756,5 +908,80 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
-**最后更新**: 2026-03-06
-**当前阶段**: Round 1 完成 ✅ → 准备 Round 2
+### Review 修复 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+> 对 Phase 1 ~ Round 1 全部已完成内容进行代码 review，发现并修复 6 个问题。
+
+#### 🔴 P0: Test Connection 健康检查路径错误
+- **问题**: `settings-dialog.tsx` 和 `Settings.tsx` 中 Test Connection 使用 `/api/health`，OpenCode 实际端点为 `/global/health`
+- **影响**: 测试连接永远 404，用户误以为连接失败
+- **修复**: 两处路径改为 `/global/health`
+- **文件**: `settings-dialog.tsx`, `Settings.tsx`
+
+#### 🔴 P0: handleReset 闭包 Bug
+- **问题**: `settings-dialog.tsx` 的 `handleReset` 中 `setTimeout(() => setFormData(config), 0)` 读取的是闭包中的旧 `config`（reset 前的值），不是 DEFAULT_CONFIG
+- **影响**: 点击 Reset 后表单数据不会正确更新
+- **修复**: 去掉 setTimeout，直接 `setFormData(DEFAULT_CONFIG)`
+- **文件**: `settings-dialog.tsx` (+ 新增 `DEFAULT_CONFIG` 导入)
+
+#### 🟡 P1: i18n 硬编码字符串补全 (~30 处)
+- **问题**: 多处 UI 文字硬编码英文，切换中文时仍显示英文
+- **涉及**:
+  - 日期分组标签: Today/Yesterday/This Week/Earlier
+  - Session 菜单项: Pin/Unpin/Rename/Delete
+  - ConnectionStatus: Connected/Disconnected
+  - formatTime: just now/m ago/h ago/d ago
+  - 右侧栏占位: "Coming in Round 2"
+  - Settings 隐私占位: "More privacy settings coming soon."
+  - MessageList 空状态: "Send a message to start chatting"
+- **修复**: 新增 ~30 个中英翻译键，替换所有硬编码字符串
+- **文件**: `i18n-context.tsx`, `left-sidebar.tsx`, `connection-status.tsx`, `Session.tsx`, `Settings.tsx`, `message-list.tsx`
+
+#### 🟡 P1: 右侧栏 state 未使用全局 context
+- **问题**: `Session.tsx` 自行管理 `rightOpen` state，未使用 `sidebar-context.tsx` 中已定义的 `rightOpen`/`toggleRight`
+- **影响**: 右侧栏状态不在全局管理中，无法从其他组件控制
+- **修复**: 改为使用 `useSidebar()` 的 `rightOpen`/`toggleRight`
+- **文件**: `Session.tsx`
+
+#### 🟡 P2: 日期分组逻辑不精确
+- **问题**: 使用简单时间差 (24h/48h/7d) 而非日历日期判断
+- **影响**: 晚上 23:59 创建的 session，凌晨 0:01 就变成 "Yesterday"
+- **修复**: 改为基于 `startOfDay` 计算，使用精确日历日期边界
+- **文件**: `left-sidebar.tsx` (groupSessionsByDate 重写)
+
+#### 🟢 P3: About 页占位链接
+- **问题**: GitHub 链接为 `https://github.com/your-repo/ultrawork`，文档链接为 `https://docs.ultrawork.dev`（均不存在）
+- **修复**: 替换为真实链接 — OpenCode GitHub + OpenCode 文档
+- **文件**: `settings-dialog.tsx`
+
+#### 环境修复 (附带)
+- **Vite Proxy**: 添加 dev proxy 解决 CORS (localhost:1420 → localhost:4096)
+- **默认密码**: config 默认密码改为 `test123` + `opencode`，匹配 sidecar 启动配置
+- **localStorage 旧配置兼容**: 加载时空密码/用户名自动回退到默认值
+- **SSE 相对路径**: dev 模式下 SSE 和 API 使用相对 URL，走 Vite proxy
+- **文件**: `vite.config.ts`, `config.ts`, `use-api.ts`, `sse-client.ts`
+
+#### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `vite.config.ts` | 更新 - 添加 dev proxy |
+| `src/lib/config.ts` | 更新 - 默认密码/用户名 + 旧配置兼容 |
+| `src/lib/use-api.ts` | 更新 - dev 模式强制空 baseUrl |
+| `src/lib/sse-client.ts` | 更新 - 兼容空 baseUrl |
+| `src/lib/i18n-context.tsx` | 更新 - 新增 ~30 个翻译键 |
+| `src/components/settings/settings-dialog.tsx` | 更新 - health 路径 + reset bug + DEFAULT_CONFIG 导入 + About 链接 |
+| `src/components/settings/connection-status.tsx` | 更新 - i18n |
+| `src/components/layout/left-sidebar.tsx` | 更新 - 日期分组重写 + formatTime/菜单 i18n |
+| `src/components/chat/message-list.tsx` | 更新 - 空状态 i18n |
+| `src/pages/Session.tsx` | 更新 - 全局 sidebar context + 占位 i18n |
+| `src/pages/Settings.tsx` | 更新 - health 路径 + 隐私占位 i18n |
+
+**验证**: TypeCheck 3/3 ✅
+
+---
+
+**最后更新**: 2026-03-07
+**当前阶段**: Review 修复完成 ✅ → Round 2 规划完成，待执行

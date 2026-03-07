@@ -107,6 +107,35 @@ const translations: Record<Language, Record<string, string>> = {
     "button.cancel": "Cancel",
     "button.reset": "Reset to Default",
 
+    // Date groups
+    "dateGroup.today": "Today",
+    "dateGroup.yesterday": "Yesterday",
+    "dateGroup.thisWeek": "This Week",
+    "dateGroup.earlier": "Earlier",
+
+    // Session menu
+    "session.pin": "Pin",
+    "session.unpin": "Unpin",
+    "session.rename": "Rename",
+    "session.delete": "Delete",
+    "session.sessions": "Sessions",
+
+    // Connection status
+    "connectionStatus.connected": "Connected",
+    "connectionStatus.disconnected": "Disconnected",
+
+    // Time
+    "time.justNow": "just now",
+    "time.mAgo": "{n}m ago",
+    "time.hAgo": "{n}h ago",
+    "time.dAgo": "{n}d ago",
+
+    // Placeholders
+    "placeholder.comingSoon": "Coming soon",
+    "placeholder.comingInRound2": "Coming in Round 2",
+    "placeholder.privacyComingSoon": "More privacy settings coming soon.",
+    "placeholder.sendMessage": "Send a message to start chatting",
+
     // Common
     "common.loading": "Loading...",
     "common.error": "Error",
@@ -204,6 +233,35 @@ const translations: Record<Language, Record<string, string>> = {
     "button.save": "保存更改",
     "button.cancel": "取消",
     "button.reset": "重置为默认",
+
+    // Date groups
+    "dateGroup.today": "今天",
+    "dateGroup.yesterday": "昨天",
+    "dateGroup.thisWeek": "本周",
+    "dateGroup.earlier": "更早",
+
+    // Session menu
+    "session.pin": "置顶",
+    "session.unpin": "取消置顶",
+    "session.rename": "重命名",
+    "session.delete": "删除",
+    "session.sessions": "会话",
+
+    // Connection status
+    "connectionStatus.connected": "已连接",
+    "connectionStatus.disconnected": "未连接",
+
+    // Time
+    "time.justNow": "刚刚",
+    "time.mAgo": "{n}分钟前",
+    "time.hAgo": "{n}小时前",
+    "time.dAgo": "{n}天前",
+
+    // Placeholders
+    "placeholder.comingSoon": "即将推出",
+    "placeholder.comingInRound2": "Round 2 开发中",
+    "placeholder.privacyComingSoon": "更多隐私设置即将推出。",
+    "placeholder.sendMessage": "发送消息开始聊天",
 
     // Common
     "common.loading": "加载中...",
