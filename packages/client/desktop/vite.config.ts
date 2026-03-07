@@ -17,5 +17,23 @@ export default defineConfig({
     watch: {
       ignored: ["**/src-tauri/**"],
     },
+    proxy: {
+      "/event": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/session": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/health": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/global": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+    },
   },
 })

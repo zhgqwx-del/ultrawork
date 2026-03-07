@@ -7,9 +7,9 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  apiBaseUrl: "http://localhost:4096",
-  apiPassword: "",
-  apiUsername: "",
+  apiBaseUrl: import.meta.env.DEV ? "" : "http://localhost:4096",
+  apiPassword: "test123",
+  apiUsername: "opencode",
   theme: "system",
   language: "en",
 }
@@ -22,7 +22,11 @@ export class ConfigStorage {
       const stored = localStorage.getItem(CONFIG_STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
-        return { ...DEFAULT_CONFIG, ...parsed }
+        const merged = { ...DEFAULT_CONFIG, ...parsed }
+        // Ensure credentials fall back to defaults if stored as empty
+        if (!merged.apiPassword) merged.apiPassword = DEFAULT_CONFIG.apiPassword
+        if (!merged.apiUsername) merged.apiUsername = DEFAULT_CONFIG.apiUsername
+        return merged
       }
     } catch (err) {
       console.error("Failed to load config:", err)

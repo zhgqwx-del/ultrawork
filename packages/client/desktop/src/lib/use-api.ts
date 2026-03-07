@@ -8,7 +8,7 @@ export function useApi() {
   const client = useMemo(
     () =>
       new ApiClient({
-        baseUrl: config.apiBaseUrl,
+        baseUrl: import.meta.env.DEV ? "" : config.apiBaseUrl,
         username: config.apiUsername,
         password: config.apiPassword,
       }),

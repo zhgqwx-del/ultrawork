@@ -47,7 +47,9 @@ export class SSEClient {
 
     this.shouldReconnect = true // Enable reconnection when connecting
 
-    const url = new URL("/event", this.config.baseUrl)
+    const url = this.config.baseUrl
+      ? new URL("/event", this.config.baseUrl).toString()
+      : "/event"
 
     // Prepare headers for Basic Auth
     const headers: Record<string, string> = {
@@ -60,12 +62,12 @@ export class SSEClient {
       headers["Authorization"] = `Basic ${credentials}`
     }
 
-    console.log("Connecting to SSE:", url.toString())
+    console.log("Connecting to SSE:", url)
 
     this.abortController = new AbortController()
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await fetch(url, {
         headers,
         signal: this.abortController.signal,
       })
