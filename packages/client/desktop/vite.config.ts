@@ -25,6 +25,15 @@ export default defineConfig({
       "/session": {
         target: "http://localhost:4096",
         changeOrigin: true,
+        timeout: 300000,
+      },
+      "/permission": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/question": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
       },
       "/health": {
         target: "http://localhost:4096",

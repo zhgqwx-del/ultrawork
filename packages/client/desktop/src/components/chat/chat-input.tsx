@@ -64,8 +64,8 @@ export function ChatInput({
   return (
     <div
       className={cn(
-        "rounded-2xl border border-[--color-border] bg-[--color-bg] p-4",
-        variant === "home" ? "shadow-lg" : "shadow-sm",
+        "relative rounded-2xl border border-[--color-border] bg-[--color-bg]",
+        variant === "home" ? "shadow-lg p-4" : "shadow-sm py-2.5 pl-4 pr-3",
         className
       )}
     >
@@ -80,7 +80,7 @@ export function ChatInput({
         disabled={disabled}
         className={cn(
           "w-full resize-none border-0 bg-transparent text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none disabled:opacity-50",
-          variant === "home" ? "text-base" : "text-sm px-1"
+          variant === "home" ? "text-base" : "text-sm pr-10"
         )}
         rows={variant === "home" ? 2 : 1}
         style={{
@@ -90,69 +90,55 @@ export function ChatInput({
         }}
       />
 
-      {/* Bottom Toolbar */}
-      <div className={cn("flex items-center justify-between", variant === "home" ? "mt-3" : "mt-2")}>
-        {/* Left: + button */}
-        <button
-          type="button"
-          aria-label="Add attachment"
-          disabled={disabled}
-          className="flex size-7 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg] disabled:opacity-30 disabled:hover:bg-transparent"
-        >
-          <Plus className="size-4" />
-        </button>
-
-        {/* Right: Send/Stop + CTA button */}
-        <div className="flex items-center gap-2">
+      {variant === "home" ? (
+        /* Home variant: toolbar below with send button flush bottom-right */
+        <div className="mt-3 flex items-center">
+          <button
+            type="button"
+            aria-label="Add attachment"
+            disabled={disabled}
+            className="flex size-7 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <Plus className="size-4" />
+          </button>
+          <div className="flex-1" />
           <button
             type="button"
             onClick={handleSendClick}
             disabled={!canSend}
-            aria-label={loading ? "Stop generating" : "Send message"}
             className={cn(
-              "flex items-center justify-center rounded-full transition-all",
-              variant === "home" ? "size-8" : "size-7",
+              "rounded-lg px-5 py-2 text-sm font-medium transition-all",
               canSend
-                ? "bg-[--color-fg] text-[--color-bg] hover:opacity-90"
-                : "bg-[--color-fg-muted] text-[--color-bg] opacity-30"
+                ? "bg-[--color-brand] text-white hover:opacity-90"
+                : "bg-[--color-brand]/60 text-white/80 cursor-default"
             )}
           >
-            {loading ? (
-              <Loader2 className={cn("animate-spin", variant === "home" ? "size-4" : "size-3")} />
-            ) : (
-              <svg
-                viewBox="0 0 24 24"
-                className={cn(variant === "home" ? "size-4" : "size-3")}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                {variant === "home" ? (
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                ) : (
-                  <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-                )}
-              </svg>
-            )}
+            {loading ? <Loader2 className="size-4 animate-spin" /> : ctaLabel}
           </button>
-
-          {variant === "home" && (
-            <button
-              type="button"
-              onClick={handleSendClick}
-              disabled={!canSend}
-              className={cn(
-                "rounded-lg px-4 py-1.5 text-sm font-medium transition-all",
-                canSend
-                  ? "bg-[--color-brand] text-white hover:opacity-90"
-                  : "bg-[--color-brand] text-white opacity-40"
-              )}
-            >
-              {loading ? <Loader2 className="size-4 animate-spin" /> : ctaLabel}
-            </button>
-          )}
         </div>
-      </div>
+      ) : (
+        /* Reply variant: send button pinned bottom-right */
+        <button
+          type="button"
+          onClick={handleSendClick}
+          disabled={!canSend}
+          aria-label={loading ? "Stop generating" : "Send message"}
+          className={cn(
+            "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
+            canSend
+              ? "bg-[--color-fg] text-[--color-bg] hover:opacity-90"
+              : "bg-[--color-fg-muted] text-[--color-bg] opacity-30"
+          )}
+        >
+          {loading ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+            </svg>
+          )}
+        </button>
+      )}
     </div>
   )
 }

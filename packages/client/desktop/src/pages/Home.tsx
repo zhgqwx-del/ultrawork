@@ -44,12 +44,16 @@ export function HomePage() {
     setSending(true)
     try {
       const session = await createSession()
-      await api.sendMessage(session.id, text)
       setInput("")
+      // Navigate immediately, don't wait for sendMessage (it blocks until agent completes)
       navigate(`/session/${session.id}`)
+      // Fire message in background — Session page handles streaming via SSE
+      api.sendMessage(session.id, text).catch((err) => {
+        console.error("Failed to send message:", err)
+      })
     } catch (err) {
-      console.error("Failed to send message:", err)
-      toast.error("Failed to send message. Please check your connection.")
+      console.error("Failed to create session:", err)
+      toast.error("Failed to create session. Please check your connection.")
     } finally {
       setSending(false)
     }

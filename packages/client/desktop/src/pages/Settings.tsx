@@ -92,14 +92,22 @@ function GeneralSection() {
       {/* Language */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-[--color-fg]">{t("general.language")}</label>
-        <select
-          className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
-          value={config.language}
-          onChange={(e) => updateConfig({ language: e.target.value as "en" | "zh" })}
-        >
-          <option value="en">English</option>
-          <option value="zh">简体中文</option>
-        </select>
+        <div className="grid grid-cols-2 gap-2">
+          {([{ value: "en", label: "English" }, { value: "zh", label: "简体中文" }] as const).map((lang) => (
+            <button
+              key={lang.value}
+              className={cn(
+                "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring]",
+                config.language === lang.value
+                  ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
+                  : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+              )}
+              onClick={() => updateConfig({ language: lang.value as "en" | "zh" })}
+            >
+              {lang.label}
+            </button>
+          ))}
+        </div>
         <p className="text-xs text-[--color-fg-muted]">{t("general.language.description")}</p>
       </div>
     </div>

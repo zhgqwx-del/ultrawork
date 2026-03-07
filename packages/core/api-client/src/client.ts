@@ -3,7 +3,9 @@ import type {
   SessionCreateRequest,
   Session,
   SendMessageRequest,
-  SendMessageResponse
+  SendMessageResponse,
+  PermissionRequest,
+  QuestionRequest,
 } from "./types"
 
 export class ApiClient {
@@ -94,7 +96,7 @@ export class ApiClient {
     })
   }
 
-  async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
+  async sendMessage(sessionId: string, message: string, options?: { signal?: AbortSignal }): Promise<SendMessageResponse> {
     const requestBody: SendMessageRequest = {
       parts: [
         {
@@ -107,6 +109,45 @@ export class ApiClient {
     return this.request<SendMessageResponse>(`/session/${sessionId}/message`, {
       method: "POST",
       body: JSON.stringify(requestBody),
+      signal: options?.signal,
+    })
+  }
+
+  async abortSession(sessionId: string): Promise<boolean> {
+    return this.request<boolean>(`/session/${sessionId}/abort`, {
+      method: "POST",
+    })
+  }
+
+  // --- Permission ---
+
+  async listPermissions(): Promise<PermissionRequest[]> {
+    return this.request<PermissionRequest[]>("/permission")
+  }
+
+  async replyPermission(requestId: string, reply: "once" | "always" | "reject"): Promise<void> {
+    await this.request<void>(`/permission/${requestId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ reply }),
+    })
+  }
+
+  // --- Question ---
+
+  async listQuestions(): Promise<QuestionRequest[]> {
+    return this.request<QuestionRequest[]>("/question")
+  }
+
+  async replyQuestion(requestId: string, answers: string[][]): Promise<void> {
+    await this.request<void>(`/question/${requestId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    })
+  }
+
+  async rejectQuestion(requestId: string): Promise<void> {
+    await this.request<void>(`/question/${requestId}/reject`, {
+      method: "POST",
     })
   }
 

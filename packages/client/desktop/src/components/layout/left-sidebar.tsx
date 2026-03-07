@@ -159,7 +159,10 @@ export function LeftSidebar() {
           <>
             {/* Expanded: Brand + Toggle */}
             <div className="flex shrink-0 items-center justify-between gap-3 p-4">
-              <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => navigate("/")}
+                className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+              >
                 <div
                   className="flex size-8 items-center justify-center rounded-lg"
                   style={{ background: "var(--color-brand-gradient)" }}
@@ -169,7 +172,7 @@ export function LeftSidebar() {
                 <span className="text-sm font-semibold tracking-wide text-[--sidebar-fg]">
                   {t("brand.name")}
                 </span>
-              </div>
+              </button>
               <button
                 onClick={toggleLeft}
                 aria-label="Collapse sidebar"
@@ -335,8 +338,8 @@ export function LeftSidebar() {
             {/* Collapsed: Icon-only */}
             <div className="flex shrink-0 items-center justify-center p-2 pt-3">
               <button
-                onClick={toggleLeft}
-                aria-label="Expand sidebar"
+                onClick={() => navigate("/")}
+                aria-label="Home"
                 className="flex size-8 items-center justify-center rounded-lg transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
                 style={{ background: "var(--color-brand-gradient)" }}
               >
@@ -454,6 +457,16 @@ function SessionItem({
       handleCancelEdit()
     }
   }
+
+  // Force re-render when session crosses the 30s "active" threshold
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const age = Date.now() - session.time.updated
+    if (age < 30000) {
+      const timer = setTimeout(() => setTick((t) => t + 1), 30000 - age + 500)
+      return () => clearTimeout(timer)
+    }
+  }, [session.time.updated])
 
   // Status icon based on session state
   const StatusIcon = () => {

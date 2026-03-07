@@ -136,13 +136,45 @@ const translations: Record<Language, Record<string, string>> = {
     "placeholder.privacyComingSoon": "More privacy settings coming soon.",
     "placeholder.sendMessage": "Send a message to start chatting",
 
+    // Message parts
+    "message.reasoning": "Thought Process",
+    "message.toolCall": "Tool Call",
+    "message.tokensInput": "In",
+    "message.tokensOutput": "Out",
+    "message.tokensReasoning": "Reasoning",
+    "message.executionWorking": "Working on it...",
+    "message.executionDone": "Execution complete",
+    "message.executionError": "Execution failed",
+    "message.stopExecution": "Stop",
+    "message.progressTitle": "Plan Progress",
+    "message.artifactsTitle": "Artifacts",
+    "message.workspaceTitle": "Workspace",
+    "message.workingDirectory": "Working Directory",
+    "message.noArtifacts": "No artifacts yet",
+    "message.noSteps": "No steps yet",
+
+    // Permission dock
+    "permission.title": "Permission Required",
+    "permission.description": "The agent needs your permission to proceed with this action.",
+    "permission.allowOnce": "Allow Once",
+    "permission.allowAlways": "Always Allow",
+    "permission.reject": "Reject",
+
+    // Question dock
+    "question.title": "Question",
+    "question.submit": "Submit",
+    "question.dismiss": "Dismiss",
+    "question.next": "Next",
+    "question.back": "Back",
+    "question.customInput": "Or type a custom answer...",
+
     // Common
     "common.loading": "Loading...",
     "common.error": "Error",
   },
   zh: {
     // Brand
-    "brand.name": "无影 UltraWork",
+    "brand.name": "UltraWork",
 
     // Sidebar
     "sidebar.newTask": "新建任务",
@@ -262,6 +294,38 @@ const translations: Record<Language, Record<string, string>> = {
     "placeholder.comingInRound2": "Round 2 开发中",
     "placeholder.privacyComingSoon": "更多隐私设置即将推出。",
     "placeholder.sendMessage": "发送消息开始聊天",
+
+    // Message parts
+    "message.reasoning": "思考过程",
+    "message.toolCall": "工具调用",
+    "message.tokensInput": "输入",
+    "message.tokensOutput": "输出",
+    "message.tokensReasoning": "推理",
+    "message.executionWorking": "正在执行...",
+    "message.executionDone": "执行完成",
+    "message.executionError": "执行失败",
+    "message.stopExecution": "停止",
+    "message.progressTitle": "计划执行进度",
+    "message.artifactsTitle": "产物",
+    "message.workspaceTitle": "工作区",
+    "message.workingDirectory": "工作目录",
+    "message.noArtifacts": "暂无产物",
+    "message.noSteps": "暂无步骤",
+
+    // Permission dock
+    "permission.title": "需要授权",
+    "permission.description": "Agent 需要您的授权才能执行此操作。",
+    "permission.allowOnce": "允许一次",
+    "permission.allowAlways": "始终允许",
+    "permission.reject": "拒绝",
+
+    // Question dock
+    "question.title": "提问",
+    "question.submit": "提交",
+    "question.dismiss": "取消",
+    "question.next": "下一个",
+    "question.back": "返回",
+    "question.customInput": "或输入自定义答案...",
 
     // Common
     "common.loading": "加载中...",

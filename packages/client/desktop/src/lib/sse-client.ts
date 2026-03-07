@@ -1,28 +1,64 @@
 import { toast } from "sonner"
-import type { ApiClientConfig } from "@agent/api-client"
+import type { ApiClientConfig, MessagePart, MessageInfo, PermissionRequest, QuestionRequest } from "@agent/api-client"
 
-// SSE Event types from OpenCode
+// SSE Event types aligned with OpenCode upstream
 export type SSEEvent =
   | { type: "server.connected"; properties: Record<string, never> }
   | { type: "server.heartbeat"; properties: Record<string, never> }
-  | { type: "message.delta"; properties: MessageDeltaProperties }
-  | { type: "message.completed"; properties: MessageCompletedProperties }
+  // Part-level events (OpenCode primary streaming mechanism)
+  | { type: "message.part.updated"; properties: { part: MessagePart } }
+  | { type: "message.part.delta"; properties: PartDeltaProperties }
+  | { type: "message.part.removed"; properties: { sessionID: string; messageID: string; partID: string } }
+  // Message-level events
+  | { type: "message.updated"; properties: { info: MessageInfo } }
+  | { type: "message.removed"; properties: { sessionID: string; messageID: string } }
+  // Session events
   | { type: "session.updated"; properties: SessionUpdatedProperties }
+  | { type: "session.created"; properties: { id: string; [key: string]: any } }
+  | { type: "session.deleted"; properties: { id: string } }
+  | { type: "session.status"; properties: SessionStatusProperties }
+  // Permission / Question blocking-interaction events
+  | { type: "permission.asked"; properties: PermissionRequest }
+  | { type: "permission.replied"; properties: { sessionID: string; requestID: string; reply: string } }
+  | { type: "question.asked"; properties: QuestionRequest }
+  | { type: "question.replied"; properties: { sessionID: string; requestID: string; answers: string[][] } }
+  | { type: "question.rejected"; properties: { sessionID: string; requestID: string } }
+  // Legacy events (kept for backward compatibility if server sends them)
+  | { type: "message.delta"; properties: LegacyDeltaProperties }
+  | { type: "message.completed"; properties: LegacyCompletedProperties }
+  // Catch-all for unknown event types
+  | { type: string; properties: Record<string, any> }
 
-export interface MessageDeltaProperties {
+export interface PartDeltaProperties {
+  sessionID: string
+  messageID: string
+  partID: string
+  field: string
+  delta: string
+}
+
+export interface SessionUpdatedProperties {
+  sessionID?: string
+  id?: string
+  title?: string
+  [key: string]: any
+}
+
+export interface SessionStatusProperties {
+  sessionID: string
+  status: { type: "idle" } | { type: "busy" } | { type: "retry"; attempt: number; message: string; next: number }
+}
+
+// Legacy types kept for backward compat
+export interface LegacyDeltaProperties {
   sessionID: string
   messageID: string
   delta: string
 }
 
-export interface MessageCompletedProperties {
+export interface LegacyCompletedProperties {
   sessionID: string
   messageID: string
-}
-
-export interface SessionUpdatedProperties {
-  sessionID: string
-  title?: string
 }
 
 export type SSEEventHandler = (event: SSEEvent) => void
@@ -33,9 +69,9 @@ export class SSEClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
-  private reconnectDelay = 1000 // Start with 1s
+  private reconnectDelay = 1000
   private isConnected = false
-  private shouldReconnect = true // Track if we should reconnect
+  private shouldReconnect = true
 
   constructor(private config: ApiClientConfig) {}
 
@@ -45,13 +81,12 @@ export class SSEClient {
       return
     }
 
-    this.shouldReconnect = true // Enable reconnection when connecting
+    this.shouldReconnect = true
 
     const url = this.config.baseUrl
       ? new URL("/event", this.config.baseUrl).toString()
       : "/event"
 
-    // Prepare headers for Basic Auth
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
     }
@@ -84,7 +119,6 @@ export class SSEClient {
       this.isConnected = true
       this.reconnectAttempts = 0
 
-      // Read the stream
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
@@ -99,9 +133,8 @@ export class SSEClient {
 
         buffer += decoder.decode(value, { stream: true })
 
-        // Parse SSE format: "data: {...}\n\n"
         const lines = buffer.split("\n")
-        buffer = lines.pop() || "" // Keep incomplete line in buffer
+        buffer = lines.pop() || ""
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
@@ -125,14 +158,13 @@ export class SSEClient {
       this.abortController = null
     }
 
-    // Reconnect if we should reconnect (not manually disconnected)
     if (this.shouldReconnect) {
       this.scheduleReconnect()
     }
   }
 
   disconnect(): void {
-    this.shouldReconnect = false // Disable reconnection on manual disconnect
+    this.shouldReconnect = false
 
     if (this.abortController) {
       this.abortController.abort()

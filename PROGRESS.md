@@ -8,10 +8,11 @@ Phase 2 UI:   ✅ 完成 (2.1-2.10 全部完成)
 Round 0 加固: ✅ 完成 (Error Boundary, Toast, 环境修复)
 Round 1 重构: ✅ 完成 (UI 架构对齐设计稿, 17 个文件变更)
 Review 修复:  ✅ 完成 (6 个问题: health路径/reset bug/i18n/sidebar state/日期分组/链接)
-Round 2:      📋 规划完成 (4 Steps: 结构化消息/执行状态/进度面板/产物)
+Round 2:      ✅ 完成 (4 Steps: 结构化消息/执行状态/进度面板/产物)
+Round 3:      ✅ 完成 (Permission & Question Dock + 10 个联调修复)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
-Tauri Dev:    ✅ 修复 (bun --bun 绕过 Node.js v14, Vite Proxy 解决 CORS)
+Tauri Dev:    ✅ 联调通过
 ```
 
 ---
@@ -733,7 +734,7 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
-### Round 2: 核心体验 - 任务执行过程展示 (🔜 下一步)
+### Round 2: 核心体验 - 任务执行过程展示 (✅ 已完成)
 
 > **目标**: 将 OpenCode 返回的结构化消息（12 种 Part 类型）从当前的 "只提取 text" 升级为可视化执行过程展示，对齐设计稿 ChatDetail 交互。
 
@@ -887,11 +888,238 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 | 停止按钮 | ✅ Step 2.2 | 需确认 API 支持 |
 | 右侧栏进度 | ✅ Step 2.3 | 设计稿核心交互 |
 | 右侧栏产物列表 | ✅ Step 2.4 | 设计稿核心交互 |
-| 产物预览分屏 | ⚠️ Step 2.4 可选 | 布局复杂，可推 Round 3 |
+| 产物预览分屏 | ❌ → Round 3 | 布局复杂，推迟 |
 | 文件上传 | ❌ → Round 3 | 需 Tauri 文件选择器 + multipart API |
 | MCP/Skills 面板 | ❌ → Round 3 | 需后端 API 支持 |
 
-### Round 3: 模型和扩展能力 (📋 规划中)
+#### 完成日期: 2026-03-07
+
+#### 实现总结
+
+**Step 2.1: API 类型补全 + 结构化消息渲染**
+- `api-client/types.ts`: 新增 7 个具体 Part 类型 (TextPart, ReasoningPart, ToolPart, StepStartPart, StepFinishPart, FilePart, PatchPart) + ToolState 联合类型
+- `assistant-message.tsx`: 重构为接收 `parts: MessagePart[]`，按类型分发渲染
+- `message-list.tsx`: assistant 消息传递完整 parts 数组（不再 join text）
+- 新建组件:
+  - `reasoning-block.tsx` — 可折叠"思考过程"区块（Brain 图标 + 紫色）
+  - `tool-call-block.tsx` — 工具调用卡片（状态图标 + 可展开 input/output/error）
+  - `step-indicator.tsx` — 步骤分隔线 + token/cost 统计
+
+**Step 2.2: 执行状态显示 + 停止按钮**
+- 新建 `execution-status.tsx`: 4 种状态 (working/done/error/stopped)
+- Session.tsx: AbortController 支持取消请求 + 错误状态追踪
+- 停止按钮: abort fetch（OpenCode 无 cancel API，前端中断）
+
+**Step 2.3: 右侧栏 - 计划执行进度面板**
+- 新建 `session/progress-panel.tsx`: 从消息提取 tool parts → 步骤列表
+- 显示: 完成计数 + 状态图标 (pending/running/completed/error)
+- 替换右侧栏 "Plan Progress" 占位内容
+
+**Step 2.4: 右侧栏 - 产物 & 工作区面板**
+- 新建 `session/artifacts-panel.tsx`: 从消息提取 file/patch → 产物列表 (去重)
+- 新建 `session/workspace-panel.tsx`: 显示 session 工作目录
+- RightSidebarSection 支持 children prop
+
+#### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/types.ts` | 更新 - 7 个 Part 类型 + ToolState |
+| `packages/core/api-client/src/index.ts` | 更新 - 导出新类型 |
+| `src/components/chat/assistant-message.tsx` | 重构 - parts 数组渲染 |
+| `src/components/chat/message-list.tsx` | 更新 - 传递 parts |
+| `src/components/chat/reasoning-block.tsx` | **新建** |
+| `src/components/chat/tool-call-block.tsx` | **新建** |
+| `src/components/chat/step-indicator.tsx` | **新建** |
+| `src/components/chat/execution-status.tsx` | **新建** |
+| `src/components/chat/index.ts` | 更新 - 导出新组件 |
+| `src/components/session/progress-panel.tsx` | **新建** |
+| `src/components/session/artifacts-panel.tsx` | **新建** |
+| `src/components/session/workspace-panel.tsx` | **新建** |
+| `src/components/session/index.ts` | **新建** |
+| `src/pages/Session.tsx` | 更新 - 执行状态 + 右侧栏集成 |
+| `src/lib/i18n-context.tsx` | 更新 - 新增 ~16 个翻译键 |
+
+**验证**: TypeCheck 3/3 ✅
+
+#### Round 2 Review 修复 (2026-03-07)
+
+> 对照 OpenCode 上游 (anomalyco/opencode) 源码 review，发现并修复 13 个问题。
+
+**🔴 P0: 类型对齐 OpenCode 上游 (5 个)**
+
+1. **ToolState 类型完全错误**: 我们用简单字符串，OpenCode 是嵌套判别联合对象 (`{ status, input, output, title, time, error }`)
+2. **ToolPart 字段映射错误**: `title/input/output/error/duration` 不在顶层，嵌套在 `state` 内
+3. **SSE 事件类型不存在**: `message.delta`/`message.completed` 不是 OpenCode 事件。正确: `message.part.updated`/`message.part.delta`/`message.updated`
+4. **PatchPart 字段错误**: OpenCode 用 `hash` + `files: string[]`，不是 `path`/`content`/`operations`
+5. **FilePart 字段错误**: OpenCode 用 `mime`/`url`，不是 `mediaType`/`path`
+
+**🟡 P1: 功能缺陷 (4 个)**
+
+6. **缺少服务端 abort**: 新增 `POST /session/{id}/abort` API 调用
+7. **AbortController signal 未传递**: `sendMessage()` 现在接受 `{ signal }` 参数
+8. **ExecutionStatus 不显示 done**: 添加 `showDone` 状态 + 2s 自动消失
+9. **sendError 持续残留**: 添加 5s 自动清除 timer
+
+**🟢 P2: 代码质量 (4 个)**
+
+10. **PartBase 缺失**: 所有 Part 类型补全 `id/sessionID/messageID`
+11. **StepFinishPart.tokens 缺 cache**: 补全 `cache: { read, write }`
+12. **进度/产物面板不安全类型断言**: 改为使用正确的 ToolPart/FilePart/PatchPart 类型
+13. **file/patch 未渲染**: assistant-message 添加 FileBlock 和 PatchBlock 组件
+
+**文件变更清单**:
+
+| 文件 | 修复 |
+|------|------|
+| `api-client/src/types.ts` | 重写 — PartBase/ToolState 嵌套/PatchPart(hash+files)/FilePart(mime+url)/StepFinish tokens.cache |
+| `api-client/src/index.ts` | 导出新类型 (PartBase, ToolState*, etc.) |
+| `api-client/src/client.ts` | 新增 abortSession() + sendMessage signal 参数 |
+| `chat/tool-call-block.tsx` | 重写 — 从嵌套 state 对象提取 status/title/input/output/error/duration |
+| `chat/assistant-message.tsx` | 添加 FileBlock/PatchBlock 渲染 + ToolPart 正确传参 |
+| `chat/step-indicator.tsx` | 补全 cache tokens 显示 |
+| `chat/message-list.tsx` | 类型窄化 type guard fix |
+| `session/progress-panel.tsx` | 从 state.status 读取状态 + state.title 读取标题 |
+| `session/artifacts-panel.tsx` | 使用 FilePart(mime/filename) + PatchPart(files) |
+| `lib/sse-client.ts` | 重写事件类型 — message.part.updated/delta/removed + message.updated + session.status |
+| `pages/Session.tsx` | SSE handler 全面重写 + abort + signal + ExecutionStatus 生命周期 |
+
+**验证**: TypeCheck 3/3 ✅
+
+---
+
+### Round 3: Permission & Question Dock + 联调修复 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+> **背景**: Agent 执行过程中向用户提问（确认文件保存位置等）或请求权限（bash/文件操作），但 UI 仅显示 "working..." 状态，没有渲染交互界面，导致双方死锁。
+> OpenCode 服务端通过 `permission.asked` / `question.asked` SSE 事件触发阻塞式交互，客户端需通过 REST API 回复。
+
+#### Step 1: API 类型 + 客户端方法
+
+**新增类型** (`packages/core/api-client/src/types.ts`):
+- `PermissionRequest`: `{ id, sessionID, permission, patterns, metadata, always, tool? }`
+- `QuestionRequest`: `{ id, sessionID, questions: QuestionInfo[], tool? }`
+- `QuestionInfo`: `{ question, header, options: QuestionOption[], multiple?, custom? }`
+- `QuestionOption`: `{ label, description }`
+
+**新增 API 方法** (`packages/core/api-client/src/client.ts`):
+- `listPermissions()` — `GET /permission`
+- `replyPermission(requestId, reply)` — `POST /permission/{id}/reply`
+- `listQuestions()` — `GET /question`
+- `replyQuestion(requestId, answers)` — `POST /question/{id}/reply`
+- `rejectQuestion(requestId)` — `POST /question/{id}/reject`
+
+#### Step 2: SSE 事件类型扩展
+
+**新增事件** (`lib/sse-client.ts`):
+- `permission.asked` → `PermissionRequest` (properties 直接是请求对象，非嵌套)
+- `permission.replied` → `{ sessionID, requestID, reply }`
+- `question.asked` → `QuestionRequest`
+- `question.replied` → `{ sessionID, requestID, answers }`
+- `question.rejected` → `{ sessionID, requestID }`
+
+#### Step 3: Permission Dock 组件
+
+**新建** `components/chat/permission-dock.tsx`:
+- 琥珀色主题 (amber-500), Shield 图标
+- 显示权限类型标题 + patterns 列表（代码块样式）
+- 三个按钮: Reject / Always Allow / Allow Once
+- 与 ChatInput 相同的 max-w-[800px] 容器
+
+#### Step 4: Question Dock 组件
+
+**新建** `components/chat/question-dock.tsx`:
+- 蓝色主题 (blue-500), HelpCircle 图标
+- 多问题导航 (1/N 进度)
+- 单选/多选按钮组 + 可选自定义文本输入
+- Back / Next / Submit / Dismiss 按钮
+
+#### Step 5: Session.tsx 集成
+
+- SSE handler 新增 5 个 case: `permission.asked/replied`, `question.asked/replied/rejected`
+- 底部区域条件渲染: Question Dock > Permission Dock > ChatInput (优先级)
+- handler 函数调用 API 回复并清除状态
+
+#### Step 6: i18n 翻译
+
+- 新增 12 个翻译键 (en + zh): permission.title/description/allowOnce/allowAlways/reject, question.title/submit/dismiss/next/back/customInput
+
+#### 联调测试修复 (10 个问题)
+
+**🔴 P0: SSE 数据结构不匹配**
+- **问题**: `permission.asked` 的 properties 直接是 `PermissionRequest`，代码错误解构为 `{ permission: PermissionRequest }`
+- **修复**: SSE 类型改为 `properties: PermissionRequest`，handler 直接使用 `event.properties as PermissionRequest`
+
+**🔴 P0: 消息重复 Bug**
+- **问题**: `sendMessage` POST 阻塞等待 Agent 完成，期间 SSE 创建真实消息，POST 返回后又替换 temp 消息，导致用户消息显示两次
+- **修复**: `handleSend` 改为 fire-and-forget（不 await POST），SSE `message.part.updated` 创建新消息时自动移除所有 `temp-` 前缀的乐观消息
+- **文件**: `Session.tsx`
+
+**🔴 P0: 首页发送后不跳转**
+- **问题**: `Home.tsx` 的 `handleSend` 中 `await api.sendMessage()` 阻塞，Agent 执行期间（尤其需要 permission 时）POST 不返回
+- **修复**: 创建 session 后立即 `navigate()`，`api.sendMessage()` 放后台 fire-and-forget
+- **文件**: `Home.tsx`
+
+**🟡 P1: Vite proxy 超时 + 缺少路由**
+- **问题**: `/session` proxy 默认 30s 超时，Agent 长时间执行时 POST 超时; 缺少 `/permission`、`/question` proxy 路由
+- **修复**: `/session` 超时延长至 300s，新增 `/permission` 和 `/question` proxy
+- **文件**: `vite.config.ts`
+
+**🟡 P1: Session 列表状态图标一直转圈**
+- **问题**: `StatusIcon` 用 `Date.now() - session.time.updated < 30000` 判断"运行中"，但组件不会在 30 秒后自动重渲染
+- **修复**: 添加 `useEffect` + `setTimeout` 在 30s 后强制 re-render
+- **文件**: `left-sidebar.tsx`
+
+**🟡 P1: sending 状态不自动清除**
+- **问题**: fire-and-forget 后 `setSending(false)` 没有触发点
+- **修复**: SSE `session.status: idle` 和 `message.updated` (assistant finish) 时清除 sending
+- **文件**: `Session.tsx`
+
+**🟡 P1: Logo 无法回首页**
+- **问题**: 品牌 logo 和折叠态图标都没有导航功能
+- **修复**: 品牌 logo 按钮 `onClick={() => navigate("/")}`
+- **文件**: `left-sidebar.tsx`
+
+**🟢 P2: 发送按钮位置不对**
+- **问题**: Reply 模式下发送按钮在单独的工具栏行，没有贴合输入框右下角
+- **修复**: Reply 模式用 `absolute bottom-2 right-2.5` 定位; Home 模式简化为单个 CTA 按钮
+- **文件**: `chat-input.tsx`
+
+**🟢 P2: 语言选择器样式不一致**
+- **问题**: 语言选择用原生 `<select>` 下拉框，与主题选择器的按钮组风格不统一
+- **修复**: 改为与主题一致的 `grid grid-cols-2` 按钮组样式
+- **文件**: `Settings.tsx`
+
+**🟢 P2: 品牌名称简化**
+- **问题**: 中文模式下显示 "无影 UltraWork"，冗余
+- **修复**: 统一为 "UltraWork"
+- **文件**: `i18n-context.tsx`
+
+#### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/types.ts` | 更新 - 新增 Permission/Question 类型 |
+| `packages/core/api-client/src/client.ts` | 更新 - 新增 5 个 API 方法 |
+| `packages/core/api-client/src/index.ts` | 更新 - 导出新类型 |
+| `src/lib/sse-client.ts` | 更新 - 新增 5 个 SSE 事件类型 |
+| `src/components/chat/permission-dock.tsx` | **新建** - 权限确认 Dock |
+| `src/components/chat/question-dock.tsx` | **新建** - 问题回答 Dock |
+| `src/components/chat/chat-input.tsx` | 更新 - 发送按钮定位优化 |
+| `src/components/chat/index.ts` | 更新 - 导出新组件 |
+| `src/pages/Session.tsx` | 更新 - SSE 集成 + Dock 条件渲染 + 消息去重 + sending 状态 |
+| `src/pages/Home.tsx` | 更新 - fire-and-forget 发送 + 即时导航 |
+| `src/pages/Settings.tsx` | 更新 - 语言选择器按钮组 |
+| `src/lib/i18n-context.tsx` | 更新 - 新增 12 个翻译键 + 品牌名简化 |
+| `src/components/layout/left-sidebar.tsx` | 更新 - Logo 导航 + 状态图标自动刷新 |
+| `vite.config.ts` | 更新 - proxy 超时 + 新路由 |
+
+**验证**: TypeCheck 3/3 ✅ | Tauri Dev 联调通过 ✅
+
+---
+
+### Round 4: 模型和扩展能力 (📋 规划中)
 - [ ] 多模型支持（Provider 管理 + 模型切换 + 思考模式）
 - [ ] MCP 服务管理（列表 / 开关 / 搜索 / 管理入口）
 - [ ] Skills 管理
@@ -984,4 +1212,4 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 ---
 
 **最后更新**: 2026-03-07
-**当前阶段**: Review 修复完成 ✅ → Round 2 规划完成，待执行
+**当前阶段**: Round 2 完成 ✅ → Round 3 规划中
