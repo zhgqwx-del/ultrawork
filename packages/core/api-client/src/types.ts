@@ -9,7 +9,6 @@ export interface ApiClientConfig {
 
 export interface SessionCreateRequest {
   agent?: string
-  workingDirectory?: string
 }
 
 // --- PartBase: identity fields present on every part ---
@@ -371,4 +370,7 @@ export interface FileStatusEntry {
 export interface FileContentResponse {
   type: string
   content: string
+  diff?: string
+  encoding?: string
+  mimeType?: string
 }

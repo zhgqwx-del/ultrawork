@@ -6,6 +6,8 @@ import type { FileEntry, FileStatusEntry } from "@agent/api-client"
 
 interface WorkspacePanelProps {
   directory?: string
+  /** Changes to this value trigger a file tree refresh */
+  refreshKey?: number
 }
 
 function GitStatusDot({ status }: { status: string }) {
@@ -106,7 +108,7 @@ function FileTreeItem({
   )
 }
 
-export function WorkspacePanel({ directory }: WorkspacePanelProps) {
+export function WorkspacePanel({ directory, refreshKey }: WorkspacePanelProps) {
   const api = useApi()
   const { t } = useI18n()
   const [files, setFiles] = useState<FileEntry[] | null>(null)
@@ -127,7 +129,9 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
     setError(false)
     try {
       const [fileList, statusList] = await Promise.all([
-        api.getFileTree(directory || "."),
+        // Always use "." — the x-opencode-directory header sets the workspace root;
+        // passing absolute paths breaks because server joins Instance.directory + path
+        api.getFileTree("."),
         api.getFileStatus(),
       ])
       setFiles(fileList.filter(f => !f.ignored).sort((a, b) => {
@@ -144,7 +148,7 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+  }, [loadData, refreshKey])
 
   return (
     <div className="space-y-2">

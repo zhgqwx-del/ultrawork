@@ -1,45 +1,14 @@
-import { useState, useEffect, useRef } from "react"
-import { useSSE } from "@/lib/use-sse"
+import { useSSEConnected } from "@/lib/sse-context"
 import { Wifi, WifiOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useI18n } from "@/lib/i18n-context"
 
 export function ConnectionStatus() {
-  const [isConnected, setIsConnected] = useState(false)
-  const [lastEvent, setLastEvent] = useState<Date | null>(null)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isConnected = useSSEConnected()
   const { t } = useI18n()
-
-  // Monitor SSE events to determine connection status
-  useSSE(() => {
-    setIsConnected(true)
-    setLastEvent(new Date())
-
-    // Clear any existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-
-    // Reset connection status if no heartbeat for 30s
-    timeoutRef.current = setTimeout(() => {
-      setIsConnected(false)
-    }, 30000)
-  })
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
 
   const connectedLabel = t("connectionStatus.connected")
   const disconnectedLabel = t("connectionStatus.disconnected")
-  const statusText = isConnected
-    ? `${connectedLabel}${lastEvent ? ` • ${lastEvent.toLocaleTimeString()}` : ""}`
-    : disconnectedLabel
 
   return (
     <Tooltip>
@@ -56,7 +25,7 @@ export function ConnectionStatus() {
         </div>
       </TooltipTrigger>
       <TooltipContent>
-        <p>{statusText}</p>
+        <p>{isConnected ? connectedLabel : disconnectedLabel}</p>
       </TooltipContent>
     </Tooltip>
   )

@@ -1,11 +1,11 @@
-import { useRef, useEffect, useState, useCallback } from "react"
-import { useParams } from "react-router-dom"
+import { useRef, useEffect, useState, useCallback, useMemo } from "react"
+import { useParams, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { TopBar } from "@/components/layout/top-bar"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
-import { useSSE } from "@/lib/use-sse"
+import { useSSESubscribe } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { ChatInput, MessageList, ModelSelector } from "@/components/chat"
 import { ExecutionStatus } from "@/components/chat/execution-status"
@@ -21,6 +21,7 @@ import type { SSEEvent } from "@/lib/sse-client"
 
 export function SessionPage() {
   const { id } = useParams()
+  const location = useLocation()
   const { sessions, updateSession } = useSessionsContext()
   const api = useApi()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -56,12 +57,14 @@ export function SessionPage() {
     setPendingPermission(null)
     setPendingQuestion(null)
     setStreamingMessageId(null)
-    setSending(false)
+    // Preserve sending=true when navigating from Home with an in-flight prompt
+    const navState = location.state as { sending?: boolean } | null
+    setSending(!!navState?.sending)
     setSelectedArtifact(null)
     setStopped(false)
     setStoppedAtMessageId(null)
     frozenMessageIdsRef.current = new Set()
-  }, [id])
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps -- location.state is read once per id change
 
   const checkIfAtBottom = useCallback(() => {
     const container = scrollContainerRef.current
@@ -317,7 +320,34 @@ export function SessionPage() {
     [id, updateSession, getEventSessionID]
   )
 
-  useSSE(handleSSEEvent)
+  useSSESubscribe(handleSSEEvent)
+
+  // --- Permission/Question polling fallback ---
+  // If SSE missed the permission.asked / question.asked event (race condition
+  // when navigating from Home → Session), poll every 3s to catch it.
+  // Trigger: `sending` (sent from Session) OR `streamingMessageId` (SSE events
+  // arriving — covers the Home→Session case where sending=false but AI is active).
+  const isAgentActive = sending || streamingMessageId !== null
+  useEffect(() => {
+    if (!id || !isAgentActive || pendingPermission || pendingQuestion) return
+
+    const poll = () => {
+      api.listPermissions().then((perms) => {
+        const match = perms.find((p) => p.sessionID === id)
+        if (match) setPendingPermission(match)
+      }).catch((err) => console.debug("Permission poll failed:", err))
+
+      api.listQuestions().then((qs) => {
+        const match = qs.find((q) => q.sessionID === id)
+        if (match) setPendingQuestion(match)
+      }).catch((err) => console.debug("Question poll failed:", err))
+    }
+
+    // Run immediately once, then every 3s
+    poll()
+    const timer = setInterval(poll, 3000)
+    return () => clearInterval(timer)
+  }, [id, isAgentActive, pendingPermission, pendingQuestion, api])
 
   useEffect(() => {
     let cancelled = false
@@ -490,6 +520,16 @@ export function SessionPage() {
     })
   }, [pendingQuestion, api, t])
 
+  // Count completed tool calls to trigger workspace file tree refresh
+  const workspaceRefreshKey = useMemo(() => {
+    return messages.reduce((count, msg) => {
+      if (!msg.parts) return count
+      return count + msg.parts.filter(
+        (p) => p.type === "tool" && "state" in p && (p as any).state?.status === "completed"
+      ).length
+    }, 0)
+  }, [messages])
+
   const handleArtifactClick = useCallback((artifact: Artifact) => {
     // Add sessionId for patch type artifacts so preview can fetch diff
     setSelectedArtifact({ ...artifact, sessionId: id })
@@ -501,9 +541,9 @@ export function SessionPage() {
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
-      {/* Left Panel - Artifact Preview (50/50 split when active) */}
+      {/* Artifact Preview (left, 50% when active) */}
       {selectedArtifact && (
-        <div className="w-1/2 shrink-0 overflow-hidden">
+        <div className="w-1/2 shrink-0 overflow-hidden border-r border-[var(--color-border)]">
           <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
         </div>
       )}
@@ -593,11 +633,12 @@ export function SessionPage() {
               <ProgressPanel messages={messages} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.workspace")}>
-              <WorkspacePanel directory={session?.directory} />
+              <WorkspacePanel directory={session?.directory} refreshKey={workspaceRefreshKey} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
               <ArtifactsPanel
                 messages={messages}
+                directory={session?.directory}
                 onArtifactClick={handleArtifactClick}
                 selectedPath={selectedArtifact?.path}
               />

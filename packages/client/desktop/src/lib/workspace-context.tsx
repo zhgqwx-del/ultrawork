@@ -2,7 +2,6 @@ import { createContext, useContext, useState, useCallback, useMemo, type ReactNo
 
 const STORAGE_KEY_PATH = "workspace_path"
 const STORAGE_KEY_RECENT = "workspace_recent"
-const STORAGE_KEY_SESSION_MAP = "session_dir_map"
 const MAX_RECENT = 5
 
 interface WorkspaceContextValue {
@@ -18,10 +17,6 @@ interface WorkspaceContextValue {
   setWorkspace: (path: string) => void
   /** Remove a path from the recent list */
   removeRecent: (path: string) => void
-  /** Get the shortId for a session, or undefined if not mapped */
-  getSessionShortId: (sessionId: string) => string | undefined
-  /** Store a session → shortId mapping */
-  setSessionShortId: (sessionId: string, shortId: string) => void
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
@@ -37,19 +32,6 @@ function loadRecent(): string[] {
 
 function saveRecent(paths: string[]) {
   localStorage.setItem(STORAGE_KEY_RECENT, JSON.stringify(paths))
-}
-
-function loadSessionMap(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_SESSION_MAP)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveSessionMap(map: Record<string, string>) {
-  localStorage.setItem(STORAGE_KEY_SESSION_MAP, JSON.stringify(map))
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -82,16 +64,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const getSessionShortId = useCallback((sessionId: string): string | undefined => {
-    return loadSessionMap()[sessionId]
-  }, [])
-
-  const setSessionShortId = useCallback((sessionId: string, shortId: string) => {
-    const map = loadSessionMap()
-    map[sessionId] = shortId
-    saveSessionMap(map)
-  }, [])
-
   const value = useMemo<WorkspaceContextValue>(() => ({
     workspacePath,
     confirmed,
@@ -99,9 +71,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     recentPaths,
     setWorkspace,
     removeRecent,
-    getSessionShortId,
-    setSessionShortId,
-  }), [workspacePath, confirmed, lastPath, recentPaths, setWorkspace, removeRecent, getSessionShortId, setSessionShortId])
+  }), [workspacePath, confirmed, lastPath, recentPaths, setWorkspace, removeRecent])
 
   return (
     <WorkspaceContext.Provider value={value}>

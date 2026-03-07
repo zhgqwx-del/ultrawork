@@ -180,10 +180,9 @@ describe("ApiClient", () => {
     it("createSession - with options", async () => {
       const session = { id: "s1", title: "Test" }
       mockFetch.mockResolvedValueOnce(jsonResponse(session))
-      await client.createSession({ agent: "general", workingDirectory: "/tmp" })
+      await client.createSession({ agent: "general" })
       const body = JSON.parse(mockFetch.mock.calls[0][1].body)
       expect(body.agent).toBe("general")
-      expect(body.workingDirectory).toBe("/tmp")
     })
 
     it("getSession", async () => {

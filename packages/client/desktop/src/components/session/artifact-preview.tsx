@@ -123,7 +123,7 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const language = getLanguageFromPath(artifact.path)
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg)]">
+    <div className="flex h-full flex-col overflow-hidden bg-[var(--color-bg)]">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <ArtifactIcon artifact={artifact} />

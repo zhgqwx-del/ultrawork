@@ -1,13 +1,10 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { nanoid } from "nanoid"
-import { mkdir } from "@tauri-apps/plugin-fs"
 import { FolderOpen, Pen, FileText } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useModel } from "@/lib/model-context"
-import { useWorkspace } from "@/lib/workspace-context"
 import { ChatInput, ModelSelector } from "@/components/chat"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
@@ -41,7 +38,6 @@ export function HomePage() {
   const api = useApi()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
-  const { workspacePath, setSessionShortId } = useWorkspace()
 
   const handleSend = async () => {
     const text = input.trim()
@@ -49,26 +45,10 @@ export function HomePage() {
 
     setSending(true)
     try {
-      // Generate session subdirectory under workspace
-      const shortId = nanoid(8)
-      const sessionDir = workspacePath ? `${workspacePath}/${shortId}` : undefined
-
-      // Create the directory before session so WorkspacePanel can display it
-      if (sessionDir) {
-        await mkdir(sessionDir, { recursive: true }).catch((err) => {
-          console.warn("Failed to create session directory (non-fatal):", err)
-        })
-      }
-
-      const session = await createSession({ workingDirectory: sessionDir })
-
-      // Store session → shortId mapping
-      if (sessionDir) {
-        setSessionShortId(session.id, shortId)
-      }
+      const session = await createSession()
 
       setInput("")
-      navigate(`/session/${session.id}`)
+      navigate(`/session/${session.id}`, { state: { sending: true } })
       api.promptAsync(session.id, text, { model: currentModel || undefined }).catch((err) => {
         console.error("Failed to send message:", err)
         toast.error(t("error.sendMessage"))

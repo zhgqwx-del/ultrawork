@@ -6,9 +6,7 @@ import { useWorkspace } from "./workspace-context"
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
   if (!workspacePath) return list
-  return list.filter(
-    (s) => s.directory === workspacePath || s.directory?.startsWith(workspacePath + "/")
-  )
+  return list.filter((s) => s.directory === workspacePath)
 }
 
 export function useSessions() {
@@ -20,7 +18,12 @@ export function useSessions() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await api.listSessions({ roots: true, limit: 50 })
+      // Pass directory for server-side filtering + client-side as safety net
+      const list = await api.listSessions({
+        roots: true,
+        limit: 50,
+        directory: workspacePath || undefined,
+      })
       setSessions(filterByWorkspace(list, workspacePath))
       setError(null)
     } catch (err) {
@@ -31,7 +34,11 @@ export function useSessions() {
 
   useEffect(() => {
     let cancelled = false
-    api.listSessions({ roots: true, limit: 50 }).then(list => {
+    api.listSessions({
+      roots: true,
+      limit: 50,
+      directory: workspacePath || undefined,
+    }).then(list => {
       if (!cancelled) {
         setSessions(filterByWorkspace(list, workspacePath))
         setError(null)
@@ -46,8 +53,8 @@ export function useSessions() {
     return () => { cancelled = true }
   }, [api, workspacePath])
 
-  const createSession = useCallback(async (options?: { workingDirectory?: string }) => {
-    const session = await api.createSession(options ? { workingDirectory: options.workingDirectory } : {})
+  const createSession = useCallback(async () => {
+    const session = await api.createSession()
     setSessions(prev => [session as Session, ...prev])
     return session
   }, [api])

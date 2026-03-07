@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from "./lib/theme-context"
 import { I18nProvider } from "./lib/i18n-context"
 import { ModelProvider, useModel } from "./lib/model-context"
 import { WorkspaceProvider } from "./lib/workspace-context"
+import { SSEProvider } from "./lib/sse-context"
 import { ModelDialog } from "./components/settings/model-dialog"
 import { router } from "./router"
 import "./index.css"
@@ -43,10 +44,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <ThemeProvider>
         <I18nProvider>
           <WorkspaceProvider>
-            <ModelProvider>
-              <RouterProvider router={router} />
-              <ModelDialogSingleton />
-            </ModelProvider>
+            <SSEProvider>
+              <ModelProvider>
+                <RouterProvider router={router} />
+                <ModelDialogSingleton />
+              </ModelProvider>
+            </SSEProvider>
           </WorkspaceProvider>
           <ThemedToaster />
         </I18nProvider>

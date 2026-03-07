@@ -18,6 +18,7 @@ Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low �
 手动测试 4.3:  ✅ 完成 (M1-M4 全部通过, 11 个 bugfix)
 手动测试 4.4:  ✅ 完成 (MCP disconnect/reconnect/delete/persist + C1-C4 命令)
 Round 5 工作区: ✅ 完成 (工作区选择 + session 子目录隔离 + Review 3 修复)
+Round 5 联调:  ✅ 完成 (SSE 全局化 + 产物/文件树/预览 6 bugfix + 死代码清理)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -2071,5 +2072,114 @@ session_dir_map   = { "sess_abc123": "a8k2m9p4", ... }  // session → shortId �
 
 ---
 
+## Round 5 联调: SSE 全局化 + 产物/文件树/预览修复 (✅ 已完成)
+
+### 背景
+
+Round 5 工作区功能完成后，手动联调发现 3 类关键问题：
+1. Write 工具执行卡住（PermissionDock 不弹出）— SSE 竞态
+2. 产物列表/文件树始终为空
+3. 子目录隔离死代码残留
+
+### Part A: SSE 全局化（修复工具卡住）
+
+**问题**: SSE 连接原本在 Session.tsx mount 时创建。Home.tsx 先调 `promptAsync`（fire-and-forget），再 `navigate` 到 Session 页。Server 发出 `permission.asked` 时，Session 页 SSE 尚未建连，事件丢失。
+
+**修复**:
+- **新建** `src/lib/sse-context.tsx` — `SSEProvider` + `useSSESubscribe` + `useSSEConnected`
+  - Provider 在 app 级别维护单一 SSEClient，通过 `handlersRef: Set<SSEEventHandler>` 分发
+  - `workspacePath` 变化时自动重连，订阅者无需重新注册
+  - 30s heartbeat timeout 追踪连接状态
+  - `useSSESubscribe` 用 ref 模式保持 handler 最新，依赖 `[subscribe]` 而非 `[ctx]` 避免 heartbeat 引发重订阅
+- **修改** `src/main.tsx` — 插入 SSEProvider: `WorkspaceProvider > SSEProvider > ModelProvider`
+- **修改** `src/pages/Session.tsx` — `useSSE` → `useSSESubscribe`
+- **修改** `connection-status.tsx` — 简化为 `useSSEConnected()` 读全局状态
+- **删除** `src/lib/use-sse.ts` — 不再需要
+
+### Part B: Permission/Question 轮询兜底
+
+**修复**: Session.tsx 新增 `useEffect`，当 `isAgentActive = sending || streamingMessageId !== null` 且无 pending 权限/问题时，每 3s 并行轮询 `GET /permission` 和 `GET /question`。
+
+Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态，Session.tsx 在 reset effect 中读取。
+
+### Part C: 清理子目录隔离死代码
+
+| 文件 | 改动 |
+|------|------|
+| `api-client/types.ts` | `SessionCreateRequest` 移除 `workingDirectory` 字段 |
+| `api-client/__tests__/client.test.ts` | 测试去掉 `workingDirectory` 断言 |
+| `workspace-context.tsx` | 删除 `getSessionShortId`/`setSessionShortId`/`loadSessionMap`/`saveSessionMap` |
+| `sessions-context.tsx` | `createSession` 签名去掉 `options` 参数 |
+| `use-sessions.ts` | `filterByWorkspace` 精确匹配, `createSession` 去掉 options, `listSessions` 加 `directory` 参数 |
+| `Home.tsx` | 删除 `nanoid`/`mkdir`/`useWorkspace` 导入及 shortId/sessionDir/mkdir 逻辑 |
+
+### Part D: 产物列表 + 文件树 + 预览修复（6 个 bug）
+
+#### D.1 产物列表显示"暂无产物"
+
+**根因**: `extractArtifacts()` 只检查 `FilePart` (type="file") 和 `PatchPart` (type="patch")，不处理 Write/Edit 工具产生的 `ToolPart` (type="tool")。
+
+**修复**: 增加 `type === "tool"` 分支，从 `state.input.filePath` 提取路径。
+
+#### D.2 ToolPart 输入键名不匹配
+
+**根因**: OpenCode Write/Edit/Read 工具统一用 **`filePath`（camelCase）**，代码检查的是 `file_path`/`path`/`filepath`，全部不匹配。
+
+**修复**: 改为 `input.filePath || input.file_path || input.path`。
+
+#### D.3 绝对路径导致 API 返回空
+
+**根因**: OpenCode `/file?path=` 和 `/file/content?path=` 用 `path.join(Instance.directory, dir)` 解析路径。传绝对路径会 join 出错误路径，返回空数组/空内容。
+
+**修复**:
+- `WorkspacePanel`: `getFileTree(".")` 固定传相对路径，由 `x-opencode-directory` header 指定根
+- `ArtifactsPanel`: `toRelative()` 函数去掉工作区前缀，将绝对路径转为相对路径
+- 新增 `directory` prop 从 Session.tsx 传入工作区根路径
+
+#### D.4 文件树无自动刷新
+
+**根因**: `WorkspacePanel` 仅在 mount 时加载一次，agent 创建文件后不刷新。
+
+**修复**: 新增 `refreshKey` prop，Session.tsx 传入已完成工具调用计数（`workspaceRefreshKey` useMemo），工具完成时自动触发重新加载。
+
+#### D.5 预览面板位置错误
+
+**根因**: ArtifactPreview 渲染在 Chat 之前（HTML 顺序），导致预览在左、聊天在右，位置反了。
+
+**修复**: 调整 DOM 顺序为 ArtifactPreview（左 w-1/2, border-r）→ Chat（右 w-1/2）→ Sidebar。
+
+#### D.6 图片产物图标缺扩展名兜底
+
+**根因**: ToolPart 提取的产物无 `mime` 字段，图片文件无法通过 `mime?.startsWith("image/")` 匹配，显示灰色图标。
+
+**修复**: 增加 `IMAGE_EXTS` 正则（`.png/.jpg/.gif/.svg/.webp` 等）扩展名兜底检测 + hover 高亮改用 `cn()` + `transition-colors`。
+
+### 补充: FileContentResponse 类型补全
+
+`api-client/types.ts` 的 `FileContentResponse` 补充 `diff?`, `encoding?`, `mimeType?` 字段，对齐服务端返回。
+
+### 改动文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `src/lib/sse-context.tsx` | 新建 |
+| `src/lib/use-sse.ts` | 删除 |
+| `src/main.tsx` | 修改 |
+| `src/pages/Session.tsx` | 修改 |
+| `src/pages/Home.tsx` | 修改 |
+| `src/components/settings/connection-status.tsx` | 修改 |
+| `src/components/session/artifacts-panel.tsx` | 修改 |
+| `src/components/session/workspace-panel.tsx` | 修改 |
+| `src/components/session/artifact-preview.tsx` | 修改 |
+| `src/lib/workspace-context.tsx` | 修改 |
+| `src/lib/sessions-context.tsx` | 修改 |
+| `src/lib/use-sessions.ts` | 修改 |
+| `api-client/src/types.ts` | 修改 |
+| `api-client/src/__tests__/client.test.ts` | 修改 |
+
+**验证**: TypeCheck 3/3 ✅, 手动联调 ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 5 工作区管理 ✅ 完成（含手动测试修复）
+**当前阶段**: Round 5 联调 ✅ 完成（SSE 全局化 + 产物/文件树/预览修复 + 死代码清理）
