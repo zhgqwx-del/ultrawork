@@ -321,14 +321,21 @@
 > **Vite HMR 修复**: `PATCH /config` 写入项目级 `config.json` 触发 Vite 刷新 → `/session/ID` 被 proxy 拦截返回原始 JSON。修复: watch 忽略 config.json + `/session` proxy bypass HTML 请求。
 > **putProviderAuth 修复**: API 要求 `{ type: "api", key }` 格式，非 `{ apiKey }`。
 
-### 4.4 MCP & 命令
+### 4.4 MCP & 命令 — ✅ 全部通过 (2026-03-08)
 
-| # | 测试场景 | 步骤 | 预期结果 |
-|---|---------|------|---------|
-| C1 | MCP 列表 | 右侧栏 MCP 面板 | 显示已配置的 MCP 服务 |
-| C2 | MCP 连接/断开 | 点击 Connect/Disconnect | 状态正确更新 |
-| C3 | 斜杠命令 | 输入 `/` | CommandSelector 弹出, 显示可用命令 |
-| C4 | 命令选择 | 选择命令 | 命令内容填入输入框 |
+| # | 测试场景 | 步骤 | 预期结果 | 状态 |
+|---|---------|------|---------|------|
+| C1 | MCP 列表 | 右侧栏 MCP 面板 | 显示已配置的 MCP 服务 | ✅ |
+| C2 | MCP 连接/断开 | 点击 Connect/Disconnect | 状态正确更新 | ✅ (bugfix) |
+| C3 | 斜杠命令 | 输入 `/` | CommandSelector 弹出, 显示可用命令 | ✅ |
+| C4 | 命令选择 | 选择命令 | 命令内容填入输入框 | ✅ |
+
+> **C2 Bugfix — MCP 连接/断开/删除/持久化**:
+> - **Disconnect 后列表清空**: 后端 `GET /mcp` 不返回已断开的 server。修复: disconnect 后本地设 `disabled` 状态，不依赖后端返回。
+> - **Connect 无反应**: 后端断开后遗忘 server，`connectMCP(name)` 无效。修复: 存储 `configMap`，reconnect 时用 `createMCP` 重新注册。
+> - **重启后 MCP 丢失**: React state 重启即失。修复: `configMap` 持久化到 `localStorage`，启动时合并后端+本地数据。
+> - **已删除 server 复活**: 后端 `POST /mcp` 返回全量 map（含 mcp-auth.json 中残留的 server）。修复: 新增 `hiddenSet` (localStorage) 记录用户删除的 server，所有后端响应经 `filterHidden()` 过滤。
+> - **新增删除功能**: 非连接状态显示 Trash2 删除按钮，支持从列表移除不需要的 server。
 
 ### 4.5 产物与文件
 

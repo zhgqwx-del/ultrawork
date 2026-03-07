@@ -211,6 +211,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.typeRemote": "Remote",
     "mcp.typeLocal": "Local",
     "mcp.add": "Add",
+    "mcp.remove": "Remove",
 
     // Skills / Commands
     "skills.noItems": "No commands or skills available",
@@ -460,6 +461,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.typeRemote": "远程",
     "mcp.typeLocal": "本地",
     "mcp.add": "添加",
+    "mcp.remove": "移除",
 
     // Skills / Commands
     "skills.noItems": "暂无命令或技能",

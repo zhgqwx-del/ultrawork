@@ -1786,5 +1786,36 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
-**最后更新**: 2026-03-07
-**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2/4.3 完成 ✅
+### 手动测试 4.4: MCP & 命令 (2026-03-08)
+
+#### MCP 面板修复 (4 项 bugfix + 1 新功能)
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | Disconnect 后 server 从列表消失 | 本地设 `disabled` 状态，不依赖后端 `GET /mcp` 返回 |
+| 2 | 已断开 server 点 Connect 无反应 | 存储 `configMap`，reconnect 时用 `createMCP` 重新注册 |
+| 3 | 重启应用后 MCP 列表清空 | `configMap` 持久化到 `localStorage`，启动时合并后端+本地数据 |
+| 4 | 已删除 server 在操作其他 MCP 后复活 | 新增 `hiddenSet` (localStorage) + `filterHidden()` 过滤所有后端响应 |
+| 5 | 无法删除失败/不需要的 MCP server | 新增 Trash2 删除按钮 (非连接状态显示) |
+
+#### 斜杠命令测试 (C3/C4)
+
+- `/` 触发 CommandSelector 弹出 ✅
+- 过滤搜索、↑↓ 键盘导航、Enter/Tab/鼠标选择 ✅
+- Escape 关闭（移除 `/` 前缀）✅
+- 空格后不弹出 ✅
+- 命令发送到 agent 正常执行 ✅
+
+#### 文件变更
+
+| 文件 | 操作 |
+|------|------|
+| `packages/client/desktop/src/components/session/mcp-panel.tsx` | 重写 — disconnect/connect/remove/持久化逻辑 |
+| `packages/client/desktop/src/lib/i18n-context.tsx` | 更新 — 新增 `mcp.remove` 中英文 |
+
+**验证**: C1-C4 手动测试全部通过 ✅
+
+---
+
+**最后更新**: 2026-03-08
+**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2/4.3/4.4 完成 ✅
