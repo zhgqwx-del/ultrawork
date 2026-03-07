@@ -151,7 +151,7 @@ export function LeftSidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          "flex h-full shrink-0 flex-col bg-[--sidebar-bg] transition-all duration-300",
+          "flex h-full shrink-0 flex-col bg-[var(--sidebar-bg)] transition-all duration-300",
           leftOpen ? "w-72" : "w-12"
         )}
       >
@@ -169,14 +169,14 @@ export function LeftSidebar() {
                 >
                   <Sparkles className="size-4 text-white" />
                 </div>
-                <span className="text-sm font-semibold tracking-wide text-[--sidebar-fg]">
+                <span className="text-sm font-semibold tracking-wide text-[var(--sidebar-fg)]">
                   {t("brand.name")}
                 </span>
               </button>
               <button
                 onClick={toggleLeft}
                 aria-label="Collapse sidebar"
-                className="flex size-8 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                className="flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
               >
                 <PanelLeft className="size-4" />
               </button>
@@ -189,7 +189,7 @@ export function LeftSidebar() {
                   <button
                     onClick={handleNewChat}
                     disabled={creating}
-                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
                     {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                   </button>
@@ -204,8 +204,8 @@ export function LeftSidebar() {
                     className={cn(
                       "flex size-9 items-center justify-center rounded-lg transition-colors",
                       showSearch
-                        ? "bg-[--sidebar-accent] text-[--sidebar-fg]"
-                        : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
+                        : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                     )}
                   >
                     <Search className="size-4" />
@@ -218,7 +218,7 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     disabled
-                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] opacity-50"
+                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] opacity-50"
                   >
                     <Clock className="size-4" />
                   </button>
@@ -230,7 +230,7 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     disabled
-                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] opacity-50"
+                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] opacity-50"
                   >
                     <Briefcase className="size-4" />
                   </button>
@@ -243,14 +243,14 @@ export function LeftSidebar() {
             {showSearch && (
               <div className="shrink-0 px-3 pt-2">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[--sidebar-fg-muted]" />
+                  <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--sidebar-fg-muted)]" />
                   <input
                     type="text"
                     placeholder={t("sidebar.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoFocus
-                    className="w-full rounded-lg border border-[--color-border] bg-[--color-bg] py-1.5 pl-9 pr-3 text-sm text-[--sidebar-fg] placeholder:text-[--sidebar-fg-muted] focus:border-[--color-primary] focus:outline-none focus:ring-1 focus:ring-[--color-primary]"
+                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-9 pr-3 text-sm text-[var(--sidebar-fg)] placeholder:text-[var(--sidebar-fg-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
                   />
                 </div>
               </div>
@@ -261,10 +261,10 @@ export function LeftSidebar() {
               <div className="scrollbar-soft flex-1 space-y-0.5 overflow-y-auto">
                 {loading ? (
                   <div className="flex items-center justify-center py-6">
-                    <Loader2 className="size-4 animate-spin text-[--sidebar-fg-muted]" />
+                    <Loader2 className="size-4 animate-spin text-[var(--sidebar-fg-muted)]" />
                   </div>
                 ) : filteredSessions.length === 0 ? (
-                  <div className="px-2 py-4 text-center text-xs text-[--sidebar-fg-muted]">
+                  <div className="px-2 py-4 text-center text-xs text-[var(--sidebar-fg-muted)]">
                     {searchQuery ? t("sidebar.noMatch") : t("sidebar.noSessions")}
                   </div>
                 ) : (
@@ -275,7 +275,7 @@ export function LeftSidebar() {
 
                       return (
                         <div key={group.label} className="space-y-0.5">
-                          <h3 className="px-2 py-1 text-xs font-medium tracking-wider text-[--sidebar-fg-muted] opacity-70">
+                          <h3 className="px-2 py-1 text-xs font-medium tracking-wider text-[var(--sidebar-fg-muted)] opacity-70">
                             {group.label}
                           </h3>
                           {pinnedSessions.map((session) => (
@@ -318,17 +318,17 @@ export function LeftSidebar() {
               <SettingsPopover>
                 <button
                   aria-label="User settings"
-                  className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[--sidebar-accent]"
+                  className="flex w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]"
                 >
-                  <div className="flex size-8 items-center justify-center rounded-full bg-[--color-brand] text-sm font-semibold text-white">
+                  <div className="flex size-8 items-center justify-center rounded-full bg-[var(--color-brand)] text-sm font-semibold text-white">
                     Y
                   </div>
                   <div className="min-w-0 flex-1 text-left">
-                    <p className="truncate text-sm font-medium text-[--sidebar-fg]">
+                    <p className="truncate text-sm font-medium text-[var(--sidebar-fg)]">
                       {t("sidebar.user")}
                     </p>
                   </div>
-                  <Settings className="size-4 text-[--sidebar-fg-muted]" />
+                  <Settings className="size-4 text-[var(--sidebar-fg-muted)]" />
                 </button>
               </SettingsPopover>
             </div>
@@ -340,7 +340,7 @@ export function LeftSidebar() {
               <button
                 onClick={() => navigate("/")}
                 aria-label="Home"
-                className="flex size-8 items-center justify-center rounded-lg transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                className="flex size-8 items-center justify-center rounded-lg transition-all hover:ring-2 hover:ring-[var(--sidebar-fg-muted)]"
                 style={{ background: "var(--color-brand-gradient)" }}
               >
                 <Sparkles className="size-4 text-white" />
@@ -354,7 +354,7 @@ export function LeftSidebar() {
                     onClick={handleNewChat}
                     disabled={creating}
                     aria-label={t("sidebar.newTask")}
-                    className="flex size-9 items-center justify-center rounded-lg text-[--sidebar-fg-muted] transition-colors hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
                     {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                   </button>
@@ -370,8 +370,8 @@ export function LeftSidebar() {
                     className={cn(
                       "flex size-9 items-center justify-center rounded-lg transition-colors",
                       location.pathname.startsWith("/session")
-                        ? "bg-[--sidebar-accent] text-[--sidebar-fg]"
-                        : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent] hover:text-[--sidebar-fg]"
+                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
+                        : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                     )}
                   >
                     <MessageSquare className="size-4" />
@@ -387,7 +387,7 @@ export function LeftSidebar() {
               <SettingsPopover>
                 <button
                   aria-label="Settings"
-                  className="flex size-8 items-center justify-center rounded-full bg-[--color-brand] text-xs font-semibold text-white transition-all hover:ring-2 hover:ring-[--sidebar-fg-muted]"
+                  className="flex size-8 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-semibold text-white transition-all hover:ring-2 hover:ring-[var(--sidebar-fg-muted)]"
                 >
                   Y
                 </button>
@@ -474,7 +474,7 @@ function SessionItem({
 
     // Active within last 30 seconds = running
     if (age < 30000) {
-      return <Loader2 className="size-3.5 shrink-0 animate-spin text-[--color-brand]" />
+      return <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
     }
     // Has meaningful content (updated significantly after creation) = completed
     if (session.time.updated - session.time.created > 5000) {
@@ -489,8 +489,8 @@ function SessionItem({
         className={cn(
           "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
           isActive
-            ? "bg-[--sidebar-accent] font-medium text-[--sidebar-fg]"
-            : "bg-[--sidebar-accent-hover] text-[--sidebar-fg]"
+            ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
+            : "bg-[var(--sidebar-accent-hover)] text-[var(--sidebar-fg)]"
         )}
       >
         <StatusIcon />
@@ -510,7 +510,7 @@ function SessionItem({
               e.stopPropagation()
               handleSaveEdit()
             }}
-            className="flex size-6 items-center justify-center rounded-md hover:bg-[--sidebar-accent]"
+            className="flex size-6 items-center justify-center rounded-md hover:bg-[var(--sidebar-accent)]"
             aria-label="Save"
           >
             <Check className="size-3.5" />
@@ -520,7 +520,7 @@ function SessionItem({
               e.stopPropagation()
               handleCancelEdit()
             }}
-            className="flex size-6 items-center justify-center rounded-md hover:bg-[--sidebar-accent]"
+            className="flex size-6 items-center justify-center rounded-md hover:bg-[var(--sidebar-accent)]"
             aria-label="Cancel"
           >
             <X className="size-3.5" />
@@ -536,9 +536,9 @@ function SessionItem({
       className={cn(
         "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-150",
         isActive
-          ? "bg-[--sidebar-accent] font-medium text-[--sidebar-fg]"
-          : "text-[--sidebar-fg-muted] hover:bg-[--sidebar-accent-hover] hover:text-[--sidebar-fg]",
-        isPinned && "border-l-2 border-[--color-primary]"
+          ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
+          : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent-hover)] hover:text-[var(--sidebar-fg)]",
+        isPinned && "border-l-2 border-[var(--color-primary)]"
       )}
     >
       {/* Pin/Star icon */}
@@ -550,7 +550,7 @@ function SessionItem({
         className={cn(
           "flex size-4 shrink-0 items-center justify-center transition-opacity",
           isPinned
-            ? "text-[--color-primary] opacity-100"
+            ? "text-[var(--color-primary)] opacity-100"
             : "opacity-0 group-hover:opacity-60 hover:opacity-100"
         )}
         aria-label={isPinned ? t("session.unpin") : t("session.pin")}
@@ -596,7 +596,7 @@ function SessionItem({
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={onDelete}
-            className="text-[--color-destructive] focus:text-[--color-destructive]"
+            className="text-[var(--color-destructive)] focus:text-[var(--color-destructive)]"
           >
             <Trash2 className="mr-2 size-4" />
             {t("session.delete")}

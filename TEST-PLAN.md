@@ -304,14 +304,22 @@
 | U11 | 能力卡片 | Home 页点击卡片 | 填充示例 prompt 到输入框 | ✅ |
 | U12 | 自动滚动 | 新消息到来 | 在底部时自动滚动, 不在底部时不打断 | ✅ |
 
-### 4.3 模型管理
+### 4.3 模型管理 — ✅ 全部通过 (2026-03-07)
 
-| # | 测试场景 | 步骤 | 预期结果 |
-|---|---------|------|---------|
-| M1 | 打开 ModelDialog | 侧栏 SettingsPopover → 模型管理 | 显示供应商和模型列表 |
-| M2 | 搜索模型 | 输入模型名称 | 过滤显示匹配项 |
-| M3 | 快速切换模型 | ChatInput 区域 ModelSelector | Popover 打开, 选择后切换 |
-| M4 | 添加供应商 | ModelDialog → 添加新供应商 | 表单填写 + 创建 |
+| # | 测试场景 | 步骤 | 预期结果 | 状态 |
+|---|---------|------|---------|------|
+| M1 | 打开 ModelDialog | 侧栏 SettingsPopover → 模型管理 | 显示供应商和模型列表 | ✅ (bugfix) |
+| M2 | 搜索模型 | 输入模型名称 | 过滤显示匹配项, connected 优先排序 | ✅ (bugfix) |
+| M3 | 快速切换模型 | ChatInput 区域 ModelSelector | Popover 打开, 搜索过滤, 选择后切换 | ✅ (bugfix) |
+| M4 | 配置供应商 | ModelDialog → 配置供应商 | 两步式: 选择注册表供应商 → 配置 API Key + Base URL | ✅ (重构) |
+
+> **M1 Bugfix**: `GET /provider` 返回 `{ all, default, connected }` 对象而非数组，`models` 是 object map 不是 array。修复 `getProviders()` 转换响应格式。
+> **M2 Bugfix**: 搜索结果排序优化 — connected 供应商优先，名称匹配优先，再按字母排序。
+> **M3 Bugfix**: ModelSelector Popover 添加搜索框，支持按模型名/供应商名/ID 过滤。
+> **M4 重构**: 原「添加供应商」改为「配置供应商」两步式流程。OpenCode 注册表固定 98 个供应商，不支持创建自定义供应商。
+> **Tailwind v4 全局修复**: `[--color-*]` → `[var(--color-*)]`，修复所有 Dialog/Popover/DropdownMenu 透明问题（30+ 文件）。
+> **Vite HMR 修复**: `PATCH /config` 写入项目级 `config.json` 触发 Vite 刷新 → `/session/ID` 被 proxy 拦截返回原始 JSON。修复: watch 忽略 config.json + `/session` proxy bypass HTML 请求。
+> **putProviderAuth 修复**: API 要求 `{ type: "api", key }` 格式，非 `{ apiKey }`。
 
 ### 4.4 MCP & 命令
 

@@ -42,7 +42,7 @@ function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-3.5 shrink-0 text-blue-500" />
   if (artifact.mime?.startsWith("image/")) return <FileImage className="size-3.5 shrink-0 text-purple-500" />
   if (artifact.mime?.includes("pdf") || artifact.path.endsWith(".pdf")) return <FileText className="size-3.5 shrink-0 text-red-500" />
-  return <File className="size-3.5 shrink-0 text-[--color-fg-muted]" />
+  return <File className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
 }
 
 function basename(path: string): string {
@@ -54,7 +54,7 @@ export function ArtifactsPanel({ messages, onArtifactClick, selectedPath }: Arti
   const artifacts = useMemo(() => extractArtifacts(messages), [messages])
 
   if (artifacts.length === 0) {
-    return <p className="py-2 text-xs text-[--color-fg-muted]">{t("message.noArtifacts")}</p>
+    return <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("message.noArtifacts")}</p>
   }
 
   return (
@@ -63,12 +63,12 @@ export function ArtifactsPanel({ messages, onArtifactClick, selectedPath }: Arti
         <div
           key={artifact.path}
           onClick={() => onArtifactClick?.(artifact)}
-          className={`flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-[--color-accent] ${
+          className={`flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-[var(--color-accent)] ${
             onArtifactClick ? "cursor-pointer" : ""
-          } ${selectedPath === artifact.path ? "bg-[--color-accent]" : ""}`}
+          } ${selectedPath === artifact.path ? "bg-[var(--color-accent)]" : ""}`}
         >
           <ArtifactIcon artifact={artifact} />
-          <span className="min-w-0 flex-1 truncate text-[--color-fg]" title={artifact.path}>
+          <span className="min-w-0 flex-1 truncate text-[var(--color-fg)]" title={artifact.path}>
             {basename(artifact.path)}
           </span>
           {artifact.type === "patch" && (

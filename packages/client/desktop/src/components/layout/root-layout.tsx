@@ -11,11 +11,11 @@ export function RootLayout() {
   return (
     <SessionsProvider>
       <SidebarProvider>
-        <div className="flex h-screen overflow-hidden bg-[--sidebar-bg]">
+        <div className="flex h-screen overflow-hidden bg-[var(--sidebar-bg)]">
           <LeftSidebar />
 
           {/* Main content area - pages render here via Outlet */}
-          <div className="my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-[--color-bg] shadow-sm">
+          <div className="my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-[var(--color-bg)] shadow-sm">
             <ErrorBoundary>
               <Outlet />
             </ErrorBoundary>

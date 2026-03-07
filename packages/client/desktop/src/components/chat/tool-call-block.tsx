@@ -17,7 +17,7 @@ function StatusIcon({ status }: { status: string }) {
     case "error":
       return <XCircle className="size-4 text-red-500" />
     default:
-      return <Circle className="size-4 text-[--color-fg-muted]" />
+      return <Circle className="size-4 text-[var(--color-fg-muted)]" />
   }
 }
 
@@ -46,16 +46,16 @@ export function ToolCallBlock({ tool, state }: ToolCallBlockProps) {
   const hasDetails = hasInput || hasOutput || hasError
 
   return (
-    <div className="my-1.5 rounded-lg border border-[--color-border] bg-[--color-bg-subtle]">
+    <div className="my-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
       <button
         onClick={() => hasDetails && setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs text-[--color-fg] transition-colors hover:bg-[--color-accent]"
+        className="flex w-full items-center gap-2 px-3 py-2 text-xs text-[var(--color-fg)] transition-colors hover:bg-[var(--color-accent)]"
       >
         <StatusIcon status={state.status} />
-        <Wrench className="size-3.5 text-[--color-fg-muted]" />
+        <Wrench className="size-3.5 text-[var(--color-fg-muted)]" />
         <span className="font-medium">{displayName}</span>
         {duration != null && (
-          <span className="text-[--color-fg-muted]">
+          <span className="text-[var(--color-fg-muted)]">
             {duration < 1000 ? `${duration}ms` : `${(duration / 1000).toFixed(1)}s`}
           </span>
         )}
@@ -67,19 +67,19 @@ export function ToolCallBlock({ tool, state }: ToolCallBlockProps) {
       </button>
 
       {open && (
-        <div className="space-y-2 border-t border-[--color-border] px-3 py-2">
+        <div className="space-y-2 border-t border-[var(--color-border)] px-3 py-2">
           {hasInput && (
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-[--color-fg-muted]">Input</p>
-              <pre className="overflow-x-auto rounded bg-[--color-accent] p-2 text-[11px] text-[--color-fg]">
+              <p className="mb-1 text-[10px] font-semibold uppercase text-[var(--color-fg-muted)]">Input</p>
+              <pre className="overflow-x-auto rounded bg-[var(--color-accent)] p-2 text-[11px] text-[var(--color-fg)]">
                 {JSON.stringify(state.input, null, 2)}
               </pre>
             </div>
           )}
           {hasOutput && (
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-[--color-fg-muted]">Output</p>
-              <pre className="max-h-40 overflow-auto rounded bg-[--color-accent] p-2 text-[11px] text-[--color-fg]">
+              <p className="mb-1 text-[10px] font-semibold uppercase text-[var(--color-fg-muted)]">Output</p>
+              <pre className="max-h-40 overflow-auto rounded bg-[var(--color-accent)] p-2 text-[11px] text-[var(--color-fg)]">
                 {state.status === "completed" && state.output.length > 500
                   ? state.output.slice(0, 500) + "..."
                   : state.status === "completed" ? state.output : ""}

@@ -232,10 +232,28 @@ export interface ProviderModel {
 export interface Provider {
   id: string
   name: string
-  prefix: string
+  source?: string
   models: ProviderModel[]
   connected: string[] // model IDs that are connected/available
+  env?: string[]
   options?: Record<string, unknown>
+}
+
+/** Raw response from GET /provider */
+export interface ProviderResponse {
+  all: RawProvider[]
+  default: Record<string, string>
+  connected: string[] // connected provider IDs
+}
+
+/** Raw provider shape from the API (models as object map) */
+export interface RawProvider {
+  id: string
+  name: string
+  source?: string
+  env?: string[]
+  options?: Record<string, unknown>
+  models: Record<string, ProviderModel>
 }
 
 export interface ProviderAuthInfo {
@@ -244,6 +262,14 @@ export interface ProviderAuthInfo {
   type: string
   env?: string[]
   set?: boolean
+}
+
+/** Raw response from GET /provider/auth — map of providerId to auth methods */
+export type ProviderAuthResponse = Record<string, ProviderAuthMethod[]>
+
+export interface ProviderAuthMethod {
+  type: string
+  label: string
 }
 
 // --- Config types ---

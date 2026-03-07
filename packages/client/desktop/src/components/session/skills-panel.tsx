@@ -32,7 +32,7 @@ export function SkillsPanel() {
   useEffect(() => { fetchData() }, [fetchData])
 
   if (loading) {
-    return <p className="py-2 text-xs text-[--color-fg-muted]">{t("common.loading")}</p>
+    return <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("common.loading")}</p>
   }
 
   if (error) {
@@ -42,7 +42,7 @@ export function SkillsPanel() {
   const hasContent = commands.length > 0 || skills.length > 0
 
   if (!hasContent) {
-    return <p className="py-1 text-xs text-[--color-fg-muted]">{t("skills.noItems")}</p>
+    return <p className="py-1 text-xs text-[var(--color-fg-muted)]">{t("skills.noItems")}</p>
   }
 
   return (
@@ -50,12 +50,12 @@ export function SkillsPanel() {
       {commands.map((cmd) => (
         <div
           key={cmd.name}
-          className="flex items-start gap-2 rounded-md bg-[--color-accent] px-2 py-1.5"
+          className="flex items-start gap-2 rounded-md bg-[var(--color-accent)] px-2 py-1.5"
         >
-          <Terminal className="mt-0.5 size-3.5 shrink-0 text-[--color-fg-muted]" />
+          <Terminal className="mt-0.5 size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-[--color-fg]">/{cmd.name}</p>
-            <p className="text-[10px] text-[--color-fg-muted]">{cmd.description}</p>
+            <p className="text-xs font-medium text-[var(--color-fg)]">/{cmd.name}</p>
+            <p className="text-[10px] text-[var(--color-fg-muted)]">{cmd.description}</p>
           </div>
         </div>
       ))}
@@ -63,12 +63,12 @@ export function SkillsPanel() {
       {skills.map((skill) => (
         <div
           key={skill.name}
-          className="flex items-start gap-2 rounded-md bg-[--color-accent] px-2 py-1.5"
+          className="flex items-start gap-2 rounded-md bg-[var(--color-accent)] px-2 py-1.5"
         >
-          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[--color-brand]" />
+          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-brand)]" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-[--color-fg]">{skill.name}</p>
-            <p className="text-[10px] text-[--color-fg-muted]">{skill.description}</p>
+            <p className="text-xs font-medium text-[var(--color-fg)]">{skill.name}</p>
+            <p className="text-[10px] text-[var(--color-fg-muted)]">{skill.description}</p>
           </div>
         </div>
       ))}

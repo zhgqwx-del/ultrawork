@@ -64,18 +64,18 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
         {/* Header */}
         <div className="mb-3 flex items-center gap-2">
           <HelpCircle className="size-5 text-blue-500" />
-          <span className="text-sm font-medium text-[--color-fg]">
+          <span className="text-sm font-medium text-[var(--color-fg)]">
             {q.header || t("question.title")}
           </span>
           {questions.length > 1 && (
-            <span className="ml-auto text-xs text-[--color-fg-muted]">
+            <span className="ml-auto text-xs text-[var(--color-fg-muted)]">
               {currentIndex + 1} / {questions.length}
             </span>
           )}
         </div>
 
         {/* Question text */}
-        <p className="mb-3 text-sm text-[--color-fg]">{q.question}</p>
+        <p className="mb-3 text-sm text-[var(--color-fg)]">{q.question}</p>
 
         {/* Options */}
         <div className="mb-3 space-y-1.5">
@@ -87,17 +87,17 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
                 onClick={() => toggleOption(opt.label)}
                 className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                   selected
-                    ? "border-blue-500 bg-blue-500/10 text-[--color-fg]"
-                    : "border-[--color-border] text-[--color-fg-muted] hover:border-blue-500/50 hover:bg-blue-500/5"
+                    ? "border-blue-500 bg-blue-500/10 text-[var(--color-fg)]"
+                    : "border-[var(--color-border)] text-[var(--color-fg-muted)] hover:border-blue-500/50 hover:bg-blue-500/5"
                 }`}
               >
                 <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-current">
                   {selected && <span className="size-2 rounded-full bg-blue-500" />}
                 </span>
                 <span>
-                  <span className="font-medium text-[--color-fg]">{opt.label}</span>
+                  <span className="font-medium text-[var(--color-fg)]">{opt.label}</span>
                   {opt.description && (
-                    <span className="ml-1 text-[--color-fg-muted]">— {opt.description}</span>
+                    <span className="ml-1 text-[var(--color-fg-muted)]">— {opt.description}</span>
                   )}
                 </span>
               </button>
@@ -118,7 +118,7 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
               })
             }
             placeholder={t("question.customInput")}
-            className="mb-3 w-full rounded-lg border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:border-blue-500 focus:outline-none"
+            className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:border-blue-500 focus:outline-none"
           />
         )}
 
@@ -126,7 +126,7 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
         <div className="flex items-center gap-2">
           <button
             onClick={onReject}
-            className="rounded-lg border border-[--color-border] px-4 py-1.5 text-sm text-[--color-fg-muted] transition-colors hover:bg-[--color-bg-secondary]"
+            className="rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-bg-secondary)]"
           >
             {t("question.dismiss")}
           </button>
@@ -134,7 +134,7 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
           {currentIndex > 0 && (
             <button
               onClick={handleBack}
-              className="rounded-lg border border-[--color-border] px-4 py-1.5 text-sm text-[--color-fg-muted] transition-colors hover:bg-[--color-bg-secondary]"
+              className="rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-bg-secondary)]"
             >
               {t("question.back")}
             </button>

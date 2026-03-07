@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react"
-import { ChevronDown, Check, Cpu, Loader2 } from "lucide-react"
+import { useState, useEffect, useMemo } from "react"
+import { ChevronDown, Check, Cpu, Loader2, Search } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
@@ -24,12 +24,16 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
   const [models, setModels] = useState<FlatModel[]>([])
   const [loading, setLoading] = useState(false)
   const [hasFetched, setHasFetched] = useState(false)
+  const [search, setSearch] = useState("")
   const api = useApi()
   const { t } = useI18n()
 
-  // Reset cache when popover opens so fresh data is fetched each time
+  // Reset cache and search when popover opens
   useEffect(() => {
-    if (open) setHasFetched(false)
+    if (open) {
+      setHasFetched(false)
+      setSearch("")
+    }
   }, [open])
 
   useEffect(() => {
@@ -61,6 +65,14 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
     return () => { cancelled = true }
   }, [open, api, hasFetched])
 
+  const filteredModels = useMemo(() => {
+    if (!search) return models
+    const q = search.toLowerCase()
+    return models.filter(
+      (m) => m.name.toLowerCase().includes(q) || m.providerName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+    )
+  }, [models, search])
+
   const currentLabel = currentModel
     ? currentModel.split("/").pop() || currentModel
     : t("model.noModel")
@@ -71,7 +83,7 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
         <button
           type="button"
           className={cn(
-            "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg]",
+            "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]",
             className
           )}
         >
@@ -80,21 +92,32 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
           <ChevronDown className="size-3" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" side="top" className="w-64 p-0">
-        <div className="border-b border-[--color-border] px-3 py-2">
-          <p className="text-xs font-medium text-[--color-fg]">{t("model.selectModel")}</p>
+      <PopoverContent align="start" side="top" className="w-72 p-0">
+        {/* Search */}
+        <div className="border-b border-[var(--color-border)] px-2 py-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-[var(--color-fg-muted)]" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("model.searchPlaceholder")}
+              className="w-full rounded-md border border-[var(--color-border)] bg-transparent py-1.5 pl-7 pr-2 text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              autoFocus
+            />
+          </div>
         </div>
         <div className="max-h-60 overflow-y-auto scrollbar-soft">
           {loading ? (
             <div className="flex items-center justify-center py-4">
-              <Loader2 className="size-4 animate-spin text-[--color-fg-muted]" />
+              <Loader2 className="size-4 animate-spin text-[var(--color-fg-muted)]" />
             </div>
-          ) : models.length === 0 ? (
-            <div className="px-3 py-4 text-center text-xs text-[--color-fg-muted]">
+          ) : filteredModels.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-[var(--color-fg-muted)]">
               {t("model.noModels")}
             </div>
           ) : (
-            models.map((model) => (
+            filteredModels.map((model) => (
               <button
                 key={model.id}
                 type="button"
@@ -103,30 +126,30 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
                   setOpen(false)
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-[--color-accent]",
-                  currentModel === model.id && "bg-[--color-accent]"
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--color-accent)]",
+                  currentModel === model.id && "bg-[var(--color-accent)]"
                 )}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="truncate font-medium text-[--color-fg]">{model.name}</div>
-                  <div className="truncate text-[--color-fg-muted]">{model.providerName}</div>
+                  <div className="truncate font-medium text-[var(--color-fg)]">{model.name}</div>
+                  <div className="truncate text-[var(--color-fg-muted)]">{model.providerName}</div>
                 </div>
                 {currentModel === model.id && (
-                  <Check className="size-3 shrink-0 text-[--color-brand]" />
+                  <Check className="size-3 shrink-0 text-[var(--color-brand)]" />
                 )}
               </button>
             ))
           )}
         </div>
         {onOpenModelDialog && (
-          <div className="border-t border-[--color-border] p-2">
+          <div className="border-t border-[var(--color-border)] p-2">
             <button
               type="button"
               onClick={() => {
                 onOpenModelDialog()
                 setOpen(false)
               }}
-              className="w-full rounded-md px-3 py-1.5 text-xs text-[--color-brand] transition-colors hover:bg-[--color-accent]"
+              className="w-full rounded-md px-3 py-1.5 text-xs text-[var(--color-brand)] transition-colors hover:bg-[var(--color-accent)]"
             >
               {t("model.manage")}
             </button>

@@ -105,7 +105,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <div className="space-y-4 py-4">
               {/* API Base URL */}
               <div className="space-y-2">
-                <label htmlFor="apiBaseUrl" className="text-sm font-medium text-[--color-fg]">
+                <label htmlFor="apiBaseUrl" className="text-sm font-medium text-[var(--color-fg)]">
                   {t("connection.apiBaseUrl")}
                 </label>
                 <input
@@ -114,16 +114,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   value={formData.apiBaseUrl}
                   onChange={(e) => setFormData({ ...formData, apiBaseUrl: e.target.value })}
                   placeholder={t("connection.apiBaseUrl.placeholder")}
-                  className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                 />
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("connection.apiBaseUrl.description")}
                 </p>
               </div>
 
               {/* API Username */}
               <div className="space-y-2">
-                <label htmlFor="apiUsername" className="text-sm font-medium text-[--color-fg]">
+                <label htmlFor="apiUsername" className="text-sm font-medium text-[var(--color-fg)]">
                   {t("connection.username")}
                 </label>
                 <input
@@ -132,16 +132,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   value={formData.apiUsername || ""}
                   onChange={(e) => setFormData({ ...formData, apiUsername: e.target.value })}
                   placeholder={t("connection.username.placeholder")}
-                  className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                 />
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("connection.username.description")}
                 </p>
               </div>
 
               {/* API Password */}
               <div className="space-y-2">
-                <label htmlFor="apiPassword" className="text-sm font-medium text-[--color-fg]">
+                <label htmlFor="apiPassword" className="text-sm font-medium text-[var(--color-fg)]">
                   {t("connection.password")}
                 </label>
                 <input
@@ -150,9 +150,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   value={formData.apiPassword}
                   onChange={(e) => setFormData({ ...formData, apiPassword: e.target.value })}
                   placeholder={t("connection.password.placeholder")}
-                  className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                 />
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("connection.password.description")}
                 </p>
               </div>
@@ -194,60 +194,60 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <div className="space-y-4 py-4">
               {/* Theme */}
               <div className="space-y-2">
-                <label className="text-sm font-medium text-[--color-fg]">
+                <label className="text-sm font-medium text-[var(--color-fg)]">
                   {t("general.theme")}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
-                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring] ${
+                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] ${
                       theme === "light"
-                        ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
-                        : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
                     }`}
                     onClick={() => setTheme("light")}
                   >
                     {t("general.theme.light")}
                   </button>
                   <button
-                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring] ${
+                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] ${
                       theme === "dark"
-                        ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
-                        : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
                     }`}
                     onClick={() => setTheme("dark")}
                   >
                     {t("general.theme.dark")}
                   </button>
                   <button
-                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring] ${
+                    className={`rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] ${
                       theme === "system"
-                        ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
-                        : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
                     }`}
                     onClick={() => setTheme("system")}
                   >
                     {t("general.theme.system")}
                   </button>
                 </div>
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("general.theme.description")}
                 </p>
               </div>
 
               {/* Language */}
               <div className="space-y-2">
-                <label className="text-sm font-medium text-[--color-fg]">
+                <label className="text-sm font-medium text-[var(--color-fg)]">
                   {t("general.language")}
                 </label>
                 <select
-                  className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                   value={formData.language}
                   onChange={(e) => setFormData({ ...formData, language: e.target.value as "en" | "zh" })}
                 >
                   <option value="en">English</option>
                   <option value="zh">简体中文</option>
                 </select>
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("general.language.description")}
                 </p>
               </div>
@@ -259,14 +259,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <div className="space-y-4 py-4">
               {/* App Info */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-md border border-[--color-border] bg-[--color-bg-subtle] p-3">
-                  <span className="text-sm font-medium text-[--color-fg]">{t("about.version")}</span>
-                  <span className="text-sm text-[--color-fg-muted]">0.1.0</span>
+                <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3">
+                  <span className="text-sm font-medium text-[var(--color-fg)]">{t("about.version")}</span>
+                  <span className="text-sm text-[var(--color-fg-muted)]">0.1.0</span>
                 </div>
 
-                <div className="flex items-center justify-between rounded-md border border-[--color-border] bg-[--color-bg-subtle] p-3">
-                  <span className="text-sm font-medium text-[--color-fg]">{t("about.opencode")}</span>
-                  <span className="text-sm text-[--color-fg-muted]">{formData.apiBaseUrl}</span>
+                <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3">
+                  <span className="text-sm font-medium text-[var(--color-fg)]">{t("about.opencode")}</span>
+                  <span className="text-sm text-[var(--color-fg-muted)]">{formData.apiBaseUrl}</span>
                 </div>
               </div>
 
@@ -277,7 +277,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     href="https://github.com/anomalyco/opencode"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] hover:bg-[--color-bg-subtle] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                    className="block rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                   >
                     {t("about.github")}
                   </a>
@@ -285,7 +285,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     href="https://opencode.ai/docs/zh-cn/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] hover:bg-[--color-bg-subtle] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+                    className="block rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
                   >
                     {t("about.documentation")}
                   </a>
@@ -294,7 +294,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
               {/* Copyright */}
               <div className="pt-4 text-center">
-                <p className="text-xs text-[--color-fg-muted]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("about.copyright")}
                 </p>
               </div>
@@ -303,7 +303,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </Tabs>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between gap-2 border-t border-[--color-border] pt-4">
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
           <Button variant="outline" onClick={handleReset}>
             {t("button.reset")}
           </Button>

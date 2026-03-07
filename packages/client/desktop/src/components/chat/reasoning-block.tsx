@@ -11,18 +11,18 @@ export function ReasoningBlock({ text }: ReasoningBlockProps) {
   const { t } = useI18n()
 
   return (
-    <div className="my-2 rounded-lg border border-[--color-border] bg-[--color-bg-subtle]">
+    <div className="my-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-[--color-fg-muted] hover:text-[--color-fg] transition-colors"
+        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] transition-colors"
       >
         <Brain className="size-3.5 text-purple-500" />
         <span>{t("message.reasoning")}</span>
         {open ? <ChevronDown className="ml-auto size-3.5" /> : <ChevronRight className="ml-auto size-3.5" />}
       </button>
       {open && (
-        <div className="border-t border-[--color-border] px-3 py-2">
-          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-[--color-fg-muted]">
+        <div className="border-t border-[var(--color-border)] px-3 py-2">
+          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-[var(--color-fg-muted)]">
             {text}
           </p>
         </div>

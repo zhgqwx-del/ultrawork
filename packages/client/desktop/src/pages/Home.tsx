@@ -74,10 +74,10 @@ export function HomePage() {
         <div className="flex w-full max-w-2xl flex-col items-center gap-8">
           {/* Headline */}
           <div className="space-y-2 text-center">
-            <h1 className="text-3xl font-semibold tracking-tight text-[--color-fg] md:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-tight text-[var(--color-fg)] md:text-4xl">
               {t("home.headline")}
             </h1>
-            <p className="text-sm text-[--color-fg-muted]">
+            <p className="text-sm text-[var(--color-fg-muted)]">
               {t("home.subtitle")}
             </p>
           </div>
@@ -88,13 +88,13 @@ export function HomePage() {
               <button
                 key={card.titleKey}
                 onClick={() => handleCardClick(card.promptKey)}
-                className="flex flex-col items-start gap-2 rounded-xl border border-[--color-border] bg-[--color-bg-subtle] p-4 text-left transition-all hover:border-[--color-brand] hover:shadow-sm"
+                className="flex flex-col items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 text-left transition-all hover:border-[var(--color-brand)] hover:shadow-sm"
               >
-                <card.icon className="size-5 text-[--color-brand]" />
-                <span className="text-sm font-medium text-[--color-fg]">
+                <card.icon className="size-5 text-[var(--color-brand)]" />
+                <span className="text-sm font-medium text-[var(--color-fg)]">
                   {t(card.titleKey)}
                 </span>
-                <span className="text-xs leading-relaxed text-[--color-fg-muted]">
+                <span className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
                   {t(card.descKey)}
                 </span>
               </button>

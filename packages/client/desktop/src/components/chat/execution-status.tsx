@@ -17,11 +17,11 @@ export function ExecutionStatus({ state, errorMessage, onStop }: ExecutionStatus
       {state === "working" && (
         <>
           <Loader2 className="size-3.5 animate-spin text-orange-500" />
-          <span className="text-[--color-fg-muted]">{t("message.executionWorking")}</span>
+          <span className="text-[var(--color-fg-muted)]">{t("message.executionWorking")}</span>
           {onStop && (
             <button
               onClick={onStop}
-              className="ml-2 flex items-center gap-1 rounded-md border border-[--color-border] px-2 py-0.5 text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg]"
+              className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
             >
               <Square className="size-3" />
               <span>{t("message.stopExecution")}</span>

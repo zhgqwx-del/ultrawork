@@ -370,23 +370,39 @@ describe("ApiClient", () => {
 
   describe("provider operations", () => {
     it("getProviders", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse([{ id: "opencode" }]))
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        all: [{ id: "opencode", name: "opencode", models: { "gpt-4": { id: "gpt-4", name: "GPT-4" } } }],
+        default: { opencode: "gpt-4" },
+        connected: ["opencode"],
+      }))
       const result = await client.getProviders()
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/provider")
-      expect(result).toEqual([{ id: "opencode" }])
+      expect(result).toEqual([{
+        id: "opencode",
+        name: "opencode",
+        source: undefined,
+        env: undefined,
+        options: undefined,
+        models: [{ id: "gpt-4", name: "GPT-4" }],
+        connected: ["gpt-4"],
+      }])
     })
 
     it("getProviderAuth", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse([]))
-      await client.getProviderAuth()
+      mockFetch.mockResolvedValueOnce(jsonResponse({
+        openai: [{ type: "api", label: "API Key" }],
+      }))
+      const result = await client.getProviderAuth()
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/provider/auth")
+      expect(result).toEqual([{ id: "openai", name: "openai", type: "api", set: true }])
     })
 
     it("putProviderAuth", async () => {
       mockFetch.mockResolvedValueOnce(emptyResponse(204))
-      await client.putProviderAuth("auth1", { apiKey: "sk-xxx" })
+      await client.putProviderAuth("auth1", "sk-xxx")
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/auth1")
       expect(mockFetch.mock.calls[0][1].method).toBe("PUT")
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ type: "api", key: "sk-xxx" })
     })
   })
 

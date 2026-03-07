@@ -79,10 +79,10 @@ export function CommandSelector({ input, onSelectCommand, onClose, visible }: Co
   return (
     <div
       ref={listRef}
-      className="absolute bottom-full left-0 z-50 mb-1 w-full max-w-md rounded-lg border border-[--color-border] bg-[--color-bg] shadow-lg"
+      className="absolute bottom-full left-0 z-50 mb-1 w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg"
     >
       <div className="p-1.5">
-        <p className="px-2 pb-1 text-[10px] font-medium text-[--color-fg-muted]">
+        <p className="px-2 pb-1 text-[10px] font-medium text-[var(--color-fg-muted)]">
           {t("command.title")}
         </p>
         {filtered.map((cmd, i) => (
@@ -91,8 +91,8 @@ export function CommandSelector({ input, onSelectCommand, onClose, visible }: Co
             onClick={() => onSelectCommand(cmd)}
             className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
               i === selectedIndex
-                ? "bg-[--color-accent] text-[--color-fg]"
-                : "text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+                ? "bg-[var(--color-accent)] text-[var(--color-fg)]"
+                : "text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
             }`}
           >
             <Terminal className="size-3.5 shrink-0" />

@@ -63,7 +63,7 @@ export function MCPPanel() {
   const entries = Object.entries(statusMap)
 
   if (loading) {
-    return <p className="py-2 text-xs text-[--color-fg-muted]">{t("common.loading")}</p>
+    return <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("common.loading")}</p>
   }
 
   if (error) {
@@ -73,7 +73,7 @@ export function MCPPanel() {
   return (
     <div className="space-y-1.5">
       {entries.length === 0 && !showAdd && (
-        <p className="py-1 text-xs text-[--color-fg-muted]">{t("mcp.noServers")}</p>
+        <p className="py-1 text-xs text-[var(--color-fg-muted)]">{t("mcp.noServers")}</p>
       )}
 
       {entries.map(([name, status]) => (
@@ -95,7 +95,7 @@ export function MCPPanel() {
       ) : (
         <button
           onClick={() => setShowAdd(true)}
-          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg]"
+          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
         >
           <Plus className="size-3" />
           {t("mcp.addServer")}
@@ -135,7 +135,7 @@ function MCPServerItem({
   const StatusIcon = isConnected ? PlugZap : (isFailed || needsAuth) ? AlertCircle : Plug
 
   return (
-    <div className="flex items-center gap-2 rounded-md bg-[--color-accent] px-2 py-1.5">
+    <div className="flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-2 py-1.5">
       <StatusIcon
         className={`size-3.5 shrink-0 ${
           isConnected
@@ -144,19 +144,19 @@ function MCPServerItem({
             ? "text-red-400"
             : needsAuth
             ? "text-amber-400"
-            : "text-[--color-fg-muted]"
+            : "text-[var(--color-fg-muted)]"
         }`}
       />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-[--color-fg]">{name}</p>
-        <p className={`text-[10px] ${isFailed ? "text-red-400" : needsAuth ? "text-amber-400" : "text-[--color-fg-muted]"}`}>
+        <p className="truncate text-xs font-medium text-[var(--color-fg)]">{name}</p>
+        <p className={`text-[10px] ${isFailed ? "text-red-400" : needsAuth ? "text-amber-400" : "text-[var(--color-fg-muted)]"}`}>
           {"error" in status && status.error ? status.error : statusLabel}
         </p>
       </div>
       <button
         onClick={onToggle}
         disabled={loading}
-        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors hover:bg-[--color-bg] disabled:opacity-50"
+        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors hover:bg-[var(--color-bg)] disabled:opacity-50"
       >
         {loading ? (
           <Loader2 className="size-3 animate-spin" />
@@ -197,10 +197,10 @@ function AddMCPForm({
   }
 
   return (
-    <div className="space-y-2 rounded-md border border-[--color-border] bg-[--color-accent] p-2">
+    <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-accent)] p-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-[--color-fg]">{t("mcp.addServer")}</span>
-        <button onClick={onCancel} className="text-[--color-fg-muted] hover:text-[--color-fg]">
+        <span className="text-xs font-medium text-[var(--color-fg)]">{t("mcp.addServer")}</span>
+        <button onClick={onCancel} className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]">
           <X className="size-3.5" />
         </button>
       </div>
@@ -209,7 +209,7 @@ function AddMCPForm({
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder={t("mcp.namePlaceholder")}
-        className="w-full rounded border border-[--color-border] bg-[--color-bg] px-2 py-1 text-xs text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none"
+        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none"
       />
 
       <div className="flex gap-1">
@@ -219,8 +219,8 @@ function AddMCPForm({
             onClick={() => setType(v)}
             className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
               type === v
-                ? "bg-[--color-brand] text-white"
-                : "bg-[--color-bg] text-[--color-fg-muted] hover:text-[--color-fg]"
+                ? "bg-[var(--color-brand)] text-white"
+                : "bg-[var(--color-bg)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
             }`}
           >
             {v === "remote" ? t("mcp.typeRemote") : t("mcp.typeLocal")}
@@ -233,21 +233,21 @@ function AddMCPForm({
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://mcp-server.example.com"
-          className="w-full rounded border border-[--color-border] bg-[--color-bg] px-2 py-1 text-xs text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none"
         />
       ) : (
         <input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           placeholder="python -m mcp_server"
-          className="w-full rounded border border-[--color-border] bg-[--color-bg] px-2 py-1 text-xs text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none"
         />
       )}
 
       <button
         onClick={handleSubmit}
         disabled={!canSubmit || loading}
-        className="w-full rounded bg-[--color-brand] px-2 py-1 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+        className="w-full rounded bg-[var(--color-brand)] px-2 py-1 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
       >
         {loading ? <Loader2 className="mx-auto size-3 animate-spin" /> : t("mcp.add")}
       </button>

@@ -62,33 +62,33 @@ function FileTreeItem({
     <div>
       <div
         onClick={handleToggle}
-        className={`flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-[--color-accent] ${isDir ? "cursor-pointer" : ""}`}
+        className={`flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-[var(--color-accent)] ${isDir ? "cursor-pointer" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
         {isDir ? (
           <>
-            {expanded ? <ChevronDown className="size-3 shrink-0 text-[--color-fg-muted]" /> : <ChevronRight className="size-3 shrink-0 text-[--color-fg-muted]" />}
+            {expanded ? <ChevronDown className="size-3 shrink-0 text-[var(--color-fg-muted)]" /> : <ChevronRight className="size-3 shrink-0 text-[var(--color-fg-muted)]" />}
             {expanded ? <FolderOpen className="size-3.5 shrink-0 text-yellow-600" /> : <Folder className="size-3.5 shrink-0 text-yellow-600" />}
           </>
         ) : (
           <>
             <span className="size-3 shrink-0" />
-            <FileText className="size-3.5 shrink-0 text-[--color-fg-muted]" />
+            <FileText className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
           </>
         )}
-        <span className="min-w-0 flex-1 truncate text-[--color-fg]">{entry.name}</span>
+        <span className="min-w-0 flex-1 truncate text-[var(--color-fg)]">{entry.name}</span>
         {gitStatus && <GitStatusDot status={gitStatus} />}
       </div>
 
       {expanded && isDir && (
         <div>
           {loading && (
-            <div className="py-1 text-[10px] text-[--color-fg-muted]" style={{ paddingLeft: `${(depth + 1) * 12 + 4}px` }}>
+            <div className="py-1 text-[10px] text-[var(--color-fg-muted)]" style={{ paddingLeft: `${(depth + 1) * 12 + 4}px` }}>
               {t("common.loading")}
             </div>
           )}
           {children && children.length === 0 && !loading && (
-            <div className="py-1 text-[10px] text-[--color-fg-muted]" style={{ paddingLeft: `${(depth + 1) * 12 + 4}px` }}>
+            <div className="py-1 text-[10px] text-[var(--color-fg-muted)]" style={{ paddingLeft: `${(depth + 1) * 12 + 4}px` }}>
               {t("workspace.emptyDir")}
             </div>
           )}
@@ -150,15 +150,15 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
     <div className="space-y-2">
       {/* Working directory header */}
       {directory && (
-        <div className="flex items-center gap-2 rounded bg-[--color-accent] px-2 py-1.5 text-xs">
-          <Folder className="size-3.5 shrink-0 text-[--color-fg-muted]" />
+        <div className="flex items-center gap-2 rounded bg-[var(--color-accent)] px-2 py-1.5 text-xs">
+          <Folder className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-[--color-fg-muted]">{t("message.workingDirectory")}</p>
-            <p className="truncate text-[--color-fg]" title={directory}>{directory}</p>
+            <p className="text-[10px] text-[var(--color-fg-muted)]">{t("message.workingDirectory")}</p>
+            <p className="truncate text-[var(--color-fg)]" title={directory}>{directory}</p>
           </div>
           <button
             onClick={loadData}
-            className="shrink-0 rounded p-0.5 text-[--color-fg-muted] hover:text-[--color-fg]"
+            className="shrink-0 rounded p-0.5 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
             aria-label={t("workspace.refresh")}
           >
             <RefreshCw className="size-3" />
@@ -168,7 +168,7 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
 
       {/* Git status summary */}
       {gitStatus.length > 0 && (
-        <div className="flex items-center gap-1.5 px-1 text-[10px] text-[--color-fg-muted]">
+        <div className="flex items-center gap-1.5 px-1 text-[10px] text-[var(--color-fg-muted)]">
           <span className="inline-block size-2 rounded-full bg-yellow-500" />
           <span>{gitStatus.length} {t("workspace.filesChanged")}</span>
         </div>
@@ -176,13 +176,13 @@ export function WorkspacePanel({ directory }: WorkspacePanelProps) {
 
       {/* File tree */}
       {loading && !files && (
-        <p className="py-2 text-xs text-[--color-fg-muted]">{t("common.loading")}</p>
+        <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("common.loading")}</p>
       )}
       {error && (
         <p className="py-2 text-xs text-red-500">{t("workspace.loadError")}</p>
       )}
       {files && files.length === 0 && (
-        <p className="py-2 text-xs text-[--color-fg-muted]">{t("workspace.emptyDir")}</p>
+        <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("workspace.emptyDir")}</p>
       )}
       {files && files.length > 0 && (
         <div className="max-h-64 overflow-y-auto scrollbar-soft">

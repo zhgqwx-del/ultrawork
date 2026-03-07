@@ -45,7 +45,7 @@ function DiffView({ content }: { content: string }) {
   return (
     <pre className="overflow-x-auto p-4 font-mono text-sm">
       {lines.map((line, i) => {
-        let cls = "text-[--color-fg]"
+        let cls = "text-[var(--color-fg)]"
         if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-green-600 bg-green-500/10"
         else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-red-600 bg-red-500/10"
         else if (line.startsWith("@@")) cls = "text-blue-500 bg-blue-500/10"
@@ -63,7 +63,7 @@ function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-4 shrink-0 text-blue-500" />
   if (isImageMime(artifact.mime)) return <FileImage className="size-4 shrink-0 text-purple-500" />
   if (artifact.path.endsWith(".md") || artifact.path.endsWith(".mdx")) return <FileText className="size-4 shrink-0 text-orange-500" />
-  return <File className="size-4 shrink-0 text-[--color-fg-muted]" />
+  return <File className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
 }
 
 function basename(path: string): string {
@@ -123,24 +123,24 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const language = getLanguageFromPath(artifact.path)
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border-r border-[--color-border] bg-[--color-bg]">
+    <div className="flex h-full flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg)]">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-[--color-border] px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <ArtifactIcon artifact={artifact} />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-[--color-fg]" title={artifact.path}>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--color-fg)]" title={artifact.path}>
           {basename(artifact.path)}
         </span>
         {content && (
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
           >
             {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
           </button>
         )}
         <button
           onClick={onClose}
-          className="flex items-center justify-center rounded p-1 text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+          className="flex items-center justify-center rounded p-1 text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
           aria-label={t("artifact.close")}
         >
           <X className="size-4" />
@@ -148,14 +148,14 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
       </div>
 
       {/* Path breadcrumb */}
-      <div className="border-b border-[--color-border] px-4 py-1.5 text-xs text-[--color-fg-muted]">
+      <div className="border-b border-[var(--color-border)] px-4 py-1.5 text-xs text-[var(--color-fg-muted)]">
         {artifact.path}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-auto scrollbar-soft">
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-sm text-[--color-fg-muted]">
+          <div className="flex items-center justify-center py-12 text-sm text-[var(--color-fg-muted)]">
             {t("artifact.loading")}
           </div>
         ) : error ? (
@@ -163,7 +163,7 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
             {error}
           </div>
         ) : content === null || content === "" ? (
-          <div className="flex items-center justify-center py-12 text-sm text-[--color-fg-muted]">
+          <div className="flex items-center justify-center py-12 text-sm text-[var(--color-fg-muted)]">
             {t("artifact.noContent")}
           </div>
         ) : artifact.type === "patch" ? (

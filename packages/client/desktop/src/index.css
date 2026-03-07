@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* WorkAny-style design tokens */
+/* Design tokens */
 :root {
   /* Core colors */
   --color-bg: #ffffff;
@@ -21,6 +21,7 @@
   --color-brand-fg: #ffffff;
   --color-brand-gradient: linear-gradient(135deg, #7c3aed, #2563eb);
   --color-bg-subtle: #f8fafc;
+  --color-bg-secondary: #f1f5f9;
 
   /* Sidebar */
   --sidebar-bg: #ffffff;
@@ -40,7 +41,6 @@
 
 /* Dark mode colors */
 .dark {
-  /* Core colors */
   --color-bg: #0f172a;
   --color-fg: #f1f5f9;
   --color-fg-muted: #64748b;
@@ -54,13 +54,12 @@
   --color-muted: #1e293b;
   --color-muted-fg: #94a3b8;
 
-  /* Brand */
   --color-brand: #ea580c;
   --color-brand-fg: #ffffff;
   --color-brand-gradient: linear-gradient(135deg, #7c3aed, #2563eb);
   --color-bg-subtle: #1e293b;
+  --color-bg-secondary: #1e293b;
 
-  /* Sidebar */
   --sidebar-bg: #000000;
   --sidebar-fg: #f1f5f9;
   --sidebar-fg-muted: rgba(241, 245, 249, 0.5);
@@ -68,11 +67,9 @@
   --sidebar-accent-hover: rgba(241, 245, 249, 0.04);
   --sidebar-border: #1e293b;
 
-  /* Popover / Dropdown */
   --color-popover: #1e293b;
   --color-popover-fg: #f1f5f9;
 
-  /* Ring */
   --color-ring: #3b82f6;
 }
 

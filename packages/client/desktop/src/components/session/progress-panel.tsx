@@ -46,7 +46,7 @@ function StepIcon({ status }: { status: string }) {
     case "error":
       return <XCircle className="size-3.5 shrink-0 text-red-500" />
     default:
-      return <Circle className="size-3.5 shrink-0 text-[--color-fg-muted]" />
+      return <Circle className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
   }
 }
 
@@ -57,14 +57,14 @@ export function ProgressPanel({ messages }: ProgressPanelProps) {
 
   if (steps.length === 0) {
     return (
-      <p className="py-2 text-xs text-[--color-fg-muted]">{t("message.noSteps")}</p>
+      <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("message.noSteps")}</p>
     )
   }
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-medium text-[--color-fg-muted]">
+        <span className="text-[10px] font-medium text-[var(--color-fg-muted)]">
           {completed} / {steps.length}
         </span>
       </div>
@@ -73,7 +73,7 @@ export function ProgressPanel({ messages }: ProgressPanelProps) {
           <div key={i} className="flex items-start gap-2 rounded px-1 py-1 text-xs">
             <StepIcon status={step.status} />
             <div className="min-w-0 flex-1">
-              <span className="text-[--color-fg]">{step.title}</span>
+              <span className="text-[var(--color-fg)]">{step.title}</span>
               {step.error && (
                 <p className="mt-0.5 truncate text-[10px] text-red-500">{step.error}</p>
               )}

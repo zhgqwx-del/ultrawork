@@ -19,7 +19,7 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
   if (messages.length === 0 && !isLoading) {
     return (
       <div className="flex min-h-[200px] items-center justify-center py-12">
-        <p className="text-sm text-[--color-fg-muted]">{t("placeholder.sendMessage")}</p>
+        <p className="text-sm text-[var(--color-fg-muted)]">{t("placeholder.sendMessage")}</p>
       </div>
     )
   }
@@ -57,8 +57,8 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
 
       {isLoading && (
         <div className="flex items-center justify-center py-8">
-          <div className="flex items-center gap-2 text-sm text-[--color-fg-muted]">
-            <div className="size-4 animate-spin rounded-full border-2 border-[--color-fg-muted] border-t-transparent" />
+          <div className="flex items-center gap-2 text-sm text-[var(--color-fg-muted)]">
+            <div className="size-4 animate-spin rounded-full border-2 border-[var(--color-fg-muted)] border-t-transparent" />
             <span>{t("message.loadingMessages")}</span>
           </div>
         </div>

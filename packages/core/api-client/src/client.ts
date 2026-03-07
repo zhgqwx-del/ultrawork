@@ -7,7 +7,9 @@ import type {
   PermissionRequest,
   QuestionRequest,
   Provider,
+  ProviderResponse,
   ProviderAuthInfo,
+  ProviderAuthResponse,
   OpenCodeConfig,
   Agent,
   PromptAsyncRequest,
@@ -200,17 +202,39 @@ export class ApiClient {
   // --- Provider ---
 
   async getProviders(): Promise<Provider[]> {
-    return this.request<Provider[]>("/provider")
+    const raw = await this.request<ProviderResponse>("/provider")
+    const connectedSet = new Set(raw.connected || [])
+    return (raw.all || []).map((p) => {
+      const models = Object.values(p.models || {})
+      return {
+        id: p.id,
+        name: p.name,
+        source: p.source,
+        env: p.env,
+        options: p.options,
+        models,
+        // If this provider is connected, all its models are available
+        connected: connectedSet.has(p.id) ? models.map((m) => m.id) : [],
+      }
+    })
   }
 
   async getProviderAuth(): Promise<ProviderAuthInfo[]> {
-    return this.request<ProviderAuthInfo[]>("/provider/auth")
+    const raw = await this.request<ProviderAuthResponse>("/provider/auth")
+    if (!raw || typeof raw !== "object") return []
+    // Transform { providerId: [{type, label}] } into ProviderAuthInfo[]
+    return Object.entries(raw).map(([id, methods]) => ({
+      id,
+      name: id,
+      type: methods?.[0]?.type || "unknown",
+      set: methods?.some((m) => m.type === "api") || false,
+    }))
   }
 
-  async putProviderAuth(authId: string, config: Record<string, unknown>): Promise<void> {
+  async putProviderAuth(authId: string, apiKey: string): Promise<void> {
     await this.request<void>(`/auth/${authId}`, {
       method: "PUT",
-      body: JSON.stringify(config),
+      body: JSON.stringify({ type: "api", key: apiKey }),
     })
   }
 

@@ -24,8 +24,8 @@ export function StepIndicator({ reason, tokens, cost }: StepFinishProps) {
   if (!hasStats) return null
 
   return (
-    <div className="my-2 flex items-center gap-3 text-[10px] text-[--color-fg-muted]">
-      <div className="h-px flex-1 bg-[--color-border]" />
+    <div className="my-2 flex items-center gap-3 text-[10px] text-[var(--color-fg-muted)]">
+      <div className="h-px flex-1 bg-[var(--color-border)]" />
       <div className="flex items-center gap-2">
         {tokens?.input != null && <span>{t("message.tokensInput")}: {formatTokens(tokens.input)}</span>}
         {tokens?.output != null && <span>{t("message.tokensOutput")}: {formatTokens(tokens.output)}</span>}
@@ -36,7 +36,7 @@ export function StepIndicator({ reason, tokens, cost }: StepFinishProps) {
         {cost != null && <span>${cost.toFixed(4)}</span>}
         {reason && reason !== "stop" && <span>({reason})</span>}
       </div>
-      <div className="h-px flex-1 bg-[--color-border]" />
+      <div className="h-px flex-1 bg-[var(--color-border)]" />
     </div>
   )
 }

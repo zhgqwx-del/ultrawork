@@ -13,6 +13,9 @@ Round 3:      ✅ 完成 (Permission & Question Dock + 10 个联调修复)
 Round 4:      ✅ 完成 (3 Steps: 模型管理/MCP命令/文件产物预览)
 Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low 修复)
 全面代码审查:  ✅ 完成 (36 问题: 3C+7H+14M+12L 发现, 20 个修复, 16 个已知推迟)
+手动测试 4.1:  ✅ 完成 (E1-E10 全部通过, E5 bugfix)
+手动测试 4.2:  ✅ 完成 (U1-U12 全部通过)
+手动测试 4.3:  ✅ 完成 (M1-M4 全部通过, 10 个 bugfix)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -1735,5 +1738,50 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
+---
+
+### 手动测试 — 4.3 模型管理 (2026-03-07)
+
+**测试结果**: 全部通过 ✅ (M1-M4 = 4 项)
+
+#### 发现并修复的问题
+
+| # | 问题 | 严重度 | 修复 |
+|---|------|--------|------|
+| 1 | ModelDialog 白屏: `providers.filter is not a function` | Critical | `getProviders()` 转换 API 响应 (`{ all, connected }` → `Provider[]`) |
+| 2 | Dialog/Popover/DropdownMenu 全部透明 | Critical | Tailwind v4: `[--color-*]` → `[var(--color-*)]` (30+ 文件) |
+| 3 | 搜索结果排序不合理 | Medium | connected 优先 + 名称匹配优先 + 字母排序 |
+| 4 | ModelSelector Popover 缺少搜索 | Medium | 添加搜索框，支持模型名/供应商名/ID 过滤 |
+| 5 | 创建按钮不可见 (透明背景 + 白色文字) | High | 同 #2 Tailwind var() 修复 |
+| 6 | `PUT /auth/{id}` 400 错误 | High | body 从 `{ apiKey }` 改为 `{ type: "api", key }` |
+| 7 | 「添加供应商」流程不匹配 OpenCode 架构 | Medium | 重构为「配置供应商」两步式 (选择注册表供应商 → 配置 Key/URL) |
+| 8 | 嵌套 Dialog 冲突: 创建后两个 Dialog 都关闭 | High | 改为同一 Dialog 内视图切换 (`"list"` / `"configure"`) |
+| 9 | `PATCH /config` 触发 Vite HMR → 页面崩溃显示原始 JSON | Critical | Vite watch 忽略 `config.json` + `/session` proxy bypass HTML 请求 |
+| 10 | `config.json` 是运行时产物，不应提交 | Low | 加入 `.gitignore` |
+
+#### 文件变更
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/types.ts` | 更新 - 新增 ProviderResponse/RawProvider/ProviderAuthResponse 类型 |
+| `packages/core/api-client/src/client.ts` | 更新 - getProviders/getProviderAuth/putProviderAuth 修复 |
+| `packages/core/api-client/src/index.ts` | 更新 - 导出新类型 |
+| `packages/core/api-client/src/__tests__/client.test.ts` | 更新 - 测试对齐真实 API 响应格式 |
+| `packages/client/desktop/vite.config.ts` | 更新 - watch 忽略 config.json + /session proxy bypass |
+| `packages/client/desktop/src/components/settings/model-dialog.tsx` | 重写 - 视图切换 + 配置供应商两步式 |
+| `packages/client/desktop/src/components/chat/model-selector.tsx` | 更新 - 添加搜索框 |
+| `packages/client/desktop/src/components/ui/dialog.tsx` | 更新 - var(--color-*) 修复 |
+| `packages/client/desktop/src/components/ui/popover.tsx` | 更新 - var(--color-*) 修复 |
+| `packages/client/desktop/src/components/ui/dropdown-menu.tsx` | 更新 - var(--color-*) 修复 |
+| `packages/client/desktop/src/components/ui/tooltip.tsx` | 更新 - var(--color-*) 修复 |
+| `packages/client/desktop/src/lib/i18n-context.tsx` | 更新 - 配置供应商相关 i18n 键 (中英文) |
+| `packages/client/desktop/src/__tests__/lib/sse-client.test.ts` | 更新 - 修复未使用变量 |
+| `.gitignore` | 更新 - 忽略 OpenCode 运行时 config.json |
+| 30+ .tsx 文件 | 更新 - 全局 `[--color-*]` → `[var(--color-*)]` Tailwind v4 修复 |
+
+**验证**: TypeCheck 3/3 ✅，M1-M4 测试通过 ✅
+
+---
+
 **最后更新**: 2026-03-07
-**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2 完成 ✅
+**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2/4.3 完成 ✅

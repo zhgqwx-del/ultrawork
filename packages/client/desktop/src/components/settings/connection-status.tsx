@@ -48,9 +48,9 @@ export function ConnectionStatus() {
           {isConnected ? (
             <Wifi className="size-3.5 text-green-500" />
           ) : (
-            <WifiOff className="size-3.5 text-[--color-fg-muted]" />
+            <WifiOff className="size-3.5 text-[var(--color-fg-muted)]" />
           )}
-          <span className={isConnected ? "text-green-500" : "text-[--color-fg-muted]"}>
+          <span className={isConnected ? "text-green-500" : "text-[var(--color-fg-muted)]"}>
             {isConnected ? connectedLabel : disconnectedLabel}
           </span>
         </div>

@@ -26,13 +26,13 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
         {/* Header */}
         <div className="mb-3 flex items-center gap-2">
           <Shield className="size-5 text-amber-500" />
-          <span className="text-sm font-medium text-[--color-fg]">
+          <span className="text-sm font-medium text-[var(--color-fg)]">
             {t("permission.title")} — {label}
           </span>
         </div>
 
         {/* Description */}
-        <p className="mb-3 text-sm text-[--color-fg-muted]">
+        <p className="mb-3 text-sm text-[var(--color-fg-muted)]">
           {t("permission.description")}
         </p>
 
@@ -42,7 +42,7 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
             {request.patterns.map((pattern, i) => (
               <code
                 key={i}
-                className="block rounded bg-[--color-bg-secondary] px-3 py-1.5 text-xs text-[--color-fg]"
+                className="block rounded bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs text-[var(--color-fg)]"
               >
                 {pattern}
               </code>
@@ -54,14 +54,14 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => onReply("reject")}
-            className="rounded-lg border border-[--color-border] px-4 py-1.5 text-sm text-[--color-fg-muted] transition-colors hover:bg-[--color-bg-secondary]"
+            className="rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-bg-secondary)]"
           >
             {t("permission.reject")}
           </button>
           <div className="flex-1" />
           <button
             onClick={() => onReply("always")}
-            className="rounded-lg border border-[--color-border] px-4 py-1.5 text-sm text-[--color-fg-muted] transition-colors hover:bg-[--color-bg-secondary]"
+            className="rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-bg-secondary)]"
           >
             {t("permission.allowAlways")}
           </button>

@@ -517,8 +517,8 @@ export function SessionPage() {
             className={cn(
               "flex size-8 items-center justify-center rounded-lg transition-colors",
               rightOpen
-                ? "bg-[--color-accent] text-[--color-fg]"
-                : "text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+                ? "bg-[var(--color-accent)] text-[var(--color-fg)]"
+                : "text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
             )}
           >
             <PanelRight className="size-4" />
@@ -586,7 +586,7 @@ export function SessionPage() {
 
       {/* Right Sidebar */}
       {rightOpen && (
-        <aside className="flex w-80 shrink-0 flex-col border-l border-[--color-border] bg-[--color-bg]">
+        <aside className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
           <div className="flex-1 overflow-y-auto p-3 scrollbar-soft">
             <RightSidebarSection title={t("session.rightSidebar.plan")}>
               <ProgressPanel messages={messages} />
@@ -619,16 +619,16 @@ function RightSidebarSection({ title, placeholder, children }: { title: string; 
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="border-b border-[--color-border] last:border-b-0">
+    <div className="border-b border-[var(--color-border)] last:border-b-0">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 py-3 text-sm font-medium text-[--color-fg] hover:text-[--color-fg]"
+        className="flex w-full items-center gap-2 py-3 text-sm font-medium text-[var(--color-fg)] hover:text-[var(--color-fg)]"
       >
         {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
         {title}
       </button>
       {open && (
-        <div className="pb-3 text-xs text-[--color-fg-muted]">
+        <div className="pb-3 text-xs text-[var(--color-fg-muted)]">
           {children || placeholder}
         </div>
       )}

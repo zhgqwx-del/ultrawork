@@ -90,7 +90,7 @@ export function ChatInput({
   return (
     <div
       className={cn(
-        "relative rounded-2xl border border-[--color-border] bg-[--color-bg]",
+        "relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]",
         variant === "home" ? "shadow-lg p-4" : "shadow-sm py-2.5 pl-4 pr-3",
         className
       )}
@@ -116,7 +116,7 @@ export function ChatInput({
         placeholder={placeholder}
         disabled={disabled}
         className={cn(
-          "w-full resize-none border-0 bg-transparent text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none disabled:opacity-50",
+          "w-full resize-none border-0 bg-transparent text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none disabled:opacity-50",
           variant === "home" ? "text-base" : "text-sm pr-10"
         )}
         rows={variant === "home" ? 2 : 1}
@@ -134,7 +134,7 @@ export function ChatInput({
             type="button"
             aria-label={t("aria.attachment")}
             disabled={disabled}
-            className="flex size-7 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg] disabled:opacity-30 disabled:hover:bg-transparent"
+            className="flex size-7 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <Plus className="size-4" />
           </button>
@@ -147,8 +147,8 @@ export function ChatInput({
             className={cn(
               "rounded-lg px-5 py-2 text-sm font-medium transition-all",
               canSend
-                ? "bg-[--color-brand] text-white hover:opacity-90"
-                : "bg-[--color-brand]/60 text-white/80 cursor-default"
+                ? "bg-[var(--color-brand)] text-white hover:opacity-90"
+                : "bg-[var(--color-brand)]/60 text-white/80 cursor-default"
             )}
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : ctaLabel}
@@ -170,8 +170,8 @@ export function ChatInput({
           className={cn(
             "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
             canSend
-              ? "bg-[--color-fg] text-[--color-bg] hover:opacity-90"
-              : "bg-[--color-fg-muted] text-[--color-bg] opacity-30"
+              ? "bg-[var(--color-fg)] text-[var(--color-bg)] hover:opacity-90"
+              : "bg-[var(--color-fg-muted)] text-[var(--color-bg)] opacity-30"
           )}
         >
           {loading ? (

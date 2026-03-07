@@ -26,7 +26,7 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
         <button
           onClick={toggleLeft}
           aria-label="Toggle sidebar"
-          className="flex size-8 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg]"
+          className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
         >
           <PanelLeft className="size-4" />
         </button>
@@ -36,14 +36,14 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
             <button
               disabled
               aria-label="Go back"
-              className="flex size-8 items-center justify-center rounded-lg text-[--color-fg-muted] opacity-40"
+              className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] opacity-40"
             >
               <ChevronLeft className="size-4" />
             </button>
             <button
               disabled
               aria-label="Go forward"
-              className="flex size-8 items-center justify-center rounded-lg text-[--color-fg-muted] opacity-40"
+              className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] opacity-40"
             >
               <ChevronRight className="size-4" />
             </button>
@@ -54,7 +54,7 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
       {/* Center: title */}
       {title && (
         <div className="flex min-w-0 flex-1 items-center justify-center">
-          <h1 className="truncate text-sm font-medium text-[--color-fg]">{title}</h1>
+          <h1 className="truncate text-sm font-medium text-[var(--color-fg)]">{title}</h1>
         </div>
       )}
       {!title && <div className="flex-1" />}
@@ -66,7 +66,7 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex size-8 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg]"
+            className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
           >
             <X className="size-4" />
           </button>

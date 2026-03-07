@@ -27,7 +27,7 @@ export function SettingsPage() {
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left nav */}
-        <nav className="flex w-56 shrink-0 flex-col gap-1 border-r border-[--color-border] p-3">
+        <nav className="flex w-56 shrink-0 flex-col gap-1 border-r border-[var(--color-border)] p-3">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.key}
@@ -35,8 +35,8 @@ export function SettingsPage() {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
                 activeSection === item.key
-                  ? "bg-[--color-accent] font-medium text-[--color-fg]"
-                  : "text-[--color-fg-muted] hover:bg-[--color-accent] hover:text-[--color-fg]"
+                  ? "bg-[var(--color-accent)] font-medium text-[var(--color-fg)]"
+                  : "text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
               )}
             >
               <item.icon className="size-4" />
@@ -65,20 +65,20 @@ function GeneralSection() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-[--color-fg]">{t("settingsPage.general")}</h2>
+      <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("settingsPage.general")}</h2>
 
       {/* Theme */}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-[--color-fg]">{t("general.theme")}</label>
+        <label className="text-sm font-medium text-[var(--color-fg)]">{t("general.theme")}</label>
         <div className="grid grid-cols-3 gap-2">
           {(["light", "dark", "system"] as const).map((v) => (
             <button
               key={v}
               className={cn(
-                "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring]",
+                "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
                 theme === v
-                  ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
-                  : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                  : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
               )}
               onClick={() => setTheme(v)}
             >
@@ -86,21 +86,21 @@ function GeneralSection() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-[--color-fg-muted]">{t("general.theme.description")}</p>
+        <p className="text-xs text-[var(--color-fg-muted)]">{t("general.theme.description")}</p>
       </div>
 
       {/* Language */}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-[--color-fg]">{t("general.language")}</label>
+        <label className="text-sm font-medium text-[var(--color-fg)]">{t("general.language")}</label>
         <div className="grid grid-cols-2 gap-2">
           {([{ value: "en", label: "English" }, { value: "zh", label: "简体中文" }] as const).map((lang) => (
             <button
               key={lang.value}
               className={cn(
-                "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--color-ring]",
+                "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
                 config.language === lang.value
-                  ? "border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]"
-                  : "border-[--color-border] bg-[--color-bg] text-[--color-fg] hover:bg-[--color-accent]"
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                  : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
               )}
               onClick={() => updateConfig({ language: lang.value as "en" | "zh" })}
             >
@@ -108,7 +108,7 @@ function GeneralSection() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-[--color-fg-muted]">{t("general.language.description")}</p>
+        <p className="text-xs text-[var(--color-fg-muted)]">{t("general.language.description")}</p>
       </div>
     </div>
   )
@@ -119,9 +119,9 @@ function PrivacySection() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-[--color-fg]">{t("settingsPage.privacy.title")}</h2>
-      <p className="text-sm text-[--color-fg-muted]">{t("settingsPage.privacy.desc")}</p>
-      <div className="rounded-lg border border-[--color-border] bg-[--color-bg-subtle] p-6 text-center text-sm text-[--color-fg-muted]">
+      <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("settingsPage.privacy.title")}</h2>
+      <p className="text-sm text-[var(--color-fg-muted)]">{t("settingsPage.privacy.desc")}</p>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-6 text-center text-sm text-[var(--color-fg-muted)]">
         {t("placeholder.privacyComingSoon")}
       </div>
     </div>
@@ -172,39 +172,39 @@ function CapabilitiesSection() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-[--color-fg]">{t("settingsPage.capabilities.title")}</h2>
+      <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("settingsPage.capabilities.title")}</h2>
 
       <div className="space-y-4">
         <div className="space-y-2">
-          <label className="text-sm font-medium text-[--color-fg]">{t("connection.apiBaseUrl")}</label>
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("connection.apiBaseUrl")}</label>
           <input
             type="text"
             value={formData.apiBaseUrl}
             onChange={(e) => setFormData({ ...formData, apiBaseUrl: e.target.value })}
             placeholder={t("connection.apiBaseUrl.placeholder")}
-            className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium text-[--color-fg]">{t("connection.username")}</label>
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("connection.username")}</label>
           <input
             type="text"
             value={formData.apiUsername || ""}
             onChange={(e) => setFormData({ ...formData, apiUsername: e.target.value })}
             placeholder={t("connection.username.placeholder")}
-            className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium text-[--color-fg]">{t("connection.password")}</label>
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("connection.password")}</label>
           <input
             type="password"
             value={formData.apiPassword}
             onChange={(e) => setFormData({ ...formData, apiPassword: e.target.value })}
             placeholder={t("connection.password.placeholder")}
-            className="w-full rounded-md border border-[--color-border] bg-[--color-bg] px-3 py-2 text-sm text-[--color-fg] placeholder:text-[--color-fg-muted] focus:outline-none focus:ring-2 focus:ring-[--color-ring]"
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
           />
         </div>
 

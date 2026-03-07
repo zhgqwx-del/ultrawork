@@ -3,6 +3,9 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "path"
 
+// Shared proxy target config
+const backend = { target: "http://localhost:4096", changeOrigin: true }
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -15,74 +18,41 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // Ignore Tauri source and OpenCode config files to prevent HMR reload
+      ignored: ["**/src-tauri/**", "**/config.json", "**/.opencode/**"],
     },
     proxy: {
-      "/event": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
+      "/event": backend,
+      // /session proxy: only match API calls, not SPA routes like /session/ses_xxx
+      // API routes always have a sub-path after the session ID (e.g. /session/ID/message)
+      // or are exact /session (list) or /session with POST (create)
       "/session": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
+        ...backend,
         timeout: 300000,
+        // Bypass proxy for browser navigation requests (HTML pages)
+        // so Vite SPA fallback serves index.html instead
+        bypass(req) {
+          // Browser navigation/page requests accept text/html
+          const accept = req.headers.accept || ""
+          if (accept.includes("text/html")) {
+            return req.url // return the URL to skip proxy and let Vite handle it
+          }
+        },
       },
-      "/permission": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/question": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/health": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/global": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/config": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/provider": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/auth": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/agent": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/mcp": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/skill": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/command": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/file": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/project": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
-      "/experimental": {
-        target: "http://localhost:4096",
-        changeOrigin: true,
-      },
+      "/permission": backend,
+      "/question": backend,
+      "/health": backend,
+      "/global": backend,
+      "/config": backend,
+      "/provider": backend,
+      "/auth": backend,
+      "/agent": backend,
+      "/mcp": backend,
+      "/skill": backend,
+      "/command": backend,
+      "/file": backend,
+      "/project": backend,
+      "/experimental": backend,
     },
   },
 })

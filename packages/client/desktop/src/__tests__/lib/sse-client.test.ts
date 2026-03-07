@@ -116,7 +116,7 @@ describe("SSEClient", () => {
 
     it("warns when already connected", async () => {
       const stream1 = createMockStream([])
-      const stream2 = createMockStream([])
+      createMockStream([])
       mockFetch
         .mockResolvedValueOnce({ ok: true, body: stream1 })
 
