@@ -1,15 +1,13 @@
+import { useMemo } from "react"
 import { FileText, FileDiff, FileImage, File } from "lucide-react"
 import type { SendMessageResponse, FilePart, PatchPart } from "@agent/api-client"
+import type { Artifact } from "./artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
 
 interface ArtifactsPanelProps {
   messages: SendMessageResponse[]
-}
-
-interface Artifact {
-  type: "file" | "patch"
-  path: string
-  mime?: string
+  onArtifactClick?: (artifact: Artifact) => void
+  selectedPath?: string
 }
 
 function extractArtifacts(messages: SendMessageResponse[]): Artifact[] {
@@ -17,7 +15,7 @@ function extractArtifacts(messages: SendMessageResponse[]): Artifact[] {
   const artifacts: Artifact[] = []
 
   for (const msg of messages) {
-    if (msg.info.role !== "assistant") continue
+    if (msg.info.role !== "assistant" || !msg.parts) continue
     for (const part of msg.parts) {
       if (part.type === "file") {
         const fp = part as FilePart
@@ -51,9 +49,9 @@ function basename(path: string): string {
   return path.split("/").pop() || path
 }
 
-export function ArtifactsPanel({ messages }: ArtifactsPanelProps) {
+export function ArtifactsPanel({ messages, onArtifactClick, selectedPath }: ArtifactsPanelProps) {
   const { t } = useI18n()
-  const artifacts = extractArtifacts(messages)
+  const artifacts = useMemo(() => extractArtifacts(messages), [messages])
 
   if (artifacts.length === 0) {
     return <p className="py-2 text-xs text-[--color-fg-muted]">{t("message.noArtifacts")}</p>
@@ -61,17 +59,20 @@ export function ArtifactsPanel({ messages }: ArtifactsPanelProps) {
 
   return (
     <div className="space-y-1">
-      {artifacts.map((artifact, i) => (
+      {artifacts.map((artifact) => (
         <div
-          key={i}
-          className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-[--color-accent]"
+          key={artifact.path}
+          onClick={() => onArtifactClick?.(artifact)}
+          className={`flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-[--color-accent] ${
+            onArtifactClick ? "cursor-pointer" : ""
+          } ${selectedPath === artifact.path ? "bg-[--color-accent]" : ""}`}
         >
           <ArtifactIcon artifact={artifact} />
           <span className="min-w-0 flex-1 truncate text-[--color-fg]" title={artifact.path}>
             {basename(artifact.path)}
           </span>
           {artifact.type === "patch" && (
-            <span className="shrink-0 text-[10px] text-blue-500">diff</span>
+            <span className="shrink-0 text-[10px] text-blue-500">{t("artifact.diff")}</span>
           )}
         </div>
       ))}

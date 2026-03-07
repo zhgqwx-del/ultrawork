@@ -208,3 +208,132 @@ export interface QuestionRequest {
   questions: QuestionInfo[]
   tool?: { messageID: string; callID: string }
 }
+
+// --- Provider / Model types ---
+
+export interface ProviderModel {
+  id: string
+  name: string
+  capabilities?: {
+    input?: string[]
+    output?: string[]
+  }
+  limit?: {
+    context?: number
+    output?: number
+  }
+  cost?: {
+    input?: number
+    output?: number
+  }
+  attached?: boolean
+}
+
+export interface Provider {
+  id: string
+  name: string
+  prefix: string
+  models: ProviderModel[]
+  connected: string[] // model IDs that are connected/available
+  options?: Record<string, unknown>
+}
+
+export interface ProviderAuthInfo {
+  id: string
+  name: string
+  type: string
+  env?: string[]
+  set?: boolean
+}
+
+// --- Config types ---
+
+export interface OpenCodeConfig {
+  model?: string
+  provider?: Record<string, { options?: Record<string, unknown> }>
+  [key: string]: unknown
+}
+
+// --- Agent types ---
+
+export interface Agent {
+  id: string
+  name: string
+  description?: string
+  model?: string
+  system?: string
+}
+
+// --- Prompt async request ---
+
+export interface PromptAsyncRequest {
+  parts: Array<{ type: string; text?: string; [key: string]: any }>
+  agent?: string
+}
+
+// --- MCP types ---
+
+export interface MCPConfigLocal {
+  type: "local"
+  command: string[]
+  environment?: Record<string, string>
+  enabled?: boolean
+  timeout?: number
+}
+
+export interface MCPConfigRemote {
+  type: "remote"
+  url: string
+  enabled?: boolean
+  headers?: Record<string, string>
+  timeout?: number
+}
+
+export type MCPConfig = MCPConfigLocal | MCPConfigRemote
+
+export type MCPStatus =
+  | { status: "connected" }
+  | { status: "disabled" }
+  | { status: "failed"; error: string }
+  | { status: "needs_auth" }
+  | { status: "needs_client_registration"; error: string }
+
+export type MCPStatusMap = Record<string, MCPStatus>
+
+// --- Command / Skill types ---
+
+export interface Command {
+  name: string
+  description: string
+  source: string
+  template: string
+  hints?: string[]
+}
+
+export interface Skill {
+  name: string
+  description: string
+  [key: string]: unknown
+}
+
+// --- File browsing types ---
+
+export interface FileEntry {
+  name: string
+  path: string
+  absolute: string
+  type: "file" | "directory"
+  ignored: boolean
+}
+
+export interface FileStatusEntry {
+  path: string
+  added: number
+  removed: number
+  status: string
+}
+
+export interface FileContentResponse {
+  type: string
+  content: string
+}

@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react"
+import { createContext, useContext, useCallback, useMemo } from "react"
 import { useConfig } from "./config-context"
 
 type Language = "en" | "zh"
@@ -6,7 +6,7 @@ type Language = "en" | "zh"
 interface I18nContextValue {
   language: Language
   setLanguage: (lang: Language) => void
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, string | number>) => string
 }
 
 const I18nContext = createContext<I18nContextValue | undefined>(undefined)
@@ -47,6 +47,9 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.content.desc": "Generate articles, emails and creative content",
     "home.card.docs": "Document Processing",
     "home.card.docs.desc": "Analyze, summarize and transform documents",
+    "home.card.files.prompt": "Help me organize and sort files in my folder",
+    "home.card.content.prompt": "Help me write an article or email",
+    "home.card.docs.prompt": "Help me analyze and summarize a document",
 
     // Settings page
     "settingsPage.title": "Settings",
@@ -146,12 +149,15 @@ const translations: Record<Language, Record<string, string>> = {
     "message.executionDone": "Execution complete",
     "message.executionError": "Execution failed",
     "message.stopExecution": "Stop",
+    "message.executionStopped": "Execution stopped",
     "message.progressTitle": "Plan Progress",
     "message.artifactsTitle": "Artifacts",
     "message.workspaceTitle": "Workspace",
     "message.workingDirectory": "Working Directory",
     "message.noArtifacts": "No artifacts yet",
     "message.noSteps": "No steps yet",
+    "message.aiTyping": "AI is typing...",
+    "message.loadingMessages": "Loading messages...",
 
     // Permission dock
     "permission.title": "Permission Required",
@@ -167,6 +173,91 @@ const translations: Record<Language, Record<string, string>> = {
     "question.next": "Next",
     "question.back": "Back",
     "question.customInput": "Or type a custom answer...",
+
+    // Model management
+    "model.noModel": "No model",
+    "model.selectModel": "Select Model",
+    "model.noModels": "No models available",
+    "model.manage": "Manage Models",
+    "model.dialogTitle": "Model Management",
+    "model.searchPlaceholder": "Search providers and models...",
+    "model.noProviders": "No matching providers",
+    "model.enabled": "Enabled",
+    "model.modelsConnected": "models connected",
+    "model.apiKeySet": "Key set",
+    "model.mInput": "M in",
+    "model.mOutput": "M out",
+    "model.moreModels": "more models",
+    "model.addProvider": "Add New Provider",
+    "model.addProvider.displayName": "Display Name",
+    "model.addProvider.providerId": "Provider ID",
+    "model.addProvider.models": "Models",
+    "model.addProvider.modelId": "Model ID (e.g. gpt-4)",
+    "model.addProvider.modelName": "Display Name (e.g. GPT-4)",
+    "model.addProvider.addModel": "Add Model",
+    "model.addProvider.create": "Create",
+    "model.addProvider.required": "Required",
+    "model.switchSuccess": "Model switched",
+
+    // MCP
+    "mcp.noServers": "No MCP servers configured",
+    "mcp.addServer": "Add MCP Server",
+    "mcp.connected": "Connected",
+    "mcp.disabled": "Disabled",
+    "mcp.failed": "Failed",
+    "mcp.needsAuth": "Auth required",
+    "mcp.connect": "Connect",
+    "mcp.disconnect": "Disconnect",
+    "mcp.namePlaceholder": "Server name",
+    "mcp.typeRemote": "Remote",
+    "mcp.typeLocal": "Local",
+    "mcp.add": "Add",
+
+    // Skills / Commands
+    "skills.noItems": "No commands or skills available",
+    "command.title": "Commands",
+
+    // Artifact preview
+    "artifact.preview": "Preview",
+    "artifact.close": "Close Preview",
+    "artifact.loading": "Loading...",
+    "artifact.loadError": "Failed to load",
+    "artifact.noContent": "No content",
+    "artifact.diff": "Diff",
+
+    // Workspace file tree
+    "workspace.fileTree": "File Tree",
+    "workspace.gitModified": "Modified",
+    "workspace.gitAdded": "Added",
+    "workspace.gitDeleted": "Deleted",
+    "workspace.loadError": "Failed to load file tree",
+    "workspace.emptyDir": "Empty directory",
+    "workspace.filesChanged": "files changed",
+
+    // Errors
+    "error.switchModel": "Failed to switch model",
+    "error.sendMessage": "Failed to send message",
+    "error.loadMessages": "Failed to load messages",
+    "error.createSession": "Failed to create session. Please check your connection.",
+    "error.replyPermission": "Failed to reply permission",
+    "error.replyQuestion": "Failed to reply question",
+    "error.rejectQuestion": "Failed to reject question",
+    "error.fetchMCP": "Failed to load MCP servers",
+    "error.mcpToggle": "MCP operation failed",
+    "error.addMCP": "Failed to add MCP server",
+    "error.fetchSkills": "Failed to load commands/skills",
+
+    // Additional labels
+    "model.addProvider.baseUrl": "Base URL",
+    "model.addProvider.apiKey": "API Key",
+    "session.newChat": "New Chat",
+    "placeholder.reply": "Reply...",
+    "placeholder.askAnything": "Ask anything...",
+    "workspace.refresh": "Refresh",
+    "aria.attachment": "Add attachment",
+    "aria.sendMessage": "Send message",
+    "aria.stopGenerating": "Stop generating",
+    "aria.toggleSidebar": "Toggle right sidebar",
 
     // Common
     "common.loading": "Loading...",
@@ -206,6 +297,9 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.content.desc": "生成文章、邮件和创意内容",
     "home.card.docs": "文档处理",
     "home.card.docs.desc": "分析、总结和转换各类文档",
+    "home.card.files.prompt": "帮我整理和分类文件夹中的文件",
+    "home.card.content.prompt": "帮我写一篇文章或邮件",
+    "home.card.docs.prompt": "帮我分析和总结一份文档",
 
     // Settings page
     "settingsPage.title": "设置",
@@ -305,12 +399,15 @@ const translations: Record<Language, Record<string, string>> = {
     "message.executionDone": "执行完成",
     "message.executionError": "执行失败",
     "message.stopExecution": "停止",
+    "message.executionStopped": "执行已中断",
     "message.progressTitle": "计划执行进度",
     "message.artifactsTitle": "产物",
     "message.workspaceTitle": "工作区",
     "message.workingDirectory": "工作目录",
     "message.noArtifacts": "暂无产物",
     "message.noSteps": "暂无步骤",
+    "message.aiTyping": "AI 正在输入...",
+    "message.loadingMessages": "加载消息中...",
 
     // Permission dock
     "permission.title": "需要授权",
@@ -327,6 +424,91 @@ const translations: Record<Language, Record<string, string>> = {
     "question.back": "返回",
     "question.customInput": "或输入自定义答案...",
 
+    // Model management
+    "model.noModel": "未选择模型",
+    "model.selectModel": "选择模型",
+    "model.noModels": "暂无可用模型",
+    "model.manage": "管理模型",
+    "model.dialogTitle": "模型管理",
+    "model.searchPlaceholder": "搜索供应商和模型...",
+    "model.noProviders": "没有匹配的供应商",
+    "model.enabled": "已启用",
+    "model.modelsConnected": "个模型已连接",
+    "model.apiKeySet": "已配置",
+    "model.mInput": "M 输入",
+    "model.mOutput": "M 输出",
+    "model.moreModels": "个更多模型",
+    "model.addProvider": "添加新供应商",
+    "model.addProvider.displayName": "显示名称",
+    "model.addProvider.providerId": "供应商 ID",
+    "model.addProvider.models": "模型列表",
+    "model.addProvider.modelId": "模型 ID（如 gpt-4）",
+    "model.addProvider.modelName": "显示名称（如 GPT-4）",
+    "model.addProvider.addModel": "添加模型",
+    "model.addProvider.create": "创建",
+    "model.addProvider.required": "必填",
+    "model.switchSuccess": "模型已切换",
+
+    // MCP
+    "mcp.noServers": "未配置 MCP 服务",
+    "mcp.addServer": "添加 MCP 服务",
+    "mcp.connected": "已连接",
+    "mcp.disabled": "已禁用",
+    "mcp.failed": "连接失败",
+    "mcp.needsAuth": "需要认证",
+    "mcp.connect": "连接",
+    "mcp.disconnect": "断开",
+    "mcp.namePlaceholder": "服务名称",
+    "mcp.typeRemote": "远程",
+    "mcp.typeLocal": "本地",
+    "mcp.add": "添加",
+
+    // Skills / Commands
+    "skills.noItems": "暂无命令或技能",
+    "command.title": "命令",
+
+    // Artifact preview
+    "artifact.preview": "预览",
+    "artifact.close": "关闭预览",
+    "artifact.loading": "加载中...",
+    "artifact.loadError": "加载失败",
+    "artifact.noContent": "无内容",
+    "artifact.diff": "差异",
+
+    // Workspace file tree
+    "workspace.fileTree": "文件树",
+    "workspace.gitModified": "已修改",
+    "workspace.gitAdded": "新增",
+    "workspace.gitDeleted": "已删除",
+    "workspace.loadError": "加载文件树失败",
+    "workspace.emptyDir": "空目录",
+    "workspace.filesChanged": "个文件变更",
+
+    // Errors
+    "error.switchModel": "切换模型失败",
+    "error.sendMessage": "发送消息失败",
+    "error.loadMessages": "加载消息失败",
+    "error.createSession": "创建会话失败，请检查连接。",
+    "error.replyPermission": "回复授权失败",
+    "error.replyQuestion": "回复问题失败",
+    "error.rejectQuestion": "拒绝问题失败",
+    "error.fetchMCP": "加载 MCP 服务失败",
+    "error.mcpToggle": "MCP 操作失败",
+    "error.addMCP": "添加 MCP 服务失败",
+    "error.fetchSkills": "加载命令/技能失败",
+
+    // Additional labels
+    "model.addProvider.baseUrl": "基础 URL",
+    "model.addProvider.apiKey": "API 密钥",
+    "session.newChat": "新对话",
+    "placeholder.reply": "回复...",
+    "placeholder.askAnything": "有什么可以帮到你...",
+    "workspace.refresh": "刷新",
+    "aria.attachment": "添加附件",
+    "aria.sendMessage": "发送消息",
+    "aria.stopGenerating": "停止生成",
+    "aria.toggleSidebar": "切换右侧边栏",
+
     // Common
     "common.loading": "加载中...",
     "common.error": "错误",
@@ -336,16 +518,26 @@ const translations: Record<Language, Record<string, string>> = {
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const { config, updateConfig } = useConfig()
 
-  const setLanguage = (lang: Language) => {
+  const setLanguage = useCallback((lang: Language) => {
     updateConfig({ language: lang })
-  }
+  }, [updateConfig])
 
-  const t = (key: string): string => {
-    return translations[config.language]?.[key] || key
-  }
+  const language = config.language
+
+  const t = useCallback((key: string, params?: Record<string, string | number>): string => {
+    let value = translations[language]?.[key] || key
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        value = value.replace(`{${k}}`, String(v))
+      })
+    }
+    return value
+  }, [language])
+
+  const value = useMemo(() => ({ language, setLanguage, t }), [language, setLanguage, t])
 
   return (
-    <I18nContext.Provider value={{ language: config.language, setLanguage, t }}>
+    <I18nContext.Provider value={value}>
       {children}
     </I18nContext.Provider>
   )

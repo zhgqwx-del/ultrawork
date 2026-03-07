@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
+import { useI18n } from "@/lib/i18n-context"
 import { Loader2, Plus } from "lucide-react"
+import { CommandSelector } from "./command-selector"
+import type { Command } from "@agent/api-client"
 
 interface ChatInputProps {
   value: string
@@ -12,6 +15,7 @@ interface ChatInputProps {
   variant?: "home" | "reply"
   className?: string
   ctaLabel?: string
+  leftSlot?: React.ReactNode
 }
 
 export function ChatInput({
@@ -24,9 +28,13 @@ export function ChatInput({
   variant = "reply",
   className,
   ctaLabel = "Start Now",
+  leftSlot,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isComposing, setIsComposing] = useState(false)
+  const { t } = useI18n()
+  // Only show command selector while typing the command name (no space yet)
+  const showCommandSelector = value.startsWith("/") && !value.includes(" ") && !disabled && !loading
 
   // Auto-resize textarea
   useEffect(() => {
@@ -39,9 +47,27 @@ export function ChatInput({
     textarea.style.height = `${newHeight}px`
   }, [value, variant])
 
+  const handleSelectCommand = (cmd: Command) => {
+    // Replace input with /<command> and let user add arguments
+    onChange(`/${cmd.name} `)
+    textareaRef.current?.focus()
+  }
+
+  const handleCloseCommandSelector = () => {
+    // Remove the "/" prefix to dismiss the selector, keep other text if any
+    onChange(value.startsWith("/") ? value.slice(1) : value)
+  }
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter without Shift and not composing → send
-    if (e.key === "Enter" && !e.shiftKey && !isComposing) {
+    // Let CommandSelector handle arrow/tab/enter/escape when visible
+    if (showCommandSelector && ["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(e.key)) {
+      e.preventDefault() // Prevent cursor movement / focus change in textarea
+      return // CommandSelector's document-level handler will capture this
+    }
+    // Enter without Shift and not composing → send (or let CommandSelector handle if it has matches)
+    // Check both React state AND native isComposing — some browsers fire compositionEnd before keyDown
+    if (e.key === "Enter" && !e.shiftKey && !isComposing && !e.nativeEvent.isComposing) {
+      if (showCommandSelector) return // Let CommandSelector handle Enter when it has matches
       e.preventDefault()
       if (value.trim() && !disabled && !loading) {
         onSend()
@@ -69,13 +95,24 @@ export function ChatInput({
         className
       )}
     >
+      <CommandSelector
+        input={value}
+        onSelectCommand={handleSelectCommand}
+        onClose={handleCloseCommandSelector}
+        visible={showCommandSelector}
+      />
+
       <textarea
         ref={textareaRef}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         onCompositionStart={() => setIsComposing(true)}
-        onCompositionEnd={() => setIsComposing(false)}
+        onCompositionEnd={() => {
+          // Delay clearing composing state — some browsers fire compositionEnd before the
+          // final keyDown (Enter), so we need isComposing to still be true during that keyDown
+          setTimeout(() => setIsComposing(false), 0)
+        }}
         placeholder={placeholder}
         disabled={disabled}
         className={cn(
@@ -95,12 +132,13 @@ export function ChatInput({
         <div className="mt-3 flex items-center">
           <button
             type="button"
-            aria-label="Add attachment"
+            aria-label={t("aria.attachment")}
             disabled={disabled}
             className="flex size-7 items-center justify-center rounded-lg text-[--color-fg-muted] transition-colors hover:bg-[--color-accent] hover:text-[--color-fg] disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <Plus className="size-4" />
           </button>
+          {leftSlot}
           <div className="flex-1" />
           <button
             type="button"
@@ -117,12 +155,18 @@ export function ChatInput({
           </button>
         </div>
       ) : (
-        /* Reply variant: send button pinned bottom-right */
+        /* Reply variant: model selector + send button */
+        <>
+        {leftSlot && (
+          <div className="mt-1 flex items-center">
+            {leftSlot}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleSendClick}
           disabled={!canSend}
-          aria-label={loading ? "Stop generating" : "Send message"}
+          aria-label={t("aria.sendMessage")}
           className={cn(
             "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
             canSend
@@ -138,6 +182,7 @@ export function ChatInput({
             </svg>
           )}
         </button>
+        </>
       )}
     </div>
   )

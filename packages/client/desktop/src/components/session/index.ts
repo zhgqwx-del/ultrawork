@@ -1,3 +1,7 @@
 export { ProgressPanel } from "./progress-panel"
 export { ArtifactsPanel } from "./artifacts-panel"
 export { WorkspacePanel } from "./workspace-panel"
+export { MCPPanel } from "./mcp-panel"
+export { SkillsPanel } from "./skills-panel"
+export { ArtifactPreview } from "./artifact-preview"
+export type { Artifact } from "./artifact-preview"

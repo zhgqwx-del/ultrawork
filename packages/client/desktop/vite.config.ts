@@ -43,6 +43,46 @@ export default defineConfig({
         target: "http://localhost:4096",
         changeOrigin: true,
       },
+      "/config": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/provider": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/auth": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/agent": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/mcp": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/skill": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/command": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/file": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/project": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
+      "/experimental": {
+        target: "http://localhost:4096",
+        changeOrigin: true,
+      },
     },
   },
 })

@@ -6,6 +6,18 @@ import type {
   SendMessageResponse,
   PermissionRequest,
   QuestionRequest,
+  Provider,
+  ProviderAuthInfo,
+  OpenCodeConfig,
+  Agent,
+  PromptAsyncRequest,
+  MCPConfig,
+  MCPStatusMap,
+  Command,
+  Skill,
+  FileEntry,
+  FileStatusEntry,
+  FileContentResponse,
 } from "./types"
 
 export class ApiClient {
@@ -27,10 +39,10 @@ export class ApiClient {
     return { username: this.username, password: this.password }
   }
 
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private buildHeaders(extra?: Record<string, string>): Record<string, string> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...((options?.headers as Record<string, string>) || {}),
+      ...(extra || {}),
     }
 
     if (this.password) {
@@ -38,6 +50,12 @@ export class ApiClient {
       const credentials = btoa(`${username}:${this.password}`)
       headers["Authorization"] = `Basic ${credentials}`
     }
+
+    return headers
+  }
+
+  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const headers = this.buildHeaders(options?.headers as Record<string, string>)
 
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...options,
@@ -48,7 +66,15 @@ export class ApiClient {
       throw new Error(`API request failed: ${response.status} ${response.statusText}`)
     }
 
-    return response.json() as Promise<T>
+    // Handle empty responses (204 No Content, or empty body)
+    if (response.status === 204 || response.headers.get("content-length") === "0") {
+      return undefined as T
+    }
+
+    const text = await response.text()
+    if (!text) return undefined as T
+
+    return JSON.parse(text) as T
   }
 
   async listSessions(options?: {
@@ -119,6 +145,13 @@ export class ApiClient {
     })
   }
 
+  async revertSession(sessionId: string, messageID: string): Promise<void> {
+    await this.request<void>(`/session/${sessionId}/revert`, {
+      method: "POST",
+      body: JSON.stringify({ messageID }),
+    })
+  }
+
   // --- Permission ---
 
   async listPermissions(): Promise<PermissionRequest[]> {
@@ -149,6 +182,125 @@ export class ApiClient {
     await this.request<void>(`/question/${requestId}/reject`, {
       method: "POST",
     })
+  }
+
+  // --- Config ---
+
+  async getConfig(): Promise<OpenCodeConfig> {
+    return this.request<OpenCodeConfig>("/config")
+  }
+
+  async patchConfig(updates: Partial<OpenCodeConfig>): Promise<OpenCodeConfig> {
+    return this.request<OpenCodeConfig>("/config", {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    })
+  }
+
+  // --- Provider ---
+
+  async getProviders(): Promise<Provider[]> {
+    return this.request<Provider[]>("/provider")
+  }
+
+  async getProviderAuth(): Promise<ProviderAuthInfo[]> {
+    return this.request<ProviderAuthInfo[]>("/provider/auth")
+  }
+
+  async putProviderAuth(authId: string, config: Record<string, unknown>): Promise<void> {
+    await this.request<void>(`/auth/${authId}`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    })
+  }
+
+  // --- Agent ---
+
+  async getAgents(): Promise<Agent[]> {
+    return this.request<Agent[]>("/agent")
+  }
+
+  // --- Async message send ---
+
+  async promptAsync(sessionId: string, message: string, options?: { agent?: string }): Promise<void> {
+    const requestBody: PromptAsyncRequest = {
+      parts: [{ type: "text", text: message }],
+    }
+    if (options?.agent) {
+      requestBody.agent = options.agent
+    }
+
+    const response = await fetch(`${this.baseUrl}/session/${sessionId}/prompt_async`, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(requestBody),
+    })
+
+    if (!response.ok) {
+      throw new Error(`promptAsync failed: ${response.status} ${response.statusText}`)
+    }
+    // Returns 204 No Content — no body to parse
+  }
+
+  // --- MCP ---
+
+  async getMCP(): Promise<MCPStatusMap> {
+    return this.request<MCPStatusMap>("/mcp")
+  }
+
+  async createMCP(name: string, config: MCPConfig): Promise<MCPStatusMap> {
+    return this.request<MCPStatusMap>("/mcp", {
+      method: "POST",
+      body: JSON.stringify({ name, config }),
+    })
+  }
+
+  async connectMCP(name: string): Promise<boolean> {
+    return this.request<boolean>(`/mcp/${encodeURIComponent(name)}/connect`, {
+      method: "POST",
+    })
+  }
+
+  async disconnectMCP(name: string): Promise<boolean> {
+    return this.request<boolean>(`/mcp/${encodeURIComponent(name)}/disconnect`, {
+      method: "POST",
+    })
+  }
+
+  // --- Tools ---
+
+  async getToolIds(): Promise<string[]> {
+    return this.request<string[]>("/experimental/tool/ids")
+  }
+
+  // --- Skills ---
+
+  async getSkills(): Promise<Skill[]> {
+    return this.request<Skill[]>("/skill")
+  }
+
+  // --- Commands ---
+
+  async getCommands(): Promise<Command[]> {
+    return this.request<Command[]>("/command")
+  }
+
+  // --- File browsing ---
+
+  async getFileTree(path: string): Promise<FileEntry[]> {
+    return this.request<FileEntry[]>(`/file?path=${encodeURIComponent(path)}`)
+  }
+
+  async getFileContent(path: string): Promise<FileContentResponse> {
+    return this.request<FileContentResponse>(`/file/content?path=${encodeURIComponent(path)}`)
+  }
+
+  async getFileStatus(): Promise<FileStatusEntry[]> {
+    return this.request<FileStatusEntry[]>("/file/status")
+  }
+
+  async getSessionDiff(sessionId: string): Promise<string[]> {
+    return this.request<string[]>(`/session/${sessionId}/diff`)
   }
 
   subscribeToEvents(onEvent: (data: string) => void): () => void {

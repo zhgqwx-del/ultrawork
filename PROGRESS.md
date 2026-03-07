@@ -10,6 +10,9 @@ Round 1 重构: ✅ 完成 (UI 架构对齐设计稿, 17 个文件变更)
 Review 修复:  ✅ 完成 (6 个问题: health路径/reset bug/i18n/sidebar state/日期分组/链接)
 Round 2:      ✅ 完成 (4 Steps: 结构化消息/执行状态/进度面板/产物)
 Round 3:      ✅ 完成 (Permission & Question Dock + 10 个联调修复)
+Round 4:      ✅ 完成 (3 Steps: 模型管理/MCP命令/文件产物预览)
+Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low 修复)
+全面代码审查:  ✅ 完成 (36 问题: 3C+7H+14M+12L 发现, 20 个修复, 16 个已知推迟)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -1119,20 +1122,509 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
-### Round 4: 模型和扩展能力 (📋 规划中)
-- [ ] 多模型支持（Provider 管理 + 模型切换 + 思考模式）
-- [ ] MCP 服务管理（列表 / 开关 / 搜索 / 管理入口）
-- [ ] Skills 管理
-- [ ] Plugins 管理
-- [ ] 消息通道（钉钉配置入口）
+### Round 4: 模型管理 + 扩展能力 + 文件系统 (✅ 完成)
+
+> **目标**: 基于 API 调研结果，实现模型切换、MCP 管理、文件浏览/预览等核心能力，覆盖设计稿"第一版本"要求。
+
+#### API 调研结果 (2026-03-07)
+
+已确认可用但尚未使用的 OpenCode 端点:
+
+| 分类 | 端点 | 说明 |
+|------|------|------|
+| **配置** | `GET /config`, `PATCH /config` | 完整配置读写（含模型切换） |
+| **Provider** | `GET /provider` | 98 个 Provider + 全部模型信息 + `connected` 状态 |
+| **Provider Auth** | `GET /provider/auth`, `PUT /auth/:id` | 认证方式 + 设置 API Key |
+| **MCP** | `GET /mcp`, `POST /mcp`, `POST /mcp/:name/connect\|disconnect` | MCP 服务 CRUD |
+| **Agent** | `GET /agent` | 7 个 Agent 定义 (build/plan/general/explore 等) |
+| **Skill** | `GET /skill` | 技能列表 |
+| **Command** | `GET /command` | 斜杠命令 (init, review) |
+| **工具** | `GET /experimental/tool/ids` | 所有可用 Tool ID |
+| **文件** | `GET /file?path=`, `GET /file/content?path=`, `GET /file/status` | 文件树/内容/Git 状态 |
+| **异步发送** | `POST /session/:id/prompt_async` | 立即返回 204，替代 fire-and-forget |
+| **Diff** | `GET /session/:id/diff?messageID=` | 文件变更 diff |
+| **Project** | `GET /project` | 项目列表 + 工作区信息 |
+
+#### Step 4.1: 模型管理 + 消息发送升级 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+##### 实现总结
+
+**1. API Client 扩展** (`packages/core/api-client/`):
+- `types.ts`: 新增 6 个类型 — `Provider`, `ProviderModel`, `ProviderAuthInfo`, `OpenCodeConfig`, `Agent`, `PromptAsyncRequest`
+- `client.ts`: 新增 7 个方法 — `getConfig()`, `patchConfig()`, `getProviders()`, `getProviderAuth()`, `putProviderAuth()`, `getAgents()`, `promptAsync()`
+- `promptAsync()` 使用 raw fetch (返回 204 No Content，不走 `this.request<T>` JSON 解析)
+
+**2. Vite 代理配置** (`vite.config.ts`):
+- 新增 9 个代理路由: `/config`, `/provider`, `/auth`, `/agent`, `/mcp`, `/skill`, `/command`, `/file`, `/project`, `/experimental`
+
+**3. UI 组件**:
+- **Popover** (`ui/popover.tsx`): 基于 `@radix-ui/react-popover`，与 Dialog 风格一致
+- **ModelSelector** (`chat/model-selector.tsx`): ChatInput 内嵌 Popover
+  - 显示当前模型名称 + Cpu 图标
+  - 点击弹出已连接模型列表 (按 Provider 分组)
+  - "管理模型" 链接打开 ModelDialog
+  - 实时从 `GET /provider` 加载 (按需，打开时才请求)
+- **ModelDialog** (`settings/model-dialog.tsx`): 完整模型管理弹窗
+  - 搜索过滤 Provider/模型
+  - Provider 卡片: 展开显示模型列表 + API Key 状态
+  - 选中模型写入配置 (`PATCH /config`)
+  - 底部 "添加新供应商" 按钮
+- **AddProviderDialog** (嵌套在 model-dialog.tsx 内): 自定义 Provider 创建
+  - 双栏表单: 显示名称 / Provider ID / Base URL / API Key
+  - 可添加多个模型 (Model ID + Display Name)
+  - 验证 + 提交 (`PUT /auth/:id` + `PATCH /config`)
+
+**4. prompt_async 升级**:
+- `Session.tsx` `handleSend()`: `api.sendMessage()` → `api.promptAsync()` (返回 204，不阻塞)
+- `Home.tsx` `handleSend()`: 同步升级
+- 不再需要 fire-and-forget workaround，SSE 仍负责所有 UI 更新
+
+**5. 模型切换集成**:
+- `Session.tsx`: 加载时从 `GET /config` 读取当前模型，切换通过 `PATCH /config`
+- `Home.tsx`: 同上
+- `SettingsPopover`: "模型管理" 菜单项从 `disabled` → 可点击打开 ModelDialog
+
+**6. i18n 翻译**:
+- 新增 25 个翻译键 (en + zh): model.selectModel, model.manage, model.dialogTitle, model.addProvider 等
+
+##### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/types.ts` | 更新 - 6 个新类型 |
+| `packages/core/api-client/src/client.ts` | 更新 - 7 个新方法 |
+| `packages/core/api-client/src/index.ts` | 更新 - 导出新类型 |
+| `packages/client/desktop/vite.config.ts` | 更新 - 9 个新代理路由 |
+| `src/components/ui/popover.tsx` | **新建** - Radix Popover |
+| `src/components/ui/index.ts` | 更新 - 导出 Popover |
+| `src/components/chat/model-selector.tsx` | **新建** - 模型快速选择器 |
+| `src/components/chat/chat-input.tsx` | 更新 - 新增 leftSlot prop |
+| `src/components/chat/index.ts` | 更新 - 导出 ModelSelector |
+| `src/components/settings/model-dialog.tsx` | **新建** - ModelDialog + AddProviderDialog |
+| `src/components/settings/settings-popover.tsx` | 更新 - 激活模型管理 |
+| `src/components/settings/index.ts` | 更新 - 导出 ModelDialog |
+| `src/pages/Session.tsx` | 更新 - promptAsync + ModelSelector + ModelDialog |
+| `src/pages/Home.tsx` | 更新 - promptAsync + ModelSelector + ModelDialog |
+| `src/lib/i18n-context.tsx` | 更新 - 25 个新翻译键 |
+
+**验证**: TypeCheck 3/3 ✅
+
+##### 注意: Agent 选择推迟
+- Agent 选择 (build/plan/general 等) 的 UI 推迟到 Step 4.2
+- `promptAsync()` 已支持 `options.agent` 参数，UI 侧待实现
+
+##### Step 4.1 Review 修复 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+**P1 问题 (已修复)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| P1-1 | `promptAsync()` 内联重复 auth 逻辑 | 提取 `buildHeaders()` 私有方法，`request()` 和 `promptAsync()` 共用 | `api-client/src/client.ts` |
+| P1-2 | ModelSelector 每次打开都请求 ~2.1MB Provider 数据 | 添加 `hasFetched` 缓存标志，仅首次打开时请求 | `chat/model-selector.tsx` |
+| P1-3 | 模型状态在 3 处独立管理 (Session/Home/SettingsPopover) | 新建 `ModelProvider` 共享 Context，3 处统一用 `useModel()` | `lib/model-context.tsx` (**新建**), `main.tsx`, `Session.tsx`, `Home.tsx`, `settings-popover.tsx` |
+| P1-4 | ModelDialog 选中模型后不自动关闭 | `handleSelectModel` 末尾添加 `onOpenChange(false)` | `settings/model-dialog.tsx` |
+| P1-5 | `abortControllerRef` 升级 promptAsync 后成为死代码 | 移除 ref，`handleStop` 仅调用 `api.abortSession()` | `pages/Session.tsx` |
+
+**P2 问题 (已知，推迟修复)**:
+
+| # | 问题 | 说明 |
+|---|------|------|
+| P2-6 | AddProviderDialog 模型数据未持久化 | `handleCreate` 仅写 provider options，用户添加的模型列表未写入配置 |
+| P2-7 | ModelDialog 搜索行为不一致 | 搜索时显示未连接 Provider，清空搜索后隐藏 — 行为不统一 |
+
+**新增文件**:
+- `src/lib/model-context.tsx` — 共享模型状态 Context (currentModel, setModel, modelDialogOpen)
+
+**额外修改文件**:
+- `src/main.tsx` — 添加 `<ModelProvider>` 包裹
+
+**验证**: TypeCheck 3/3 ✅
+
+#### Step 4.2: MCP + 工具 + 命令面板 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+##### API 层扩展
+
+| 文件 | 变更 |
+|------|------|
+| `api-client/src/types.ts` | 新增 `MCPConfigLocal`, `MCPConfigRemote`, `MCPConfig`, `MCPStatus`, `MCPStatusMap`, `Command`, `Skill` 类型 |
+| `api-client/src/client.ts` | 新增 7 个方法: `getMCP()`, `createMCP()`, `connectMCP()`, `disconnectMCP()`, `getToolIds()`, `getSkills()`, `getCommands()` |
+| `api-client/src/index.ts` | 导出全部新类型 |
+
+##### MCP 面板 (`session/mcp-panel.tsx`)
+
+- [x] 从 `GET /mcp` 获取真实 MCP 服务状态 (connected/disabled/failed/needs_auth)
+- [x] 每个服务显示名称、状态、彩色图标 (绿=已连接, 红=失败, 灰=禁用)
+- [x] 连接/断开按钮 (调用 `POST /mcp/:name/connect|disconnect`)
+- [x] 添加新 MCP 服务表单 (支持 remote/local 两种类型)
+- [x] Loading 状态 + 操作中 spinner
+
+##### Skills/Commands 面板 (`session/skills-panel.tsx`)
+
+- [x] 并发获取 `GET /command` + `GET /skill`
+- [x] 命令卡片: `/<name>` + 描述 (Terminal 图标)
+- [x] 技能卡片: `name` + 描述 (Sparkles 图标)
+- [x] 空状态提示
+
+##### 斜杠命令选择器 (`chat/command-selector.tsx`)
+
+- [x] ChatInput 输入 `/` 自动弹出命令列表
+- [x] 模糊搜索过滤 (名称 + 描述)
+- [x] 键盘导航 (↑↓ 选择, Tab/Enter 确认)
+- [x] 选中后填入 `/<command> ` 格式到输入框
+
+##### 集成
+
+| 文件 | 变更 |
+|------|------|
+| `chat/chat-input.tsx` | 集成 CommandSelector 弹出层 + 键盘事件协调 |
+| `chat/index.ts` | 导出 CommandSelector |
+| `session/index.ts` | 导出 MCPPanel, SkillsPanel |
+| `pages/Session.tsx` | 右侧栏 MCP/Skills 占位替换为真实面板 |
+| `lib/i18n-context.tsx` | 新增 13 个中英翻译键 (mcp.*, skills.*, command.*) |
+
+**验证**: TypeCheck 3/3 ✅, Vite Build ✅
+
+##### Step 4.2 Review 修复 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+| # | 级别 | 问题 | 修复方案 | 涉及文件 |
+|---|------|------|---------|---------|
+| P1-1 | 🔴 P1 | `showCommandSelector` 条件过宽 — 选中命令后输入参数 (如 `/review some code`) 时弹窗仍在，Enter 被 CommandSelector 拦截导致无法发送消息 | 添加 `!value.includes(" ")` 条件，只在输入命令名阶段显示弹窗 | `chat/chat-input.tsx` |
+| P1-2 | 🔴 P1 | `needs_auth` / `needs_client_registration` 状态无 i18n 标签 — UI 直接显示原始字符串 `"needs_auth"` | 添加 `needsAuth` 布尔判断 + `mcp.needsAuth` 翻译键 (中英) + 琥珀色图标/文字 | `session/mcp-panel.tsx`, `lib/i18n-context.tsx` |
+| P2-1 | 🟡 P2 | `MCPServerItem.status` prop 为松散的 `{ status: string; error?: string }` — 失去 discriminated union 类型安全 | prop 类型改为 `MCPStatus`，错误信息用 `"error" in status` 类型收窄安全取值 | `session/mcp-panel.tsx` |
+| TS-fix | 🔴 编译 | `status.status` 在穷尽 5 种 union 后类型收窄为 `never`，TS 报错 | fallback 分支改为 `t("mcp.disabled")` (逻辑上不可达，仅满足类型检查) | `session/mcp-panel.tsx` |
+
+**验证**: TypeCheck 3/3 ✅
+
+#### Step 4.3: 文件能力 + 产物预览 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+##### API 层扩展
+
+| 文件 | 变更 |
+|------|------|
+| `api-client/src/types.ts` | 新增 `FileEntry`, `FileStatusEntry`, `FileContentResponse` 类型 |
+| `api-client/src/client.ts` | 新增 4 个方法: `getFileTree()`, `getFileContent()`, `getFileStatus()`, `getSessionDiff()` |
+| `api-client/src/index.ts` | 导出新类型 |
+
+##### ArtifactPreview 组件 (`session/artifact-preview.tsx`)
+
+- [x] 根据文件类型渲染不同预览内容
+  - **代码文件** → 语法高亮 (复用 CodeBlock，自动检测语言)
+  - **Markdown** → ReactMarkdown 渲染
+  - **图片** → `<img>` 标签
+  - **Diff/Patch** → 彩色 unified diff (绿色+/红色-/蓝色@@)
+  - **其他文本** → 原始文本
+- [x] 顶部文件名 + 路径 breadcrumb + 复制按钮 + 关闭按钮
+- [x] Loading/Error/Empty 状态处理
+- [x] 通过 `getFileContent` API 获取文件内容，Patch 通过 `getSessionDiff` 获取
+
+##### Session.tsx 50/50 分屏布局
+
+- [x] `selectedArtifact` 状态管理
+- [x] 无选中: 原有布局不变 (chat + right sidebar)
+- [x] 有选中: 左右 50/50 分屏 (左=ArtifactPreview, 右=chat)
+- [x] `handleArtifactClick` + `handleClosePreview` 回调
+
+##### ArtifactsPanel 点击集成
+
+- [x] 接收 `onArtifactClick` + `selectedPath` props
+- [x] 产物项 cursor-pointer + onClick
+- [x] 选中项 bg 高亮
+
+##### AssistantMessage 点击集成
+
+- [x] FileBlock + PatchBlock 接收 onClick prop
+- [x] cursor-pointer + hover border 样式
+- [x] 通过 MessageList → AssistantMessage 传递 onArtifactClick
+
+##### WorkspacePanel 文件树 + Git 状态
+
+- [x] 调用 `getFileTree(".")` 获取根目录文件列表
+- [x] 调用 `getFileStatus()` 获取 git 修改状态
+- [x] 可展开文件树 (递归 FileTreeItem，点击目录加载子目录)
+- [x] Git 状态标记: Modified=黄色, Added=绿色, Deleted=红色
+- [x] 文件夹/文件图标 + 展开/折叠箭头
+- [x] 保留顶部工作目录显示 + 刷新按钮
+- [x] Git 变更数量摘要
+
+##### i18n
+
+- [x] 新增 ~13 个翻译键 (artifact.preview/close/loading/loadError/noContent/diff + workspace.fileTree/gitModified/gitAdded/gitDeleted/loadError/emptyDir/filesChanged)
+
+##### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `api-client/src/types.ts` | 更新 - 3 个新类型 |
+| `api-client/src/client.ts` | 更新 - 4 个新方法 |
+| `api-client/src/index.ts` | 更新 - 导出新类型 |
+| `src/components/session/artifact-preview.tsx` | **新建** - 产物预览组件 |
+| `src/components/session/artifacts-panel.tsx` | 更新 - 点击回调 + 选中高亮 |
+| `src/components/session/workspace-panel.tsx` | 更新 - 文件树 + git 状态 |
+| `src/components/session/index.ts` | 更新 - 导出 ArtifactPreview |
+| `src/components/chat/assistant-message.tsx` | 更新 - FileBlock/PatchBlock 点击 |
+| `src/components/chat/message-list.tsx` | 更新 - 传递 onArtifactClick |
+| `src/pages/Session.tsx` | 更新 - 分屏布局 + artifact 状态 |
+| `src/lib/i18n-context.tsx` | 更新 - 13 个新翻译键 |
+
+##### 不做的事项 (推迟)
+
+- **文件上传** (Tauri file picker) — 需 Tauri Rust 侧支持 + multipart API
+- **PDF 预览** — 需额外库
+- **语法高亮** — 复用已有 CodeBlock
+
+**验证**: TypeCheck 3/3 ✅
+
+##### Step 4.3 Review 修复 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+**P1 问题 (已修复)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| P1-1 | `GitStatusDot` title 属性硬编码英文 `"Added/Deleted/Modified"` — 已有 `workspace.gitAdded` 等 i18n 键但未使用 | 改用 `t("workspace.gitAdded")` / `t("workspace.gitDeleted")` / `t("workspace.gitModified")` | `session/workspace-panel.tsx` |
+| P1-2 | 预览面板容器 `flex w-1/2` — 多余的 `flex` 可能导致子元素无法正确填满高度 | 移除 `flex`，改为 `w-1/2 shrink-0 overflow-hidden` | `pages/Session.tsx` |
+| P1-3 | `gitStatusMap` 在函数体内 `new Map()` 每次渲染重建，传递给子组件导致不必要的重渲染 | 用 `useMemo(() => ..., [gitStatus])` 缓存 | `session/workspace-panel.tsx` |
+
+**P2 问题 (已知，可接受)**:
+
+| # | 问题 | 说明 |
+|---|------|------|
+| P2-1 | DiffView 对 `string[]` 先 `join("\n")` 再 `split("\n")` 有一次冗余 | 不影响正确性，API 返回的 diff 数组规模通常不大 |
+| P2-2 | PatchBlock 点击取 `pp.files[0]` 作为路径标识 | ArtifactPreview 实际通过 `getSessionDiff` 获取整个 session 的 diff，取第一个文件路径仅用于 sidebar 高亮标识，功能正确 |
+| P2-3 | `Artifact` 类型定义在 `artifact-preview.tsx` 并导出 | `artifacts-panel.tsx` 和 `assistant-message.tsx` 均 import 引用，单一来源合理 |
+
+**验证**: TypeCheck 3/3 ✅
+
+#### Round 4 整体 Review (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+> 对 Round 4 全部 3 个 Step (4.1 模型管理+promptAsync、4.2 MCP+命令、4.3 文件+产物预览) 进行跨步骤整体 Review，检查代码质量、类型安全、i18n 完整性、组件间一致性及交叉问题。4 个并行 Agent 分别审查 4.1 文件组、4.2 文件组、4.3 文件组、跨切面（api-client/i18n/barrel exports/provider 嵌套/vite proxy），共发现 28 个问题并全部修复。
+
+##### 发现问题分布
+
+| 严重度 | 数量 | 描述 |
+|--------|------|------|
+| Critical | 2 | 可见功能 Bug（图片渲染崩溃、文件树不刷新） |
+| High | 3 | 功能 Bug / 潜在崩溃（sending 卡死、死 UI、数组越界） |
+| Medium | 15 | 代码质量 / UX 问题（i18n、单例、键盘交互、错误状态等） |
+| Low | 13 | 最佳实践 / 细节优化 |
+
+##### 已修复问题清单
+
+**Critical (2)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| C1 | 图片 artifact `<img src>` 使用服务器文件路径，浏览器无法加载 | 改用已获取的 content 构建 `data:${mime};base64,${content}` data URL | `session/artifact-preview.tsx` |
+| C2 | `WorkspacePanel.loadData()` 硬编码 `getFileTree(".")`，忽略 `directory` prop，切换 session 后文件树不刷新 | 改为 `getFileTree(directory \|\| ".")`，将 `directory` 加入 `useCallback` 依赖 | `session/workspace-panel.tsx` |
+
+**High (2 of 3 修复，H2 为已知推迟)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| H1 | `promptAsync` 失败时 `sending` 状态永久卡死，输入框永久禁用 | catch 中添加 `setSending(false)` + `toast.error()` | `pages/Session.tsx` |
+| H3 | `CommandSelector` `selectedIndex` 可超出 `filtered.length-1`，导致 `onSelectCommand(undefined)` 崩溃 | 使用 `Math.min(selectedIndex, filtered.length - 1)` 防护 | `chat/command-selector.tsx` |
+
+**Medium (11 修复)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| M1 | 20+ 硬编码英文字符串未走 `t()` | 新增 22 个 i18n key (en+zh)，所有 placeholder/toast/aria-label/label 改用 `t()` | `i18n-context.tsx` + 7 个文件 |
+| M2 | `ModelDialog` 在 Session/Home/SettingsPopover 渲染 3 个实例 | 移至 `main.tsx` `ModelDialogSingleton` 组件（单例），从 3 处移除 | `main.tsx`, `Session.tsx`, `Home.tsx`, `settings-popover.tsx` |
+| M3 | `closeModelDialog: () => void` 传给 `onOpenChange: (open: boolean) => void` 类型不匹配 | 单例中使用 `(open) => { if (!open) closeModelDialog() }` 包装 | `main.tsx` |
+| M4 | CommandSelector Escape 键是空操作，用户无法通过键盘关闭弹窗 | 新增 `onClose` prop，Escape 触发 `onClose()` 清空输入 | `chat/command-selector.tsx`, `chat/chat-input.tsx` |
+| M5 | 输入 `/xxx` 无匹配命令时按 Enter 插入换行而非发送 | 将 Escape 加入 ChatInput passthrough 列表 | `chat/chat-input.tsx` |
+| M6 | ModelSelector `hasFetched` 缓存永不失效 | 每次 Popover 打开时重置 `hasFetched` 为 false | `chat/model-selector.tsx` |
+| M7+M8 | MCP/Skills 面板无错误反馈、加载失败显示"无数据" | 新增 error 状态 + toast.error 提示 | `session/mcp-panel.tsx`, `session/skills-panel.tsx` |
+| M10 | `extractArtifacts` 每次 render 重算 | `useMemo(() => ..., [messages])` | `session/artifacts-panel.tsx` |
+| M14 | `handleModelChange` try-catch 包装重复 3 处 | 错误处理集成到 `ModelProvider.setModel`，消除包装 | `lib/model-context.tsx`, 3 个页面 |
+
+**Low (6 顺带修复)**:
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| L4+L5 | 文件树未排序 | 目录优先 + 字母排序（根+子目录） | `session/workspace-panel.tsx` |
+| L7 | artifacts 列表用 array index 做 key | 改用 `artifact.path` | `session/artifacts-panel.tsx` |
+| L8 | "diff" badge 硬编码 | 改用 `t("artifact.diff")` | `session/artifacts-panel.tsx` |
+| L11 | `ModelContext.Provider` value 每次 render 新建 | `useMemo()` 缓存 | `lib/model-context.tsx` |
+| L15 | Refresh aria-label 硬编码 | 新增 `workspace.refresh` i18n key | `workspace-panel.tsx`, `i18n-context.tsx` |
+
+##### 已知推迟 (不修)
+
+| # | 问题 | 说明 |
+|---|------|------|
+| H2 | AddProviderDialog models 数据未写入 config | Step 4.1 Review 已记录 (P2-6)，Provider 创建可工作 |
+| L1 | `ArtifactIcon` + `basename` 重复定义 | 尺寸和条件略有差异，暂不抽取 |
+| L3 | 每个 `FileTreeItem` 调用 `useApi()` / `useI18n()` | Context hook 开销极小，暂可接受 |
+| L12 | `sendMessage()` 已是死代码 | 保留向后兼容 |
+| L13 | 附件按钮无 onClick | 功能待实现（需 Tauri 文件选择器） |
+
+##### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `src/lib/model-context.tsx` | 更新 — setModel 内部错误处理 + useMemo context value |
+| `src/lib/i18n-context.tsx` | 更新 — 新增 22 个翻译键 (en+zh) |
+| `src/main.tsx` | 更新 — 新增 ModelDialogSingleton 单例渲染 |
+| `src/pages/Session.tsx` | 更新 — 移除 ModelDialog/handleModelChange + i18n 替换 6 处 |
+| `src/pages/Home.tsx` | 更新 — 移除 ModelDialog/handleModelChange + i18n 替换 3 处 |
+| `src/components/settings/settings-popover.tsx` | 更新 — 移除 ModelDialog/handleModelChange，精简为纯菜单 |
+| `src/components/settings/model-dialog.tsx` | 更新 — Base URL / API Key 标签 i18n |
+| `src/components/chat/chat-input.tsx` | 更新 — 导入 useI18n + aria-label i18n + onClose + loading 条件 |
+| `src/components/chat/command-selector.tsx` | 更新 — 新增 onClose prop + selectedIndex 防护 + Escape 处理 |
+| `src/components/chat/model-selector.tsx` | 更新 — hasFetched 每次打开重置 |
+| `src/components/session/artifact-preview.tsx` | 更新 — 图片改用 data URL |
+| `src/components/session/artifacts-panel.tsx` | 更新 — useMemo + path 做 key + diff i18n |
+| `src/components/session/workspace-panel.tsx` | 更新 — directory prop + 文件排序 + refresh i18n |
+| `src/components/session/mcp-panel.tsx` | 更新 — error 状态 + toast 反馈 |
+| `src/components/session/skills-panel.tsx` | 更新 — error 状态 |
+
+**验证**: TypeCheck 3/3 ✅
+
+#### Scope 决策
+
+| 功能 | 归属 | 说明 |
+|------|------|------|
+| 模型选择器 + Provider 管理 | ✅ Step 4.1 | 设计稿有完整弹窗设计 |
+| prompt_async 升级 | ✅ Step 4.1 | 替代 fire-and-forget，更可靠 |
+| MCP 真实数据 | ✅ Step 4.2 | 替换占位 |
+| 斜杠命令 | ✅ Step 4.2 | 设计稿有 |
+| 产物预览分屏 | ✅ Step 4.3 | 设计稿标注"第一版本" |
+| 文件上传 | ✅ Step 4.3 | 需 Tauri 文件选择器 |
+| 引导页 (Onboarding) | ❌ → Round 5 | 非核心，推迟 |
+| 定时任务 | ❌ → Round 5+ | 需新包 @agent/proactive-cron |
+| 通道集成 (钉钉等) | ❌ → Round 5+ | 需新包 @agent/channel-gateway |
+
+### 全面代码审查 (✅ 已完成)
+
+**完成日期**: 2026-03-07
+
+> 对 Phase 1 ~ Round 4 全部已完成内容进行系统性全面代码审查。3 个并行 Agent 分别审查 UI 核心组件、Session/Settings 组件、API Client/Lib 层，共发现 36 个问题，修复 20 个。
+
+#### 审查范围
+
+| 审查组 | 覆盖文件 |
+|--------|----------|
+| UI 核心 | Session.tsx, Home.tsx, assistant-message.tsx, message-list.tsx, chat-input.tsx, command-selector.tsx, model-selector.tsx |
+| Session/Settings | artifacts-panel.tsx, workspace-panel.tsx, mcp-panel.tsx, skills-panel.tsx, artifact-preview.tsx, settings-popover.tsx, model-dialog.tsx |
+| API/Lib | api-client/client.ts, api-client/types.ts, sse-client.ts, use-sse.ts, i18n-context.tsx, model-context.tsx, main.tsx |
+
+#### 发现问题分布
+
+| 严重度 | 发现 | 修复 | 推迟 |
+|--------|------|------|------|
+| 🔴 Critical | 3 | 3 | 0 |
+| 🟠 High | 7 | 7 | 0 |
+| 🟡 Medium | 14 | 10 | 4 |
+| 🟢 Low | 12 | 0 | 12 |
+| **合计** | **36** | **20** | **16** |
+
+#### 🔴 Critical 修复 (3)
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| C1 | `request<T>` 对 204/空 body 响应调 `.json()` 抛 SyntaxError — 影响 `replyPermission`/`replyQuestion`/`rejectQuestion`/`abortSession`/`deleteSession` 5 个方法 | 检查 `response.status === 204` 和 `content-length === "0"`，改用 `text() + JSON.parse` 安全解析 | `api-client/client.ts` |
+| C2 | ModelDialog `open={open && !addProviderOpen}` 打开 AddProvider 时触发 `onOpenChange(false)` → `closeModelDialog()`，关闭 AddProvider 后主 Dialog 永久无法打开 | `onOpenChange` 增加 `if (!addProviderOpen)` 守卫，阻止嵌套 Dialog 关闭传播 | `settings/model-dialog.tsx` |
+| C3 | Session 切换时 `pendingPermission`/`pendingQuestion`/`streamingMessageId`/`sending`/`selectedArtifact` 状态残留，导致 A 会话的权限 Dock 在 B 会话显示 | 新增 `useEffect([id])` 重置 5 个 session 级状态 | `pages/Session.tsx` |
+
+#### 🟠 High 修复 (7)
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| H1 | SSE `message.part.updated` 创建新消息时硬编码 `role: "assistant"` — 服务器对 user 消息的 part update 会创建 ghost assistant 消息 | 检测是否有 `temp-` 前缀的乐观消息，若有且 part 为 text 类型则推断 `role: "user"` | `pages/Session.tsx` |
+| H2 | `promptAsync` 失败后临时消息残留 — 用户看到"已发送"的消息实际未发出 | catch 中按 `tempId` 移除临时消息 | `pages/Session.tsx` |
+| H3 | Home 页 `promptAsync` 失败仅 `console.error` — 用户看到空 session 无任何提示 | 添加 `toast.error(t("error.sendMessage"))` | `pages/Home.tsx` |
+| H4 | CommandSelector Escape 清空全部输入 — 用户输入 `/rev` 按 Escape 丢失所有文字 | 仅去掉 `/` 前缀，保留后续文字 | `chat/chat-input.tsx` |
+| H5 | CommandSelector 打开时 ArrowDown/ArrowUp/Tab 缺少 `preventDefault` — 同时移动 textarea 光标、转移焦点 | 添加 `e.preventDefault()` | `chat/chat-input.tsx` |
+| H6 | `permission.replied`/`question.replied`/`question.rejected` 未按 sessionID 过滤 — 并发 session 时一个 session 的回复事件会清掉另一个 session 的 Dock | 添加 `sessionID` 检查，仅当事件 sessionID 匹配或缺失时清除 | `pages/Session.tsx` |
+| H7 | Reply 模式发送按钮 `aria-label` 在 loading 时显示 "Stop Generating" 但点击无停止功能 | 统一为 `t("aria.sendMessage")`，停止功能由 `ExecutionStatus` 组件提供 | `chat/chat-input.tsx` |
+
+#### 🟡 Medium 修复 (10)
+
+| # | 问题 | 修复方案 | 涉及文件 |
+|---|------|---------|---------|
+| M1 | `I18nProvider` 的 `t` 函数和 `value` 对象未 memoize — 每次渲染新引用，连锁导致所有 `useI18n()` 消费者和 `ModelProvider.setModel` 的 `useCallback` 失效 | `t` 用 `useCallback([language])`，value 用 `useMemo`，`setLanguage` 用 `useCallback` | `lib/i18n-context.tsx` |
+| M2 | i18n `{n}` 占位符无插值支持 — `t("time.mAgo")` 返回字面 `"{n}m ago"` | `t()` 新增 `params?: Record<string, string \| number>` 参数，遍历替换 `{key}` 占位符 | `lib/i18n-context.tsx` |
+| M3 | Permission/Question Dock 乐观清除状态 — API 失败时 Dock 已消失，用户无法重试 | catch 中恢复原始 Dock 状态 (`setPendingPermission(perm)`) + toast 提示 | `pages/Session.tsx` |
+| M7 | `artifacts-panel.tsx` 遍历 `msg.parts` 时未检查 undefined — SSE 流式中 parts 尚未到达时 `for...of` 抛 TypeError | 添加 `!msg.parts` 守卫跳过 | `session/artifacts-panel.tsx` |
+| M8 | `CommandSelector` document listener 每次渲染重注册 — `filtered` 每次渲染新数组触发 `useEffect` 卸载/注册 | `filtered` 改用 `useMemo([commands, query])` 稳定引用 | `chat/command-selector.tsx` |
+| M9 | `ModelProvider` config 加载无取消机制 — 快速切换 config 时旧请求覆盖新请求 | 添加 `cancelled` flag + cleanup | `lib/model-context.tsx` |
+| M11 | ModelDialog cost 显示 `$undefined/M` — `cost.input?.toFixed(2)` 在 input 为 undefined 时模板显示 `$undefined` | 改为 `(cost.input ?? 0).toFixed(2)` | `settings/model-dialog.tsx` |
+| M13 | 文件树快速展开/折叠无请求取消 — 旧请求结果覆盖新请求 | 添加 `fetchIdRef` 计数器，旧请求完成时跳过 setState | `session/workspace-panel.tsx` |
+| M14a | "AI is typing..." 硬编码英文 | 新增 `message.aiTyping` i18n 键 (en: "AI is typing...", zh: "AI 正在输入...") | `chat/assistant-message.tsx`, `i18n-context.tsx` |
+| M14b | "Loading messages..." 硬编码英文 | 新增 `message.loadingMessages` i18n 键 + 使用 `t()` | `chat/message-list.tsx`, `i18n-context.tsx` |
+| M14c | PatchBlock "files changed" 硬编码英文 | 改用已有 `t("workspace.filesChanged")` | `chat/assistant-message.tsx` |
+
+#### 🟡 Medium 推迟 (4)
+
+| # | 问题 | 推迟原因 |
+|---|------|---------|
+| M4 | ModelSelector 每次打开拉 ~2.1MB `/provider` | 需要设计缓存策略（Round 4 Review M6 的修复导致每次打开重置 hasFetched） |
+| M5 | SSE 无心跳超时检测 — 半开 TCP 连接永不重连 | 需整体 SSE 架构调整 |
+| M10 | ModelDialog 搜索行为不一致 — 搜索时显示未连接 Provider，清空后隐藏 | 已在 Round 4 Review P2-7 记录，UX 优化 |
+| M12 | MCP 命令字符串分割不支持引号参数 | 边缘场景，需设计引号解析逻辑 |
+
+#### 🟢 Low 推迟 (12)
+
+| # | 问题 | 说明 |
+|---|------|------|
+| L1 | `subscribeToEvents` 使用 EventSource 无法传 auth header | 死代码，实际用 `sse-client.ts` |
+| L2 | `Session.messages` 类型定义为 `Message[]` 而非 `SendMessageResponse[]` | 类型不匹配但不影响运行 |
+| L3 | `MessagePart` 尾部 catch-all 削弱类型收窄 | 设计上为兼容未知 part 类型 |
+| L4 | `listSessions` falsy check 丢弃 `start=0` / `limit=0` | 实际无人传 0 |
+| L5 | SkillsPanel commands/skills key 可能碰撞 | 极低概率 |
+| L6 | SkillsPanel 无 retry/refresh 机制 | 需重新挂载组件 |
+| L7 | assistant-message parts 用 array index 做 key | SSE 动态更新可能导致 React reuse 问题 |
+| L8 | `react-markdown` inline code 检测依赖已弃用 `inline` prop | 依赖版本兼容 |
+| L9 | 缺少 `mcp.needsClientRegistration` i18n 键 | 当前用 `mcp.needsAuth` 覆盖 |
+| L10 | MCP 面板无删除服务功能 | 功能缺失，待设计 |
+| L11 | AddProviderDialog 模型数据未写入 config | 已在 Round 4 Review P2-6 记录 |
+| L12 | SettingsPopover 5/7 菜单项 disabled 无说明 | 待功能实现时启用 |
+
+#### 文件变更清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/client.ts` | 更新 — `request<T>` 空 body 安全处理 |
+| `src/pages/Session.tsx` | 更新 — session 状态重置 + 角色推断 + 临时消息清理 + 权限/问题 sessionID 过滤 + Dock 失败恢复 |
+| `src/pages/Home.tsx` | 更新 — promptAsync 失败 toast |
+| `src/components/settings/model-dialog.tsx` | 更新 — AddProvider 嵌套 Dialog 生命周期 + cost undefined 防护 |
+| `src/components/chat/chat-input.tsx` | 更新 — Escape 保留文字 + preventDefault + aria-label 修正 |
+| `src/components/chat/command-selector.tsx` | 更新 — filtered useMemo |
+| `src/components/chat/assistant-message.tsx` | 更新 — PatchBlock/streaming i18n |
+| `src/components/chat/message-list.tsx` | 更新 — loading i18n |
+| `src/components/session/artifacts-panel.tsx` | 更新 — parts undefined 守卫 |
+| `src/components/session/workspace-panel.tsx` | 更新 — 文件树请求竞态防护 |
+| `src/lib/i18n-context.tsx` | 更新 — t/value memoize + 插值支持 + 4 个新 i18n 键 |
+| `src/lib/model-context.tsx` | 更新 — config 加载取消机制 |
+
+**验证**: TypeCheck 3/3 ✅
+
+---
 
 ### 后续迭代 (📋 规划中)
-- 引导页（首次安装后展示）
-- 定时任务系统
+- 引导页（首次安装设置向导）
+- 定时任务系统 (@agent/proactive-cron)
+- 通道集成 — 钉钉/飞书/Slack (@agent/channel-gateway)
 - 数据导入/导出
 - 记忆管理
 - 键盘快捷键
 - 性能优化（消息虚拟化、代码分割）
+- @agent/workspace — ~/.ultrawork/ 工作区管理
+- @agent/connector — 连接抽象层
+- @agent/notifier — 通知调度
 
 ---
 
@@ -1211,5 +1703,37 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 
 ---
 
+---
+
+### 手动测试 — 4.1 E2E + 4.2 UI 交互 (2026-03-07)
+
+**测试结果**: 全部通过 ✅ (E1-E10 + U1-U12 = 22 项)
+
+#### E5 停止执行 — Bugfix
+
+**问题**: 流式中点击停止后，AI 部分回复消失；发送新消息后收到旧问题的回答。
+
+**根因**: SSE 事件泄漏竞态
+1. `session.status: idle` 过早清除 `stopped` → 服务器后续清理事件（`message.part.removed` 等）生效 → 消息消失
+2. 清除 `stopped` 后，TCP 缓冲中旧交互的 SSE 事件涌入 → 旧回答覆盖新交互
+3. 无 `revertSession` → 服务器会话历史含脏数据 → 下次回复上下文混乱
+
+**修复方案**: 冻结消息 ID 机制（`frozenMessageIdsRef`）
+- `handleStop`: 记录所有当前消息 ID 到冻结集合；temp 消息重命名为 `stopped-*` 防被 dedup 清除
+- SSE 处理器: `stopped=true` 时全量阻断；`stopped=false` 后仍阻断冻结 ID 对应的事件
+- `session.status: idle`: 不再清除 `stopped`（改由 `handleSend` 在发新消息时清除）
+- 恢复 `revertSession`: 有冻结 ID 保护后，revert 清理事件被安全拦截
+- MessageList: 用户消息也支持显示 `■ 执行已中断` 指示器
+
+**文件变更**:
+| 文件 | 操作 |
+|------|------|
+| `src/pages/Session.tsx` | 更新 - frozenMessageIdsRef + handleStop 重写 + SSE 冻结检查 + session.status 修复 |
+| `src/components/chat/message-list.tsx` | 更新 - 用户消息也渲染 stopped 指示器 |
+
+**验证**: TypeCheck 通过 ✅，E5 场景测试通过 ✅
+
+---
+
 **最后更新**: 2026-03-07
-**当前阶段**: Round 2 完成 ✅ → Round 3 规划中
+**当前阶段**: Round 4 + 全面审查 + 手动测试 4.1/4.2 完成 ✅

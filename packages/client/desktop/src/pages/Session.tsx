@@ -6,13 +6,15 @@ import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useSSE } from "@/lib/use-sse"
-import { ChatInput, MessageList } from "@/components/chat"
+import { useModel } from "@/lib/model-context"
+import { ChatInput, MessageList, ModelSelector } from "@/components/chat"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
 import { cn } from "@/lib/utils"
 import { PanelRight, ChevronDown, ChevronRight } from "lucide-react"
-import { ProgressPanel, ArtifactsPanel, WorkspacePanel } from "@/components/session"
+import { ProgressPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview } from "@/components/session"
+import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
 import type { SendMessageResponse, PermissionRequest, QuestionRequest } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
@@ -32,11 +34,34 @@ export function SessionPage() {
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
   const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
+  const [stopped, setStopped] = useState(false) // temporary: blocks SSE during abort cycle
+  const [stoppedAtMessageId, setStoppedAtMessageId] = useState<string | null>(null) // permanent: inline indicator
+  const { currentModel, setModel, openModelDialog } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  // Refs to access latest state inside callbacks without stale closures
+  const messagesRef = useRef<SendMessageResponse[]>(messages)
+  messagesRef.current = messages
+  const stoppedRef = useRef(stopped)
+  stoppedRef.current = stopped
+  // Message IDs from stopped interactions — events for these IDs are permanently
+  // ignored even after `stopped` is cleared, preventing stale event leakage
+  const frozenMessageIdsRef = useRef<Set<string>>(new Set())
 
   const session = sessions.find(s => s.id === id)
+
+  // Reset session-specific state when navigating between sessions
+  useEffect(() => {
+    setPendingPermission(null)
+    setPendingQuestion(null)
+    setStreamingMessageId(null)
+    setSending(false)
+    setSelectedArtifact(null)
+    setStopped(false)
+    setStoppedAtMessageId(null)
+    frozenMessageIdsRef.current = new Set()
+  }, [id])
 
   const checkIfAtBottom = useCallback(() => {
     const container = scrollContainerRef.current
@@ -62,6 +87,17 @@ export function SessionPage() {
       // Filter events not for this session (except session-level events that use id)
       if (eventSessionID && eventSessionID !== id) return
 
+      // Block message events from stopped or frozen (old) interactions
+      if (event.type.startsWith("message.")) {
+        // Full block while stop is active (server still cleaning up)
+        if (stoppedRef.current) return
+        // After stopped is cleared, still block events for frozen message IDs
+        // (prevents stale events from old interaction leaking into new one)
+        const p = event.properties as Record<string, any>
+        const msgId: string | undefined = p.messageID || p.part?.messageID || p.info?.id
+        if (msgId && frozenMessageIdsRef.current.has(msgId)) return
+      }
+
       switch (event.type) {
         // --- OpenCode primary events ---
 
@@ -86,15 +122,19 @@ export function SessionPage() {
               updated[msgIndex] = msg
               return updated
             }
-            // New message — remove any temp user message (optimistic UI dedup)
+            // New message — check if this replaces a temp user message (optimistic UI dedup)
+            const tempMsg = prev.find((m) => m.info.id.startsWith("temp-"))
+            const hasTemp = !!tempMsg
             const filtered = prev.filter((m) => !m.info.id.startsWith("temp-"))
+            // If there was a temp user message, the first new message from server is likely the real user message
+            const inferredRole = hasTemp && part.type === "text" ? "user" as const : "assistant" as const
             return [
               ...filtered,
               {
                 info: {
                   id: messageID,
                   sessionID: id!,
-                  role: "assistant" as const,
+                  role: inferredRole,
                   time: { created: Date.now() },
                 },
                 parts: [part],
@@ -235,6 +275,9 @@ export function SessionPage() {
           const { sessionID, status } = event.properties as { sessionID: string; status: { type: string } }
           if (sessionID === id && status.type === "idle") {
             setSending(false)
+            // Do NOT clear `stopped` here — server may still send message cleanup
+            // events after idle. Clearing too early causes partial AI response to
+            // vanish. `stopped` is cleared in handleSend when the user sends next msg.
           }
           break
         }
@@ -250,7 +293,8 @@ export function SessionPage() {
         }
 
         case "permission.replied": {
-          setPendingPermission(null)
+          const { sessionID: permSid } = event.properties as { sessionID?: string }
+          if (!permSid || permSid === id) setPendingPermission(null)
           break
         }
 
@@ -264,7 +308,8 @@ export function SessionPage() {
 
         case "question.replied":
         case "question.rejected": {
-          setPendingQuestion(null)
+          const { sessionID: qSid } = event.properties as { sessionID?: string }
+          if (!qSid || qSid === id) setPendingQuestion(null)
           break
         }
       }
@@ -292,7 +337,7 @@ export function SessionPage() {
       .catch((err: Error) => {
         if (!cancelled) {
           console.error("Failed to load messages:", err)
-          toast.error("Failed to load messages")
+          toast.error(t("error.loadMessages"))
           setMessages([])
           setLoading(false)
         }
@@ -315,19 +360,69 @@ export function SessionPage() {
   }, [checkIfAtBottom])
 
   const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort()
-    abortControllerRef.current = null
+    setStopped(true)
+    stoppedRef.current = true // Update ref immediately so SSE guard works before re-render
+    setStreamingMessageId(null)
     setSending(false)
-    // Call server-side abort endpoint
+
+    const currentMsgs = messagesRef.current
+    if (currentMsgs.length === 0) return
+
+    // --- Freeze message IDs & set stopped indicator ---
+    const lastMsg = currentMsgs[currentMsgs.length - 1]
+    const frozenIds = new Set<string>()
+    let stoppedId = lastMsg.info.id
+
+    if (stoppedId.startsWith("temp-")) {
+      // Promote temp msg to a stable ID so it survives temp-dedup when the
+      // next interaction starts (temp-dedup removes ALL temp-* messages)
+      const stableId = `stopped-${Date.now()}`
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.info.id === stoppedId
+            ? { ...m, info: { ...m.info, id: stableId } }
+            : m
+        )
+      )
+      currentMsgs.forEach((m) =>
+        frozenIds.add(m.info.id === stoppedId ? stableId : m.info.id)
+      )
+      stoppedId = stableId
+    } else {
+      currentMsgs.forEach((m) => frozenIds.add(m.info.id))
+    }
+
+    frozenMessageIdsRef.current = frozenIds
+    setStoppedAtMessageId(stoppedId)
+
+    // --- Abort + revert (server-side cleanup) ---
+    // With frozenIds protecting the UI, revert's cleanup SSE events are safely
+    // ignored. Revert ensures the server history is clean for the next prompt.
     if (id) {
-      api.abortSession(id).catch(() => {
-        // Ignore abort errors — best effort
-      })
+      const lastUserMsg = [...currentMsgs].reverse().find(
+        (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
+      )
+      api.abortSession(id)
+        .then(() => {
+          if (lastUserMsg) {
+            return api.revertSession(id, lastUserMsg.info.id).catch(() => {
+              // Revert is best-effort
+            })
+          }
+        })
+        .catch(() => {
+          setSending(false)
+        })
     }
   }, [id, api])
 
   const handleSend = async () => {
     if (!id || !input.trim() || sending) return
+    // Clear stopped state so SSE events flow for the new interaction
+    if (stoppedRef.current) {
+      setStopped(false)
+      stoppedRef.current = false
+    }
     const userMessage = input.trim()
     const tempId = `temp-${crypto.randomUUID()}`
     setSending(true)
@@ -344,55 +439,81 @@ export function SessionPage() {
     setMessages((prev) => [...prev, tempUserMessage])
     setInput("")
 
-    // Fire-and-forget: SSE handles all message display
-    // When SSE creates a new message, any temp- messages are automatically removed
-    api.sendMessage(id, userMessage).catch((err) => {
+    // Use prompt_async (returns 204 immediately) instead of fire-and-forget sendMessage
+    api.promptAsync(id, userMessage).catch((err) => {
       console.error("Failed to send message:", err)
+      setSending(false)
+      // Remove the orphaned temp message
+      setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
+      toast.error(t("error.sendMessage"))
     })
   }
 
   const handlePermissionReply = useCallback(
     (reply: "once" | "always" | "reject") => {
       if (!pendingPermission) return
+      const perm = pendingPermission
       setPendingPermission(null)
-      api.replyPermission(pendingPermission.id, reply).catch((err: Error) => {
+      api.replyPermission(perm.id, reply).catch((err: Error) => {
         console.error("Failed to reply permission:", err)
-        toast.error("Failed to reply permission")
+        // Restore the permission dock so user can retry
+        setPendingPermission(perm)
+        toast.error(t("error.replyPermission"))
       })
     },
-    [pendingPermission, api]
+    [pendingPermission, api, t]
   )
 
   const handleQuestionReply = useCallback(
     (answers: string[][]) => {
       if (!pendingQuestion) return
+      const q = pendingQuestion
       setPendingQuestion(null)
-      api.replyQuestion(pendingQuestion.id, answers).catch((err: Error) => {
+      api.replyQuestion(q.id, answers).catch((err: Error) => {
         console.error("Failed to reply question:", err)
-        toast.error("Failed to reply question")
+        setPendingQuestion(q)
+        toast.error(t("error.replyQuestion"))
       })
     },
-    [pendingQuestion, api]
+    [pendingQuestion, api, t]
   )
 
   const handleQuestionReject = useCallback(() => {
     if (!pendingQuestion) return
+    const q = pendingQuestion
     setPendingQuestion(null)
-    api.rejectQuestion(pendingQuestion.id).catch((err: Error) => {
+    api.rejectQuestion(q.id).catch((err: Error) => {
       console.error("Failed to reject question:", err)
-      toast.error("Failed to reject question")
+      setPendingQuestion(q)
+      toast.error(t("error.rejectQuestion"))
     })
-  }, [pendingQuestion, api])
+  }, [pendingQuestion, api, t])
+
+  const handleArtifactClick = useCallback((artifact: Artifact) => {
+    // Add sessionId for patch type artifacts so preview can fetch diff
+    setSelectedArtifact({ ...artifact, sessionId: id })
+  }, [id])
+
+  const handleClosePreview = useCallback(() => {
+    setSelectedArtifact(null)
+  }, [])
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
-      {/* Left Panel - Chat */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {/* Left Panel - Artifact Preview (50/50 split when active) */}
+      {selectedArtifact && (
+        <div className="w-1/2 shrink-0 overflow-hidden">
+          <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
+        </div>
+      )}
+
+      {/* Chat Panel (full width or 50% when preview active) */}
+      <div className={cn("flex min-w-0 flex-col overflow-hidden", selectedArtifact ? "w-1/2" : "flex-1")}>
         {/* Header */}
-        <TopBar title={session?.title || "New Chat"}>
+        <TopBar title={session?.title || t("session.newChat")}>
           <button
             onClick={toggleRight}
-            aria-label="Toggle right sidebar"
+            aria-label={t("aria.toggleSidebar")}
             className={cn(
               "flex size-8 items-center justify-center rounded-lg transition-colors",
               rightOpen
@@ -410,8 +531,14 @@ export function SessionPage() {
           className={cn("relative flex flex-1 justify-center overflow-x-hidden overflow-y-auto scrollbar-soft")}
         >
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
-            <MessageList messages={messages} isLoading={loading} streamingMessageId={streamingMessageId} />
-            {sending && (
+            <MessageList
+              messages={messages}
+              isLoading={loading}
+              streamingMessageId={streamingMessageId}
+              stoppedAtMessageId={stoppedAtMessageId}
+              onArtifactClick={handleArtifactClick}
+            />
+            {sending && !stopped && (
               <ExecutionStatus
                 state="working"
                 onStop={handleStop}
@@ -440,10 +567,17 @@ export function SessionPage() {
                 value={input}
                 onChange={setInput}
                 onSend={handleSend}
-                placeholder="Reply..."
+                placeholder={t("placeholder.reply")}
                 disabled={sending}
                 loading={sending}
                 variant="reply"
+                leftSlot={
+                  <ModelSelector
+                    currentModel={currentModel}
+                    onModelChange={setModel}
+                    onOpenModelDialog={openModelDialog}
+                  />
+                }
               />
             </div>
           )}
@@ -461,13 +595,22 @@ export function SessionPage() {
               <WorkspacePanel directory={session?.directory} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
-              <ArtifactsPanel messages={messages} />
+              <ArtifactsPanel
+                messages={messages}
+                onArtifactClick={handleArtifactClick}
+                selectedPath={selectedArtifact?.path}
+              />
             </RightSidebarSection>
-            <RightSidebarSection title={t("session.rightSidebar.mcp")} placeholder={t("placeholder.comingSoon")} />
-            <RightSidebarSection title={t("session.rightSidebar.skills")} placeholder={t("placeholder.comingSoon")} />
+            <RightSidebarSection title={t("session.rightSidebar.mcp")}>
+              <MCPPanel />
+            </RightSidebarSection>
+            <RightSidebarSection title={t("session.rightSidebar.skills")}>
+              <SkillsPanel />
+            </RightSidebarSection>
           </div>
         </aside>
       )}
+
     </div>
   )
 }

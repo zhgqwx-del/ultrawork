@@ -45,8 +45,8 @@ export function ExecutionStatus({ state, errorMessage, onStop }: ExecutionStatus
       )}
       {state === "stopped" && (
         <>
-          <Square className="size-3.5 text-[--color-fg-muted]" />
-          <span className="text-[--color-fg-muted]">{t("message.stopExecution")}</span>
+          <Square className="size-3.5 text-orange-400" />
+          <span className="text-orange-500 dark:text-orange-400">{t("message.executionStopped")}</span>
         </>
       )}
     </div>

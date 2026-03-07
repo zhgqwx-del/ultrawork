@@ -4,7 +4,8 @@ import { toast } from "sonner"
 import { FolderOpen, Pen, FileText } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
-import { ChatInput } from "@/components/chat"
+import { useModel } from "@/lib/model-context"
+import { ChatInput, ModelSelector } from "@/components/chat"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -13,19 +14,19 @@ const ABILITY_CARDS = [
     icon: FolderOpen,
     titleKey: "home.card.files",
     descKey: "home.card.files.desc",
-    prompt: "Help me organize and sort my files in the current directory",
+    promptKey: "home.card.files.prompt",
   },
   {
     icon: Pen,
     titleKey: "home.card.content",
     descKey: "home.card.content.desc",
-    prompt: "Help me write an article about ",
+    promptKey: "home.card.content.prompt",
   },
   {
     icon: FileText,
     titleKey: "home.card.docs",
     descKey: "home.card.docs.desc",
-    prompt: "Help me analyze and summarize this document: ",
+    promptKey: "home.card.docs.prompt",
   },
 ]
 
@@ -36,6 +37,7 @@ export function HomePage() {
   const { createSession } = useSessionsContext()
   const api = useApi()
   const { t } = useI18n()
+  const { currentModel, setModel, openModelDialog } = useModel()
 
   const handleSend = async () => {
     const text = input.trim()
@@ -45,22 +47,23 @@ export function HomePage() {
     try {
       const session = await createSession()
       setInput("")
-      // Navigate immediately, don't wait for sendMessage (it blocks until agent completes)
+      // Navigate immediately, don't wait for promptAsync
       navigate(`/session/${session.id}`)
-      // Fire message in background — Session page handles streaming via SSE
-      api.sendMessage(session.id, text).catch((err) => {
+      // Use prompt_async (returns 204 immediately) — Session page handles streaming via SSE
+      api.promptAsync(session.id, text).catch((err) => {
         console.error("Failed to send message:", err)
+        toast.error(t("error.sendMessage"))
       })
     } catch (err) {
       console.error("Failed to create session:", err)
-      toast.error("Failed to create session. Please check your connection.")
+      toast.error(t("error.createSession"))
     } finally {
       setSending(false)
     }
   }
 
-  const handleCardClick = (prompt: string) => {
-    setInput(prompt)
+  const handleCardClick = (promptKey: string) => {
+    setInput(t(promptKey))
   }
 
   return (
@@ -84,7 +87,7 @@ export function HomePage() {
             {ABILITY_CARDS.map((card) => (
               <button
                 key={card.titleKey}
-                onClick={() => handleCardClick(card.prompt)}
+                onClick={() => handleCardClick(card.promptKey)}
                 className="flex flex-col items-start gap-2 rounded-xl border border-[--color-border] bg-[--color-bg-subtle] p-4 text-left transition-all hover:border-[--color-brand] hover:shadow-sm"
               >
                 <card.icon className="size-5 text-[--color-brand]" />
@@ -103,15 +106,23 @@ export function HomePage() {
             value={input}
             onChange={setInput}
             onSend={handleSend}
-            placeholder="Ask anything..."
+            placeholder={t("placeholder.askAnything")}
             disabled={sending}
             loading={sending}
             variant="home"
             className="w-full"
             ctaLabel={t("home.startNow")}
+            leftSlot={
+              <ModelSelector
+                currentModel={currentModel}
+                onModelChange={setModel}
+                onOpenModelDialog={openModelDialog}
+              />
+            }
           />
         </div>
       </div>
+
     </div>
   )
 }

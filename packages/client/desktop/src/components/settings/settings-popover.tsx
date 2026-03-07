@@ -17,6 +17,7 @@ import {
   Info,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
+import { useModel } from "@/lib/model-context"
 import type { ReactNode } from "react"
 
 interface SettingsPopoverProps {
@@ -26,6 +27,7 @@ interface SettingsPopoverProps {
 export function SettingsPopover({ children }: SettingsPopoverProps) {
   const navigate = useNavigate()
   const { t } = useI18n()
+  const { openModelDialog } = useModel()
 
   return (
     <DropdownMenu>
@@ -41,7 +43,7 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <Globe className="mr-2 size-4" />
           {t("settingsPopover.language")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={openModelDialog}>
           <Cpu className="mr-2 size-4" />
           {t("settingsPopover.models")}
         </DropdownMenuItem>

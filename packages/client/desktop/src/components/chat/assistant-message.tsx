@@ -6,10 +6,13 @@ import { ToolCallBlock } from "./tool-call-block"
 import { StepIndicator } from "./step-indicator"
 import { FileText, FileDiff } from "lucide-react"
 import type { MessagePart, ToolPart, FilePart, PatchPart } from "@agent/api-client"
+import type { Artifact } from "@/components/session/artifact-preview"
+import { useI18n } from "@/lib/i18n-context"
 
 interface AssistantMessageProps {
   parts: MessagePart[]
   isStreaming?: boolean
+  onArtifactClick?: (artifact: Artifact) => void
 }
 
 function MarkdownContent({ text }: { text: string }) {
@@ -71,10 +74,15 @@ function MarkdownContent({ text }: { text: string }) {
   )
 }
 
-function FileBlock({ part }: { part: FilePart }) {
+function FileBlock({ part, onClick }: { part: FilePart; onClick?: () => void }) {
   const name = part.filename || part.url.split("/").pop() || "file"
   return (
-    <div className="my-1.5 flex items-center gap-2 rounded-lg border border-[--color-border] bg-[--color-bg-subtle] px-3 py-2 text-xs">
+    <div
+      onClick={onClick}
+      className={`my-1.5 flex items-center gap-2 rounded-lg border border-[--color-border] bg-[--color-bg-subtle] px-3 py-2 text-xs ${
+        onClick ? "cursor-pointer hover:border-[--color-primary]/40" : ""
+      }`}
+    >
       <FileText className="size-4 text-[--color-fg-muted]" />
       <span className="text-[--color-fg]">{name}</span>
       <span className="text-[--color-fg-muted]">{part.mime}</span>
@@ -82,12 +90,18 @@ function FileBlock({ part }: { part: FilePart }) {
   )
 }
 
-function PatchBlock({ part }: { part: PatchPart }) {
+function PatchBlock({ part, onClick }: { part: PatchPart; onClick?: () => void }) {
+  const { t } = useI18n()
   return (
-    <div className="my-1.5 rounded-lg border border-[--color-border] bg-[--color-bg-subtle] px-3 py-2 text-xs">
+    <div
+      onClick={onClick}
+      className={`my-1.5 rounded-lg border border-[--color-border] bg-[--color-bg-subtle] px-3 py-2 text-xs ${
+        onClick ? "cursor-pointer hover:border-[--color-primary]/40" : ""
+      }`}
+    >
       <div className="flex items-center gap-2">
         <FileDiff className="size-4 text-blue-500" />
-        <span className="font-medium text-[--color-fg]">{part.files.length} file{part.files.length !== 1 ? "s" : ""} changed</span>
+        <span className="font-medium text-[--color-fg]">{part.files.length} {t("workspace.filesChanged")}</span>
       </div>
       {part.files.length > 0 && (
         <div className="mt-1 space-y-0.5 pl-6">
@@ -100,7 +114,8 @@ function PatchBlock({ part }: { part: PatchPart }) {
   )
 }
 
-export function AssistantMessage({ parts, isStreaming = false }: AssistantMessageProps) {
+export function AssistantMessage({ parts, isStreaming = false, onArtifactClick }: AssistantMessageProps) {
+  const { t } = useI18n()
   return (
     <div className="py-3">
       <div className="space-y-0">
@@ -127,10 +142,33 @@ export function AssistantMessage({ parts, isStreaming = false }: AssistantMessag
                   cost={part.cost}
                 />
               )
-            case "file":
-              return <FileBlock key={i} part={part as FilePart} />
-            case "patch":
-              return <PatchBlock key={i} part={part as PatchPart} />
+            case "file": {
+              const fp = part as FilePart
+              return (
+                <FileBlock
+                  key={i}
+                  part={fp}
+                  onClick={onArtifactClick ? () => onArtifactClick({
+                    type: "file",
+                    path: fp.filename || fp.url || "unknown",
+                    mime: fp.mime,
+                  }) : undefined}
+                />
+              )
+            }
+            case "patch": {
+              const pp = part as PatchPart
+              return (
+                <PatchBlock
+                  key={i}
+                  part={pp}
+                  onClick={onArtifactClick && pp.files.length > 0 ? () => onArtifactClick({
+                    type: "patch",
+                    path: pp.files[0],
+                  }) : undefined}
+                />
+              )
+            }
             case "step-start":
               return null
             default:
@@ -145,7 +183,7 @@ export function AssistantMessage({ parts, isStreaming = false }: AssistantMessag
               <span className="inline-block size-2 animate-pulse rounded-full bg-[--color-primary] [animation-delay:0.2s]" />
               <span className="inline-block size-2 animate-pulse rounded-full bg-[--color-primary] [animation-delay:0.4s]" />
             </div>
-            <span className="text-xs text-[--color-fg-muted]">AI is typing...</span>
+            <span className="text-xs text-[--color-fg-muted]">{t("message.aiTyping")}</span>
           </div>
         )}
       </div>
