@@ -35,7 +35,15 @@ Thumbs.db
 bun.lockb
 
 # Tauri
-src-tauri/target
+**/src-tauri/target
+**/src-tauri/binaries
+packages/client/desktop/packages/
+
+# Test files
+**/bubble_sort.py
+
+# Design assets
+product-uxd-design/
 
 # User workspace (runtime data)
 .ultrawork/
