@@ -2181,5 +2181,67 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+---
+
+## Round 6: 设置页面增强
+
+### 6.1 SettingsPopover 语言子菜单
+
+**需求**: 设置弹出菜单中 "语言" 项原为 disabled，需激活并复用通用设置中的语言切换逻辑。
+
+**方案**: 使用 Radix DropdownMenu 子菜单模式（Sub + SubTrigger + SubContent + RadioGroup）。
+
+**改动**:
+1. `dropdown-menu.tsx` — 新增 `DropdownMenuSubTrigger`（带右箭头 chevron）和 `DropdownMenuSubContent` 组件并导出
+2. `settings-popover.tsx` — disabled 的语言菜单项改为子菜单，展开显示 English/简体中文 单选项，选中即时切换语言（`useConfig` + `updateConfig`）
+
+### 6.2 Settings 页面 About 部分
+
+**需求**: 参照桌面截图设计，在设置页面新增"关于"标签页。
+
+**截图设计要素**: Logo+品牌名+副标题、版本/构建双栏、作者/版权/许可证信息行、底部快捷链接、Powered by 文字。
+
+**改动**:
+1. `Settings.tsx` — 新增 `AboutSection` 组件:
+   - Logo + 品牌名 + 副标题 + "检查更新"按钮
+   - 版本/构建双栏卡片（0.1.0 / 2026.03.08）
+   - 信息行：作者、版权、许可证、OpenCode 服务器地址（带外链图标）
+   - 底部 5 个快捷链接：官网、源码、社区、关注、反馈
+   - Powered by OpenCode 底部文字
+2. `Settings.tsx` — `SettingsSection` 类型新增 `"about"`，左侧导航新增 About 项（Info 图标）
+3. `Settings.tsx` — 支持 `location.state.section` 导航到指定标签 + `useEffect` 同步
+4. `settings-popover.tsx` — "关于"菜单项从 disabled 改为导航到 `/settings` + `state: { section: "about" }`
+
+### 6.3 i18n 新增翻译 key
+
+**新增 key（中英双语）**:
+- `settingsPage.about` — 关于标签标题
+- `about.build` / `about.author` / `about.copyright` / `about.license` — 信息行标签
+- `about.copyrightValue` / `about.licenseValue` — 信息行值
+- `about.subtitle` / `about.checkUpdate` — 品牌区
+- `about.website` / `about.sourceCode` / `about.community` / `about.followUs` / `about.feedback` — 快捷链接
+- `about.poweredBy` — 底部文字
+
+**注意**: `about.copyright` 语义从完整版权文本改为标签名，完整版权文本移到 `about.copyrightValue`。
+
+### 6.4 Review 修复 2 个缺陷
+
+1. **`settings-dialog.tsx` `about.copyright` 语义变更**: SettingsDialog About tab 的 `t("about.copyright")` → `t("about.copyrightValue")`，修复版权文本显示为 "Copyright" 而非完整版权信息
+2. **`Settings.tsx` activeSection 不响应 location.state 变化**: 添加 `useEffect` 监听 `sectionFromState`，确保从 Popover 重复导航到 `/settings` 时能正确切换标签
+
+### 改动文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `src/components/ui/dropdown-menu.tsx` | 修改（新增 SubTrigger/SubContent） |
+| `src/components/settings/settings-popover.tsx` | 修改（语言子菜单 + 关于导航） |
+| `src/pages/Settings.tsx` | 修改（新增 AboutSection + location.state 同步） |
+| `src/components/settings/settings-dialog.tsx` | 修改（about.copyright → about.copyrightValue） |
+| `src/lib/i18n-context.tsx` | 修改（新增 ~15 个 about.* key） |
+
+**验证**: TypeCheck ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 5 联调 ✅ 完成（SSE 全局化 + 产物/文件树/预览修复 + 死代码清理）
+**当前阶段**: Round 6 设置页面增强 ✅ 完成（语言子菜单 + About 页面 + review 修复 2 缺陷）

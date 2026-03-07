@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import { Settings, Shield, Cpu, CheckCircle2, XCircle, Loader2 } from "lucide-react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink } from "lucide-react"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -8,18 +8,28 @@ import { useTheme } from "@/lib/theme-context"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-type SettingsSection = "general" | "privacy" | "capabilities"
+type SettingsSection = "general" | "privacy" | "capabilities" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
+  { key: "about", icon: Info, labelKey: "settingsPage.about" },
 ]
 
 export function SettingsPage() {
   const navigate = useNavigate()
-  const [activeSection, setActiveSection] = useState<SettingsSection>("general")
+  const location = useLocation()
+  const sectionFromState = (location.state as { section?: SettingsSection })?.section
+  const [activeSection, setActiveSection] = useState<SettingsSection>(sectionFromState || "general")
   const { t } = useI18n()
+
+  // Sync activeSection when navigating to /settings with a different section in state
+  useEffect(() => {
+    if (sectionFromState) {
+      setActiveSection(sectionFromState)
+    }
+  }, [sectionFromState])
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -51,6 +61,7 @@ export function SettingsPage() {
             {activeSection === "general" && <GeneralSection />}
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
+            {activeSection === "about" && <AboutSection />}
           </div>
         </div>
       </div>
@@ -230,6 +241,104 @@ function CapabilitiesSection() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function AboutSection() {
+  const { t } = useI18n()
+  const { config } = useConfig()
+
+  const LINKS = [
+    { icon: Globe, labelKey: "about.website", href: "https://ultrawork.ai" },
+    { icon: Code2, labelKey: "about.sourceCode", href: "https://github.com/anthropics/ultrawork" },
+    { icon: Users, labelKey: "about.community", href: "https://discord.gg/ultrawork" },
+    { icon: Twitter, labelKey: "about.followUs", href: "https://x.com/ultrawork" },
+    { icon: MessageSquare, labelKey: "about.feedback", href: "https://github.com/anthropics/ultrawork/issues" },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("settingsPage.about")}</h2>
+
+      {/* Logo + Brand */}
+      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-400 to-red-500">
+            <Sparkles className="size-5 text-white" />
+          </div>
+          <div>
+            <div className="text-base font-semibold text-[var(--color-fg)]">{t("brand.name")}</div>
+            <div className="text-xs text-[var(--color-fg-muted)]">{t("about.subtitle")}</div>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" className="text-xs">
+          {t("about.checkUpdate")}
+        </Button>
+      </div>
+
+      {/* Version / Build grid */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+          <div className="text-xs text-[var(--color-fg-muted)]">{t("about.version")}</div>
+          <div className="mt-1 font-mono text-sm font-medium text-[var(--color-fg)]">0.1.0</div>
+        </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+          <div className="text-xs text-[var(--color-fg-muted)]">{t("about.build")}</div>
+          <div className="mt-1 font-mono text-sm font-medium text-[var(--color-fg)]">2026.03.08</div>
+        </div>
+      </div>
+
+      {/* Info rows */}
+      <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+        <InfoRow label={t("about.author")} value="UltraWork Team" href="https://ultrawork.ai" />
+        <InfoRow label={t("about.copyright")} value={t("about.copyrightValue")} />
+        <InfoRow label={t("about.license")} value={t("about.licenseValue")} href="https://ultrawork.ai/license" />
+        <InfoRow label={t("about.opencode")} value={config.apiBaseUrl || "localhost:4096"} />
+      </div>
+
+      {/* Quick links */}
+      <div className="flex flex-wrap gap-2">
+        {LINKS.map((link) => (
+          <a
+            key={link.labelKey}
+            href={link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-xs text-[var(--color-fg)] transition-colors hover:bg-[var(--color-accent)]"
+          >
+            <link.icon className="size-3.5" />
+            {t(link.labelKey)}
+            <ExternalLink className="size-3 text-[var(--color-fg-muted)]" />
+          </a>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <p className="text-center text-xs text-[var(--color-fg-muted)]">
+        {t("about.poweredBy")}
+      </p>
+    </div>
+  )
+}
+
+function InfoRow({ label, value, href }: { label: string; value: string; href?: string }) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3">
+      <span className="text-sm text-[var(--color-fg-muted)]">{label}</span>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sm text-[var(--color-fg)] hover:text-[var(--color-primary)]"
+        >
+          {value}
+          <ExternalLink className="size-3" />
+        </a>
+      ) : (
+        <span className="text-sm text-[var(--color-fg)]">{value}</span>
+      )}
     </div>
   )
 }

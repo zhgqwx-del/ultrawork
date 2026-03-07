@@ -56,6 +56,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.general": "General",
     "settingsPage.privacy": "Privacy",
     "settingsPage.capabilities": "Capabilities",
+    "settingsPage.about": "About",
     "settingsPage.privacy.title": "Data & Privacy",
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
     "settingsPage.capabilities.title": "Connection Settings",
@@ -98,12 +99,25 @@ const translations: Record<Language, Record<string, string>> = {
     "general.language": "Language",
     "general.language.description": "Choose your preferred language",
 
-    // About tab
+    // About section
     "about.version": "Version",
+    "about.build": "Build",
+    "about.author": "Author",
+    "about.copyright": "Copyright",
+    "about.license": "License",
+    "about.copyrightValue": "© 2026 Ultrawork. All rights reserved.",
+    "about.licenseValue": "UltraWork Community License",
+    "about.subtitle": "Desktop AI Agent",
+    "about.checkUpdate": "Check for Updates",
+    "about.website": "Website",
+    "about.sourceCode": "Source Code",
+    "about.community": "Community",
+    "about.followUs": "Follow Us",
+    "about.feedback": "Report Issues",
+    "about.poweredBy": "Powered by OpenCode",
     "about.opencode": "OpenCode Server",
     "about.documentation": "Documentation",
     "about.github": "GitHub Repository",
-    "about.copyright": "© 2026 Ultrawork. All rights reserved.",
 
     // Buttons
     "button.save": "Save Changes",
@@ -316,6 +330,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.general": "通用",
     "settingsPage.privacy": "隐私",
     "settingsPage.capabilities": "能力配置",
+    "settingsPage.about": "关于",
     "settingsPage.privacy.title": "数据与隐私",
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
     "settingsPage.capabilities.title": "连接设置",
@@ -358,12 +373,25 @@ const translations: Record<Language, Record<string, string>> = {
     "general.language": "语言",
     "general.language.description": "选择您喜欢的语言",
 
-    // About tab
+    // About section
     "about.version": "版本",
+    "about.build": "构建",
+    "about.author": "作者",
+    "about.copyright": "版权",
+    "about.license": "许可证",
+    "about.copyrightValue": "© 2026 Ultrawork. 保留所有权利。",
+    "about.licenseValue": "UltraWork Community License",
+    "about.subtitle": "桌面通用 Agent",
+    "about.checkUpdate": "检查更新",
+    "about.website": "官网",
+    "about.sourceCode": "查看源码",
+    "about.community": "加入社区",
+    "about.followUs": "关注我们",
+    "about.feedback": "反馈问题",
+    "about.poweredBy": "部分组件使用 OpenCode 构建",
     "about.opencode": "OpenCode 服务器",
     "about.documentation": "文档",
     "about.github": "GitHub 仓库",
-    "about.copyright": "© 2026 Ultrawork. 保留所有权利。",
 
     // Buttons
     "button.save": "保存更改",

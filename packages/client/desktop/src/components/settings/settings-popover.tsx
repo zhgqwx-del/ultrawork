@@ -5,6 +5,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import {
   Settings,
@@ -17,6 +22,7 @@ import {
   Info,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
+import { useConfig } from "@/lib/config-context"
 import { useModel } from "@/lib/model-context"
 import type { ReactNode } from "react"
 
@@ -27,6 +33,7 @@ interface SettingsPopoverProps {
 export function SettingsPopover({ children }: SettingsPopoverProps) {
   const navigate = useNavigate()
   const { t } = useI18n()
+  const { config, updateConfig } = useConfig()
   const { openModelDialog } = useModel()
 
   return (
@@ -39,10 +46,21 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <Settings className="mr-2 size-4" />
           {t("settingsPopover.general")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <Globe className="mr-2 size-4" />
-          {t("settingsPopover.language")}
-        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Globe className="mr-2 size-4" />
+            {t("settingsPopover.language")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={config.language}
+              onValueChange={(v) => updateConfig({ language: v as "en" | "zh" })}
+            >
+              <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="zh">简体中文</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuItem onClick={openModelDialog}>
           <Cpu className="mr-2 size-4" />
           {t("settingsPopover.models")}
@@ -65,7 +83,7 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <HelpCircle className="mr-2 size-4" />
           {t("settingsPopover.help")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "about" } })}>
           <Info className="mr-2 size-4" />
           {t("settingsPopover.about")}
         </DropdownMenuItem>

@@ -295,7 +295,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               {/* Copyright */}
               <div className="pt-4 text-center">
                 <p className="text-xs text-[var(--color-fg-muted)]">
-                  {t("about.copyright")}
+                  {t("about.copyrightValue")}
                 </p>
               </div>
             </div>
