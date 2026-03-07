@@ -246,12 +246,20 @@ export class ApiClient {
 
   // --- Async message send ---
 
-  async promptAsync(sessionId: string, message: string, options?: { agent?: string }): Promise<void> {
+  async promptAsync(sessionId: string, message: string, options?: { agent?: string; model?: string }): Promise<void> {
     const requestBody: PromptAsyncRequest = {
       parts: [{ type: "text", text: message }],
     }
     if (options?.agent) {
       requestBody.agent = options.agent
+    }
+    // Parse "providerID/modelID" format into model override object
+    if (options?.model && options.model.includes("/")) {
+      const slashIdx = options.model.indexOf("/")
+      requestBody.model = {
+        providerID: options.model.substring(0, slashIdx),
+        modelID: options.model.substring(slashIdx + 1),
+      }
     }
 
     const response = await fetch(`${this.baseUrl}/session/${sessionId}/prompt_async`, {

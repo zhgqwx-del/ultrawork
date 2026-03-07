@@ -290,11 +290,19 @@ export interface Agent {
   system?: string
 }
 
+// --- Model override for per-message model selection ---
+
+export interface ModelOverride {
+  providerID: string
+  modelID: string
+}
+
 // --- Prompt async request ---
 
 export interface PromptAsyncRequest {
   parts: Array<{ type: string; text?: string; [key: string]: any }>
   agent?: string
+  model?: ModelOverride
 }
 
 // --- MCP types ---

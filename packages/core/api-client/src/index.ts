@@ -34,6 +34,7 @@ export type {
   ProviderAuthMethod,
   OpenCodeConfig,
   Agent,
+  ModelOverride,
   PromptAsyncRequest,
   MCPConfigLocal,
   MCPConfigRemote,

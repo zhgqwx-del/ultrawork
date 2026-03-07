@@ -440,7 +440,8 @@ export function SessionPage() {
     setInput("")
 
     // Use prompt_async (returns 204 immediately) instead of fire-and-forget sendMessage
-    api.promptAsync(id, userMessage).catch((err) => {
+    // Pass current model so the server uses the selected model for this message
+    api.promptAsync(id, userMessage, { model: currentModel || undefined }).catch((err) => {
       console.error("Failed to send message:", err)
       setSending(false)
       // Remove the orphaned temp message

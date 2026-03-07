@@ -50,7 +50,8 @@ export function HomePage() {
       // Navigate immediately, don't wait for promptAsync
       navigate(`/session/${session.id}`)
       // Use prompt_async (returns 204 immediately) — Session page handles streaming via SSE
-      api.promptAsync(session.id, text).catch((err) => {
+      // Pass current model so the server uses the selected model for this message
+      api.promptAsync(session.id, text, { model: currentModel || undefined }).catch((err) => {
         console.error("Failed to send message:", err)
         toast.error(t("error.sendMessage"))
       })

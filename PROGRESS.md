@@ -15,7 +15,7 @@ Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low �
 全面代码审查:  ✅ 完成 (36 问题: 3C+7H+14M+12L 发现, 20 个修复, 16 个已知推迟)
 手动测试 4.1:  ✅ 完成 (E1-E10 全部通过, E5 bugfix)
 手动测试 4.2:  ✅ 完成 (U1-U12 全部通过)
-手动测试 4.3:  ✅ 完成 (M1-M4 全部通过, 10 个 bugfix)
+手动测试 4.3:  ✅ 完成 (M1-M4 全部通过, 11 个 bugfix)
 TypeCheck:    ✅ 3/3 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
@@ -1758,13 +1758,14 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 | 8 | 嵌套 Dialog 冲突: 创建后两个 Dialog 都关闭 | High | 改为同一 Dialog 内视图切换 (`"list"` / `"configure"`) |
 | 9 | `PATCH /config` 触发 Vite HMR → 页面崩溃显示原始 JSON | Critical | Vite watch 忽略 `config.json` + `/session` proxy bypass HTML 请求 |
 | 10 | `config.json` 是运行时产物，不应提交 | Low | 加入 `.gitignore` |
+| 11 | 模型切换不生效: `PATCH /config` 只写磁盘不更新运行时 | Critical | `prompt_async` 传 `model: { providerID, modelID }` 参数实现运行时切换 |
 
 #### 文件变更
 
 | 文件 | 操作 |
 |------|------|
-| `packages/core/api-client/src/types.ts` | 更新 - 新增 ProviderResponse/RawProvider/ProviderAuthResponse 类型 |
-| `packages/core/api-client/src/client.ts` | 更新 - getProviders/getProviderAuth/putProviderAuth 修复 |
+| `packages/core/api-client/src/types.ts` | 更新 - 新增 ProviderResponse/RawProvider/ProviderAuthResponse/ModelOverride 类型 |
+| `packages/core/api-client/src/client.ts` | 更新 - getProviders/getProviderAuth/putProviderAuth 修复 + promptAsync 添加 model 参数 |
 | `packages/core/api-client/src/index.ts` | 更新 - 导出新类型 |
 | `packages/core/api-client/src/__tests__/client.test.ts` | 更新 - 测试对齐真实 API 响应格式 |
 | `packages/client/desktop/vite.config.ts` | 更新 - watch 忽略 config.json + /session proxy bypass |
@@ -1777,9 +1778,11 @@ OpenCode API key 通过 `~/.config/opencode/opencode.json` 配置：
 | `packages/client/desktop/src/lib/i18n-context.tsx` | 更新 - 配置供应商相关 i18n 键 (中英文) |
 | `packages/client/desktop/src/__tests__/lib/sse-client.test.ts` | 更新 - 修复未使用变量 |
 | `.gitignore` | 更新 - 忽略 OpenCode 运行时 config.json |
+| `packages/client/desktop/src/pages/Session.tsx` | 更新 - promptAsync 传入 currentModel |
+| `packages/client/desktop/src/pages/Home.tsx` | 更新 - promptAsync 传入 currentModel |
 | 30+ .tsx 文件 | 更新 - 全局 `[--color-*]` → `[var(--color-*)]` Tailwind v4 修复 |
 
-**验证**: TypeCheck 3/3 ✅，M1-M4 测试通过 ✅
+**验证**: TypeCheck 3/3 ✅，M1-M4 测试通过 ✅ (含运行时模型切换验证)
 
 ---
 
