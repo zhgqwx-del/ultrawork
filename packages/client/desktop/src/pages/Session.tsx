@@ -22,7 +22,7 @@ import type { SSEEvent } from "@/lib/sse-client"
 export function SessionPage() {
   const { id } = useParams()
   const location = useLocation()
-  const { sessions, updateSession } = useSessionsContext()
+  const { sessions, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
   const api = useApi()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { t } = useI18n()
@@ -62,7 +62,7 @@ export function SessionPage() {
     setPendingQuestion(null)
     setStreamingMessageId(null)
     // Preserve sending=true when navigating from Home with an in-flight prompt
-    const navState = location.state as { sending?: boolean } | null
+    const navState = location.state as { sending?: boolean; messageText?: string } | null
     const isSendingFromNav = !!navState?.sending
     setSending(isSendingFromNav)
     sendingRef.current = isSendingFromNav
@@ -71,14 +71,34 @@ export function SessionPage() {
     setStoppedAtMessageId(null)
     frozenMessageIdsRef.current = new Set()
 
+    // Optimistic user message: show the user's text immediately when navigating
+    // from Home with a pending prompt, so the chat isn't empty while waiting for SSE
+    if (isSendingFromNav && id) {
+      markSessionActive(id)
+      if (navState?.messageText) {
+        const tempId = `temp-${crypto.randomUUID()}`
+        setMessages([{
+          info: {
+            id: tempId,
+            sessionID: id,
+            role: "user",
+            time: { created: Date.now() },
+          },
+          parts: [{ type: "text", text: navState.messageText }],
+        }])
+      }
+    }
+
     // Safety timeout: if sending was set from navigation state (Home → Session)
     // but no SSE message events arrive within 8s, reset sending to prevent stuck UI.
     // Normal flow: session.status:idle SSE event clears sending; this is a fallback.
-    if (isSendingFromNav) {
+    if (isSendingFromNav && id) {
+      const sessionId = id
       const timer = setTimeout(() => {
         if (sendingRef.current && !stoppedRef.current) {
           sendingRef.current = false
           setSending(false)
+          markSessionIdle(sessionId)
         }
       }, 8000)
       return () => clearTimeout(timer)
@@ -298,6 +318,7 @@ export function SessionPage() {
           if (sessionID === id && status.type === "idle") {
             sendingRef.current = false
             setSending(false)
+            markSessionIdle(sessionID)
             // Do NOT clear `stopped` here — server may still send message cleanup
             // events after idle. Clearing too early causes partial AI response to
             // vanish. `stopped` is cleared in handleSend when the user sends next msg.
@@ -337,7 +358,7 @@ export function SessionPage() {
         }
       }
     },
-    [id, updateSession, getEventSessionID]
+    [id, updateSession, markSessionIdle, getEventSessionID]
   )
 
   useSSESubscribe(handleSSEEvent)
@@ -382,6 +403,8 @@ export function SessionPage() {
         if (!cancelled) {
           setMessages(prev => {
             if (prev.length === 0) return msgs
+            // Server returned nothing (e.g. brand-new session) — keep optimistic/SSE messages
+            if (msgs.length === 0) return prev
             // Merge: keep SSE-delivered messages not in server response
             const serverIds = new Set(msgs.map(m => m.info.id))
             const sseOnly = prev.filter(m =>
@@ -422,6 +445,7 @@ export function SessionPage() {
     stoppedRef.current = true // Update ref immediately so SSE guard works before re-render
     setStreamingMessageId(null)
     setSending(false)
+    if (id) markSessionIdle(id)
 
     const currentMsgs = messagesRef.current
     if (currentMsgs.length === 0) return
@@ -472,11 +496,12 @@ export function SessionPage() {
           setSending(false)
         })
     }
-  }, [id, api])
+  }, [id, api, markSessionIdle])
 
   const handleSend = async () => {
     if (!id || !input.trim() || sending || sendingRef.current) return
     sendingRef.current = true
+    markSessionActive(id)
     // Clear stopped state so SSE events flow for the new interaction
     const wasStopped = stoppedRef.current
     const prevFrozenIds = wasStopped ? new Set(frozenMessageIdsRef.current) : null
@@ -509,6 +534,7 @@ export function SessionPage() {
       if (idRef.current !== id) return
       sendingRef.current = false
       setSending(false)
+      markSessionIdle(id)
       // Restore stopped state if it was active before send attempt
       if (wasStopped) {
         setStopped(true)
@@ -623,7 +649,7 @@ export function SessionPage() {
           <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
             <MessageList
               messages={messages}
-              isLoading={loading}
+              isLoading={loading && !sending}
               streamingMessageId={streamingMessageId}
               stoppedAtMessageId={stoppedAtMessageId}
               onArtifactClick={handleArtifactClick}

@@ -15,6 +15,29 @@ export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeSessionIds, setActiveSessionIds] = useState<Set<string>>(new Set())
+
+  const markSessionActive = useCallback((id: string) => {
+    setActiveSessionIds(prev => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
+
+  const markSessionIdle = useCallback((id: string) => {
+    setActiveSessionIds(prev => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+    // Update time.updated so StatusIcon can show checkmark (updated - created > 5s)
+    setSessions(prev => prev.map(s =>
+      s.id === id ? { ...s, time: { ...s.time, updated: Date.now() } } : s
+    ))
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -87,5 +110,5 @@ export function useSessions() {
     [api]
   )
 
-  return { sessions, loading, error, refresh, createSession, deleteSession, updateSession, renameSession }
+  return { sessions, loading, error, activeSessionIds, refresh, createSession, deleteSession, updateSession, renameSession, markSessionActive, markSessionIdle }
 }

@@ -23,6 +23,7 @@ Round 7 预览优化: ✅ 完成 (4 优化 + 2 review 修复 + MCP bunx 提示)
 Round 8 技术债: ✅ 完成 (4 修复: Provider缓存/SSE重连/React key/死代码 + review 竞态修复)
 Round 10 服务: ✅ 完成 (远程服务设置页面 — useMCPServers hook 提取 + ServicesSection 全页面管理)
 Round 11 技能: ✅ 完成 (技能面板增强 — useSkills hook + 分组面板 + Settings 技能管理 + MCP 状态持久化 + vendor patch)
+Round 12 体验: ✅ 完成 (新建会话乐观消息 + Sidebar 真实活跃状态 + 隐藏未实现功能)
 TypeCheck:    ✅ 3/3 通过
 单元测试:     ✅ 47/47 通过
 Vite Dev:     ✅ 正常启动
@@ -2692,5 +2693,59 @@ Skill 接口添加 `location?: string` 和 `content?: string` 字段。
 
 ---
 
+## Round 12: 新建会话体验优化 (✅ 完成)
+
+### 问题
+新建会话时，左侧 sidebar session item 显示 spinner 持续 30 秒，主聊天区空白只有"正在执行..."，用户体验差。
+
+### 根因
+1. Home→Session 导航未传递用户消息文本，Session.tsx 等待 SSE 才显示消息
+2. Sidebar StatusIcon 用 `time.updated < 30s` 时间启发式判断活跃，但 `time.updated` 在本地状态从未更新 → 固定 30 秒 spinner，且 checkmark 永远不显示
+3. 定时任务/自定义/渠道 3 个功能按钮处于 disabled 状态但仍占位
+
+### 修复
+
+#### 1. 乐观用户消息 (Optimistic Message)
+- Home.tsx 导航时携带 `messageText` 到 Session 页
+- Session.tsx reset effect 立即创建 temp 用户消息，消除空白等待
+- getMessages merge 增加 `msgs.length === 0` 守卫，防止新会话空响应清除乐观消息
+- `isLoading={loading && !sending}` 避免 loading spinner 和 ExecutionStatus 重叠
+
+#### 2. Sidebar 真实活跃状态追踪
+- `use-sessions.ts` 新增 `activeSessionIds` Set + `markSessionActive` / `markSessionIdle`
+- `markSessionIdle` 同时更新 `time.updated` → checkmark 逻辑生效
+- Session.tsx 在 4 处调用：reset(nav)、handleSend、session.status:idle、handleStop、8s 超时、promptAsync 失败
+- SessionItem StatusIcon 改用 `isRunning` prop 替代 30 秒时间启发式，删除无用 tick timer
+
+#### 3. 隐藏未实现功能
+- 隐藏 Sidebar 定时任务/自定义按钮 + 设置弹出菜单渠道项
+- 清理未使用的 lucide-react 图标导入
+
+### 变更文件 (7 files)
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `packages/client/desktop/src/lib/use-sessions.ts` | 修改 | activeSessionIds + markSessionActive/markSessionIdle |
+| `packages/client/desktop/src/lib/sessions-context.tsx` | 修改 | 接口暴露新字段 |
+| `packages/client/desktop/src/pages/Home.tsx` | 修改 | 导航传 messageText |
+| `packages/client/desktop/src/pages/Session.tsx` | 修改 | 乐观消息 + markActive/Idle 调用 |
+| `packages/client/desktop/src/components/layout/left-sidebar.tsx` | 修改 | isRunning prop + 隐藏定时/自定义 |
+| `packages/client/desktop/src/components/settings/settings-popover.tsx` | 修改 | 隐藏渠道菜单项 |
+| `PROGRESS.md` | 修改 | Round 12 记录 + 未实现功能清单 |
+
+---
+
+## 🔲 未实现功能（暂隐藏，待后续规划）
+
+以下功能 UI 元素已创建但尚未实现，当前已从界面隐藏（保留 TODO 注释）：
+
+| 功能 | 位置 | 说明 |
+|---|---|---|
+| 定时任务 | 左侧 Sidebar 操作栏 | `sidebar.scheduled` — Clock 图标按钮，计划支持定时/周期任务调度 |
+| 自定义 | 左侧 Sidebar 操作栏 | `sidebar.custom` — Briefcase 图标按钮，计划支持自定义 Agent/工作流模板 |
+| 渠道 | 设置弹出菜单 | `settingsPopover.channels` — Radio 图标菜单项，计划支持多渠道（Slack/飞书等）消息推送集成 |
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 11 技能面板增强 ✅ 完成
+**当前阶段**: Round 12 新建会话体验优化 ✅ 完成

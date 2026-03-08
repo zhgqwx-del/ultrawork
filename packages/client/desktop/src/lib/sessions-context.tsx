@@ -6,11 +6,14 @@ interface SessionsContextType {
   sessions: Session[]
   loading: boolean
   error: string | null
+  activeSessionIds: Set<string>
   refresh: () => Promise<void>
   createSession: () => Promise<Session>
   deleteSession: (sessionId: string) => Promise<void>
   updateSession: (id: string, updates: Partial<Session>) => void
   renameSession: (sessionId: string, newTitle: string) => Promise<void>
+  markSessionActive: (id: string) => void
+  markSessionIdle: (id: string) => void
 }
 
 const SessionsContext = createContext<SessionsContextType | null>(null)

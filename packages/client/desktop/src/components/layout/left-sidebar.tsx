@@ -14,8 +14,6 @@ import {
   X,
   Search,
   Star,
-  Clock,
-  Briefcase,
   Sparkles,
 } from "lucide-react"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -94,7 +92,7 @@ export function LeftSidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { leftOpen, toggleLeft } = useSidebar()
-  const { sessions, loading, createSession, deleteSession, renameSession } = useSessionsContext()
+  const { sessions, loading, activeSessionIds, createSession, deleteSession, renameSession } = useSessionsContext()
   const [creating, setCreating] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showSearch, setShowSearch] = useState(false)
@@ -214,29 +212,8 @@ export function LeftSidebar() {
                 <TooltipContent side="bottom">{t("sidebar.search")}</TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    disabled
-                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] opacity-50"
-                  >
-                    <Clock className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{t("sidebar.scheduled")}</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    disabled
-                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] opacity-50"
-                  >
-                    <Briefcase className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{t("sidebar.custom")}</TooltipContent>
-              </Tooltip>
+              {/* TODO: 定时任务 (sidebar.scheduled) — 未实现，暂隐藏 */}
+              {/* TODO: 自定义 (sidebar.custom) — 未实现，暂隐藏 */}
             </nav>
 
             {/* Search Input (conditional) */}
@@ -283,6 +260,7 @@ export function LeftSidebar() {
                               key={session.id}
                               session={session}
                               isActive={currentSessionId === session.id}
+                              isRunning={activeSessionIds.has(session.id)}
                               isPinned={true}
                               onNavigate={() => navigate(`/session/${session.id}`)}
                               onDelete={(e) => handleDeleteSession(e, session.id)}
@@ -296,6 +274,7 @@ export function LeftSidebar() {
                               key={session.id}
                               session={session}
                               isActive={currentSessionId === session.id}
+                              isRunning={activeSessionIds.has(session.id)}
                               isPinned={false}
                               onNavigate={() => navigate(`/session/${session.id}`)}
                               onDelete={(e) => handleDeleteSession(e, session.id)}
@@ -403,6 +382,7 @@ export function LeftSidebar() {
 function SessionItem({
   session,
   isActive,
+  isRunning,
   isPinned,
   onNavigate,
   onDelete,
@@ -412,6 +392,7 @@ function SessionItem({
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
   isActive: boolean
+  isRunning: boolean
   isPinned: boolean
   onNavigate: () => void
   onDelete: (e: React.MouseEvent) => void
@@ -458,22 +439,9 @@ function SessionItem({
     }
   }
 
-  // Force re-render when session crosses the 30s "active" threshold
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const age = Date.now() - session.time.updated
-    if (age < 30000) {
-      const timer = setTimeout(() => setTick((t) => t + 1), 30000 - age + 500)
-      return () => clearTimeout(timer)
-    }
-  }, [session.time.updated])
-
-  // Status icon based on session state
+  // Status icon based on actual session activity state
   const StatusIcon = () => {
-    const age = Date.now() - session.time.updated
-
-    // Active within last 30 seconds = running
-    if (age < 30000) {
+    if (isRunning) {
       return <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
     }
     // Has meaningful content (updated significantly after creation) = completed
