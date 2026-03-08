@@ -36,6 +36,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPopover.remote": "Remote Services",
     "settingsPopover.help": "Help Docs",
     "settingsPopover.about": "About",
+    "settingsPopover.skills": "Skills",
 
     // Home
     "home.headline": "Chat & Work, Simple & Easy",
@@ -60,6 +61,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.privacy.title": "Data & Privacy",
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
     "settingsPage.services": "Services",
+    "settingsPage.skills": "Skills",
     "settingsPage.capabilities.title": "Connection Settings",
 
     // Session right sidebar
@@ -239,7 +241,31 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.hintBunx": "Local servers: use bunx instead of npx (e.g. bunx --bun @mcp/server)",
 
     // Skills / Commands
-    "skills.noItems": "No commands or skills available",
+    "skills.noItems": "No skills available",
+    "skills.empty": "No skills available. Add skills in Settings.",
+    "skills.manage": "Manage Skills",
+    "skills.group.command": "Built-in",
+    "skills.group.mcp": "MCP",
+    "skills.group.skill": "Project Skills",
+    "skills.settingsTitle": "Skills",
+    "skills.settingsDescription": "Manage commands and skills that extend agent capabilities.",
+    "skills.searchPlaceholder": "Search skills...",
+    "skills.noSearchResults": "No matching skills",
+    "skills.source.command": "Built-in",
+    "skills.source.mcp": "MCP",
+    "skills.source.skill": "Project",
+    "skills.configTitle": "Skills Configuration",
+    "skills.pathsLabel": "Skills Loading Paths",
+    "skills.pathsDescription": "Directories where SKILL.md files are discovered.",
+    "skills.pathPlaceholder": "~/.claude/skills/my-skills",
+    "skills.addPath": "Add",
+    "skills.urlsLabel": "Remote Skills URLs",
+    "skills.urlsDescription": "Remote URLs for skill discovery.",
+    "skills.urlPlaceholder": "https://example.com/skills",
+    "skills.addUrl": "Add",
+    "skills.configSaved": "Skills configuration saved",
+    "skills.configError": "Failed to save skills configuration",
+    "skills.configNote": "Click refresh after saving to load new skills.",
     "command.title": "Commands",
 
     // Artifact preview
@@ -322,6 +348,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPopover.remote": "远程服务",
     "settingsPopover.help": "帮助文档",
     "settingsPopover.about": "关于",
+    "settingsPopover.skills": "技能管理",
 
     // Home
     "home.headline": "聊天办公，简单轻松",
@@ -346,6 +373,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.privacy.title": "数据与隐私",
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
     "settingsPage.services": "服务",
+    "settingsPage.skills": "技能",
     "settingsPage.capabilities.title": "连接设置",
 
     // Session right sidebar
@@ -525,7 +553,31 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.hintBunx": "本地服务：请用 bunx 代替 npx（如 bunx --bun @mcp/server）",
 
     // Skills / Commands
-    "skills.noItems": "暂无命令或技能",
+    "skills.noItems": "暂无技能",
+    "skills.empty": "暂无可用技能，前往设置添加。",
+    "skills.manage": "管理技能",
+    "skills.group.command": "内置",
+    "skills.group.mcp": "MCP",
+    "skills.group.skill": "项目技能",
+    "skills.settingsTitle": "技能",
+    "skills.settingsDescription": "管理扩展 Agent 能力的命令和技能。",
+    "skills.searchPlaceholder": "搜索技能...",
+    "skills.noSearchResults": "没有匹配的技能",
+    "skills.source.command": "内置",
+    "skills.source.mcp": "MCP",
+    "skills.source.skill": "项目",
+    "skills.configTitle": "技能配置",
+    "skills.pathsLabel": "技能加载目录",
+    "skills.pathsDescription": "自动发现 SKILL.md 文件的目录。",
+    "skills.pathPlaceholder": "~/.claude/skills/my-skills",
+    "skills.addPath": "添加",
+    "skills.urlsLabel": "远程技能源",
+    "skills.urlsDescription": "远程技能发现 URL。",
+    "skills.urlPlaceholder": "https://example.com/skills",
+    "skills.addUrl": "添加",
+    "skills.configSaved": "技能配置已保存",
+    "skills.configError": "保存技能配置失败",
+    "skills.configNote": "保存后点击刷新即可加载新技能。",
     "command.title": "命令",
 
     // Artifact preview

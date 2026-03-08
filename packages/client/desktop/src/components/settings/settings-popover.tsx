@@ -19,6 +19,7 @@ import {
   FolderOpen,
   Radio,
   Server,
+  Sparkles,
   HelpCircle,
   Info,
 } from "lucide-react"
@@ -78,6 +79,10 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
         <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "services" } })}>
           <Server className="mr-2 size-4" />
           {t("settingsPopover.remote")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "skills" } })}>
+          <Sparkles className="mr-2 size-4" />
+          {t("settingsPopover.skills")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => openUrl("https://docs.ultrawork.ai/guide")}>

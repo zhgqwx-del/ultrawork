@@ -22,6 +22,7 @@ Round 5 联调:  ✅ 完成 (SSE 全局化 + 产物/文件树/预览 6 bugfix + 
 Round 7 预览优化: ✅ 完成 (4 优化 + 2 review 修复 + MCP bunx 提示)
 Round 8 技术债: ✅ 完成 (4 修复: Provider缓存/SSE重连/React key/死代码 + review 竞态修复)
 Round 10 服务: ✅ 完成 (远程服务设置页面 — useMCPServers hook 提取 + ServicesSection 全页面管理)
+Round 11 技能: ✅ 完成 (技能面板增强 — useSkills hook + 分组面板 + Settings 技能管理 + MCP 状态持久化 + vendor patch)
 TypeCheck:    ✅ 3/3 通过
 单元测试:     ✅ 47/47 通过
 Vite Dev:     ✅ 正常启动
@@ -2590,5 +2591,106 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+---
+
+## Round 11: 技能面板增强 (✅ 完成)
+
+### 概述
+
+按来源分组的技能面板（右侧栏）+ Settings 技能管理页 + MCP 状态持久化修复 + vendor config.json→opencode.json patch。
+
+### Step 1: api-client Skill 类型增强 ✅
+
+**修改**: `packages/core/api-client/src/types.ts`
+
+Skill 接口添加 `location?: string` 和 `content?: string` 字段。
+
+### Step 2: useSkills 共享 Hook ✅
+
+**新建**: `packages/client/desktop/src/lib/use-skills.ts`
+
+- 合并 `/command` + `/skill` + `/config` 三个 API
+- 按 `source` 字段分组（command → mcp → skill），去重优先保留 Command 版本
+- `skillLocationMap` 从 `/skill` enrichment Command-sourced items 的 location
+- `updateSkillsConfig` 乐观更新 + ref 同步 + 失败回滚
+- `skillsConfigRef.current = newConfig` 同步 ref 防连续调用丢数据
+
+### Step 3: i18n 新增 25 个翻译键 ✅
+
+**修改**: `packages/client/desktop/src/lib/i18n-context.tsx`
+
+`skills.*` 系列 25 个键 + `settingsPopover.skills` + `settingsPage.skills`，en/zh 完整对应。
+
+### Step 4: SkillsPanel 重写（右侧栏分组面板）✅
+
+**重写**: `packages/client/desktop/src/components/session/skills-panel.tsx`
+
+- 消费 `useSkills()` hook
+- 按来源分组渲染：内置(Terminal) / MCP(Globe) / 项目技能(Sparkles)
+- 卡片可点击 → `onSkillClick(name)` → 聊天输入框填入 `/{name} `
+- 底部"管理技能"链接 → 导航到 Settings 技能页
+
+### Step 5: Session.tsx handleSkillClick ✅
+
+**修改**: `packages/client/desktop/src/pages/Session.tsx`
+
+`handleSkillClick = useCallback((name) => setInput(\`/${name} \`), [])` + 传给 SkillsPanel
+
+### Step 6: Settings 技能管理页 ✅
+
+**修改**: `packages/client/desktop/src/pages/Settings.tsx`
+
+- `SettingsSection` 新增 `"skills"`
+- `SkillsSection` 组件：Header + 搜索 + 分组列表 + 来源 badge(gray/blue/purple) + location 显示 + 路径/URL 配置区
+- `SettingsSkillCard`: 图标 + `/{name}` + badge + 描述 + location(mono)
+- 路径/URL 添加删除 + 通过 `updateSkillsConfig` 写入后端
+
+### Step 7: SettingsPopover 技能入口 ✅
+
+**修改**: `packages/client/desktop/src/components/settings/settings-popover.tsx`
+
+新增 Sparkles 图标 + "技能管理" 菜单项 → navigate to Settings skills section
+
+### Step 8: Vendor Config.update 文件名修复 ✅
+
+**修改**: `vendor/opencode/packages/opencode/src/config/config.ts`
+
+`Config.update()` 写入 `"config.json"` → `"opencode.json"`（上游 rename 遗漏）。
+重编译 sidecar binary: `bun run script/build.ts --single --skip-install`。
+详见 `memory/vendor-patches.md`。
+
+### Step 9: MCP 状态 localStorage 持久化 ✅
+
+**修改**: `packages/client/desktop/src/lib/use-mcp-servers.ts`
+
+- 新增 `ultrawork_mcp_statuses` localStorage 键
+- `handleAdd`/`handleToggle` 成功后持久化状态
+- `fetchMCP` 合并时使用保存的状态代替默认 "disabled"
+- `handleRemove` 清理保存的状态
+- `configMapRef` 防 handleToggle 闭包读到旧 configMap
+
+### Step 10: Review 修复 3 个缺陷 ✅
+
+1. **handleToggle 闭包**: `configMap` 直接引用 → `configMapRef.current`，deps 移除 `configMap`
+2. **updateSkillsConfig ref 同步**: `setSkillsConfig(newConfig)` 后添加 `skillsConfigRef.current = newConfig`
+3. **onRefresh try/finally**: `await refresh()` → `try { await refresh() } finally { setRefreshing(false) }`（SkillsSection + ServicesSection 同时修复）
+
+### 修改文件清单
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `packages/core/api-client/src/types.ts` | 修改 | Skill 接口加 location/content |
+| `packages/client/desktop/src/lib/use-skills.ts` | 新建 | 共享技能数据 hook |
+| `packages/client/desktop/src/lib/use-mcp-servers.ts` | 修改 | 状态持久化 + configMapRef |
+| `packages/client/desktop/src/lib/i18n-context.tsx` | 修改 | 新增 ~27 个 i18n 键 |
+| `packages/client/desktop/src/components/session/skills-panel.tsx` | 重写 | 分组面板 + 点击 + 管理入口 |
+| `packages/client/desktop/src/pages/Session.tsx` | 修改 | handleSkillClick + prop 传递 |
+| `packages/client/desktop/src/pages/Settings.tsx` | 修改 | Skills section + onRefresh try/finally |
+| `packages/client/desktop/src/components/settings/settings-popover.tsx` | 修改 | 技能管理菜单项 |
+| `vendor/opencode/packages/opencode/src/config/config.ts` | 修改 | config.json→opencode.json |
+| `src-tauri/binaries/opencode-server-aarch64-apple-darwin` | 替换 | 重编译 sidecar binary |
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 10 远程服务设置页面 ✅ 完成
+**当前阶段**: Round 11 技能面板增强 ✅ 完成

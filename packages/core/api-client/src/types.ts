@@ -347,6 +347,8 @@ export interface Command {
 export interface Skill {
   name: string
   description: string
+  location?: string   // SKILL.md file path
+  content?: string    // SKILL.md content
   [key: string]: unknown
 }
 

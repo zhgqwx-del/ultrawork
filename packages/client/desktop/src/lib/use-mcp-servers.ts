@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
@@ -6,6 +6,7 @@ import type { MCPStatusMap, MCPConfig } from "@agent/api-client"
 
 const MCP_CONFIGS_KEY = "ultrawork_mcp_configs"
 const MCP_HIDDEN_KEY = "ultrawork_mcp_hidden"
+const MCP_STATUSES_KEY = "ultrawork_mcp_statuses"
 
 function loadSavedConfigs(): Record<string, MCPConfig> {
   try {
@@ -19,6 +20,21 @@ function loadSavedConfigs(): Record<string, MCPConfig> {
 function saveConfigs(configs: Record<string, MCPConfig>) {
   try {
     localStorage.setItem(MCP_CONFIGS_KEY, JSON.stringify(configs))
+  } catch {}
+}
+
+function loadSavedStatuses(): MCPStatusMap {
+  try {
+    const raw = localStorage.getItem(MCP_STATUSES_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveSavedStatuses(statuses: MCPStatusMap) {
+  try {
+    localStorage.setItem(MCP_STATUSES_KEY, JSON.stringify(statuses))
   } catch {}
 }
 
@@ -53,6 +69,8 @@ export function useMCPServers() {
   const { t } = useI18n()
   const [statusMap, setStatusMap] = useState<MCPStatusMap>({})
   const [configMap, setConfigMap] = useState<Record<string, MCPConfig>>(loadSavedConfigs)
+  const configMapRef = useRef(configMap)
+  configMapRef.current = configMap
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -63,11 +81,15 @@ export function useMCPServers() {
       const data = filterHidden(raw)
       // Merge: backend active servers + locally saved disconnected servers
       const saved = loadSavedConfigs()
+      const savedStatuses = loadSavedStatuses()
       const hidden = loadHiddenSet()
       const merged: MCPStatusMap = { ...data }
       for (const name of Object.keys(saved)) {
         if (!(name in merged) && !hidden.has(name)) {
-          merged[name] = { status: "disabled" }
+          // Use last-known status from localStorage instead of assuming "disabled".
+          // GET /mcp only reports config-file-based servers; dynamically added
+          // servers (POST /mcp) are in memory but not reported by the endpoint.
+          merged[name] = savedStatuses[name] ?? { status: "disabled" }
         }
       }
       setStatusMap(merged)
@@ -90,13 +112,22 @@ export function useMCPServers() {
         // Backend removes disconnected servers from GET /mcp response,
         // so update locally to preserve the entry as "disabled"
         setStatusMap(prev => ({ ...prev, [name]: { status: "disabled" } }))
+        // Persist disabled status
+        const ss = loadSavedStatuses()
+        ss[name] = { status: "disabled" }
+        saveSavedStatuses(ss)
       } else {
         // Backend forgets disconnected servers, so connectMCP(name) won't work.
         // Re-create the server using stored config (createMCP adds + connects).
-        const config = configMap[name]
+        const config = configMapRef.current[name]
         if (config) {
           const raw = await api.createMCP(name, config)
-          setStatusMap(prev => ({ ...prev, ...filterHidden(raw) }))
+          const filtered = filterHidden(raw)
+          setStatusMap(prev => ({ ...prev, ...filtered }))
+          // Persist connected statuses
+          const ss = loadSavedStatuses()
+          for (const [k, v] of Object.entries(filtered)) ss[k] = v
+          saveSavedStatuses(ss)
         } else {
           // Fallback for servers loaded before we tracked configs
           await api.connectMCP(name)
@@ -110,7 +141,7 @@ export function useMCPServers() {
     } finally {
       setActionLoading(null)
     }
-  }, [api, configMap, t])
+  }, [api, t])
 
   const handleAdd = useCallback(async (name: string, config: MCPConfig) => {
     setActionLoading("__add__")
@@ -128,7 +159,14 @@ export function useMCPServers() {
         hidden.delete(name)
         saveHiddenSet(hidden)
       }
-      setStatusMap(prev => ({ ...prev, ...filterHidden(raw) }))
+      const filtered = filterHidden(raw)
+      setStatusMap(prev => ({ ...prev, ...filtered }))
+      // Persist statuses so page navigation doesn't lose connected state.
+      // GET /mcp only reports config-file servers; dynamically added servers
+      // need localStorage to remember their status across re-mounts.
+      const ss = loadSavedStatuses()
+      for (const [k, v] of Object.entries(filtered)) ss[k] = v
+      saveSavedStatuses(ss)
     } catch (err) {
       console.error("Failed to add MCP:", err)
       toast.error(t("error.addMCP"))
@@ -163,6 +201,10 @@ export function useMCPServers() {
       saveConfigs(next)
       return next
     })
+    // Clean up saved status
+    const ss = loadSavedStatuses()
+    delete ss[name]
+    saveSavedStatuses(ss)
   }, [api])
 
   return {

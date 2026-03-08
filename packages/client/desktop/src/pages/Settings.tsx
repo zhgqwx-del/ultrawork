@@ -1,22 +1,25 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle } from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal } from "lucide-react"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
+import { useSkills } from "@/lib/use-skills"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { MCPStatus, MCPConfig } from "@agent/api-client"
+import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "about"
+type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "skills" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
   { key: "services", icon: Server, labelKey: "settingsPage.services" },
+  { key: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
   { key: "about", icon: Info, labelKey: "settingsPage.about" },
 ]
 
@@ -65,6 +68,7 @@ export function SettingsPage() {
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "services" && <ServicesSection />}
+            {activeSection === "skills" && <SkillsSection />}
             {activeSection === "about" && <AboutSection />}
           </div>
         </div>
@@ -263,8 +267,7 @@ function ServicesSection() {
 
   const onRefresh = async () => {
     setRefreshing(true)
-    await refresh()
-    setRefreshing(false)
+    try { await refresh() } finally { setRefreshing(false) }
   }
 
   const onAdd = async (name: string, config: MCPConfig) => {
@@ -559,6 +562,282 @@ function ServiceAddForm({
             {loading && <Loader2 className="mr-1.5 size-4 animate-spin" />}
             {t("mcp.add")}
           </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const SKILL_GROUP_ICONS: Record<SkillSource, typeof Terminal> = {
+  command: Terminal,
+  mcp: Globe,
+  skill: Sparkles,
+}
+
+const SKILL_GROUP_LABELS: Record<SkillSource, string> = {
+  command: "skills.group.command",
+  mcp: "skills.group.mcp",
+  skill: "skills.group.skill",
+}
+
+const SOURCE_BADGE_COLORS: Record<SkillSource, string> = {
+  command: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  mcp: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  skill: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+}
+
+function SkillsSection() {
+  const { t } = useI18n()
+  const {
+    groups, loading, error, totalCount,
+    skillsConfig, refresh, updateSkillsConfig,
+  } = useSkills()
+  const [searchQuery, setSearchQuery] = useState("")
+  const [refreshing, setRefreshing] = useState(false)
+  const [newPath, setNewPath] = useState("")
+  const [newUrl, setNewUrl] = useState("")
+
+  const onRefresh = async () => {
+    setRefreshing(true)
+    try { await refresh() } finally { setRefreshing(false) }
+  }
+
+  // Filter items by search query
+  const filteredGroups = searchQuery.trim()
+    ? groups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter(
+            (item) =>
+              item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              item.description.toLowerCase().includes(searchQuery.toLowerCase())
+          ),
+        }))
+        .filter((group) => group.items.length > 0)
+    : groups
+
+  const filteredCount = filteredGroups.reduce((sum, g) => sum + g.items.length, 0)
+
+  const handleAddPath = () => {
+    const trimmed = newPath.trim()
+    if (!trimmed) return
+    if (skillsConfig.paths.includes(trimmed)) return
+    updateSkillsConfig({ paths: [...skillsConfig.paths, trimmed] })
+    setNewPath("")
+  }
+
+  const handleRemovePath = (path: string) => {
+    updateSkillsConfig({ paths: skillsConfig.paths.filter((p) => p !== path) })
+  }
+
+  const handleAddUrl = () => {
+    const trimmed = newUrl.trim()
+    if (!trimmed) return
+    if (skillsConfig.urls.includes(trimmed)) return
+    updateSkillsConfig({ urls: [...skillsConfig.urls, trimmed] })
+    setNewUrl("")
+  }
+
+  const handleRemoveUrl = (url: string) => {
+    updateSkillsConfig({ urls: skillsConfig.urls.filter((u) => u !== url) })
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("skills.settingsTitle")}</h2>
+            {totalCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-[var(--color-accent)] px-2 py-0.5 text-xs font-medium text-[var(--color-fg-muted)]">
+                {totalCount}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("skills.settingsDescription")}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+          <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+          {t("workspace.refresh")}
+        </Button>
+      </div>
+
+      {/* Search */}
+      {totalCount > 0 && (
+        <div className="relative">
+          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--color-fg-muted)]" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("skills.searchPlaceholder")}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pr-3 pl-9 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
+        </div>
+      )}
+
+      {/* Error */}
+      {error && !loading && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-500/10 p-4 text-sm text-red-600 dark:border-red-800 dark:text-red-400">
+          <AlertCircle className="size-4 shrink-0" />
+          {t("error.fetchSkills")}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && totalCount === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
+          <Sparkles className="size-10 text-[var(--color-fg-muted)]" />
+          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("skills.empty")}</p>
+        </div>
+      )}
+
+      {/* No search results */}
+      {!loading && !error && totalCount > 0 && searchQuery.trim() && filteredCount === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12">
+          <Search className="size-8 text-[var(--color-fg-muted)]" />
+          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("skills.noSearchResults")}</p>
+        </div>
+      )}
+
+      {/* Grouped skill list */}
+      {!loading && !error && filteredGroups.length > 0 && (
+        <div className="space-y-6">
+          {filteredGroups.map((group) => {
+            const Icon = SKILL_GROUP_ICONS[group.key]
+            return (
+              <div key={group.key} className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
+                  <Icon className="size-4" />
+                  <span>{t(SKILL_GROUP_LABELS[group.key])}</span>
+                  <span className="text-xs text-[var(--color-fg-muted)]">({group.items.length})</span>
+                </div>
+                <div className="space-y-2">
+                  {group.items.map((item) => (
+                    <SettingsSkillCard key={item.name} item={item} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Skills configuration */}
+      {!loading && !error && (
+        <>
+          <div className="border-t border-[var(--color-border)]" />
+
+          <div className="space-y-6">
+            <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("skills.configTitle")}</h3>
+
+            {/* Paths */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-[var(--color-fg)]">{t("skills.pathsLabel")}</label>
+                <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.pathsDescription")}</p>
+              </div>
+
+              {skillsConfig.paths.map((path, i) => (
+                <div key={`${path}-${i}`} className="flex items-center gap-2">
+                  <div className="flex-1 truncate rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-fg)]">
+                    {path}
+                  </div>
+                  <button
+                    onClick={() => handleRemovePath(path)}
+                    className="rounded p-1.5 text-[var(--color-fg-muted)] transition-colors hover:bg-red-500/10 hover:text-red-500"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-2">
+                <input
+                  value={newPath}
+                  onChange={(e) => setNewPath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddPath() }}
+                  placeholder={t("skills.pathPlaceholder")}
+                  className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                />
+                <Button variant="outline" size="sm" onClick={handleAddPath} disabled={!newPath.trim()}>
+                  <Plus className="mr-1 size-3.5" />
+                  {t("skills.addPath")}
+                </Button>
+              </div>
+            </div>
+
+            {/* URLs */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-[var(--color-fg)]">{t("skills.urlsLabel")}</label>
+                <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.urlsDescription")}</p>
+              </div>
+
+              {skillsConfig.urls.map((url, i) => (
+                <div key={`${url}-${i}`} className="flex items-center gap-2">
+                  <div className="flex-1 truncate rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-fg)]">
+                    {url}
+                  </div>
+                  <button
+                    onClick={() => handleRemoveUrl(url)}
+                    className="rounded p-1.5 text-[var(--color-fg-muted)] transition-colors hover:bg-red-500/10 hover:text-red-500"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-2">
+                <input
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddUrl() }}
+                  placeholder={t("skills.urlPlaceholder")}
+                  className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                />
+                <Button variant="outline" size="sm" onClick={handleAddUrl} disabled={!newUrl.trim()}>
+                  <Plus className="mr-1 size-3.5" />
+                  {t("skills.addUrl")}
+                </Button>
+              </div>
+            </div>
+
+            {/* Note */}
+            <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.configNote")}</p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SettingsSkillCard({ item }: { item: SkillItem }) {
+  const { t } = useI18n()
+  const Icon = SKILL_GROUP_ICONS[item.source]
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex items-start gap-3">
+        <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-fg-muted)]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-[var(--color-fg)]">/{item.name}</span>
+            <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", SOURCE_BADGE_COLORS[item.source])}>
+              {t(`skills.source.${item.source}`)}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{item.description}</p>
+          {item.location && (
+            <p className="mt-1 truncate font-mono text-[10px] text-[var(--color-fg-muted)]">{item.location}</p>
+          )}
         </div>
       </div>
     </div>

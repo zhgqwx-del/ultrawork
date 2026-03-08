@@ -584,6 +584,10 @@ export function SessionPage() {
     setSelectedArtifact(null)
   }, [])
 
+  const handleSkillClick = useCallback((name: string) => {
+    setInput(`/${name} `)
+  }, [])
+
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
       {/* Artifact Preview (left, 50% when active) */}
@@ -692,7 +696,7 @@ export function SessionPage() {
               <MCPPanel />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.skills")}>
-              <SkillsPanel />
+              <SkillsPanel onSkillClick={handleSkillClick} />
             </RightSidebarSection>
           </div>
         </aside>

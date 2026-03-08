@@ -21,12 +21,25 @@ function MarkdownContent({ text }: { text: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code(props) {
-            const { className, children } = props
-            const inline = 'inline' in props ? props.inline as boolean : false
+          // Fenced code blocks: react-markdown v9 renders as <pre><code>.
+          // Override `pre` to extract the inner <code> and render CodeBlock directly,
+          // avoiding <p> > <div>/<pre> nesting violations.
+          pre({ children }) {
+            // children is the <code> element rendered by react-markdown
+            const codeEl = children as React.ReactElement<{ className?: string; children?: React.ReactNode }>
+            const className = codeEl?.props?.className
+            const content = String(codeEl?.props?.children ?? "").replace(/\n$/, "")
+            return (
+              <CodeBlock inline={false} className={className}>
+                {content}
+              </CodeBlock>
+            )
+          },
+          // Inline code only (fenced code blocks are handled by `pre` above)
+          code({ className, children }) {
             const content = String(children).replace(/\n$/, "")
             return (
-              <CodeBlock inline={inline} className={className}>
+              <CodeBlock inline={true} className={className}>
                 {content}
               </CodeBlock>
             )
