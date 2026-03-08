@@ -20,7 +20,9 @@ Round 4 Review: ✅ 完成 (28 问题: 2 Critical + 2 High + 11 Medium + 6 Low �
 Round 5 工作区: ✅ 完成 (工作区选择 + session 子目录隔离 + Review 3 修复)
 Round 5 联调:  ✅ 完成 (SSE 全局化 + 产物/文件树/预览 6 bugfix + 死代码清理)
 Round 7 预览优化: ✅ 完成 (4 优化 + 2 review 修复 + MCP bunx 提示)
+Round 8 技术债: ✅ 完成 (4 修复: Provider缓存/SSE重连/React key/死代码 + review 竞态修复)
 TypeCheck:    ✅ 3/3 通过
+单元测试:     ✅ 47/47 通过
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
 ```
@@ -2295,5 +2297,70 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+## Round 8: Tech Debt Cleanup (✅ 完成)
+
+**目标**: 清理代码审查累积的技术债，选取 4 项投入小收益大的集中修复。
+
+### Fix 1: ModelSelector Provider 缓存 (M1)
+
+**问题**: `hasFetched` 每次 Popover 打开都 reset，导致每次触发 ~2.1MB `GET /provider`。
+
+**修复**: 模块级 5 分钟 TTL 缓存 + 后台静默刷新。
+- 新增 `CACHE_TTL`、`cachedModels`、`cacheTimestamp` 模块变量
+- 提取 `flattenProviders()` 纯函数
+- 有缓存时立即显示数据，后台检查 TTL 并静默刷新（无 spinner 闪烁）
+- 无缓存时才显示 loading spinner
+
+### Fix 2: SSE 心跳超时自动重连 (M2)
+
+**问题**: 半开 TCP 连接时 SSEProvider 30s 心跳超时只设 `connected=false`，不触发重连。
+
+**修复**: 两处协调改动。
+
+**sse-client.ts**:
+- 新增 `forceReconnect()` 公共方法：abort 当前连接 + 清 timer + 重置 attempts + connect()
+- `connect()` 的 `finally` 块添加身份校验（`this.abortController === controller`），防止旧连接的 finally 覆盖新连接的 controller（Review 发现的竞态 bug）
+
+**sse-context.tsx**:
+- 新增 `reconnectAttemptsRef`（最多 3 次）
+- 心跳超时回调中：递增计数 + `clientRef.current.forceReconnect()`
+- 收到任意事件时重置计数器
+- workspace 切换 cleanup 中重置计数器
+
+### Fix 3: Parts React Key 修复 (L7)
+
+**问题**: `assistant-message.tsx` 所有 part 渲染分支使用 `key={i}` 数组下标，SSE 流式 part 变化时可能 React 错误复用 DOM。
+
+**修复**: `const key = ('id' in part && part.id) ? part.id : \`part-${i}\``，替换所有 6 处 `key={i}`。
+
+### Fix 4: 死代码清理 (L1+L2)
+
+**删除**:
+- `client.ts`: `sendMessage()` 方法（已被 `promptAsync` 替代）
+- `client.ts`: `subscribeToEvents()` 方法（已被 SSEProvider 替代）
+- `client.ts`: `SendMessageRequest` 导入（仅 sendMessage 使用）
+- `client.test.ts`: 2 个 `sendMessage` 测试用例
+
+**保留**: `SendMessageRequest` 类型定义 + `index.ts` 导出（公共 API 类型）
+
+### Review 发现并修复 1 缺陷
+
+**forceReconnect 竞态 bug**: `forceReconnect()` 同步调用 `connect()` 后，旧 `connect()` 的 `finally` 块异步执行时将 `this.abortController = null`，覆盖新连接的 controller → 连接泄漏。修复：`connect()` 用局部 `controller` 变量，`finally` 中校验 `this.abortController === controller` 再清理。
+
+### 改动文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/core/api-client/src/client.ts` | 修改（删除 sendMessage + subscribeToEvents + SendMessageRequest 导入） |
+| `packages/core/api-client/src/__tests__/client.test.ts` | 修改（删除 2 个 sendMessage 测试） |
+| `packages/client/desktop/src/components/chat/assistant-message.tsx` | 修改（part.id React key） |
+| `packages/client/desktop/src/components/chat/model-selector.tsx` | 修改（模块级 TTL 缓存） |
+| `packages/client/desktop/src/lib/sse-client.ts` | 修改（forceReconnect + connect finally 身份校验） |
+| `packages/client/desktop/src/lib/sse-context.tsx` | 修改（心跳超时重连逻辑） |
+
+**验证**: TypeCheck 3/3 ✅ | 单元测试 47/47 ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 7 预览优化 ✅ 完成（4 优化 + 2 review 修复 + MCP bunx 提示）
+**当前阶段**: Round 8 Tech Debt Cleanup ✅ 完成（4 修复 + review 竞态修复）

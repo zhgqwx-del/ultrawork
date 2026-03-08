@@ -120,15 +120,16 @@ export function AssistantMessage({ parts, isStreaming = false, onArtifactClick }
     <div className="py-3">
       <div className="space-y-0">
         {parts.map((part, i) => {
+          const key = ('id' in part && part.id) ? part.id : `part-${i}`
           switch (part.type) {
             case "text":
-              return <MarkdownContent key={i} text={part.text || ""} />
+              return <MarkdownContent key={key} text={part.text || ""} />
             case "reasoning":
-              return <ReasoningBlock key={i} text={part.text || ""} />
+              return <ReasoningBlock key={key} text={part.text || ""} />
             case "tool":
               return (
                 <ToolCallBlock
-                  key={i}
+                  key={key}
                   tool={(part as ToolPart).tool}
                   state={(part as ToolPart).state}
                 />
@@ -136,7 +137,7 @@ export function AssistantMessage({ parts, isStreaming = false, onArtifactClick }
             case "step-finish":
               return (
                 <StepIndicator
-                  key={i}
+                  key={key}
                   reason={part.reason}
                   tokens={part.tokens}
                   cost={part.cost}
@@ -146,7 +147,7 @@ export function AssistantMessage({ parts, isStreaming = false, onArtifactClick }
               const fp = part as FilePart
               return (
                 <FileBlock
-                  key={i}
+                  key={key}
                   part={fp}
                   onClick={onArtifactClick ? () => onArtifactClick({
                     type: "file",
@@ -160,7 +161,7 @@ export function AssistantMessage({ parts, isStreaming = false, onArtifactClick }
               const pp = part as PatchPart
               return (
                 <PatchBlock
-                  key={i}
+                  key={key}
                   part={pp}
                   onClick={onArtifactClick && pp.files.length > 0 ? () => onArtifactClick({
                     type: "patch",

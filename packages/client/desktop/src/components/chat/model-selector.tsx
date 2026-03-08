@@ -19,51 +19,62 @@ interface FlatModel {
   providerName: string
 }
 
+// Module-level TTL cache to avoid ~2.1MB /provider fetch on every popover open
+const CACHE_TTL = 5 * 60 * 1000
+let cachedModels: FlatModel[] | null = null
+let cacheTimestamp = 0
+
+function flattenProviders(providers: Provider[]): FlatModel[] {
+  const flat: FlatModel[] = []
+  for (const provider of providers) {
+    if (provider.connected.length === 0) continue
+    for (const modelId of provider.connected) {
+      const modelInfo = provider.models.find((m: ProviderModel) => m.id === modelId)
+      flat.push({
+        id: `${provider.id}/${modelId}`,
+        name: modelInfo?.name || modelId,
+        providerName: provider.name,
+      })
+    }
+  }
+  return flat
+}
+
 export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, className }: ModelSelectorProps) {
   const [open, setOpen] = useState(false)
-  const [models, setModels] = useState<FlatModel[]>([])
+  const [models, setModels] = useState<FlatModel[]>(cachedModels || [])
   const [loading, setLoading] = useState(false)
-  const [hasFetched, setHasFetched] = useState(false)
   const [search, setSearch] = useState("")
   const api = useApi()
   const { t } = useI18n()
 
-  // Reset cache and search when popover opens
+  // On popover open: reset search, load from cache, refresh if stale
   useEffect(() => {
-    if (open) {
-      setHasFetched(false)
-      setSearch("")
-    }
-  }, [open])
+    if (!open) return
+    setSearch("")
+    if (cachedModels) setModels(cachedModels)
 
-  useEffect(() => {
-    if (!open || hasFetched) return
+    const isStale = !cachedModels || Date.now() - cacheTimestamp > CACHE_TTL
+    if (!isStale) return
+
     let cancelled = false
-    setLoading(true)
+    // Show spinner only when no cached data
+    if (!cachedModels) setLoading(true)
+
     api.getProviders()
       .then((providers: Provider[]) => {
         if (cancelled) return
-        const flat: FlatModel[] = []
-        for (const provider of providers) {
-          if (provider.connected.length === 0) continue
-          for (const modelId of provider.connected) {
-            const modelInfo = provider.models.find((m: ProviderModel) => m.id === modelId)
-            flat.push({
-              id: `${provider.id}/${modelId}`,
-              name: modelInfo?.name || modelId,
-              providerName: provider.name,
-            })
-          }
-        }
+        const flat = flattenProviders(providers)
+        cachedModels = flat
+        cacheTimestamp = Date.now()
         setModels(flat)
-        setHasFetched(true)
         setLoading(false)
       })
       .catch(() => {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [open, api, hasFetched])
+  }, [open, api])
 
   const filteredModels = useMemo(() => {
     if (!search) return models

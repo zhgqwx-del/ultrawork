@@ -222,22 +222,6 @@ describe("ApiClient", () => {
   // --- Message sending ---
 
   describe("message operations", () => {
-    it("sendMessage - correct body format", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse({ info: {}, parts: [] }))
-      await client.sendMessage("s1", "Hello world")
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
-      expect(body).toEqual({
-        parts: [{ type: "text", text: "Hello world" }],
-      })
-    })
-
-    it("sendMessage - passes AbortSignal", async () => {
-      const controller = new AbortController()
-      mockFetch.mockResolvedValueOnce(jsonResponse({ info: {}, parts: [] }))
-      await client.sendMessage("s1", "Test", { signal: controller.signal })
-      expect(mockFetch.mock.calls[0][1].signal).toBe(controller.signal)
-    })
-
     it("abortSession", async () => {
       mockFetch.mockResolvedValueOnce(emptyResponse(204))
       await client.abortSession("s1")

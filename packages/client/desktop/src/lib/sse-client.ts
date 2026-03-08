@@ -108,12 +108,13 @@ export class SSEClient {
 
     console.log("Connecting to SSE:", url)
 
-    this.abortController = new AbortController()
+    const controller = new AbortController()
+    this.abortController = controller
 
     try {
       const response = await fetch(url, {
         headers,
-        signal: this.abortController.signal,
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -163,8 +164,11 @@ export class SSEClient {
       }
       console.error("SSE error:", err)
     } finally {
-      this.isConnected = false
-      this.abortController = null
+      // Only clean up if we're still the current connection (guard against forceReconnect race)
+      if (this.abortController === controller) {
+        this.isConnected = false
+        this.abortController = null
+      }
     }
 
     if (this.shouldReconnect) {
@@ -186,6 +190,23 @@ export class SSEClient {
     }
 
     this.isConnected = false
+  }
+
+  /** Force-reconnect without disabling shouldReconnect (used by heartbeat timeout). */
+  forceReconnect(): void {
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
+    this.reconnectAttempts = 0
+    this.isConnected = false
+    this.connect()
   }
 
   private scheduleReconnect(): void {

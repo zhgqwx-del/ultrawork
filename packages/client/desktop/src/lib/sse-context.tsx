@@ -13,6 +13,7 @@ interface SSEContextValue {
 const SSEContext = createContext<SSEContextValue | null>(null)
 
 const HEARTBEAT_TIMEOUT = 30_000
+const MAX_HEARTBEAT_RECONNECTS = 3
 
 export function SSEProvider({ children }: { children: ReactNode }) {
   const api = useApi()
@@ -21,13 +22,23 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   const handlersRef = useRef<Set<SSEEventHandler>>(new Set())
   const [connected, setConnected] = useState(false)
   const heartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptsRef = useRef(0)
 
   // Master handler dispatches to all subscribers + tracks heartbeat
   const masterHandler = useCallback((event: SSEEvent) => {
-    // Reset heartbeat timer on any event
+    // Reset heartbeat timer and reconnect counter on any event
     setConnected(true)
+    reconnectAttemptsRef.current = 0
     if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
-    heartbeatTimerRef.current = setTimeout(() => setConnected(false), HEARTBEAT_TIMEOUT)
+    heartbeatTimerRef.current = setTimeout(() => {
+      setConnected(false)
+      // Auto-reconnect on heartbeat timeout (half-open TCP)
+      if (reconnectAttemptsRef.current < MAX_HEARTBEAT_RECONNECTS && clientRef.current) {
+        reconnectAttemptsRef.current++
+        console.log(`Heartbeat timeout, forcing reconnect (attempt ${reconnectAttemptsRef.current}/${MAX_HEARTBEAT_RECONNECTS})`)
+        clientRef.current.forceReconnect()
+      }
+    }, HEARTBEAT_TIMEOUT)
 
     // Dispatch to all subscribers
     handlersRef.current.forEach((h) => h(event))
@@ -62,6 +73,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         clearTimeout(heartbeatTimerRef.current)
         heartbeatTimerRef.current = null
       }
+      reconnectAttemptsRef.current = 0
       setConnected(false)
     }
   }, [api, workspacePath, masterHandler])

@@ -2,7 +2,6 @@ import type {
   ApiClientConfig,
   SessionCreateRequest,
   Session,
-  SendMessageRequest,
   SendMessageResponse,
   PermissionRequest,
   QuestionRequest,
@@ -127,23 +126,6 @@ export class ApiClient {
     return this.request<Session>(`/session/${sessionId}`, {
       method: "PATCH",
       body: JSON.stringify(updates),
-    })
-  }
-
-  async sendMessage(sessionId: string, message: string, options?: { signal?: AbortSignal }): Promise<SendMessageResponse> {
-    const requestBody: SendMessageRequest = {
-      parts: [
-        {
-          type: "text",
-          text: message
-        }
-      ]
-    }
-
-    return this.request<SendMessageResponse>(`/session/${sessionId}/message`, {
-      method: "POST",
-      body: JSON.stringify(requestBody),
-      signal: options?.signal,
     })
   }
 
@@ -339,22 +321,6 @@ export class ApiClient {
 
   async getSessionDiff(sessionId: string): Promise<string[]> {
     return this.request<string[]>(`/session/${sessionId}/diff`)
-  }
-
-  subscribeToEvents(onEvent: (data: string) => void): () => void {
-    const params = new URLSearchParams()
-    if (this.workingDirectory) params.set("directory", this.workingDirectory)
-    const query = params.toString()
-    const eventSource = new EventSource(`${this.baseUrl}/event${query ? `?${query}` : ""}`)
-
-    eventSource.onmessage = (ev) => {
-      onEvent(ev.data)
-    }
-    eventSource.onerror = (error) => {
-      console.error("SSE connection error:", error)
-    }
-
-    return () => eventSource.close()
   }
 }
 
