@@ -21,6 +21,7 @@ Round 5 工作区: ✅ 完成 (工作区选择 + session 子目录隔离 + Revie
 Round 5 联调:  ✅ 完成 (SSE 全局化 + 产物/文件树/预览 6 bugfix + 死代码清理)
 Round 7 预览优化: ✅ 完成 (4 优化 + 2 review 修复 + MCP bunx 提示)
 Round 8 技术债: ✅ 完成 (4 修复: Provider缓存/SSE重连/React key/死代码 + review 竞态修复)
+Round 10 服务: ✅ 完成 (远程服务设置页面 — useMCPServers hook 提取 + ServicesSection 全页面管理)
 TypeCheck:    ✅ 3/3 通过
 单元测试:     ✅ 47/47 通过
 Vite Dev:     ✅ 正常启动
@@ -2515,5 +2516,79 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+## Round 10: 远程服务（MCP 服务管理）设置页面 (2026-03-08)
+
+**需求**: SettingsPopover 中"远程服务"菜单项原为 `disabled`，改为点击后跳转 Settings 页面新增的 "服务" section，提供比 sidebar MCPPanel 更丰富的全页面 MCP 服务管理界面。
+
+### Step 1: 提取 `useMCPServers` 共享 Hook ✅
+
+**新建**: `src/lib/use-mcp-servers.ts`
+
+将 `mcp-panel.tsx` 中的状态管理逻辑（localStorage 辅助函数、fetchMCP、handleToggle、handleAdd、handleRemove）提取为独立 hook，供 MCPPanel 和 ServicesSection 共用。
+
+返回接口: `{ statusMap, configMap, loading, error, actionLoading, handleToggle, handleAdd, handleRemove, refresh }`
+
+关键设计:
+- `handleAdd` 失败时 throw，由调用者控制 UI（如 `setShowAdd`）
+- 暴露 `refresh` 供手动刷新按钮使用
+- `setConfigMap` 使用函数式更新防闭包丢失
+
+### Step 2: 重构 MCPPanel 使用 Hook ✅
+
+**修改**: `src/components/session/mcp-panel.tsx`
+
+- 删除内联的 localStorage 辅助函数和所有状态管理逻辑（原 ~160 行）
+- 改为 `import { useMCPServers } from "@/lib/use-mcp-servers"`
+- `MCPServerItem` 和 `AddMCPForm` 组件保持不变（纯展示）
+- `showAdd` 状态保留在 MCPPanel 本地
+- `onAdd` 包装 handleAdd，成功时 `setShowAdd(false)`，失败时保留表单
+
+### Step 3: Settings 页面新增 "services" section ✅
+
+**修改**: `src/pages/Settings.tsx`
+
+- 扩展 `SettingsSection` 类型: 新增 `"services"`
+- NAV_ITEMS 中 about 之前插入 `{ key: "services", icon: Server, labelKey: "settingsPage.services" }`
+- 新增 `ServicesSection` 组件:
+  - **头部**: 标题 + 已连接数 badge + 刷新按钮 + 添加按钮
+  - **空状态**: Server 图标 + 提示文字 + 添加按钮
+  - **加载/错误状态**: 居中 spinner / 红色错误横幅
+  - **服务列表**: `ServiceCard` 卡片组件
+  - **添加表单**: `ServiceAddForm` — 内联展开
+- `ServiceCard`: 状态圆点（green/red/amber/gray） + 名称 + 类型标签（Remote/Local badge） + 状态文字 + URL/命令详情（mono字体） + 错误详情 + bunx 提示 + Connect/Disconnect/Remove 按钮
+- `ServiceAddForm`: 带 label 的输入框（名称、类型选择器、URL/命令） + Cancel/Add 按钮
+
+### Step 4: 启用 SettingsPopover 菜单项 ✅
+
+**修改**: `src/components/settings/settings-popover.tsx`
+
+`<DropdownMenuItem disabled>` → `<DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "services" } })}>`
+
+### Step 5: 添加 i18n 键 ✅
+
+**修改**: `src/lib/i18n-context.tsx`
+
+新增 8 个键/语言: `settingsPage.services`, `services.title`, `services.description`, `services.connected`, `services.serverName`, `services.serverType`, `services.serverUrl`, `services.serverCommand`
+
+复用已有键: `mcp.*`, `workspace.refresh`, `button.cancel`, `error.fetchMCP`
+
+### 修改文件清单
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `src/lib/use-mcp-servers.ts` | 新建 | 共享 MCP 状态管理 hook |
+| `src/components/session/mcp-panel.tsx` | 修改 | 重构为消费 hook，删除重复逻辑 |
+| `src/pages/Settings.tsx` | 修改 | 新增 services section + ServiceCard + ServiceAddForm |
+| `src/components/settings/settings-popover.tsx` | 修改 | 启用"远程服务"菜单项（1行） |
+| `src/lib/i18n-context.tsx` | 修改 | 新增 16 个 i18n 键（en/zh 各 8） |
+
+### Review ✅
+
+- 逐文件检查：hook 提取正确、MCPPanel 行为保持、类型安全、状态互斥渲染、闭包/依赖/清理均正确
+- 0 个缺陷
+- TypeCheck 3/3 ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 9 缺陷修复 ✅ 完成（16 计划修复 + 5 回归修复 + 帮助文档链接）
+**当前阶段**: Round 10 远程服务设置页面 ✅ 完成

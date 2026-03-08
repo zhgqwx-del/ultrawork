@@ -1,19 +1,22 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink } from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle } from "lucide-react"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
+import { useMCPServers } from "@/lib/use-mcp-servers"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import type { MCPStatus, MCPConfig } from "@agent/api-client"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "about"
+type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
+  { key: "services", icon: Server, labelKey: "settingsPage.services" },
   { key: "about", icon: Info, labelKey: "settingsPage.about" },
 ]
 
@@ -61,6 +64,7 @@ export function SettingsPage() {
             {activeSection === "general" && <GeneralSection />}
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
+            {activeSection === "services" && <ServicesSection />}
             {activeSection === "about" && <AboutSection />}
           </div>
         </div>
@@ -240,6 +244,322 @@ function CapabilitiesSection() {
             <span>{connectionMessage}</span>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ServicesSection() {
+  const { t } = useI18n()
+  const {
+    statusMap, configMap, loading, error, actionLoading,
+    handleToggle, handleAdd, handleRemove, refresh,
+  } = useMCPServers()
+  const [showAdd, setShowAdd] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const entries = Object.entries(statusMap)
+  const connectedCount = entries.filter(([, s]) => s.status === "connected").length
+
+  const onRefresh = async () => {
+    setRefreshing(true)
+    await refresh()
+    setRefreshing(false)
+  }
+
+  const onAdd = async (name: string, config: MCPConfig) => {
+    try {
+      await handleAdd(name, config)
+      setShowAdd(false)
+    } catch {
+      // error already toasted by hook
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("services.title")}</h2>
+            {connectedCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                {connectedCount} {t("services.connected")}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("services.description")}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+            {t("workspace.refresh")}
+          </Button>
+          <Button size="sm" onClick={() => setShowAdd(true)} disabled={showAdd}>
+            <Plus className="mr-1.5 size-3.5" />
+            {t("mcp.addServer")}
+          </Button>
+        </div>
+      </div>
+
+      {/* Add form */}
+      {showAdd && (
+        <ServiceAddForm
+          onAdd={onAdd}
+          onCancel={() => setShowAdd(false)}
+          loading={actionLoading === "__add__"}
+        />
+      )}
+
+      {/* Loading / Error */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-500/10 p-4 text-sm text-red-600 dark:border-red-800 dark:text-red-400">
+          <AlertCircle className="size-4 shrink-0" />
+          {t("error.fetchMCP")}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && entries.length === 0 && !showAdd && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
+          <Server className="size-10 text-[var(--color-fg-muted)]" />
+          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("mcp.noServers")}</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowAdd(true)}>
+            <Plus className="mr-1.5 size-3.5" />
+            {t("mcp.addServer")}
+          </Button>
+        </div>
+      )}
+
+      {/* Service cards */}
+      {!loading && !error && entries.length > 0 && (
+        <div className="space-y-3">
+          {entries.map(([name, status]) => (
+            <ServiceCard
+              key={name}
+              name={name}
+              status={status}
+              config={configMap[name]}
+              loading={actionLoading === name}
+              onToggle={() => handleToggle(name, status.status)}
+              onRemove={() => handleRemove(name, status.status)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ServiceCard({
+  name,
+  status,
+  config,
+  loading,
+  onToggle,
+  onRemove,
+}: {
+  name: string
+  status: MCPStatus
+  config?: MCPConfig
+  loading: boolean
+  onToggle: () => void
+  onRemove: () => void
+}) {
+  const { t } = useI18n()
+  const isConnected = status.status === "connected"
+  const isFailed = status.status === "failed"
+  const isDisabled = status.status === "disabled"
+  const needsAuth = status.status === "needs_auth" || status.status === "needs_client_registration"
+
+  const statusLabel = isConnected
+    ? t("mcp.connected")
+    : isFailed
+    ? t("mcp.failed")
+    : isDisabled
+    ? t("mcp.disabled")
+    : needsAuth
+    ? t("mcp.needsAuth")
+    : t("mcp.disabled")
+
+  const dotColor = isConnected
+    ? "bg-green-500"
+    : isFailed
+    ? "bg-red-500"
+    : needsAuth
+    ? "bg-amber-500"
+    : "bg-gray-400"
+
+  const isRemote = config?.type === "remote"
+  const detail = isRemote
+    ? (config as { url: string }).url
+    : config?.type === "local"
+    ? (config as { command: string[] }).command.join(" ")
+    : undefined
+
+  const errorText = "error" in status && typeof status.error === "string" ? status.error : undefined
+  const showBunxHint = isFailed && errorText?.includes("Connection closed")
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5">
+            <span className={cn("size-2.5 shrink-0 rounded-full", dotColor)} />
+            <span className="text-sm font-medium text-[var(--color-fg)]">{name}</span>
+            {config && (
+              <span className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                isRemote
+                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                  : "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+              )}>
+                {isRemote ? t("mcp.typeRemote") : t("mcp.typeLocal")}
+              </span>
+            )}
+          </div>
+          <p className={cn(
+            "mt-1 text-xs",
+            isFailed ? "text-red-500" : needsAuth ? "text-amber-500" : "text-[var(--color-fg-muted)]"
+          )}>
+            {errorText || statusLabel}
+          </p>
+          {detail && (
+            <p className="mt-1 truncate font-mono text-xs text-[var(--color-fg-muted)]">{detail}</p>
+          )}
+          {showBunxHint && (
+            <p className="mt-1 text-xs text-amber-500">{t("mcp.hintBunx")}</p>
+          )}
+        </div>
+        <div className="ml-4 flex shrink-0 items-center gap-2">
+          <Button
+            variant={isConnected ? "outline" : "default"}
+            size="sm"
+            onClick={onToggle}
+            disabled={loading}
+          >
+            {loading && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+            {isConnected ? t("mcp.disconnect") : t("mcp.connect")}
+          </Button>
+          {!isConnected && !loading && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRemove}
+              className="text-red-500 hover:bg-red-500/10 hover:text-red-600"
+            >
+              {t("mcp.remove")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ServiceAddForm({
+  onAdd,
+  onCancel,
+  loading,
+}: {
+  onAdd: (name: string, config: MCPConfig) => void
+  onCancel: () => void
+  loading: boolean
+}) {
+  const { t } = useI18n()
+  const [name, setName] = useState("")
+  const [type, setType] = useState<"local" | "remote">("remote")
+  const [url, setUrl] = useState("")
+  const [command, setCommand] = useState("")
+
+  const canSubmit = name.trim() && (type === "remote" ? url.trim() : command.trim())
+
+  const handleSubmit = () => {
+    if (!canSubmit) return
+    const config: MCPConfig =
+      type === "remote"
+        ? { type: "remote", url: url.trim() }
+        : { type: "local", command: command.trim().split(/\s+/) }
+    onAdd(name.trim(), config)
+  }
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.addServer")}</h3>
+        <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverName")}</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("mcp.namePlaceholder")}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverType")}</label>
+          <div className="grid grid-cols-2 gap-2">
+            {(["remote", "local"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setType(v)}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
+                  type === v
+                    ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                    : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
+                )}
+              >
+                {v === "remote" ? t("mcp.typeRemote") : t("mcp.typeLocal")}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {type === "remote" ? (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverUrl")}</label>
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://mcp-server.example.com"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+            />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverCommand")}</label>
+            <input
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              placeholder="bunx --bun @mcp/server"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+            />
+            <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.hintBunx")}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>{t("button.cancel")}</Button>
+          <Button onClick={handleSubmit} disabled={!canSubmit || loading}>
+            {loading && <Loader2 className="mr-1.5 size-4 animate-spin" />}
+            {t("mcp.add")}
+          </Button>
+        </div>
       </div>
     </div>
   )

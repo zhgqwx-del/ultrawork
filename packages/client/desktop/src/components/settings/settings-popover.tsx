@@ -75,7 +75,7 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <Radio className="mr-2 size-4" />
           {t("settingsPopover.channels")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "services" } })}>
           <Server className="mr-2 size-4" />
           {t("settingsPopover.remote")}
         </DropdownMenuItem>

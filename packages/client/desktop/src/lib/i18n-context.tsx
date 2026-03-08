@@ -59,6 +59,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "About",
     "settingsPage.privacy.title": "Data & Privacy",
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
+    "settingsPage.services": "Services",
     "settingsPage.capabilities.title": "Connection Settings",
 
     // Session right sidebar
@@ -212,6 +213,15 @@ const translations: Record<Language, Record<string, string>> = {
     "model.modelsAvailable": "models",
     "model.switchSuccess": "Model switched",
 
+    // Services page
+    "services.title": "Remote Services",
+    "services.description": "Manage MCP servers that extend agent capabilities.",
+    "services.connected": "connected",
+    "services.serverName": "Server Name",
+    "services.serverType": "Server Type",
+    "services.serverUrl": "Server URL",
+    "services.serverCommand": "Command",
+
     // MCP
     "mcp.noServers": "No MCP servers configured",
     "mcp.addServer": "Add MCP Server",
@@ -335,6 +345,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "关于",
     "settingsPage.privacy.title": "数据与隐私",
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
+    "settingsPage.services": "服务",
     "settingsPage.capabilities.title": "连接设置",
 
     // Session right sidebar
@@ -487,6 +498,15 @@ const translations: Record<Language, Record<string, string>> = {
     "model.configureProvider.optional": "可选",
     "model.modelsAvailable": "个模型",
     "model.switchSuccess": "模型已切换",
+
+    // Services page
+    "services.title": "远程服务",
+    "services.description": "管理 MCP 服务，扩展 Agent 的能力。",
+    "services.connected": "已连接",
+    "services.serverName": "服务名称",
+    "services.serverType": "服务类型",
+    "services.serverUrl": "服务 URL",
+    "services.serverCommand": "命令",
 
     // MCP
     "mcp.noServers": "未配置 MCP 服务",
