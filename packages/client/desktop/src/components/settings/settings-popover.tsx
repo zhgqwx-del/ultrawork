@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -79,7 +80,7 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           {t("settingsPopover.remote")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={() => openUrl("https://docs.ultrawork.ai/guide")}>
           <HelpCircle className="mr-2 size-4" />
           {t("settingsPopover.help")}
         </DropdownMenuItem>

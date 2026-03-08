@@ -2499,5 +2499,21 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+---
+
+## Round 9 补充: 帮助文档链接 (2026-03-08)
+
+**需求**: 设置 → 帮助文档菜单项原为 `disabled`，改为点击打开外部浏览器链接（mock）。
+
+**改动**:
+- `settings-popover.tsx`: `disabled` → `onClick={() => openUrl("https://docs.ultrawork.ai/guide")}`，使用 `@tauri-apps/plugin-opener`
+- `Cargo.toml`: 添加 `tauri-plugin-opener = "2"` 依赖
+- `lib.rs`: 注册 `.plugin(tauri_plugin_opener::init())`
+- `capabilities/default.json`: 添加 `"opener:default"` 权限
+
+**说明**: Tauri WebView 中 `window.open` 不能打开系统浏览器，必须用 `@tauri-apps/plugin-opener` 的 `openUrl` API。
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 9 缺陷修复 ✅ 完成（16 计划修复 + 5 回归修复）
+**当前阶段**: Round 9 缺陷修复 ✅ 完成（16 计划修复 + 5 回归修复 + 帮助文档链接）
