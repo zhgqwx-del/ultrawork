@@ -2362,5 +2362,142 @@ Home.tsx 用 `navigate(url, { state: { sending: true } })` 传递 sending 状态
 
 ---
 
+---
+
+## Round 9: 缺陷修复 (2026-03-08)
+
+系统性代码审查发现 22 处缺陷，覆盖竞态条件、内存泄漏、状态管理、类型安全等方面。实施 16 处修复 + review 发现并修复 5 处回归缺陷。
+
+### 第一批：16 处计划修复
+
+#### Fix 1: config-context.tsx — updateConfig 闭包过期 (S1)
+
+**问题**: `updateConfig` 闭包捕获渲染时的 `config`，连续调用会丢失前一次更新。
+**修复**: `useCallback([])` + 函数式 `setConfig(prev => { ...prev, ...updates })`，`ConfigStorage.save` 在 updater 内执行（idempotent）。
+
+#### Fix 2: question-dock.tsx — request 切换时状态残留 (S1)
+
+**问题**: `useState` 初始化只在挂载时运行，切换问题时 `currentIndex/answers/customInputs` 不重置。
+**修复**: `useEffect([request.id])` 重置三个状态。新增 `useEffect` import。
+
+#### Fix 3: Session.tsx — SSE 与初始加载竞态 (S1)
+
+**问题**: `getMessages` 完成后 `setMessages(msgs)` 直接覆盖，会冲掉 SSE 已积累的 parts。
+**修复**: merge 逻辑 — `prev.length === 0` 直接替换，否则保留 SSE-only 消息。
+
+#### Fix 4: Session.tsx — handleSend 双发竞态 (S1)
+
+**问题**: 用 `sending` state 做互斥，React 批量更新间可双发。
+**修复**: `sendingRef = useRef(false)` 同步互斥锁。`handleSend` 开头检查 `sendingRef.current`，catch 和 `session.status:idle` 中重置。
+
+#### Fix 5: Session.tsx — promptAsync 失败未恢复 stopped 状态 (S2)
+
+**问题**: `stopped` 在发送前清除，API 失败后未恢复，frozenMessageIdsRef 残留。
+**修复**: catch 中保存 `wasStopped` + `prevFrozenIds`，失败时恢复。
+
+#### Fix 6: model-selector.tsx — 缓存无失效机制 (S2)
+
+**问题**: ModelDialog 保存新 Provider key 后，ModelSelector 5min 内显示旧列表。
+**修复**: 导出 `clearModelCache()` 函数（重置 `cachedModels = null; cacheTimestamp = 0`）。`model-dialog.tsx` 的 `handleSaveConfig` 成功后调用。
+
+#### Fix 7: setTimeout 未清理 (S3) — code-block.tsx / artifact-preview.tsx / chat-input.tsx
+
+**问题**: `setCopied(false)` 和 `setIsComposing(false)` 的 setTimeout 未在卸载时清除。
+**修复**: `useRef<ReturnType<typeof setTimeout>>` 存储 timer + `useEffect(() => () => clearTimeout(ref.current), [])` cleanup。
+
+#### Fix 8: workspace-panel.tsx — loadData 多余 directory 依赖 (S3)
+
+**问题**: `useCallback` 依赖 `[api, directory]` 但 `directory` 未在内部使用。
+**修复**: 移除 `directory` → `[api]`。
+
+#### Fix 9: permission-dock.tsx — key={i} (S4)
+
+**修复**: `key={pattern}` → 用 pattern 字符串作 key。
+
+#### Fix 10: progress-panel.tsx — key={i} (S4)
+
+**修复**: `key={\`${step.tool}-${i}\`}` — 组合工具名 + 索引。
+
+#### Fix 11: server-manager/manager.ts — 健康检查端点 (S2)
+
+**问题**: 用 `/health` 而非 `/global/health`。
+**修复**: 改为 `/global/health`。
+
+#### Fix 12: workspace-context.tsx — lastPath 冻结 (S4)
+
+**问题**: `useMemo([])` 永不更新。
+**修复**: `useState(() => localStorage.getItem(...))` + `setWorkspace` 中 `setLastPath(path)` 同步更新。
+
+#### Fix 13: api-client/client.ts — deleteSession/abortSession 返回类型 (S4)
+
+**修复**: 返回 `Promise<void>`，`request<T>` 增加 `text()` + `try { JSON.parse } catch` 安全解析。
+
+#### Fix 14: settings-dialog.tsx — About 标签页显示 Save/Reset 按钮 (S4)
+
+**修复**: Footer Actions 区域加条件 `activeTab !== "about"`。
+
+#### Fix 15: sse-client.ts — forceReconnect 未 await (S4)
+
+**修复**: `this.connect().catch(() => {})` 防 unhandled rejection。
+
+#### Fix 16: Session.tsx — permission.replied 接受 undefined sessionID (S4)
+
+**修复**: 仅当 `permSid === id` 时清除 pendingPermission/Question，移除 `!permSid` 分支。
+
+### 第二批：Review 发现 5 处 Round-9 引入的回归缺陷
+
+#### Review Fix 1: Session.tsx — 切换 session 消息不清空 (S1)
+
+**问题**: Reset effect (`useEffect([id])`) 未重置 `messages` 状态。与 Fix 3 的 merge 逻辑结合后，切换到新 session 时旧消息不清空（`prev.length > 0` 走 merge 分支，新 session 的 `msgs` 为空数组，`sseOnly` 保留全部旧消息）。
+**症状**: 从 s1 切换到新 session，标题栏更新但聊天内容仍显示 s1 的消息。
+**修复**: Reset effect 开头加 `setMessages([])`。
+
+#### Review Fix 2: Session.tsx — handleSend 未清除 frozenMessageIdsRef (S3)
+
+**问题**: stop→resend 流程中，`handleSend` 清除 `stopped` 但未清除 `frozenMessageIdsRef.current`，导致旧消息 ID 的 SSE 事件被永久忽略。
+**修复**: `if (wasStopped) { ... frozenMessageIdsRef.current = new Set() }`。
+
+#### Review Fix 3: Session.tsx — promptAsync catch 跨 session 状态污染 (S2)
+
+**问题**: `promptAsync` 失败时的 catch 无条件恢复 `stopped/frozenIds`，若用户已切换到其他 session，会错误设置新 session 的 `stopped=true` 并阻断所有 SSE 消息事件。
+**修复**: 新增 `idRef = useRef(id)` 追踪当前 session；catch 中 `if (idRef.current !== id) return` 跳过已切换的 session。
+
+#### Review Fix 4: permission-dock.tsx — key={pattern} 重复 key (S4)
+
+**问题**: `patterns` 数组可能包含重复字符串，`key={pattern}` 产生 React key 冲突。
+**修复**: `key={\`${pattern}-${i}\`}`。
+
+#### Review Fix 5: assistant-message.tsx — PatchBlock key={f} 重复 key (S4)
+
+**问题**: `PatchPart.files` 可能包含重复文件路径，`key={f}` 导致元素丢失。
+**修复**: `key={\`${f}-${i}\`}`。
+
+### 改动文件清单
+
+| 文件 | 操作 |
+|------|------|
+| `packages/client/desktop/src/lib/config-context.tsx` | 修改（updateConfig useCallback + 函数式更新） |
+| `packages/client/desktop/src/components/chat/question-dock.tsx` | 修改（useEffect([request.id]) 重置状态） |
+| `packages/client/desktop/src/pages/Session.tsx` | 修改（sendingRef 互斥锁 + getMessages merge + promptAsync catch 恢复 + idRef 跨 session 检查 + setMessages([]) reset + frozenIds 清除 + 8s 安全超时） |
+| `packages/client/desktop/src/components/chat/model-selector.tsx` | 修改（clearModelCache 导出） |
+| `packages/client/desktop/src/components/settings/model-dialog.tsx` | 修改（handleSaveConfig 调用 clearModelCache） |
+| `packages/client/desktop/src/components/chat/code-block.tsx` | 修改（setTimeout cleanup） |
+| `packages/client/desktop/src/components/session/artifact-preview.tsx` | 修改（setTimeout cleanup） |
+| `packages/client/desktop/src/components/chat/chat-input.tsx` | 修改（composition timer cleanup） |
+| `packages/client/desktop/src/components/session/workspace-panel.tsx` | 修改（移除 directory 依赖） |
+| `packages/client/desktop/src/components/chat/permission-dock.tsx` | 修改（key 组合） |
+| `packages/client/desktop/src/components/session/progress-panel.tsx` | 修改（key 组合） |
+| `packages/core/server-manager/src/manager.ts` | 修改（/global/health） |
+| `packages/client/desktop/src/lib/workspace-context.tsx` | 修改（lastPath useState） |
+| `packages/core/api-client/src/client.ts` | 修改（void 返回 + JSON.parse 安全解析） |
+| `packages/client/desktop/src/components/settings/settings-dialog.tsx` | 修改（About 隐藏 Save/Reset） |
+| `packages/client/desktop/src/lib/sse-client.ts` | 修改（forceReconnect .catch） |
+| `packages/client/desktop/src/lib/use-favorites.ts` | 修改（localStorage try-catch） |
+| `packages/client/desktop/src/components/chat/assistant-message.tsx` | 修改（PatchBlock key 组合） |
+
+**验证**: TypeCheck 3/3 ✅
+
+---
+
 **最后更新**: 2026-03-08
-**当前阶段**: Round 8 Tech Debt Cleanup ✅ 完成（4 修复 + review 竞态修复）
+**当前阶段**: Round 9 缺陷修复 ✅ 完成（16 计划修复 + 5 回归修复）

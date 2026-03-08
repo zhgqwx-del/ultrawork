@@ -81,7 +81,11 @@ export class ApiClient {
     const text = await response.text()
     if (!text) return undefined as T
 
-    return JSON.parse(text) as T
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      throw new Error(`Failed to parse API response as JSON: ${text.slice(0, 200)}`)
+    }
   }
 
   async listSessions(options?: {
@@ -116,8 +120,8 @@ export class ApiClient {
     return this.request<SendMessageResponse[]>(`/session/${sessionId}/message`)
   }
 
-  async deleteSession(sessionId: string): Promise<boolean> {
-    return this.request<boolean>(`/session/${sessionId}`, {
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.request<void>(`/session/${sessionId}`, {
       method: "DELETE",
     })
   }
@@ -129,8 +133,8 @@ export class ApiClient {
     })
   }
 
-  async abortSession(sessionId: string): Promise<boolean> {
-    return this.request<boolean>(`/session/${sessionId}/abort`, {
+  async abortSession(sessionId: string): Promise<void> {
+    await this.request<void>(`/session/${sessionId}/abort`, {
       method: "POST",
     })
   }

@@ -70,7 +70,7 @@ export function ProgressPanel({ messages }: ProgressPanelProps) {
       </div>
       <div className="space-y-1">
         {steps.map((step, i) => (
-          <div key={i} className="flex items-start gap-2 rounded px-1 py-1 text-xs">
+          <div key={`${step.tool}-${i}`} className="flex items-start gap-2 rounded px-1 py-1 text-xs">
             <StepIcon status={step.status} />
             <div className="min-w-0 flex-1">
               <span className="text-[var(--color-fg)]">{step.title}</span>

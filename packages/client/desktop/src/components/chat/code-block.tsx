@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Check, Copy } from "lucide-react"
 
 interface CodeBlockProps {
@@ -9,6 +9,11 @@ interface CodeBlockProps {
 
 export function CodeBlock({ children, className, inline }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  useEffect(() => {
+    return () => { clearTimeout(copyTimerRef.current) }
+  }, [])
 
   // Extract language from className (format: "language-xxx")
   const language = className?.replace(/language-/, "") || "text"
@@ -17,7 +22,8 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
     try {
       await navigator.clipboard.writeText(children)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error("Failed to copy code:", err)
       // Fallback: user will see the button didn't change, indicating failure

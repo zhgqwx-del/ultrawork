@@ -152,7 +152,7 @@ export function WorkspacePanel({ directory, refreshKey, onFileClick }: Workspace
     } finally {
       setLoading(false)
     }
-  }, [api, directory])
+  }, [api]) // eslint-disable-line react-hooks/exhaustive-deps -- directory is passed via API header, not used in loadData
 
   useEffect(() => {
     loadData()

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { HelpCircle } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
 import type { QuestionRequest } from "@agent/api-client"
@@ -16,6 +16,13 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
   // answers[i] = selected labels for question i
   const [answers, setAnswers] = useState<string[][]>(() => questions.map(() => []))
   const [customInputs, setCustomInputs] = useState<string[]>(() => questions.map(() => ""))
+
+  // Reset state when the question request changes (e.g., consecutive questions)
+  useEffect(() => {
+    setCurrentIndex(0)
+    setAnswers(request.questions.map(() => []))
+    setCustomInputs(request.questions.map(() => ""))
+  }, [request.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const q = questions[currentIndex]
   if (!q) return null

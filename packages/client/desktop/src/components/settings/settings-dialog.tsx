@@ -302,20 +302,22 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsContent>
         </Tabs>
 
-        {/* Footer Actions */}
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
-          <Button variant="outline" onClick={handleReset}>
-            {t("button.reset")}
-          </Button>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleCancel}>
-              {t("button.cancel")}
+        {/* Footer Actions — hidden on About tab (read-only) */}
+        {activeTab !== "about" && (
+          <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
+            <Button variant="outline" onClick={handleReset}>
+              {t("button.reset")}
             </Button>
-            <Button onClick={handleSave}>
-              {t("button.save")}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleCancel}>
+                {t("button.cancel")}
+              </Button>
+              <Button onClick={handleSave}>
+                {t("button.save")}
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   )

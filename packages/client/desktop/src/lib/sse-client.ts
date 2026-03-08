@@ -206,7 +206,9 @@ export class SSEClient {
 
     this.reconnectAttempts = 0
     this.isConnected = false
-    this.connect()
+    this.connect().catch((err) => {
+      console.error("forceReconnect failed:", err)
+    })
   }
 
   private scheduleReconnect(): void {

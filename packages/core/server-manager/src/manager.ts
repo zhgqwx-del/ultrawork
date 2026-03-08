@@ -74,7 +74,7 @@ export class ServerManager {
 
     while (Date.now() - startTime < timeout) {
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/health`)
+        const response = await fetch(`http://127.0.0.1:${port}/global/health`)
         if (response.ok) {
           return
         }

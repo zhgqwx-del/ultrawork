@@ -41,12 +41,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [recentPaths, setRecentPaths] = useState<string[]>(loadRecent)
 
   // Last persisted path (for display in selector, not for auto-entering)
-  const lastPath = useMemo(() => localStorage.getItem(STORAGE_KEY_PATH), [])
+  const [lastPath, setLastPath] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_PATH))
 
   const setWorkspace = useCallback((path: string) => {
     setWorkspacePath(path)
     setConfirmed(true)
     localStorage.setItem(STORAGE_KEY_PATH, path)
+    setLastPath(path)
 
     // Update recent list: add to front, deduplicate, cap at MAX_RECENT
     setRecentPaths((prev) => {

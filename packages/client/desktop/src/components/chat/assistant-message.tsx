@@ -106,7 +106,7 @@ function PatchBlock({ part, onClick }: { part: PatchPart; onClick?: () => void }
       {part.files.length > 0 && (
         <div className="mt-1 space-y-0.5 pl-6">
           {part.files.map((f, i) => (
-            <p key={i} className="truncate text-[var(--color-fg-muted)]" title={f}>{f}</p>
+            <p key={`${f}-${i}`} className="truncate text-[var(--color-fg-muted)]" title={f}>{f}</p>
           ))}
         </div>
       )}

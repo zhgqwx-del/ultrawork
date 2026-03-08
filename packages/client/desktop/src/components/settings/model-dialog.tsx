@@ -11,6 +11,7 @@ import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { clearModelCache } from "@/components/chat/model-selector"
 import type { Provider, ProviderAuthInfo } from "@agent/api-client"
 
 interface ModelDialogProps {
@@ -146,6 +147,8 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
         })
       }
       toast.success(t("model.addProvider.success"))
+      // Invalidate ModelSelector cache so it picks up new provider immediately
+      clearModelCache()
       // Go back to list and search for this provider
       setSearch(selectedProvider.name)
       setView("list")

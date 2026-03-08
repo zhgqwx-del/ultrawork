@@ -41,11 +41,14 @@ export function SessionPage() {
   const { currentModel, setModel, openModelDialog } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const sendingRef = useRef(false) // Synchronous mutex to prevent double-send
   // Refs to access latest state inside callbacks without stale closures
   const messagesRef = useRef<SendMessageResponse[]>(messages)
   messagesRef.current = messages
   const stoppedRef = useRef(stopped)
   stoppedRef.current = stopped
+  const idRef = useRef(id)
+  idRef.current = id
   // Message IDs from stopped interactions — events for these IDs are permanently
   // ignored even after `stopped` is cleared, preventing stale event leakage
   const frozenMessageIdsRef = useRef<Set<string>>(new Set())
@@ -54,16 +57,32 @@ export function SessionPage() {
 
   // Reset session-specific state when navigating between sessions
   useEffect(() => {
+    setMessages([])
     setPendingPermission(null)
     setPendingQuestion(null)
     setStreamingMessageId(null)
     // Preserve sending=true when navigating from Home with an in-flight prompt
     const navState = location.state as { sending?: boolean } | null
-    setSending(!!navState?.sending)
+    const isSendingFromNav = !!navState?.sending
+    setSending(isSendingFromNav)
+    sendingRef.current = isSendingFromNav
     setSelectedArtifact(null)
     setStopped(false)
     setStoppedAtMessageId(null)
     frozenMessageIdsRef.current = new Set()
+
+    // Safety timeout: if sending was set from navigation state (Home → Session)
+    // but no SSE message events arrive within 8s, reset sending to prevent stuck UI.
+    // Normal flow: session.status:idle SSE event clears sending; this is a fallback.
+    if (isSendingFromNav) {
+      const timer = setTimeout(() => {
+        if (sendingRef.current && !stoppedRef.current) {
+          sendingRef.current = false
+          setSending(false)
+        }
+      }, 8000)
+      return () => clearTimeout(timer)
+    }
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps -- location.state is read once per id change
 
   const checkIfAtBottom = useCallback(() => {
@@ -277,6 +296,7 @@ export function SessionPage() {
         case "session.status": {
           const { sessionID, status } = event.properties as { sessionID: string; status: { type: string } }
           if (sessionID === id && status.type === "idle") {
+            sendingRef.current = false
             setSending(false)
             // Do NOT clear `stopped` here — server may still send message cleanup
             // events after idle. Clearing too early causes partial AI response to
@@ -297,7 +317,7 @@ export function SessionPage() {
 
         case "permission.replied": {
           const { sessionID: permSid } = event.properties as { sessionID?: string }
-          if (!permSid || permSid === id) setPendingPermission(null)
+          if (permSid === id) setPendingPermission(null)
           break
         }
 
@@ -312,7 +332,7 @@ export function SessionPage() {
         case "question.replied":
         case "question.rejected": {
           const { sessionID: qSid } = event.properties as { sessionID?: string }
-          if (!qSid || qSid === id) setPendingQuestion(null)
+          if (qSid === id) setPendingQuestion(null)
           break
         }
       }
@@ -360,7 +380,15 @@ export function SessionPage() {
       .getMessages(id)
       .then((msgs: SendMessageResponse[]) => {
         if (!cancelled) {
-          setMessages(msgs)
+          setMessages(prev => {
+            if (prev.length === 0) return msgs
+            // Merge: keep SSE-delivered messages not in server response
+            const serverIds = new Set(msgs.map(m => m.info.id))
+            const sseOnly = prev.filter(m =>
+              !m.info.id.startsWith("temp-") && !serverIds.has(m.info.id)
+            )
+            return [...msgs, ...sseOnly]
+          })
           setLoading(false)
         }
       })
@@ -447,11 +475,15 @@ export function SessionPage() {
   }, [id, api])
 
   const handleSend = async () => {
-    if (!id || !input.trim() || sending) return
+    if (!id || !input.trim() || sending || sendingRef.current) return
+    sendingRef.current = true
     // Clear stopped state so SSE events flow for the new interaction
-    if (stoppedRef.current) {
+    const wasStopped = stoppedRef.current
+    const prevFrozenIds = wasStopped ? new Set(frozenMessageIdsRef.current) : null
+    if (wasStopped) {
       setStopped(false)
       stoppedRef.current = false
+      frozenMessageIdsRef.current = new Set()
     }
     const userMessage = input.trim()
     const tempId = `temp-${crypto.randomUUID()}`
@@ -473,7 +505,16 @@ export function SessionPage() {
     // Pass current model so the server uses the selected model for this message
     api.promptAsync(id, userMessage, { model: currentModel || undefined }).catch((err) => {
       console.error("Failed to send message:", err)
+      // Only restore state if still on the same session
+      if (idRef.current !== id) return
+      sendingRef.current = false
       setSending(false)
+      // Restore stopped state if it was active before send attempt
+      if (wasStopped) {
+        setStopped(true)
+        stoppedRef.current = true
+        if (prevFrozenIds) frozenMessageIdsRef.current = prevFrozenIds
+      }
       // Remove the orphaned temp message
       setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
       toast.error(t("error.sendMessage"))

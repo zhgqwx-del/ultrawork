@@ -31,7 +31,12 @@ export function ChatInput({
   leftSlot,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const compositionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const [isComposing, setIsComposing] = useState(false)
+
+  useEffect(() => {
+    return () => { clearTimeout(compositionTimerRef.current) }
+  }, [])
   const { t } = useI18n()
   // Only show command selector while typing the command name (no space yet)
   const showCommandSelector = value.startsWith("/") && !value.includes(" ") && !disabled && !loading
@@ -111,7 +116,8 @@ export function ChatInput({
         onCompositionEnd={() => {
           // Delay clearing composing state — some browsers fire compositionEnd before the
           // final keyDown (Enter), so we need isComposing to still be true during that keyDown
-          setTimeout(() => setIsComposing(false), 0)
+          clearTimeout(compositionTimerRef.current)
+          compositionTimerRef.current = setTimeout(() => setIsComposing(false), 0)
         }}
         placeholder={placeholder}
         disabled={disabled}

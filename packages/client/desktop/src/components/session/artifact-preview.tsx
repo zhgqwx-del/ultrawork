@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { X, FileText, FileDiff, FileImage, File, Copy, Check } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -83,8 +83,13 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   /** MIME type resolved from API response (fallback for file-tree clicks with no mime) */
   const [resolvedMime, setResolvedMime] = useState<string | undefined>(artifact.mime)
+
+  useEffect(() => {
+    return () => { clearTimeout(copyTimerRef.current) }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -126,7 +131,8 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
     try {
       await navigator.clipboard.writeText(content)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
     } catch {}
   }
 

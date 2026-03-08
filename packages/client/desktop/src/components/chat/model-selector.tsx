@@ -40,6 +40,11 @@ function flattenProviders(providers: Provider[]): FlatModel[] {
   return flat
 }
 
+export function clearModelCache() {
+  cachedModels = null
+  cacheTimestamp = 0
+}
+
 export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, className }: ModelSelectorProps) {
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<FlatModel[]>(cachedModels || [])

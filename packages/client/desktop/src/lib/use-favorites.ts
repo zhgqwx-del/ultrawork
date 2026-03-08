@@ -4,12 +4,20 @@ const FAVORITES_KEY = "ultrawork:favorites"
 
 export function useFavorites() {
   const [favorites, setFavorites] = useState<Set<string>>(() => {
-    const stored = localStorage.getItem(FAVORITES_KEY)
-    return stored ? new Set(JSON.parse(stored)) : new Set()
+    try {
+      const stored = localStorage.getItem(FAVORITES_KEY)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
   })
 
   useEffect(() => {
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]))
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]))
+    } catch {
+      // localStorage full or disabled — silently ignore
+    }
   }, [favorites])
 
   const toggleFavorite = (sessionId: string) => {

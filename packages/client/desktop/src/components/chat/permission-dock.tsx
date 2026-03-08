@@ -41,7 +41,7 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
           <div className="mb-4 space-y-1">
             {request.patterns.map((pattern, i) => (
               <code
-                key={i}
+                key={`${pattern}-${i}`}
                 className="block rounded bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs text-[var(--color-fg)]"
               >
                 {pattern}

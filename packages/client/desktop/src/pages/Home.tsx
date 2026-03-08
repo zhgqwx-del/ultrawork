@@ -46,8 +46,9 @@ export function HomePage() {
     setSending(true)
     try {
       const session = await createSession()
-
       setInput("")
+      // Navigate immediately for instant UX; promptAsync returns 204 fire-and-forget.
+      // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true } })
       api.promptAsync(session.id, text, { model: currentModel || undefined }).catch((err) => {
         console.error("Failed to send message:", err)
