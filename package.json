@@ -17,6 +17,7 @@
     "tauri:build": "cd packages/client/desktop && bun run --bun tauri build",
     "build": "turbo run build",
     "build:opencode": "bun run scripts/build-opencode.ts",
+    "build:gateway": "bun run scripts/build-gateway.ts",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",

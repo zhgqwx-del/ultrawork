@@ -46,4 +46,8 @@ export type {
   FileEntry,
   FileStatusEntry,
   FileContentResponse,
+  ChannelState,
+  ChannelStatus,
+  ChannelConfig,
+  ChannelListResponse,
 } from "./types"

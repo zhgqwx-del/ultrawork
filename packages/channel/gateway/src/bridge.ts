@@ -1,0 +1,366 @@
+import { createApiClient } from "@agent/api-client";
+import type { ApiClient, MessagePart } from "@agent/api-client";
+import type { IncomingMessage } from "./types.js";
+
+const OPENCODE_BASE_URL = "http://localhost:4096";
+const OPENCODE_PASSWORD = "test123";
+const MAX_REPLY_LENGTH = 20_000; // DingTalk ~20KB limit
+const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
+
+interface SessionContext {
+  sessionId: string;
+  chatId: string;
+  workspaceDir: string;
+  /** Accumulated text per partID (handles multiple text parts) */
+  textParts: Map<string, string>;
+  /** Callback to reply to the originating message */
+  reply: (content: string) => Promise<void>;
+  /** Idle timeout handle */
+  idleTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Bridge between channel adapters and OpenCode Server.
+ * - Maps chatId → OpenCode session
+ * - Sequential queue per chat to prevent concurrent prompts
+ * - SSE subscription to collect assistant output and reply on idle
+ * - Auto-handles permission (once) and question (reject)
+ */
+export class Bridge {
+  /** chatId → OpenCode sessionId */
+  private sessionMap = new Map<string, string>();
+  /** sessionId → active context for current turn */
+  private activeContexts = new Map<string, SessionContext>();
+  /** chatId → sequential promise chain */
+  private queues = new Map<string, Promise<void>>();
+  /** Per-workspace ApiClient cache */
+  private clients = new Map<string, ApiClient>();
+  /** SSE abort controllers per workspace */
+  private sseControllers = new Map<string, AbortController>();
+  /** Permission/question poll timers per workspace */
+  private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+  /** Get or create an ApiClient for a workspace directory */
+  private getClient(workspaceDir: string): ApiClient {
+    let client = this.clients.get(workspaceDir);
+    if (!client) {
+      client = createApiClient({
+        baseUrl: OPENCODE_BASE_URL,
+        username: "opencode",
+        password: OPENCODE_PASSWORD,
+        workingDirectory: workspaceDir,
+      });
+      this.clients.set(workspaceDir, client);
+    }
+    return client;
+  }
+
+  /** Enqueue a task per chatId to prevent concurrent prompts */
+  private enqueue(chatId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.queues.get(chatId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.queues.set(chatId, next);
+    return next;
+  }
+
+  /** Process an incoming message from a channel adapter */
+  async handleMessage(msg: IncomingMessage): Promise<void> {
+    await this.enqueue(msg.chatId, () => this.processMessage(msg));
+  }
+
+  private async processMessage(msg: IncomingMessage): Promise<void> {
+    const client = this.getClient(msg.workspaceDir);
+
+    // Get or create session for this chat
+    let sessionId = this.sessionMap.get(msg.chatId);
+    if (!sessionId) {
+      const session = await client.createSession({});
+      sessionId = session.id;
+      this.sessionMap.set(msg.chatId, sessionId);
+      console.log(
+        `[Bridge] Created session ${sessionId} for chat ${msg.chatId}`,
+      );
+    }
+
+    // Set up context to accumulate reply
+    const ctx: SessionContext = {
+      sessionId,
+      chatId: msg.chatId,
+      workspaceDir: msg.workspaceDir,
+      textParts: new Map(),
+      reply: msg.reply,
+    };
+    this.activeContexts.set(sessionId, ctx);
+
+    // Ensure SSE is connected for this workspace
+    this.ensureSSE(msg.workspaceDir);
+
+    // Start permission/question polling
+    this.ensurePolling(msg.workspaceDir, sessionId);
+
+    // Get current model from server config so channel uses the same model as desktop
+    let model: string | undefined;
+    try {
+      const config = await client.getConfig();
+      if (config.model) model = config.model;
+    } catch {
+      // Fall through — send without model override
+    }
+
+    // Send the prompt
+    try {
+      await client.promptAsync(sessionId, msg.text, { model });
+      console.log(
+        `[Bridge] Sent prompt to session ${sessionId}: "${msg.text.slice(0, 50)}..."`,
+      );
+    } catch (err) {
+      console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
+      this.activeContexts.delete(sessionId);
+      await msg
+        .reply(`Error: Failed to send message to AI agent.`)
+        .catch(() => {});
+    }
+  }
+
+  /** Ensure SSE connection is active for a workspace */
+  private ensureSSE(workspaceDir: string): void {
+    if (this.sseControllers.has(workspaceDir)) return;
+
+    const controller = new AbortController();
+    this.sseControllers.set(workspaceDir, controller);
+
+    this.connectSSE(workspaceDir, controller.signal).catch((err) => {
+      console.error(`[Bridge] SSE connection error for ${workspaceDir}:`, err);
+      this.sseControllers.delete(workspaceDir);
+    });
+  }
+
+  private async connectSSE(
+    workspaceDir: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const params = new URLSearchParams({ directory: workspaceDir });
+    const url = `${OPENCODE_BASE_URL}/event?${params}`;
+    const credentials = btoa(`opencode:${OPENCODE_PASSWORD}`);
+    let backoff = 1000; // Start at 1s, max 30s
+
+    while (!signal.aborted) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Basic ${credentials}`,
+            "x-opencode-directory": encodeURIComponent(workspaceDir),
+          },
+          signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`SSE ${response.status} ${response.statusText}`);
+        }
+        if (!response.body) throw new Error("SSE response has no body");
+
+        console.log(`[Bridge] SSE connected for ${workspaceDir}`);
+        backoff = 1000; // Reset on successful connect
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const event = JSON.parse(line.slice(6));
+                this.handleSSEEvent(event);
+              } catch {
+                // skip unparseable events
+              }
+            }
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        console.error(`[Bridge] SSE error, reconnecting in ${backoff / 1000}s:`, err);
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 30_000); // Exponential backoff, cap 30s
+      }
+    }
+  }
+
+  private handleSSEEvent(event: { type: string; properties: any }): void {
+    switch (event.type) {
+      case "message.part.updated":
+        this.onPartUpdated(event.properties.part);
+        break;
+      case "message.part.delta":
+        this.onPartDelta(event.properties);
+        break;
+      case "session.status":
+        this.onSessionStatus(
+          event.properties.sessionID,
+          event.properties.status,
+        );
+        break;
+      case "permission.asked":
+        this.onPermissionAsked(event.properties);
+        break;
+      case "question.asked":
+        this.onQuestionAsked(event.properties);
+        break;
+    }
+  }
+
+  /** Accumulate assistant text from full part updates */
+  private onPartUpdated(part: MessagePart): void {
+    if (part.type !== "text") return;
+    const ctx = this.activeContexts.get(part.sessionID);
+    if (!ctx) return;
+    const partId = (part as any).id ?? "__default__";
+    const text = (part as any).content ?? (part as any).text ?? "";
+    ctx.textParts.set(partId, text);
+  }
+
+  /** Accumulate assistant text from delta (incremental append) */
+  private onPartDelta(props: {
+    sessionID: string;
+    partID: string;
+    field: string;
+    delta: string;
+  }): void {
+    const ctx = this.activeContexts.get(props.sessionID);
+    if (!ctx) return;
+    if (props.field === "content" || props.field === "text") {
+      const existing = ctx.textParts.get(props.partID) ?? "";
+      ctx.textParts.set(props.partID, existing + props.delta);
+    }
+  }
+
+  /** Session went idle → send accumulated reply */
+  private onSessionStatus(
+    sessionId: string,
+    status: { type: string },
+  ): void {
+    if (status.type !== "idle") return;
+
+    const ctx = this.activeContexts.get(sessionId);
+    if (!ctx) return;
+
+    // Send reply and clean up — concatenate all text parts
+    const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
+    if (text) {
+      const truncated =
+        text.length > MAX_REPLY_LENGTH
+          ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
+          : text;
+
+      ctx.reply(truncated).catch((err) => {
+        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+      });
+    }
+
+    this.activeContexts.delete(sessionId);
+    console.log(
+      `[Bridge] Session ${sessionId} idle, replied ${text.length} chars`,
+    );
+  }
+
+  /** Auto-reply permission with "once" */
+  private onPermissionAsked(perm: { id: string; sessionID: string }): void {
+    const ctx = this.activeContexts.get(perm.sessionID);
+    if (!ctx) return;
+
+    const client = this.getClient(ctx.workspaceDir);
+    client.replyPermission(perm.id, "once").catch((err) => {
+      console.error(
+        `[Bridge] Auto-reply permission ${perm.id} failed:`,
+        err,
+      );
+    });
+    console.log(`[Bridge] Auto-approved permission ${perm.id}`);
+  }
+
+  /** Auto-reject question */
+  private onQuestionAsked(question: { id: string; sessionID: string }): void {
+    const ctx = this.activeContexts.get(question.sessionID);
+    if (!ctx) return;
+
+    const client = this.getClient(ctx.workspaceDir);
+    client.rejectQuestion(question.id).catch((err) => {
+      console.error(
+        `[Bridge] Auto-reject question ${question.id} failed:`,
+        err,
+      );
+    });
+    console.log(`[Bridge] Auto-rejected question ${question.id}`);
+  }
+
+  /** Start polling for permission/question as SSE backup */
+  private ensurePolling(workspaceDir: string, sessionId: string): void {
+    const key = `${workspaceDir}:${sessionId}`;
+    if (this.pollTimers.has(key)) return;
+
+    const client = this.getClient(workspaceDir);
+    const timer = setInterval(async () => {
+      // Stop polling if no active context
+      if (!this.activeContexts.has(sessionId)) {
+        clearInterval(timer);
+        this.pollTimers.delete(key);
+        return;
+      }
+
+      try {
+        const permissions = await client.listPermissions();
+        for (const p of permissions) {
+          if (p.sessionID === sessionId) {
+            this.onPermissionAsked(p);
+          }
+        }
+      } catch {
+        // Ignore poll errors
+      }
+
+      try {
+        const questions = await client.listQuestions();
+        for (const q of questions) {
+          if (q.sessionID === sessionId) {
+            this.onQuestionAsked(q);
+          }
+        }
+      } catch {
+        // Ignore poll errors
+      }
+    }, POLL_INTERVAL_MS);
+
+    this.pollTimers.set(key, timer);
+  }
+
+  async shutdown(): Promise<void> {
+    // Abort all SSE connections
+    for (const controller of this.sseControllers.values()) {
+      controller.abort();
+    }
+    this.sseControllers.clear();
+
+    // Clear all poll timers
+    for (const timer of this.pollTimers.values()) {
+      clearInterval(timer);
+    }
+    this.pollTimers.clear();
+
+    // Clear idle timers
+    for (const ctx of this.activeContexts.values()) {
+      if (ctx.idleTimer) clearTimeout(ctx.idleTimer);
+    }
+    this.activeContexts.clear();
+    this.sessionMap.clear();
+    this.clients.clear();
+    this.queues.clear();
+  }
+}

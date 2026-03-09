@@ -3,8 +3,9 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "path"
 
-// Shared proxy target config
+// Shared proxy target configs
 const backend = { target: "http://localhost:4096", changeOrigin: true }
+const gateway = { target: "http://localhost:4097", changeOrigin: true }
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -53,6 +54,8 @@ export default defineConfig({
       "/file": backend,
       "/project": backend,
       "/experimental": backend,
+      // Channel gateway proxy → :4097
+      "/channel": gateway,
     },
   },
 })

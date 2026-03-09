@@ -24,8 +24,11 @@ Round 8 技术债: ✅ 完成 (4 修复: Provider缓存/SSE重连/React key/死�
 Round 10 服务: ✅ 完成 (远程服务设置页面 — useMCPServers hook 提取 + ServicesSection 全页面管理)
 Round 11 技能: ✅ 完成 (技能面板增强 — useSkills hook + 分组面板 + Settings 技能管理 + MCP 状态持久化 + vendor patch)
 Round 12 体验: ✅ 完成 (新建会话乐观消息 + Sidebar 真实活跃状态 + 隐藏未实现功能)
-TypeCheck:    ✅ 3/3 通过
-单元测试:     ✅ 47/47 通过
+Round 13 钉钉: ✅ 实现完成 (钉钉 Channel Gateway — dingtalk-stream WebSocket + 独立 sidecar + Desktop UI)
+Round 13 测试: ✅ 完成 (7 个测试文件, 126 个 test case 全部通过)
+Round 14 增强: ✅ 完成 (Channel UX 优化 — 自动工作区/模型同步/自动连接/启动加速/卡片信息)
+TypeCheck:    ✅ 4/4 通过
+单元测试:     ✅ 236/236 通过 (Gateway 113 + Desktop 123)
 Vite Dev:     ✅ 正常启动
 Tauri Dev:    ✅ 联调通过
 ```
@@ -2743,9 +2746,186 @@ Skill 接口添加 `location?: string` 和 `content?: string` 字段。
 |---|---|---|
 | 定时任务 | 左侧 Sidebar 操作栏 | `sidebar.scheduled` — Clock 图标按钮，计划支持定时/周期任务调度 |
 | 自定义 | 左侧 Sidebar 操作栏 | `sidebar.custom` — Briefcase 图标按钮，计划支持自定义 Agent/工作流模板 |
-| 渠道 | 设置弹出菜单 | `settingsPopover.channels` — Radio 图标菜单项，计划支持多渠道（Slack/飞书等）消息推送集成 |
+| 渠道 | 设置弹出菜单 | `settingsPopover.channels` — Round 13 规划完成: 钉钉 Channel Gateway + Desktop Channels 设置页面 |
 
 ---
 
-**最后更新**: 2026-03-08
-**当前阶段**: Round 12 新建会话体验优化 ✅ 完成
+---
+
+## ✅ Round 13: 钉钉 Channel 接入（实现 + 测试完成）
+
+### 目标
+实现钉钉企业内部机器人接入，用户通过钉钉单聊/群聊与 OpenCode Agent 交互。
+
+### SDK 选型 ✅ 已确认
+- `dingtalk-stream` v2.1.4 — WebSocket Stream Mode，无需公网 IP / ngrok
+- TypeScript 类型内置，依赖轻量 (axios + ws + debug)
+
+### 架构决策
+- **Gateway 独立进程**: `packages/channel/gateway/` → `bun build --compile` → sidecar :4097
+- **与桌面端同生同死**: Tauri 托管两个 sidecar (opencode-server:4096 + channel-gateway:4097)
+- **后续演进**: System Tray 后台常驻 → 7×24 在线
+- **端口冲突防护**: lib.rs 新增启动前 probe + 残留清理 + 失败 dialog
+
+### 实施步骤 (7 步) — 全部完成 ✅
+
+| Step | 内容 | 关键产出 | 状态 |
+|------|------|---------|------|
+| 0.5 | Sidecar 启动健壮性 | lib.rs 端口检测 + 残留清理 + 失败通知 | ✅ |
+| 1 | `@agent/channel-gateway` 包骨架 | package.json + tsconfig + 目录结构, typecheck 通过 | ✅ |
+| 2 | 核心类型 + ChannelManager | ChannelAdapter 接口 + 生命周期管理 | ✅ |
+| 3 | Bridge 会话桥接层 | chatId→sessionId + Sequential Queue + SSE 订阅 + Permission 自动回复 | ✅ |
+| 4 | DingTalk Adapter | DWClient 封装 + sessionWebhook 回复 + TokenManager | ✅ |
+| 5 | Gateway Server + Sidecar 集成 | Hono API 6 端点 + bun compile + Tauri 启动 + Vite proxy | ✅ |
+| 6 | Desktop UI Channels 页面 | SettingsPopover 启用 + ChannelsSection + use-channels hook + i18n | ✅ |
+
+### 参考项目
+- openwork/opencode-router (TypeScript) — Bridge 架构、Sequential Queue、SSE 事件订阅
+- nanobot/channels/dingtalk.py (Python) — DingTalk Stream SDK 用法、群聊路由、Token 管理
+
+### MVP 排除项
+群聊@精细处理、交互式卡片、文件发送、多目录绑定、飞书/Slack adapter、凭证加密
+
+### 风险项
+dingtalk-stream Bun 兼容性、SSE 长连接内存、sessionWebhook 30min 有效期、Gateway 进程管理
+
+### 代码实现 — 文件清单
+
+**Gateway 包 (`packages/channel/gateway/`)**:
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `src/types.ts` | 类型 | ChannelAdapter, ChannelStatus, ChannelConfig, IncomingMessage, AdapterFactory |
+| `src/config-store.ts` | 模块 | 磁盘持久化 (~/.ultrawork/channels.json)，mutex 锁防竞态 |
+| `src/channel-manager.ts` | 类 | 适配器工厂注册 + 生命周期管理 (init/add/remove/connect/disconnect/shutdown) |
+| `src/bridge.ts` | 类 | chatId→sessionId 映射 + Sequential Queue + SSE 订阅 + 权限自动回复 + 轮询兜底 |
+| `src/gateway-server.ts` | 模块 | Hono REST API 6 端点 (/channel CRUD + health + connect/disconnect) |
+| `src/index.ts` | 入口 | main() + 类型/类导出 + 优雅关闭 (SIGINT/SIGTERM) |
+| `src/adapters/dingtalk/dingtalk-adapter.ts` | 类 | DWClient 封装 + 消息路由 (单聊/群聊) + webhook 回复 + REST API 推送 |
+| `src/adapters/dingtalk/token-manager.ts` | 类 | OAuth access_token 缓存 + TTL + 并发去重 |
+| `src/adapters/dingtalk/dingtalk-types.ts` | 类型 | DingTalkTokenResponse, WebhookReplyBody |
+| `src/adapters/dingtalk/index.ts` | 导出 | Factory + re-exports |
+
+**Desktop 包变更**:
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `src/lib/use-channels.ts` | 新建 | useChannels() hook — gateway API 封装 + 乐观更新 + toast |
+| `src/pages/Settings.tsx` | 修改 | 新增 ChannelsSection + ChannelCard + ChannelAddForm 组件 |
+| `src/components/settings/settings-popover.tsx` | 修改 | 启用"渠道"菜单项 (Radio 图标) → 导航到 settings channels section |
+| `src/lib/i18n-context.tsx` | 修改 | 新增 ~20 个 channel.* i18n keys |
+| `packages/core/api-client/src/types.ts` | 修改 | 新增 ChannelState, ChannelStatus, ChannelConfig, ChannelListResponse |
+
+### 自动化测试 — 126 个 test case 全部通过 ✅
+
+**Gateway 测试 (113 tests, 6 files)**:
+
+| # | 测试文件 | 被测模块 | 测试数 | Mock 策略 |
+|---|---------|----------|--------|-----------|
+| T1 | `src/__tests__/config-store.test.ts` | config-store.ts | 15 | Mock `fs/promises` |
+| T2 | `src/__tests__/channel-manager.test.ts` | channel-manager.ts | 21 | Mock config-store + mock adapter factory |
+| T3 | `src/__tests__/bridge.test.ts` | bridge.ts | 28 | Mock `@agent/api-client` + mock fetch (SSE) + vi.useFakeTimers |
+| T4 | `src/__tests__/gateway-server.test.ts` | gateway-server.ts | 20 | Mock ChannelManager + Hono app.fetch() |
+| T5 | `src/__tests__/adapters/dingtalk/token-manager.test.ts` | token-manager.ts | 8 | Mock global.fetch + vi.useFakeTimers |
+| T6 | `src/__tests__/adapters/dingtalk/dingtalk-adapter.test.ts` | dingtalk-adapter.ts | 21 | Mock dingtalk-stream (class) + mock TokenManager + mock fetch |
+
+**Desktop 测试 (13 tests, 1 file)**:
+
+| # | 测试文件 | 被测模块 | 测试数 | Mock 策略 |
+|---|---------|----------|--------|-----------|
+| T7 | `src/__tests__/lib/use-channels.test.ts` | use-channels.ts | 13 | Mock global.fetch + mock i18n + mock sonner |
+
+**测试覆盖范围**:
+- 配置持久化: 文件读写、锁互斥、增删改查、错误处理
+- Token 管理: 缓存/过期/刷新/并发去重/失败重试
+- 渠道管理: Factory 注册、生命周期管理、自动连接
+- HTTP API: 6 个端点的输入验证、成功/错误路径
+- Bridge: Session 映射、队列串行化、SSE 事件处理(text/delta/idle/permission/question)、截断、轮询、多工作区隔离
+- DingTalk 适配器: 连接/断开状态机、消息路由(单聊/群聊)、ACK、webhook 回复、REST API 推送
+- 前端 Hook: CRUD 操作、loading/error 状态、toast 通知、乐观更新
+
+**测试基础设施**:
+- Gateway: `vitest.config.ts` (node 环境) + `vitest` devDep
+- Desktop: 复用既有 vitest + jsdom + @testing-library/react 配置
+
+**执行命令**:
+```bash
+# Gateway 单元测试
+cd packages/channel/gateway && bun run --bun vitest run
+
+# Desktop 单元测试
+cd packages/client/desktop && bun run --bun vitest run
+
+# 全量类型检查
+bun run --bun turbo run typecheck
+```
+
+### 手动测试清单（需真实钉钉凭证）
+
+**M1: 渠道 CRUD — Settings UI** (10 项)
+- M1.1-M1.10: 空状态/添加表单/取消/验证/提交/卡片显示/断开/连接/移除/刷新
+
+**M2: 钉钉消息往返** (7 项)
+- M2.1-M2.7: 连接/单聊发送/AI 回复/session 复用/群聊/@/超长截断
+
+**M3: 权限与问题自动处理** (3 项)
+- M3.1-M3.3: edit permission 配置/自动批准/question 自动拒绝
+
+**M4: 错误恢复** (6 项)
+- M4.1-M4.6: sidecar 停止/重启/无效凭证/移除错误渠道/gateway 停止/重启
+
+**M5: Gateway 进程生命周期** (7 项)
+- M5.1-M5.7: 启动/health/添加/列表/SIGTERM/重启自动连接/配置文件
+
+**M6: Settings 导航** (3 项)
+- M6.1-M6.3: 齿轮菜单/渠道菜单项/section 切换
+
+**M7: SSE 重连** (3 项)
+- M7.1-M7.3: 重连/指数退避/上限 30s
+
+**M8: 并发消息** (3 项)
+- M8.1-M8.3: 同用户串行/不同用户并发/群聊单聊独立
+
+---
+
+## Round 14: Channel UX 增强 (✅ 完成)
+
+### 改动清单
+
+**1. 渠道添加表单自动填充工作区** (`Settings.tsx`)
+- 移除 `workspaceDir` 手动输入字段
+- 从 `useWorkspace().workspacePath` 自动注入，减少用户操作和输入错误
+- 保留 i18n key（将来 channel 详情可能使用）
+
+**2. Bridge 模型同步** (`bridge.ts`)
+- 发送消息前调用 `getConfig()` 获取当前配置模型
+- 传递 `model` 参数给 `promptAsync`，确保钉钉渠道与桌面端使用同一模型
+- 解决了钉钉回复用 qwen3.5-plus 而桌面端用 big-pickle 的不一致问题
+
+**3. 添加渠道自动连接** (`channel-manager.ts`)
+- `addChannel` 时检查 `config.autoConnect`，为 true 则 `await connectChannel`
+- 之前仅 `init()`（启动加载）才自动连接，新添加的渠道即使勾选自动连接也不会连
+
+**4. 渠道卡片显示工作区** (`Settings.tsx`)
+- ChannelCard 新增 `workspaceDir` prop
+- 显示目录末段名（如 `workspace2`），hover 显示完整路径
+- 复用已有 i18n key `channel.workspaceDir`
+
+**5. Tauri 启动加速** (`lib.rs`)
+- Gateway sidecar 改为后台线程启动，不阻塞 UI
+- 缩短超时：port check 500ms→100ms, health 2s→500ms, kill wait 500ms→200ms
+- 重构 `start_sidecar` 为泛型函数，支持 `App` 和 `AppHandle`
+
+**6. Gateway 构建脚本修复** (`scripts/build-gateway.ts`)
+- `Bun.file().size()` → `Bun.file().size`（属性非方法）
+
+### 测试结果
+- TypeCheck: 4/4 通过
+- Gateway 测试: 113/113 通过
+- Desktop 测试: 123/123 通过
+- Cargo check: 零警告
+
+---
+
+**最后更新**: 2026-03-09
+**当前阶段**: Round 14 Channel UX 增强 ✅ 完成

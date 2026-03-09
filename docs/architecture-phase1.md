@@ -1,14 +1,41 @@
 # Desktop Agent - Phase 1 Architecture Design
 
+> **Implementation Status Note (2026-03-09)**
+>
+> 本文档是 Phase 1 的完整架构设计。截至 Round 12，**Desktop Client** 部分已全面实现（12 轮迭代，30+ 组件），其余模块仍为规划状态。
+>
+> **已实现 vs 规划对照：**
+>
+> | 模块 | 状态 | 说明 |
+> |------|------|------|
+> | Desktop Client (Tauri) | ✅ 已实现 | React 19 + Vite 7 + Tailwind 4（原设计为 SolidJS，实际采用 React） |
+> | @agent/api-client | ✅ 已实现 | TypeScript SDK，REST + SSE |
+> | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
+> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象 |
+> | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
+> | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
+> | @agent/notifier | 🔲 规划中 | |
+> | @agent/channel-gateway | 🔲 规划中 | |
+> | @agent/proactive-heartbeat | 🔲 规划中 | |
+> | @agent/proactive-cron | 🔲 规划中 | |
+>
+> **技术栈变更：**
+> - UI 框架：SolidJS → **React 19**（文档中提到 SolidJS 的地方均应理解为 React）
+> - 样式：TBD → **Tailwind CSS 4 + shadcn/ui (Radix primitives)**
+> - 状态管理：SolidJS Context → **React Context** (SidebarProvider, SessionsProvider, ConfigProvider, ThemeProvider, I18nProvider, WorkspaceProvider, SSEProvider, ModelProvider)
+> - 路由：**react-router-dom v7**
+>
+> 已实现功能详见 `REQUIREMENTS.md` 和 `PROGRESS.md`。
+
 ## Overview
 
 A desktop-grade AI agent built on top of OpenCode's server capabilities. Phase 1 focuses on:
 
-- **Desktop Client (Tauri)**: Full-featured desktop application as the primary platform
-- **IM Channel Integrations**: DingTalk, Feishu, Slack via Channel Gateway
-- **Local/Remote Mode Operation**: OpenCode running as sidecar (Desktop) or remote server (Channels)
-- **Agent Workspace**: Persistent identity, personality, and memory across sessions
-- **Proactive Services**: Background heartbeat monitoring and scheduled LLM tasks
+- **Desktop Client (Tauri)**: ✅ Full-featured desktop application as the primary platform
+- **IM Channel Integrations**: 🔲 DingTalk, Feishu, Slack via Channel Gateway
+- **Local/Remote Mode Operation**: ✅ (local) / 🔲 (remote) OpenCode running as sidecar (Desktop) or remote server (Channels)
+- **Agent Workspace**: 🔲 Persistent identity, personality, and memory across sessions
+- **Proactive Services**: 🔲 Background heartbeat monitoring and scheduled LLM tasks
 
 Core strategy: use OpenCode as a **headless server** (compiled binary, spawned as sidecar or deployed remotely), and build the desktop client, channel gateway, and proactive services independently.
 
@@ -41,7 +68,7 @@ Phase 1 implements a Data Plane instance with Desktop client and IM Channel inte
 |            |                |                |                         |
 |  +---------+---------+  +---+------------+  +----------+----------+   |
 |  |  Desktop App      |  |  Channel       |  |  Proactive          |   |
-|  |  (Tauri + SolidJS)|  |  Gateway       |  |  Services           |   |
+|  |  (Tauri + React)  |  |  Gateway       |  |  Services           |   |
 |  |                   |  |  (Hono)        |  |  - Heartbeat        |   |
 |  |  - Chat UI        |  |                |  |  - Cron             |   |
 |  |  - Settings       |  |  - DingTalk    |  +---------------------+   |
@@ -81,14 +108,14 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 |-------|---------|----------------------|
 | **Core** | `@agent/api-client` | OpenCode Server SDK - Type-safe REST API calls and SSE event streaming. Foundation for all OpenCode communication. |
 | | `@agent/server-manager` | Process Lifecycle Manager - Spawns OpenCode sidecar, monitors health, handles crash recovery with auto-restart. |
-| | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. |
-| | `@agent/ui` | UI Component Library - Shared SolidJS components (chat, diff, markdown, dialogs) ensuring consistent UX. |
-| | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. |
-| | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. |
-| **Client** | `@agent/client-desktop` | Desktop Application - Full-featured Tauri app with local sidecar, native OS integration, and workspace management. |
-| **Channel** | `@agent/channel-gateway` | IM Gateway Service - Bridges IM platforms (DingTalk, Feishu, Slack) to OpenCode via webhook adaptation. |
-| **Proactive** | `@agent/proactive-heartbeat` | Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
-| | `@agent/proactive-cron` | Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
+| | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. 🔲 规划中，Desktop 当前直连 api-client |
+| | `@agent/ui` | UI Component Library - Shared React components (chat, diff, markdown, dialogs) ensuring consistent UX. 🔲 规划中，当前组件在 desktop/src/components 内 |
+| | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
+| | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
+| **Client** | `@agent/client-desktop` | ✅ Desktop Application - Full-featured Tauri app with local sidecar, React 19 + Vite 7 + Tailwind 4. |
+| **Channel** | `@agent/channel-gateway` | 🔲 Round 13 规划完成 — IM Gateway Service. 独立 sidecar :4097, DingTalk Stream Mode (WebSocket), Bridge 会话桥接, Hono HTTP API. |
+| **Proactive** | `@agent/proactive-heartbeat` | 🔲 Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
+| | `@agent/proactive-cron` | 🔲 Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
 
 ### Package Naming Convention
 
@@ -169,7 +196,7 @@ your-agent/
 │   │   │
 │   │   ├── connector/            # @agent/connector
 │   │   │   │
-│   │   │   │  [Functional Positioning]
+│   │   │   │  [Functional Positioning] 🔲 规划中
 │   │   │   │  Connection abstraction for OpenCode Server.
 │   │   │   │  Supports both local (sidecar) and remote (network) modes:
 │   │   │   │  - Local: Uses server-manager to spawn/manage binary
@@ -195,8 +222,8 @@ your-agent/
 │   │   │
 │   │   ├── ui/                   # @agent/ui
 │   │   │   │
-│   │   │   │  [Functional Positioning]
-│   │   │   │  SolidJS UI component library for Desktop client.
+│   │   │   │  [Functional Positioning] 🔲 规划中（当前组件在 desktop/src/components 内）
+│   │   │   │  React UI component library for Desktop client.
 │   │   │   │  Handles real-time SSE streaming display, code rendering,
 │   │   │   │  and interactive dialogs. Theme-aware and responsive.
 │   │   │   │
@@ -209,7 +236,7 @@ your-agent/
 │   │   │
 │   │   ├── workspace/            # @agent/workspace
 │   │   │   │
-│   │   │   │  [Functional Positioning]
+│   │   │   │  [Functional Positioning] 🔲 规划中
 │   │   │   │  Runtime workspace manager for ~/.ultrawork/ directory
 │   │   │   │  in user's home. Unified user-level storage.
 │   │   │   │  Handles:
@@ -228,7 +255,7 @@ your-agent/
 │   │   │
 │   │   └── notifier/             # @agent/notifier
 │   │       │
-│   │       │  [Functional Positioning]
+│   │       │  [Functional Positioning] 🔲 规划中
 │   │       │  Unified outbound notification dispatcher.
 │   │       │  Routes notification payloads to configured targets:
 │   │       │  - Desktop system notifications (Tauri API)
@@ -257,18 +284,19 @@ your-agent/
 │   │   │
 │   │   └── desktop/              # @agent/client-desktop
 │   │       │
-│   │       │  [Functional Positioning]
-│   │       │  Full-featured desktop application built with Tauri.
+│   │       │  [Functional Positioning] ✅ 已实现
+│   │       │  Full-featured desktop application built with Tauri + React 19.
 │   │       │  The primary client platform in Phase 1:
 │   │       │  - Spawns OpenCode Server as sidecar process
-│   │       │  - Native OS integration (clipboard, window, filesystem)
-│   │       │  - Secure credential storage via OS keychain
-│   │       │  - Workspace management UI
+│   │       │  - Native OS integration (opener plugin for external links)
+│   │       │  - Workspace directory selection via x-opencode-directory header
+│   │       │  - 8 React Contexts for state management
 │   │       │
-│   │       ├── src/              #   SolidJS frontend
+│   │       ├── src/              #   React 19 frontend
 │   │       │   ├── App.tsx       #   Application root, routing setup
-│   │       │   ├── pages/        #   Chat, settings, session history pages
-│   │       │   └── context/      #   SolidJS contexts: ServerProvider, WorkspaceProvider
+│   │       │   ├── pages/        #   Home, Session, Settings, WorkspaceSelector
+│   │       │   ├── lib/          #   Contexts, hooks, utils (sse-context, config-context, etc.)
+│   │       │   └── components/   #   chat/, session/, settings/, layout/, ui/
 │   │       ├── src-tauri/        #   Rust backend for native capabilities
 │   │       │   └── src/
 │   │       │       ├── lib.rs    #     Tauri commands, sidecar spawn, IPC bridge
@@ -284,29 +312,40 @@ your-agent/
 │   │   │
 │   │   └── gateway/              # @agent/channel-gateway
 │   │       │
-│   │       │  [Functional Positioning]
+│   │       │  [Functional Positioning] 🔲 Round 13 规划完成，待实现
 │   │       │  IM platform integration gateway service.
-│   │       │  Bridges between IM platforms (DingTalk, Feishu, Slack)
-│   │       │  and OpenCode Server. Handles:
-│   │       │  - Webhook reception from IM platforms
-│   │       │  - User-to-session mapping and lifecycle
-│   │       │  - SSE stream buffering for non-streaming IM APIs
-│   │       │  - Message format adaptation (markdown downgrade, cards)
-│   │       │  Deployed as standalone service, one instance per IM bot.
+│   │       │  Bridges between IM platforms and OpenCode Server.
+│   │       │
+│   │       │  Round 13 架构决策 (2026-03):
+│   │       │  - 独立 sidecar 进程 (bun build --compile, :4097)
+│   │       │  - 与桌面端同生同死 (Tauri 托管)
+│   │       │  - 钉钉优先: dingtalk-stream v2.1.4 WebSocket Stream Mode
+│   │       │  - 无需公网 IP / ngrok
+│   │       │
+│   │       │  Handles:
+│   │       │  - DingTalk Stream Mode WebSocket connection (not webhook)
+│   │       │  - User-to-session mapping and lifecycle (Bridge pattern)
+│   │       │  - Sequential Promise queue per session
+│   │       │  - SSE event subscription for reply aggregation
+│   │       │  - Permission auto-response, Question auto-reject
+│   │       │  - Message format: Markdown via sessionWebhook
 │   │       │
 │   │       ├── src/
-│   │       │   ├── gateway.ts    #   HTTP server: webhook endpoints, health check
-│   │       │   ├── session-pool.ts # Map IM user -> OpenCode session, lifecycle management
-│   │       │   ├── stream-buffer.ts # Collect SSE stream, emit complete messages
+│   │       │   ├── index.ts      #   导出入口
+│   │       │   ├── types.ts      #   ChannelConfig, ChannelStatus, ChannelAdapter 接口
+│   │       │   ├── channel-manager.ts # Adapter 注册/生命周期管理
+│   │       │   ├── gateway-server.ts  # Hono HTTP API (6 endpoints: CRUD + connect/disconnect)
+│   │       │   ├── bridge.ts     #   OpenCode 会话桥接 (chatId→sessionId + Queue + SSE)
 │   │       │   ├── adapters/
-│   │       │   │   ├── types.ts  #   IM adapter interface definition
-│   │       │   │   ├── dingtalk.ts # DingTalk Bot: webhook, outgoing message, cards
-│   │       │   │   ├── feishu.ts #   Feishu Bot: webhook, outgoing message, cards
-│   │       │   │   └── slack.ts  #   Slack Bot: webhook, outgoing message, blocks
-│   │       │   └── renderers/
-│   │       │       ├── card.ts   #   Interactive card templates (permission, confirm)
-│   │       │       └── markdown.ts # Markdown -> platform-specific format conversion
-│   │       └── package.json      #   deps: @agent/connector
+│   │       │   │   └── dingtalk/
+│   │       │   │       ├── index.ts
+│   │       │   │       ├── dingtalk-adapter.ts # DWClient 封装
+│   │       │   │       ├── dingtalk-types.ts   # 钉钉消息结构
+│   │       │   │       └── token-manager.ts    # access_token 缓存+刷新
+│   │       │   └── adapters/     #   (预留: feishu/, slack/)
+│   │       ├── tests/
+│   │       │   └── channel-manager.test.ts
+│   │       └── package.json      #   deps: @agent/api-client, dingtalk-stream, hono
 │   │
 │   │  =============================================
 │   │  proactive/ - Background Services
@@ -316,7 +355,7 @@ your-agent/
 │       │
 │       ├── heartbeat/            # @agent/proactive-heartbeat
 │       │   │
-│       │   │  [Functional Positioning]
+│       │   │  [Functional Positioning] 🔲 规划中
 │       │   │  Independent background service that periodically
 │       │   │  examines task/session state, interacts with OpenCode
 │       │   │  using LLM to summarize progress and analyze status,
@@ -335,7 +374,7 @@ your-agent/
 │       │
 │       └── cron/                 # @agent/proactive-cron
 │           │
-│           │  [Functional Positioning]
+│           │  [Functional Positioning] 🔲 规划中
 │           │  Independent background service with HTTP API.
 │           │  Receives job definitions from Desktop UI (REST API calls).
 │           │  Executes LLM-powered tasks on schedule:
@@ -440,16 +479,16 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 
 | Package | Path | Functional Summary | Internal Dependencies |
 |---------|------|-------------------|----------------------|
-| `@agent/api-client` | `core/api-client` | OpenCode REST/SSE SDK, type-safe API calls | none |
-| `@agent/server-manager` | `core/server-manager` | Sidecar lifecycle: spawn, health check, auto-restart (local only) | `@agent/api-client` |
-| `@agent/connector` | `core/connector` | Unified local/remote connection abstraction + workspace context injection + session lifecycle hooks | `@agent/api-client`, `@agent/server-manager`, `@agent/workspace` |
-| `@agent/ui` | `core/ui` | SolidJS component library: chat, diff, markdown, dialogs | `@agent/api-client` |
-| `@agent/workspace` | `core/workspace` | Runtime ~/.ultrawork/ manager: identity, soul, memory, history, context assembly | none |
-| `@agent/notifier` | `core/notifier` | Outbound notification dispatcher: desktop, IM webhooks, file | none (standalone) |
-| `@agent/client-desktop` | `client/desktop` | Tauri app: full-featured, local sidecar | `@agent/connector`, `@agent/ui`, `@agent/workspace` |
-| `@agent/channel-gateway` | `channel/gateway` | IM integration: DingTalk/Feishu/Slack webhook adapter | `@agent/connector` |
-| `@agent/proactive-heartbeat` | `proactive/heartbeat` | Background service: periodic LLM-powered progress summary + server watchdog | `@agent/connector`, `@agent/notifier`, `@agent/workspace` |
-| `@agent/proactive-cron` | `proactive/cron` | Background service with HTTP API: scheduled LLM tasks, MCP tools | `@agent/connector`, `@agent/notifier` |
+| `@agent/api-client` | `core/api-client` | ✅ OpenCode REST/SSE SDK, type-safe API calls | none |
+| `@agent/server-manager` | `core/server-manager` | ✅ Sidecar lifecycle: spawn, health check, auto-restart (local only) | `@agent/api-client` |
+| `@agent/connector` | `core/connector` | 🔲 Unified local/remote connection abstraction + workspace context injection + session lifecycle hooks | `@agent/api-client`, `@agent/server-manager`, `@agent/workspace` |
+| `@agent/ui` | `core/ui` | 🔲 React component library: chat, diff, markdown, dialogs (当前在 desktop/src/components) | `@agent/api-client` |
+| `@agent/workspace` | `core/workspace` | 🔲 Runtime ~/.ultrawork/ manager: identity, soul, memory, history, context assembly | none |
+| `@agent/notifier` | `core/notifier` | 🔲 Outbound notification dispatcher: desktop, IM webhooks, file | none (standalone) |
+| `@agent/client-desktop` | `client/desktop` | ✅ Tauri + React 19 app: full-featured, local sidecar | `@agent/api-client`, `@agent/server-manager` |
+| `@agent/channel-gateway` | `channel/gateway` | 🔲 Round 13 规划完成: DingTalk Stream Mode + Bridge + Hono API | `@agent/api-client` (直接复用，不依赖 connector) |
+| `@agent/proactive-heartbeat` | `proactive/heartbeat` | 🔲 Background service: periodic LLM-powered progress summary + server watchdog | `@agent/connector`, `@agent/notifier`, `@agent/workspace` |
+| `@agent/proactive-cron` | `proactive/cron` | 🔲 Background service with HTTP API: scheduled LLM tasks, MCP tools | `@agent/connector`, `@agent/notifier` |
 
 ### Workspace Configuration
 
@@ -603,11 +642,11 @@ Gateway startup
   -> createConnector({ mode: "remote", remote: { baseUrl, apiKey } })
     -> conn.connect()
 
-User sends message in IM
-  -> IM platform webhook
-    -> channel-gateway receives
-      -> session-pool: find/create session for IM user
-        -> conn.client.sessionPrompt(sessionId)
+User sends message in DingTalk (IM)
+  -> dingtalk-stream WebSocket (Stream Mode, no public IP needed)
+    -> channel-gateway DingTalk adapter receives
+      -> bridge: find/create session for chatId (senderId or "group:"+conversationId)
+        -> sequential queue: conn.client.promptAsync(sessionId)
           -> stream-buffer collects SSE stream
             -> renderer formats (card / markdown downgrade)
               -> adapter.send()
@@ -1553,30 +1592,38 @@ async function saveLLMApiKey(provider: string, key: string) {
 
 ## Technology Stack
 
-| Layer               | Technology                       |
-|---------------------|----------------------------------|
-| Runtime             | Bun                              |
-| Build               | Turborepo                        |
-| UI Framework        | SolidJS                          |
-| Desktop Shell       | Tauri (Rust)                     |
-| Gateway Server      | Hono (on Bun)                    |
-| OpenCode Server     | Bun (compiled binary)            |
-| Styling             | TBD (Tailwind / Vanilla Extract) |
+| Layer               | 设计 | 实际采用 |
+|---------------------|------|---------|
+| Runtime             | Bun | ✅ Bun |
+| Build               | Turborepo | ✅ Turborepo |
+| UI Framework        | SolidJS | ✅ **React 19** (变更) |
+| Desktop Shell       | Tauri (Rust) | ✅ Tauri 2 (Rust) |
+| Gateway Server      | Hono (on Bun) | 🔲 未实现 |
+| OpenCode Server     | Bun (compiled binary) | ✅ Go (compiled binary) |
+| Styling             | TBD (Tailwind / Vanilla Extract) | ✅ **Tailwind CSS 4 + shadcn/ui** |
+| Routing             | - | ✅ react-router-dom v7 |
+| Bundler             | - | ✅ Vite 7 |
 
 ## Feature Summary (Phase 1)
 
 ### Desktop Client Features
 
-| Feature                        | Description                                           |
-|--------------------------------|-------------------------------------------------------|
-| Chat UI                        | Real-time SSE streaming, markdown rendering           |
-| Session Management             | Create, list, resume sessions                         |
-| Permission Dialogs             | Interactive tool permission confirmations             |
-| File Diff Viewing              | Syntax-highlighted diff display                       |
-| Credential Storage             | Secure OS keychain integration                        |
-| Workspace Management           | Project-bound agent workspace configuration           |
+| Feature                        | 状态 | Description                                           |
+|--------------------------------|------|-------------------------------------------------------|
+| Chat UI                        | ✅ | Real-time SSE streaming, markdown rendering, 7 种 Part 类型 |
+| Session Management             | ✅ | Create, list, delete sessions, 按日期分组, 活跃状态追踪 |
+| Permission Dialogs             | ✅ | Permission Dock + Question Dock (单选/多选) |
+| File Diff Viewing              | ✅ | ArtifactPreview 50/50 split-screen (code/md/image/diff) |
+| Model Management               | ✅ | ModelDialog + ModelSelector + prompt_async model override |
+| MCP Management                 | ✅ | MCP Panel + useMCPServers hook + localStorage 状态持久化 |
+| Skills Panel                   | ✅ | 按来源分组 + 点击填入 + 管理入口 |
+| Workspace Directory            | ✅ | WorkspaceSelector + x-opencode-directory header |
+| Settings                       | ✅ | 通用/模型/远程服务/技能管理/关于/帮助/主题/语言 |
+| i18n                           | ✅ | 中英双语 |
+| Credential Storage             | 🔲 | Secure OS keychain integration (当前用 OpenCode 内置 auth) |
+| Workspace (~/.ultrawork/)      | 🔲 | Project-bound agent workspace configuration |
 
-### Channel Gateway Features
+### Channel Gateway Features 🔲 全部规划中
 
 | Feature                        | Description                                           |
 |--------------------------------|-------------------------------------------------------|
@@ -1588,7 +1635,7 @@ async function saveLLMApiKey(provider: string, key: string) {
 | Message Adaptation             | Markdown downgrade, platform-specific formatting      |
 | Interactive Cards              | Permission requests, confirmation dialogs             |
 
-### Agent Workspace Features
+### Agent Workspace Features 🔲 全部规划中
 
 | Feature                        | Description                                           |
 |--------------------------------|-------------------------------------------------------|
@@ -1601,7 +1648,7 @@ async function saveLLMApiKey(provider: string, key: string) {
 | Session Context Injection      | Auto-assemble identity + personality + memory         |
 | Post-session Fact Extraction   | Extract and deduplicate learnings after each session  |
 
-### Proactive Services Features
+### Proactive Services Features 🔲 全部规划中
 
 | Feature                        | Description                                           |
 |--------------------------------|-------------------------------------------------------|

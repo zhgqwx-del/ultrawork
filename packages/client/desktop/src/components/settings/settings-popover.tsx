@@ -18,6 +18,7 @@ import {
   Cpu,
   FolderOpen,
   Server,
+  Radio,
   Sparkles,
   HelpCircle,
   Info,
@@ -71,7 +72,10 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <FolderOpen className="mr-2 size-4" />
           {t("settingsPopover.workspace")}
         </DropdownMenuItem>
-        {/* TODO: 渠道 (settingsPopover.channels) — 未实现，暂隐藏 */}
+        <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "channels" } })}>
+          <Radio className="mr-2 size-4" />
+          {t("settingsPopover.channels")}
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => navigate("/settings", { state: { section: "services" } })}>
           <Server className="mr-2 size-4" />
           {t("settingsPopover.remote")}

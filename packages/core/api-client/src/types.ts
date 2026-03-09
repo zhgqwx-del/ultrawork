@@ -376,3 +376,31 @@ export interface FileContentResponse {
   encoding?: string
   mimeType?: string
 }
+
+// --- Channel types (channel-gateway :4097) ---
+
+export type ChannelState = "disconnected" | "connecting" | "connected" | "error"
+
+export interface ChannelStatus {
+  id: string
+  type: string
+  name: string
+  state: ChannelState
+  error?: string
+  connectedAt?: string
+}
+
+export interface ChannelConfig {
+  id: string
+  type: "dingtalk"
+  name: string
+  clientId: string
+  clientSecret: string
+  workspaceDir: string
+  autoConnect: boolean
+}
+
+export interface ChannelListResponse {
+  channels: ChannelStatus[]
+  configs: ChannelConfig[]
+}
