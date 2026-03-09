@@ -6,6 +6,7 @@ const OPENCODE_BASE_URL = "http://localhost:4096";
 const OPENCODE_PASSWORD = "test123";
 const MAX_REPLY_LENGTH = 20_000; // DingTalk ~20KB limit
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
+const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
 
 interface SessionContext {
   sessionId: string;
@@ -15,7 +16,7 @@ interface SessionContext {
   textParts: Map<string, string>;
   /** Callback to reply to the originating message */
   reply: (content: string) => Promise<void>;
-  /** Idle timeout handle */
+  /** Idle timeout handle — force-sends accumulated text if SSE misses idle event */
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -25,6 +26,7 @@ interface SessionContext {
  * - Sequential queue per chat to prevent concurrent prompts
  * - SSE subscription to collect assistant output and reply on idle
  * - Auto-handles permission (once) and question (reject)
+ * - Idle timeout fallback in case SSE misses the idle event
  */
 export class Bridge {
   /** chatId → OpenCode sessionId */
@@ -37,6 +39,8 @@ export class Bridge {
   private clients = new Map<string, ApiClient>();
   /** SSE abort controllers per workspace */
   private sseControllers = new Map<string, AbortController>();
+  /** SSE "connected" promise per workspace — resolves when first SSE read succeeds */
+  private sseReady = new Map<string, Promise<void>>();
   /** Permission/question poll timers per workspace */
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -92,8 +96,8 @@ export class Bridge {
     };
     this.activeContexts.set(sessionId, ctx);
 
-    // Ensure SSE is connected for this workspace
-    this.ensureSSE(msg.workspaceDir);
+    // Ensure SSE is connected for this workspace and WAIT for it to be ready
+    await this.ensureSSE(msg.workspaceDir);
 
     // Start permission/question polling
     this.ensurePolling(msg.workspaceDir, sessionId);
@@ -113,8 +117,12 @@ export class Bridge {
       console.log(
         `[Bridge] Sent prompt to session ${sessionId}: "${msg.text.slice(0, 50)}..."`,
       );
+
+      // Start idle timeout — force-send if SSE misses the idle event
+      this.startIdleTimer(sessionId);
     } catch (err) {
       console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
+      this.clearIdleTimer(ctx);
       this.activeContexts.delete(sessionId);
       await msg
         .reply(`Error: Failed to send message to AI agent.`)
@@ -122,27 +130,90 @@ export class Bridge {
     }
   }
 
-  /** Ensure SSE connection is active for a workspace */
-  private ensureSSE(workspaceDir: string): void {
-    if (this.sseControllers.has(workspaceDir)) return;
+  /** Start or reset the idle timeout for a session */
+  private startIdleTimer(sessionId: string): void {
+    const ctx = this.activeContexts.get(sessionId);
+    if (!ctx) return;
+
+    this.clearIdleTimer(ctx);
+    ctx.idleTimer = setTimeout(() => {
+      console.log(
+        `[Bridge] Idle timeout (${IDLE_TIMEOUT_MS / 1000}s) for session ${sessionId}, force-sending`,
+      );
+      this.flushAndReply(sessionId);
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  /** Clear idle timer for a context */
+  private clearIdleTimer(ctx: SessionContext): void {
+    if (ctx.idleTimer) {
+      clearTimeout(ctx.idleTimer);
+      ctx.idleTimer = undefined;
+    }
+  }
+
+  /** Flush accumulated text and send reply, then clean up */
+  private flushAndReply(sessionId: string): void {
+    const ctx = this.activeContexts.get(sessionId);
+    if (!ctx) return;
+
+    this.clearIdleTimer(ctx);
+
+    const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
+    if (text) {
+      const truncated =
+        text.length > MAX_REPLY_LENGTH
+          ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
+          : text;
+
+      ctx.reply(truncated).catch((err) => {
+        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+      });
+    }
+
+    this.activeContexts.delete(sessionId);
+    console.log(
+      `[Bridge] Session ${sessionId} idle, replied ${text.length} chars`,
+    );
+  }
+
+  /** Ensure SSE connection is active for a workspace. Returns when connected. */
+  private async ensureSSE(workspaceDir: string): Promise<void> {
+    const existing = this.sseReady.get(workspaceDir);
+    if (existing) return existing;
 
     const controller = new AbortController();
     this.sseControllers.set(workspaceDir, controller);
 
-    this.connectSSE(workspaceDir, controller.signal).catch((err) => {
+    let resolveReady: () => void;
+    const readyPromise = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    this.sseReady.set(workspaceDir, readyPromise);
+
+    this.connectSSE(workspaceDir, controller.signal, () =>
+      resolveReady(),
+    ).catch((err) => {
       console.error(`[Bridge] SSE connection error for ${workspaceDir}:`, err);
       this.sseControllers.delete(workspaceDir);
+      this.sseReady.delete(workspaceDir);
+      // Resolve anyway so processMessage doesn't hang forever
+      resolveReady();
     });
+
+    return readyPromise;
   }
 
   private async connectSSE(
     workspaceDir: string,
     signal: AbortSignal,
+    onConnected: () => void,
   ): Promise<void> {
     const params = new URLSearchParams({ directory: workspaceDir });
     const url = `${OPENCODE_BASE_URL}/event?${params}`;
     const credentials = btoa(`opencode:${OPENCODE_PASSWORD}`);
     let backoff = 1000; // Start at 1s, max 30s
+    let firstConnect = true;
 
     while (!signal.aborted) {
       try {
@@ -162,6 +233,13 @@ export class Bridge {
 
         console.log(`[Bridge] SSE connected for ${workspaceDir}`);
         backoff = 1000; // Reset on successful connect
+
+        // Signal that SSE is ready (only matters on first connect)
+        if (firstConnect) {
+          firstConnect = false;
+          onConnected();
+        }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -180,7 +258,7 @@ export class Bridge {
                 const event = JSON.parse(line.slice(6));
                 this.handleSSEEvent(event);
               } catch {
-                // skip unparseable events
+                console.warn(`[Bridge] Unparseable SSE event: ${line.slice(0, 100)}`);
               }
             }
           }
@@ -188,6 +266,11 @@ export class Bridge {
       } catch (err: unknown) {
         if (err instanceof Error && err.name === "AbortError") return;
         console.error(`[Bridge] SSE error, reconnecting in ${backoff / 1000}s:`, err);
+        // Signal ready even on error so processMessage doesn't hang
+        if (firstConnect) {
+          firstConnect = false;
+          onConnected();
+        }
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 30_000); // Exponential backoff, cap 30s
       }
@@ -225,6 +308,9 @@ export class Bridge {
     const partId = (part as any).id ?? "__default__";
     const text = (part as any).content ?? (part as any).text ?? "";
     ctx.textParts.set(partId, text);
+
+    // Reset idle timer — agent is still producing output
+    this.startIdleTimer(ctx.sessionId);
   }
 
   /** Accumulate assistant text from delta (incremental append) */
@@ -239,6 +325,9 @@ export class Bridge {
     if (props.field === "content" || props.field === "text") {
       const existing = ctx.textParts.get(props.partID) ?? "";
       ctx.textParts.set(props.partID, existing + props.delta);
+
+      // Reset idle timer — agent is still producing output
+      this.startIdleTimer(ctx.sessionId);
     }
   }
 
@@ -248,27 +337,7 @@ export class Bridge {
     status: { type: string },
   ): void {
     if (status.type !== "idle") return;
-
-    const ctx = this.activeContexts.get(sessionId);
-    if (!ctx) return;
-
-    // Send reply and clean up — concatenate all text parts
-    const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
-    if (text) {
-      const truncated =
-        text.length > MAX_REPLY_LENGTH
-          ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
-          : text;
-
-      ctx.reply(truncated).catch((err) => {
-        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
-      });
-    }
-
-    this.activeContexts.delete(sessionId);
-    console.log(
-      `[Bridge] Session ${sessionId} idle, replied ${text.length} chars`,
-    );
+    this.flushAndReply(sessionId);
   }
 
   /** Auto-reply permission with "once" */
@@ -347,6 +416,7 @@ export class Bridge {
       controller.abort();
     }
     this.sseControllers.clear();
+    this.sseReady.clear();
 
     // Clear all poll timers
     for (const timer of this.pollTimers.values()) {
@@ -356,7 +426,7 @@ export class Bridge {
 
     // Clear idle timers
     for (const ctx of this.activeContexts.values()) {
-      if (ctx.idleTimer) clearTimeout(ctx.idleTimer);
+      this.clearIdleTimer(ctx);
     }
     this.activeContexts.clear();
     this.sessionMap.clear();

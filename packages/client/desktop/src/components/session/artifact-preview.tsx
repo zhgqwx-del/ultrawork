@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { X, FileText, FileDiff, FileImage, File, Copy, Check } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import CodeMirror from "@uiw/react-codemirror"
+import { githubLight, githubDark } from "@uiw/codemirror-theme-github"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { useTheme } from "@/lib/theme-context"
 import { cn } from "@/lib/utils"
-import { CodeBlock } from "@/components/chat/code-block"
+import { extractExtension, getLanguageExtension } from "@/lib/codemirror-lang"
 
 export interface Artifact {
   type: "file" | "patch"
@@ -17,20 +20,6 @@ export interface Artifact {
 interface ArtifactPreviewProps {
   artifact: Artifact
   onClose: () => void
-}
-
-function getLanguageFromPath(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() || ""
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    py: "python", go: "go", rs: "rust", rb: "ruby", java: "java",
-    c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
-    json: "json", yaml: "yaml", yml: "yaml", toml: "toml",
-    html: "html", css: "css", scss: "scss", sql: "sql",
-    sh: "bash", bash: "bash", zsh: "bash",
-    md: "markdown", mdx: "markdown",
-  }
-  return map[ext] || "text"
 }
 
 const IMAGE_EXTS = /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i
@@ -79,6 +68,7 @@ function basename(path: string): string {
 export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const api = useApi()
   const { t } = useI18n()
+  const { resolvedTheme } = useTheme()
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -86,6 +76,14 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   /** MIME type resolved from API response (fallback for file-tree clicks with no mime) */
   const [resolvedMime, setResolvedMime] = useState<string | undefined>(artifact.mime)
+
+  const cmTheme = resolvedTheme === "dark" ? githubDark : githubLight
+
+  const cmExtensions = useMemo(() => {
+    const ext = extractExtension(artifact.path)
+    const lang = getLanguageExtension(ext)
+    return lang ? [lang] : []
+  }, [artifact.path])
 
   useEffect(() => {
     return () => { clearTimeout(copyTimerRef.current) }
@@ -145,8 +143,6 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [onClose])
 
-  const language = getLanguageFromPath(artifact.path)
-
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--color-bg)]">
       {/* Header */}
@@ -178,7 +174,11 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto scrollbar-soft">
+      <div className={
+        artifact.type !== "patch" && !isImage(resolvedMime, artifact.path) && !isMarkdown(artifact.path) && !loading && !error && content
+          ? "flex-1 overflow-hidden"
+          : "flex-1 overflow-auto scrollbar-soft"
+      }>
         {loading ? (
           <div className="flex items-center justify-center py-12 text-sm text-[var(--color-fg-muted)]">
             {t("artifact.loading")}
@@ -206,7 +206,23 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
         ) : (
-          <CodeBlock className={`language-${language}`}>{content}</CodeBlock>
+          <CodeMirror
+            value={content}
+            readOnly
+            editable={false}
+            theme={cmTheme}
+            extensions={cmExtensions}
+            basicSetup={{
+              lineNumbers: true,
+              foldGutter: true,
+              highlightActiveLine: false,
+              bracketMatching: false,
+              autocompletion: false,
+              defaultKeymap: false,
+              searchKeymap: false,
+            }}
+            style={{ height: "100%", overflow: "auto" }}
+          />
         )}
       </div>
     </div>

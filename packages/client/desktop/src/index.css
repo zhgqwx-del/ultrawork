@@ -41,7 +41,7 @@
 
 /* Dark mode colors */
 .dark {
-  --color-bg: #0f172a;
+  --color-bg: #000000;
   --color-fg: #f1f5f9;
   --color-fg-muted: #64748b;
   --color-border: #1e293b;

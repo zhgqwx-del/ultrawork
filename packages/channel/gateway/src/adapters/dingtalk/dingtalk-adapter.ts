@@ -177,7 +177,7 @@ export class DingTalkAdapter implements ChannelAdapter {
         workspaceDir: this.workspaceDir,
         raw: robotMsg,
         reply: async (content: string) => {
-          await this.replyViaWebhook(sessionWebhook, content);
+          await this.replyViaWebhook(sessionWebhook, chatId, content);
         },
       };
 
@@ -191,9 +191,10 @@ export class DingTalkAdapter implements ChannelAdapter {
     }
   }
 
-  /** Reply using the sessionWebhook (valid for ~30 min) */
+  /** Reply using the sessionWebhook (valid for ~30 min), fallback to REST API */
   private async replyViaWebhook(
     webhookUrl: string,
+    chatId: string,
     content: string,
   ): Promise<void> {
     const body: WebhookReplyBody = {
@@ -219,8 +220,12 @@ export class DingTalkAdapter implements ChannelAdapter {
       // Fallback to proactive push if webhook expired
       if (resp.status === 400 || resp.status === 403) {
         console.log("[DingTalk] Webhook expired, falling back to REST API push");
-        // Can't easily get chatId here, log for now
-        // TODO: Consider passing chatId to reply closure for fallback
+        try {
+          await this.sendMessage(chatId, content);
+          console.log("[DingTalk] REST API fallback succeeded");
+        } catch (fallbackErr) {
+          console.error("[DingTalk] REST API fallback also failed:", fallbackErr);
+        }
       }
     }
   }

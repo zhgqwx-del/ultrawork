@@ -27,6 +27,7 @@ Round 12 体验: ✅ 完成 (新建会话乐观消息 + Sidebar 真实活跃状�
 Round 13 钉钉: ✅ 实现完成 (钉钉 Channel Gateway — dingtalk-stream WebSocket + 独立 sidecar + Desktop UI)
 Round 13 测试: ✅ 完成 (7 个测试文件, 126 个 test case 全部通过)
 Round 14 增强: ✅ 完成 (Channel UX 优化 — 自动工作区/模型同步/自动连接/启动加速/卡片信息)
+Round 15 预览: ✅ 完成 (深色模式统一纯黑 + CodeMirror 6 产物预览 + Bridge SSE竞态/idle超时/webhook fallback 修复)
 TypeCheck:    ✅ 4/4 通过
 单元测试:     ✅ 236/236 通过 (Gateway 113 + Desktop 123)
 Vite Dev:     ✅ 正常启动
@@ -2927,5 +2928,55 @@ bun run --bun turbo run typecheck
 
 ---
 
+## Round 15: 深色模式 + CodeMirror 产物预览 + Bridge 可靠性 (✅ 完成)
+
+### Task 1: 深色模式色差修复
+
+- `--color-bg` 和 `--sidebar-bg` 统一为纯黑 `#000000`
+- 靠 `--sidebar-border: #1e293b` 边框线区分侧边栏与主内容区
+
+### Task 2: CodeMirror 6 集成
+
+**安装 17 个包**: `@uiw/react-codemirror`, `@uiw/codemirror-theme-github`, 15 个语言包
+
+**新文件 `src/lib/codemirror-lang.ts`**:
+- `extractExtension(path)` — 从路径提取扩展名
+- `getLanguageExtension(ext)` — 文件扩展名 → CodeMirror 语言扩展
+- 支持: TS/JS/JSX/TSX, Python, Go, Rust, JSON, HTML, CSS, Markdown, YAML, SQL, Java, C/C++, XML, PHP
+- 无语言支持的扩展名（sh/bash/toml/rb）返回 `null`，回退纯文本
+
+**修改 `artifact-preview.tsx`**:
+- 代码预览: `<CodeBlock>` → `<CodeMirror>` + 语法高亮 + 行号 + 代码折叠
+- 主题: `githubDark` / `githubLight` 跟随系统主题
+- `basicSetup` 禁用 `defaultKeymap` + `searchKeymap`，避免 Escape 键冲突
+- Diff 预览: 保留原 `DiffView` 组件（绿/红/蓝着色），`codemirror-lang-diff` 无 styleTags 不可用
+- 图片/Markdown: 渲染方式不变
+
+**代码审查修复 (自测发现)**:
+- Escape 键冲突: CM `simplifySelection` 在选中文本时调 `preventDefault()` → 禁用 `defaultKeymap`
+- Diff 着色回归: `codemirror-lang-diff` 无颜色 → 恢复 `DiffView` 组件
+- `cs` → `cpp` 语义错误: 移除 C# 映射
+
+### Task 3: Bridge 可靠性修复 (钉钉消息不回复 bug)
+
+**根因**: `ensureSSE()` 不等 SSE 连接就绪就发 `promptAsync`，首条消息的 `session.status:idle` 事件在 SSE 建立前就被发出，永远丢失，回复永远不发送。
+
+**bridge.ts 三个修复**:
+
+1. **SSE 竞态修复** — 新增 `sseReady` Promise Map，`ensureSSE` 返回 Promise，`processMessage` await SSE 就绪后才发送 `promptAsync`
+2. **idle 超时兜底** — 实现 `idleTimer`（3 分钟），每次收到文本事件重置；超时后 `flushAndReply` 强制发送累积文本
+3. **日志增强** — 不可解析 SSE 事件改为 `console.warn` 打印前 100 字符
+
+**dingtalk-adapter.ts 一个修复**:
+- Webhook 过期 fallback: `replyViaWebhook` 传入 `chatId`，webhook 400/403 时自动 fallback 到 `sendMessage()` REST API
+
+### 测试结果
+- TypeCheck: 4/4 通过
+- Gateway 测试: 113/113 通过
+- Desktop 测试: 123/123 通过
+- 钉钉实测: 3 条消息全部正常收到回复
+
+---
+
 **最后更新**: 2026-03-09
-**当前阶段**: Round 14 Channel UX 增强 ✅ 完成
+**当前阶段**: Round 15 深色模式 + CodeMirror + Bridge 可靠性 ✅ 完成
