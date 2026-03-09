@@ -1,187 +1,158 @@
-# Ultrawork - AI Agent Desktop App
+# Ultrawork
 
-## 🎉 Phase 2 完成！
+AI Agent 桌面客户端，基于 Tauri 2 + React 19 构建，后端集成 [OpenCode](https://github.com/anomalyco/opencode) 作为 AI Agent 引擎。
 
-Desktop App 已完成所有基础功能和体验优化，达到生产级水平。
-
-## ✅ 当前状态
-
-```
-Phase 1 MVP: ✅ 完成
-Phase 2 UI:  ✅ 完成 (2.1-2.10 全部完成)
-Phase 2.7:   ✅ 关键 Bug 修复
-Phase 2.8:   ✅ 设置面板升级
-Phase 2.9:   ✅ Session 管理增强
-Phase 2.10:  ✅ 用户测试修复
-TypeCheck:   ✅ 全部通过
-Vite Build:  ✅ 通过 (612 KB, gzipped: 192 KB)
-测试状态:    ✅ 桌面应用运行正常 (100% 通过率)
-```
-
-## 🚀 快速开始
-
-### 方法 1: 使用启动脚本（推荐）
-```bash
-./start.sh
-```
-
-### 方法 2: 手动启动
-```bash
-# 1. 安装依赖
-npm install
-
-# 2. 类型检查
-npm run typecheck
-
-# 3. 构建
-npm run build
-
-# 4. 启动开发服务器
-npm run dev
-```
-
-### 前置要求
-- ✅ OpenCode 服务器运行在 `http://localhost:4096`
-- ✅ OpenCode 密码设置为 `test123`
-
-## ✨ 核心功能
-
-### 聊天功能
-- ✅ 消息发送和接收
-- ✅ SSE 流式响应（逐字符显示）
-- ✅ Markdown 渲染（代码块、表格、链接等）
-- ✅ 用户消息右对齐气泡，助手消息左对齐
-- ✅ 智能自动滚动（不打断用户查看历史）
-
-### Session 管理
-- ✅ 创建/删除 Session
-- ✅ Session 重命名（内联编辑）
-- ✅ 日期分组（Today / Yesterday / This Week / Earlier）
-- ✅ 搜索/过滤 Session
-- ✅ 收藏/置顶 Session
-- ✅ 标题实时更新（SSE 事件驱动）
-
-### 设置面板
-- ✅ 标签页布局（Connection / General / About）
-- ✅ 连接测试功能
-- ✅ 主题切换（Light / Dark / System）
-- ✅ 国际化（English / 中文）
-- ✅ 连接状态实时显示
-
-### UI/UX
-- ✅ 响应式布局
-- ✅ 深色模式完整支持
-- ✅ 侧边栏折叠/展开
-- ✅ 悬停效果和活动状态高亮
-- ✅ 清晰的视觉层次
-
-## 📁 项目结构
+## 架构概览
 
 ```
 ultrawork/
 ├── packages/
 │   ├── core/
-│   │   ├── api-client/          # OpenCode REST/SSE 客户端
-│   │   └── server-manager/      # OpenCode 进程管理
-│   └── client/
-│       └── desktop/             # Tauri 桌面应用
-│           ├── src/
-│           │   ├── components/  # UI 组件
-│           │   ├── lib/         # Hooks & 工具
-│           │   ├── pages/       # 路由页面
-│           │   └── main.tsx     # 应用入口
-│           └── src-tauri/       # Tauri 后端
-├── docs/                        # 架构文档
-├── scripts/                     # 构建脚本
-├── PROGRESS.md                  # 详细开发进度
-├── TESTING-GUIDE.md            # 测试指南
-├── PHASE-2-SUMMARY.md          # Phase 2 总结
-└── start.sh                     # 快速启动脚本
+│   │   ├── api-client/            # OpenCode REST/SSE TypeScript 客户端
+│   │   └── server-manager/        # Sidecar 进程管理
+│   ├── client/
+│   │   └── desktop/               # Tauri 桌面应用 (React + Vite)
+│   │       ├── src/               # 前端源码
+│   │       └── src-tauri/         # Rust 后端 + sidecar 二进制
+│   └── channel/
+│       └── gateway/               # 渠道网关 (钉钉等即时通讯集成)
+├── vendor/
+│   └── opencode/                  # OpenCode 上游 (git submodule)
+├── patches/                       # Vendor 补丁文件
+├── scripts/                       # 构建脚本
+└── setup.sh                       # 一键构建脚本
 ```
 
-## 📝 技术栈
+## 技术栈
 
-- **Runtime**: Node.js / Bun
-- **Build**: Turborepo 2.8.13 + Vite 7.3.1
-- **UI**: React 19 + Tailwind CSS 4
-- **Desktop**: Tauri 2
-- **Language**: TypeScript 5.8+
-- **State**: React Context API
-- **Styling**: CSS Variables + Tailwind
-- **Icons**: Lucide React
-- **Components**: Radix UI
-- **Backend**: OpenCode Server
+| 层级 | 技术 |
+|------|------|
+| 桌面框架 | Tauri 2 (Rust) |
+| 前端 | React 19 + TypeScript 5.8 + Vite 7 |
+| 样式 | Tailwind CSS 4 + Radix UI |
+| 状态 | React Context + SSE |
+| 构建 | Turborepo + Bun |
+| AI 后端 | OpenCode Server (Bun 编译二进制，作为 sidecar 运行) |
+| 渠道网关 | Hono + DingTalk Stream SDK (Bun 编译二进制) |
 
-## 📚 文档
+## 前置依赖
 
-- [PROGRESS.md](./PROGRESS.md) - 详细开发进度（包含 Phase 2.10 用户测试修复）
-- [TESTING-GUIDE.md](./TESTING-GUIDE.md) - 完整测试指南（18 个测试用例）
-- [TEST-REPORT-2026-03-06.md](./TEST-REPORT-2026-03-06.md) - 用户测试报告
-- [PHASE-2-SUMMARY.md](./PHASE-2-SUMMARY.md) - Phase 2 完成总结
-- [OPENCODE-API-FINDINGS.md](./OPENCODE-API-FINDINGS.md) - OpenCode API 调研
-- [docs/architecture-phase1.md](./docs/architecture-phase1.md) - 架构设计
+| 工具 | 最低版本 | 安装方式 |
+|------|----------|----------|
+| **Bun** | >= 1.3.10 | `curl -fsSL https://bun.sh/install \| bash` |
+| **Rust** | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| **Xcode CLT** | - | macOS: `xcode-select --install` |
 
-## 🎯 下一步计划
+> 不需要单独安装 Node.js，全程使用 Bun 作为 JS/TS 运行时。
 
-### Phase 3: 功能扩展
+## 快速开始
 
-**Phase 3.1: 工具调用展示** (推荐优先)
-- 显示 Agent 使用的工具（Read/Write/Bash 等）
-- 折叠式工具组
-- 文件操作可视化
+### 一键启动（推荐）
 
-**Phase 3.2: 右侧边栏 + Artifact**
-- 文件树面板
-- 代码/HTML 预览
-- 语法高亮
+```bash
+git clone --recurse-submodules https://github.com/zhgqwx-del/ultrawork.git
+cd ultrawork
+./setup.sh
+```
 
-**Phase 3.3: 文件附件**
-- 图片上传和预览
-- 拖拽上传
-- 粘贴板支持
+`setup.sh` 会自动完成：初始化 submodule → 应用 vendor 补丁 → 安装依赖 → 编译 sidecar → 启动开发服务器。
 
-**Phase 3.4: 核心包实现**
-- @agent/connector（本地/远程连接抽象）
-- @agent/workspace（~/.ultrawork/ 目录管理）
-- @agent/notifier（通知分发）
+### 手动步骤
 
-## 🧪 测试
+```bash
+# 1. Clone（必须包含 submodule）
+git clone --recurse-submodules https://github.com/zhgqwx-del/ultrawork.git
+cd ultrawork
 
-详细测试指南请查看 [TESTING-GUIDE.md](./TESTING-GUIDE.md)
+# 2. 应用 vendor 补丁
+cd vendor/opencode
+git apply ../../patches/vendor-opencode-config-fix.patch
+cd ../..
 
-### 快速测试
-1. 启动应用: `./start.sh`
-2. 发送消息，验证流式响应
-3. 测试主题切换（设置 → General → Theme）
-4. 测试语言切换（设置 → General → Language）
-5. 测试 Session 重命名、搜索、置顶
+# 3. 安装依赖
+bun install
 
-## 📊 性能指标
+# 4. 编译 OpenCode sidecar（约 114MB，首次耗时较长）
+bun run build:opencode
 
-- **构建大小**: 612 KB (gzipped: 192 KB)
-- **首屏加载**: < 1s
-- **类型检查**: 通过
-- **构建时间**: ~3s
+# 5. 编译 Channel Gateway sidecar（约 61MB）
+bun run build:gateway
 
-## 🐛 已知限制
+# 6. 启动开发服务器
+bun run tauri:dev
+```
 
-### OpenCode API 限制
-- **流式输出不可用**: OpenCode 当前不通过 SSE 发送 `message.delta` 事件，AI 回复是一次性返回的完整消息，无法实现逐字符流式显示
+### 构建发布包
 
-### 需要后续优化
-- 错误提示 Toast（目前仅 console.error）
-- 密码安全存储（目前 localStorage 明文）
-- 消息虚拟化（长会话性能优化）
-- 前端模拟流式效果（可选）
+```bash
+./setup.sh --build
+# 或手动：
+bun run tauri:build
+```
 
-## 🙏 致谢
+产物位于 `packages/client/desktop/src-tauri/target/release/bundle/`。
 
-参考项目：
-- [WorkAny](https://github.com/workany-ai/workany) - UI/UX 设计参考
-- [OpenCode](https://github.com/anomalyco/opencode) - Agent 能力参考
+## 开发指南
 
----
+### 常用命令
 
-**最后更新**: 2026-03-06
-**当前阶段**: Phase 2 完成 ✅ → 准备 Phase 3
+```bash
+bun run tauri:dev          # 启动开发服务器（前端 HMR + Rust 热重载）
+bun run typecheck          # 全量 TypeScript 类型检查 (4 个包)
+bun run build:opencode     # 重新编译 OpenCode sidecar
+bun run build:gateway      # 重新编译 Channel Gateway sidecar
+```
 
+### 测试
+
+```bash
+# Gateway 单元测试 (113 cases)
+cd packages/channel/gateway && bun run --bun vitest run
+
+# Desktop 单元测试 (123 cases)
+cd packages/client/desktop && bun run --bun vitest run
+```
+
+### 开发端口
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| Vite Dev Server | 1420 | 前端开发服务器 |
+| OpenCode Server | 4096 | AI Agent 后端 (sidecar) |
+| Channel Gateway | 4097 | 渠道网关 (sidecar) |
+
+Vite 开发模式下自动将 API 请求代理到后端端口。
+
+### Vendor 补丁
+
+`vendor/opencode` 是上游 OpenCode 的 git submodule。本项目的修改以 patch 文件形式保存在 `patches/` 目录：
+
+- `vendor-opencode-config-fix.patch` — 修复 `Config.update()` 写入文件名为 `opencode.json`（上游错误地写入 `config.json`）
+
+更新 submodule 后需重新 apply：
+```bash
+cd vendor/opencode && git apply ../../patches/vendor-opencode-config-fix.patch
+```
+
+## 核心功能
+
+- AI Agent 对话 — 结构化消息渲染（思考过程、工具调用、代码 diff）
+- SSE 流式响应 — 全局 SSE 连接，跨页面不丢事件
+- 工作区管理 — 多目录隔离，按工作区过滤 Session
+- 模型管理 — Provider 配置、模型快速切换
+- MCP 集成 — 远程/本地 MCP 服务器管理
+- 权限/问答 — Agent 权限授权 Dock、交互式问答 Dock
+- 文件预览 — 50/50 分屏预览（代码/Markdown/图片/Diff）
+- 渠道网关 — 钉钉等即时通讯接入，通过 Gateway sidecar 桥接
+- 国际化 — 中文/英文
+
+## 项目文档
+
+- [PROGRESS.md](./PROGRESS.md) — 详细开发进度记录
+- [docs/architecture-phase1.md](./docs/architecture-phase1.md) — 架构设计
+- [TESTING-GUIDE.md](./TESTING-GUIDE.md) — 测试指南
+
+## 致谢
+
+- [OpenCode](https://github.com/anomalyco/opencode) — AI Agent 引擎
+- [WorkAny](https://github.com/workany-ai/workany) — UI/UX 设计参考
