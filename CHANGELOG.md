@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+Format follows [Keep a Changelog](https://keepachangelog.com/).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-03-09
+
+### Added
+- Round 15: 深色模式统一纯黑 (#000000) + CodeMirror 6 产物预览（17 语言包）
+- Round 14: Channel UX 优化 — 自动工作区/模型同步/自动连接/启动加速
+- Round 13: 钉钉 Channel Gateway — dingtalk-stream WebSocket + 独立 sidecar + Desktop UI
+- Round 12: 新建会话乐观消息 + Sidebar 真实活跃状态追踪
+- Round 11: 技能面板增强 — useSkills hook + 分组面板 + Settings 管理
+- Round 10: 远程服务设置页面 — useMCPServers hook + ServicesSection
+- Round 8: 技术债清理 — Provider 缓存/SSE 重连/React key 修复
+- Round 7: 产物预览优化 + MCP bunx 提示
+- Round 5: 工作区管理 — WorkspaceSelector + x-opencode-directory + SSE 全局化
+- Round 4: 模型管理 + MCP/Slash Commands + 文件产物预览
+- Round 3: Permission Dock + Question Dock
+- Round 2: 结构化消息渲染（7 Part types）+ 执行状态 + 进度面板
+- Round 1: UI 架构重构对齐设计稿
+- Round 0: Error Boundary + Toast + 环境修复
+- Phase 2: 完整 UI 体验（布局/消息/SSE/设置/会话管理）
+- Phase 1: MVP — Tauri sidecar + 基础聊天
+
+### Fixed
+- Round 15: Bridge SSE 竞态修复 + idle 超时兜底 + webhook 过期 fallback
+- Round 9: 16+5 缺陷修复（竞态/闭包/内存泄漏/状态管理）
+
+### Tests
+- 236/236 单元测试通过 (Gateway 113 + Desktop 123)
+- TypeCheck 4/4 通过
+- 手动测试 E1-E10 + U1-U12 + M1-M4 + C1-C4 = 30 项通过

@@ -148,9 +148,16 @@ cd vendor/opencode && git apply ../../patches/vendor-opencode-config-fix.patch
 
 ## 项目文档
 
-- [PROGRESS.md](./PROGRESS.md) — 详细开发进度记录
-- [docs/architecture-phase1.md](./docs/architecture-phase1.md) — 架构设计
-- [TESTING-GUIDE.md](./TESTING-GUIDE.md) — 测试指南
+- [快速上手](./docs/getting-started.md) — 环境搭建与开发流程
+- [架构设计](./docs/architecture.md) — 系统架构概览
+- [构建部署](./docs/build-and-deploy.md) — 打包、签名、跨平台
+- [API 参考](./docs/api-reference.md) — OpenCode Server API
+- [开发规范](./docs/conventions.md) — 代码约定与模式
+- [测试策略](./docs/testing.md) — 测试框架与用例
+- [需求文档](./docs/requirements.md) — 产品需求与功能清单
+- [架构决策](./docs/decisions/) — ADR 记录
+- [变更日志](./CHANGELOG.md) — 版本历史
+- [设计资料](./design/) — 产品原型与参考
 
 ## 致谢
 

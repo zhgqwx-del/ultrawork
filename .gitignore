@@ -42,8 +42,9 @@ packages/client/desktop/packages/
 # Test files
 **/bubble_sort.py
 
-# Design assets
-product-uxd-design/
+# Design assets (prototypes with node_modules, .fig files)
+design/product/prototype/node_modules/
+design/product/*.fig
 
 # User workspace (runtime data)
 .ultrawork/
