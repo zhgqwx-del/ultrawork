@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Round 17: DMG 打包后渠道页面无法加载 — Gateway 缺少 CORS 支持 + 前端 production 下未使用绝对 URL
+
 ## [0.1.0] - 2026-03-09
 
 ### Added

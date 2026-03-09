@@ -3,7 +3,9 @@ import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n-context"
 import type { ChannelStatus, ChannelConfig, ChannelListResponse } from "@agent/api-client"
 
-const GATEWAY_BASE = "/channel"
+const GATEWAY_BASE = import.meta.env.DEV
+  ? "/channel"
+  : "http://localhost:4097/channel"
 
 async function gatewayFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${GATEWAY_BASE}${path}`, {

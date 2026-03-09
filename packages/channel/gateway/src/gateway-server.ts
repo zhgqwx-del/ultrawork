@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
 import type { ChannelConfig } from "./types.js";
@@ -9,6 +10,19 @@ function generateId(): string {
 
 export function createApp(manager: ChannelManager): Hono {
   const app = new Hono();
+
+  // Allow cross-origin requests from Tauri webview and dev server only
+  app.use(
+    "/*",
+    cors({
+      origin: [
+        "tauri://localhost",        // Tauri production (macOS/Linux)
+        "https://tauri.localhost",  // Tauri production (Windows)
+        "http://tauri.localhost",   // Tauri production fallback
+        "http://localhost:1420",    // Vite dev server
+      ],
+    }),
+  );
 
   // Health check
   app.get("/channel/health", (c) => c.json({ status: "ok" }));

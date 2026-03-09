@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: round-16 -->
+<!-- last-synced: round-17 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -144,3 +144,28 @@ Gateway 非关键，用 `std::thread::spawn` + `app.handle().clone()` 在后台�
 
 ### 外部链接
 Tauri WebView 中 `window.open` 无法打开系统浏览器，必须用 `@tauri-apps/plugin-opener` 的 `openUrl()`。
+
+### Production vs Dev URL 差异
+Dev 模式下 Vite proxy 将相对路径转发到后端，Production 下没有 proxy。所有 localhost 服务请求必须区分环境：
+```ts
+// OpenCode API（已有模式）
+const baseUrl = import.meta.env.DEV ? "" : "http://localhost:4096"
+// Gateway
+const GATEWAY_BASE = import.meta.env.DEV ? "/channel" : "http://localhost:4097/channel"
+```
+
+### Gateway CORS 白名单
+Production 下 Tauri webview origin（`tauri://localhost`）跨域请求 Gateway，必须配置 CORS。仅允许已知 origin，不要用 `origin: "*"`：
+```ts
+cors({
+  origin: ["tauri://localhost", "https://tauri.localhost", "http://tauri.localhost", "http://localhost:1420"],
+})
+```
+
+### Gateway 重编译完整流程
+修改 Gateway 代码后，必须重新编译 sidecar 二进制并重新打包 DMG：
+```bash
+bun run --bun scripts/build-gateway.ts  # 编译并复制到 src-tauri/binaries/
+bun run --bun tauri build               # 打包 DMG
+```
+注意：仅 `turbo run build` 会编译到 `gateway/dist/`，**不会**更新 sidecar binaries 目录。
