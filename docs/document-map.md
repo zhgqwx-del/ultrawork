@@ -13,7 +13,7 @@ ultrawork/
 ├── CHANGELOG.md                       # 变更日志：Keep a Changelog 格式，按版本倒序
 │
 ├── docs/                              # ═══ 功能文档层 ═══
-│   ├── getting-started.md             #   快速上手：依赖安装、Clone、启动、FAQ
+│   ├── getting-started.md             #   快速上手：依赖安装、Clone、启动、FAQ、AI 协作工作流
 │   ├── architecture.md                #   架构设计：系统架构图、模块职责、数据流（1788 行，含 Phase 1 全量设计）
 │   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台
 │   ├── api-reference.md               #   API 参考：OpenCode Server 全部端点、请求/响应格式、认证

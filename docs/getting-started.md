@@ -141,3 +141,88 @@ bun run build:gateway
 ```bash
 cd vendor/opencode && git apply ../../patches/vendor-opencode-config-fix.patch
 ```
+
+---
+
+## AI 协作工作流 (Claude Code)
+
+本项目使用 Claude Code 作为 AI 编程助手。以下说明如何充分利用项目中积累的文档和上下文。
+
+### 自动加载的上下文
+
+每次启动 Claude Code session 时，以下三个文件**自动注入**，不需要手动操作：
+
+| 文件 | 内容 | 作用 |
+|------|------|------|
+| `CLAUDE.md` | 工作流程指令 | 告诉 Claude 按任务类型加载文档、轮次收尾步骤 |
+| `AGENTS.md` | 项目概览 | 包结构、技术栈、API 摘要、关键文件路径 |
+| `.claude/memory/MEMORY.md` | 工作记忆 | 环境变量、API 类型细节、已知坑点、当前状态 |
+
+### 开始一个开发任务
+
+**直接描述你要做的事即可**，Claude 会根据任务类型自动加载需要的深层文档：
+
+```
+你：帮我在 Session 页面加一个导出按钮
+
+Claude 自动执行：
+  1. 已有 CLAUDE.md + AGENTS.md + MEMORY.md ✓
+  2. 判断：新 UI 组件 → 读取 docs/conventions.md
+  3. 判断：涉及 Session API → 读取 docs/api-reference.md
+  4. 开始开发...
+```
+
+不同任务会触发不同文档加载：
+
+| 任务类型 | Claude 会额外读取 |
+|----------|-------------------|
+| 新建/修改 UI 组件 | `docs/conventions.md`（状态管理、组件模式） |
+| SSE / 消息流相关 | `docs/conventions.md` §3 SSE + §5 组件模式 |
+| 调用 OpenCode API | `docs/api-reference.md` |
+| 架构层变更 | `docs/architecture.md` + 相关 ADR |
+| 修复 Bug | 按涉及模块选读 |
+| 跨模块功能 | `docs/conventions.md` + `docs/architecture.md` |
+
+**如果 Claude 没有主动加载上下文**，可以提示一句：
+```
+你：先读一下 docs/conventions.md 再开始
+```
+
+### 轮次结束时更新文档
+
+一轮开发完成后，用以下任意说法触发文档更新：
+
+```
+你：这轮结束
+你：收尾
+你：wrap up
+```
+
+Claude 会自动执行 5 步收尾流程（定义在 `CLAUDE.md` 中）：
+
+| 步骤 | 动作 | 涉及文件 |
+|------|------|---------|
+| 1 | 将开发中发现的新模式从暂存区整理到团队规范 | `MEMORY.md` → `docs/conventions.md` |
+| 2 | 追加本轮变更摘要 | `CHANGELOG.md` |
+| 3 | 更新当前状态 | `MEMORY.md` |
+| 4 | 如有架构决策，新建 ADR | `docs/decisions/NNN-*.md` |
+| 5 | 输出收尾摘要 | 告诉你更新了什么 |
+
+**开发过程中不需要手动维护文档**——Claude 发现新模式时会自动暂存到 `MEMORY.md` 的 staging 区，收尾时一次性格式化写入 `docs/conventions.md`。
+
+### 数据流
+
+```
+开发过程中                              轮次结束时
+┌──────────┐                          ┌─────────────────┐
+│ 发现新模式 │ ── 一行摘要 ──→         │ MEMORY.md       │
+│ (坑点/模式)│                         │ New Patterns 区  │
+└──────────┘                          └────────┬────────┘
+                                               │ "收尾"
+                                               ▼
+                                      ┌─────────────────┐
+                                      │ conventions.md  │
+                                      │ + CHANGELOG.md  │
+                                      │ + ADR (如有)     │
+                                      └─────────────────┘
+```
