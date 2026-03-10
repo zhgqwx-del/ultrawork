@@ -54,38 +54,39 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 
 ### 发现新模式/坑点时
 **写到 MEMORY.md 的 `## New Patterns (pending sync)` staging 区**（一行摘要即可）。
-不要直接改 `docs/conventions.md`——等轮次结束时统一整理。
+不要直接改 `docs/conventions.md`——等任务收尾时统一整理。
 
 ### 做了重大技术选型时
-记下来，轮次结束时写 ADR。开发中不必停下来写。
+记下来，任务收尾时写 ADR。开发中不必停下来写。
 
 ---
 
-## 轮次收尾流程
+## 任务收尾流程
 
-用户说「这轮结束」「收尾」「wrap up」或类似指令时，按顺序执行：
+用户说「收尾」「wrap up」或类似指令时，按顺序执行：
 
 ### Step 1: 同步 conventions.md
 1. 读取 MEMORY.md 的 `## New Patterns (pending sync)` 区域
 2. 如果有新条目：
    - 将每条模式格式化为完整描述（含代码示例），追加到 `docs/conventions.md` 对应章节
    - 如果不属于任何现有章节，在末尾新增章节
-   - 更新 `docs/conventions.md` 顶部的 `<!-- last-synced: round-N -->` 标记
+   - 更新 `docs/conventions.md` 顶部的 `<!-- last-synced: YYYY-MM-DD -->` 标记
    - 清空 MEMORY.md 的 staging 区（保留注释模板）
 3. 如果没有新条目，跳过
 
 ### Step 2: 更新 CHANGELOG.md
-在 `## [Unreleased]` 下追加本轮变更摘要（Added/Changed/Fixed）。
+在 `## [Unreleased]` 下追加本次任务变更摘要（Added/Changed/Fixed）。
+- 条目格式：`#issue-number: 描述`（如有关联 Issue）
 
 ### Step 3: 更新 MEMORY.md
-- 更新 `## Current Status` 区域，标记本轮完成
+- 更新 `## Current Status` 区域，标记本次任务完成
 - 如果有新的 Key Files 或 API 发现，更新对应 section
 
 ### Step 4: 新建 ADR（如有架构决策）
 在 `docs/decisions/` 新建 ADR 文件，更新 `docs/decisions/README.md` 索引。
 
 ### Step 5: 输出收尾摘要
-告诉用户本轮做了什么文档更新，例如：
+告诉用户本次任务做了什么文档更新，例如：
 > 收尾完成：conventions.md 新增 2 条模式、CHANGELOG 已更新、新建 ADR-016。
 
 ---
@@ -98,3 +99,4 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 - 测试：见 `docs/getting-started.md`
 - 健康检查端点：`/global/health`（不是 `/health`）
 - Gateway 修改后需 `bun run build:gateway` 重编译
+- Commit message 格式：`fix(#42): 描述` / `feat(#42): 描述`（关联 Issue 时在 scope 中写 `#issue-number`）

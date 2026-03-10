@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+<!-- Round 1-18 使用线性编号；此后改用 GitHub Issue# 标识（如 #42: 描述） -->
+
 ## [Unreleased]
+
+### Changed
+- 任务追踪从线性 Round 编号迁移到 GitHub Issue# 标识，支持多人并行开发
+- CLAUDE.md 收尾流程从「轮次收尾」改为「任务收尾」，conventions.md last-synced 改用日期格式
+- document-map.md 标注 `.claude/memory/` 为本地文件（不入 git），新增维护规则说明
+- CHANGELOG 新条目格式改为 `#issue-number: 描述`
+- 新增 commit message 约定：`fix(#42): 描述` 格式
 
 ### Fixed
 - Round 18: vendor/opencode submodule 指向本地 commit 导致同事 clone 失败 — 重置到上游 commit + patch 管理

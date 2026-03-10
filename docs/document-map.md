@@ -9,7 +9,7 @@ ultrawork/
 │
 ├── README.md                          # 项目入口：架构概览、技术栈、快速开始、功能列表
 ├── AGENTS.md                          # AI Agent 上下文：供 Claude Code / Copilot 等 AI 工具快速理解项目
-├── CLAUDE.md                          # Claude Code 指令：轮次收尾流程、模式记录规则、通用约定
+├── CLAUDE.md                          # Claude Code 指令：任务收尾流程、模式记录规则、通用约定
 ├── CHANGELOG.md                       # 变更日志：Keep a Changelog 格式，按版本倒序
 │
 ├── docs/                              # ═══ 功能文档层 ═══
@@ -69,8 +69,8 @@ ultrawork/
 │       ├── qoderwork/                 #   QoderWork 参考（3 张截图）
 │       └── workany/                   #   WorkAny 参考（2 张截图）
 │
-└── .claude/memory/                    # ═══ AI 工作记忆（不入库）═══
-    ├── MEMORY.md                      #   Claude 跨 session 记忆（93 行）
+└── .claude/memory/                    # ═══ AI 工作记忆（本地，不入 git）═══
+    ├── MEMORY.md                      #   Claude 跨 session 记忆
     ├── dingtalk-channel-plan.md       #   钉钉渠道方案详细记录
     └── vendor-patches.md              #   Vendor 补丁记录
 ```
@@ -111,17 +111,18 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
-| **入口层** | 根目录 | 4 | 所有人 | 每轮结束 |
+| **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 7 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 16 | 架构师/新成员 | 有重大决策时新增 |
 | **归档层** | `docs/archive/` | 8 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 5+ | 产品/设计 | 需求变更时 |
-| **AI 记忆** | `.claude/memory/` | 3 | Claude Code | 每次 session |
+| **AI 记忆** | `.claude/memory/` (本地) | 3 | Claude Code | 每次 session |
 
 ## 维护规则
 
 1. **根目录只保留 4 个 .md**：README、AGENTS、CLAUDE、CHANGELOG
 2. **新功能文档**放 `docs/`，新决策放 `docs/decisions/NNN-*.md`
-3. **轮次收尾**更新 CHANGELOG → 同步 conventions.md → 如有 ADR 则新建（详见 CLAUDE.md）
+3. **任务收尾**更新 CHANGELOG → 同步 conventions.md → 如有 ADR 则新建（详见 CLAUDE.md）
 4. **归档只追加不修改**，保证历史可追溯
 5. **设计资料**不入 git 主仓（`.gitignore` 排除 .fig 和 prototype/node_modules）
+6. **`.claude/memory/`** 是 Claude Code 本地工作记忆，不入版本控制（已在 `.gitignore` 中排除）。GitHub 上看不到此目录
