@@ -47,7 +47,7 @@ Core strategy: use OpenCode as a **headless server** (compiled binary, spawned a
 
 ## System Architecture
 
-![Phase 1 Architecture Overview](architecture-phase1.png)
+![Phase 1 Architecture Overview](images/architecture-phase1.png)
 
 Phase 1 implements a Data Plane instance with Desktop client and IM Channel integrations:
 
@@ -149,8 +149,8 @@ your-agent/
 │   └── dev.ts                    # Local development launcher
 │
 ├── docs/
-│   ├── architecture.md           # Full system architecture
 │   ├── architecture-phase1.md    # This file - Phase 1 architecture
+│   ├── architecture-full.md     # Full system architecture (future phases)
 │   └── ai-context/               # Shared AI knowledge base
 │       ├── README.md             # Index and navigation guide
 │       ├── team/                 # Team-wide standards
@@ -508,7 +508,7 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 
 ## Data Flow
 
-![Phase 1 Data Flow](architecture-phase1-dataflow.png)
+![Phase 1 Data Flow](images/architecture-phase1-dataflow.png)
 
 ### Connection Establishment (via @agent/connector)
 

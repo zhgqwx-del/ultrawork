@@ -15,7 +15,7 @@
 | 文件 | 何时需要 |
 |------|---------|
 | `docs/conventions.md` | 写新组件/修改状态管理/处理 SSE 时 |
-| `docs/architecture.md` | 理解系统架构、模块职责时 |
+| `docs/architecture-phase1.md` | 理解系统架构、模块职责时 |
 | `docs/api-reference.md` | 调用 OpenCode API、排查请求格式时 |
 | `docs/decisions/README.md` | 需要了解某个技术选型的背景时 |
 | `docs/requirements.md` | 确认功能需求和验收标准时 |
@@ -36,9 +36,9 @@
 | 修改 SSE/消息流 | `docs/conventions.md` §3 + §5 |
 | 调用 OpenCode API | `docs/api-reference.md` |
 | 修改 Gateway/Channel | MEMORY.md §Gateway 已自动加载，够用 |
-| 架构层变更 | `docs/architecture.md` + 相关 ADR |
+| 架构层变更 | `docs/architecture-phase1.md` + 相关 ADR |
 | 修复 Bug | 先定位文件，再按涉及模块选读 |
-| 全新功能/跨模块 | `docs/conventions.md` + `docs/architecture.md` |
+| 全新功能/跨模块 | `docs/conventions.md` + `docs/architecture-phase1.md` |
 
 ### 2. 检查当前状态
 

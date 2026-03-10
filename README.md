@@ -149,7 +149,7 @@ cd vendor/opencode && git apply ../../patches/vendor-opencode-config-fix.patch
 ## 项目文档
 
 - [快速上手](./docs/getting-started.md) — 环境搭建与开发流程
-- [架构设计](./docs/architecture.md) — 系统架构概览
+- [架构设计](./docs/architecture-phase1.md) — Phase 1 系统架构
 - [构建部署](./docs/build-and-deploy.md) — 打包、签名、跨平台
 - [API 参考](./docs/api-reference.md) — OpenCode Server API
 - [开发规范](./docs/conventions.md) — 代码约定与模式

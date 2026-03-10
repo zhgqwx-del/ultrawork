@@ -179,9 +179,9 @@ Claude 自动执行：
 | 新建/修改 UI 组件 | `docs/conventions.md`（状态管理、组件模式） |
 | SSE / 消息流相关 | `docs/conventions.md` §3 SSE + §5 组件模式 |
 | 调用 OpenCode API | `docs/api-reference.md` |
-| 架构层变更 | `docs/architecture.md` + 相关 ADR |
+| 架构层变更 | `docs/architecture-phase1.md` + 相关 ADR |
 | 修复 Bug | 按涉及模块选读 |
-| 跨模块功能 | `docs/conventions.md` + `docs/architecture.md` |
+| 跨模块功能 | `docs/conventions.md` + `docs/architecture-phase1.md` |
 
 **如果 Claude 没有主动加载上下文**，可以提示一句：
 ```

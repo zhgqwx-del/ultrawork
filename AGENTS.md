@@ -43,7 +43,7 @@ ultrawork/
 ├── scripts/                     # Build scripts
 ├── vendor/opencode/             # OpenCode git submodule
 ├── docs/                        # Project documentation
-│   ├── architecture.md          # System architecture
+│   ├── architecture-phase1.md   # Phase 1 system architecture
 │   ├── api-reference.md         # OpenCode API details
 │   ├── conventions.md           # Development conventions
 │   ├── decisions/               # Architecture Decision Records
@@ -82,7 +82,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 ## Key Documentation
 
-- [docs/architecture.md](./docs/architecture.md) — Full architecture design
+- [docs/architecture-phase1.md](./docs/architecture-phase1.md) — Phase 1 architecture design
 - [docs/api-reference.md](./docs/api-reference.md) — OpenCode API findings
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns
 - [docs/decisions/](./docs/decisions/) — Architecture Decision Records (15 ADRs)
