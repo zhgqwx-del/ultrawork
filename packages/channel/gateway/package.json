@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "bun run --bun src/index.ts",
     "build": "bun build --compile src/index.ts --outfile dist/channel-gateway",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "echo 'No linting configured yet'"

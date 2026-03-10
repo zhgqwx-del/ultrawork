@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- Round 18: vendor/opencode submodule 指向本地 commit 导致同事 clone 失败 — 重置到上游 commit + patch 管理
+- Round 18: core 包 `tsc --noEmit` 与 `composite: true` 冲突，新环境无 `.d.ts` 导致 typecheck 失败 — 改为 `tsc --build`
+- Round 18: `.gitignore` 补充 `opencode.json`（本地配置）和 `*.tsbuildinfo`（构建缓存）
 - Round 17: DMG 打包后渠道页面无法加载 — Gateway 缺少 CORS 支持 + 前端 production 下未使用绝对 URL
 
 ## [0.1.0] - 2026-03-09
