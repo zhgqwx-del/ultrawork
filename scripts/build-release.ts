@@ -1,0 +1,130 @@
+#!/usr/bin/env bun
+import { $ } from "bun"
+import path from "path"
+
+const rootDir = path.resolve(import.meta.dir, "..")
+const tauriDir = path.join(rootDir, "packages/client/desktop/src-tauri")
+
+// ── CLI flags ──────────────────────────────────────────────────────
+const args = new Set(process.argv.slice(2))
+const skipSidecar = args.has("--skip-sidecar")
+const skipNotarize = args.has("--skip-notarize")
+const verbose = args.has("--verbose")
+
+// ── Resolve Tauri target triple ────────────────────────────────────
+const getCurrentTauriTarget = () => {
+  if (process.platform === "darwin") {
+    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin"
+  } else if (process.platform === "win32") {
+    return "x86_64-pc-windows-msvc"
+  } else {
+    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu"
+  }
+}
+
+const tauriTarget = getCurrentTauriTarget()
+
+// ── Environment checks ────────────────────────────────────────────
+const signingIdentity = process.env.APPLE_SIGNING_IDENTITY
+if (!signingIdentity) {
+  console.error("❌ APPLE_SIGNING_IDENTITY is required")
+  console.error("   Set it to your 'Developer ID Application: ...' identity")
+  console.error("   List identities: security find-identity -v -p codesigning")
+  process.exit(1)
+}
+
+const appleId = process.env.APPLE_ID
+const applePassword = process.env.APPLE_PASSWORD
+const appleTeamId = process.env.APPLE_TEAM_ID
+const canNotarize = !!(appleId && applePassword && appleTeamId)
+
+if (!skipNotarize && !canNotarize) {
+  console.warn("⚠️  Notarization credentials missing (APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID)")
+  console.warn("   Will sign only. Use --skip-notarize to suppress this warning.")
+}
+
+console.log(`\n🚀 Ultrawork Release Build`)
+console.log(`   Target: ${tauriTarget}`)
+console.log(`   Identity: ${signingIdentity}`)
+console.log(`   Notarize: ${!skipNotarize && canNotarize ? "yes" : "no"}`)
+console.log()
+
+// ── Step 1: Build sidecars ────────────────────────────────────────
+if (skipSidecar) {
+  console.log("⏭️  Skipping sidecar build (--skip-sidecar)")
+} else {
+  console.log("📦 Building OpenCode sidecar...")
+  await $`bun run ${path.join(rootDir, "scripts/build-opencode.ts")}`.quiet(!verbose)
+
+  console.log("📦 Building Channel Gateway sidecar...")
+  await $`bun run ${path.join(rootDir, "scripts/build-gateway.ts")}`.quiet(!verbose)
+}
+
+// ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY) ───
+console.log("\n🔨 Running tauri build...")
+await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget}`
+  .env({ ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity })
+  .quiet(!verbose)
+
+// ── Locate build outputs ──────────────────────────────────────────
+const bundleDir = path.join(tauriDir, "target", tauriTarget, "release/bundle")
+const appPath = path.join(bundleDir, "macos/Ultrawork.app")
+const dmgGlob = new Bun.Glob("*.dmg")
+const dmgFiles = Array.from(dmgGlob.scanSync(path.join(bundleDir, "dmg")))
+const dmgPath = dmgFiles.length > 0 ? path.join(bundleDir, "dmg", dmgFiles[0]) : null
+
+console.log(`\n✅ Build complete`)
+console.log(`   .app: ${appPath}`)
+if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
+
+// ── Step 3: Verify code signing ───────────────────────────────────
+console.log("\n🔏 Verifying code signature...")
+await $`codesign --verify --deep --strict ${appPath}`
+console.log("   Signature valid ✓")
+
+if (verbose) {
+  await $`codesign -dv --verbose=2 ${appPath}`
+}
+
+// ── Step 4: Notarize & staple ─────────────────────────────────────
+if (skipNotarize || !canNotarize) {
+  console.log("\n⏭️  Skipping notarization")
+} else {
+  // Notarize the DMG (preferred) or .app as zip fallback
+  if (!dmgPath) {
+    // Need to zip the .app for notarization
+    console.log("\n📤 Zipping .app for notarization...")
+    const zipPath = path.join(bundleDir, "Ultrawork.zip")
+    await $`ditto -c -k --sequesterRsrc --keepParent ${appPath} ${zipPath}`
+  }
+
+  const submitTarget = dmgPath ?? path.join(bundleDir, "Ultrawork.zip")
+
+  console.log(`\n📤 Submitting for notarization: ${path.basename(submitTarget)}`)
+  console.log("   This may take several minutes...")
+
+  await $`xcrun notarytool submit ${submitTarget} --apple-id ${appleId} --password ${applePassword} --team-id ${appleTeamId} --wait`
+    .quiet(!verbose)
+
+  console.log("   Notarization approved ✓")
+
+  // Staple the ticket
+  console.log("\n📎 Stapling notarization ticket...")
+  await $`xcrun stapler staple ${appPath}`
+  if (dmgPath) {
+    await $`xcrun stapler staple ${dmgPath}`
+  }
+  console.log("   Stapled ✓")
+}
+
+// ── Summary ───────────────────────────────────────────────────────
+console.log("\n" + "─".repeat(50))
+console.log("🎉 Release build complete!")
+console.log(`   .app: ${appPath}`)
+if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
+console.log()
+console.log("Verify with:")
+console.log(`   codesign -dv --verbose=2 "${appPath}"`)
+if (!skipNotarize && canNotarize) {
+  console.log(`   spctl --assess --type open --context context:primary-signature "${appPath}"`)
+}
