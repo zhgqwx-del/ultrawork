@@ -63,6 +63,10 @@ fi
 echo "[4/6] Installing dependencies..."
 bun install
 
+# Install vendor/opencode dependencies (needed for build preload resolution)
+echo "  Installing vendor/opencode dependencies..."
+(cd "$VENDOR_DIR" && bun install)
+
 # ── 5. Build sidecar binaries ───────────────
 
 BINARIES_DIR="$ROOT_DIR/packages/client/desktop/src-tauri/binaries"

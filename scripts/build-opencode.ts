@@ -80,5 +80,5 @@ const targetPath = path.join(tauriBinDir, targetName)
 await $`cp ${binaryPath} ${targetPath}`
 await $`chmod +x ${targetPath}`
 
-const size = (await binaryFile.size()) / 1024 / 1024
+const size = binaryFile.size / 1024 / 1024
 console.log(`✅ OpenCode sidecar ready: ${targetName} (${size.toFixed(1)} MB)`)

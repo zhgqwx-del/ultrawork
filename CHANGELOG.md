@@ -15,6 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 新增 commit message 约定：`fix(#42): 描述` 格式
 
 ### Fixed
+- setup.sh 新 clone 后 build:opencode 失败 — vendor/opencode 依赖未安装导致 `@opentui/solid/preload` 解析失败
+- build-opencode.ts `Bun.file().size()` 应为属性访问 `.size`，修复 bun 1.3.10 兼容性
 - Round 18: vendor/opencode submodule 指向本地 commit 导致同事 clone 失败 — 重置到上游 commit + patch 管理
 - Round 18: core 包 `tsc --noEmit` 与 `composite: true` 冲突，新环境无 `.d.ts` 导致 typecheck 失败 — 改为 `tsc --build`
 - Round 18: `.gitignore` 补充 `opencode.json`（本地配置）和 `*.tsbuildinfo`（构建缓存）
