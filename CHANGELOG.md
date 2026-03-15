@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Browser MCP 集成：检测系统 Node.js (≥v20) + Chrome，一键安装 chrome-devtools-mcp 到 `~/.ultrawork/mcp/`
+- Tauri commands: detect_node, detect_chrome, install_browser_mcp（支持 nvm/fnm/volta/homebrew PATH 发现）
+- 设置页 + sidebar 双入口 Browser 控制卡片，显示环境检测状态和安装/已安装状态
+- 产物面板：从 MCP 工具输出文本和 attachments 中提取文件路径（支持截图等非内置工具产物）
+
 ### Changed
 - 任务追踪从线性 Round 编号迁移到 GitHub Issue# 标识，支持多人并行开发
 - CLAUDE.md 收尾流程从「轮次收尾」改为「任务收尾」，conventions.md last-synced 改用日期格式
