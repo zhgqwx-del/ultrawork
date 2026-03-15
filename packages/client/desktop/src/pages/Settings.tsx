@@ -6,6 +6,7 @@ import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
+import { useBrowserMCP } from "@/lib/use-browser-mcp"
 import { useChannels } from "@/lib/use-channels"
 import { useSkills } from "@/lib/use-skills"
 import { useWorkspace } from "@/lib/workspace-context"
@@ -257,6 +258,96 @@ function CapabilitiesSection() {
   )
 }
 
+function BrowserServiceCard() {
+  const { t } = useI18n()
+  const {
+    nodeAvailable, nodeVersion, chromeAvailable,
+    installed, installing, error, setup, checking,
+  } = useBrowserMCP()
+
+  if (checking) {
+    return (
+      <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] p-4">
+        <Loader2 className="size-5 animate-spin text-[var(--color-fg-muted)]" />
+        <p className="text-sm text-[var(--color-fg-muted)]">{t("mcp.browser.checking")}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-4">
+      <div className="flex items-start justify-between">
+        <div className="flex items-start gap-3">
+          <div className={cn(
+            "mt-0.5 flex size-8 items-center justify-center rounded-lg",
+            installed ? "bg-green-500/10" : nodeAvailable ? "bg-blue-500/10" : "bg-amber-500/10",
+          )}>
+            <Globe className={cn(
+              "size-4",
+              installed ? "text-green-500" : nodeAvailable ? "text-blue-500" : "text-amber-500",
+            )} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.browser.title")}</h3>
+              <span className="rounded-full bg-[var(--color-accent)] px-2 py-px text-[10px] font-medium text-[var(--color-fg-muted)]">
+                {t("mcp.browser.builtin")}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("mcp.browser.desc")}</p>
+            {nodeAvailable ? (
+              <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-[var(--color-fg-muted)]">
+                <span className="flex items-center gap-1">
+                  <CheckCircle2 className="size-3 text-green-500" />
+                  {t("mcp.browser.nodeVersion", { version: nodeVersion ?? "" })}
+                </span>
+                <span className="flex items-center gap-1">
+                  {chromeAvailable
+                    ? <><CheckCircle2 className="size-3 text-green-500" />{t("mcp.browser.chromeDetected")}</>
+                    : <><XCircle className="size-3 text-[var(--color-fg-muted)]" />{t("mcp.browser.chromeNotDetected")}</>
+                  }
+                </span>
+              </div>
+            ) : (
+              <div className="mt-1.5">
+                <p className="text-xs text-amber-500">{t("mcp.browser.noNode")}</p>
+                <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.browser.noNodeHint")}</p>
+              </div>
+            )}
+          </div>
+        </div>
+        {nodeAvailable && (
+          <div className="shrink-0">
+            {installed ? (
+              <span className="inline-flex items-center rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                <CheckCircle2 className="mr-1 size-3" />
+                {t("mcp.browser.installed")}
+              </span>
+            ) : (
+              <Button size="sm" onClick={setup} disabled={installing}>
+                {installing ? (
+                  <><Loader2 className="mr-1.5 size-3.5 animate-spin" />{t("mcp.browser.installing")}</>
+                ) : (
+                  t("mcp.browser.enable")
+                )}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {error && (
+        <div className="mt-3 flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="size-3.5 shrink-0" />
+          <span className="flex-1">{error}</span>
+          <button onClick={setup} disabled={installing} className="font-medium hover:underline">
+            {t("mcp.browser.retry")}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ServicesSection() {
   const { t } = useI18n()
   const {
@@ -309,6 +400,9 @@ function ServicesSection() {
           </Button>
         </div>
       </div>
+
+      {/* Built-in: Browser MCP */}
+      <BrowserServiceCard />
 
       {/* Add form */}
       {showAdd && (

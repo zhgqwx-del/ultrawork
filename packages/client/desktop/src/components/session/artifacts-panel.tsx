@@ -24,6 +24,24 @@ function toRelative(filePath: string, workspaceRoot?: string): string {
 /** File-modifying tool names whose filePath input should be tracked as artifacts */
 const FILE_TOOLS = new Set(["write", "edit", "create", "patch"])
 
+/** Match file paths in tool output text (e.g. "Saved screenshot to /path/file.png") */
+const FILE_PATH_RE = /(?:saved?\s+(?:screenshot|file|trace|report)\s+to\s+)(\S+)/gi
+
+function addIfNew(
+  path: string,
+  type: Artifact["type"],
+  seen: Set<string>,
+  artifacts: Artifact[],
+  workspaceRoot?: string,
+  mime?: string,
+) {
+  const relPath = toRelative(path, workspaceRoot)
+  if (!seen.has(relPath)) {
+    seen.add(relPath)
+    artifacts.push({ type, path: relPath, ...(mime ? { mime } : {}) })
+  }
+}
+
 function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: string): Artifact[] {
   const seen = new Set<string>()
   const artifacts: Artifact[] = []
@@ -34,31 +52,43 @@ function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: strin
       if (part.type === "file") {
         const fp = part as FilePart
         const path = fp.filename || fp.url || "unknown"
-        if (!seen.has(path)) {
-          seen.add(path)
-          artifacts.push({ type: "file", path, mime: fp.mime })
-        }
+        addIfNew(path, "file", seen, artifacts, workspaceRoot, fp.mime)
       } else if (part.type === "patch") {
         const pp = part as PatchPart
         for (const file of pp.files) {
-          if (!seen.has(file)) {
-            seen.add(file)
-            artifacts.push({ type: "patch", path: file })
-          }
+          addIfNew(file, "patch", seen, artifacts, workspaceRoot)
         }
       } else if (part.type === "tool") {
         const tp = part as ToolPart
-        if (!FILE_TOOLS.has(tp.tool)) continue
-        const input = tp.state.input as Record<string, unknown> | undefined
-        if (input) {
-          // OpenCode tools use camelCase `filePath` for the file path parameter
-          const rawPath = (input.filePath || input.file_path || input.path) as string | undefined
-          if (rawPath) {
-            // Convert to relative path for API compatibility (server resolves via header)
-            const relPath = toRelative(rawPath, workspaceRoot)
-            if (!seen.has(relPath)) {
-              seen.add(relPath)
-              artifacts.push({ type: "file", path: relPath })
+        if (FILE_TOOLS.has(tp.tool)) {
+          const input = tp.state.input as Record<string, unknown> | undefined
+          if (input) {
+            // OpenCode tools use camelCase `filePath` for the file path parameter
+            const rawPath = (input.filePath || input.file_path || input.path) as string | undefined
+            if (rawPath) {
+              addIfNew(rawPath, "file", seen, artifacts, workspaceRoot)
+            }
+          }
+        }
+
+        // Extract file paths from tool output text (MCP tools like take_screenshot)
+        if (tp.state.status === "completed") {
+          const { output, attachments } = tp.state
+          // Scan output for "Saved ... to /path/file.ext" patterns
+          if (output) {
+            let match: RegExpExecArray | null
+            FILE_PATH_RE.lastIndex = 0
+            while ((match = FILE_PATH_RE.exec(output)) !== null) {
+              // Strip trailing punctuation like period or quote
+              const filePath = match[1].replace(/[."']+$/, "")
+              addIfNew(filePath, "file", seen, artifacts, workspaceRoot)
+            }
+          }
+          // Also collect tool attachments (FilePart[])
+          if (attachments) {
+            for (const att of attachments) {
+              const path = att.filename || att.url || "unknown"
+              addIfNew(path, "file", seen, artifacts, workspaceRoot, att.mime)
             }
           }
         }

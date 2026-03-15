@@ -53,13 +53,15 @@ function saveHiddenSet(set: Set<string>) {
   } catch {}
 }
 
-/** Filter out user-hidden servers from a backend response */
+// Built-in MCP servers managed by dedicated UI (not shown in generic list)
+const BUILTIN_MCP_NAMES = new Set(["browser"])
+
+/** Filter out user-hidden servers and built-in servers from a backend response */
 function filterHidden(data: MCPStatusMap): MCPStatusMap {
   const hidden = loadHiddenSet()
-  if (hidden.size === 0) return data
   const filtered: MCPStatusMap = {}
   for (const [name, status] of Object.entries(data)) {
-    if (!hidden.has(name)) filtered[name] = status
+    if (!hidden.has(name) && !BUILTIN_MCP_NAMES.has(name)) filtered[name] = status
   }
   return filtered
 }
@@ -85,7 +87,7 @@ export function useMCPServers() {
       const hidden = loadHiddenSet()
       const merged: MCPStatusMap = { ...data }
       for (const name of Object.keys(saved)) {
-        if (!(name in merged) && !hidden.has(name)) {
+        if (!(name in merged) && !hidden.has(name) && !BUILTIN_MCP_NAMES.has(name)) {
           // Use last-known status from localStorage instead of assuming "disabled".
           // GET /mcp only reports config-file-based servers; dynamically added
           // servers (POST /mcp) are in memory but not reported by the endpoint.
