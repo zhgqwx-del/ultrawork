@@ -616,13 +616,6 @@ export function SessionPage() {
 
   return (
     <div className="flex min-w-0 flex-1 overflow-hidden">
-      {/* Artifact Preview (left, 50% when active) */}
-      {selectedArtifact && (
-        <div className="w-1/2 shrink-0 overflow-hidden border-r border-[var(--color-border)]">
-          <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
-        </div>
-      )}
-
       {/* Chat Panel (full width or 50% when preview active) */}
       <div className={cn("flex min-w-0 flex-col overflow-hidden", selectedArtifact ? "w-1/2" : "flex-1")}>
         {/* Header */}
@@ -699,6 +692,13 @@ export function SessionPage() {
           )}
         </div>
       </div>
+
+      {/* Artifact Preview (right, 50% when active) */}
+      {selectedArtifact && (
+        <div className="w-1/2 shrink-0 overflow-hidden border-l border-[var(--color-border)]">
+          <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
+        </div>
+      )}
 
       {/* Right Sidebar */}
       {rightOpen && (
