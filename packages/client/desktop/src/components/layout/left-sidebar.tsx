@@ -14,8 +14,8 @@ import {
   X,
   Search,
   Star,
-  Sparkles,
 } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
 import type { Session } from "@agent/api-client"
 import {
@@ -161,12 +161,7 @@ export function LeftSidebar() {
                 onClick={() => navigate("/")}
                 className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
               >
-                <div
-                  className="flex size-8 items-center justify-center rounded-lg"
-                  style={{ background: "var(--color-brand-gradient)" }}
-                >
-                  <Sparkles className="size-4 text-white" />
-                </div>
+                <Logo className="size-8" />
                 <span className="text-sm font-semibold tracking-wide text-[var(--sidebar-fg)]">
                   {t("brand.name")}
                 </span>
@@ -320,9 +315,8 @@ export function LeftSidebar() {
                 onClick={() => navigate("/")}
                 aria-label="Home"
                 className="flex size-8 items-center justify-center rounded-lg transition-all hover:ring-2 hover:ring-[var(--sidebar-fg-muted)]"
-                style={{ background: "var(--color-brand-gradient)" }}
               >
-                <Sparkles className="size-4 text-white" />
+                <Logo className="size-8" />
               </button>
             </div>
 

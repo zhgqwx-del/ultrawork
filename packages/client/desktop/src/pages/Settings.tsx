@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -1254,9 +1255,7 @@ function AboutSection() {
       {/* Logo + Brand */}
       <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
         <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-400 to-red-500">
-            <Sparkles className="size-5 text-white" />
-          </div>
+          <Logo className="size-10" />
           <div>
             <div className="text-base font-semibold text-[var(--color-fg)]">{t("brand.name")}</div>
             <div className="text-xs text-[var(--color-fg-muted)]">{t("about.subtitle")}</div>

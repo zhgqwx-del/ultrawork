@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 全新品牌 Logo：等轴测水晶棱镜设计（靛蓝→青色渐变），替换旧版字母 "U" 图标
+- Logo React 组件 `<Logo />`（`useId` 避免多实例 gradient ID 冲突），用于侧边栏 + Settings 关于页
+- 全平台应用图标更新：PNG/ICO/ICNS/iOS/Android 全尺寸（via `@tauri-apps/cli icon`）
+- Logo 设计源文件：`design/logo/` (SVG + 1024px PNG + 预览 HTML)
 - Browser MCP 集成：检测系统 Node.js (≥v20) + Chrome，一键安装 chrome-devtools-mcp 到 `~/.ultrawork/mcp/`
 - Tauri commands: detect_node, detect_chrome, install_browser_mcp（支持 nvm/fnm/volta/homebrew PATH 发现）
 - 设置页 + sidebar 双入口 Browser 控制卡片，显示环境检测状态和安装/已安装状态
