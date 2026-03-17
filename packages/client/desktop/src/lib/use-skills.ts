@@ -26,6 +26,9 @@ export interface SkillsConfig {
 
 const GROUP_ORDER: SkillSource[] = ["command", "mcp", "skill"]
 
+// Built-in OpenCode commands that are developer-oriented and not useful for end users
+const HIDDEN_BUILTIN_COMMANDS = new Set(["init", "review"])
+
 export function useSkills() {
   const api = useApi()
   const { t } = useI18n()
@@ -75,8 +78,10 @@ export function useSkills() {
     }
 
     // Commands first — they have template/hints, take priority over /skill dupes
+    // Filter out developer-oriented built-in commands (init, review) for end users
     for (const cmd of commands) {
       if (seen.has(cmd.name)) continue
+      if (HIDDEN_BUILTIN_COMMANDS.has(cmd.name) && (cmd.source === "command" || !cmd.source)) continue
       seen.add(cmd.name)
       items.push({
         name: cmd.name,

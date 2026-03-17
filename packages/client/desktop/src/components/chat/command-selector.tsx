@@ -4,6 +4,9 @@ import { useI18n } from "@/lib/i18n-context"
 import { Terminal } from "lucide-react"
 import type { Command } from "@agent/api-client"
 
+// Built-in OpenCode commands that are developer-oriented and not useful for end users
+const HIDDEN_BUILTIN_COMMANDS = new Set(["init", "review"])
+
 interface CommandSelectorProps {
   input: string
   onSelectCommand: (command: Command) => void
@@ -30,12 +33,14 @@ export function CommandSelector({ input, onSelectCommand, onClose, visible }: Co
     })
   }, [visible, hasFetched, api])
 
-  // Filter commands based on input after "/"
+  // Filter commands based on input after "/", excluding hidden built-in commands
   const query = input.startsWith("/") ? input.slice(1).toLowerCase() : ""
   const filtered = useMemo(() => commands.filter(
-    (cmd) =>
-      cmd.name.toLowerCase().includes(query) ||
-      cmd.description.toLowerCase().includes(query)
+    (cmd) => {
+      if (HIDDEN_BUILTIN_COMMANDS.has(cmd.name) && (cmd.source === "command" || !cmd.source)) return false
+      return cmd.name.toLowerCase().includes(query) ||
+        cmd.description.toLowerCase().includes(query)
+    }
   ), [commands, query])
 
   // Reset selection when filter changes
