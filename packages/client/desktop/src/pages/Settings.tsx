@@ -262,8 +262,9 @@ function CapabilitiesSection() {
 function BrowserServiceCard() {
   const { t } = useI18n()
   const {
-    nodeAvailable, nodeVersion, chromeAvailable,
+    nodeAvailable, nodeVersion, nodeEmbedded, chromeAvailable,
     installed, installing, error, setup, checking,
+    mode, switchMode, switchingMode,
   } = useBrowserMCP()
 
   if (checking) {
@@ -296,36 +297,37 @@ function BrowserServiceCard() {
               </span>
             </div>
             <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("mcp.browser.desc")}</p>
-            {nodeAvailable ? (
-              <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-[var(--color-fg-muted)]">
+            <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-[var(--color-fg-muted)]">
+              {nodeAvailable ? (
                 <span className="flex items-center gap-1">
                   <CheckCircle2 className="size-3 text-green-500" />
                   {t("mcp.browser.nodeVersion", { version: nodeVersion ?? "" })}
+                  <span className="text-[10px] opacity-60">
+                    ({nodeEmbedded ? t("mcp.browser.nodeEmbedded") : t("mcp.browser.nodeSystem")})
+                  </span>
                 </span>
-                <span className="flex items-center gap-1">
-                  {chromeAvailable
-                    ? <><CheckCircle2 className="size-3 text-green-500" />{t("mcp.browser.chromeDetected")}</>
-                    : <><XCircle className="size-3 text-[var(--color-fg-muted)]" />{t("mcp.browser.chromeNotDetected")}</>
-                  }
+              ) : (
+                <span className="flex items-center gap-1 text-[var(--color-fg-muted)]">
+                  {t("mcp.browser.toastDownloadingNode").replace("...", "")}
                 </span>
-              </div>
-            ) : (
-              <div className="mt-1.5">
-                <p className="text-xs text-amber-500">{t("mcp.browser.noNode")}</p>
-                <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.browser.noNodeHint")}</p>
-              </div>
-            )}
+              )}
+              <span className="flex items-center gap-1">
+                {chromeAvailable
+                  ? <><CheckCircle2 className="size-3 text-green-500" />{t("mcp.browser.chromeDetected")}</>
+                  : <><XCircle className="size-3 text-[var(--color-fg-muted)]" />{t("mcp.browser.chromeNotDetected")}</>
+                }
+              </span>
+            </div>
           </div>
         </div>
-        {nodeAvailable && (
-          <div className="shrink-0">
+        <div className="shrink-0">
             {installed ? (
               <span className="inline-flex items-center rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
                 <CheckCircle2 className="mr-1 size-3" />
                 {t("mcp.browser.installed")}
               </span>
             ) : (
-              <Button size="sm" onClick={setup} disabled={installing}>
+              <Button size="sm" onClick={setup} disabled={installing || switchingMode}>
                 {installing ? (
                   <><Loader2 className="mr-1.5 size-3.5 animate-spin" />{t("mcp.browser.installing")}</>
                 ) : (
@@ -334,8 +336,42 @@ function BrowserServiceCard() {
               </Button>
             )}
           </div>
-        )}
       </div>
+
+      {/* Mode selector */}
+      <div className="mt-3 flex gap-2">
+          {(["playwright", "devtools"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => switchMode(m)}
+              disabled={switchingMode || mode === m}
+              className={cn(
+                "flex-1 rounded-md border px-3 py-2 text-left transition-colors",
+                mode === m
+                  ? "border-[var(--color-brand)] bg-[var(--color-brand)]/5"
+                  : "border-[var(--color-border)] hover:border-[var(--color-fg-muted)]",
+                "disabled:opacity-60",
+              )}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-[var(--color-fg)]">
+                  {m === "playwright" ? t("mcp.browser.modePlaywright") : t("mcp.browser.modeDevtools")}
+                </span>
+                {m === "playwright" && (
+                  <span className="rounded bg-[var(--color-brand)]/10 px-1 py-px text-[9px] font-medium text-[var(--color-brand)]">
+                    {t("mcp.browser.recommended")}
+                  </span>
+                )}
+                {mode === m && <CheckCircle2 className="ml-auto size-3 text-[var(--color-brand)]" />}
+              </div>
+              <p className="mt-0.5 text-[10px] text-[var(--color-fg-muted)]">
+                {m === "playwright" ? t("mcp.browser.modePlaywrightDesc") : t("mcp.browser.modeDevtoolsDesc")}
+              </p>
+            </button>
+          ))}
+          {switchingMode && <Loader2 className="size-4 animate-spin text-[var(--color-fg-muted)]" />}
+        </div>
+
       {error && (
         <div className="mt-3 flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
           <AlertCircle className="size-3.5 shrink-0" />

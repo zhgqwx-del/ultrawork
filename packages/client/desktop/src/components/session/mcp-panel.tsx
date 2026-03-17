@@ -73,8 +73,9 @@ export function MCPPanel() {
 function BrowserMCPSection() {
   const { t } = useI18n()
   const {
-    nodeAvailable, nodeVersion, chromeAvailable,
+    nodeVersion, nodeEmbedded, chromeAvailable,
     installed, installing, error, setup, checking,
+    mode, switchMode, switchingMode,
   } = useBrowserMCP()
 
   if (checking) {
@@ -86,21 +87,7 @@ function BrowserMCPSection() {
     )
   }
 
-  // Node.js not available — show install prompt
-  if (!nodeAvailable) {
-    return (
-      <div className="rounded-md bg-[var(--color-accent)] px-2 py-1.5">
-        <div className="flex items-center gap-2">
-          <Globe className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-[var(--color-fg)]">{t("mcp.browser.title")}</p>
-            <p className="text-[10px] text-amber-500">{t("mcp.browser.noNode")}</p>
-            <p className="text-[10px] text-[var(--color-fg-muted)]">{t("mcp.browser.noNodeHint")}</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const modeLabel = mode === "playwright" ? t("mcp.browser.modePlaywright") : t("mcp.browser.modeDevtools")
 
   return (
     <div className="rounded-md bg-[var(--color-accent)] px-2 py-1.5">
@@ -110,15 +97,18 @@ function BrowserMCPSection() {
           <div className="flex items-center gap-1.5">
             <p className="text-xs font-medium text-[var(--color-fg)]">{t("mcp.browser.title")}</p>
             <span className="rounded bg-[var(--color-bg)] px-1 py-px text-[9px] text-[var(--color-fg-muted)]">
-              {t("mcp.browser.builtin")}
+              {modeLabel}
             </span>
           </div>
           <p className="text-[10px] text-[var(--color-fg-muted)]">{t("mcp.browser.desc")}</p>
           <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-[var(--color-fg-muted)]">
-            <span className="flex items-center gap-0.5">
-              <CheckCircle2 className="size-2.5 text-green-500" />
-              {t("mcp.browser.nodeVersion", { version: nodeVersion ?? "" })}
-            </span>
+            {nodeVersion && (
+              <span className="flex items-center gap-0.5">
+                <CheckCircle2 className="size-2.5 text-green-500" />
+                {t("mcp.browser.nodeVersion", { version: nodeVersion })}
+                {nodeEmbedded && <span className="ml-0.5 text-[9px] opacity-60">({t("mcp.browser.nodeEmbedded")})</span>}
+              </span>
+            )}
             <span className="flex items-center gap-0.5">
               {chromeAvailable
                 ? <><CheckCircle2 className="size-2.5 text-green-500" />{t("mcp.browser.chromeDetected")}</>
@@ -135,7 +125,7 @@ function BrowserMCPSection() {
           ) : (
             <button
               onClick={setup}
-              disabled={installing}
+              disabled={installing || switchingMode}
               className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
             >
               {installing ? (
@@ -149,6 +139,24 @@ function BrowserMCPSection() {
             </button>
           )}
         </div>
+      </div>
+      {/* Mode switcher (compact for sidebar) */}
+      <div className="mt-1 flex gap-1">
+        {(["playwright", "devtools"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => switchMode(m)}
+            disabled={switchingMode || mode === m}
+            className={`rounded px-1.5 py-px text-[9px] font-medium transition-colors ${
+              mode === m
+                ? "bg-[var(--color-brand)] text-white"
+                : "bg-[var(--color-bg)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+            } disabled:opacity-50`}
+          >
+            {m === "playwright" ? t("mcp.browser.modePlaywright") : t("mcp.browser.modeDevtools")}
+          </button>
+        ))}
+        {switchingMode && <Loader2 className="size-3 animate-spin text-[var(--color-fg-muted)]" />}
       </div>
       {error && (
         <div className="mt-1 flex items-center gap-1">

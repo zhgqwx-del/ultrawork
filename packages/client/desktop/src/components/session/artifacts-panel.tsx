@@ -22,10 +22,46 @@ function toRelative(filePath: string, workspaceRoot?: string): string {
 }
 
 /** File-modifying tool names whose filePath input should be tracked as artifacts */
-const FILE_TOOLS = new Set(["write", "edit", "create", "patch"])
+const FILE_TOOL_SUFFIXES = ["write", "edit", "create", "patch"]
 
-/** Match file paths in tool output text (e.g. "Saved screenshot to /path/file.png") */
-const FILE_PATH_RE = /(?:saved?\s+(?:screenshot|file|trace|report)\s+to\s+)(\S+)/gi
+/** Tool name suffixes that produce file output via a path parameter */
+const OUTPUT_TOOL_SUFFIXES = ["take_screenshot", "screenshot", "pdf_save", "save_file"]
+
+/** Directories to exclude from artifact detection (temp/system paths) */
+const TEMP_PATH_RE = /\/(var\/folders|tmp|private\/tmp|Caches|playwright-mcp-output)\//i
+
+/** Match file paths in tool output text */
+const FILE_PATH_RE = /(?:saved?\s+(?:screenshot|file|trace|report|image)\s+(?:to|as)\s+)(\S+)/gi
+
+/** Match absolute file paths with common extensions in tool output */
+const ABS_PATH_RE = /(\/[\w./-]+\.(?:png|jpe?g|gif|svg|webp|pdf|html|json|csv|txt|md|ts|js|py))\b/gi
+
+/** Path input parameter names to check */
+const PATH_PARAMS = ["filePath", "file_path", "path", "outputPath", "filename"]
+
+/** Check if tool name ends with a known suffix (handles MCP prefix like "browser_browser_write") */
+function toolEndsWith(tool: string, suffixes: string[]): boolean {
+  return suffixes.some(s => tool === s || tool.endsWith("_" + s))
+}
+
+/** Check if a path looks like a real workspace artifact (not temp/system) */
+function isValidArtifactPath(filePath: string, workspaceRoot?: string): boolean {
+  // Reject temp/system paths
+  if (TEMP_PATH_RE.test(filePath)) return false
+  // Reject data URIs
+  if (filePath.startsWith("data:")) return false
+  // Reject paths that are too long to be meaningful file names (likely base64 or garbage)
+  if (filePath.length > 500) return false
+  // If workspace root is known, only accept paths within it or relative paths
+  if (workspaceRoot) {
+    if (filePath.startsWith("/")) {
+      return filePath.startsWith(workspaceRoot)
+    }
+    // Relative paths are fine (e.g. "google.png")
+    return true
+  }
+  return true
+}
 
 function addIfNew(
   path: string,
@@ -35,6 +71,7 @@ function addIfNew(
   workspaceRoot?: string,
   mime?: string,
 ) {
+  if (!isValidArtifactPath(path, workspaceRoot)) return
   const relPath = toRelative(path, workspaceRoot)
   if (!seen.has(relPath)) {
     seen.add(relPath)
@@ -60,34 +97,42 @@ function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: strin
         }
       } else if (part.type === "tool") {
         const tp = part as ToolPart
-        if (FILE_TOOLS.has(tp.tool)) {
-          const input = tp.state.input as Record<string, unknown> | undefined
-          if (input) {
-            // OpenCode tools use camelCase `filePath` for the file path parameter
-            const rawPath = (input.filePath || input.file_path || input.path) as string | undefined
+        const input = tp.state.input as Record<string, unknown> | undefined
+
+        // Extract file path from tool input parameters for known file/screenshot tools
+        if (input && (toolEndsWith(tp.tool, FILE_TOOL_SUFFIXES) || toolEndsWith(tp.tool, OUTPUT_TOOL_SUFFIXES))) {
+          for (const param of PATH_PARAMS) {
+            const rawPath = input[param] as string | undefined
             if (rawPath) {
               addIfNew(rawPath, "file", seen, artifacts, workspaceRoot)
+              break
             }
           }
         }
 
-        // Extract file paths from tool output text (MCP tools like take_screenshot)
+        // Extract file paths from tool output text
         if (tp.state.status === "completed") {
           const { output, attachments } = tp.state
-          // Scan output for "Saved ... to /path/file.ext" patterns
           if (output) {
             let match: RegExpExecArray | null
+            // "Saved screenshot to /path/file.png" pattern
             FILE_PATH_RE.lastIndex = 0
             while ((match = FILE_PATH_RE.exec(output)) !== null) {
-              // Strip trailing punctuation like period or quote
               const filePath = match[1].replace(/[."']+$/, "")
               addIfNew(filePath, "file", seen, artifacts, workspaceRoot)
             }
+            // Absolute paths with known extensions
+            ABS_PATH_RE.lastIndex = 0
+            while ((match = ABS_PATH_RE.exec(output)) !== null) {
+              addIfNew(match[1], "file", seen, artifacts, workspaceRoot)
+            }
           }
-          // Also collect tool attachments (FilePart[])
+          // Collect tool attachments (skip data URIs — only show workspace files)
           if (attachments) {
             for (const att of attachments) {
-              const path = att.filename || att.url || "unknown"
+              const url = att.url || ""
+              if (url.startsWith("data:")) continue
+              const path = att.filename || url || "unknown"
               addIfNew(path, "file", seen, artifacts, workspaceRoot, att.mime)
             }
           }

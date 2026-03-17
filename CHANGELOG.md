@@ -12,10 +12,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Logo React 组件 `<Logo />`（`useId` 避免多实例 gradient ID 冲突），用于侧边栏 + Settings 关于页
 - 全平台应用图标更新：PNG/ICO/ICNS/iOS/Android 全尺寸（via `@tauri-apps/cli icon`）
 - Logo 设计源文件：`design/logo/` (SVG + 1024px PNG + 预览 HTML)
-- Browser MCP 集成：检测系统 Node.js (≥v20) + Chrome，一键安装 chrome-devtools-mcp 到 `~/.ultrawork/mcp/`
-- Tauri commands: detect_node, detect_chrome, install_browser_mcp（支持 nvm/fnm/volta/homebrew PATH 发现）
-- 设置页 + sidebar 双入口 Browser 控制卡片，显示环境检测状态和安装/已安装状态
-- 产物面板：从 MCP 工具输出文本和 attachments 中提取文件路径（支持截图等非内置工具产物）
+- Browser MCP 双模式架构：按需下载 Node.js v22 + 默认 Playwright MCP（标准）+ 可选 chrome-devtools-mcp（高级），DMG 零增量
+- 按需下载 Node.js：首次启用浏览器时从 nodejs.org 下载 (~45MB)，strip 优化，后续复用
+- Tauri commands: `download_node`, `detect_browser_env`, `install_playwright_mcp`, `install_devtools_mcp`, `get/set_browser_mode`, `kill_browser_mcp_processes`
+- 设置页 + sidebar 双入口模式切换 UI（标准/高级），安装过程 toast 分阶段反馈（下载→安装→注册）
+- 浏览器进程清理：模式切换时自动清理 Chrome 子进程，防止"会话锁定"
+- 产物面板：MCP 工具产物提取（input 参数 + output 文本），过滤 temp 路径和 data URI
 
 ### Changed
 - 任务追踪从线性 Round 编号迁移到 GitHub Issue# 标识，支持多人并行开发
