@@ -122,6 +122,24 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     Ok(())
 }
 
+// ── Default workspace ──────────────────────────────────────────────
+
+/// Ensure the default workspace directory exists (~/.ultrawork/workspace/).
+/// Returns the absolute path. Idempotent — safe to call every startup.
+#[tauri::command]
+fn ensure_default_workspace() -> Result<String, String> {
+    let dir = ultrawork_dir().join("workspace");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create default workspace: {}", e))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Check whether a directory exists on disk.
+#[tauri::command]
+fn check_directory_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
 // ── Browser MCP types ──────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -748,6 +766,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            ensure_default_workspace,
+            check_directory_exists,
             download_node,
             get_node_path,
             detect_chrome,

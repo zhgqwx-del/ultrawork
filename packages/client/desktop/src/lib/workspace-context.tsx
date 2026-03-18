@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, type ReactNode } from "react"
+import { invoke } from "@tauri-apps/api/core"
 
 const STORAGE_KEY_PATH = "workspace_path"
 const STORAGE_KEY_RECENT = "workspace_recent"
@@ -9,6 +10,8 @@ interface WorkspaceContextValue {
   workspacePath: string | null
   /** Whether workspace has been confirmed for this app session */
   confirmed: boolean
+  /** Whether workspace initialization is still in progress */
+  initializing: boolean
   /** Last used workspace path from localStorage (for display in selector) */
   lastPath: string | null
   /** Recently used workspace paths (most recent first) */
@@ -35,12 +38,10 @@ function saveRecent(paths: string[]) {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  // confirmed = false on fresh app start; becomes true after user confirms in WorkspaceSelector
+  const [initializing, setInitializing] = useState(true)
   const [confirmed, setConfirmed] = useState(false)
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [recentPaths, setRecentPaths] = useState<string[]>(loadRecent)
-
-  // Last persisted path (for display in selector, not for auto-entering)
   const [lastPath, setLastPath] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_PATH))
 
   const setWorkspace = useCallback((path: string) => {
@@ -65,14 +66,46 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Auto-restore last workspace or create default on first launch
+  useEffect(() => {
+    async function autoInit() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY_PATH)
+
+        if (saved) {
+          // Returning user: verify the directory still exists
+          const exists = await invoke<boolean>("check_directory_exists", { path: saved })
+          if (exists) {
+            setWorkspace(saved)
+            return
+          }
+          // Directory gone — clear stale record
+          localStorage.removeItem(STORAGE_KEY_PATH)
+          setLastPath(null)
+        }
+
+        // First launch (or stale path cleared): create default workspace
+        const defaultPath = await invoke<string>("ensure_default_workspace")
+        setWorkspace(defaultPath)
+      } catch (err) {
+        console.error("Workspace auto-init failed:", err)
+        // Fall through to manual selection
+      } finally {
+        setInitializing(false)
+      }
+    }
+    autoInit()
+  }, [setWorkspace])
+
   const value = useMemo<WorkspaceContextValue>(() => ({
     workspacePath,
     confirmed,
+    initializing,
     lastPath,
     recentPaths,
     setWorkspace,
     removeRecent,
-  }), [workspacePath, confirmed, lastPath, recentPaths, setWorkspace, removeRecent])
+  }), [workspacePath, confirmed, initializing, lastPath, recentPaths, setWorkspace, removeRecent])
 
   return (
     <WorkspaceContext.Provider value={value}>

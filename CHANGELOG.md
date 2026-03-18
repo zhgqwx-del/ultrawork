@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 工作区自动恢复：启动时自动恢复上次工作区，无需每次手动确认
+- 默认工作区：首次安装自动创建 `~/.ultrawork/workspace/`，零配置即可使用
+- Tauri commands: `ensure_default_workspace`, `check_directory_exists`
 - 全新品牌 Logo：等轴测水晶棱镜设计（靛蓝→青色渐变），替换旧版字母 "U" 图标
 - Logo React 组件 `<Logo />`（`useId` 避免多实例 gradient ID 冲突），用于侧边栏 + Settings 关于页
 - 全平台应用图标更新：PNG/ICO/ICNS/iOS/Android 全尺寸（via `@tauri-apps/cli icon`）
