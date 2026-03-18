@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { useWorkspace } from "@/lib/workspace-context"
 
 export type BrowserMode = "playwright" | "devtools"
 
@@ -42,6 +43,8 @@ const BROWSER_MCP_NAME = "browser"
 export function useBrowserMCP(): BrowserMCPState {
   const api = useApi()
   const { t } = useI18n()
+  const { workspacePath, lastPath } = useWorkspace()
+  const effectivePath = workspacePath ?? lastPath
   const [env, setEnv] = useState<BrowserEnvInfo | null>(null)
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -93,15 +96,47 @@ export function useBrowserMCP(): BrowserMCPState {
 
   const registerMcp = useCallback(async (envInfo: BrowserEnvInfo, m: BrowserMode) => {
     const command = buildMcpCommand(envInfo, m)
-    await api.createMCP(BROWSER_MCP_NAME, {
-      type: "local",
-      command,
-      enabled: true,
-      timeout: 30000,
-    })
+    const config = { type: "local" as const, command, enabled: true, timeout: 30000 }
+    // Persist to opencode.json so OpenCode auto-connects on restart
+    if (effectivePath) {
+      await invoke("write_mcp_config", {
+        workspace: effectivePath,
+        name: BROWSER_MCP_NAME,
+        config,
+      })
+    }
+    await api.createMCP(BROWSER_MCP_NAME, config)
     // Explicitly connect after registration
     await api.connectMCP(BROWSER_MCP_NAME)
-  }, [api, buildMcpCommand])
+  }, [api, buildMcpCommand, effectivePath])
+
+  // Auto-restore: if MCP is installed but not connected in backend, re-register from config
+  useEffect(() => {
+    if (!env || !isInstalled || !effectivePath) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const mcpStatus = await api.getMCP()
+        if (cancelled) return
+        // Already connected — nothing to do
+        if (mcpStatus[BROWSER_MCP_NAME]?.status === "connected") return
+        // Check if config exists in opencode.json
+        const savedConfigs = await invoke<Record<string, unknown>>("read_mcp_config", { workspace: effectivePath })
+        if (cancelled) return
+        if (savedConfigs[BROWSER_MCP_NAME]) {
+          // Config exists but not connected — re-register
+          const command = buildMcpCommand(env, mode)
+          const config = { type: "local" as const, command, enabled: true, timeout: 30000 }
+          await api.createMCP(BROWSER_MCP_NAME, config)
+          await api.connectMCP(BROWSER_MCP_NAME)
+        }
+      } catch (err) {
+        console.error("Browser MCP auto-restore failed:", err)
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env, isInstalled, effectivePath])
 
   const setup = useCallback(async () => {
     if (!env) return
