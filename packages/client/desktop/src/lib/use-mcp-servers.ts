@@ -1,67 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from "react"
+import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { useWorkspace } from "@/lib/workspace-context"
 import type { MCPStatusMap, MCPConfig } from "@agent/api-client"
-
-const MCP_CONFIGS_KEY = "ultrawork_mcp_configs"
-const MCP_HIDDEN_KEY = "ultrawork_mcp_hidden"
-const MCP_STATUSES_KEY = "ultrawork_mcp_statuses"
-
-function loadSavedConfigs(): Record<string, MCPConfig> {
-  try {
-    const raw = localStorage.getItem(MCP_CONFIGS_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveConfigs(configs: Record<string, MCPConfig>) {
-  try {
-    localStorage.setItem(MCP_CONFIGS_KEY, JSON.stringify(configs))
-  } catch {}
-}
-
-function loadSavedStatuses(): MCPStatusMap {
-  try {
-    const raw = localStorage.getItem(MCP_STATUSES_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveSavedStatuses(statuses: MCPStatusMap) {
-  try {
-    localStorage.setItem(MCP_STATUSES_KEY, JSON.stringify(statuses))
-  } catch {}
-}
-
-function loadHiddenSet(): Set<string> {
-  try {
-    const raw = localStorage.getItem(MCP_HIDDEN_KEY)
-    return raw ? new Set(JSON.parse(raw)) : new Set()
-  } catch {
-    return new Set()
-  }
-}
-
-function saveHiddenSet(set: Set<string>) {
-  try {
-    localStorage.setItem(MCP_HIDDEN_KEY, JSON.stringify([...set]))
-  } catch {}
-}
 
 // Built-in MCP servers managed by dedicated UI (not shown in generic list)
 const BUILTIN_MCP_NAMES = new Set(["browser"])
 
-/** Filter out user-hidden servers and built-in servers from a backend response */
-function filterHidden(data: MCPStatusMap): MCPStatusMap {
-  const hidden = loadHiddenSet()
+/** Filter built-in servers from a backend response */
+function filterBuiltin(data: MCPStatusMap): MCPStatusMap {
   const filtered: MCPStatusMap = {}
   for (const [name, status] of Object.entries(data)) {
-    if (!hidden.has(name) && !BUILTIN_MCP_NAMES.has(name)) filtered[name] = status
+    if (!BUILTIN_MCP_NAMES.has(name)) filtered[name] = status
   }
   return filtered
 }
@@ -69,8 +21,12 @@ function filterHidden(data: MCPStatusMap): MCPStatusMap {
 export function useMCPServers() {
   const api = useApi()
   const { t } = useI18n()
+  const { workspacePath, lastPath } = useWorkspace()
+  // workspacePath is null until user confirms in WorkspaceSelector;
+  // fall back to lastPath (persisted in localStorage) for MCP config I/O
+  const effectivePath = workspacePath ?? lastPath
   const [statusMap, setStatusMap] = useState<MCPStatusMap>({})
-  const [configMap, setConfigMap] = useState<Record<string, MCPConfig>>(loadSavedConfigs)
+  const [configMap, setConfigMap] = useState<Record<string, MCPConfig>>({})
   const configMapRef = useRef(configMap)
   configMapRef.current = configMap
   const [loading, setLoading] = useState(true)
@@ -78,23 +34,22 @@ export function useMCPServers() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   const fetchMCP = useCallback(async () => {
+    if (!effectivePath) return
     try {
-      const raw = await api.getMCP()
-      const data = filterHidden(raw)
-      // Merge: backend active servers + locally saved disconnected servers
-      const saved = loadSavedConfigs()
-      const savedStatuses = loadSavedStatuses()
-      const hidden = loadHiddenSet()
-      const merged: MCPStatusMap = { ...data }
-      for (const name of Object.keys(saved)) {
-        if (!(name in merged) && !hidden.has(name) && !BUILTIN_MCP_NAMES.has(name)) {
-          // Use last-known status from localStorage instead of assuming "disabled".
-          // GET /mcp only reports config-file-based servers; dynamically added
-          // servers (POST /mcp) are in memory but not reported by the endpoint.
-          merged[name] = savedStatuses[name] ?? { status: "disabled" }
-        }
+      // 1. Backend runtime status (only reports config-file-based servers)
+      const backendStatus = await api.getMCP()
+      // 2. Persisted configs from opencode.json
+      const savedConfigs = await invoke<Record<string, MCPConfig>>("read_mcp_config", { workspace: effectivePath })
+      // 3. Merge: config is the source of truth for which MCPs exist;
+      //    backend provides runtime status for those that are connected
+      const merged: MCPStatusMap = {}
+      for (const [name, config] of Object.entries(savedConfigs)) {
+        if (BUILTIN_MCP_NAMES.has(name)) continue
+        const runtime = backendStatus[name]
+        merged[name] = runtime ?? (config.enabled === false ? { status: "disabled" } : { status: "disabled" })
       }
       setStatusMap(merged)
+      setConfigMap(savedConfigs)
       setError(false)
     } catch (err) {
       console.error("Failed to fetch MCP:", err)
@@ -102,39 +57,59 @@ export function useMCPServers() {
     } finally {
       setLoading(false)
     }
-  }, [api])
+  }, [api, effectivePath])
 
   useEffect(() => { fetchMCP() }, [fetchMCP])
 
+  // One-time migration: localStorage → opencode.json
+  useEffect(() => {
+    if (!effectivePath) return
+    const oldRaw = localStorage.getItem("ultrawork_mcp_configs")
+    if (!oldRaw) return
+    ;(async () => {
+      try {
+        const oldConfigs = JSON.parse(oldRaw) as Record<string, MCPConfig>
+        for (const [name, config] of Object.entries(oldConfigs)) {
+          await invoke("write_mcp_config", { workspace: effectivePath, name, config })
+        }
+        localStorage.removeItem("ultrawork_mcp_configs")
+        localStorage.removeItem("ultrawork_mcp_statuses")
+        localStorage.removeItem("ultrawork_mcp_hidden")
+        console.info("Migrated MCP configs from localStorage to opencode.json")
+        fetchMCP()
+      } catch (err) {
+        console.error("MCP config migration failed:", err)
+      }
+    })()
+  // Run once when workspace becomes available
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePath])
+
   const handleToggle = useCallback(async (name: string, currentStatus: string) => {
+    if (!effectivePath) return
     setActionLoading(name)
     try {
       if (currentStatus === "connected") {
         await api.disconnectMCP(name)
-        // Backend removes disconnected servers from GET /mcp response,
-        // so update locally to preserve the entry as "disabled"
-        setStatusMap(prev => ({ ...prev, [name]: { status: "disabled" } }))
-        // Persist disabled status
-        const ss = loadSavedStatuses()
-        ss[name] = { status: "disabled" }
-        saveSavedStatuses(ss)
-      } else {
-        // Backend forgets disconnected servers, so connectMCP(name) won't work.
-        // Re-create the server using stored config (createMCP adds + connects).
         const config = configMapRef.current[name]
         if (config) {
-          const raw = await api.createMCP(name, config)
-          const filtered = filterHidden(raw)
-          setStatusMap(prev => ({ ...prev, ...filtered }))
-          // Persist connected statuses
-          const ss = loadSavedStatuses()
-          for (const [k, v] of Object.entries(filtered)) ss[k] = v
-          saveSavedStatuses(ss)
-        } else {
-          // Fallback for servers loaded before we tracked configs
-          await api.connectMCP(name)
-          const raw = await api.getMCP()
-          setStatusMap(prev => ({ ...prev, ...filterHidden(raw) }))
+          await invoke("write_mcp_config", {
+            workspace: effectivePath, name,
+            config: { ...config, enabled: false },
+          })
+          setConfigMap(prev => ({ ...prev, [name]: { ...config, enabled: false } }))
+        }
+        setStatusMap(prev => ({ ...prev, [name]: { status: "disabled" } }))
+      } else {
+        const config = configMapRef.current[name]
+        if (config) {
+          await invoke("write_mcp_config", {
+            workspace: effectivePath, name,
+            config: { ...config, enabled: true },
+          })
+          setConfigMap(prev => ({ ...prev, [name]: { ...config, enabled: true } }))
+          const raw = await api.createMCP(name, { ...config, enabled: true })
+          setStatusMap(prev => ({ ...prev, ...filterBuiltin(raw) }))
         }
       }
     } catch (err) {
@@ -143,55 +118,38 @@ export function useMCPServers() {
     } finally {
       setActionLoading(null)
     }
-  }, [api, t])
+  }, [api, t, effectivePath])
 
   const handleAdd = useCallback(async (name: string, config: MCPConfig) => {
+    if (!effectivePath) return
     setActionLoading("__add__")
     try {
-      const raw = await api.createMCP(name, config)
-      // Persist config for reconnection across restarts
-      setConfigMap(prev => {
-        const newConfigs = { ...prev, [name]: config }
-        saveConfigs(newConfigs)
-        return newConfigs
-      })
-      // Un-hide this server if it was previously removed
-      const hidden = loadHiddenSet()
-      if (hidden.has(name)) {
-        hidden.delete(name)
-        saveHiddenSet(hidden)
-      }
-      const filtered = filterHidden(raw)
-      setStatusMap(prev => ({ ...prev, ...filtered }))
-      // Persist statuses so page navigation doesn't lose connected state.
-      // GET /mcp only reports config-file servers; dynamically added servers
-      // need localStorage to remember their status across re-mounts.
-      const ss = loadSavedStatuses()
-      for (const [k, v] of Object.entries(filtered)) ss[k] = v
-      saveSavedStatuses(ss)
+      const configWithEnabled = { ...config, enabled: true }
+      // 1. Persist to opencode.json
+      await invoke("write_mcp_config", { workspace: effectivePath, name, config: configWithEnabled })
+      // 2. Connect immediately via POST /mcp
+      const raw = await api.createMCP(name, configWithEnabled)
+      // 3. Update local state
+      setConfigMap(prev => ({ ...prev, [name]: configWithEnabled }))
+      setStatusMap(prev => ({ ...prev, ...filterBuiltin(raw) }))
     } catch (err) {
       console.error("Failed to add MCP:", err)
       toast.error(t("error.addMCP"))
-      throw err // Let caller know it failed
+      throw err
     } finally {
       setActionLoading(null)
     }
-  }, [api, t])
+  }, [api, t, effectivePath])
 
   const handleRemove = useCallback(async (name: string, currentStatus: string) => {
-    // If connected, disconnect from backend first
+    if (!effectivePath) return
+    // 1. Disconnect if connected
     if (currentStatus === "connected") {
-      try {
-        await api.disconnectMCP(name)
-      } catch {
-        // Ignore - we're removing it anyway
-      }
+      await api.disconnectMCP(name).catch(() => {})
     }
-    // Add to hidden set so backend responses won't resurrect it
-    const hidden = loadHiddenSet()
-    hidden.add(name)
-    saveHiddenSet(hidden)
-    // Remove from local state and localStorage
+    // 2. Remove from opencode.json
+    await invoke("remove_mcp_config", { workspace: effectivePath, name })
+    // 3. Update local state
     setStatusMap(prev => {
       const next = { ...prev }
       delete next[name]
@@ -200,14 +158,9 @@ export function useMCPServers() {
     setConfigMap(prev => {
       const next = { ...prev }
       delete next[name]
-      saveConfigs(next)
       return next
     })
-    // Clean up saved status
-    const ss = loadSavedStatuses()
-    delete ss[name]
-    saveSavedStatuses(ss)
-  }, [api])
+  }, [api, effectivePath])
 
   return {
     statusMap,

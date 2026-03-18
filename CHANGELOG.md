@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 产物面板：MCP 工具产物提取（input 参数 + output 文本），过滤 temp 路径和 data URI
 
 ### Changed
+- MCP 服务持久化从 localStorage 迁移到 `opencode.json`：通过 Tauri command 直接读写工作区配置文件，OpenCode 重启后自动连接，不依赖 WebView 缓存
+- Tauri commands 新增: `read_mcp_config`, `write_mcp_config`, `remove_mcp_config`
+- MCP 服务页面文案统一为「MCP 服务」（原「远程服务」「服务」不一致）
 - 隐藏面向开发者的内置命令 `/init`、`/review`，普通用户不再看到（skills-panel + command-selector + Settings 页统一过滤）
 - 任务追踪从线性 Round 编号迁移到 GitHub Issue# 标识，支持多人并行开发
 - CLAUDE.md 收尾流程从「轮次收尾」改为「任务收尾」，conventions.md last-synced 改用日期格式

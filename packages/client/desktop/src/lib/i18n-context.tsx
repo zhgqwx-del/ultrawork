@@ -33,7 +33,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPopover.models": "Model Management",
     "settingsPopover.workspace": "Workspace",
     "settingsPopover.channels": "Channels",
-    "settingsPopover.remote": "Remote Services",
+    "settingsPopover.remote": "MCP Services",
     "settingsPopover.help": "Help Docs",
     "settingsPopover.about": "About",
     "settingsPopover.skills": "Skills",
@@ -60,7 +60,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "About",
     "settingsPage.privacy.title": "Data & Privacy",
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
-    "settingsPage.services": "Services",
+    "settingsPage.services": "MCP Services",
     "settingsPage.channels": "Channels",
     "settingsPage.skills": "Skills",
     "settingsPage.capabilities.title": "Connection Settings",
@@ -217,7 +217,7 @@ const translations: Record<Language, Record<string, string>> = {
     "model.switchSuccess": "Model switched",
 
     // Services page
-    "services.title": "Remote Services",
+    "services.title": "MCP Services",
     "services.description": "Manage MCP servers that extend agent capabilities.",
     "services.connected": "connected",
     "services.serverName": "Server Name",
@@ -403,7 +403,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPopover.models": "模型管理",
     "settingsPopover.workspace": "工作区",
     "settingsPopover.channels": "渠道",
-    "settingsPopover.remote": "远程服务",
+    "settingsPopover.remote": "MCP 服务",
     "settingsPopover.help": "帮助文档",
     "settingsPopover.about": "关于",
     "settingsPopover.skills": "技能管理",
@@ -430,7 +430,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "关于",
     "settingsPage.privacy.title": "数据与隐私",
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
-    "settingsPage.services": "服务",
+    "settingsPage.services": "MCP 服务",
     "settingsPage.channels": "渠道",
     "settingsPage.skills": "技能",
     "settingsPage.capabilities.title": "连接设置",
@@ -587,7 +587,7 @@ const translations: Record<Language, Record<string, string>> = {
     "model.switchSuccess": "模型已切换",
 
     // Services page
-    "services.title": "远程服务",
+    "services.title": "MCP 服务",
     "services.description": "管理 MCP 服务，扩展 Agent 的能力。",
     "services.connected": "已连接",
     "services.serverName": "服务名称",

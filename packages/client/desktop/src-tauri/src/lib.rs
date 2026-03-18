@@ -666,6 +666,67 @@ fn detect_browser_env() -> BrowserEnvInfo {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MCP config persistence — read/write opencode.json `mcp` field directly
+// (avoids PATCH /config which triggers Instance.dispose and kills all MCPs)
+// ---------------------------------------------------------------------------
+
+fn opencode_json_path(workspace: &str) -> PathBuf {
+    PathBuf::from(workspace).join("opencode.json")
+}
+
+fn read_opencode_json(workspace: &str) -> Result<serde_json::Value, String> {
+    let path = opencode_json_path(workspace);
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
+}
+
+fn write_opencode_json(workspace: &str, root: &serde_json::Value) -> Result<(), String> {
+    let path = opencode_json_path(workspace);
+    let mut json = serde_json::to_string_pretty(root)
+        .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
+    json.push('\n');
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+#[tauri::command]
+fn read_mcp_config(workspace: String) -> Result<serde_json::Value, String> {
+    let root = read_opencode_json(&workspace)?;
+    Ok(root.get("mcp").cloned().unwrap_or(serde_json::json!({})))
+}
+
+#[tauri::command]
+fn write_mcp_config(workspace: String, name: String, config: serde_json::Value) -> Result<(), String> {
+    let mut root = read_opencode_json(&workspace)?;
+    let obj = root.as_object_mut()
+        .ok_or("opencode.json root is not an object")?;
+    let mcp = obj.entry("mcp")
+        .or_insert_with(|| serde_json::json!({}));
+    let mcp_obj = mcp.as_object_mut()
+        .ok_or("opencode.json mcp field is not an object")?;
+    mcp_obj.insert(name, config);
+    write_opencode_json(&workspace, &root)
+}
+
+#[tauri::command]
+fn remove_mcp_config(workspace: String, name: String) -> Result<(), String> {
+    let mut root = read_opencode_json(&workspace)?;
+    let obj = root.as_object_mut()
+        .ok_or("opencode.json root is not an object")?;
+    if let Some(mcp) = obj.get_mut("mcp") {
+        if let Some(mcp_obj) = mcp.as_object_mut() {
+            mcp_obj.remove(&name);
+            // Remove empty mcp field
+            if mcp_obj.is_empty() {
+                obj.remove("mcp");
+            }
+        }
+    }
+    write_opencode_json(&workspace, &root)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -683,6 +744,9 @@ pub fn run() {
             set_browser_mode,
             install_playwright_mcp,
             install_devtools_mcp,
+            read_mcp_config,
+            write_mcp_config,
+            remove_mcp_config,
         ])
         .setup(|app| {
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
