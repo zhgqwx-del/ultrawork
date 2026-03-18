@@ -1,6 +1,6 @@
 # Ultrawork 文档地图
 
-> 全部文档 41 个 Markdown 文件，按用途分四层：入口层、功能层、决策层、归档层。
+> 全部文档 43 个 Markdown 文件，按用途分四层：入口层、功能层、决策层、归档层。
 
 ## 目录树
 
@@ -35,11 +35,13 @@ ultrawork/
 │   │   ├── 008-sse-global-polling-fallback.md  # SSE 全局化 + 3s 轮询兜底（Round 5）
 │   │   ├── 009-artifact-preview-split.md  # 产物预览 50/50 分屏 + CodeMirror（Round 7）
 │   │   ├── 010-shared-hook-pattern.md #   共享 Hook 提取模式 useMCPServers/useSkills（Round 10）
-│   │   ├── 011-mcp-localstorage-persistence.md  # MCP 状态 localStorage 持久化（Round 11）
+│   │   ├── 011-mcp-localstorage-persistence.md  # MCP 状态 localStorage 持久化（Round 11, Superseded → opencode.json）
 │   │   ├── 012-optimistic-message-active-tracking.md  # 乐观消息 + 活跃状态追踪（Round 12）
 │   │   ├── 013-channel-gateway-sidecar.md  # Channel Gateway 独立 Sidecar 进程（Round 13）
 │   │   ├── 014-dingtalk-stream-sdk.md #   DingTalk Stream SDK 选型（Round 13）
-│   │   └── 015-dark-mode-codemirror.md  # 深色模式纯黑 + CodeMirror 6（Round 15）
+│   │   ├── 015-dark-mode-codemirror.md  # 深色模式纯黑 + CodeMirror 6（Round 15）
+│   │   ├── 016-browser-mcp-node-detection.md  # Browser MCP — 检测 Node.js + 按需安装（2026-03-15）
+│   │   └── 017-browser-mcp-dual-mode.md  # Browser MCP 双模式 — Playwright 默认 + DevTools 可选（2026-03-17）
 │   │
 │   └── archive/                       # ═══ 历史归档层 ═══
 │       ├── progress-raw.md            #   完整开发进度（2982 行，Phase 1 → Round 15 全部记录）
@@ -114,7 +116,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 7 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 16 | 架构师/新成员 | 有重大决策时新增 |
+| **决策层** | `docs/decisions/` | 18 | 架构师/新成员 | 有重大决策时新增 |
 | **归档层** | `docs/archive/` | 8 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 5+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | `.claude/memory/` (本地) | 3 | Claude Code | 每次 session |

@@ -82,10 +82,24 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 - 更新 `## Current Status` 区域，标记本次任务完成
 - 如果有新的 Key Files 或 API 发现，更新对应 section
 
-### Step 4: 新建 ADR（如有架构决策）
+### Step 4: 检查状态文档
+如果本次任务涉及**模块状态变更**（新模块实现、功能完成、技术迁移等），检查并更新以下文档中的过时标记：
+
+| 文档 | 检查内容 |
+|------|---------|
+| `docs/requirements.md` | 功能状态（`🔲→✅`、`[ ]→[x]`），已完成功能从"未实现"移到"已实现" |
+| `docs/architecture-phase1.md` | 顶部状态表 + Module Overview + Feature Summary + Data Flow |
+| `docs/decisions/README.md` | ADR 索引状态（新增条目、标记 Superseded 等） |
+| `docs/document-map.md` | 文件计数、新增文档条目 |
+| `docs/build-and-deploy.md` | 新 sidecar / 构建步骤变更 |
+| `docs/testing.md` | 测试描述中引用的技术细节是否过时 |
+
+> **判断标准**：如果只是 bug fix 或小改动，通常不需要更新状态文档。涉及新模块上线、持久化方案迁移、新 adapter 等里程碑式变更时才触发此步骤。
+
+### Step 5: 新建 ADR（如有架构决策）
 在 `docs/decisions/` 新建 ADR 文件，更新 `docs/decisions/README.md` 索引。
 
-### Step 5: 输出收尾摘要
+### Step 6: 输出收尾摘要
 告诉用户本次任务做了什么文档更新，例如：
 > 收尾完成：conventions.md 新增 2 条模式、CHANGELOG 已更新、新建 ADR-016。
 

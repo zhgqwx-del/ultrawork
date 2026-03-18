@@ -40,10 +40,10 @@
 | [008](./008-sse-global-polling-fallback.md) | SSE 全局化 + 轮询兜底 | Round 5 | Accepted |
 | [009](./009-artifact-preview-split.md) | 产物预览 50/50 分屏 | Round 7 | Accepted |
 | [010](./010-shared-hook-pattern.md) | 共享 Hook 提取模式 | Round 10 | Accepted |
-| [011](./011-mcp-localstorage-persistence.md) | MCP 状态 localStorage 持久化 | Round 11 | Accepted |
+| [011](./011-mcp-localstorage-persistence.md) | MCP 状态 localStorage 持久化 | Round 11 | Superseded (→ opencode.json, Issue#18) |
 | [012](./012-optimistic-message-active-tracking.md) | 乐观消息 + 活跃状态追踪 | Round 12 | Accepted |
-| [013](./013-channel-gateway-sidecar.md) | Channel Gateway 独立 Sidecar | Round 13 | Accepted |
-| [014](./014-dingtalk-stream-sdk.md) | DingTalk Stream SDK 选型 | Round 13 | Accepted |
+| [013](./013-channel-gateway-sidecar.md) | Channel Gateway 独立 Sidecar | Round 13 | Accepted (✅ 已实现) |
+| [014](./014-dingtalk-stream-sdk.md) | DingTalk Stream SDK 选型 | Round 13 | Accepted (✅ 已实现) |
 | [015](./015-dark-mode-codemirror.md) | 深色模式 + CodeMirror 6 | Round 15 | Accepted |
 | [016](./016-browser-mcp-node-detection.md) | Browser MCP — 检测 Node.js + 按需安装 | 2026-03-15 | Accepted |
 | [017](./017-browser-mcp-dual-mode.md) | Browser MCP 双模式 — Playwright 默认 + DevTools 可选 | 2026-03-17 | Accepted |

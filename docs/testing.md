@@ -106,8 +106,8 @@
 | `ConfigStorage.load` - 有存储 | 合并覆盖默认值 | P0 |
 | `ConfigStorage.load` - 空密码回退 | 空密码回退到默认 | P0 |
 | `ConfigStorage.load` - 无效 JSON | 返回默认配置 | P1 |
-| `ConfigStorage.save` | 正确写入 localStorage | P0 |
-| `ConfigStorage.reset` | 删除 localStorage 条目 | P0 |
+| `ConfigStorage.save` | 正确写入存储 | P0 |
+| `ConfigStorage.reset` | 删除存储条目 | P0 |
 
 ### 3.4 i18n 国际化 (`lib/i18n-context.tsx`)
 
@@ -125,11 +125,11 @@
 | 测试用例 | 描述 | 优先级 |
 |---------|------|--------|
 | 初始状态 - 无存储 | 空 Set | P0 |
-| 初始状态 - 有存储 | 从 localStorage 恢复 | P0 |
+| 初始状态 - 有存储 | 从存储恢复 | P0 |
 | `toggleFavorite` - 添加 | 添加到收藏 | P0 |
 | `toggleFavorite` - 移除 | 从收藏移除 | P0 |
 | `isFavorite` | 查询收藏状态 | P0 |
-| 持久化 | 变更后同步到 localStorage | P0 |
+| 持久化 | 变更后同步到存储 | P0 |
 
 ### 3.6 工具函数 (`lib/utils.ts`)
 
@@ -333,8 +333,8 @@
 > **C2 Bugfix — MCP 连接/断开/删除/持久化**:
 > - **Disconnect 后列表清空**: 后端 `GET /mcp` 不返回已断开的 server。修复: disconnect 后本地设 `disabled` 状态，不依赖后端返回。
 > - **Connect 无反应**: 后端断开后遗忘 server，`connectMCP(name)` 无效。修复: 存储 `configMap`，reconnect 时用 `createMCP` 重新注册。
-> - **重启后 MCP 丢失**: React state 重启即失。修复: `configMap` 持久化到 `localStorage`，启动时合并后端+本地数据。
-> - **已删除 server 复活**: 后端 `POST /mcp` 返回全量 map（含 mcp-auth.json 中残留的 server）。修复: 新增 `hiddenSet` (localStorage) 记录用户删除的 server，所有后端响应经 `filterHidden()` 过滤。
+> - **重启后 MCP 丢失**: React state 重启即失。修复: `configMap` 持久化到 `opencode.json`（通过 Tauri command 读写），启动时合并后端+本地数据。（注：最初用 localStorage，Issue#18 迁移到 opencode.json + 全局 `~/.config/opencode/opencode.json`）
+> - **已删除 server 复活**: 后端 `POST /mcp` 返回全量 map（含 mcp-auth.json 中残留的 server）。修复: 新增 `hiddenSet` 记录用户删除的 server，所有后端响应经 `filterHidden()` 过滤。
 > - **新增删除功能**: 非连接状态显示 Trash2 删除按钮，支持从列表移除不需要的 server。
 
 ### 4.5 产物与文件 — ✅ 全部通过 (2026-03-08)

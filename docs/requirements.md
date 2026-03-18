@@ -41,11 +41,11 @@ Monorepo 结构：
 | `@agent/ui` | `packages/core/ui` | 🔲 规划中 | 共享组件库（当前组件在 desktop 内） |
 | `@agent/workspace` | `packages/core/workspace` | 🔲 规划中 | ~/.ultrawork/ 目录管理 |
 | `@agent/notifier` | `packages/core/notifier` | 🔲 规划中 | 通知分发 |
-| `@agent/channel-gateway` | `packages/channel/gateway` | 🔲 Round 13 规划完成 | IM 集成网关（钉钉 Stream Mode，独立 sidecar 进程 :4097） |
+| `@agent/channel-gateway` | `packages/channel/gateway` | ✅ 已实现 | IM 集成网关（钉钉 Stream Mode，独立 sidecar 进程 :4097，配置持久化 `~/.ultrawork/channels.json`）|
 | `@agent/proactive-heartbeat` | `packages/proactive/heartbeat` | 🔲 规划中 | 心跳服务 |
 | `@agent/proactive-cron` | `packages/proactive/cron` | 🔲 规划中 | 定时任务服务 |
 
-## Phase 1 已实现功能 (Round 0 ~ Round 12)
+## Phase 1 已实现功能 (Round 0 ~ Issue#18)
 
 ### 核心聊天
 
@@ -113,8 +113,28 @@ Monorepo 结构：
 - [x] TypeScript 严格类型检查
 - [x] 47 项单元测试
 - [x] Tauri opener 插件（外部链接）
-- [x] MCP 状态 localStorage 持久化
+- [x] MCP 状态持久化（已从 localStorage 迁移到 opencode.json + 全局 `~/.config/opencode/opencode.json`）
 - [x] vendor opencode.json patch + sidecar 重编译
+
+### Channel Gateway (Issue#13-17)
+
+- [x] 渠道(Channels)配置 — 钉钉企业内部机器人 (dingtalk-stream WebSocket Stream Mode)
+- [x] IM Channel Gateway — 独立 sidecar 进程 :4097 + Hono HTTP API + Bridge 会话桥接
+- [x] Desktop Channels 设置页面 — ChannelsSection + use-channels hook
+- [x] Sidecar 启动健壮性 — 端口冲突检测 + 残留清理
+- [x] Gateway 配置持久化 — `~/.ultrawork/channels.json` + mutex + 重启自动恢复
+
+### Browser MCP (Issue#15-18)
+
+- [x] Browser MCP 双模式 — Playwright MCP 默认 + DevTools 可选
+- [x] 内嵌 Node.js v22 按需下载（`~/.ultrawork/node/`）
+- [x] MCP 持久化迁移 — localStorage → opencode.json + 全局 `~/.config/opencode/opencode.json`
+- [x] 浏览器 MCP 跨工作区自动恢复
+
+### 其他 (Issue#16-18)
+
+- [x] 品牌 Logo 设计 + 全平台图标 + in-app Logo 组件
+- [x] 隐藏内置开发者命令（/init, /review）
 
 ## Phase 1 未实现功能（规划中）
 
@@ -128,20 +148,19 @@ Monorepo 结构：
 - [ ] 收藏/重命名功能
 - [ ] Settings 隐私/能力配置页
 - [ ] Settings 工作目录管理页
-- [ ] 渠道(Channels)配置 — Round 13 规划完成: 钉钉企业内部机器人 (dingtalk-stream WebSocket)
-- [ ] IM Channel Gateway — Round 13 规划完成: 独立 sidecar 进程 + Hono HTTP API + Bridge 会话桥接
-- [ ] Desktop Channels 设置页面 — Round 13 规划完成: ChannelsSection + use-channels hook
-- [ ] Sidecar 启动健壮性 — Round 13 规划完成: 端口冲突检测 + 残留清理
+- [ ] Channel Gateway: Feishu/Slack adapter
+- [ ] Channel Gateway: Interactive card（权限交互卡片）
+- [ ] Channel Gateway: Message adaptation（平台特定格式化）
 - [ ] Agent Workspace (~/.ultrawork/ 目录，IDENTITY/SOUL/MEMORY)
 - [ ] Proactive Services（Heartbeat/Cron）
 - [ ] System Tray / 后台常驻
 - [ ] OS Keychain 凭证存储
 
-## Phase 2 规划: 钉钉 Channel (Round 13)
+## 钉钉 Channel 实现记录 (Issue#13) ✅ 已完成
 
 ### 目标
 
-实现钉钉企业内部机器人接入，用户可通过钉钉单聊/群聊与 OpenCode Agent 交互。
+实现钉钉企业内部机器人接入，用户可通过钉钉单聊/群聊与 OpenCode Agent 交互。**已实现。**
 
 ### 技术方案
 

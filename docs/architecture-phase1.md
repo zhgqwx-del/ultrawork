@@ -1,8 +1,8 @@
 # Desktop Agent - Phase 1 Architecture Design
 
-> **Implementation Status Note (2026-03-09)**
+> **Implementation Status Note (2026-03-18)**
 >
-> 本文档是 Phase 1 的完整架构设计。截至 Round 12，**Desktop Client** 部分已全面实现（12 轮迭代，30+ 组件），其余模块仍为规划状态。
+> 本文档是 Phase 1 的完整架构设计。截至 Issue#18，**Desktop Client** 和 **Channel Gateway (DingTalk)** 已全面实现，其余模块仍为规划状态。
 >
 > **已实现 vs 规划对照：**
 >
@@ -11,11 +11,11 @@
 > | Desktop Client (Tauri) | ✅ 已实现 | React 19 + Vite 7 + Tailwind 4（原设计为 SolidJS，实际采用 React） |
 > | @agent/api-client | ✅ 已实现 | TypeScript SDK，REST + SSE |
 > | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
-> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象 |
+> | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode, Bridge 会话桥接, Hono HTTP API, 配置持久化 `~/.ultrawork/channels.json` |
+> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
 > | @agent/notifier | 🔲 规划中 | |
-> | @agent/channel-gateway | 🔲 规划中 | |
 > | @agent/proactive-heartbeat | 🔲 规划中 | |
 > | @agent/proactive-cron | 🔲 规划中 | |
 >
@@ -25,6 +25,12 @@
 > - 状态管理：SolidJS Context → **React Context** (SidebarProvider, SessionsProvider, ConfigProvider, ThemeProvider, I18nProvider, WorkspaceProvider, SSEProvider, ModelProvider)
 > - 路由：**react-router-dom v7**
 >
+> **Desktop 后续新增功能（文档发布后实现）：**
+> - MCP 服务持久化：localStorage → `opencode.json` + 全局 `~/.config/opencode/opencode.json`，重启自动恢复
+> - Browser MCP：内嵌 Node.js v22 + Playwright MCP 默认 + DevTools 可选（`~/.ultrawork/node/` + `~/.ultrawork/mcp/`）
+> - 品牌 Logo：棱镜 SVG 设计 + 全平台图标 + in-app Logo 组件
+> - 内置命令隐藏：/init, /review 对普通用户不可见
+>
 > 已实现功能详见 `REQUIREMENTS.md` 和 `PROGRESS.md`。
 
 ## Overview
@@ -32,7 +38,7 @@
 A desktop-grade AI agent built on top of OpenCode's server capabilities. Phase 1 focuses on:
 
 - **Desktop Client (Tauri)**: ✅ Full-featured desktop application as the primary platform
-- **IM Channel Integrations**: 🔲 DingTalk, Feishu, Slack via Channel Gateway
+- **IM Channel Integrations**: ✅ DingTalk (Stream Mode) / 🔲 Feishu, Slack via Channel Gateway
 - **Local/Remote Mode Operation**: ✅ (local) / 🔲 (remote) OpenCode running as sidecar (Desktop) or remote server (Channels)
 - **Agent Workspace**: 🔲 Persistent identity, personality, and memory across sessions
 - **Proactive Services**: 🔲 Background heartbeat monitoring and scheduled LLM tasks
@@ -113,7 +119,7 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 | | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
 | | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
 | **Client** | `@agent/client-desktop` | ✅ Desktop Application - Full-featured Tauri app with local sidecar, React 19 + Vite 7 + Tailwind 4. |
-| **Channel** | `@agent/channel-gateway` | 🔲 Round 13 规划完成 — IM Gateway Service. 独立 sidecar :4097, DingTalk Stream Mode (WebSocket), Bridge 会话桥接, Hono HTTP API. |
+| **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket), Bridge 会话桥接, Hono HTTP API, 配置持久化 `~/.ultrawork/channels.json`. Feishu/Slack 待实现. |
 | **Proactive** | `@agent/proactive-heartbeat` | 🔲 Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
 | | `@agent/proactive-cron` | 🔲 Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
 
@@ -312,15 +318,18 @@ your-agent/
 │   │   │
 │   │   └── gateway/              # @agent/channel-gateway
 │   │       │
-│   │       │  [Functional Positioning] 🔲 Round 13 规划完成，待实现
+│   │       │  [Functional Positioning] ✅ 已实现 (DingTalk)
 │   │       │  IM platform integration gateway service.
 │   │       │  Bridges between IM platforms and OpenCode Server.
 │   │       │
-│   │       │  Round 13 架构决策 (2026-03):
+│   │       │  实现细节 (Issue#13-17 迭代):
 │   │       │  - 独立 sidecar 进程 (bun build --compile, :4097)
 │   │       │  - 与桌面端同生同死 (Tauri 托管)
-│   │       │  - 钉钉优先: dingtalk-stream v2.1.4 WebSocket Stream Mode
+│   │       │  - 钉钉: dingtalk-stream v2.1.4 WebSocket Stream Mode
 │   │       │  - 无需公网 IP / ngrok
+│   │       │  - 配置持久化: ~/.ultrawork/channels.json (mutex 防竞态)
+│   │       │  - 回复策略: sessionWebhook 优先 + REST API fallback
+│   │       │  - 安全策略: permission 自动批准 "once", question 自动拒绝
 │   │       │
 │   │       │  Handles:
 │   │       │  - DingTalk Stream Mode WebSocket connection (not webhook)
@@ -343,8 +352,11 @@ your-agent/
 │   │       │   │       ├── dingtalk-types.ts   # 钉钉消息结构
 │   │       │   │       └── token-manager.ts    # access_token 缓存+刷新
 │   │       │   └── adapters/     #   (预留: feishu/, slack/)
-│   │       ├── tests/
-│   │       │   └── channel-manager.test.ts
+│   │       ├── __tests__/
+│   │       │   ├── channel-manager.test.ts
+│   │       │   ├── config-store.test.ts
+│   │       │   ├── gateway-server.test.ts
+│   │       │   └── adapters/dingtalk/dingtalk-adapter.test.ts
 │   │       └── package.json      #   deps: @agent/api-client, dingtalk-stream, hono
 │   │
 │   │  =============================================
@@ -486,7 +498,7 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 | `@agent/workspace` | `core/workspace` | 🔲 Runtime ~/.ultrawork/ manager: identity, soul, memory, history, context assembly | none |
 | `@agent/notifier` | `core/notifier` | 🔲 Outbound notification dispatcher: desktop, IM webhooks, file | none (standalone) |
 | `@agent/client-desktop` | `client/desktop` | ✅ Tauri + React 19 app: full-featured, local sidecar | `@agent/api-client`, `@agent/server-manager` |
-| `@agent/channel-gateway` | `channel/gateway` | 🔲 Round 13 规划完成: DingTalk Stream Mode + Bridge + Hono API | `@agent/api-client` (直接复用，不依赖 connector) |
+| `@agent/channel-gateway` | `channel/gateway` | ✅ DingTalk Stream Mode + Bridge + Hono API + config 持久化。Feishu/Slack 待实现 | `@agent/api-client` (直接复用，不依赖 connector) |
 | `@agent/proactive-heartbeat` | `proactive/heartbeat` | 🔲 Background service: periodic LLM-powered progress summary + server watchdog | `@agent/connector`, `@agent/notifier`, `@agent/workspace` |
 | `@agent/proactive-cron` | `proactive/cron` | 🔲 Background service with HTTP API: scheduled LLM tasks, MCP tools | `@agent/connector`, `@agent/notifier` |
 
@@ -635,31 +647,49 @@ Session end
     -> workspace.appendHistory(sessionSummary)
 ```
 
-### IM Channels Flow (DingTalk / Feishu / Slack)
+### IM Channels Flow (DingTalk) ✅ 已实现
 
 ```
-Gateway startup
-  -> createConnector({ mode: "remote", remote: { baseUrl, apiKey } })
-    -> conn.connect()
+Gateway startup (index.ts)
+  -> new ChannelManager() + new Bridge()
+  -> manager.registerFactory("dingtalk", createDingTalkAdapter)
+  -> manager.setMessageHandler(bridge.handleMessage)
+  -> manager.init()  // 从 ~/.ultrawork/channels.json 加载配置，autoConnect 自动连接
+  -> Bun.serve(:4097)
 
 User sends message in DingTalk (IM)
   -> dingtalk-stream WebSocket (Stream Mode, no public IP needed)
-    -> channel-gateway DingTalk adapter receives
-      -> bridge: find/create session for chatId (senderId or "group:"+conversationId)
-        -> sequential queue: conn.client.promptAsync(sessionId)
-          -> stream-buffer collects SSE stream
-            -> renderer formats (card / markdown downgrade)
-              -> adapter.send()
-                -> IM platform API
-                  -> User sees response
+    -> DingTalkAdapter.handleRobotMessage()
+      -> ACK immediately (prevent server retry)
+      -> Parse RobotMessage → IncomingMessage
+      -> Route: single chat → senderId / group → "group:{conversationId}"
+    -> Bridge.handleMessage(msg)
+      -> enqueue(chatId, ...) — sequential queue per chat
+      -> getClient(workspaceDir) — per-workspace ApiClient (直连 api-client，不经 connector)
+      -> sessionMap: find/create OpenCode session for chatId
+      -> ensureSSE(workspaceDir) — per-workspace SSE connection (exponential backoff reconnect)
+      -> ensurePolling() — permission/question poll backup (3s interval)
+      -> client.promptAsync(sessionId, text)
+        -> SSE events accumulate text in textParts Map
+        -> session.status: idle → flushAndReply()
+          -> Merge textParts, truncate to 20KB (DingTalk limit)
+          -> msg.reply(content)
+            -> DingTalkAdapter.replyViaWebhook() (sessionWebhook, 30min TTL)
+              -> If webhook expired → fallback sendMessage() (REST API + access_token)
+                -> User sees response
 
-If permission requested:
-  -> renderer creates interactive card
-    -> IM platform sends card
-      -> User taps approve/deny
-        -> gateway receives callback
-          -> api-client.permissionReply()
+If permission requested (via SSE or poll):
+  -> Bridge auto-approves with "once" (no interactive card — IM 用户无法交互审批)
+If question asked:
+  -> Bridge auto-rejects (IM 场景不支持交互式问答)
+
+Note: 文档原设计的 interactive card 权限交互和 renderer 格式化尚未实现。
+      当前直接发送 markdown，由钉钉客户端渲染。
 ```
+
+### IM Channels Flow (Feishu / Slack) 🔲 规划中
+
+Feishu 和 Slack adapter 尚未实现，预留了 `adapters/` 目录结构。
 
 ## Agent Workspace
 
@@ -669,17 +699,25 @@ The Agent Workspace is a **runtime product feature** -- when the built software 
 
 ```
 ~/.ultrawork/                          # User's home directory
-├── config.json                        #   Global settings, version info
-├── IDENTITY.md                        #   Who the agent is (factual identity)
-├── SOUL.md                            #   How the agent behaves (personality & style)
-├── MEMORY.md                          #   Long-term factual memory (with dedup)
-├── HISTORY.md                         #   Chronological event log (rotated)
-├── credentials/                       #   API keys, tokens (gitignored)
-├── cache/                             #   Session cache, history archives
+├── channels.json                      #   ✅ Channel Gateway 配置持久化 (mutex 保护)
+├── node/                              #   ✅ 内嵌 Node.js v22 (Browser MCP 运行时)
+├── mcp/                               #   ✅ Browser MCP 安装目录
+│   ├── playwright/                    #     Playwright MCP server
+│   └── chrome-devtools/               #     Chrome DevTools MCP server
+├── config.json                        #   🔲 Global settings, version info
+├── IDENTITY.md                        #   🔲 Who the agent is (factual identity)
+├── SOUL.md                            #   🔲 How the agent behaves (personality & style)
+├── MEMORY.md                          #   🔲 Long-term factual memory (with dedup)
+├── HISTORY.md                         #   🔲 Chronological event log (rotated)
+├── credentials/                       #   🔲 API keys, tokens (gitignored)
+├── cache/                             #   🔲 Session cache, history archives
 │   └── HISTORY.2026-02-01.md          #   Archived history (rotated)
 └── opencode/
-    └── config.json                    #   OpenCode configuration
+    └── config.json                    #   🔲 OpenCode configuration
 ```
+
+> **注**: ✅ 标记的文件/目录已在实现中使用，🔲 标记的属于 @agent/workspace 规划，尚未实现。
+> 另有 MCP 全局配置存储在 `~/.config/opencode/opencode.json`（Browser MCP 跨工作区自动恢复）。
 
 ### Why Unified User-Level Directory?
 
@@ -1199,11 +1237,11 @@ The system adopts a **detach-on-exit** strategy: the Desktop App spawns OpenCode
 | OpenCode Server | **Resident** -- survives desktop exit, reattached on next launch | `server-manager` + process registry |
 | Heartbeat Service | **Resident** -- independent background process | self-managed, reads process registry |
 | Cron Service | **Resident** -- independent background process with HTTP API | self-managed, reads process registry |
-| Channel Gateway | **Resident** -- standalone service for IM webhooks | deployed independently (production) |
+| Channel Gateway | **Sidecar** -- Tauri 托管，与桌面端同生同死 | ✅ `server-manager` 管理 (bun build --compile, :4097)。实际为 Tauri sidecar，非独立部署 |
 
 ### Process Registry
 
-All managed processes register in `~/.ultrawork/daemon.json`. This is the single source of truth for process discovery.
+All managed processes register in `~/.ultrawork/daemon.json`. This is the single source of truth for process discovery. **🔲 尚未实现** — 当前 Desktop 和 Gateway 使用固定端口 (4096/4097)，无进程注册表。
 
 ```jsonc
 // ~/.ultrawork/daemon.json
@@ -1615,25 +1653,31 @@ async function saveLLMApiKey(provider: string, key: string) {
 | Permission Dialogs             | ✅ | Permission Dock + Question Dock (单选/多选) |
 | File Diff Viewing              | ✅ | ArtifactPreview 50/50 split-screen (code/md/image/diff) |
 | Model Management               | ✅ | ModelDialog + ModelSelector + prompt_async model override |
-| MCP Management                 | ✅ | MCP Panel + useMCPServers hook + localStorage 状态持久化 |
+| MCP Management                 | ✅ | MCP Panel + useMCPServers hook + opencode.json 持久化（已从 localStorage 迁移） |
 | Skills Panel                   | ✅ | 按来源分组 + 点击填入 + 管理入口 |
 | Workspace Directory            | ✅ | WorkspaceSelector + x-opencode-directory header |
 | Settings                       | ✅ | 通用/模型/远程服务/技能管理/关于/帮助/主题/语言 |
 | i18n                           | ✅ | 中英双语 |
+| Browser MCP                    | ✅ | 内嵌 Node.js v22 + Playwright MCP 默认 + DevTools 可选（~/.ultrawork/node/ + mcp/） |
+| Brand Logo                     | ✅ | 棱镜 SVG 设计 + 全平台图标 + in-app Logo 组件 |
+| Built-in Command Visibility    | ✅ | /init, /review 对普通用户隐藏 |
 | Credential Storage             | 🔲 | Secure OS keychain integration (当前用 OpenCode 内置 auth) |
 | Workspace (~/.ultrawork/)      | 🔲 | Project-bound agent workspace configuration |
 
-### Channel Gateway Features 🔲 全部规划中
+### Channel Gateway Features
 
-| Feature                        | Description                                           |
-|--------------------------------|-------------------------------------------------------|
-| DingTalk Integration           | Bot webhook, outgoing messages, interactive cards     |
-| Feishu Integration             | Bot webhook, outgoing messages, interactive cards     |
-| Slack Integration              | Bot webhook, outgoing messages, blocks                |
-| Session Pool                   | User-to-session mapping and lifecycle management      |
-| Stream Buffering               | Collect SSE stream for non-streaming IM APIs          |
-| Message Adaptation             | Markdown downgrade, platform-specific formatting      |
-| Interactive Cards              | Permission requests, confirmation dialogs             |
+| Feature                        | 状态 | Description                                           |
+|--------------------------------|------|-------------------------------------------------------|
+| DingTalk Integration           | ✅ | dingtalk-stream WebSocket Stream Mode, sessionWebhook reply + REST API fallback |
+| Feishu Integration             | 🔲 | Bot webhook, outgoing messages, interactive cards     |
+| Slack Integration              | 🔲 | Bot webhook, outgoing messages, blocks                |
+| Session Pool (chatId→session)  | ✅ | Bridge.sessionMap 内存映射 + sequential queue per chat（未持久化，重启后新建 session） |
+| Stream Buffering               | ✅ | Bridge.textParts 按 partID 累积 + idle flush + 3min timeout fallback |
+| Config Persistence             | ✅ | ~/.ultrawork/channels.json + mutex 防竞态 + 重启自动恢复 autoConnect |
+| Gateway HTTP API               | ✅ | Hono 6 端点: CRUD + connect/disconnect + health (CORS 仅限 Tauri/dev) |
+| Permission Auto-handling       | ✅ | SSE + poll 双通道，自动批准 "once" + 自动拒绝 question |
+| Message Adaptation             | 🔲 | 当前直接发 markdown，未做平台特定格式化 |
+| Interactive Cards              | 🔲 | Permission/question 交互卡片（当前自动处理，不发卡片） |
 
 ### Agent Workspace Features 🔲 全部规划中
 
@@ -1690,16 +1734,17 @@ async function saveLLMApiKey(provider: string, key: string) {
 
 ### Channel Gateway (P1)
 
-| Feature                              | Complexity |
-|--------------------------------------|------------|
-| Gateway HTTP server + health check   | Low        |
-| DingTalk adapter                     | Medium     |
-| Feishu adapter                       | Medium     |
-| Slack adapter                        | Medium     |
-| Session pool management              | Medium     |
-| Stream buffering                     | Medium     |
-| Interactive card renderer            | Medium     |
-| Markdown format adaptation           | Low        |
+| Feature                              | Complexity | 状态 |
+|--------------------------------------|------------|------|
+| Gateway HTTP server + health check   | Low        | ✅ |
+| DingTalk adapter                     | Medium     | ✅ |
+| Session pool management (Bridge)     | Medium     | ✅ |
+| Stream buffering                     | Medium     | ✅ |
+| Config persistence + auto-reconnect  | Low        | ✅ |
+| Feishu adapter                       | Medium     | 🔲 |
+| Slack adapter                        | Medium     | 🔲 |
+| Interactive card renderer            | Medium     | 🔲 |
+| Markdown format adaptation           | Low        | 🔲 |
 
 ### Proactive Services (P2)
 

@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-03-10 -->
+<!-- last-synced: 2026-03-18 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -10,6 +10,7 @@
 - 路径别名 `@/` → `packages/client/desktop/src/`
 - 所有脚本用 `bun run --bun` 执行（系统 Node.js v14 不兼容）
 - MCP 本地服务器必须用 `bunx --bun`（不能用 `npx`，会导致 stdio pipe 断裂）
+- Browser MCP 使用内嵌 Node.js（`~/.ultrawork/node/`），npm 安装必须用 `node npm-cli.js install`（不能直接调 `bin/npm`，symlink 相对路径断裂）
 
 ### UI 组件
 - 遵循 shadcn/ui 模式：Radix 无样式原语 + Tailwind CSS 4
@@ -169,3 +170,22 @@ bun run --bun scripts/build-gateway.ts  # 编译并复制到 src-tauri/binaries/
 bun run --bun tauri build               # 打包 DMG
 ```
 注意：仅 `turbo run build` 会编译到 `gateway/dist/`，**不会**更新 sidecar binaries 目录。
+
+## 7. MCP 持久化
+
+### 存储迁移（Issue#18）
+MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri command 读写工作区配置文件）。浏览器 MCP 全局配置存储在 `~/.config/opencode/opencode.json`，跨工作区自动恢复。
+
+### Browser MCP 双模式
+- **Playwright MCP**（默认）：`~/.ultrawork/mcp/playwright/`
+- **Chrome DevTools MCP**（可选）：`~/.ultrawork/mcp/chrome-devtools/`
+- Node.js 运行时：`~/.ultrawork/node/`（按需下载 v22）
+- MCP 注册名 `browser` + 工具名 `browser_take_screenshot` → 实际调用名为 `browser_browser_take_screenshot`（前缀叠加）
+
+## 8. 内置命令可见性
+
+面向开发者的内置命令（`/init`, `/review`）通过前端过滤对普通用户隐藏，不在 CommandSelector 和 Skills Panel 中显示。过滤逻辑在 `command-selector.tsx` 和 `use-skills.ts` 中。
+
+## 9. Logo 组件
+
+品牌 Logo 使用 SVG 棱镜设计（`src/components/ui/logo.tsx`）。组件内部使用 `useId()` 为 SVG gradient 生成唯一 ID，防止同页面多实例时 gradient ID 冲突。

@@ -87,7 +87,8 @@ xcrun notarytool store-credentials "ultrawork-notarize" \
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/opencode-server"
+      "binaries/opencode-server",
+      "binaries/opencode-gateway"
     ],
     "macOS": {
       "signingIdentity": null,
@@ -149,11 +150,16 @@ cd /Users/zhangguoqiang/ai-workspace/claude-workspace/ultrawork01/ultrawork
 # ---- Step 1: 安装依赖 ----
 bun install
 
-# ---- Step 2: 构建 Sidecar ----
+# ---- Step 2: 构建 Sidecar (OpenCode + Gateway) ----
 bun run build:opencode
 # 验证：
 ls -lh packages/client/desktop/src-tauri/binaries/opencode-server-aarch64-apple-darwin
 # 应为 ~114MB
+
+bun run build:gateway
+# 验证：
+ls -lh packages/client/desktop/src-tauri/binaries/opencode-gateway-aarch64-apple-darwin
+# 应为 ~61MB
 
 # ---- Step 3: 构建前端 ----
 cd packages/client/desktop
