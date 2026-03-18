@@ -676,9 +676,11 @@ fn opencode_json_path(workspace: &str) -> PathBuf {
 }
 
 fn global_config_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config"))
-        .join("opencode")
+    // Must match OpenCode's xdg-basedir: XDG_CONFIG_HOME or ~/.config (NOT ~/Library/Application Support on macOS)
+    match std::env::var("XDG_CONFIG_HOME") {
+        Ok(val) if !val.is_empty() => PathBuf::from(val).join("opencode"),
+        _ => dirs::home_dir().unwrap().join(".config").join("opencode"),
+    }
 }
 
 #[tauri::command]

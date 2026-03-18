@@ -114,7 +114,7 @@ export function useBrowserMCP(): BrowserMCPState {
     await api.connectMCP(BROWSER_MCP_NAME)
   }, [api, buildMcpCommand, globalConfigDir])
 
-  // Auto-restore: if MCP is installed but not connected in backend, re-register from config
+  // Auto-restore: if MCP is installed but not connected in backend, register and persist
   useEffect(() => {
     if (!env || !isInstalled || !globalConfigDir) return
     let cancelled = false
@@ -124,16 +124,8 @@ export function useBrowserMCP(): BrowserMCPState {
         if (cancelled) return
         // Already connected — nothing to do
         if (mcpStatus[BROWSER_MCP_NAME]?.status === "connected") return
-        // Check if config exists in opencode.json
-        const savedConfigs = await invoke<Record<string, unknown>>("read_mcp_config", { workspace: globalConfigDir })
-        if (cancelled) return
-        if (savedConfigs[BROWSER_MCP_NAME]) {
-          // Config exists but not connected — re-register
-          const command = buildMcpCommand(env, mode)
-          const config = { type: "local" as const, command, enabled: true, timeout: 30000 }
-          await api.createMCP(BROWSER_MCP_NAME, config)
-          await api.connectMCP(BROWSER_MCP_NAME)
-        }
+        // Not connected — register (this also persists to global config)
+        await registerMcp(env, mode)
       } catch (err) {
         console.error("Browser MCP auto-restore failed:", err)
       }
