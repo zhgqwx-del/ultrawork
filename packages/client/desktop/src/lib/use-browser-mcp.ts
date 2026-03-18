@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
-import { useWorkspace } from "@/lib/workspace-context"
 
 export type BrowserMode = "playwright" | "devtools"
 
@@ -43,21 +42,26 @@ const BROWSER_MCP_NAME = "browser"
 export function useBrowserMCP(): BrowserMCPState {
   const api = useApi()
   const { t } = useI18n()
-  const { workspacePath, lastPath } = useWorkspace()
-  const effectivePath = workspacePath ?? lastPath
+  const [globalConfigDir, setGlobalConfigDir] = useState<string | null>(null)
   const [env, setEnv] = useState<BrowserEnvInfo | null>(null)
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(true)
   const [switchingMode, setSwitchingMode] = useState(false)
 
-  // Detect environment on mount
+  // Detect environment and global config dir on mount
   useEffect(() => {
     let cancelled = false
     async function detect() {
       try {
-        const info = await invoke<BrowserEnvInfo>("detect_browser_env")
-        if (!cancelled) setEnv(info)
+        const [info, configDir] = await Promise.all([
+          invoke<BrowserEnvInfo>("detect_browser_env"),
+          invoke<string>("get_global_config_dir"),
+        ])
+        if (!cancelled) {
+          setEnv(info)
+          setGlobalConfigDir(configDir)
+        }
       } catch (err) {
         console.error("Browser MCP detection failed:", err)
       } finally {
@@ -98,9 +102,9 @@ export function useBrowserMCP(): BrowserMCPState {
     const command = buildMcpCommand(envInfo, m)
     const config = { type: "local" as const, command, enabled: true, timeout: 30000 }
     // Persist to opencode.json so OpenCode auto-connects on restart
-    if (effectivePath) {
+    if (globalConfigDir) {
       await invoke("write_mcp_config", {
-        workspace: effectivePath,
+        workspace: globalConfigDir,
         name: BROWSER_MCP_NAME,
         config,
       })
@@ -108,11 +112,11 @@ export function useBrowserMCP(): BrowserMCPState {
     await api.createMCP(BROWSER_MCP_NAME, config)
     // Explicitly connect after registration
     await api.connectMCP(BROWSER_MCP_NAME)
-  }, [api, buildMcpCommand, effectivePath])
+  }, [api, buildMcpCommand, globalConfigDir])
 
   // Auto-restore: if MCP is installed but not connected in backend, re-register from config
   useEffect(() => {
-    if (!env || !isInstalled || !effectivePath) return
+    if (!env || !isInstalled || !globalConfigDir) return
     let cancelled = false
     ;(async () => {
       try {
@@ -121,7 +125,7 @@ export function useBrowserMCP(): BrowserMCPState {
         // Already connected — nothing to do
         if (mcpStatus[BROWSER_MCP_NAME]?.status === "connected") return
         // Check if config exists in opencode.json
-        const savedConfigs = await invoke<Record<string, unknown>>("read_mcp_config", { workspace: effectivePath })
+        const savedConfigs = await invoke<Record<string, unknown>>("read_mcp_config", { workspace: globalConfigDir })
         if (cancelled) return
         if (savedConfigs[BROWSER_MCP_NAME]) {
           // Config exists but not connected — re-register
@@ -136,7 +140,7 @@ export function useBrowserMCP(): BrowserMCPState {
     })()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [env, isInstalled, effectivePath])
+  }, [env, isInstalled, globalConfigDir])
 
   const setup = useCallback(async () => {
     if (!env) return

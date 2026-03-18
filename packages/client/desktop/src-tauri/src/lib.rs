@@ -675,6 +675,17 @@ fn opencode_json_path(workspace: &str) -> PathBuf {
     PathBuf::from(workspace).join("opencode.json")
 }
 
+fn global_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config"))
+        .join("opencode")
+}
+
+#[tauri::command]
+fn get_global_config_dir() -> String {
+    global_config_dir().to_string_lossy().to_string()
+}
+
 fn read_opencode_json(workspace: &str) -> Result<serde_json::Value, String> {
     let path = opencode_json_path(workspace);
     let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
@@ -747,6 +758,7 @@ pub fn run() {
             read_mcp_config,
             write_mcp_config,
             remove_mcp_config,
+            get_global_config_dir,
         ])
         .setup(|app| {
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
