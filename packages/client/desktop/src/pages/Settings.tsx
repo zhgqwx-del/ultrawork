@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
+import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio } from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
@@ -12,6 +13,12 @@ import { useChannels } from "@/lib/use-channels"
 import { useSkills } from "@/lib/use-skills"
 import { useWorkspace } from "@/lib/workspace-context"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig } from "@agent/api-client"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
@@ -391,7 +398,7 @@ function ServicesSection() {
     statusMap, configMap, loading, error, actionLoading,
     handleToggle, handleAdd, handleRemove, refresh,
   } = useMCPServers()
-  const [showAdd, setShowAdd] = useState(false)
+  const [addMode, setAddMode] = useState<"none" | "manual" | "json">("none")
   const [refreshing, setRefreshing] = useState(false)
 
   const entries = Object.entries(statusMap)
@@ -405,9 +412,43 @@ function ServicesSection() {
   const onAdd = async (name: string, config: MCPConfig) => {
     try {
       await handleAdd(name, config)
-      setShowAdd(false)
+      setAddMode("none")
     } catch {
       // error already toasted by hook
+    }
+  }
+
+  const [jsonImporting, setJsonImporting] = useState(false)
+
+  const onJsonImport = async (servers: Record<string, MCPConfig>) => {
+    const existingNames = new Set(Object.keys(statusMap))
+    let imported = 0
+    let skipped = 0
+    setJsonImporting(true)
+    try {
+      for (const [name, config] of Object.entries(servers)) {
+        if (existingNames.has(name)) {
+          skipped++
+          continue
+        }
+        try {
+          await handleAdd(name, config)
+          imported++
+        } catch {
+          // error already toasted by hook
+        }
+      }
+      if (imported > 0) {
+        toast.success(t("mcp.jsonImportSuccess").replace("{count}", String(imported)))
+      }
+      if (skipped > 0) {
+        toast.info(t("mcp.jsonImportSkipped").replace("{count}", String(skipped)))
+      }
+      if (imported > 0 || skipped === Object.keys(servers).length) {
+        setAddMode("none")
+      }
+    } finally {
+      setJsonImporting(false)
     }
   }
 
@@ -431,22 +472,46 @@ function ServicesSection() {
             <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
             {t("workspace.refresh")}
           </Button>
-          <Button size="sm" onClick={() => setShowAdd(true)} disabled={showAdd}>
-            <Plus className="mr-1.5 size-3.5" />
-            {t("mcp.addServer")}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={addMode !== "none"}>
+                <Plus className="mr-1.5 size-3.5" />
+                {t("mcp.addServer")}
+                <ChevronDown className="ml-1.5 size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setAddMode("manual")}>
+                <Plus className="mr-2 size-4" />
+                {t("mcp.addManual")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setAddMode("json")}>
+                <FileJson className="mr-2 size-4" />
+                {t("mcp.addJsonImport")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
       {/* Built-in: Browser MCP */}
       <BrowserServiceCard />
 
-      {/* Add form */}
-      {showAdd && (
+      {/* Add form (manual) */}
+      {addMode === "manual" && (
         <ServiceAddForm
           onAdd={onAdd}
-          onCancel={() => setShowAdd(false)}
+          onCancel={() => setAddMode("none")}
           loading={actionLoading === "__add__"}
+        />
+      )}
+
+      {/* JSON import form */}
+      {addMode === "json" && (
+        <JsonImportForm
+          onImport={onJsonImport}
+          onCancel={() => setAddMode("none")}
+          loading={jsonImporting}
         />
       )}
 
@@ -465,11 +530,11 @@ function ServicesSection() {
       )}
 
       {/* Empty state */}
-      {!loading && !error && entries.length === 0 && !showAdd && (
+      {!loading && !error && entries.length === 0 && addMode === "none" && (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
           <Server className="size-10 text-[var(--color-fg-muted)]" />
           <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("mcp.noServers")}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowAdd(true)}>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setAddMode("manual")}>
             <Plus className="mr-1.5 size-3.5" />
             {t("mcp.addServer")}
           </Button>
@@ -602,6 +667,63 @@ function ServiceCard({
   )
 }
 
+function KeyValueEditor({
+  entries,
+  onChange,
+  namePlaceholder,
+  valuePlaceholder,
+  addLabel,
+  removeLabel,
+}: {
+  entries: Array<{ key: string; value: string }>
+  onChange: (entries: Array<{ key: string; value: string }>) => void
+  namePlaceholder: string
+  valuePlaceholder: string
+  addLabel: string
+  removeLabel: string
+}) {
+  const addEntry = () => onChange([...entries, { key: "", value: "" }])
+  const removeEntry = (idx: number) => onChange(entries.filter((_, i) => i !== idx))
+  const updateEntry = (idx: number, field: "key" | "value", val: string) => {
+    const next = entries.map((e, i) => (i === idx ? { ...e, [field]: val } : e))
+    onChange(next)
+  }
+
+  return (
+    <div className="space-y-2">
+      {entries.map((entry, idx) => (
+        <div key={idx} className="flex items-center gap-2">
+          <input
+            value={entry.key}
+            onChange={(e) => updateEntry(idx, "key", e.target.value)}
+            placeholder={namePlaceholder}
+            className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+          <input
+            value={entry.value}
+            onChange={(e) => updateEntry(idx, "value", e.target.value)}
+            placeholder={valuePlaceholder}
+            className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+          <button
+            onClick={() => removeEntry(idx)}
+            className="rounded p-1.5 text-[var(--color-fg-muted)] transition-colors hover:bg-red-500/10 hover:text-red-500"
+            title={removeLabel}
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={addEntry}
+        className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+      >
+        + {addLabel}
+      </button>
+    </div>
+  )
+}
+
 function ServiceAddForm({
   onAdd,
   onCancel,
@@ -616,16 +738,36 @@ function ServiceAddForm({
   const [type, setType] = useState<"local" | "remote">("remote")
   const [url, setUrl] = useState("")
   const [command, setCommand] = useState("")
+  const [headers, setHeaders] = useState<Array<{ key: string; value: string }>>([])
+  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
 
   const canSubmit = name.trim() && (type === "remote" ? url.trim() : command.trim())
 
   const handleSubmit = () => {
     if (!canSubmit) return
-    const config: MCPConfig =
-      type === "remote"
-        ? { type: "remote", url: url.trim() }
-        : { type: "local", command: command.trim().split(/\s+/) }
-    onAdd(name.trim(), config)
+    if (type === "remote") {
+      const headersRecord = headers.reduce<Record<string, string>>((acc, h) => {
+        if (h.key.trim()) acc[h.key.trim()] = h.value
+        return acc
+      }, {})
+      const config: MCPConfig = {
+        type: "remote",
+        url: url.trim(),
+        ...(Object.keys(headersRecord).length > 0 && { headers: headersRecord }),
+      }
+      onAdd(name.trim(), config)
+    } else {
+      const envRecord = envVars.reduce<Record<string, string>>((acc, e) => {
+        if (e.key.trim()) acc[e.key.trim()] = e.value
+        return acc
+      }, {})
+      const config: MCPConfig = {
+        type: "local",
+        command: command.trim().split(/\s+/),
+        ...(Object.keys(envRecord).length > 0 && { environment: envRecord }),
+      }
+      onAdd(name.trim(), config)
+    }
   }
 
   return (
@@ -669,26 +811,66 @@ function ServiceAddForm({
         </div>
 
         {type === "remote" ? (
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverUrl")}</label>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://mcp-server.example.com"
-              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-            />
-          </div>
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverUrl")}</label>
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://mcp-server.example.com"
+                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              />
+            </div>
+
+            {/* Headers */}
+            <div className="space-y-2 rounded-lg border border-dashed border-[var(--color-border)] p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.headers")}</label>
+                  <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.headersHint")}</p>
+                </div>
+              </div>
+              <KeyValueEditor
+                entries={headers}
+                onChange={setHeaders}
+                namePlaceholder={t("mcp.headerName")}
+                valuePlaceholder={t("mcp.headerValue")}
+                addLabel={t("mcp.addHeader")}
+                removeLabel={t("mcp.headerRemove")}
+              />
+            </div>
+          </>
         ) : (
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverCommand")}</label>
-            <input
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="bunx --bun @mcp/server"
-              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-            />
-            <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.hintBunx")}</p>
-          </div>
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--color-fg)]">{t("services.serverCommand")}</label>
+              <input
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="bunx --bun @mcp/server"
+                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              />
+              <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.hintBunx")}</p>
+            </div>
+
+            {/* Environment variables */}
+            <div className="space-y-2 rounded-lg border border-dashed border-[var(--color-border)] p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.environment")}</label>
+                  <p className="text-xs text-[var(--color-fg-muted)]">{t("mcp.environmentHint")}</p>
+                </div>
+              </div>
+              <KeyValueEditor
+                entries={envVars}
+                onChange={setEnvVars}
+                namePlaceholder={t("mcp.envVarName")}
+                valuePlaceholder={t("mcp.envVarValue")}
+                addLabel={t("mcp.addEnvVar")}
+                removeLabel={t("mcp.headerRemove")}
+              />
+            </div>
+          </>
         )}
 
         <div className="flex justify-end gap-2">
@@ -696,6 +878,121 @@ function ServiceAddForm({
           <Button onClick={handleSubmit} disabled={!canSubmit || loading}>
             {loading && <Loader2 className="mr-1.5 size-4 animate-spin" />}
             {t("mcp.add")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function JsonImportForm({
+  onImport,
+  onCancel,
+  loading,
+}: {
+  onImport: (servers: Record<string, MCPConfig>) => Promise<void> | void
+  onCancel: () => void
+  loading: boolean
+}) {
+  const { t } = useI18n()
+  const [json, setJson] = useState("")
+  const [parseError, setParseError] = useState("")
+
+  const handleImport = () => {
+    setParseError("")
+    try {
+      const parsed = JSON.parse(json)
+      // Support both { mcpServers: { ... } } and direct { name: config } format
+      const servers: Record<string, any> = parsed.mcpServers ?? parsed
+      if (typeof servers !== "object" || Array.isArray(servers)) {
+        setParseError(t("mcp.jsonImportError"))
+        return
+      }
+
+      // Convert to our MCPConfig format
+      const result: Record<string, MCPConfig> = {}
+      for (const [name, raw] of Object.entries(servers)) {
+        if (typeof raw !== "object" || !raw) continue
+        const entry = raw as Record<string, any>
+
+        if (entry.url && typeof entry.url === "string") {
+          // Remote server
+          const hdrs = entry.headers && typeof entry.headers === "object"
+            ? entry.headers as Record<string, string>
+            : undefined
+          result[name] = { type: "remote", url: entry.url, ...(hdrs && { headers: hdrs }) }
+        } else if (entry.command) {
+          // Local server — handle both `command: string` + `args: string[]` and `command: string[]`
+          let cmdArray: string[]
+          if (Array.isArray(entry.command)) {
+            cmdArray = entry.command.map(String)
+          } else {
+            cmdArray = [String(entry.command), ...(Array.isArray(entry.args) ? entry.args.map(String) : [])]
+          }
+          const env = entry.environment && typeof entry.environment === "object"
+            ? entry.environment as Record<string, string>
+            : entry.env && typeof entry.env === "object"
+            ? entry.env as Record<string, string>
+            : undefined
+          result[name] = { type: "local", command: cmdArray, ...(env && { environment: env }) }
+        }
+      }
+
+      if (Object.keys(result).length === 0) {
+        setParseError(t("mcp.jsonImportError"))
+        return
+      }
+
+      onImport(result)
+    } catch {
+      setParseError(t("mcp.jsonImportError"))
+    }
+  }
+
+  const placeholder = `{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "mcp-server-example"]
+    }
+  }
+}`
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.jsonImportTitle")}</h3>
+        <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-[var(--color-fg)]">{t("mcp.jsonImportLabel")}</label>
+          <textarea
+            value={json}
+            onChange={(e) => { setJson(e.target.value); setParseError("") }}
+            placeholder={placeholder}
+            rows={10}
+            className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+          />
+          <p className="text-xs text-green-600 dark:text-green-400">{t("mcp.jsonImportHint")}</p>
+        </div>
+
+        {parseError && (
+          <div className="flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+            <AlertCircle className="size-3.5 shrink-0" />
+            <span>{parseError}</span>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>{t("button.cancel")}</Button>
+          <Button onClick={handleImport} disabled={!json.trim() || loading}>
+            {loading && <Loader2 className="mr-1.5 size-4 animate-spin" />}
+            <FileJson className="mr-1.5 size-4" />
+            {t("mcp.jsonImportButton")}
           </Button>
         </div>
       </div>
