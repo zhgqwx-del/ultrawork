@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { Folder, FolderOpen, FileText, ChevronRight, ChevronDown, RefreshCw } from "lucide-react"
+import { Folder, FolderOpen, ChevronRight, ChevronDown, RefreshCw } from "lucide-react"
+import { FileIcon } from "@/components/ui/file-icon"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import type { FileEntry, FileStatusEntry } from "@agent/api-client"
@@ -82,7 +83,7 @@ function FileTreeItem({
         ) : (
           <>
             <span className="size-3 shrink-0" />
-            <FileText className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+            <FileIcon filename={entry.name} size={14} />
           </>
         )}
         <span className="min-w-0 flex-1 truncate text-[var(--color-fg)]">{entry.name}</span>

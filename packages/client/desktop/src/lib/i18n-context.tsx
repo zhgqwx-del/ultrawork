@@ -334,6 +334,9 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.noContent": "No content",
     "artifact.noChanges": "No changes",
     "artifact.diff": "Diff",
+    "artifact.revealInFinder": "Show in Finder",
+    "artifact.openInBrowser": "Open in Browser",
+    "artifact.openWithApp": "Open with App",
 
     // Workspace selector
     "workspace.selectTitle": "Select Workspace",
@@ -704,6 +707,9 @@ const translations: Record<Language, Record<string, string>> = {
     "artifact.noContent": "无内容",
     "artifact.noChanges": "暂无变更",
     "artifact.diff": "差异",
+    "artifact.revealInFinder": "在 Finder 中显示",
+    "artifact.openInBrowser": "在浏览器中打开",
+    "artifact.openWithApp": "用应用打开",
 
     // Workspace selector
     "workspace.selectTitle": "选择工作区",

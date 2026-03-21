@@ -1,9 +1,10 @@
 import { useMemo } from "react"
-import { FileText, FileDiff, FileImage, File } from "lucide-react"
+import { FileDiff } from "lucide-react"
 import type { SendMessageResponse, FilePart, PatchPart, ToolPart } from "@agent/api-client"
 import type { Artifact } from "./artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
+import { FileIcon } from "@/components/ui/file-icon"
 
 interface ArtifactsPanelProps {
   messages: SendMessageResponse[]
@@ -143,13 +144,9 @@ function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: strin
   return artifacts
 }
 
-const IMAGE_EXTS = /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i
-
 function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-3.5 shrink-0 text-blue-500" />
-  if (artifact.mime?.startsWith("image/") || IMAGE_EXTS.test(artifact.path)) return <FileImage className="size-3.5 shrink-0 text-purple-500" />
-  if (artifact.mime?.includes("pdf") || artifact.path.endsWith(".pdf")) return <FileText className="size-3.5 shrink-0 text-red-500" />
-  return <File className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+  return <FileIcon filename={artifact.path} mime={artifact.mime} size={14} />
 }
 
 function basename(path: string): string {

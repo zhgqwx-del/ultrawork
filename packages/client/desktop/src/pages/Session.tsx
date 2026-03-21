@@ -696,7 +696,7 @@ export function SessionPage() {
       {/* Artifact Preview (right, 50% when active) */}
       {selectedArtifact && (
         <div className="w-1/2 shrink-0 overflow-hidden border-l border-[var(--color-border)]">
-          <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
+          <ArtifactPreview artifact={selectedArtifact} directory={session?.directory} onClose={handleClosePreview} />
         </div>
       )}
 

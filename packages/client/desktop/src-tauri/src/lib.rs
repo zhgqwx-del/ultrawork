@@ -134,6 +134,43 @@ fn ensure_default_workspace() -> Result<String, String> {
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// Open a file with the system default application (e.g. browser for .html, Keynote for .pptx).
+/// Uses macOS `open` command.
+#[tauri::command]
+fn open_file_with_system(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+    let output = Command::new("open")
+        .arg(&path)
+        .output()
+        .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("open failed: {}", stderr));
+    }
+    Ok(())
+}
+
+/// Reveal a file in Finder (macOS). Uses `open -R` which highlights the file in its folder.
+#[tauri::command]
+fn reveal_file_in_finder(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+    let output = Command::new("open")
+        .args(["-R", &path])
+        .output()
+        .map_err(|e| format!("Failed to reveal {}: {}", path, e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("open -R failed: {}", stderr));
+    }
+    Ok(())
+}
+
 /// Check whether a directory exists on disk.
 #[tauri::command]
 fn check_directory_exists(path: String) -> bool {
@@ -767,6 +804,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             ensure_default_workspace,
+            open_file_with_system,
+            reveal_file_in_finder,
             check_directory_exists,
             download_node,
             get_node_path,

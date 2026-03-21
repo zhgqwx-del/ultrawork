@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react"
-import { X, FileText, FileDiff, FileImage, File, Copy, Check } from "lucide-react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { X, FileDiff, Copy, Check, FolderOpen, ExternalLink } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import CodeMirror from "@uiw/react-codemirror"
@@ -9,6 +10,7 @@ import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
 import { cn } from "@/lib/utils"
 import { extractExtension, getLanguageExtension } from "@/lib/codemirror-lang"
+import { FileIcon, isBinaryFile, getFileTypeLabel } from "@/components/ui/file-icon"
 
 export interface Artifact {
   type: "file" | "patch"
@@ -19,6 +21,8 @@ export interface Artifact {
 
 interface ArtifactPreviewProps {
   artifact: Artifact
+  /** Workspace root directory — used to resolve relative paths to absolute for system operations */
+  directory?: string
   onClose: () => void
 }
 
@@ -32,6 +36,10 @@ function isImage(mime?: string, path?: string): boolean {
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx)$/i.test(path)
+}
+
+function isHtml(path: string): boolean {
+  return /\.(html?|xhtml)$/i.test(path)
 }
 
 function DiffView({ content }: { content: string }) {
@@ -56,16 +64,69 @@ function DiffView({ content }: { content: string }) {
 
 function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-4 shrink-0 text-blue-500" />
-  if (isImage(artifact.mime, artifact.path)) return <FileImage className="size-4 shrink-0 text-purple-500" />
-  if (artifact.path.endsWith(".md") || artifact.path.endsWith(".mdx")) return <FileText className="size-4 shrink-0 text-orange-500" />
-  return <File className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
+  return <FileIcon filename={artifact.path} mime={artifact.mime} size={16} />
 }
 
 function basename(path: string): string {
   return path.split("/").pop() || path
 }
 
-export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
+/** Resolve artifact path to absolute path for system operations */
+function resolveAbsPath(artifactPath: string, directory?: string): string {
+  if (artifactPath.startsWith("/")) return artifactPath
+  if (directory) return `${directory.replace(/\/$/, "")}/${artifactPath}`
+  return artifactPath
+}
+
+/** Binary file info card — shown for non-previewable files like pptx, docx, etc. */
+function BinaryFileCard({
+  artifact,
+  directory,
+  t,
+}: {
+  artifact: Artifact
+  directory?: string
+  t: (key: string) => string
+}) {
+  const absPath = resolveAbsPath(artifact.path, directory)
+  const typeLabel = getFileTypeLabel(artifact.path)
+
+  return (
+    <div className="flex flex-1 items-center justify-center p-8">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <FileIcon filename={artifact.path} mime={artifact.mime} size={48} />
+        <div>
+          <p className="text-sm font-medium text-[var(--color-fg)]">{basename(artifact.path)}</p>
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{typeLabel}</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              console.log("[BinaryFileCard] openPath:", absPath)
+              invoke("open_file_with_system", { path: absPath }).catch((e) => console.error("[BinaryFileCard] openPath failed:", e))
+            }}
+            className="flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+          >
+            <ExternalLink className="size-3.5" />
+            {t("artifact.openWithApp")}
+          </button>
+          <button
+            onClick={() => {
+              console.log("[BinaryFileCard] revealItemInDir:", absPath)
+              invoke("reveal_file_in_finder", { path: absPath }).catch((e) => console.error("[BinaryFileCard] revealItemInDir failed:", e))
+            }}
+            className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+          >
+            <FolderOpen className="size-3.5" />
+            {t("artifact.revealInFinder")}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPreviewProps) {
   const api = useApi()
   const { t } = useI18n()
   const { resolvedTheme } = useTheme()
@@ -78,6 +139,8 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   const [resolvedMime, setResolvedMime] = useState<string | undefined>(artifact.mime)
 
   const cmTheme = resolvedTheme === "dark" ? githubDark : githubLight
+  const absPath = resolveAbsPath(artifact.path, directory)
+  const binary = artifact.type === "file" && isBinaryFile(artifact.path)
 
   const cmExtensions = useMemo(() => {
     const ext = extractExtension(artifact.path)
@@ -90,6 +153,12 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
   }, [])
 
   useEffect(() => {
+    // Skip loading for binary files — we'll show the info card instead
+    if (binary) {
+      setLoading(false)
+      return
+    }
+
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -122,7 +191,7 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
 
     load()
     return () => { cancelled = true }
-  }, [artifact.path, artifact.type, artifact.sessionId, api, t])
+  }, [artifact.path, artifact.type, artifact.sessionId, artifact.mime, api, t, binary])
 
   const handleCopy = async () => {
     if (!content) return
@@ -133,6 +202,16 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
       copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
     } catch {}
   }
+
+  const handleRevealInFinder = useCallback(() => {
+    console.log("[ArtifactPreview] revealItemInDir:", absPath)
+    invoke("reveal_file_in_finder", { path: absPath }).catch((e) => console.error("[ArtifactPreview] revealItemInDir failed:", e))
+  }, [absPath])
+
+  const handleOpenWithApp = useCallback(() => {
+    console.log("[ArtifactPreview] openPath:", absPath)
+    invoke("open_file_with_system", { path: absPath }).catch((e) => console.error("[ArtifactPreview] openPath failed:", e))
+  }, [absPath])
 
   // Escape key to close preview (skip if another handler already consumed the event)
   useEffect(() => {
@@ -151,7 +230,31 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--color-fg)]" title={artifact.path}>
           {basename(artifact.path)}
         </span>
-        {content && (
+
+        {/* Open in browser — for HTML files */}
+        {artifact.type === "file" && isHtml(artifact.path) && (
+          <button
+            onClick={handleOpenWithApp}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+            title={t("artifact.openInBrowser")}
+          >
+            <ExternalLink className="size-3" />
+          </button>
+        )}
+
+        {/* Reveal in Finder — for all non-patch artifacts */}
+        {artifact.type === "file" && (
+          <button
+            onClick={handleRevealInFinder}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+            title={t("artifact.revealInFinder")}
+          >
+            <FolderOpen className="size-3" />
+          </button>
+        )}
+
+        {/* Copy button — only for text content */}
+        {content && !binary && (
           <button
             onClick={handleCopy}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
@@ -175,7 +278,7 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
 
       {/* Content */}
       <div className={
-        artifact.type !== "patch" && !isImage(resolvedMime, artifact.path) && !isMarkdown(artifact.path) && !loading && !error && content
+        artifact.type !== "patch" && !isImage(resolvedMime, artifact.path) && !isMarkdown(artifact.path) && !binary && !loading && !error && content
           ? "flex-1 overflow-hidden"
           : "flex-1 overflow-auto scrollbar-soft"
       }>
@@ -187,6 +290,8 @@ export function ArtifactPreview({ artifact, onClose }: ArtifactPreviewProps) {
           <div className="flex items-center justify-center py-12 text-sm text-red-500">
             {error}
           </div>
+        ) : binary ? (
+          <BinaryFileCard artifact={artifact} directory={directory} t={t} />
         ) : content === null || content === "" ? (
           <div className="flex items-center justify-center py-12 text-sm text-[var(--color-fg-muted)]">
             {artifact.type === "patch" ? t("artifact.noChanges") : t("artifact.noContent")}
