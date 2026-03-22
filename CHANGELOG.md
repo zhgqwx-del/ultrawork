@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 钉钉 Channel 即时确认：收到消息立刻回复 `⏳ 收到，正在处理`
+- 钉钉 Channel Session 命名：AI 回复后自动加 `[钉钉·用户名]` 前缀，侧边栏可区分来源
+- 钉钉 Channel `/new` 指令：重置当前聊天 session，开启新对话
+- Session 映射持久化：chatId→sessionId 写入 `~/.ultrawork/session-map.json`，gateway 重启后自动恢复
+- 侧边栏实时更新：通过 SSE 订阅 `session.updated` 事件，钉钉新建/更新 session 实时反映
+
+### Changed
+- Bridge queue 清理：完成后自动删除 entry，防止内存泄漏
+- Bridge poll timer 超时保护：5 分钟自动停止，防止 session 卡住时无限轮询
+- Bridge shutdown 时先 flush 待发消息再清理，避免用户收不到回复
+
 - 工作区自动恢复：启动时自动恢复上次工作区，无需每次手动确认
 - 默认工作区：首次安装自动创建 `~/.ultrawork/workspace/`，零配置即可使用
 - Tauri commands: `ensure_default_workspace`, `check_directory_exists`

@@ -1,17 +1,20 @@
 import { createApiClient } from "@agent/api-client";
 import type { ApiClient, MessagePart } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
+import { loadSessionMap, saveSessionMap } from "./session-store.js";
 
 const OPENCODE_BASE_URL = "http://localhost:4096";
 const OPENCODE_PASSWORD = "test123";
 const MAX_REPLY_LENGTH = 20_000; // DingTalk ~20KB limit
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
+const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if session stuck
 
 interface SessionContext {
   sessionId: string;
   chatId: string;
   workspaceDir: string;
+  senderName: string;
   /** Accumulated text per partID (handles multiple text parts) */
   textParts: Map<string, string>;
   /** Callback to reply to the originating message */
@@ -44,6 +47,21 @@ export class Bridge {
   /** Permission/question poll timers per workspace */
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 
+  /** Restore persisted session mappings from disk */
+  async init(): Promise<void> {
+    this.sessionMap = await loadSessionMap();
+    if (this.sessionMap.size > 0) {
+      console.log(`[Bridge] Restored ${this.sessionMap.size} session mappings`);
+    }
+  }
+
+  /** Persist session map to disk (fire-and-forget) */
+  private persistSessionMap(): void {
+    saveSessionMap(this.sessionMap).catch((err) => {
+      console.error("[Bridge] Failed to persist session map:", err);
+    });
+  }
+
   /** Get or create an ApiClient for a workspace directory */
   private getClient(workspaceDir: string): ApiClient {
     let client = this.clients.get(workspaceDir);
@@ -62,7 +80,12 @@ export class Bridge {
   /** Enqueue a task per chatId to prevent concurrent prompts */
   private enqueue(chatId: string, fn: () => Promise<void>): Promise<void> {
     const prev = this.queues.get(chatId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
+    const next = prev.then(fn, fn).finally(() => {
+      // Clean up queue entry if this is the last task in the chain
+      if (this.queues.get(chatId) === next) {
+        this.queues.delete(chatId);
+      }
+    });
     this.queues.set(chatId, next);
     return next;
   }
@@ -73,6 +96,23 @@ export class Bridge {
   }
 
   private async processMessage(msg: IncomingMessage): Promise<void> {
+    // Handle /new command — reset session for this chat
+    if (msg.text.trim() === "/new") {
+      const oldSessionId = this.sessionMap.get(msg.chatId);
+      if (oldSessionId) {
+        // Clean up any active context for the old session
+        const oldCtx = this.activeContexts.get(oldSessionId);
+        if (oldCtx) {
+          this.clearIdleTimer(oldCtx);
+          this.activeContexts.delete(oldSessionId);
+        }
+      }
+      this.sessionMap.delete(msg.chatId);
+      this.persistSessionMap();
+      await msg.reply("✅ 已重置对话，下条消息将开启新会话").catch(() => {});
+      return;
+    }
+
     const client = this.getClient(msg.workspaceDir);
 
     // Get or create session for this chat
@@ -81,6 +121,7 @@ export class Bridge {
       const session = await client.createSession({});
       sessionId = session.id;
       this.sessionMap.set(msg.chatId, sessionId);
+      this.persistSessionMap();
       console.log(
         `[Bridge] Created session ${sessionId} for chat ${msg.chatId}`,
       );
@@ -91,10 +132,16 @@ export class Bridge {
       sessionId,
       chatId: msg.chatId,
       workspaceDir: msg.workspaceDir,
+      senderName: msg.senderName,
       textParts: new Map(),
       reply: msg.reply,
     };
     this.activeContexts.set(sessionId, ctx);
+
+    // Instantly acknowledge receipt to the user
+    msg.reply("⏳ 收到，正在处理").catch((err) => {
+      console.error(`[Bridge] Instant ack failed for ${msg.chatId}:`, err);
+    });
 
     // Ensure SSE is connected for this workspace and WAIT for it to be ready
     await this.ensureSSE(msg.workspaceDir);
@@ -175,6 +222,25 @@ export class Bridge {
     console.log(
       `[Bridge] Session ${sessionId} idle, replied ${text.length} chars`,
     );
+
+    // Update session title with sender info (fire-and-forget)
+    this.updateSessionTitle(ctx).catch((err) => {
+      console.error(`[Bridge] Title update failed for ${ctx.sessionId}:`, err);
+    });
+  }
+
+  /** Prepend [钉钉·senderName] to the auto-generated session title */
+  private async updateSessionTitle(ctx: SessionContext): Promise<void> {
+    const client = this.getClient(ctx.workspaceDir);
+    const session = await client.getSession(ctx.sessionId);
+    const prefix = `[钉钉·${ctx.senderName}]`;
+
+    // Don't add prefix if already present (session reuse from same chat)
+    if (session.title && !session.title.startsWith("[钉钉·")) {
+      const newTitle = `${prefix} ${session.title}`;
+      await client.updateSession(ctx.sessionId, { title: newTitle });
+      console.log(`[Bridge] Updated title: "${newTitle}"`);
+    }
   }
 
   /** Ensure SSE connection is active for a workspace. Returns when connected. */
@@ -376,9 +442,10 @@ export class Bridge {
     if (this.pollTimers.has(key)) return;
 
     const client = this.getClient(workspaceDir);
+    const startTime = Date.now();
     const timer = setInterval(async () => {
-      // Stop polling if no active context
-      if (!this.activeContexts.has(sessionId)) {
+      // Stop polling if no active context or max lifetime exceeded
+      if (!this.activeContexts.has(sessionId) || Date.now() - startTime > POLL_MAX_LIFETIME_MS) {
         clearInterval(timer);
         this.pollTimers.delete(key);
         return;
@@ -411,6 +478,11 @@ export class Bridge {
   }
 
   async shutdown(): Promise<void> {
+    // Flush any pending replies before shutting down
+    for (const sessionId of [...this.activeContexts.keys()]) {
+      this.flushAndReply(sessionId);
+    }
+
     // Abort all SSE connections
     for (const controller of this.sseControllers.values()) {
       controller.abort();
@@ -424,10 +496,9 @@ export class Bridge {
     }
     this.pollTimers.clear();
 
-    // Clear idle timers
-    for (const ctx of this.activeContexts.values()) {
-      this.clearIdleTimer(ctx);
-    }
+    // Persist session map before clearing
+    await saveSessionMap(this.sessionMap).catch(() => {});
+
     this.activeContexts.clear();
     this.sessionMap.clear();
     this.clients.clear();

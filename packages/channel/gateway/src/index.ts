@@ -10,6 +10,7 @@ async function main() {
 
   const manager = new ChannelManager();
   const bridge = new Bridge();
+  await bridge.init();
 
   // Register adapter factories
   manager.registerFactory("dingtalk", createDingTalkAdapter);

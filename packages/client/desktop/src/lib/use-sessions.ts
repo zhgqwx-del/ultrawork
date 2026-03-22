@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { Session } from "@agent/api-client"
 import { useApi } from "./use-api"
 import { useWorkspace } from "./workspace-context"
+import { useSSESubscribe } from "./sse-context"
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -109,6 +110,30 @@ export function useSessions() {
     },
     [api]
   )
+
+  // Listen for SSE session events to keep sidebar in sync
+  useSSESubscribe(useCallback((event: { type: string; properties: any }) => {
+    if (event.type === "session.updated") {
+      const info = event.properties?.info ?? event.properties
+      const sid = info?.id ?? info?.sessionID
+      if (!sid) return
+
+      setSessions((prev) => {
+        const idx = prev.findIndex((s) => s.id === sid)
+        if (idx >= 0) {
+          // Update existing session (title, time, etc.)
+          const updated = { ...prev[idx], ...info }
+          const next = [...prev]
+          next[idx] = updated
+          return next
+        }
+        // New session from another source (e.g. channel gateway)
+        // Only add if it belongs to current workspace
+        if (workspacePath && info.directory && info.directory !== workspacePath) return prev
+        return [info as Session, ...prev]
+      })
+    }
+  }, [workspacePath]))
 
   return { sessions, loading, error, activeSessionIds, refresh, createSession, deleteSession, updateSession, renameSession, markSessionActive, markSessionIdle }
 }

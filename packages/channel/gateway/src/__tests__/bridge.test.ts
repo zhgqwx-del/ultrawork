@@ -8,6 +8,8 @@ const mockRejectQuestion = vi.fn()
 const mockListPermissions = vi.fn()
 const mockListQuestions = vi.fn()
 const mockGetConfig = vi.fn()
+const mockGetSession = vi.fn()
+const mockUpdateSession = vi.fn()
 
 vi.mock("@agent/api-client", () => ({
   createApiClient: vi.fn(() => ({
@@ -18,7 +20,15 @@ vi.mock("@agent/api-client", () => ({
     listPermissions: mockListPermissions,
     listQuestions: mockListQuestions,
     getConfig: mockGetConfig,
+    getSession: mockGetSession,
+    updateSession: mockUpdateSession,
   })),
+}))
+
+// Mock session-store to avoid disk I/O in tests
+vi.mock("../session-store.js", () => ({
+  loadSessionMap: vi.fn(async () => new Map()),
+  saveSessionMap: vi.fn(async () => {}),
 }))
 
 // Mock global fetch for SSE
@@ -52,6 +62,8 @@ beforeEach(() => {
   mockListPermissions.mockResolvedValue([])
   mockListQuestions.mockResolvedValue([])
   mockGetConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-4-20250514" })
+  mockGetSession.mockResolvedValue({ id: "sess-1", title: "Auto generated title" })
+  mockUpdateSession.mockResolvedValue({})
 
   // Default SSE mock — never-resolving read to keep connection alive
   mockFetch.mockResolvedValue({
@@ -276,8 +288,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // No reply for empty text
-      expect(msg.reply).not.toHaveBeenCalled()
+      // Only the instant ack, no AI reply for empty text
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
       await bridge.shutdown()
     })
 
@@ -308,7 +321,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      expect(msg.reply).not.toHaveBeenCalled()
+      // Only instant ack, no AI content reply
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
       await bridge.shutdown()
     })
 
@@ -331,7 +346,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "running" } },
       })
 
-      expect(msg.reply).not.toHaveBeenCalled()
+      // Only instant ack, no AI content reply (not idle yet)
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
       await bridge.shutdown()
     })
 
@@ -381,7 +398,8 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      // calls[0] = instant ack, calls[1] = AI reply (truncated)
+      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[1][0]
       expect(replyArg.length).toBeLessThan(25_000)
       expect(replyArg).toContain("...(truncated)")
       await bridge.shutdown()
@@ -611,7 +629,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      expect(msg.reply).not.toHaveBeenCalled()
+      // Only instant ack, no AI content reply (toolName delta ignored)
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
       await bridge.shutdown()
     })
   })
