@@ -5,16 +5,23 @@ import { loadSessionMap, saveSessionMap } from "./session-store.js";
 
 const OPENCODE_BASE_URL = "http://localhost:4096";
 const OPENCODE_PASSWORD = "test123";
-const MAX_REPLY_LENGTH = 20_000; // DingTalk ~20KB limit
+const MAX_REPLY_LENGTH = 20_000; // Safe limit for messaging platforms (DingTalk, WeChat, etc.)
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
 const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if session stuck
+
+/** Channel type → display label mapping */
+const CHANNEL_LABELS: Record<string, string> = {
+  dingtalk: "钉钉",
+  wechat: "微信",
+};
 
 interface SessionContext {
   sessionId: string;
   chatId: string;
   workspaceDir: string;
   senderName: string;
+  channelType: string;
   /** Accumulated text per partID (handles multiple text parts) */
   textParts: Map<string, string>;
   /** Callback to reply to the originating message */
@@ -133,6 +140,7 @@ export class Bridge {
       chatId: msg.chatId,
       workspaceDir: msg.workspaceDir,
       senderName: msg.senderName,
+      channelType: msg.channelType,
       textParts: new Map(),
       reply: msg.reply,
     };
@@ -229,14 +237,16 @@ export class Bridge {
     });
   }
 
-  /** Prepend [钉钉·senderName] to the auto-generated session title */
+  /** Prepend [渠道·senderName] to the auto-generated session title */
   private async updateSessionTitle(ctx: SessionContext): Promise<void> {
     const client = this.getClient(ctx.workspaceDir);
     const session = await client.getSession(ctx.sessionId);
-    const prefix = `[钉钉·${ctx.senderName}]`;
+    const label = CHANNEL_LABELS[ctx.channelType] || ctx.channelType;
+    const prefix = `[${label}·${ctx.senderName}]`;
 
     // Don't add prefix if already present (session reuse from same chat)
-    if (session.title && !session.title.startsWith("[钉钉·")) {
+    const hasChannelPrefix = /^\[.+·/.test(session.title || "");
+    if (session.title && !hasChannelPrefix) {
       const newTitle = `${prefix} ${session.title}`;
       await client.updateSession(ctx.sessionId, { title: newTitle });
       console.log(`[Bridge] Updated title: "${newTitle}"`);

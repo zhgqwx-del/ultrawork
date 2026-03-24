@@ -2,6 +2,7 @@ import { ChannelManager } from "./channel-manager.js";
 import { Bridge } from "./bridge.js";
 import { createApp } from "./gateway-server.js";
 import { createDingTalkAdapter } from "./adapters/dingtalk/index.js";
+import { createWeChatAdapter } from "./adapters/wechat/index.js";
 
 const GATEWAY_PORT = 4097;
 
@@ -14,6 +15,7 @@ async function main() {
 
   // Register adapter factories
   manager.registerFactory("dingtalk", createDingTalkAdapter);
+  manager.registerFactory("wechat", createWeChatAdapter);
 
   // Wire bridge as message handler (catch to prevent unhandled rejection)
   manager.setMessageHandler((msg) => {

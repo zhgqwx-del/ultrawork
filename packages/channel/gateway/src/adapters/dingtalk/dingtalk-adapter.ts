@@ -6,7 +6,7 @@ import {
 import type { DWClientDownStream, RobotMessage } from "dingtalk-stream";
 import type {
   ChannelAdapter,
-  ChannelConfig,
+  DingTalkChannelConfig,
   ChannelState,
   ChannelStatus,
   IncomingMessage,
@@ -28,7 +28,7 @@ export class DingTalkAdapter implements ChannelAdapter {
   private messageHandler: (msg: IncomingMessage) => void;
 
   constructor(
-    config: ChannelConfig,
+    config: DingTalkChannelConfig,
     onMessage: (msg: IncomingMessage) => void,
   ) {
     this.id = config.id;
@@ -173,6 +173,7 @@ export class DingTalkAdapter implements ChannelAdapter {
         chatId,
         senderId: robotMsg.senderId,
         senderName: robotMsg.senderNick,
+        channelType: "dingtalk",
         text,
         workspaceDir: this.workspaceDir,
         raw: robotMsg,
@@ -233,8 +234,8 @@ export class DingTalkAdapter implements ChannelAdapter {
 
 /** Factory function for ChannelManager registration */
 export function createDingTalkAdapter(
-  config: ChannelConfig,
+  config: import("../../types.js").ChannelConfig,
   onMessage: (msg: IncomingMessage) => void,
 ): ChannelAdapter {
-  return new DingTalkAdapter(config, onMessage);
+  return new DingTalkAdapter(config as DingTalkChannelConfig, onMessage);
 }

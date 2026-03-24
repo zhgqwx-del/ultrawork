@@ -42,6 +42,7 @@ function createMessage(overrides?: Partial<IncomingMessage>): IncomingMessage {
     chatId: "user-1",
     senderId: "sender-1",
     senderName: "Sender",
+    channelType: "dingtalk",
     text: "hello",
     workspaceDir: "/workspace",
     raw: {},

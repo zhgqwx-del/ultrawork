@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n-context"
-import type { ChannelStatus, ChannelConfig, ChannelListResponse } from "@agent/api-client"
+import type {
+  ChannelStatus,
+  ChannelConfig,
+  ChannelListResponse,
+  WeChatQRCodeResponse,
+  WeChatQRStatusResponse,
+} from "@agent/api-client"
 
 const GATEWAY_BASE = import.meta.env.DEV
   ? "/channel"
@@ -126,6 +132,29 @@ export function useChannels() {
     [t],
   )
 
+  // ---- WeChat QR Code Login ----
+
+  const requestWeChatQR = useCallback(
+    async (name: string, workspaceDir: string, autoConnect = true) => {
+      const data = await gatewayFetch<WeChatQRCodeResponse>("/wechat/qrcode", {
+        method: "POST",
+        body: JSON.stringify({ name, workspaceDir, autoConnect }),
+      })
+      return data
+    },
+    [],
+  )
+
+  const pollWeChatQRStatus = useCallback(
+    async (token: string) => {
+      const data = await gatewayFetch<WeChatQRStatusResponse>(
+        `/wechat/qrcode-status?token=${encodeURIComponent(token)}`,
+      )
+      return data
+    },
+    [],
+  )
+
   return {
     channels,
     configs,
@@ -137,5 +166,7 @@ export function useChannels() {
     handleConnect,
     handleDisconnect,
     refresh: fetchChannels,
+    requestWeChatQR,
+    pollWeChatQRStatus,
   }
 }

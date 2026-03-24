@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2 } from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, QrCode, Smartphone } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
@@ -20,7 +20,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig } from "@agent/api-client"
+import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChannelConfig } from "@agent/api-client"
+import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
 type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "channels" | "skills" | "about"
@@ -1005,8 +1006,9 @@ function ChannelsSection() {
   const {
     channels, configs, loading, error, actionLoading,
     handleAdd, handleRemove, handleConnect, handleDisconnect, refresh,
+    requestWeChatQR, pollWeChatQRStatus,
   } = useChannels()
-  const [showAdd, setShowAdd] = useState(false)
+  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "wechat">(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const connectedCount = channels.filter((c) => c.state === "connected").length
@@ -1023,6 +1025,11 @@ function ChannelsSection() {
     } catch {
       // error already toasted by hook
     }
+  }
+
+  const onWeChatDone = () => {
+    setShowAdd(false)
+    refresh()
   }
 
   return (
@@ -1045,19 +1052,44 @@ function ChannelsSection() {
             <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
             {t("workspace.refresh")}
           </Button>
-          <Button size="sm" onClick={() => setShowAdd(true)} disabled={showAdd}>
-            <Plus className="mr-1.5 size-3.5" />
-            {t("channel.addChannel")}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={!!showAdd}>
+                <Plus className="mr-1.5 size-3.5" />
+                {t("channel.addChannel")}
+                <ChevronDown className="ml-1.5 size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowAdd("dingtalk")}>
+                <MessageSquare className="mr-2 size-4" />
+                {t("channel.type.dingtalk")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowAdd("wechat")}>
+                <Smartphone className="mr-2 size-4" />
+                {t("channel.type.wechat")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
-      {/* Add form */}
-      {showAdd && (
+      {/* Add DingTalk form */}
+      {showAdd === "dingtalk" && (
         <ChannelAddForm
           onAdd={onAdd}
           onCancel={() => setShowAdd(false)}
           loading={actionLoading === "__add__"}
+        />
+      )}
+
+      {/* WeChat QR login */}
+      {showAdd === "wechat" && (
+        <WeChatQRLogin
+          onDone={onWeChatDone}
+          onCancel={() => setShowAdd(false)}
+          requestQR={requestWeChatQR}
+          pollStatus={pollWeChatQRStatus}
         />
       )}
 
@@ -1081,9 +1113,9 @@ function ChannelsSection() {
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
           <Radio className="size-10 text-[var(--color-fg-muted)]" />
           <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("channel.noChannels")}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowAdd(true)}>
-            <Plus className="mr-1.5 size-3.5" />
-            {t("channel.addChannel")}
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowAdd("wechat")}>
+            <Smartphone className="mr-1.5 size-3.5" />
+            {t("channel.type.wechat")}
           </Button>
         </div>
       )}
@@ -1218,27 +1250,19 @@ function ChannelAddForm({
       clientSecret: clientSecret.trim(),
       workspaceDir: workspacePath!,
       autoConnect,
-    })
+    } as Omit<DingTalkChannelConfig, "id">)
   }
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.addChannel")}</h3>
+        <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.addChannel")} — {t("channel.type.dingtalk")}</h3>
         <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
           <X className="size-4" />
         </button>
       </div>
 
       <div className="mt-4 space-y-4">
-        {/* Channel type (fixed to DingTalk for MVP) */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-[var(--color-fg)]">{t("channel.type")}</label>
-          <div className="rounded-md border border-[var(--color-primary)] bg-[var(--color-primary)]/10 px-3 py-2 text-sm text-[var(--color-primary)]">
-            {t("channel.type.dingtalk")}
-          </div>
-        </div>
-
         <div className="space-y-2">
           <label className="text-sm font-medium text-[var(--color-fg)]">{t("channel.name")}</label>
           <input
@@ -1288,6 +1312,195 @@ function ChannelAddForm({
             {t("channel.add")}
           </Button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/** WeChat QR code login flow component */
+function WeChatQRLogin({
+  onDone,
+  onCancel,
+  requestQR,
+  pollStatus,
+}: {
+  onDone: () => void
+  onCancel: () => void
+  requestQR: (name: string, workspaceDir: string, autoConnect?: boolean) => Promise<{ qrcodeUrl: string; qrcodeImgContent: string; token: string }>
+  pollStatus: (token: string) => Promise<{ status: string; channelId?: string }>
+}) {
+  const { t } = useI18n()
+  const { workspacePath } = useWorkspace()
+  const [name, setName] = useState("")
+  const [step, setStep] = useState<"name" | "qr">("name")
+  const [qrUrl, setQrUrl] = useState("")
+  const [qrToken, setQrToken] = useState("")
+  const [scanStatus, setScanStatus] = useState<string>("wait")
+  const [errorMsg, setErrorMsg] = useState("")
+  const [refreshCount, setRefreshCount] = useState(0)
+
+  const MAX_REFRESH = 3
+
+  // Start QR flow
+  const startQR = async () => {
+    if (!name.trim() || !workspacePath) return
+    setErrorMsg("")
+    try {
+      const data = await requestQR(name.trim(), workspacePath)
+      setQrUrl(data.qrcodeImgContent || data.qrcodeUrl)
+      setQrToken(data.token)
+      setScanStatus("wait")
+      setStep("qr")
+    } catch (err) {
+      setErrorMsg(t("channel.wechat.error"))
+      console.error("WeChat QR request failed:", err)
+    }
+  }
+
+  // Poll for scan status
+  useEffect(() => {
+    if (step !== "qr" || !qrToken) return
+
+    let cancelled = false
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const resp = await pollStatus(qrToken)
+          if (cancelled) break
+          setScanStatus(resp.status)
+
+          if (resp.status === "confirmed") {
+            // Success — close and refresh
+            setTimeout(onDone, 1500)
+            return
+          }
+
+          if (resp.status === "expired") {
+            // Auto-refresh QR code
+            if (refreshCount < MAX_REFRESH) {
+              setRefreshCount((c) => c + 1)
+              try {
+                const data = await requestQR(name.trim(), workspacePath!)
+                if (cancelled) break
+                setQrUrl(data.qrcodeImgContent || data.qrcodeUrl)
+                setQrToken(data.token)
+                setScanStatus("wait")
+              } catch {
+                setErrorMsg(t("channel.wechat.error"))
+                return
+              }
+            } else {
+              setErrorMsg(t("channel.wechat.expired"))
+              return
+            }
+            continue
+          }
+
+          // For "wait" and "scaned", keep polling
+          // Small delay before next poll (ilink uses long-poll so this is mostly a safety net)
+          await new Promise((r) => setTimeout(r, 1000))
+        } catch {
+          if (cancelled) break
+          // Network error — wait and retry
+          await new Promise((r) => setTimeout(r, 3000))
+        }
+      }
+    }
+
+    poll()
+    return () => { cancelled = true }
+  }, [step, qrToken, refreshCount]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const statusText = scanStatus === "wait"
+    ? t("channel.wechat.waitingScan")
+    : scanStatus === "scaned"
+    ? t("channel.wechat.scanned")
+    : scanStatus === "confirmed"
+    ? t("channel.wechat.confirmed")
+    : ""
+
+  if (step === "name") {
+    return (
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.addChannel")} — {t("channel.type.wechat")}</h3>
+          <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="mt-4 space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-[var(--color-fg)]">{t("channel.name")}</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("channel.wechat.namePlaceholder")}
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              onKeyDown={(e) => e.key === "Enter" && name.trim() && startQR()}
+            />
+          </div>
+          {errorMsg && (
+            <p className="text-xs text-red-500">{errorMsg}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onCancel}>{t("button.cancel")}</Button>
+            <Button onClick={startQR} disabled={!name.trim()}>
+              <QrCode className="mr-1.5 size-4" />
+              {t("channel.wechat.scanQR")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // QR code display
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.wechat.scanQR")}</h3>
+        <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-col items-center gap-4">
+        {/* QR Code */}
+        <div className="rounded-lg border border-[var(--color-border)] bg-white p-4">
+          {qrUrl ? (
+            <QRCodeSVG value={qrUrl} size={200} level="M" />
+          ) : (
+            <div className="flex size-[200px] items-center justify-center">
+              <Loader2 className="size-8 animate-spin text-gray-400" />
+            </div>
+          )}
+        </div>
+
+        {/* Status */}
+        <div className="flex items-center gap-2 text-sm">
+          {scanStatus === "confirmed" ? (
+            <CheckCircle2 className="size-4 text-green-500" />
+          ) : scanStatus === "scaned" ? (
+            <Smartphone className="size-4 text-blue-500" />
+          ) : (
+            <Loader2 className="size-4 animate-spin text-[var(--color-fg-muted)]" />
+          )}
+          <span className={cn(
+            scanStatus === "confirmed" ? "text-green-600 dark:text-green-400" :
+            scanStatus === "scaned" ? "text-blue-600 dark:text-blue-400" :
+            "text-[var(--color-fg-muted)]"
+          )}>
+            {statusText}
+          </span>
+        </div>
+
+        {errorMsg && (
+          <p className="text-xs text-red-500">{errorMsg}</p>
+        )}
+
+        <Button variant="outline" size="sm" onClick={onCancel}>
+          {t("button.cancel")}
+        </Button>
       </div>
     </div>
   )

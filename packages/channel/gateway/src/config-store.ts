@@ -62,7 +62,7 @@ export async function updateConfig(
     if (idx === -1) {
       throw new Error(`Channel "${id}" not found`);
     }
-    channels[idx] = { ...channels[idx], ...patch };
+    channels[idx] = { ...channels[idx], ...patch } as ChannelConfig;
     await saveStore({ channels });
   });
 }

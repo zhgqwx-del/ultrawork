@@ -48,6 +48,10 @@ export type {
   FileContentResponse,
   ChannelState,
   ChannelStatus,
+  DingTalkChannelConfig,
+  WeChatChannelConfig,
   ChannelConfig,
   ChannelListResponse,
+  WeChatQRCodeResponse,
+  WeChatQRStatusResponse,
 } from "./types"

@@ -273,6 +273,7 @@ describe("ChannelManager", () => {
             chatId: "c1",
             senderId: "s1",
             senderName: "Sender",
+            channelType: "dingtalk",
             text: "hello",
             workspaceDir: config.workspaceDir,
             raw: {},

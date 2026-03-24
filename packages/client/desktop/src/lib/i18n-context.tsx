@@ -227,7 +227,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Channel
     "channel.title": "Channels",
-    "channel.description": "Connect messaging platforms (DingTalk, etc.) to interact with the AI agent.",
+    "channel.description": "Connect messaging platforms (DingTalk, WeChat, etc.) to interact with the AI agent.",
     "channel.connected": "connected",
     "channel.noChannels": "No channels configured",
     "channel.addChannel": "Add Channel",
@@ -237,6 +237,7 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.remove": "Remove",
     "channel.type": "Channel Type",
     "channel.type.dingtalk": "DingTalk",
+    "channel.type.wechat": "WeChat",
     "channel.name": "Channel Name",
     "channel.namePlaceholder": "e.g. My DingTalk Bot",
     "channel.clientId": "Client ID (AppKey)",
@@ -255,6 +256,13 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.error.connect": "Failed to connect channel",
     "channel.error.disconnect": "Failed to disconnect channel",
     "channel.error.fetch": "Failed to load channels. Is the gateway running?",
+    "channel.wechat.scanQR": "Scan with WeChat",
+    "channel.wechat.waitingScan": "Waiting for scan...",
+    "channel.wechat.scanned": "Scanned, please confirm on phone",
+    "channel.wechat.confirmed": "Confirmed! Channel connected.",
+    "channel.wechat.expired": "QR code expired, refreshing...",
+    "channel.wechat.error": "Failed to get QR code",
+    "channel.wechat.namePlaceholder": "e.g. My WeChat",
 
     // MCP
     "mcp.noServers": "No MCP servers configured",
@@ -620,7 +628,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Channel
     "channel.title": "渠道",
-    "channel.description": "连接消息平台（钉钉等）与 AI Agent 交互。",
+    "channel.description": "连接消息平台（钉钉、微信等）与 AI Agent 交互。",
     "channel.connected": "已连接",
     "channel.noChannels": "未配置渠道",
     "channel.addChannel": "添加渠道",
@@ -630,6 +638,7 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.remove": "删除",
     "channel.type": "渠道类型",
     "channel.type.dingtalk": "钉钉",
+    "channel.type.wechat": "微信",
     "channel.name": "渠道名称",
     "channel.namePlaceholder": "例如 我的钉钉机器人",
     "channel.clientId": "Client ID (AppKey)",
@@ -648,6 +657,13 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.error.connect": "连接渠道失败",
     "channel.error.disconnect": "断开渠道失败",
     "channel.error.fetch": "加载渠道失败，请检查 Gateway 是否运行。",
+    "channel.wechat.scanQR": "使用微信扫码",
+    "channel.wechat.waitingScan": "等待扫码...",
+    "channel.wechat.scanned": "已扫码，请在手机上确认",
+    "channel.wechat.confirmed": "已确认！渠道已连接。",
+    "channel.wechat.expired": "二维码已过期，正在刷新...",
+    "channel.wechat.error": "获取二维码失败",
+    "channel.wechat.namePlaceholder": "例如 我的微信",
 
     // MCP
     "mcp.noServers": "未配置 MCP 服务",

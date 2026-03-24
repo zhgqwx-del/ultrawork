@@ -21,16 +21,31 @@ export interface ChannelStatus {
   connectedAt?: string;
 }
 
-export interface ChannelConfig {
+// --- Channel config discriminated union ---
+
+interface ChannelConfigBase {
   id: string;
-  type: "dingtalk"; // extensible for future adapters
   name: string;
-  clientId: string;
-  clientSecret: string;
   /** Workspace directory this channel is bound to */
   workspaceDir: string;
   autoConnect: boolean;
 }
+
+export interface DingTalkChannelConfig extends ChannelConfigBase {
+  type: "dingtalk";
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface WeChatChannelConfig extends ChannelConfigBase {
+  type: "wechat";
+  botToken: string;
+  ilinkBotId: string;
+  ilinkUserId: string;
+  baseUrl: string;
+}
+
+export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig;
 
 export interface ChannelsStore {
   channels: ChannelConfig[];
@@ -41,6 +56,8 @@ export interface IncomingMessage {
   chatId: string;
   senderId: string;
   senderName: string;
+  /** Channel type for display labeling (e.g. session title prefix) */
+  channelType: string;
   text: string;
   /** Workspace directory this channel is bound to */
   workspaceDir: string;

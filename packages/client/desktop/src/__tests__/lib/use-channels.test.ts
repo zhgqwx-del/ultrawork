@@ -82,7 +82,7 @@ describe("useChannels", () => {
       })
 
       expect(result.current.channels[0].state).toBe("connected")
-      expect(result.current.configs[0].clientId).toBe("c")
+      expect((result.current.configs[0] as any).clientId).toBe("c")
     })
   })
 
@@ -109,7 +109,7 @@ describe("useChannels", () => {
           clientSecret: "s",
           workspaceDir: "/w",
           autoConnect: true,
-        })
+        } as any)
       })
 
       expect(result.current.channels).toHaveLength(1)
@@ -130,7 +130,7 @@ describe("useChannels", () => {
       act(() => {
         addPromise = result.current.handleAdd({
           type: "dingtalk", name: "X", clientId: "c", clientSecret: "s", workspaceDir: "/w", autoConnect: true,
-        })
+        } as any)
       })
 
       expect(result.current.actionLoading).toBe("__add__")
@@ -156,7 +156,7 @@ describe("useChannels", () => {
         await act(async () => {
           await result.current.handleAdd({
             type: "dingtalk", name: "X", clientId: "c", clientSecret: "s", workspaceDir: "/w", autoConnect: true,
-          })
+          } as any)
         })
       } catch {
         threw = true

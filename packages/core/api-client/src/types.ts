@@ -390,17 +390,44 @@ export interface ChannelStatus {
   connectedAt?: string
 }
 
-export interface ChannelConfig {
+interface ChannelConfigBase {
   id: string
-  type: "dingtalk"
   name: string
-  clientId: string
-  clientSecret: string
   workspaceDir: string
   autoConnect: boolean
 }
 
+export interface DingTalkChannelConfig extends ChannelConfigBase {
+  type: "dingtalk"
+  clientId: string
+  clientSecret: string
+}
+
+export interface WeChatChannelConfig extends ChannelConfigBase {
+  type: "wechat"
+  botToken: string
+  ilinkBotId: string
+  ilinkUserId: string
+  baseUrl: string
+}
+
+export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig
+
 export interface ChannelListResponse {
   channels: ChannelStatus[]
   configs: ChannelConfig[]
+}
+
+// --- WeChat QR login types ---
+
+export interface WeChatQRCodeResponse {
+  qrcodeUrl: string
+  qrcodeImgContent: string
+  token: string
+}
+
+export interface WeChatQRStatusResponse {
+  status: "wait" | "scaned" | "confirmed" | "expired"
+  channelId?: string
+  error?: string
 }

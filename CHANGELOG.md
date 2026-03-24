@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 微信 Channel（Phase 1）：ilink 协议接入，扫码登录 + 文本收发 + 语音 STT
+- 微信 QR 登录 UI：Settings → Channels → 添加微信 → 二维码扫码 → 自动连接
+- 渠道类型选择：添加渠道改为下拉菜单（钉钉 / 微信）
+- Gateway QR API：`POST /channel/wechat/qrcode` + `GET /channel/wechat/qrcode-status`
+- ChannelConfig 联合类型：`DingTalkChannelConfig | WeChatChannelConfig`，支持不同渠道不同配置字段
+- Bridge 动态渠道前缀：session 标题自动加 `[微信·xxx]` 或 `[钉钉·xxx]`
+
 - 钉钉 Channel 即时确认：收到消息立刻回复 `⏳ 收到，正在处理`
 - 钉钉 Channel Session 命名：AI 回复后自动加 `[钉钉·用户名]` 前缀，侧边栏可区分来源
 - 钉钉 Channel `/new` 指令：重置当前聊天 session，开启新对话
