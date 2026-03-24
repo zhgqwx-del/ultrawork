@@ -102,6 +102,25 @@ export function useChannels() {
         setChannels((prev) =>
           prev.map((c) => (c.id === id ? status : c)),
         )
+        // WeChat connect is async (returns "connecting" immediately).
+        // Poll for actual connected state after a short delay.
+        if (status.state === "connecting") {
+          const poll = async () => {
+            for (let i = 0; i < 10; i++) {
+              await new Promise((r) => setTimeout(r, 3000))
+              try {
+                const data = await gatewayFetch<ChannelListResponse>("")
+                const updated = data.channels.find((c) => c.id === id)
+                if (updated && updated.state !== "connecting") {
+                  setChannels(data.channels)
+                  setConfigs(data.configs)
+                  break
+                }
+              } catch { break }
+            }
+          }
+          poll()
+        }
       } catch (err) {
         console.error("Failed to connect channel:", err)
         toast.error(t("channel.error.connect"))
