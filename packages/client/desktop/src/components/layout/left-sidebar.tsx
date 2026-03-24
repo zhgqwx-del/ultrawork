@@ -576,8 +576,14 @@ function SessionItem({
 /** Expanded sidebar: channel status bar with connected count */
 function ChannelStatusBar() {
   const { t } = useI18n()
-  const { channels, loading } = useChannels()
+  const { channels, loading, refresh } = useChannels()
   const navigate = useNavigate()
+
+  // Auto-refresh every 15s to keep status in sync
+  useEffect(() => {
+    const timer = setInterval(refresh, 15_000)
+    return () => clearInterval(timer)
+  }, [refresh])
 
   if (loading || channels.length === 0) return null
 
@@ -592,7 +598,7 @@ function ChannelStatusBar() {
 
   return (
     <button
-      onClick={() => navigate("/settings?section=channels")}
+      onClick={() => navigate("/settings", { state: { section: "channels" } })}
       className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-[var(--sidebar-accent)]"
     >
       <Radio className="size-3.5 text-[var(--sidebar-fg-muted)]" />
@@ -609,8 +615,14 @@ function ChannelStatusBar() {
 
 /** Collapsed sidebar: channel status dot */
 function ChannelStatusDot() {
-  const { channels, loading } = useChannels()
+  const { channels, loading, refresh } = useChannels()
   const navigate = useNavigate()
+
+  // Auto-refresh every 15s to keep status in sync
+  useEffect(() => {
+    const timer = setInterval(refresh, 15_000)
+    return () => clearInterval(timer)
+  }, [refresh])
 
   if (loading || channels.length === 0) return null
 
@@ -627,7 +639,7 @@ function ChannelStatusDot() {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          onClick={() => navigate("/settings?section=channels")}
+          onClick={() => navigate("/settings", { state: { section: "channels" } })}
           aria-label="Channels"
           className="relative flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
         >
