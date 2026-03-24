@@ -146,6 +146,28 @@ export class ILinkApi {
     return resp.json() as Promise<SendMessageResponse>;
   }
 
+  async sendTyping(
+    ilinkUserId: string,
+    typingTicket: string,
+    status: 1 | 2, // 1=typing, 2=cancel
+  ): Promise<void> {
+    const url = `${this.baseUrl}/ilink/bot/sendtyping`;
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: this.authHeaders(),
+        body: JSON.stringify({
+          ilink_user_id: ilinkUserId,
+          typing_ticket: typingTicket,
+          status,
+          base_info: {},
+        }),
+      });
+    } catch {
+      // Fire-and-forget — typing indicator is best-effort
+    }
+  }
+
   async getConfig(
     ilinkUserId: string,
     contextToken: string = "",

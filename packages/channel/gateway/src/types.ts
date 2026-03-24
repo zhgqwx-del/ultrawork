@@ -65,6 +65,8 @@ export interface IncomingMessage {
   raw: unknown;
   /** Callback to reply to this message */
   reply: (content: string) => Promise<void>;
+  /** Optional: send typing indicator (true=start, false=stop) */
+  onTyping?: (typing: boolean) => void;
 }
 
 /** Factory function to create an adapter from config */

@@ -26,6 +26,8 @@ interface SessionContext {
   textParts: Map<string, string>;
   /** Callback to reply to the originating message */
   reply: (content: string) => Promise<void>;
+  /** Optional: typing indicator callback */
+  onTyping?: (typing: boolean) => void;
   /** Idle timeout handle — force-sends accumulated text if SSE misses idle event */
   idleTimer?: ReturnType<typeof setTimeout>;
 }
@@ -143,6 +145,7 @@ export class Bridge {
       channelType: msg.channelType,
       textParts: new Map(),
       reply: msg.reply,
+      onTyping: msg.onTyping,
     };
     this.activeContexts.set(sessionId, ctx);
 
@@ -165,6 +168,9 @@ export class Bridge {
     } catch {
       // Fall through — send without model override
     }
+
+    // Start typing indicator
+    ctx.onTyping?.(true);
 
     // Send the prompt
     try {
@@ -213,6 +219,7 @@ export class Bridge {
     if (!ctx) return;
 
     this.clearIdleTimer(ctx);
+    ctx.onTyping?.(false);
 
     const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
     if (text) {

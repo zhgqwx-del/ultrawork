@@ -33,6 +33,8 @@ export class WeChatAdapter implements ChannelAdapter {
   private pollAbort?: AbortController;
   /** Context tokens per user (from_user_id → last context_token) */
   private contextTokens = new Map<string, string>();
+  /** Typing ticket (fetched lazily from getconfig) */
+  private typingTicket: string = "";
 
   constructor(
     config: WeChatChannelConfig,
@@ -149,6 +151,8 @@ export class WeChatAdapter implements ChannelAdapter {
         if (this.state !== "connected") {
           this.state = "connected";
           this.errorMsg = undefined;
+          // Lazily fetch typing ticket after first successful connection
+          this.fetchTypingTicket();
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name === "AbortError") return;
@@ -218,6 +222,9 @@ export class WeChatAdapter implements ChannelAdapter {
             contextToken,
           );
         },
+        onTyping: (typing: boolean) => {
+          this.sendTyping(msg.from_user_id, typing);
+        },
       };
 
       console.log(
@@ -228,6 +235,28 @@ export class WeChatAdapter implements ChannelAdapter {
     } catch (err) {
       console.error("[WeChat] Failed to handle message:", err);
     }
+  }
+
+  /** Fetch typing ticket from getconfig (fire-and-forget) */
+  private fetchTypingTicket(): void {
+    // Need a user ID — use the first known context token's user
+    const firstUserId = this.contextTokens.keys().next().value;
+    if (!firstUserId) return;
+
+    this.api.getConfig(firstUserId).then((resp) => {
+      if (resp.ret === 0 && resp.typing_ticket) {
+        this.typingTicket = resp.typing_ticket;
+        console.log(`[WeChat] Got typing ticket`);
+      }
+    }).catch(() => {
+      // Non-critical — typing indicator just won't work
+    });
+  }
+
+  /** Send typing indicator to a user (best-effort) */
+  sendTyping(userId: string, typing: boolean): void {
+    if (!this.typingTicket) return;
+    this.api.sendTyping(userId, this.typingTicket, typing ? 1 : 2);
   }
 }
 

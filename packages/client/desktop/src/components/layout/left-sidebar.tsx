@@ -14,6 +14,7 @@ import {
   X,
   Search,
   Star,
+  Radio,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -36,6 +37,7 @@ import { SettingsPopover } from "@/components/settings/settings-popover"
 import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
+import { useChannels } from "@/lib/use-channels"
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
@@ -286,8 +288,9 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Footer: Connection + User avatar + Settings */}
+            {/* Footer: Channels + Connection + User avatar + Settings */}
             <div className="mt-auto shrink-0 space-y-2 p-3">
+              <ChannelStatusBar />
               <ConnectionStatus />
               <SettingsPopover>
                 <button
@@ -357,6 +360,7 @@ export function LeftSidebar() {
             <div className="flex-1" />
 
             <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-4">
+              <ChannelStatusDot />
               <SettingsPopover>
                 <button
                   aria-label="Settings"
@@ -566,5 +570,74 @@ function SessionItem({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  )
+}
+
+/** Expanded sidebar: channel status bar with connected count */
+function ChannelStatusBar() {
+  const { t } = useI18n()
+  const { channels, loading } = useChannels()
+  const navigate = useNavigate()
+
+  if (loading || channels.length === 0) return null
+
+  const connected = channels.filter((c) => c.state === "connected").length
+  const hasError = channels.some((c) => c.state === "error")
+
+  const dotColor = hasError
+    ? "bg-red-500"
+    : connected > 0
+    ? "bg-green-500"
+    : "bg-gray-400"
+
+  return (
+    <button
+      onClick={() => navigate("/settings?section=channels")}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-[var(--sidebar-accent)]"
+    >
+      <Radio className="size-3.5 text-[var(--sidebar-fg-muted)]" />
+      <span className="flex-1 text-left text-[var(--sidebar-fg-muted)]">
+        {t("channel.title")}
+      </span>
+      <span className={cn("size-2 rounded-full", dotColor)} />
+      <span className="text-[var(--sidebar-fg-muted)]">
+        {connected}/{channels.length}
+      </span>
+    </button>
+  )
+}
+
+/** Collapsed sidebar: channel status dot */
+function ChannelStatusDot() {
+  const { channels, loading } = useChannels()
+  const navigate = useNavigate()
+
+  if (loading || channels.length === 0) return null
+
+  const connected = channels.filter((c) => c.state === "connected").length
+  const hasError = channels.some((c) => c.state === "error")
+
+  const dotColor = hasError
+    ? "bg-red-500"
+    : connected > 0
+    ? "bg-green-500"
+    : "bg-gray-400"
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={() => navigate("/settings?section=channels")}
+          aria-label="Channels"
+          className="relative flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+        >
+          <Radio className="size-4" />
+          <span className={cn("absolute right-1 top-1 size-2 rounded-full", dotColor)} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {connected}/{channels.length} connected
+      </TooltipContent>
+    </Tooltip>
   )
 }
