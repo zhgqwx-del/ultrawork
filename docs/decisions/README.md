@@ -47,7 +47,7 @@
 | [015](./015-dark-mode-codemirror.md) | 深色模式 + CodeMirror 6 | Round 15 | Accepted |
 | [016](./016-browser-mcp-node-detection.md) | Browser MCP — 检测 Node.js + 按需安装 | 2026-03-15 | Accepted |
 | [017](./017-browser-mcp-dual-mode.md) | Browser MCP 双模式 — Playwright 默认 + DevTools 可选 | 2026-03-17 | Accepted |
-| [018](./018-wechat-channel-ilink.md) | 微信 Channel — ilink 协议接入 | 2026-03-24 | Accepted (Phase 1 实现) |
+| [018](./018-wechat-channel-ilink.md) | 微信 Channel — ilink 协议接入 | 2026-03-24 | Accepted (Phase 1+2 实现) |
 
 ## 新增 ADR
 

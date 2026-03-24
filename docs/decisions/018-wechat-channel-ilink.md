@@ -65,8 +65,8 @@ Desktop App
 
 | 阶段 | 内容 | 优先级 |
 |------|------|--------|
-| **Phase 1** | ilink API 封装 + WeChatAdapter + QR 登录 + 文本收发 + Settings UI QR Dialog | 本次 |
-| **Phase 2** | 侧边栏快捷入口 + 语音 STT 当文本 + 过期自动重连 + 打字指示器 | 下一轮 |
+| **Phase 1** | ilink API 封装 + WeChatAdapter + QR 登录 + 文本收发 + Settings UI QR Dialog | ✅ 已完成 |
+| **Phase 2** | 侧边栏状态指示器 + 打字指示器 + 断开重连 + 连接状态轮询刷新 | ✅ 已完成 |
 | **Phase 3** | 图片发送（AES-ECB + CDN 上传）+ 主动推送 API | 后续 |
 
 ### Gateway API 扩展

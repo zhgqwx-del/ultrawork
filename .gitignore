@@ -56,3 +56,6 @@ opencode.json
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Commercialization docs (sensitive business strategy)
+docs/discussions/002-commercialization.md
