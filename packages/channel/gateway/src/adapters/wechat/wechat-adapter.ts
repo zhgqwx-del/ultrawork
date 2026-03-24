@@ -35,6 +35,7 @@ export class WeChatAdapter implements ChannelAdapter {
   private contextTokens = new Map<string, string>();
   /** Typing ticket (fetched lazily from getconfig) */
   private typingTicket: string = "";
+  private typingTicketFetching = false;
 
   constructor(
     config: WeChatChannelConfig,
@@ -244,10 +245,11 @@ export class WeChatAdapter implements ChannelAdapter {
 
   /** Fetch typing ticket from getconfig (fire-and-forget, retries on first message) */
   private fetchTypingTicket(userId?: string): void {
-    if (this.typingTicket) return; // Already have it
+    if (this.typingTicket || this.typingTicketFetching) return;
     const uid = userId || this.contextTokens.keys().next().value;
-    if (!uid) return; // No user ID available yet
+    if (!uid) return;
 
+    this.typingTicketFetching = true;
     this.api.getConfig(uid).then((resp) => {
       if (resp.ret === 0 && resp.typing_ticket) {
         this.typingTicket = resp.typing_ticket;
@@ -255,6 +257,8 @@ export class WeChatAdapter implements ChannelAdapter {
       }
     }).catch(() => {
       // Non-critical — typing indicator just won't work
+    }).finally(() => {
+      this.typingTicketFetching = false;
     });
   }
 
