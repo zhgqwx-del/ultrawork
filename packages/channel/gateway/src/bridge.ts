@@ -184,6 +184,7 @@ export class Bridge {
     } catch (err) {
       console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
       this.clearIdleTimer(ctx);
+      ctx.onTyping?.(false);
       this.activeContexts.delete(sessionId);
       await msg
         .reply(`Error: Failed to send message to AI agent.`)

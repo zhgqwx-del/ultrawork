@@ -180,6 +180,11 @@ export class WeChatAdapter implements ChannelAdapter {
         this.contextTokens.set(msg.from_user_id, msg.context_token);
       }
 
+      // Lazily fetch typing ticket on first message (needs a user ID)
+      if (!this.typingTicket) {
+        this.fetchTypingTicket(msg.from_user_id);
+      }
+
       // Extract text from items
       const textParts: string[] = [];
       for (const item of msg.item_list ?? []) {
@@ -237,13 +242,13 @@ export class WeChatAdapter implements ChannelAdapter {
     }
   }
 
-  /** Fetch typing ticket from getconfig (fire-and-forget) */
-  private fetchTypingTicket(): void {
-    // Need a user ID — use the first known context token's user
-    const firstUserId = this.contextTokens.keys().next().value;
-    if (!firstUserId) return;
+  /** Fetch typing ticket from getconfig (fire-and-forget, retries on first message) */
+  private fetchTypingTicket(userId?: string): void {
+    if (this.typingTicket) return; // Already have it
+    const uid = userId || this.contextTokens.keys().next().value;
+    if (!uid) return; // No user ID available yet
 
-    this.api.getConfig(firstUserId).then((resp) => {
+    this.api.getConfig(uid).then((resp) => {
       if (resp.ret === 0 && resp.typing_ticket) {
         this.typingTicket = resp.typing_ticket;
         console.log(`[WeChat] Got typing ticket`);
