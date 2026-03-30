@@ -127,6 +127,7 @@ const translations: Record<Language, Record<string, string>> = {
     "button.save": "Save Changes",
     "button.cancel": "Cancel",
     "button.reset": "Reset to Default",
+    "button.retry": "Retry",
 
     // Date groups
     "dateGroup.today": "Today",
@@ -528,6 +529,7 @@ const translations: Record<Language, Record<string, string>> = {
     "button.save": "保存更改",
     "button.cancel": "取消",
     "button.reset": "重置为默认",
+    "button.retry": "重试",
 
     // Date groups
     "dateGroup.today": "今天",
