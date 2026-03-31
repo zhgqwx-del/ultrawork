@@ -91,8 +91,9 @@ export class IMAClient {
   async listKnowledgeBases(): Promise<AddableKnowledgeBase[]> {
     const all: AddableKnowledgeBase[] = []
     let cursor = ""
+    const MAX_PAGES = 20
 
-    while (true) {
+    for (let page = 0; page < MAX_PAGES; page++) {
       const data = await this.request<{
         addable_knowledge_base_list: AddableKnowledgeBase[]
         next_cursor: string
