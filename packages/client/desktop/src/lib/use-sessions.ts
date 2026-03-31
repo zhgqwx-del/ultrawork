@@ -79,7 +79,10 @@ export function useSessions() {
 
   const createSession = useCallback(async () => {
     const session = await api.createSession()
-    setSessions(prev => [session as Session, ...prev])
+    // Guard: SSE session.updated may have already inserted this session
+    setSessions(prev =>
+      prev.some(s => s.id === session.id) ? prev : [session as Session, ...prev]
+    )
     return session
   }, [api])
 
@@ -130,6 +133,8 @@ export function useSessions() {
         // New session from another source (e.g. channel gateway)
         // Only add if it belongs to current workspace
         if (workspacePath && info.directory && info.directory !== workspacePath) return prev
+        // Guard: don't add if already present (race with createSession optimistic insert)
+        if (prev.some((s) => s.id === sid)) return prev
         return [info as Session, ...prev]
       })
     }

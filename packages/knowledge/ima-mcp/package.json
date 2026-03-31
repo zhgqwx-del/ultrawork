@@ -1,0 +1,17 @@
+{
+  "name": "@agent/ima-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --bun src/index.ts",
+    "build": "bun build --compile src/index.ts --outfile dist/ima-mcp-server",
+    "typecheck": "tsc --build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.2"
+  }
+}
