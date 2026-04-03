@@ -24,6 +24,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 侧边栏实时更新：通过 SSE 订阅 `session.updated` 事件，钉钉新建/更新 session 实时反映
 
 ### Changed
+- vendor/opencode 子模块更新至 `8e9e79d`（2026-04-03 dev），获取最新模型列表（含 qwen3.6-plus-free 等新模型）
+- vendor patch 文件更新以匹配新版代码结构
+
 - Bridge queue 清理：完成后自动删除 entry，防止内存泄漏
 - Bridge poll timer 超时保护：5 分钟自动停止，防止 session 卡住时无限轮询
 - Bridge shutdown 时先 flush 待发消息再清理，避免用户收不到回复

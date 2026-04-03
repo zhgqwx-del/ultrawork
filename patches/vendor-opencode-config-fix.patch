@@ -1,13 +1,13 @@
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 28c5b239a..b1e8cabf7 100644
+index 850bcc28b..20c50254e 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
-@@ -1288,7 +1288,7 @@ export namespace Config {
-   }
+@@ -1479,7 +1479,7 @@ export namespace Config {
  
-   export async function update(config: Info) {
--    const filepath = path.join(Instance.directory, "config.json")
-+    const filepath = path.join(Instance.directory, "opencode.json")
-     const existing = await loadFile(filepath)
-     await Filesystem.writeJson(filepath, mergeDeep(existing, config))
-     await Instance.dispose()
+         const update = Effect.fn("Config.update")(function* (config: Info) {
+           const dir = yield* InstanceState.directory
+-          const file = path.join(dir, "config.json")
++          const file = path.join(dir, "opencode.json")
+           const existing = yield* loadFile(file)
+           yield* fs
+             .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
