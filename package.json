@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.10",
+  "packageManager": "bun@1.3.12",
   "workspaces": [
     "packages/core/*",
     "packages/client/*",
@@ -18,6 +18,7 @@
     "build": "turbo run build",
     "build:opencode": "bun run scripts/build-opencode.ts",
     "build:gateway": "bun run scripts/build-gateway.ts",
+    "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",

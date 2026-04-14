@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- `scripts/sync-plugin-version.ts`：vendor/opencode 更新后自动同步 `PINNED_PLUGIN_VERSION` + 重新生成 patch 文件
+- `package.json` 新增 `sync:plugin-version` 脚本
+
+### Fixed
+- opencode sidecar 每次启动都触发 npm reify：`installDependencies` 将 `@opencode-ai/plugin` 版本固定为 `1.3.13` + 添加快速路径（已安装则跳过），消除启动时的无效网络请求
+- `build-opencode.ts`：bun ≥1.3.12 编译产物缺少签名导致 Apple Silicon SIGKILL，构建后自动 ad-hoc 签名；签名失败时报错退出（不再静默复制无效二进制）；用 mtime 区分 smoke test 失败与真实编译错误
+
+### Changed
 - 微信 Channel（Phase 1）：ilink 协议接入，扫码登录 + 文本收发 + 语音 STT
 - 微信 Channel（Phase 2）：侧边栏渠道状态指示器 + 打字指示器
 - 微信 QR 登录 UI：Settings → Channels → 添加微信 → 二维码扫码 → 自动连接

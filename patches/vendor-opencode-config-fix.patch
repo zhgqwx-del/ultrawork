@@ -1,8 +1,37 @@
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28b..20c50254e 100644
+index 850bcc28b..f71ec7814 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
-@@ -1479,7 +1479,7 @@ export namespace Config {
+@@ -145,6 +145,19 @@ export namespace Config {
+ 
+   export async function installDependencies(dir: string, input?: InstallInput) {
+     if (!(await isWritable(dir))) return
++
++    // Pinned to match the vendor opencode version (1.3.13). Using
++    // Installation.VERSION causes problems in local/dev builds where it is a
++    // timestamp string (e.g. "0.0.0--202603171207") that does not exist on npm,
++    // triggering a failing npm reify on every startup.
++    const PINNED_PLUGIN_VERSION = "1.3.13"
++
++    // Fast path: if already installed at the pinned version, skip entirely.
++    // Prevents an npm reify on every startup when node_modules is healthy.
++    const installedPkgJson = path.join(dir, "node_modules", "@opencode-ai", "plugin", "package.json")
++    const installedPkg = await Filesystem.readJson<{ version?: string }>(installedPkgJson).catch(() => null)
++    if (installedPkg?.version === PINNED_PLUGIN_VERSION) return
++
+     await using _ = await Flock.acquire(`config-install:${Filesystem.resolve(dir)}`, {
+       signal: input?.signal,
+       onWait: (tick) =>
+@@ -158,7 +171,7 @@ export namespace Config {
+     input?.signal?.throwIfAborted()
+ 
+     const pkg = path.join(dir, "package.json")
+-    const target = Installation.isLocal() ? "*" : Installation.VERSION
++    const target = PINNED_PLUGIN_VERSION
+     const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
+       dependencies: {},
+     }))
+@@ -1479,7 +1492,7 @@ export namespace Config {
  
          const update = Effect.fn("Config.update")(function* (config: Info) {
            const dir = yield* InstanceState.directory
