@@ -12,6 +12,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `package.json` 新增 `sync:plugin-version` 脚本
 
 ### Fixed
+- Gateway Bridge stale session：sidecar 重启后旧 session-map 映射失效导致渠道消息无回复。新增 `getSession` 主动验证 + 自动重建 session；新增 `session.error` SSE 事件处理作为兜底
+- `build-gateway.ts`：bun ≥1.3.12 编译的 gateway 二进制缺少签名导致 macOS SIGKILL，构建后自动 ad-hoc 签名（与 `build-opencode.ts` 对齐）
+- Gateway Bridge 即时确认（⏳）延迟：将 ack 移到 session 验证之前发送，避免网络调用阻塞用户反馈
 - opencode sidecar 每次启动都触发 npm reify：`installDependencies` 将 `@opencode-ai/plugin` 版本固定为 `1.3.13` + 添加快速路径（已安装则跳过），消除启动时的无效网络请求
 - `build-opencode.ts`：bun ≥1.3.12 编译产物缺少签名导致 Apple Silicon SIGKILL，构建后自动 ad-hoc 签名；签名失败时报错退出（不再静默复制无效二进制）；用 mtime 区分 smoke test 失败与真实编译错误
 

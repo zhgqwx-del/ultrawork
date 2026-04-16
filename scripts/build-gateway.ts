@@ -30,5 +30,17 @@ const outFile = path.join(tauriBinDir, `channel-gateway-${tauriTarget}${suffix}`
 
 await $`cd ${gatewayDir} && bun build --compile src/index.ts --outfile ${outFile}`
 
+// Apple Silicon requires a valid ad-hoc signature to run bun-compiled binaries.
+// Strip any placeholder signature and re-sign.
+if (process.platform === "darwin") {
+  const resign = await $`codesign --remove-signature ${outFile} 2>/dev/null; codesign -s - ${outFile}`.nothrow()
+  if (resign.exitCode !== 0) {
+    console.error(`❌ Failed to ad-hoc sign binary (exit ${resign.exitCode})`)
+    console.error(`   Apple Silicon requires a valid signature to run the binary`)
+    process.exit(1)
+  }
+  console.log(`🔏 Ad-hoc signed: ${outFile}`)
+}
+
 const size = Bun.file(outFile).size / 1024 / 1024
 console.log(`Channel Gateway ready: channel-gateway-${tauriTarget}${suffix} (${size.toFixed(1)} MB)`)

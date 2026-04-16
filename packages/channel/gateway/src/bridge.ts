@@ -122,10 +122,32 @@ export class Bridge {
       return;
     }
 
+    // Instantly acknowledge receipt to the user (before any network calls)
+    msg.reply("⏳ 收到，正在处理").catch((err) => {
+      console.error(`[Bridge] Instant ack failed for ${msg.chatId}:`, err);
+    });
+
     const client = this.getClient(msg.workspaceDir);
 
     // Get or create session for this chat
     let sessionId = this.sessionMap.get(msg.chatId);
+    if (sessionId) {
+      // Validate that the cached session still exists on the server
+      try {
+        await client.getSession(sessionId);
+      } catch {
+        console.log(
+          `[Bridge] Session ${sessionId} is stale (not found on server), creating new session for chat ${msg.chatId}`,
+        );
+        // Clean up old active context if any
+        const oldCtx = this.activeContexts.get(sessionId);
+        if (oldCtx) {
+          this.clearIdleTimer(oldCtx);
+          this.activeContexts.delete(sessionId);
+        }
+        sessionId = undefined;
+      }
+    }
     if (!sessionId) {
       const session = await client.createSession({});
       sessionId = session.id;
@@ -148,11 +170,6 @@ export class Bridge {
       onTyping: msg.onTyping,
     };
     this.activeContexts.set(sessionId, ctx);
-
-    // Instantly acknowledge receipt to the user
-    msg.reply("⏳ 收到，正在处理").catch((err) => {
-      console.error(`[Bridge] Instant ack failed for ${msg.chatId}:`, err);
-    });
 
     // Ensure SSE is connected for this workspace and WAIT for it to be ready
     await this.ensureSSE(msg.workspaceDir);
@@ -381,6 +398,12 @@ export class Bridge {
       case "question.asked":
         this.onQuestionAsked(event.properties);
         break;
+      case "session.error":
+        this.onSessionError(
+          event.properties.sessionID,
+          event.properties.error,
+        );
+        break;
     }
   }
 
@@ -452,6 +475,42 @@ export class Bridge {
       );
     });
     console.log(`[Bridge] Auto-rejected question ${question.id}`);
+  }
+
+  /** Handle session.error SSE event — notify user and clean up */
+  private onSessionError(
+    sessionId: string | undefined,
+    error: unknown,
+  ): void {
+    if (!sessionId) return;
+    const ctx = this.activeContexts.get(sessionId);
+    if (!ctx) return;
+
+    const errMsg =
+      error && typeof error === "object" && "data" in error
+        ? (error as { data?: { message?: string } }).data?.message
+        : undefined;
+    console.error(
+      `[Bridge] session.error for ${sessionId}:`,
+      errMsg ?? error,
+    );
+
+    this.clearIdleTimer(ctx);
+    ctx.onTyping?.(false);
+
+    // Only reply if no text has been accumulated (avoid overwriting a partial response)
+    const accumulated = Array.from(ctx.textParts.values()).join("").trim();
+    if (!accumulated) {
+      ctx
+        .reply("⚠️ AI agent encountered an error. Please try again.")
+        .catch(() => {});
+    } else {
+      // Flush whatever we have
+      this.flushAndReply(sessionId);
+      return;
+    }
+
+    this.activeContexts.delete(sessionId);
   }
 
   /** Start polling for permission/question as SSE backup */

@@ -36,6 +36,7 @@ const mockFetch = vi.fn()
 
 import { Bridge } from "../bridge.js"
 import type { IncomingMessage } from "../types.js"
+import { loadSessionMap } from "../session-store.js"
 
 function createMessage(overrides?: Partial<IncomingMessage>): IncomingMessage {
   return {
@@ -578,6 +579,163 @@ describe("Bridge", () => {
       expect((bridge as any).sessionMap.size).toBe(0)
       expect((bridge as any).clients.size).toBe(0)
       expect((bridge as any).queues.size).toBe(0)
+    })
+  })
+
+  describe("stale session recovery", () => {
+    it("recreates session when cached session is stale (getSession 404)", async () => {
+      // Pre-populate session map with a stale mapping
+      vi.mocked(loadSessionMap).mockResolvedValueOnce(
+        new Map([["user-1", "stale-sess"]])
+      )
+      // getSession rejects for stale session, then succeeds for new
+      mockGetSession
+        .mockRejectedValueOnce(new Error("API request failed: 404 Not Found"))
+        .mockResolvedValue({ id: "sess-1", title: "New session" })
+      mockCreateSession.mockResolvedValueOnce({ id: "sess-1" })
+
+      const bridge = new Bridge()
+      await bridge.init()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      // Should have tried getSession with stale ID, then created new session
+      expect(mockGetSession).toHaveBeenCalledWith("stale-sess")
+      expect(mockCreateSession).toHaveBeenCalledWith({})
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "hello", { model: "anthropic/claude-sonnet-4-20250514" })
+      await bridge.shutdown()
+    })
+
+    it("does not call getSession for newly created sessions", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      // getSession should NOT be called — session was just created
+      expect(mockGetSession).not.toHaveBeenCalled()
+      expect(mockCreateSession).toHaveBeenCalledWith({})
+      await bridge.shutdown()
+    })
+
+    it("does not retry on non-404 getSession errors (e.g. 500)", async () => {
+      vi.mocked(loadSessionMap).mockResolvedValueOnce(
+        new Map([["user-1", "existing-sess"]])
+      )
+      mockGetSession.mockRejectedValueOnce(
+        new Error("API request failed: 500 Internal Server Error")
+      )
+      mockCreateSession.mockResolvedValueOnce({ id: "sess-new" })
+
+      const bridge = new Bridge()
+      await bridge.init()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      // Should treat any getSession failure as stale and recreate
+      expect(mockCreateSession).toHaveBeenCalledWith({})
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-new", "hello", { model: "anthropic/claude-sonnet-4-20250514" })
+      await bridge.shutdown()
+    })
+
+    it("cleans up old active context when session is stale", async () => {
+      // First message creates a session
+      const bridge = new Bridge()
+      const msg1 = createMessage({ text: "first" })
+      await bridge.handleMessage(msg1)
+
+      // Manually make the session stale by making getSession fail for next call
+      mockGetSession.mockRejectedValueOnce(
+        new Error("API request failed: 404 Not Found")
+      )
+      mockCreateSession.mockResolvedValueOnce({ id: "sess-2" })
+      mockGetSession.mockResolvedValue({ id: "sess-2", title: "New" })
+
+      const msg2 = createMessage({ text: "second" })
+      await bridge.handleMessage(msg2)
+
+      // Old context should be cleaned up, new context registered
+      const activeContexts = (bridge as any).activeContexts
+      expect(activeContexts.has("sess-1")).toBe(false)
+      expect(activeContexts.has("sess-2")).toBe(true)
+      await bridge.shutdown()
+    })
+  })
+
+  describe("session.error SSE event", () => {
+    it("replies with error message when session.error received", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+
+      handleSSE({
+        type: "session.error",
+        properties: {
+          sessionID: "sess-1",
+          error: { data: { message: "Session not found" } },
+        },
+      })
+
+      // Should reply with error (in addition to the instant ack)
+      expect(msg.reply).toHaveBeenCalledWith(
+        expect.stringContaining("error")
+      )
+      // Active context should be cleaned up
+      expect((bridge as any).activeContexts.has("sess-1")).toBe(false)
+      await bridge.shutdown()
+    })
+
+    it("flushes accumulated text on session.error instead of error message", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+
+      // Accumulate some text first
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text", sessionID: "sess-1", id: "p1", content: "Partial response" },
+        },
+      })
+
+      // Then session.error fires
+      handleSSE({
+        type: "session.error",
+        properties: {
+          sessionID: "sess-1",
+          error: { data: { message: "Something broke" } },
+        },
+      })
+
+      // Should flush the partial response, not send error message
+      expect(msg.reply).toHaveBeenCalledWith("Partial response")
+      await bridge.shutdown()
+    })
+
+    it("ignores session.error for unknown sessions", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+
+      // Fire error for a different session
+      handleSSE({
+        type: "session.error",
+        properties: {
+          sessionID: "unknown-sess",
+          error: { data: { message: "error" } },
+        },
+      })
+
+      // Should not affect the active session
+      expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
+      // Only the instant ack reply
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      await bridge.shutdown()
     })
   })
 
