@@ -84,22 +84,19 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
     .filter((p) => {
       if (!search) return p.connected.length > 0
       const q = search.toLowerCase()
-      return (
-        p.name.toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q) ||
-        p.models.some((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
-      )
+      // Only show providers that have at least one connected model matching the query
+      return p.connected.some((modelId) => {
+        const modelInfo = p.models.find((m) => m.id === modelId)
+        return (
+          modelId.toLowerCase().includes(q) ||
+          (modelInfo?.name ?? "").toLowerCase().includes(q)
+        )
+      })
     })
     .sort((a, b) => {
       const ac = a.connected.length > 0 ? 1 : 0
       const bc = b.connected.length > 0 ? 1 : 0
       if (ac !== bc) return bc - ac
-      if (search) {
-        const q = search.toLowerCase()
-        const aName = a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q) ? 1 : 0
-        const bName = b.name.toLowerCase().includes(q) || b.id.toLowerCase().includes(q) ? 1 : 0
-        if (aName !== bName) return bName - aName
-      }
       return a.name.localeCompare(b.name)
     })
 
@@ -149,8 +146,8 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
       toast.success(t("model.addProvider.success"))
       // Invalidate ModelSelector cache so it picks up new provider immediately
       clearModelCache()
-      // Go back to list and search for this provider
-      setSearch(selectedProvider.name)
+      // Go back to list; clear search so the new provider appears in the default view
+      setSearch("")
       setView("list")
       fetchData()
     } catch (err) {
@@ -213,7 +210,8 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
               ) : (
                 filteredProviders.map((provider) => {
                   const auth = getAuthInfo(provider.id)
-                  const isExpanded = expandedProvider === provider.id
+                  // When searching, auto-expand all; clicking header is disabled (search controls expand)
+                  const isExpanded = search ? true : expandedProvider === provider.id
 
                   return (
                     <div
@@ -223,7 +221,7 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
                       {/* Provider header */}
                       <button
                         type="button"
-                        onClick={() => setExpandedProvider(isExpanded ? null : provider.id)}
+                        onClick={() => !search && setExpandedProvider(isExpanded ? null : provider.id)}
                         className="flex w-full items-center gap-3 px-4 py-3"
                       >
                         <ChevronRight
@@ -256,47 +254,60 @@ export function ModelDialog({ open, onOpenChange, currentModel, onModelChange }:
                       </button>
 
                       {/* Model list (expanded) */}
-                      {isExpanded && (
-                        <div className="border-t border-[var(--color-border)] px-4 py-2">
-                          {provider.connected.map((modelId) => {
-                            const modelInfo = provider.models.find((m) => m.id === modelId)
-                            const fullId = `${provider.id}/${modelId}`
-                            const isActive = currentModel === fullId
+                      {isExpanded && (() => {
+                        const q = search.toLowerCase()
+                        const filteredConnected = q
+                          ? provider.connected.filter((modelId) => {
+                              const modelInfo = provider.models.find((m) => m.id === modelId)
+                              return (
+                                modelId.toLowerCase().includes(q) ||
+                                (modelInfo?.name ?? "").toLowerCase().includes(q)
+                              )
+                            })
+                          : provider.connected
 
-                            return (
-                              <button
-                                key={modelId}
-                                type="button"
-                                onClick={() => handleSelectModel(provider.id, modelId)}
-                                className={cn(
-                                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-accent)]",
-                                  isActive && "bg-[var(--color-accent)]"
-                                )}
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <div className="truncate text-[var(--color-fg)]">
-                                    {modelInfo?.name || modelId}
-                                  </div>
-                                  {modelInfo?.cost && (
-                                    <div className="text-[10px] text-[var(--color-fg-muted)]">
-                                      ${(modelInfo.cost.input ?? 0).toFixed(2)}/{t("model.mInput")} · ${(modelInfo.cost.output ?? 0).toFixed(2)}/{t("model.mOutput")}
-                                    </div>
+                        return (
+                          <div className="border-t border-[var(--color-border)] px-4 py-2">
+                            {filteredConnected.map((modelId) => {
+                              const modelInfo = provider.models.find((m) => m.id === modelId)
+                              const fullId = `${provider.id}/${modelId}`
+                              const isActive = currentModel === fullId
+
+                              return (
+                                <button
+                                  key={modelId}
+                                  type="button"
+                                  onClick={() => handleSelectModel(provider.id, modelId)}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-accent)]",
+                                    isActive && "bg-[var(--color-accent)]"
                                   )}
-                                </div>
-                                {isActive && (
-                                  <Check className="size-4 shrink-0 text-[var(--color-brand)]" />
-                                )}
-                              </button>
-                            )
-                          })}
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="truncate text-[var(--color-fg)]">
+                                      {modelInfo?.name || modelId}
+                                    </div>
+                                    {modelInfo?.cost && (
+                                      <div className="text-[10px] text-[var(--color-fg-muted)]">
+                                        ${(modelInfo.cost.input ?? 0).toFixed(2)}/{t("model.mInput")} · ${(modelInfo.cost.output ?? 0).toFixed(2)}/{t("model.mOutput")}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isActive && (
+                                    <Check className="size-4 shrink-0 text-[var(--color-brand)]" />
+                                  )}
+                                </button>
+                              )
+                            })}
 
-                          {provider.models.length > provider.connected.length && (
-                            <div className="px-3 py-1 text-[10px] text-[var(--color-fg-muted)]">
-                              +{provider.models.length - provider.connected.length} {t("model.moreModels")}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            {provider.models.length > provider.connected.length && (
+                              <div className="px-3 py-1 text-[10px] text-[var(--color-fg-muted)]">
+                                +{provider.models.length - provider.connected.length} {t("model.moreModels")}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })
