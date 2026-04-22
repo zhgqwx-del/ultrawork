@@ -114,3 +114,79 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 - 健康检查端点：`/global/health`（不是 `/health`）
 - Gateway 修改后需 `bun run build:gateway` 重编译
 - Commit message 格式：`fix(#42): 描述` / `feat(#42): 描述`（关联 Issue 时在 scope 中写 `#issue-number`）
+
+---
+
+## Vendor Patch 管理（vendor/opencode）
+
+`vendor/opencode` 是 git submodule，Ultrawork 在其基础上有**本地 patch**（配置隔离、bug 修复等）。Patch 以 `.patch` 文件形式存储在 `patches/` 目录，由构建脚本自动 apply。
+
+### 核心规则
+
+1. **不要直接 commit 到 submodule**——所有对 `vendor/opencode/` 的源码修改必须通过 patch 文件管理
+2. **Patch 文件是 git 跟踪的**——`patches/vendor-opencode-config-fix.patch` 提交在主仓库
+3. **Submodule 本身保持指向 upstream commit**——`vendor/opencode (modified content)` 是正常状态
+
+### 当前 patch 内容
+
+`patches/vendor-opencode-config-fix.patch` 包含所有 vendor 修改（单文件累加）：
+
+| 文件 | 修改内容 | 关联 ADR |
+|------|---------|---------|
+| `global/index.ts` | `OPENCODE_APP_NAME` env var 控制 app 名称 | ADR-020 |
+| `config/config.ts` | managed dir 对齐 + endsWith 过滤 + PINNED_PLUGIN_VERSION + config.json→opencode.json 修复 | ADR-020 |
+| `config/paths.ts` | 跳过 `~/.opencode/` home 目录搜索 | ADR-020 |
+
+### 修改 vendor/opencode 的完整流程
+
+#### 新增 / 修改 patch
+
+```bash
+# 1. 直接编辑 vendor/opencode 下的源码
+vim vendor/opencode/packages/opencode/src/...
+
+# 2. 重新生成 patch 文件（覆盖旧的）
+cd vendor/opencode && git diff -- \
+  packages/opencode/src/config/config.ts \
+  packages/opencode/src/config/paths.ts \
+  packages/opencode/src/global/index.ts \
+  > ../../patches/vendor-opencode-config-fix.patch
+
+# 3. 如果新增了文件，在上面的 git diff 命令中追加路径
+# 4. 重编译 sidecar
+bun run --bun scripts/build-opencode.ts
+
+# 5. 提交 patch 文件（不提交 submodule 变更）
+git add patches/vendor-opencode-config-fix.patch
+```
+
+#### 更新 vendor/opencode submodule
+
+```bash
+# 1. 拉取 upstream 新版本
+cd vendor/opencode && git fetch origin dev && git checkout <new-commit> && cd ../..
+
+# 2. 运行同步脚本（auto-apply patch + 更新 PINNED_PLUGIN_VERSION + 重新生成 patch）
+bun run scripts/sync-plugin-version.ts
+
+# 3. 如果 patch apply 失败（upstream 改了 patch 涉及的代码）：
+#    - 手动在 vendor 源码中解决冲突
+#    - 重新生成 patch 文件（见上方步骤 2）
+#    - 重新运行 sync-plugin-version.ts
+
+# 4. 重编译 sidecar
+bun run --bun scripts/build-opencode.ts
+
+# 5. 提交
+git add vendor/opencode patches/vendor-opencode-config-fix.patch
+```
+
+### 自动化保障
+
+| 入口 | 行为 |
+|------|------|
+| `setup.sh` 第 3 步 | 自动 apply `patches/vendor-opencode-*.patch`（`git apply --check` 幂等） |
+| `scripts/build-opencode.ts` | 编译前检测 sentinel，未 apply 则自动 apply（双重保障） |
+| `scripts/sync-plugin-version.ts` | submodule 更新后运行，重新 apply + 更新版本 + 重新生成 patch |
+
+**其他人 clone 后只需 `./setup.sh` 即可**——submodule init + patch apply + build 全自动。
