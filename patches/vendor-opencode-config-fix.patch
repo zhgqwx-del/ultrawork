@@ -1,8 +1,26 @@
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28b..f71ec7814 100644
+index 850bcc28b..efc900b8a 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
-@@ -145,6 +145,19 @@ export namespace Config {
+@@ -60,13 +60,14 @@ export namespace Config {
+   // Managed settings directory for enterprise deployments (highest priority, admin-controlled)
+   // These settings override all user and project settings
+   function systemManagedConfigDir(): string {
++    const name = process.env.OPENCODE_APP_NAME || "opencode"
+     switch (process.platform) {
+       case "darwin":
+-        return "/Library/Application Support/opencode"
++        return `/Library/Application Support/${name}`
+       case "win32":
+-        return path.join(process.env.ProgramData || "C:\\ProgramData", "opencode")
++        return path.join(process.env.ProgramData || "C:\\ProgramData", name)
+       default:
+-        return "/etc/opencode"
++        return `/etc/${name}`
+     }
+   }
+ 
+@@ -145,6 +146,19 @@ export namespace Config {
  
    export async function installDependencies(dir: string, input?: InstallInput) {
      if (!(await isWritable(dir))) return
@@ -22,7 +40,7 @@ index 850bcc28b..f71ec7814 100644
      await using _ = await Flock.acquire(`config-install:${Filesystem.resolve(dir)}`, {
        signal: input?.signal,
        onWait: (tick) =>
-@@ -158,7 +171,7 @@ export namespace Config {
+@@ -158,7 +172,7 @@ export namespace Config {
      input?.signal?.throwIfAborted()
  
      const pkg = path.join(dir, "package.json")
@@ -31,7 +49,18 @@ index 850bcc28b..f71ec7814 100644
      const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
        dependencies: {},
      }))
-@@ -1479,7 +1492,7 @@ export namespace Config {
+@@ -1335,7 +1349,9 @@ export namespace Config {
+           const deps: Promise<void>[] = []
+ 
+           for (const dir of unique(directories)) {
+-            if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
++            if (dir.endsWith(".opencode") ||
++                (process.env.OPENCODE_APP_NAME && dir.endsWith(`.${process.env.OPENCODE_APP_NAME}`)) ||
++                dir === Flag.OPENCODE_CONFIG_DIR) {
+               for (const file of ["opencode.json", "opencode.jsonc"]) {
+                 const source = path.join(dir, file)
+                 log.debug(`loading config from ${source}`)
+@@ -1479,7 +1495,7 @@ export namespace Config {
  
          const update = Effect.fn("Config.update")(function* (config: Info) {
            const dir = yield* InstanceState.directory
@@ -40,3 +69,46 @@ index 850bcc28b..f71ec7814 100644
            const existing = yield* loadFile(file)
            yield* fs
              .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
+diff --git a/packages/opencode/src/config/paths.ts b/packages/opencode/src/config/paths.ts
+index 82ccf3945..07bc9e5a3 100644
+--- a/packages/opencode/src/config/paths.ts
++++ b/packages/opencode/src/config/paths.ts
+@@ -24,13 +24,18 @@ export namespace ConfigPaths {
+             }),
+           )
+         : []),
+-      ...(await Array.fromAsync(
+-        Filesystem.up({
+-          targets: [".opencode"],
+-          start: Global.Path.home,
+-          stop: Global.Path.home,
+-        }),
+-      )),
++      // When running as an embedded app (OPENCODE_APP_NAME set), skip home
++      // directory search — the app manages agents/plugins through its own UI,
++      // and reusing ~/.opencode/ would leak CLI user configurations.
++      ...(!process.env.OPENCODE_APP_NAME
++        ? await Array.fromAsync(
++            Filesystem.up({
++              targets: [".opencode"],
++              start: Global.Path.home,
++              stop: Global.Path.home,
++            }),
++          )
++        : []),
+       ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
+     ]
+   }
+diff --git a/packages/opencode/src/global/index.ts b/packages/opencode/src/global/index.ts
+index 869019e2c..6509ec1ba 100644
+--- a/packages/opencode/src/global/index.ts
++++ b/packages/opencode/src/global/index.ts
+@@ -4,7 +4,7 @@ import path from "path"
+ import os from "os"
+ import { Filesystem } from "../util/filesystem"
+ 
+-const app = "opencode"
++const app = process.env.OPENCODE_APP_NAME || "opencode"
+ 
+ const data = path.join(xdgData!, app)
+ const cache = path.join(xdgCache!, app)

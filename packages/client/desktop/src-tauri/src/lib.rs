@@ -9,6 +9,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
+const OPENCODE_APP_NAME: &str = "ultrawork";
 
 fn is_port_in_use(port: u16) -> bool {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -732,9 +733,10 @@ fn opencode_json_path(workspace: &str) -> PathBuf {
 
 fn global_config_dir() -> PathBuf {
     // Must match OpenCode's xdg-basedir: XDG_CONFIG_HOME or ~/.config (NOT ~/Library/Application Support on macOS)
+    // Uses OPENCODE_APP_NAME to isolate Ultrawork config from OpenCode CLI
     match std::env::var("XDG_CONFIG_HOME") {
-        Ok(val) if !val.is_empty() => PathBuf::from(val).join("opencode"),
-        _ => dirs::home_dir().unwrap().join(".config").join("opencode"),
+        Ok(val) if !val.is_empty() => PathBuf::from(val).join(OPENCODE_APP_NAME),
+        _ => dirs::home_dir().unwrap().join(".config").join(OPENCODE_APP_NAME),
     }
 }
 
@@ -795,6 +797,78 @@ fn remove_mcp_config(workspace: String, name: String) -> Result<(), String> {
     write_opencode_json(&workspace, &root)
 }
 
+// ---------------------------------------------------------------------------
+// One-time migration: copy essential data from shared opencode paths to
+// isolated ultrawork paths. Runs before sidecar startup.
+// Trigger: ~/.config/ultrawork/opencode.json does NOT exist
+//      AND ~/.config/opencode/opencode.json DOES exist.
+// ---------------------------------------------------------------------------
+
+fn migrate_from_opencode() {
+    let new_config = global_config_dir(); // ~/.config/ultrawork/
+    let sentinel = new_config.join("opencode.json");
+    if sentinel.exists() {
+        return; // Already migrated or fresh config exists
+    }
+
+    let home = dirs::home_dir().unwrap();
+    let old_config = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(val) if !val.is_empty() => PathBuf::from(val).join("opencode"),
+        _ => home.join(".config").join("opencode"),
+    };
+    let old_sentinel = old_config.join("opencode.json");
+    if !old_sentinel.exists() {
+        return; // No old data to migrate (fresh install)
+    }
+
+    println!("[migration] Migrating data from opencode → ultrawork...");
+
+    let old_data = home.join(".local").join("share").join("opencode");
+    let new_data = home.join(".local").join("share").join(OPENCODE_APP_NAME);
+
+    // Ensure target directories exist
+    let _ = std::fs::create_dir_all(&new_config);
+    let _ = std::fs::create_dir_all(&new_data);
+
+    // Config: opencode.json only (skip node_modules, package.json, etc.)
+    copy_if_exists(&old_config.join("opencode.json"), &sentinel);
+
+    // Data: auth + mcp-auth + database files
+    copy_if_exists(
+        &old_data.join("auth.json"),
+        &new_data.join("auth.json"),
+    );
+    copy_if_exists(
+        &old_data.join("mcp-auth.json"),
+        &new_data.join("mcp-auth.json"),
+    );
+    // SQLite: copy all opencode*.db* files (main + shm + wal)
+    if let Ok(entries) = std::fs::read_dir(&old_data) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("opencode") && name_str.contains(".db") {
+                copy_if_exists(&entry.path(), &new_data.join(&name));
+            }
+        }
+    }
+
+    // NOTE: Cache (models.json etc.) is NOT migrated — sidecar's CACHE_VERSION
+    // mechanism clears the entire cache dir on first launch anyway.
+    // Models will be re-fetched automatically (~1-2s delay).
+
+    println!("[migration] Migration complete.");
+}
+
+fn copy_if_exists(src: &std::path::Path, dst: &std::path::Path) {
+    if src.exists() {
+        match std::fs::copy(src, dst) {
+            Ok(_) => println!("[migration]   {} → {}", src.display(), dst.display()),
+            Err(e) => eprintln!("[migration]   WARN: failed to copy {}: {}", src.display(), e),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -822,6 +896,9 @@ pub fn run() {
             get_global_config_dir,
         ])
         .setup(|app| {
+            // One-time migration from shared opencode paths (must run before sidecar)
+            migrate_from_opencode();
+
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
             let gw_handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -847,7 +924,10 @@ pub fn run() {
                 "/global/health",
                 Some("Basic b3BlbmNvZGU6dGVzdDEyMw=="), // opencode:test123
                 &["serve", "--port", &oc_port],
-                &[("OPENCODE_SERVER_PASSWORD", "test123")],
+                &[
+                    ("OPENCODE_SERVER_PASSWORD", "test123"),
+                    ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
+                ],
             ) {
                 eprintln!("OpenCode Server startup failed: {}", e);
                 app.dialog()

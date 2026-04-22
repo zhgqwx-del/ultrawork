@@ -44,6 +44,28 @@ if (!targetInfo) {
 
 console.log(`Building OpenCode sidecar for target: ${tauriTarget}`)
 
+// Apply vendor patches if not already applied.
+// The patch file contains all Ultrawork-specific modifications to vendor/opencode:
+//   - OPENCODE_APP_NAME config isolation (global/index.ts, config.ts, paths.ts)
+//   - PINNED_PLUGIN_VERSION + config.json→opencode.json fix (config.ts)
+// See docs/decisions/020-config-isolation.md for details.
+const vendorDir = path.join(rootDir, "vendor/opencode")
+const patchFile = path.join(rootDir, "patches/vendor-opencode-config-fix.patch")
+const patchSentinel = path.join(opencodeDir, "src/global/index.ts")
+const sentinelContent = await Bun.file(patchSentinel).text()
+if (!sentinelContent.includes("OPENCODE_APP_NAME")) {
+  console.log("Applying vendor patches...")
+  const applyResult = await $`cd ${vendorDir} && git apply ${patchFile}`.nothrow()
+  if (applyResult.exitCode !== 0) {
+    console.error("⚠️  Patch apply failed (may have conflicts after submodule update)")
+    console.error("   Fix conflicts manually, then run: bun run scripts/sync-plugin-version.ts")
+    process.exit(1)
+  }
+  console.log("✅ Vendor patches applied")
+} else {
+  console.log("Vendor patches already applied, skipping")
+}
+
 const binaryName = `opencode-${targetInfo.bunTarget}`
 const binarySuffix = targetInfo.exe ? ".exe" : ""
 const binaryPath = path.join(opencodeDir, `dist/${binaryName}/bin/opencode${binarySuffix}`)
