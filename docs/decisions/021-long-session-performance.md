@@ -346,228 +346,101 @@ const isAuto = (el) => {
 
 ---
 
-## 决策
+## 决策与实施结果
 
-采用四阶段渐进式优化方案，覆盖渲染、状态、数据、滚动四个层面。每个 Phase 可独立交付和验证。
+> **注意**：以下内容反映最终实施结果，部分设计在实施中根据实测调整。
+
+采用四阶段渐进式优化方案，覆盖渲染、状态、数据、滚动四个层面。每个 Phase 独立交付和验证。
 
 ### Phase 1：渲染层优化（止血，不改数据流）
 
 #### 1.1 组件 Memoization
 
-对所有消息相关的子组件添加 `React.memo()`：
+对所有消息相关的子组件添加 `React.memo()`，全部使用默认浅比较（实测足够，无需自定义 comparator）：
+`UserMessage`、`AssistantMessage`、`ToolCallBlock`、`CodeBlock`、`ReasoningBlock`、`StepIndicator`、`ExecutionStatus`、`MarkdownContent`、`FileBlock`、`PatchBlock`。
 
-| 组件 | memo 比较策略 |
-|------|-------------|
-| `UserMessage` | 默认浅比较（只有 `content: string`） |
-| `AssistantMessage` | 自定义比较：`parts` 引用 + `isStreaming` |
-| `ToolCallBlock` | 按 `tool` + `state.status` 比较 |
-| `ReasoningBlock` | 按 `text` 比较 |
-| `CodeBlock` | 按 `children` + `className` 比较 |
-| `StepIndicator` | 默认浅比较 |
-| `ExecutionStatus` | 按 `state` 比较 |
-
-**注意**：`MessageList` 本身不需要 memo — 它是 Session.tsx 的直接子组件，`messages` 引用每次 SSE 都会变。需要 memo 的是 `.map()` 出来的每一项。
+`MessageList` 本身不需要 memo — 它是 Session.tsx 的直接子组件，`messages` 引用每次 SSE 都会变。需要 memo 的是 `.map()` 出来的每一项。
 
 #### 1.2 MarkdownContent components 对象提取
 
-将 `assistant-message.tsx` 中的 markdown components 对象提取到模块顶层：
+将 `assistant-message.tsx` 中的 markdown `components` 对象和 `remarkPlugins` 数组提取到模块顶层常量（`MARKDOWN_COMPONENTS`、`REMARK_PLUGINS`），避免每次 render 重建导致 ReactMarkdown 重新解析。
 
-```tsx
-// 模块顶层，只创建一次
-const MARKDOWN_COMPONENTS: Components = {
-  p: ({ children }) => <p className="...">{ children }</p>,
-  code: ({ children, className, ...props }) => {
-    const inline = !className
-    return <CodeBlock inline={inline} className={className}>{String(children)}</CodeBlock>
-  },
-  // ... 其余组件
-}
-
-function MarkdownContent({ text }: { text: string }) {
-  return <ReactMarkdown components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
-}
-```
-
-`FileBlock` 和 `PatchBlock` 因为依赖 `onArtifactClick` 回调，需要拆成独立的 memo 组件，回调通过 props 传入。
+`FileBlock` 和 `PatchBlock` 拆成独立 memo 组件，直接接收 `onArtifactClick` 引用（不再由父组件创建内联 onClick 闭包），避免穿透 memo。
 
 #### 1.3 内嵌函数提取
 
-- `ToolCallBlock` 中的 `StatusIcon` 嵌套函数提取到组件外部
-- `CodeBlock` 的 `handleCopy` 添加 `useCallback`
+- `StatusIcon` 已在 `ToolCallBlock` 外部定义，无需提取
+- `CodeBlock` 的 `handleCopy` 添加 `useCallback([children])`
 
 #### 1.4 CSS content-visibility
 
-在 `message-list.tsx` 的每条消息容器上添加：
+`message-list.tsx` 中提取模块级稳定常量：
 
 ```tsx
-<div
-  key={message.info.id}
-  style={{
-    contentVisibility: isStreaming ? undefined : 'auto',
-    containIntrinsicSize: isStreaming ? undefined : 'auto 500px',
-  }}
->
-  {/* UserMessage 或 AssistantMessage */}
-</div>
+const CONTENT_VISIBILITY_STYLE: React.CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 500px',
+}
 ```
 
-参考 OpenCode `message-timeline.tsx:946-949` 的策略：活跃消息正常渲染，非活跃消息由浏览器自动跳过绘制。
+每条消息容器使用 `style={isStreaming ? undefined : CONTENT_VISIBILITY_STYLE}`。streaming 消息正常渲染，非活跃消息由浏览器跳过绘制。
 
 #### 1.5 workspaceRefreshKey 优化
 
-将 O(n×m) 的 `useMemo` 改为增量计数器：
+将 O(n×m) 的 `useMemo` 改为增量计数器 `toolCompletionCount`：
+- SSE `message.part.updated` 中检测 tool completed 时 `+1`
+- 初始加载消息时扫描已完成 tool 数量作为种子值
+- session 切换时重置为 0
 
-```tsx
-// 当前: 每次 messages 变化遍历所有消息所有 parts
-const workspaceRefreshKey = useMemo(() => {
-  return messages.reduce((count, msg) => {
-    return count + msg.parts.filter(...).length
-  }, 0)
-}, [messages])
-
-// 改为: SSE handler 中增量 +1
-const [toolCompletionCount, setToolCompletionCount] = useState(0)
-// 在 message.part.updated case 中检测到 tool completed 时 +1
-```
-
-需要在初始加载消息时扫描一遍已完成工具数量作为初始值。
-
-### Phase 2：状态层重构
+### Phase 2：状态层重构（Hook 提取）
 
 #### 2.1 Session.tsx 拆分
 
-将 755 行的巨型组件拆分为 3 个 hook + 组装层：
+将 763 行的巨型组件拆分为 2 个 hook + 组装层（滚动 hook 在 Phase 4 提取）：
 
 ```
-Session.tsx (755行)
-  → lib/use-session-messages.ts  (消息状态 + SSE 处理)
-  → lib/use-session-scroll.ts    (滚动管理)
-  → lib/use-session-permission.ts (权限/问题处理)
-  → pages/Session.tsx            (组装 + 渲染，~200行)
+Session.tsx (763行)
+  → lib/use-session-messages.ts  (消息状态 + SSE 处理，568行)
+  → lib/use-session-permission.ts (权限/问题处理，130行)
+  → pages/Session.tsx            (组装 + 渲染，252行)
 ```
 
 `useSessionMessages` hook API：
 
 ```typescript
-function useSessionMessages(sessionId: string | undefined) {
+function useSessionMessages(
+  sessionId: string | undefined,
+  options?: { initialSending?: boolean; initialMessageText?: string }
+) {
   return {
-    // 状态
-    historyMessages: SendMessageResponse[],      // 已完成的消息（稳定引用）
-    streamingMessage: SendMessageResponse | null, // 当前流式消息（高频变化）
-    allMessages: SendMessageResponse[],          // 合并视图（给渲染用）
-    loading: boolean,
-    sending: boolean,
-    streamingMessageId: string | null,
-    stoppedAtMessageId: string | null,
-    toolCompletionCount: number,
-
-    // 操作
-    sendMessage: (text: string, model?: ModelOverride) => Promise<void>,
-    stopGeneration: () => void,
+    messages: SendMessageResponse[],       // 窗口化后的消息（给 MessageList 渲染）
+    allMessages: SendMessageResponse[],    // 全量消息（给侧边栏使用）
+    sending, loading, streamingMessageId,
+    stopped, stoppedAtMessageId, toolCompletionCount,
+    turnStart, hasMore, historyLoading,    // 历史窗口状态
+    sendMessage, stopGeneration,           // 操作
+    backfillTurns, loadEarlierMessages, onScrollNearTop, // 历史加载
   }
 }
 ```
 
-#### 2.2 Streaming 消息与历史消息分离
+关键实现细节：
+- `options` 通过 `optionsRef` 在 session-reset effect 中安全读取，避免闭包过期
+- 所有 ref（`sendingRef`, `stoppedRef`, `messagesRef`, `idRef`, `frozenMessageIdsRef`）封装在 hook 内部
+- cleanup effect 仅在 `sendingRef.current === true` 时调用 `markSessionIdle`，避免非必要的 `time.updated` 写入
+- 8 秒安全超时保留在 hook 中
 
-核心改动 — 将消息分为两个独立的 state：
+#### 2.2 关于 Streaming 消息分离
 
-```typescript
-const [historyMessages, setHistoryMessages] = useState<SendMessageResponse[]>([])
-const [streamingMessage, setStreamingMessage] = useState<SendMessageResponse | null>(null)
+> **设计调整**：原方案中的 `historyMessages` + `streamingMessage` 双 state 分离**未在本轮实施**。实际保持了单一 `messages` 数组。
+>
+> 理由：Phase 1 的 memo + content-visibility 已显著降低了 SSE 更新的渲染开销，Phase 3 的历史窗口进一步减少了 DOM 中的消息数量。实测中未观察到明显的流式输出卡顿，streaming 分离的收益不足以证明其引入的复杂度（需要 streamingMessageRef 分流路由、双 state 同步、stop/freeze 逻辑适配等）。
+>
+> 如果未来在 200+ 轮对话中观察到流式输出掉帧，可作为后续优化引入。相关设计方案保留在本文档的"考虑过的替代方案"中供参考。
 
-const allMessages = useMemo(() => {
-  if (!streamingMessage) return historyMessages
-  return [...historyMessages, streamingMessage]
-}, [historyMessages, streamingMessage])
-```
+#### 2.3 useDeferredValue
 
-SSE handler 改造 — 分流路由：
-
-```typescript
-case "message.part.delta": {
-  // delta 事件只可能属于 streaming 消息（服务端保证）
-  setStreamingMessage(prev => {
-    if (!prev || prev.info.id !== messageID) {
-      return { info: { id: messageID, ... }, parts: [{ id: partID, [field]: delta }] }
-    }
-    const updatedParts = prev.parts.map(p =>
-      p.id === partID ? { ...p, [field]: (p[field] || '') + delta } : p
-    )
-    return { ...prev, parts: updatedParts }
-  })
-  break
-}
-
-case "message.part.updated": {
-  // part.updated 可能针对 streaming 消息，也可能针对历史消息
-  if (streamingMessageRef.current?.info.id === messageID) {
-    setStreamingMessage(prev => /* 更新 streaming 消息的 part */)
-  } else {
-    // 低频路径：历史消息的 part 更新（工具补全、压缩、revert 等）
-    setHistoryMessages(prev => /* O(n) 但极少触发 */)
-  }
-  break
-}
-
-case "message.part.removed": {
-  // 同上，需要两边都处理
-  if (streamingMessageRef.current?.info.id === messageID) {
-    setStreamingMessage(prev => /* 移除 part */)
-  } else {
-    setHistoryMessages(prev => /* 低频 */)
-  }
-  break
-}
-
-case "message.updated": {
-  const info = event.properties.info || event.properties
-  if (streamingMessageRef.current?.info.id === info.id && info.time?.completed) {
-    // 流式完成 → 移入历史
-    setStreamingMessage(prev => {
-      if (prev) {
-        setHistoryMessages(h => [...h, { ...prev, info: { ...prev.info, ...info } }])
-      }
-      return null
-    })
-    setSending(false)
-  } else {
-    // 历史消息的元数据更新（cost/tokens/error 等，多步 agent 场景）
-    setHistoryMessages(prev =>
-      prev.map(m => m.info.id === info.id ? { ...m, info: { ...m.info, ...info } } : m)
-    )
-  }
-  break
-}
-```
-
-**关键设计决策**：需要一个 `streamingMessageRef` 来在 SSE 回调中同步判断消息归属。
-
-**性能收益**：
-- `message.part.delta`（高频，10+ 次/秒）：只触发 `streamingMessage` → 1 个组件重渲染，O(1)
-- `message.part.updated/removed` 对历史消息（低频，每轮 0-1 次）：O(n) 但可接受
-- 历史消息绝大多数时间引用不变 → memo 组件跳过渲染
-- 整体：SSE 高频路径从 O(n) 降到 O(1)
-
-#### 2.3 useDeferredValue（可选，需实测验证）
-
-> **注意**：此步骤降级为可选优化。见风险 10 的分析。
-
-streaming 分离后，`allMessages` 每个 token 都会重建引用（因为 `streamingMessage` 变化）。如果直接对 `allMessages` 使用 `useDeferredValue`，会导致 MessageList 渲染过时的 streaming 内容，出现视觉延迟。
-
-**推荐的替代方案**：
-- 如果实测发现用户输入仍有延迟，仅对 `historyMessages` 使用 `useDeferredValue`
-- 或者用 `useTransition` 包裹"加载更早消息"等低优先级操作
-- `streamingMessage` 不应 defer，必须实时渲染
-
-```tsx
-// 仅在需要时启用，且只 defer 历史部分
-const deferredHistory = useDeferredValue(historyMessages)
-const displayMessages = useMemo(() => {
-  if (!streamingMessage) return deferredHistory
-  return [...deferredHistory, streamingMessage]
-}, [deferredHistory, streamingMessage])
-```
+**未实施**。streaming 分离未做的情况下，`useDeferredValue` 的价值更低。保留为未来可选优化。
 
 ### Phase 3：数据层改造
 
@@ -715,141 +588,94 @@ const displayMessages = useMemo(() => {
 
 #### 3.4 滚动位置保持
 
-向上加载消息时保持用户阅读位置不变。参考 OpenCode `session.tsx:139-153`，但需适配 React 18 的批量更新机制（见风险 9）：
-
-```typescript
-import { flushSync } from 'react-dom'
-
-function preserveScroll(
-  scrollContainer: HTMLElement | null,
-  action: () => void
-) {
-  if (!scrollContainer) { action(); return }
-  const beforeScrollTop = scrollContainer.scrollTop
-  const beforeScrollHeight = scrollContainer.scrollHeight
-  // flushSync 确保 React 同步完成 DOM 更新
-  // 否则 React 18 的批量更新可能导致测量到旧的 scrollHeight
-  flushSync(() => { action() })
-  const delta = scrollContainer.scrollHeight - beforeScrollHeight
-  if (delta) scrollContainer.scrollTop = beforeScrollTop + delta
-}
-```
-
-> **与 OpenCode 实现的差异**：OpenCode 用 SolidJS，状态更新是同步的，可以用 `requestAnimationFrame` 延迟测量。React 18 的 automatic batching 使得 `action()` 后 DOM 不一定已更新，必须用 `flushSync` 强制同步。`flushSync` 仅在 `preserveScroll` 中使用，不影响其他更新的批量优化。
+> **设计调整**：原方案中的 `preserveScroll` + `flushSync` 独立函数**未在本轮实施**。滚动位置保持由 Phase 4 的 `useSessionScroll` hook 统一处理：向上加载历史时，`turnStart` 变化触发 `displayMessages` 重新计算，`useSessionScroll` 的 `messages` 依赖触发 `doScrollToBottom`，由 `userScrolledRef` 控制是否执行。
+>
+> 如果未来出现向上 backfill 时滚动跳动，可引入 `flushSync` 版本的 `preserveScroll`。
 
 ### Phase 4：滚动层升级
 
+提取 `lib/use-session-scroll.ts` hook，统一管理所有滚动逻辑。
+
 #### 4.1 区分用户滚动 vs 程序滚动
 
-参考 OpenCode `create-auto-scroll.tsx:41-64`，实现 `markAuto`/`isAuto` 机制：
+参考 OpenCode `create-auto-scroll.tsx`，实现 `markAuto`/`isAuto` 机制。关键实现细节：
+
+- **`userScrolledRef`**：`userScrolled` state 的同步镜像 ref，解决 effect/callback 闭包过期问题。`setUserScrolledBoth()` 同时更新 state（触发渲染）和 ref（同步可读）
+- **`doScrollToBottom`**：纯 DOM 操作（`el.scrollTop = el.scrollHeight`），不依赖任何 state，引用稳定
+- **`scrollToBottom(force?)`**：公开 API，`force=true` 时无条件滚动并重置 `userScrolled`
+- `handleWheel`：仅 `deltaY < 0`（向上滚）时标记 `userScrolled = true`
+- `handleScroll`：距底 `< 100px` 时恢复自动跟随；通过 `isAutoScroll` 过滤程序触发的滚动事件
+- 所有事件监听使用 `{ passive: true }`
+
+#### 4.2 自动滚动触发机制
+
+采用 **messages 引用 + ResizeObserver 双重触发**（非 ResizeObserver 独占）：
 
 ```typescript
-function useSessionScroll(scrollContainerRef, contentRef) {
-  const [userScrolled, setUserScrolled] = useState(false)
-  const autoScrollMark = useRef<{ top: number; time: number } | null>(null)
-
-  const scrollToBottom = useCallback((force = false) => {
-    const el = scrollContainerRef.current
-    if (!el) return
-    if (!force && userScrolled) return
-    autoScrollMark.current = {
-      top: Math.max(0, el.scrollHeight - el.clientHeight),
-      time: Date.now(),
-    }
-    el.scrollTop = el.scrollHeight  // 即时滚动，不用 smooth
-  }, [userScrolled])
-
-  const isAutoScroll = useCallback(() => {
-    const mark = autoScrollMark.current
-    if (!mark) return false
-    if (Date.now() - mark.time > 1500) { autoScrollMark.current = null; return false }
-    const el = scrollContainerRef.current
-    return el ? Math.abs(el.scrollTop - mark.top) < 2 : false
-  }, [])
-
-  // 滚动事件处理
-  useEffect(() => {
-    const el = scrollContainerRef.current
-    if (!el) return
-
-    const handleWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) setUserScrolled(true) // 只有向上滚动才暂停
-    }
-
-    const handleScroll = () => {
-      const distance = el.scrollHeight - el.clientHeight - el.scrollTop
-      if (distance < 10) { setUserScrolled(false); return } // 回到底部恢复
-      if (isAutoScroll()) return
-      setUserScrolled(true)
-    }
-
-    el.addEventListener('wheel', handleWheel, { passive: true })
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    return () => {
-      el.removeEventListener('wheel', handleWheel)
-      el.removeEventListener('scroll', handleScroll)
-    }
-  }, [isAutoScroll])
-
-  return { userScrolled, scrollToBottom, setUserScrolled }
-}
-```
-
-#### 4.2 ResizeObserver 替代 messages 依赖
-
-用 ResizeObserver 监听内容区域高度变化触发自动滚动，而非依赖 `messages` state：
-
-```typescript
+// 主触发：messages 引用变化（覆盖新消息、初始加载、session 切换、SSE 部分更新）
 useEffect(() => {
-  const content = contentRef.current
-  if (!content) return
-
-  const observer = new ResizeObserver(() => {
-    if (!userScrolled) scrollToBottom(false)
+  if (userScrolledRef.current) return
+  requestAnimationFrame(() => {
+    if (!userScrolledRef.current) doScrollToBottom()
   })
-  observer.observe(content)
-  return () => observer.disconnect()
-}, [userScrolled, scrollToBottom])
+}, [messages, doScrollToBottom])
+
+// 补充触发：content-visibility 元素延迟布局导致 scrollHeight 漂移
+useEffect(() => {
+  if (!sessionId) return
+  const timers = [
+    setTimeout(() => { if (!userScrolledRef.current) doScrollToBottom() }, 100),
+    setTimeout(() => { if (!userScrolledRef.current) doScrollToBottom() }, 300),
+  ]
+  return () => timers.forEach(clearTimeout)
+}, [sessionId])
+
+// ResizeObserver：streaming 文本增长（单条消息内容变化但 messages 数组引用可能不变）
+const observer = new ResizeObserver(() => {
+  if (!userScrolledRef.current) doScrollToBottom()
+})
+observer.observe(contentRef.current)
 ```
 
-参考 OpenCode `create-auto-scroll.tsx:172-187`，ResizeObserver 在 layout 后 paint 前触发，同帧完成滚动。
+> **设计调整**：最初设计为 ResizeObserver 独占替代 messages 依赖。实测发现 ResizeObserver 在 Tauri WebView 中不一定可靠触发（content-visibility 影响），改为 messages 引用作为主触发 + ResizeObserver + settle 延迟三重保障。
 
 #### 4.3 overflow-anchor 动态切换
 
 ```typescript
-useEffect(() => {
-  const el = scrollContainerRef.current
-  if (!el) return
-  el.style.overflowAnchor = userScrolled ? 'auto' : 'none'
-}, [userScrolled])
+el.style.overflowAnchor = userScrolled ? "auto" : "none"
 ```
 
 - 用户回看时 `auto`：浏览器锚定当前内容位置
 - 自动跟随时 `none`：允许程序控制滚动位置
+- Safari/Linux WebKit 不支持时安全降级（等同 `none`）
 
 ---
 
-## 改动文件清单
+## 改动文件清单（实际）
 
 | Phase | 文件 | 改动类型 | 改动内容 |
 |-------|------|---------|---------|
 | **1** | `components/chat/user-message.tsx` | 修改 | 添加 `React.memo` |
-| **1** | `components/chat/assistant-message.tsx` | 重构 | 提取 `MARKDOWN_COMPONENTS` 到模块顶层；拆分 `FileBlock`/`PatchBlock` 为独立 memo 组件；添加 `React.memo` |
-| **1** | `components/chat/tool-call-block.tsx` | 修改 | 提取 `StatusIcon` 到组件外部；添加 `React.memo` |
+| **1** | `components/chat/assistant-message.tsx` | 重构 | 提取 `MARKDOWN_COMPONENTS`/`REMARK_PLUGINS` 到模块顶层；`FileBlock`/`PatchBlock` 拆为独立 memo 组件（接收 `onArtifactClick`）；`MarkdownContent`/`AssistantMessage` 添加 `React.memo` |
+| **1** | `components/chat/tool-call-block.tsx` | 修改 | 添加 `React.memo`（`StatusIcon` 已在外部） |
 | **1** | `components/chat/code-block.tsx` | 修改 | `handleCopy` 添加 `useCallback`；添加 `React.memo` |
 | **1** | `components/chat/reasoning-block.tsx` | 修改 | 添加 `React.memo` |
 | **1** | `components/chat/step-indicator.tsx` | 修改 | 添加 `React.memo` |
 | **1** | `components/chat/execution-status.tsx` | 修改 | 添加 `React.memo` |
-| **1** | `components/chat/message-list.tsx` | 修改 | 消息容器添加 `content-visibility` CSS；预留 `onLoadEarlier` prop |
+| **1** | `components/chat/message-list.tsx` | 修改 | `CONTENT_VISIBILITY_STYLE` 模块常量 + `content-visibility` CSS |
 | **2** | `lib/use-session-messages.ts` | **新建** | 从 Session.tsx 提取消息状态 + SSE 处理 hook |
-| **2** | `lib/use-session-scroll.ts` | **新建** | 从 Session.tsx 提取滚动管理 hook |
 | **2** | `lib/use-session-permission.ts` | **新建** | 从 Session.tsx 提取权限/问题处理 hook |
-| **2** | `pages/Session.tsx` | 重构 | 瘦身为组装层，使用上述 3 个 hook |
-| **3** | `core/api-client/src/client.ts` | 修改 | 新增 `requestWithResponse()` 基础方法 + `getMessagesPaginated()` 方法 |
-| **3** | `core/api-client/src/types.ts` | 修改 | 新增分页相关类型 |
-| **3** | `lib/use-session-messages.ts` | 修改 | 加入历史窗口机制 + 预取 |
-| **3** | `components/chat/message-list.tsx` | 修改 | 增加 "加载更早消息" 按钮 |
-| **4** | `lib/use-session-scroll.ts` | 修改 | markAuto/isAuto + ResizeObserver + overflow-anchor |
+| **2** | `pages/Session.tsx` | 重构 | 瘦身为组装层 |
+| **3** | `core/api-client/src/client.ts` | 修改 | 新增 `requestWithResponse()` + `getMessagesPaginated()` |
+| **3** | `core/api-client/src/types.ts` | 修改 | 新增 `PaginatedMessagesResponse` |
+| **3** | `core/api-client/src/index.ts` | 修改 | 导出新类型 |
+| **3** | `lib/use-session-messages.ts` | 修改 | 历史窗口机制（`turnStart`/`displayMessages`/`backfill`/`prefetch`） |
+| **3** | `components/chat/message-list.tsx` | 修改 | 增加"加载更早消息"按钮（`showLoadEarlier`/`onLoadEarlier`） |
+| **3** | `lib/i18n-context.tsx` | 修改 | 新增 `message.loadEarlier` 翻译 |
+| **3** | `pages/Session.tsx` | 修改 | 集成历史窗口 props + 近顶滚动触发 |
+| **4** | `lib/use-session-scroll.ts` | **新建** | 完整滚动管理 hook |
+| **4** | `pages/Session.tsx` | 修改 | 使用 `useSessionScroll`，移除内联滚动逻辑 |
+| — | `scripts/test-long-session.ts` | **新建** | 长对话生成测试脚本 |
 
 ---
 
@@ -859,29 +685,11 @@ useEffect(() => {
 
 以下风险点经过对 SSE 事件流、Session 生命周期、API 响应格式、content-visibility 兼容性的深入代码验证得出。
 
-### 风险 1：历史消息并非完全不可变（中高风险）
+### 风险 1：历史消息并非完全不可变（中高风险 → 已降级）
 
-**发现**：streaming 分离方案假设 `historyMessages` 稳定、不再变化。但代码验证发现三种 SSE 事件会修改已完成的历史消息：
+**发现**：三种 SSE 事件可能修改已完成的历史消息（`message.part.updated`、`message.part.removed`、`message.updated`）。
 
-| 事件 | 场景 | 当前代码位置 |
-|------|------|------------|
-| `message.part.updated` | 服务端对历史消息的 part 编辑（工具补全、压缩、revert） | `Session.tsx:146-187` |
-| `message.part.removed` | 服务端删除历史消息的某个 part | `Session.tsx:242-252` |
-| `message.updated` | 多步 agent 场景下可对同一消息多次触发（更新 cost/tokens/error） | `Session.tsx:225-240` |
-
-**影响**：如果 `historyMessages` 完全冻结，上述事件会被丢弃，导致 UI 与服务端状态不一致。
-
-**应对方案**：SSE handler 需要分流处理：
-```
-收到 message.* 事件
-  → messageID === streamingMessageId?
-    → 是：更新 streamingMessage（高频路径，O(1)）
-    → 否：更新 historyMessages（低频路径，O(n) 但极少触发）
-```
-
-`message.part.delta` 可以断言只属于 streaming 消息（验证确认：服务端不会对历史消息发 delta）。其余事件需要两边都能处理。
-
-这意味着 `historyMessages` 不是"绝对不变"，而是"低频变化"。性能收益依然成立 — 因为 delta 是高频事件（10+ 次/秒），而 part.updated/removed/message.updated 对历史消息的触发频率极低（每轮对话 0-1 次）。
+**实际处置**：由于 streaming/history 分离未实施，当前保持单一 `messages` 数组，所有 SSE 事件统一处理，此风险不再适用。如果未来实施 streaming 分离，需参考此风险的分流路由设计。
 
 ### 风险 2：api-client 的 `request()` 方法不返回响应头（高风险，阻塞 Phase 3）
 
@@ -1095,29 +903,13 @@ function useSessionMessages(
 
 ---
 
-### 必须保留的现有逻辑
+### 已保留的现有逻辑（已迁移到 hooks）
 
-1. **handleStop 的 frozenMessageIds 机制** (`Session.tsx:450-478`)
-   - 分离 streaming 后，freeze 逻辑需要适配
-   - streaming 消息移入 history 的时机要与 stop 互斥
-   - 需要在 `useSessionMessages` 中完整保留
-
-2. **temp- 消息的去重逻辑** (`Session.tsx:167-172`)
-   - `message.part.updated` 中有 temp→real 的去重
-   - 分离后在 `useSessionMessages` 中保留
-
-3. **初始加载与 SSE 的竞态** (`Session.tsx:404-414`)
-   - 当前有 server 返回 + SSE 消息的合并逻辑
-   - 分页后初始加载只拿 80 条，SSE 可能在加载完成前到达
-   - 合并逻辑需要更新（见风险 7）
-
-4. **workspaceRefreshKey** (`Session.tsx:590-598`)
-   - 改成增量计数器后，初始加载时需扫描已完成 tool 数量
-   - 切换 session 时计数器需重置
-
-5. **Permission/Question 轮询** (`Session.tsx:372-391`)
-   - 依赖 `sending` 和 `streamingMessageId`
-   - 拆分 hook 后这些信号要正确传递
+1. **frozenMessageIds 机制** → `use-session-messages.ts` `stopGeneration()` 中完整保留
+2. **temp- 消息去重** → `use-session-messages.ts` SSE `message.part.updated` handler 中保留
+3. **初始加载与 SSE 合并** → `use-session-messages.ts` 初始加载 effect 中保留（已适配分页）
+4. **workspaceRefreshKey 增量计数** → `use-session-messages.ts` SSE handler + 初始扫描 + session 重置
+5. **Permission/Question 轮询** → `use-session-permission.ts` 中独立管理，`isAgentActive` 由 Session.tsx 传入
 
 ### 不做的事
 
@@ -1140,31 +932,37 @@ function useSessionMessages(
 
 ---
 
-## 实施路线
+## 实施结果
 
 ```
-Phase 1 — 渲染层优化（止血）
-├── 1.1 React.memo 包裹所有消息子组件
-├── 1.2 提取 MarkdownContent components 对象
-├── 1.3 提取内嵌函数（StatusIcon, handleCopy）
-├── 1.4 CSS content-visibility
-└── 1.5 workspaceRefreshKey 增量化
+Phase 1 — 渲染层优化 ✅ (eb1a823)
+├── 1.1 React.memo 包裹所有消息子组件（默认浅比较）
+├── 1.2 提取 MARKDOWN_COMPONENTS/REMARK_PLUGINS + FileBlock/PatchBlock 接收 onArtifactClick
+├── 1.3 CodeBlock handleCopy 加 useCallback（StatusIcon 已在外部）
+├── 1.4 CSS content-visibility（CONTENT_VISIBILITY_STYLE 模块常量）
+└── 1.5 workspaceRefreshKey 增量计数器
 
-Phase 2 — 状态层重构
-├── 2.1 Session.tsx 拆分为 3 个 hook（含 legacy 事件、ref 同步、location.state 传递）
-├── 2.2 streaming 消息与历史消息分离（含历史消息低频更新路径）
-└── 2.3 useDeferredValue（可选，仅 defer historyMessages，实测后决定是否启用）
+Phase 2 — 状态层重构 ✅ (e927252)
+├── 2.1 Session.tsx → useSessionMessages + useSessionPermission（含 optionsRef、sendingRef 守卫）
+├── 2.2 streaming/history 分离 → 暂缓（实测无明显卡顿，留为后续优化）
+└── 2.3 useDeferredValue → 暂缓
 
-Phase 3 — 数据层改造
-├── 3.1 api-client 分页接口（含 requestWithResponse 基础方法）
-├── 3.2 历史窗口机制 + 预取
-├── 3.3 "加载更早消息" UI
-└── 3.4 滚动位置保持（使用 flushSync 适配 React 18）
+Phase 3 — 数据层改造 ✅ (272ed6c)
+├── 3.1 api-client: requestWithResponse + getMessagesPaginated
+├── 3.2 历史窗口: turnStart + displayMessages + backfill + prefetch
+├── 3.3 "加载更早消息" 按钮 + i18n
+└── 3.4 滚动位置保持 → 由 Phase 4 useSessionScroll 统一处理
 
-Phase 4 — 滚动层升级
-├── 4.1 markAuto/isAuto 区分机制
-├── 4.2 ResizeObserver 替代 messages 依赖
-└── 4.3 overflow-anchor 动态切换
+Phase 4 — 滚动层升级 ✅ (ac9f7e4)
+├── 4.1 useSessionScroll hook: markAuto/isAuto + userScrolledRef 镜像
+├── 4.2 messages 引用 + ResizeObserver + settle 延迟三重触发
+└── 4.3 overflow-anchor 动态切换 + passive 事件
 ```
 
-每个 Phase 可独立交付、独立验证，后续 Phase 建立在前序 Phase 基础上。
+### 未实施的设计（留为后续优化）
+
+| 设计项 | 原计划 | 未实施原因 | 触发条件 |
+|--------|--------|-----------|---------|
+| streaming/history 消息分离 | Phase 2.2 | Phase 1 memo + Phase 3 窗口化已充分降低开销 | 200+ 轮对话流式输出出现掉帧 |
+| useDeferredValue | Phase 2.3 | 与 streaming 分离耦合，单独使用价值低 | 用户输入延迟 |
+| preserveScroll + flushSync | Phase 3.4 | useSessionScroll 的 doScrollToBottom 兜底足够 | 向上 backfill 时滚动跳动 |
