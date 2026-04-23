@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { useI18n } from "@/lib/i18n-context"
 
 interface StepFinishProps {
@@ -17,7 +18,7 @@ function formatTokens(n?: number): string {
   return String(n)
 }
 
-export function StepIndicator({ reason, tokens, cost }: StepFinishProps) {
+export const StepIndicator = memo(function StepIndicator({ reason, tokens, cost }: StepFinishProps) {
   const { t } = useI18n()
   const hasStats = tokens || cost != null
 
@@ -39,4 +40,4 @@ export function StepIndicator({ reason, tokens, cost }: StepFinishProps) {
       <div className="h-px flex-1 bg-[var(--color-border)]" />
     </div>
   )
-}
+})

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { memo, useState } from "react"
 import { ChevronRight, ChevronDown, Brain } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -6,7 +6,7 @@ interface ReasoningBlockProps {
   text: string
 }
 
-export function ReasoningBlock({ text }: ReasoningBlockProps) {
+export const ReasoningBlock = memo(function ReasoningBlock({ text }: ReasoningBlockProps) {
   const [open, setOpen] = useState(false)
   const { t } = useI18n()
 
@@ -29,4 +29,4 @@ export function ReasoningBlock({ text }: ReasoningBlockProps) {
       )}
     </div>
   )
-}
+})

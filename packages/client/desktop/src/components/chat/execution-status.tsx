@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Loader2, Check, XCircle, Square } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -9,7 +10,7 @@ interface ExecutionStatusProps {
   onStop?: () => void
 }
 
-export function ExecutionStatus({ state, errorMessage, onStop }: ExecutionStatusProps) {
+export const ExecutionStatus = memo(function ExecutionStatus({ state, errorMessage, onStop }: ExecutionStatusProps) {
   const { t } = useI18n()
 
   return (
@@ -51,4 +52,4 @@ export function ExecutionStatus({ state, errorMessage, onStop }: ExecutionStatus
       )}
     </div>
   )
-}
+})

@@ -5,6 +5,12 @@ import { AssistantMessage } from "./assistant-message"
 import { ExecutionStatus } from "./execution-status"
 import { useI18n } from "@/lib/i18n-context"
 
+// Stable style object — created once to avoid breaking React shallow comparison on every render.
+const CONTENT_VISIBILITY_STYLE: React.CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 500px',
+}
+
 interface MessageListProps {
   messages: SendMessageResponse[]
   isLoading?: boolean
@@ -30,13 +36,17 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
         const isStreaming = message.info.id === streamingMessageId
         const isStopped = message.info.id === stoppedAtMessageId
 
+        // content-visibility: auto lets the browser skip layout/paint for off-screen messages.
+        // The streaming message is excluded so its content renders in real time.
+        const contentVisibilityStyle = isStreaming ? undefined : CONTENT_VISIBILITY_STYLE
+
         if (message.info.role === "user") {
           const content = message.parts
             .filter((part): part is { type: "text"; text: string; [key: string]: any } => part.type === "text" && "text" in part)
             .map((part) => part.text)
             .join("\n\n")
           return (
-            <div key={message.info.id || index}>
+            <div key={message.info.id || index} style={contentVisibilityStyle}>
               <UserMessage content={content} />
               {isStopped && <ExecutionStatus state="stopped" />}
             </div>
@@ -44,7 +54,7 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
         }
 
         return (
-          <div key={message.info.id || index}>
+          <div key={message.info.id || index} style={contentVisibilityStyle}>
             <AssistantMessage
               parts={message.parts}
               isStreaming={isStreaming}

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { memo, useState } from "react"
 import { ChevronRight, ChevronDown, Loader2, Check, XCircle, Circle, Wrench } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
 import type { ToolState } from "@agent/api-client"
@@ -33,7 +33,7 @@ function getDuration(state: ToolState): number | undefined {
   return undefined
 }
 
-export function ToolCallBlock({ tool, state }: ToolCallBlockProps) {
+export const ToolCallBlock = memo(function ToolCallBlock({ tool, state }: ToolCallBlockProps) {
   const [open, setOpen] = useState(false)
   const { t } = useI18n()
 
@@ -98,4 +98,4 @@ export function ToolCallBlock({ tool, state }: ToolCallBlockProps) {
       )}
     </div>
   )
-}
+})

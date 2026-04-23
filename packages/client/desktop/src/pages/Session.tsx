@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react"
+import { useRef, useEffect, useState, useCallback } from "react"
 import { useParams, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { TopBar } from "@/components/layout/top-bar"
@@ -38,6 +38,7 @@ export function SessionPage() {
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
   const [stopped, setStopped] = useState(false) // temporary: blocks SSE during abort cycle
   const [stoppedAtMessageId, setStoppedAtMessageId] = useState<string | null>(null) // permanent: inline indicator
+  const [toolCompletionCount, setToolCompletionCount] = useState(0) // incremental counter for workspace refresh
   const { currentModel, setModel, openModelDialog } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -69,6 +70,7 @@ export function SessionPage() {
     setSelectedArtifact(null)
     setStopped(false)
     setStoppedAtMessageId(null)
+    setToolCompletionCount(0)
     frozenMessageIdsRef.current = new Set()
 
     // Optimistic user message: show the user's text immediately when navigating
@@ -149,6 +151,10 @@ export function SessionPage() {
           if (!("messageID" in part)) break
           const messageID = (part as any).messageID as string
           setStreamingMessageId(messageID)
+          // Increment workspace refresh counter when a tool completes
+          if (part.type === "tool" && "state" in part && (part as any).state?.status === "completed") {
+            setToolCompletionCount((c) => c + 1)
+          }
           setMessages((prev) => {
             const msgIndex = prev.findIndex((m) => m.info.id === messageID)
             if (msgIndex >= 0) {
@@ -412,6 +418,14 @@ export function SessionPage() {
             )
             return [...msgs, ...sseOnly]
           })
+          // Scan initial messages for completed tools to seed the workspace refresh counter
+          const initialToolCount = msgs.reduce((count, msg) => {
+            if (!msg.parts) return count
+            return count + msg.parts.filter(
+              (p) => p.type === "tool" && "state" in p && (p as any).state?.status === "completed"
+            ).length
+          }, 0)
+          setToolCompletionCount(initialToolCount)
           setLoading(false)
         }
       })
@@ -587,15 +601,9 @@ export function SessionPage() {
     })
   }, [pendingQuestion, api, t])
 
-  // Count completed tool calls to trigger workspace file tree refresh
-  const workspaceRefreshKey = useMemo(() => {
-    return messages.reduce((count, msg) => {
-      if (!msg.parts) return count
-      return count + msg.parts.filter(
-        (p) => p.type === "tool" && "state" in p && (p as any).state?.status === "completed"
-      ).length
-    }, 0)
-  }, [messages])
+  // toolCompletionCount is incremented in SSE handler on tool completion.
+  // Initial value is set when messages are first loaded (see getMessages effect).
+  const workspaceRefreshKey = toolCompletionCount
 
   const handleArtifactClick = useCallback((artifact: Artifact) => {
     // Add sessionId for patch type artifacts so preview can fetch diff

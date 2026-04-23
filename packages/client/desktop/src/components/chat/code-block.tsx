@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { memo, useState, useRef, useEffect, useCallback } from "react"
 import { Check, Copy } from "lucide-react"
 
 interface CodeBlockProps {
@@ -7,7 +7,7 @@ interface CodeBlockProps {
   inline?: boolean
 }
 
-export function CodeBlock({ children, className, inline }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ children, className, inline }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -18,7 +18,7 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
   // Extract language from className (format: "language-xxx")
   const language = className?.replace(/language-/, "") || "text"
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(children)
       setCopied(true)
@@ -28,7 +28,7 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
       console.error("Failed to copy code:", err)
       // Fallback: user will see the button didn't change, indicating failure
     }
-  }
+  }, [children])
 
   // Inline code
   if (inline) {
@@ -70,4 +70,4 @@ export function CodeBlock({ children, className, inline }: CodeBlockProps) {
       </pre>
     </div>
   )
-}
+})
