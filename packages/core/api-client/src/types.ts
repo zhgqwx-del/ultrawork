@@ -431,3 +431,11 @@ export interface WeChatQRStatusResponse {
   channelId?: string
   error?: string
 }
+
+// --- Pagination ---
+
+export interface PaginatedMessagesResponse {
+  messages: SendMessageResponse[]
+  cursor: string | undefined
+  hasMore: boolean
+}

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react"
+import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
@@ -6,6 +6,14 @@ import { useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
+
+// --- History window constants ---
+const TURN_INIT = 15           // Initial turns to render on session load
+const TURN_BATCH = 8           // Turns to reveal per backfill gesture
+const INITIAL_PAGE_SIZE = 80   // First API request limit
+const HISTORY_PAGE_SIZE = 200  // Older history API request limit
+const PREFETCH_BUFFER = 16    // Start prefetching when turnStart <= this
+const PREFETCH_COOLDOWN = 400  // ms between prefetch requests
 
 interface UseSessionMessagesOptions {
   /** True when navigating from Home with an in-flight prompt */
@@ -22,7 +30,7 @@ export function useSessionMessages(
   const api = useApi()
   const { t } = useI18n()
 
-  // --- State ---
+  // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -30,6 +38,12 @@ export function useSessionMessages(
   const [stopped, setStopped] = useState(false)
   const [stoppedAtMessageId, setStoppedAtMessageId] = useState<string | null>(null)
   const [toolCompletionCount, setToolCompletionCount] = useState(0)
+
+  // --- History window state ---
+  const [turnStart, setTurnStart] = useState(0)
+  const [cursor, setCursor] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   // --- Refs for synchronous access inside SSE callbacks ---
   const sendingRef = useRef(false)
@@ -40,9 +54,27 @@ export function useSessionMessages(
   const idRef = useRef(sessionId)
   idRef.current = sessionId
   const frozenMessageIdsRef = useRef<Set<string>>(new Set())
-  // Keep options fresh via ref so the session-reset effect reads the latest values
   const optionsRef = useRef(options)
   optionsRef.current = options
+  const prefetchUntilRef = useRef(0)
+
+  // --- Windowed display messages ---
+  const displayMessages = useMemo(() => {
+    if (turnStart <= 0) return messages
+    // turnStart is based on user message indices; translate to flat array index
+    let userIdx = 0
+    let sliceFrom = 0
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].info.role === "user") {
+        if (userIdx >= turnStart) {
+          sliceFrom = i
+          break
+        }
+        userIdx++
+      }
+    }
+    return messages.slice(sliceFrom)
+  }, [messages, turnStart])
 
   // --- Session navigation reset ---
   useEffect(() => {
@@ -52,7 +84,12 @@ export function useSessionMessages(
     setToolCompletionCount(0)
     setStopped(false)
     setStoppedAtMessageId(null)
+    setTurnStart(0)
+    setCursor(undefined)
+    setHasMore(false)
+    setHistoryLoading(false)
     frozenMessageIdsRef.current = new Set()
+    prefetchUntilRef.current = 0
 
     const isSendingFromNav = !!opts?.initialSending
     setSending(isSendingFromNav)
@@ -89,7 +126,7 @@ export function useSessionMessages(
     }
   }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- Initial message load ---
+  // --- Initial message load (paginated) ---
   useEffect(() => {
     let cancelled = false
     if (!sessionId) {
@@ -98,9 +135,10 @@ export function useSessionMessages(
     }
     setLoading(true)
     api
-      .getMessages(sessionId)
-      .then((msgs: SendMessageResponse[]) => {
+      .getMessagesPaginated(sessionId, { limit: INITIAL_PAGE_SIZE })
+      .then((result) => {
         if (!cancelled) {
+          const msgs = result.messages
           setMessages(prev => {
             if (prev.length === 0) return msgs
             if (msgs.length === 0) return prev
@@ -110,6 +148,12 @@ export function useSessionMessages(
             )
             return [...msgs, ...sseOnly]
           })
+          setCursor(result.cursor)
+          setHasMore(result.hasMore)
+          // Set initial window: show last TURN_INIT turns
+          const userCount = msgs.filter(m => m.info.role === "user").length
+          setTurnStart(userCount > TURN_INIT ? userCount - TURN_INIT : 0)
+          // Seed tool completion counter
           const initialToolCount = msgs.reduce((count, msg) => {
             if (!msg.parts) return count
             return count + msg.parts.filter(
@@ -130,6 +174,70 @@ export function useSessionMessages(
       })
     return () => { cancelled = true }
   }, [sessionId, api]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- History loading: fetch older messages ---
+  const loadOlderMessages = useCallback(async () => {
+    if (!sessionId || !hasMore || historyLoading || !cursor) return
+    setHistoryLoading(true)
+    try {
+      const result = await api.getMessagesPaginated(sessionId, {
+        limit: HISTORY_PAGE_SIZE,
+        before: cursor,
+      })
+      if (idRef.current !== sessionId) return // session changed
+      setMessages(prev => [...result.messages, ...prev])
+      setCursor(result.cursor)
+      setHasMore(result.hasMore)
+      // Shift turnStart to account for newly prepended messages
+      const newUserCount = result.messages.filter(m => m.info.role === "user").length
+      setTurnStart(prev => prev + newUserCount)
+    } catch (err) {
+      console.error("Failed to load older messages:", err)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [sessionId, hasMore, historyLoading, cursor, api])
+
+  // --- Backfill: reveal cached messages above the window ---
+  const backfillTurns = useCallback(() => {
+    setTurnStart(prev => {
+      if (prev <= 0) return 0
+      const next = prev - TURN_BATCH
+      return next > 0 ? next : 0
+    })
+  }, [])
+
+  // --- Scroll-triggered backfill + prefetch ---
+  const onScrollNearTop = useCallback(() => {
+    const start = turnStart
+    if (start > 0) {
+      // Reveal cached turns
+      backfillTurns()
+      // Prefetch if getting close to the edge
+      if (start <= PREFETCH_BUFFER && hasMore && !historyLoading) {
+        const now = Date.now()
+        if (now >= prefetchUntilRef.current) {
+          prefetchUntilRef.current = now + PREFETCH_COOLDOWN
+          loadOlderMessages()
+        }
+      }
+      return
+    }
+    // Already at top of cache, load from server
+    if (hasMore && !historyLoading) {
+      loadOlderMessages()
+    }
+  }, [turnStart, backfillTurns, hasMore, historyLoading, loadOlderMessages])
+
+  // --- Load earlier (button click): reveal all cache + fetch ---
+  const loadEarlierMessages = useCallback(async () => {
+    // First reveal all cached messages
+    if (turnStart > 0) setTurnStart(0)
+    // Then fetch more from server
+    if (hasMore && !historyLoading) {
+      await loadOlderMessages()
+    }
+  }, [turnStart, hasMore, historyLoading, loadOlderMessages])
 
   // --- SSE event helpers ---
   const getEventSessionID = useCallback((event: SSEEvent): string | undefined => {
@@ -331,7 +439,6 @@ export function useSessionMessages(
   useSSESubscribe(handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
-  // Only mark idle if we were actively sending, to avoid unnecessary time.updated writes
   useEffect(() => {
     return () => {
       if (sessionId && sendingRef.current) {
@@ -439,14 +546,23 @@ export function useSessionMessages(
   }, [sessionId, sending, api, markSessionActive, markSessionIdle, t])
 
   return {
-    messages,
+    messages: displayMessages,
+    allMessages: messages,
     sending,
     loading,
     streamingMessageId,
     stopped,
     stoppedAtMessageId,
     toolCompletionCount,
+    // History window
+    turnStart,
+    hasMore,
+    historyLoading,
+    // Actions
     sendMessage,
     stopGeneration,
+    backfillTurns,
+    loadEarlierMessages,
+    onScrollNearTop,
   }
 }

@@ -19,6 +19,7 @@ import type {
   FileEntry,
   FileStatusEntry,
   FileContentResponse,
+  PaginatedMessagesResponse,
 } from "./types"
 
 export class ApiClient {
@@ -88,6 +89,36 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Like request(), but also returns the raw Response object so callers
+   * can read response headers (e.g. X-Next-Cursor for pagination).
+   */
+  private async requestWithResponse<T>(path: string, options?: RequestInit): Promise<{ data: T; response: Response }> {
+    const headers = this.buildHeaders(options?.headers as Record<string, string>)
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...options,
+      headers,
+    })
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
+    }
+
+    if (response.status === 204 || response.headers.get("content-length") === "0") {
+      return { data: undefined as T, response }
+    }
+
+    const text = await response.text()
+    if (!text) return { data: undefined as T, response }
+
+    try {
+      return { data: JSON.parse(text) as T, response }
+    } catch {
+      throw new Error(`Failed to parse API response as JSON: ${text.slice(0, 200)}`)
+    }
+  }
+
   async listSessions(options?: {
     directory?: string
     roots?: boolean
@@ -118,6 +149,19 @@ export class ApiClient {
 
   async getMessages(sessionId: string): Promise<SendMessageResponse[]> {
     return this.request<SendMessageResponse[]>(`/session/${sessionId}/message`)
+  }
+
+  async getMessagesPaginated(
+    sessionId: string,
+    options: { limit: number; before?: string }
+  ): Promise<PaginatedMessagesResponse> {
+    const params = new URLSearchParams({ limit: String(options.limit) })
+    if (options.before) params.set("before", options.before)
+    const { data, response } = await this.requestWithResponse<SendMessageResponse[]>(
+      `/session/${sessionId}/message?${params}`
+    )
+    const cursor = response.headers.get("X-Next-Cursor") || undefined
+    return { messages: data, cursor, hasMore: !!cursor }
   }
 
   async deleteSession(sessionId: string): Promise<void> {

@@ -17,9 +17,24 @@ interface MessageListProps {
   streamingMessageId?: string | null
   stoppedAtMessageId?: string | null
   onArtifactClick?: (artifact: Artifact) => void
+  /** Whether there are older messages available (cached or server-side) */
+  showLoadEarlier?: boolean
+  /** Whether older messages are currently being fetched */
+  historyLoading?: boolean
+  /** Callback to load earlier messages */
+  onLoadEarlier?: () => void
 }
 
-export function MessageList({ messages, isLoading = false, streamingMessageId = null, stoppedAtMessageId = null, onArtifactClick }: MessageListProps) {
+export function MessageList({
+  messages,
+  isLoading = false,
+  streamingMessageId = null,
+  stoppedAtMessageId = null,
+  onArtifactClick,
+  showLoadEarlier = false,
+  historyLoading = false,
+  onLoadEarlier,
+}: MessageListProps) {
   const { t } = useI18n()
 
   if (messages.length === 0 && !isLoading) {
@@ -32,6 +47,19 @@ export function MessageList({ messages, isLoading = false, streamingMessageId = 
 
   return (
     <div className="max-w-full min-w-0 space-y-1">
+      {/* Load earlier messages button */}
+      {showLoadEarlier && (
+        <div className="flex justify-center py-3">
+          <button
+            onClick={onLoadEarlier}
+            disabled={historyLoading}
+            className="text-sm text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)] disabled:opacity-50"
+          >
+            {historyLoading ? t("message.loadingMessages") : t("message.loadEarlier")}
+          </button>
+        </div>
+      )}
+
       {messages.map((message, index) => {
         const isStreaming = message.info.id === streamingMessageId
         const isStopped = message.info.id === stoppedAtMessageId

@@ -1,0 +1,126 @@
+/**
+ * Generate a long conversation session for performance testing.
+ *
+ * Usage: bun run --bun scripts/test-long-session.ts [rounds]
+ * Default: 30 rounds (60 messages). Use higher values to stress test.
+ *
+ * Each round sends a short message and waits for the AI to respond.
+ * With a fast model (e.g. haiku) each round takes ~2-5 seconds.
+ */
+
+const ROUNDS = parseInt(process.argv[2] || "30", 10)
+const BASE_URL = "http://localhost:4096"
+const AUTH = "Basic " + Buffer.from("opencode:test123").toString("base64")
+// Use the project root as working directory so the session appears in the app
+const WORKING_DIR = process.argv[3] || process.cwd()
+
+const headers: Record<string, string> = {
+  "Authorization": AUTH,
+  "Content-Type": "application/json",
+  "x-opencode-directory": encodeURIComponent(WORKING_DIR),
+}
+
+async function request(path: string, options?: RequestInit) {
+  const res = await fetch(`${BASE_URL}${path}`, { headers, ...options })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
+  if (res.status === 204) return null
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
+}
+
+async function waitForIdle(sessionId: string, timeoutMs = 60_000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 1000))
+    // Check if there are pending messages by looking at session status
+    try {
+      const msgs = await request(`/session/${sessionId}/message`)
+      const lastMsg = msgs[msgs.length - 1]
+      if (lastMsg?.info?.role === "assistant" && lastMsg?.info?.time?.completed) {
+        return lastMsg
+      }
+    } catch {}
+  }
+  throw new Error("Timeout waiting for AI response")
+}
+
+async function main() {
+  console.log(`Creating session and sending ${ROUNDS} rounds of messages...`)
+  console.log()
+
+  // Create session
+  const session = await request("/session", { method: "POST", body: JSON.stringify({}) })
+  const sessionId = session.id
+  console.log(`Session: ${sessionId}`)
+
+  const prompts = [
+    "用一句话解释什么是递归",
+    "给我讲一个关于编程的笑话",
+    "Python 和 JavaScript 的主要区别是什么？",
+    "什么是设计模式中的观察者模式？",
+    "解释一下 REST API 的基本原则",
+    "什么是数据库索引？为什么需要它？",
+    "简单解释一下 Docker 容器",
+    "什么是 CI/CD？",
+    "解释一下 Git 中 rebase 和 merge 的区别",
+    "什么是微服务架构？",
+    "解释一下 TCP 三次握手",
+    "什么是 JWT？如何工作的？",
+    "解释一下 CAP 定理",
+    "什么是响应式编程？",
+    "解释一下函数式编程的核心概念",
+    "什么是缓存穿透？如何解决？",
+    "解释一下 CORS 是什么",
+    "什么是 WebSocket？与 HTTP 有什么区别？",
+    "解释一下数据库事务的 ACID 特性",
+    "什么是设计模式中的工厂模式？",
+    "简单解释一下 Kubernetes",
+    "什么是 GraphQL？与 REST 的区别？",
+    "解释一下并发和并行的区别",
+    "什么是 OAuth 2.0？",
+    "解释一下分布式系统中的一致性哈希",
+    "什么是 TDD（测试驱动开发）？",
+    "解释一下消息队列的作用",
+    "什么是 CDN？如何加速网站？",
+    "解释一下 SQL 注入攻击",
+    "什么是 serverless 架构？",
+  ]
+
+  for (let i = 0; i < ROUNDS; i++) {
+    const prompt = prompts[i % prompts.length]
+    process.stdout.write(`  Round ${i + 1}/${ROUNDS}: "${prompt.slice(0, 30)}..." `)
+
+    // Send message
+    await request(`/session/${sessionId}/prompt_async`, {
+      method: "POST",
+      body: JSON.stringify({
+        parts: [{ type: "text", text: prompt }],
+      }),
+    })
+
+    // Wait for response
+    try {
+      await waitForIdle(sessionId)
+      console.log("✓")
+    } catch (err) {
+      console.log("✗ (timeout)")
+    }
+  }
+
+  // Final count
+  const allMsgs = await request(`/session/${sessionId}/message`)
+  const userCount = allMsgs.filter((m: any) => m.info.role === "user").length
+  const assistantCount = allMsgs.filter((m: any) => m.info.role === "assistant").length
+
+  console.log()
+  console.log(`Done! Session "${sessionId}" has ${allMsgs.length} messages (${userCount} user, ${assistantCount} assistant)`)
+  console.log()
+  console.log("Now open this session in the app to test:")
+  console.log("  1. Initial load speed (should only show last 15 turns)")
+  console.log("  2. Scroll up — messages appear in batches")
+  console.log('  3. "加载更早消息" button at the top')
+  console.log("  4. Send a new message — should work normally")
+  console.log("  5. Check CPU/memory in Activity Monitor during scroll")
+}
+
+main().catch(console.error)

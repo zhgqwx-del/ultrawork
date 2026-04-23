@@ -39,14 +39,20 @@ export function SessionPage() {
   // --- Message management hook ---
   const {
     messages,
+    allMessages,
     sending,
     loading,
     streamingMessageId,
     stopped,
     stoppedAtMessageId,
     toolCompletionCount,
+    turnStart,
+    hasMore,
+    historyLoading,
     sendMessage,
     stopGeneration,
+    loadEarlierMessages,
+    onScrollNearTop,
   } = useSessionMessages(id, {
     initialSending: !!navState?.sending,
     initialMessageText: navState?.messageText,
@@ -63,6 +69,8 @@ export function SessionPage() {
   } = useSessionPermission(id, isAgentActive)
 
   // --- Scroll management ---
+  const SCROLL_TOP_THRESHOLD = 200
+
   const checkIfAtBottom = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return true
@@ -77,13 +85,24 @@ export function SessionPage() {
     }
   }, [messages, isAtBottom])
 
+  const scrollNearTopFiredRef = useRef(false)
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return
-    const handleScroll = () => checkIfAtBottom()
+    const handleScroll = () => {
+      checkIfAtBottom()
+      // Trigger backfill when scrolling near the top (fire once until user scrolls away)
+      const nearTop = container.scrollTop < SCROLL_TOP_THRESHOLD
+      if (nearTop && !scrollNearTopFiredRef.current) {
+        scrollNearTopFiredRef.current = true
+        onScrollNearTop()
+      } else if (!nearTop) {
+        scrollNearTopFiredRef.current = false
+      }
+    }
     container.addEventListener("scroll", handleScroll)
     return () => container.removeEventListener("scroll", handleScroll)
-  }, [checkIfAtBottom])
+  }, [checkIfAtBottom, onScrollNearTop])
 
   // --- Reset local UI state on session change ---
   useEffect(() => {
@@ -97,6 +116,9 @@ export function SessionPage() {
     if (!input.trim()) return
     sendMessage(input.trim(), currentModel)
     setInput("")
+    // Force scroll to bottom after sending, even if user was viewing history
+    setIsAtBottom(true)
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50)
   }
 
   const handleArtifactClick = useCallback((artifact: Artifact) => {
@@ -147,6 +169,9 @@ export function SessionPage() {
               streamingMessageId={streamingMessageId}
               stoppedAtMessageId={stoppedAtMessageId}
               onArtifactClick={handleArtifactClick}
+              showLoadEarlier={turnStart > 0 || hasMore}
+              historyLoading={historyLoading}
+              onLoadEarlier={loadEarlierMessages}
             />
             {sending && !stopped && (
               <ExecutionStatus
@@ -206,14 +231,14 @@ export function SessionPage() {
         <aside className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
           <div className="flex-1 overflow-y-auto p-3 scrollbar-soft">
             <RightSidebarSection title={t("session.rightSidebar.plan")}>
-              <ProgressPanel messages={messages} />
+              <ProgressPanel messages={allMessages} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.workspace")}>
               <WorkspacePanel directory={session?.directory} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
               <ArtifactsPanel
-                messages={messages}
+                messages={allMessages}
                 directory={session?.directory}
                 onArtifactClick={handleArtifactClick}
                 selectedPath={selectedArtifact?.path}

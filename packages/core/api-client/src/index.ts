@@ -54,4 +54,5 @@ export type {
   ChannelListResponse,
   WeChatQRCodeResponse,
   WeChatQRStatusResponse,
+  PaginatedMessagesResponse,
 } from "./types"

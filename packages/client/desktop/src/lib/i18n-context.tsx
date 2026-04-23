@@ -177,6 +177,7 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noSteps": "No steps yet",
     "message.aiTyping": "AI is typing...",
     "message.loadingMessages": "Loading messages...",
+    "message.loadEarlier": "Load earlier messages",
 
     // Permission dock
     "permission.title": "Permission Required",
@@ -579,6 +580,7 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noSteps": "暂无步骤",
     "message.aiTyping": "AI 正在输入...",
     "message.loadingMessages": "加载消息中...",
+    "message.loadEarlier": "加载更早消息",
 
     // Permission dock
     "permission.title": "需要授权",
