@@ -6,6 +6,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useModel } from "@/lib/model-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPermission } from "@/lib/use-session-permission"
+import { useSessionScroll } from "@/lib/use-session-scroll"
 import { ChatInput, MessageList, ModelSelector } from "@/components/chat"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
@@ -24,12 +25,11 @@ export function SessionPage() {
   const { currentModel, setModel, openModelDialog } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   const [input, setInput] = useState("")
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
-  const [isAtBottom, setIsAtBottom] = useState(true)
 
   const session = sessions.find(s => s.id === id)
 
@@ -68,41 +68,14 @@ export function SessionPage() {
     rejectQuestion,
   } = useSessionPermission(id, isAgentActive)
 
-  // --- Scroll management ---
-  const SCROLL_TOP_THRESHOLD = 200
-
-  const checkIfAtBottom = useCallback(() => {
-    const container = scrollContainerRef.current
-    if (!container) return true
-    const threshold = 100
-    const isBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold
-    setIsAtBottom(isBottom)
-  }, [])
-
-  useEffect(() => {
-    if (isAtBottom) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-    }
-  }, [messages, isAtBottom])
-
-  const scrollNearTopFiredRef = useRef(false)
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    const handleScroll = () => {
-      checkIfAtBottom()
-      // Trigger backfill when scrolling near the top (fire once until user scrolls away)
-      const nearTop = container.scrollTop < SCROLL_TOP_THRESHOLD
-      if (nearTop && !scrollNearTopFiredRef.current) {
-        scrollNearTopFiredRef.current = true
-        onScrollNearTop()
-      } else if (!nearTop) {
-        scrollNearTopFiredRef.current = false
-      }
-    }
-    container.addEventListener("scroll", handleScroll)
-    return () => container.removeEventListener("scroll", handleScroll)
-  }, [checkIfAtBottom, onScrollNearTop])
+  // --- Scroll management hook ---
+  const { scrollToBottom } = useSessionScroll({
+    scrollContainerRef,
+    contentRef,
+    onScrollNearTop,
+    sessionId: id,
+    messages,
+  })
 
   // --- Reset local UI state on session change ---
   useEffect(() => {
@@ -117,8 +90,7 @@ export function SessionPage() {
     sendMessage(input.trim(), currentModel)
     setInput("")
     // Force scroll to bottom after sending, even if user was viewing history
-    setIsAtBottom(true)
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50)
+    scrollToBottom(true)
   }
 
   const handleArtifactClick = useCallback((artifact: Artifact) => {
@@ -162,7 +134,7 @@ export function SessionPage() {
           ref={scrollContainerRef}
           className={cn("relative flex flex-1 justify-center overflow-x-hidden overflow-y-auto scrollbar-soft")}
         >
-          <div className="w-full max-w-[800px] px-6 pt-4 pb-24">
+          <div ref={contentRef} className="w-full max-w-[800px] px-6 pt-4 pb-24">
             <MessageList
               messages={messages}
               isLoading={loading && !sending}
@@ -179,7 +151,7 @@ export function SessionPage() {
                 onStop={stopGeneration}
               />
             )}
-            <div ref={messagesEndRef} />
+            {/* Scroll anchor removed — useSessionScroll uses ResizeObserver */}
           </div>
         </div>
 
