@@ -8,8 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- ADR-021: 长对话性能优化 — React.memo 全消息组件 + CSS content-visibility + 分页加载(limit=80) + 历史窗口(15轮初始/8轮backfill) + "加载更早消息"按钮
+- `useSessionMessages` hook：从 Session.tsx 提取消息状态 + SSE 处理 + 历史窗口 + 发送/停止
+- `useSessionPermission` hook：从 Session.tsx 提取权限/问题处理 + 轮询 fallback
+- `useSessionScroll` hook：智能滚动管理（markAuto/isAuto 区分 + ResizeObserver + settle 延迟 + passive 事件 + overflow-anchor）
+- `api-client`: `requestWithResponse()` 基础方法 + `getMessagesPaginated()` 分页接口 + `PaginatedMessagesResponse` 类型
+- `scripts/test-long-session.ts`：长对话生成测试脚本
 - `scripts/sync-plugin-version.ts`：vendor/opencode 更新后自动同步 `PINNED_PLUGIN_VERSION` + 重新生成 patch 文件
 - `package.json` 新增 `sync:plugin-version` 脚本
+
+### Changed
+- Session.tsx 从 763 行瘦身为 252 行组装层，核心逻辑拆分到 3 个 hook
+- `assistant-message.tsx`: MARKDOWN_COMPONENTS 提取到模块顶层，FileBlock/PatchBlock 拆为独立 memo 组件
+- `workspaceRefreshKey` 从 O(n×m) useMemo 改为 SSE 增量计数器
+- 消息初始加载改用分页 API（limit=80），仅渲染最近 15 轮
 
 ### Fixed
 - Gateway Bridge stale session：sidecar 重启后旧 session-map 映射失效导致渠道消息无回复。新增 `getSession` 主动验证 + 自动重建 session；新增 `session.error` SSE 事件处理作为兜底
