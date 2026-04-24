@@ -60,7 +60,7 @@ rm -rf ~/.config/ultrawork ~/.local/share/ultrawork ~/.cache/ultrawork ~/.local/
 **操作**：打开 Settings → MCP 或查看 AI 对话中的工具列表
 
 **验证**：
-- [ ] 已配置的 MCP 服务仍然显示（如 browser、ima-knowledge）
+- [ ] 已配置的 MCP 服务仍然显示（如 browser）
 - [ ] MCP 服务可以正常连接（状态为 connected）
 
 ### 2.4 发送消息

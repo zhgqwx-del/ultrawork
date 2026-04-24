@@ -1,6 +1,6 @@
 # ADR-019: 知识库集成 — IMA 优先 + MCP 架构
 
-**状态**: Proposed
+**状态**: Withdrawn（POC 已验证可行，代码已从仓库清理，待后续正式实现时重新设计）
 **日期**: 2026-03-31
 **关联**: 知识库调研 `research/knowledge-base-research/`
 

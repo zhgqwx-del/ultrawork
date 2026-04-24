@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Removed
+- 移除 IMA MCP Server POC 代码（`packages/knowledge/ima-mcp/`）及 workspace2 MCP 配置，ADR-019 标记为 Withdrawn
+
 ### Added
 - ADR-021: 长对话性能优化 — React.memo 全消息组件 + CSS content-visibility + 分页加载(limit=80) + 历史窗口(15轮初始/8轮backfill) + "加载更早消息"按钮
 - `useSessionMessages` hook：从 Session.tsx 提取消息状态 + SSE 处理 + 历史窗口 + 发送/停止
