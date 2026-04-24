@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- 运行时模型切换后 `sending` 状态卡住导致输入框永久禁用（`server.instance.disposed` 事件重置状态）
+- `session.error` SSE 事件未处理，后端 API 错误（鉴权失败、额度不足等）静默吞掉无提示
+
+### Added
+- ADR-022: 运行时模型切换的副作用分析与修复
+
 ### Removed
 - 移除 IMA MCP Server POC 代码（`packages/knowledge/ima-mcp/`）及 workspace2 MCP 配置，ADR-019 标记为 Withdrawn
 

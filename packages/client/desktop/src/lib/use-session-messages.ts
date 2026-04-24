@@ -422,6 +422,28 @@ export function useSessionMessages(
           break
         }
 
+        case "session.error": {
+          const { sessionID: errSid, error } = event.properties as { sessionID?: string; error?: { name?: string; data?: { message?: string } } }
+          if ((!errSid || errSid === sessionId) && error) {
+            const msg = error.data?.message || error.name || t("error.unknown")
+            toast.error(msg)
+          }
+          break
+        }
+
+        case "server.instance.disposed": {
+          // Instance.dispose() cancels all runners and disconnects SSE.
+          // Reset sending state here because the subsequent session.status:idle
+          // event may arrive after SSE has already disconnected.
+          if (sendingRef.current && sessionId) {
+            sendingRef.current = false
+            setSending(false)
+            setStreamingMessageId(null)
+            markSessionIdle(sessionId)
+          }
+          break
+        }
+
         case "session.status": {
           const { sessionID: statusSid, status } = event.properties as { sessionID: string; status: { type: string } }
           if (statusSid === sessionId && status.type === "idle") {

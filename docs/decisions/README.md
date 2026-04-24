@@ -51,6 +51,7 @@
 | [019](./019-knowledge-base-integration.md) | 知识库集成 — IMA 优先 + MCP 架构 | 2026-03-31 | Withdrawn |
 | [020](./020-config-isolation.md) | Ultrawork 与 OpenCode 配置隔离 | 2026-04-20 | Proposed |
 | [021](./021-long-session-performance.md) | 长对话性能优化 — 渐进式渲染与分页加载 | 2026-04-23 | Proposed |
+| [022](./022-model-switch-side-effects.md) | 运行时模型切换的副作用分析与修复 | 2026-04-24 | Accepted |
 
 ## 新增 ADR
 
