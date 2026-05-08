@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 import { PanelLeft, ChevronLeft, ChevronRight, X } from "lucide-react"
 import { useSidebar } from "./sidebar-context"
+import { handleDrag } from "./drag-region"
 import type { ReactNode } from "react"
 
 interface TopBarProps {
@@ -16,6 +17,7 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
 
   return (
     <header
+      onMouseDown={handleDrag}
       className={cn(
         "z-10 flex h-12 shrink-0 items-center gap-2 px-4",
         className

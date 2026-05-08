@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react"
 import { useParams, useLocation } from "react-router-dom"
 import { TopBar } from "@/components/layout/top-bar"
+import { handleDrag } from "@/components/layout/drag-region"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useModel } from "@/lib/model-context"
@@ -201,7 +202,8 @@ export function SessionPage() {
       {/* Right Sidebar */}
       {rightOpen && (
         <aside className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
-          <div className="flex-1 overflow-y-auto p-3 scrollbar-soft">
+          <div onMouseDown={handleDrag} className="h-9 shrink-0" />
+          <div className="flex-1 overflow-y-auto p-3 pt-0 scrollbar-soft">
             <RightSidebarSection title={t("session.rightSidebar.plan")}>
               <ProgressPanel messages={allMessages} />
             </RightSidebarSection>

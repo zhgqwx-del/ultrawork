@@ -52,6 +52,7 @@
 | [020](./020-config-isolation.md) | Ultrawork 与 OpenCode 配置隔离 | 2026-04-20 | Proposed |
 | [021](./021-long-session-performance.md) | 长对话性能优化 — 渐进式渲染与分页加载 | 2026-04-23 | Proposed |
 | [022](./022-model-switch-side-effects.md) | 运行时模型切换的副作用分析与修复 | 2026-04-24 | Accepted |
+| [023](./023-titlebar-overlay.md) | macOS 标题栏 Overlay 模式 | 2026-05-08 | Accepted |
 
 ## 新增 ADR
 

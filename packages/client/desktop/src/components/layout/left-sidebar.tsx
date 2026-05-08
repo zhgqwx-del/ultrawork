@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { handleDrag } from "./drag-region"
 import {
   PanelLeft,
   Plus,
@@ -158,7 +159,7 @@ export function LeftSidebar() {
         {leftOpen ? (
           <>
             {/* Expanded: Brand + Toggle */}
-            <div className="flex shrink-0 items-center justify-between gap-3 p-4">
+            <div onMouseDown={handleDrag} className="flex shrink-0 items-center justify-between gap-3 p-4 pt-9">
               <button
                 onClick={() => navigate("/")}
                 className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
@@ -313,7 +314,7 @@ export function LeftSidebar() {
         ) : (
           <>
             {/* Collapsed: Icon-only */}
-            <div className="flex shrink-0 items-center justify-center p-2 pt-3">
+            <div onMouseDown={handleDrag} className="flex shrink-0 items-center justify-center p-2 pt-10">
               <button
                 onClick={() => navigate("/")}
                 aria-label="Home"

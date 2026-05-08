@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { FolderOpen, Check, X, FolderPlus } from "lucide-react"
 import { useWorkspace } from "@/lib/workspace-context"
 import { useI18n } from "@/lib/i18n-context"
+import { DragRegion } from "@/components/layout/drag-region"
 
 export function WorkspaceSelectorPage() {
   const navigate = useNavigate()
@@ -38,6 +39,7 @@ export function WorkspaceSelectorPage() {
 
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-[var(--color-bg)] px-4">
+      <DragRegion />
       <div className="flex w-full max-w-md flex-col items-center gap-6">
         {/* Header */}
         <div className="space-y-2 text-center">
