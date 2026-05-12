@@ -407,6 +407,7 @@ const translations: Record<Language, Record<string, string>> = {
     "placeholder.reply": "Reply...",
     "placeholder.askAnything": "Ask anything...",
     "workspace.refresh": "Refresh",
+    "workspace.openInFinder": "Open in Finder",
     "aria.attachment": "Add attachment",
     "aria.sendMessage": "Send message",
     "aria.stopGenerating": "Stop generating",
@@ -415,6 +416,7 @@ const translations: Record<Language, Record<string, string>> = {
     // Common
     "common.loading": "Loading...",
     "common.error": "Error",
+    "common.copied": "Copied",
   },
   zh: {
     // Brand
@@ -810,6 +812,7 @@ const translations: Record<Language, Record<string, string>> = {
     "placeholder.reply": "回复...",
     "placeholder.askAnything": "有什么可以帮到你...",
     "workspace.refresh": "刷新",
+    "workspace.openInFinder": "在 Finder 中打开",
     "aria.attachment": "添加附件",
     "aria.sendMessage": "发送消息",
     "aria.stopGenerating": "停止生成",
@@ -818,6 +821,7 @@ const translations: Record<Language, Record<string, string>> = {
     // Common
     "common.loading": "加载中...",
     "common.error": "错误",
+    "common.copied": "已复制",
   },
 }
 

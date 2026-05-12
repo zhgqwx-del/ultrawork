@@ -10,12 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - macOS 标题栏切换为 Overlay 模式，隐藏原生标题文字，内容延伸到窗口顶部（ADR-023）
 - 窗口拖拽改用 `startDragging()` API（workaround for tauri-apps/tauri#9503）
+- 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
 ### Fixed
 - 运行时模型切换后 `sending` 状态卡住导致输入框永久禁用（`server.instance.disposed` 事件重置状态）
 - `session.error` SSE 事件未处理，后端 API 错误（鉴权失败、额度不足等）静默吞掉无提示
 
 ### Added
+- ADR-024: 工作目录路径展示优化
 - ADR-023: macOS 标题栏 Overlay 模式
 - ADR-022: 运行时模型切换的副作用分析与修复
 

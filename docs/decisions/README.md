@@ -53,6 +53,7 @@
 | [021](./021-long-session-performance.md) | 长对话性能优化 — 渐进式渲染与分页加载 | 2026-04-23 | Proposed |
 | [022](./022-model-switch-side-effects.md) | 运行时模型切换的副作用分析与修复 | 2026-04-24 | Accepted |
 | [023](./023-titlebar-overlay.md) | macOS 标题栏 Overlay 模式 | 2026-05-08 | Accepted |
+| [024](./024-workspace-path-display.md) | 工作目录路径展示优化 | 2026-05-12 | Proposed |
 
 ## 新增 ADR
 

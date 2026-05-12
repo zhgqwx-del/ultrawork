@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { Folder, FolderOpen, ChevronRight, ChevronDown, RefreshCw } from "lucide-react"
+import { Folder, FolderOpen, ChevronRight, ChevronDown, RefreshCw, Check, Copy } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
 import { FileIcon } from "@/components/ui/file-icon"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { shortenPath, pathBasename } from "@/lib/path-utils"
 import type { FileEntry, FileStatusEntry } from "@agent/api-client"
 
 interface WorkspacePanelProps {
@@ -124,6 +126,7 @@ export function WorkspacePanel({ directory, refreshKey, onFileClick }: Workspace
   const [gitStatus, setGitStatus] = useState<FileStatusEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const gitStatusMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -155,6 +158,14 @@ export function WorkspacePanel({ directory, refreshKey, onFileClick }: Workspace
     }
   }, [api]) // eslint-disable-line react-hooks/exhaustive-deps -- directory is passed via API header, not used in loadData
 
+  const handleCopy = useCallback(() => {
+    if (!directory) return
+    navigator.clipboard.writeText(directory).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch((e) => console.error("[WorkspacePanel] clipboard write failed:", e))
+  }, [directory])
+
   useEffect(() => {
     loadData()
   }, [loadData, refreshKey])
@@ -164,11 +175,34 @@ export function WorkspacePanel({ directory, refreshKey, onFileClick }: Workspace
       {/* Working directory header */}
       {directory && (
         <div className="flex items-center gap-2 rounded bg-[var(--color-accent)] px-2 py-1.5 text-xs">
-          <Folder className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+          <button
+            onClick={() => {
+              invoke("reveal_file_in_finder", { path: directory }).catch((e) =>
+                console.error("[WorkspacePanel] reveal_file_in_finder failed:", e),
+              )
+            }}
+            className="shrink-0 rounded p-0.5 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+            title={t("workspace.openInFinder")}
+          >
+            <Folder className="size-3.5" />
+          </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-[var(--color-fg-muted)]">{t("message.workingDirectory")}</p>
-            <p className="truncate text-[var(--color-fg)]" title={directory}>{directory}</p>
+            <p className="truncate font-medium text-[var(--color-fg)]">{pathBasename(directory)}</p>
+            <p
+              className="cursor-pointer truncate text-[10px] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+              title={directory}
+              onClick={handleCopy}
+            >
+              {shortenPath(directory)}
+            </p>
           </div>
+          <button
+            onClick={handleCopy}
+            className="shrink-0 rounded p-0.5 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+            title={copied ? t("common.copied") : directory}
+          >
+            {copied ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
+          </button>
           <button
             onClick={loadData}
             className="shrink-0 rounded p-0.5 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
