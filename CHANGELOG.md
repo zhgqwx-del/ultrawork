@@ -13,6 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
 ### Fixed
+- 主内容区上下不对称：恢复顶部圆角和间距，与底部形成对称卡片布局（ADR-025）
+- 侧边栏折叠态 macOS 交通灯溢出：平台感知宽度适配（macOS 68px / 其他 48px）（ADR-025）
+- 侧边栏展开/折叠切换时 Logo 和底部头像垂直位置跳变（ADR-025）
 - 运行时模型切换后 `sending` 状态卡住导致输入框永久禁用（`server.instance.disposed` 事件重置状态）
 - `session.error` SSE 事件未处理，后端 API 错误（鉴权失败、额度不足等）静默吞掉无提示
 

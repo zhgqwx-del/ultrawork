@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "./sidebar-context"
+import { isMacOS } from "@/lib/platform"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
 import { ConnectionStatus } from "@/components/settings"
@@ -153,7 +154,7 @@ export function LeftSidebar() {
       <aside
         className={cn(
           "flex h-full shrink-0 flex-col bg-[var(--sidebar-bg)] transition-all duration-300",
-          leftOpen ? "w-72" : "w-12"
+          leftOpen ? "w-72" : isMacOS ? "w-[68px]" : "w-12"
         )}
       >
         {leftOpen ? (
@@ -314,7 +315,7 @@ export function LeftSidebar() {
         ) : (
           <>
             {/* Collapsed: Icon-only */}
-            <div onMouseDown={handleDrag} className="flex shrink-0 items-center justify-center p-2 pt-10">
+            <div onMouseDown={handleDrag} className="flex shrink-0 items-center justify-center p-2 pt-9">
               <button
                 onClick={() => navigate("/")}
                 aria-label="Home"
@@ -360,7 +361,7 @@ export function LeftSidebar() {
 
             <div className="flex-1" />
 
-            <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-4">
+            <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-3">
               <ChannelStatusDot />
               <SettingsPopover>
                 <button
