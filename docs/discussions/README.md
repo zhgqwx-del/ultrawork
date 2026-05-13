@@ -9,3 +9,4 @@
 | 文件 | 主题 | 日期 | 状态 |
 |------|------|------|------|
 | [001-mobile-relay.md](./001-mobile-relay.md) | 移动端与桌面端通信 — Relay Server 方案 | 2026-03-18 | 讨论中 |
+| [003-sidecar-sharing.md](./003-sidecar-sharing.md) | OpenCode Sidecar 能力共享 — 多进程复用方案 | 2026-05-13 | 讨论中 |
