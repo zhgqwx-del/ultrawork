@@ -1,0 +1,977 @@
+# ADR-026: 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API
+
+**状态**: Proposed
+**日期**: 2026-05-13
+**关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考)
+
+## 背景
+
+Ultrawork 作为桌面 AI Agent，用户希望能接入多种知识库让 AI 在对话中按需检索。ADR-019 曾做过 IMA MCP Server 的 POC 并验证可行，但仅覆盖了"第三方云端知识库"单一场景。实际用户需求可归纳为三类：
+
+| 场景 | 典型例子 | 核心技术需求 |
+|------|---------|-------------|
+| **A. 本地文件/文件夹** | 用户指定 `~/Documents/notes/` 作为知识库 | 文件解析 → 分块 → Embedding → 向量检索 |
+| **B. 第三方知识库平台** | IMA、NotebookLM、Obsidian、百炼 | HTTP API 调用（认证 + 搜索/检索） |
+| **C. 用户自有 API** | 企业自建知识库 REST/GraphQL 端点 | 通用 HTTP 代理（用户配置 endpoint + auth） |
+
+本 ADR 在 ADR-019 的基础上，设计一个统一架构覆盖全部三类场景。此外，调研补充了第四类场景：
+
+| 场景 | 典型例子 | 核心技术需求 |
+|------|---------|-------------|
+| **D. 在线文档/网页** | 框架官方文档站、API 参考、Wiki | 网页爬取 → 解析 → 分块 → 索引（类似 Cursor @Docs） |
+
+## 行业调研
+
+在设计方案前，调研了 10 个主流产品的知识库/RAG 实现，提炼出关键模式：
+
+### 产品对比总览
+
+| 产品 | 知识源 | 索引方式 | 向量存储 | 检索策略 | AI 访问方式 |
+|------|--------|---------|---------|---------|------------|
+| **Cursor** | 代码 + @Docs(URL 爬取) | 云端 embedding + AST 感知分块 | Turbopuffer (云端) | 语义检索 | @codebase/@docs 触发 |
+| **Windsurf** | 代码 + .windsurfrules | 本地 embedding + SWE-grep | 本地存储 | LLM-based 搜索 | Flow 自动上下文 |
+| **Claude Code** | CLAUDE.md + 文件系统 + MCP | 无 RAG，靠 1M 上下文 + 工具 | 无 | 工具调用 | Read/Grep/MCP |
+| **GitHub Copilot** | 代码 + Spaces(文档+工单) | 云端 code search | GitHub 云端 | RAG | @workspace/Spaces |
+| **Dify** | 文件/Notion/网页/云盘 | 可选 embedding 模型 | Weaviate/QDrant/PgVector | 混合检索(BM25+向量) | 工作流节点 |
+| **Coze 扣子** | 文件/网页/API/飞书/Notion | 云端自动向量化 | 内置向量库 | 混合检索+RRF | 知识库检索节点 |
+| **FastGPT** | 文件/手动录入/API | 可选 embedding | PgVector/Milvus | BM25+DPR 混合 | 知识库搜索节点 |
+| **RAGFlow** | Word/PPT/Excel/图片/扫描件 | 可配置 embedding | Elasticsearch/Infinity | 多路召回+重排序 | Agent/API |
+| **AnythingLLM** | 本地文件/URL | 本地或云端(30+模型) | LanceDB(默认)/多种 | RAG | Workspace 隔离 |
+| **Obsidian+AI** | Vault 本地 Markdown | 本地向量 embedding | 本地文件 | 语义检索 | 聊天界面 RAG |
+
+### 关键发现
+
+**1. 检索策略已收敛到混合检索**
+
+Dify / Coze / FastGPT / RAGFlow **全部**采用 BM25 关键词 + 向量语义 + 重排序的混合检索。纯向量检索在精确关键词匹配（函数名、错误码、配置项）上弱于 BM25，混合方案用 RRF (Reciprocal Rank Fusion) 算法融合两路结果，实测召回率高 15-20%。
+
+**2. Parent-Child 双层分块成为最佳实践**
+
+Dify / RAGFlow 推荐的策略：子块（小粒度 ~200 token）精确匹配查询，命中后返回父块（大粒度 ~1000 token）给 LLM 推理。解决"精度 vs 上下文完整性"的根本矛盾。
+
+**3. @Docs 网页文档爬取是开发者高频需求**
+
+Cursor 的 @Docs 功能：粘贴文档站 URL → 自动爬取 + 索引 → 对话中可引用。GitHub Copilot Spaces 也支持混合代码 + 文档。这是我们原方案遗漏的第四类知识源。
+
+**4. Chat/Query 双模式满足不同场景**
+
+AnythingLLM 区分 Chat 模式（AI 综合知识库 + 自身知识）和 Query 模式（AI **仅**基于知识库回答，不编造）。企业用户"只回答知识库里有的"是刚需。
+
+**5. 分块可视化提升用户信任**
+
+RAGFlow 提供分块结果预览 + 人工干预界面。用户能看到"文件被切成多少块、每块什么内容"，增强对 RAG 质量的信心和可控性。
+
+**6. 隐私与离线是桌面应用的核心差异化**
+
+Windsurf / AnythingLLM / Obsidian 都强调本地优先。与云端 SaaS 产品（Dify Cloud / Coze）相比，桌面应用的核心卖点就是数据不出本机。
+
+## 决策
+
+### 1. 整体架构：Knowledge Sidecar + MCP 统一对接
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Desktop App (Tauri + React)                                │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ Settings → Knowledge Tab                             │   │
+│  │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
+│  │ │本地文件夹 │ │第三方平台│ │自定义API │ │Embedding │ │   │
+│  │ │路径选择   │ │凭证配置  │ │端点配置  │ │模型选择  │ │   │
+│  │ │索引管理   │ │连接测试  │ │模板编辑  │ │本地/远程 │ │   │
+│  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────┐  ┌────────────────────────────────┐   │
+│  │ Sidebar           │  │ Chat                           │   │
+│  │ Knowledge Panel   │  │ AI 通过 MCP tools 自主调用     │   │
+│  │ · 知识源开关      │  │ · search_local_knowledge       │   │
+│  │ · 索引进度        │  │ · search_ima_knowledge         │   │
+│  │ · 手动搜索        │  │ · search_custom_api            │   │
+│  │ · 最近引用        │  │ · 结果展示在 tool-call-block   │   │
+│  └──────────────────┘  └────────────────────────────────┘   │
+└─────────────┬───────────────────┬───────────────────────────┘
+              │ HTTP + SSE        │ MCP (stdio)
+              ▼                   ▼
+┌──────────────────────────────────────────────────┐
+│  Knowledge Sidecar (:4098)                       │
+│  TypeScript + Bun (bun build --compile)          │
+│                                                  │
+│  ┌─────────────────┐  ┌───────────────────────┐  │
+│  │ HTTP API (管理)  │  │ MCP Server (AI 调用)  │  │
+│  │ /kb CRUD         │  │ search_knowledge      │  │
+│  │ /kb/:id/index    │  │ list_knowledge_bases  │  │
+│  │ /kb/:id/progress │  │ get_document          │  │
+│  │   (SSE 进度推送) │  │                       │  │
+│  └─────────────────┘  └───────────────────────┘  │
+│                                                  │
+│  内部管线 (本地 RAG + 在线文档):                   │
+│  File/URL → MarkItDown(可选) → Markdown           │
+│          → Chunker (General / Parent-Child)        │
+│          → Embedder → sqlite-vec + FTS5            │
+│                                                  │
+│  检索引擎:                                        │
+│  ├ BM25 全文检索 (SQLite FTS5)                    │
+│  ├ 向量语义检索 (sqlite-vec)                      │
+│  └ RRF 融合排序 → top-K 结果                      │
+│                                                  │
+│  Embedding:                                      │
+│  ├ 本地 ONNX (BGE-small, 默认)                   │
+│  └ 远程 API (OpenAI 等, 可选)                     │
+│                                                  │
+│  第三方平台适配器:                                │
+│  ├ IMA Adapter (Client ID + API Key)             │
+│  ├ Obsidian Adapter (本地 vault 路径)            │
+│  ├ 百炼 Adapter (API Key)                        │
+│  └ Custom API Adapter (用户配置端点)             │
+│                                                  │
+│  网页爬虫:                                        │
+│  └ fetch + cheerio (同域递归, 深度/页数可配)      │
+│                                                  │
+│  存储: ~/.ultrawork/knowledge/                    │
+│  ├ sources.json (知识源配置)                      │
+│  ├ models/ (ONNX 模型文件)                        │
+│  └ <workspace-hash>/index.db (向量+FTS5索引)     │
+└──────────────────────────────────────────────────┘
+```
+
+#### 为什么用单一 Knowledge Sidecar 而非每个知识源一个 MCP Server
+
+ADR-019 的方案是"每个知识源 = 一个 MCP Server 进程"。本次改为单一 Sidecar 统一管理，理由：
+
+| | ADR-019 (N 个 MCP Server) | 本方案 (1 个 Knowledge Sidecar) |
+|--|--------------------------|-------------------------------|
+| 进程数 | 每加一个源多一个进程 | 始终 1 个进程 |
+| 本地 RAG 能力 | 需要额外 sidecar 承载 | 内置，统一管理 |
+| 索引+检索+进度 | 跨进程协调复杂 | 同进程，天然集成 |
+| AI 调用 | 多个 MCP tool namespace | 统一 namespace，query 可跨源 |
+| 知识源管理 | 分散在各进程配置 | 集中在 sources.json |
+
+单一 Sidecar 同时暴露 HTTP API（给前端管理用）和 MCP Server（给 AI 调用用），职责清晰。
+
+### 2. 技术栈：TypeScript + Bun
+
+选择 TypeScript + Bun，与 Gateway Sidecar (ADR-013) 保持一致：
+
+- OpenCode 主体是 TypeScript，Gateway 也是 TypeScript + Bun，技术栈统一
+- `bun build --compile` 编译链路已在 Gateway 验证，DMG 分发无需用户安装运行时
+- `bun:sqlite` 内置 SQLite 支持，零依赖
+- Tauri 生命周期管理模式可复用 Gateway 的实现
+
+### 3. 文件解析：TS 原生 + MarkItDown 可选增强
+
+本地 RAG 的文件解析采用分层策略：
+
+```
+文件输入
+  │
+  ├── 核心格式 (TS 原生, 零依赖, 开箱即用)
+  │   ├── .md / .mdx        → 直接读取
+  │   ├── .txt / .log       → 直接读取
+  │   ├── 代码文件 (.ts/.py/.go/...)  → 直接读取 + 语言标注
+  │   ├── .html             → 提取正文 (cheerio)
+  │   ├── .csv / .json      → 结构化转 Markdown 表格
+  │   └── .xml              → 提取文本节点
+  │
+  └── 富媒体格式 (需要 MarkItDown, 按需启用)
+      ├── .pdf              → markitdown CLI 转 Markdown
+      ├── .docx / .doc      → markitdown CLI 转 Markdown
+      ├── .xlsx / .xls      → markitdown CLI 转 Markdown
+      ├── .pptx             → markitdown CLI 转 Markdown
+      └── .epub             → markitdown CLI 转 Markdown
+```
+
+**MarkItDown 集成方式**：
+
+- [microsoft/markitdown](https://github.com/microsoft/markitdown) 是 Python 工具（Python 3.10+）
+- 检测系统 Python 环境，有则通过 CLI 调用 `markitdown <file>`，无则提示用户安装
+- 富媒体格式在 Settings 中标注 "需要 Python + markitdown"，未安装时该格式显示为"不支持"
+- 未来可选：打包时内嵌精简 Python + markitdown wheel（增加包体积 ~30MB）
+
+**不用 MarkItDown 处理核心格式的理由**：核心格式（md/txt/代码/HTML/CSV/JSON）用 TS 原生解析更快且零依赖，覆盖 80%+ 日常场景。MarkItDown 的价值在于 PDF/Office 等二进制格式的转换。
+
+### 4. Embedding：本地模型内置 + 远程 API 可选
+
+```
+Embedding 策略
+├── 本地模型 (默认, 开箱即用)
+│   ├── 中文: BGE-small-zh-v1.5 (~50MB ONNX)
+│   ├── 英文: all-MiniLM-L6-v2 (~23MB ONNX)
+│   └── 运行: ONNX Runtime WASM (Bun 原生支持)
+│
+└── 远程 API (可选, 精度更高)
+    ├── 复用用户已配置的 LLM Provider
+    │   ├── OpenAI text-embedding-3-small
+    │   └── 其他 OpenAI-compatible 服务
+    └── 用户自定义 embedding endpoint
+```
+
+**默认本地模型的理由**：
+
+| | 本地模型 | 远程 API |
+|--|---------|---------|
+| 隐私 | 数据不出本机 | 上传到云端 |
+| 离线 | 可用 | 不可用 |
+| 成本 | 免费 | 按 token 计费 |
+| 精度 | 足够 (~85-90% 召回) | 更高 (~92-95%) |
+| 速度 | CPU ~50 chunks/s | 批量 ~200 chunks/s |
+| 包体积 | +50-100MB | 0 |
+
+对桌面 AI Agent 来说，**隐私和离线可用是核心卖点**。本地模型作为默认选项，远程 API 在 Settings 中作为可选高精度模式。
+
+**模型管理**：
+- ONNX 模型文件存储在 `~/.ultrawork/knowledge/models/`
+- 首次使用时从应用 bundle 中解压（打包时内嵌）
+- Settings 中提供选择："Embedding 模型" → 本地 BGE-small (默认) / 远程 OpenAI / 自定义
+
+### 5. 分块策略：General + Parent-Child 双层
+
+基于行业调研，采用两种可选分块策略：
+
+#### General 分块（默认）
+
+固定大小滑动窗口，适合大部分场景：
+
+```
+参数:
+  chunk_size:  512 tokens (默认)
+  overlap:     64 tokens (12.5%)
+  separators:  ["\n## ", "\n### ", "\n\n", "\n", ". "]  # 按优先级尝试在分隔符处切分
+```
+
+对代码文件，使用语言感知分块（按函数/类/模块边界切分，参考 Cursor 的 AST 感知策略），保持语义完整性。
+
+#### Parent-Child 双层分块（可选，推荐大文档启用）
+
+参考 Dify / RAGFlow 的最佳实践：
+
+```
+Parent 块:  ~1000 tokens (上下文完整)
+  └─ Child 块: ~200 tokens (精确匹配)
+
+检索时:
+  1. Query → 在 Child 块中向量检索 → 找到 top-K 匹配
+  2. 每个命中的 Child 块 → 返回其 Parent 块给 LLM
+  3. LLM 获得完整上下文，回答更准确
+```
+
+数据库 schema 扩展：
+
+```sql
+CREATE TABLE chunks (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES documents(id),
+  parent_id TEXT REFERENCES chunks(id),  -- NULL = 顶层 parent 块
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  metadata TEXT,                          -- JSON: { heading, page, line_range }
+  embedding FLOAT32[384]                  -- 仅 child 块有 embedding
+);
+```
+
+用户在创建知识库时可选择分块策略，默认 General，大文档场景建议 Parent-Child。
+
+### 6. 检索策略：混合检索（BM25 + 向量 + 重排序）
+
+行业调研表明混合检索已成为标准方案。利用 SQLite 的 FTS5 全文检索 + sqlite-vec 向量检索，同库实现：
+
+```
+用户查询
+  │
+  ├── BM25 全文检索 (SQLite FTS5)
+  │   └── 擅长：精确关键词、函数名、错误码、配置项
+  │
+  ├── 向量语义检索 (sqlite-vec)
+  │   └── 擅长：语义相似、同义改写、概念匹配
+  │
+  └── RRF 融合排序 (Reciprocal Rank Fusion)
+      └── score = Σ 1/(k + rank_i)，k=60
+          → 合并两路结果，去重，返回 top-K
+```
+
+数据库增加 FTS5 虚拟表：
+
+```sql
+-- 全文检索索引（与 chunks 表同步）
+CREATE VIRTUAL TABLE chunks_fts USING fts5(
+  content,
+  content=chunks,
+  content_rowid=rowid
+);
+
+-- 触发器保持同步
+CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+```
+
+三种检索模式可通过 MCP tool 参数控制：
+
+| 模式 | 适用场景 | 实现 |
+|------|---------|------|
+| `hybrid`（默认） | 通用查询 | BM25 + 向量 + RRF |
+| `semantic` | 概念性问题 | 仅向量检索 |
+| `keyword` | 精确查找 | 仅 BM25 |
+
+### 7. 向量存储：SQLite + sqlite-vec + FTS5
+
+选择 SQLite + [sqlite-vec](https://github.com/asg017/sqlite-vec) 扩展：
+
+- Bun 内置 SQLite（`bun:sqlite`），零额外依赖
+- sqlite-vec 是 SQLite 官方认可的向量搜索扩展，支持 HNSW 索引
+- 单文件存储，备份/迁移/删除简单
+- 对桌面应用足够（百万级 chunk 无压力）
+- 不需要额外启动 Chroma / Qdrant 等独立服务
+
+```sql
+-- 元数据表
+CREATE TABLE documents (
+  id TEXT PRIMARY KEY,
+  kb_id TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  file_hash TEXT NOT NULL,       -- 增量更新用
+  file_mtime INTEGER NOT NULL,
+  chunk_count INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 分块 + 向量表
+CREATE TABLE chunks (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES documents(id),
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  metadata TEXT,                  -- JSON: { heading, page, line_range }
+  embedding FLOAT32[384]          -- sqlite-vec 向量列
+);
+
+CREATE INDEX idx_chunks_doc ON chunks(doc_id);
+```
+
+### 6. 知识源作用域
+
+```
+知识源类型          作用域         存储位置
+──────────────────────────────────────────────────
+本地文件夹          工作区级别     ~/.ultrawork/knowledge/<workspace-hash>/index.db
+第三方平台 (IMA等)  全局           ~/.ultrawork/knowledge/sources.json
+自定义 API          全局           ~/.ultrawork/knowledge/sources.json
+```
+
+本地文件夹天然跟工作区关联（不同项目有不同参考文档），云端知识源跨工作区共享。
+
+### 7. 索引构建 UX：异步 + 进度反馈
+
+本地 RAG 索引构建可能耗时数分钟到数十分钟，必须有完善的进度交互：
+
+```
+┌─ 索引构建中 ──────────────────────────────────┐
+│                                                │
+│  📁 项目文档  ~/Documents/project-docs/        │
+│                                                │
+│  ████████████░░░░░░░░  58%                     │
+│  已处理 714 / 1,234 个文件                      │
+│  当前: architecture-overview.pdf (解析中...)     │
+│  已用时 2:35 · 预计剩余 1:50                    │
+│                                                │
+│  ⚠️ 跳过 3 个文件 (格式不支持)                   │
+│                                                │
+│               [后台运行]  [取消]                 │
+└────────────────────────────────────────────────┘
+```
+
+**设计要点**：
+
+- **异步索引 + SSE 进度推送**：`GET /kb/:id/index/progress` 返回 SSE 流，前端实时渲染进度条
+- **后台运行**：用户可关闭对话框继续使用 app，索引在后台进行，完成后 toast 通知
+- **增量索引**：首次全量构建后，后续基于文件 mtime + hash 只处理新增/修改文件
+- **可中断/恢复**：支持取消索引，已完成的部分保留，下次从断点续建
+- **Sidebar 状态指示**：Knowledge Panel 中用动画 icon 表示"索引构建中"
+
+### 8. API 设计
+
+#### HTTP API（前端管理用）
+
+```
+POST   /kb                    — 创建知识库（本地文件夹/第三方/自定义 API）
+GET    /kb                    — 列出所有知识库
+GET    /kb/:id                — 获取知识库详情
+PUT    /kb/:id                — 更新知识库配置
+DELETE /kb/:id                — 删除知识库（含索引数据）
+
+POST   /kb/:id/index          — 触发索引构建/重建
+DELETE /kb/:id/index           — 取消正在进行的索引
+GET    /kb/:id/index/progress  — SSE 流，推送索引进度
+GET    /kb/:id/index/status    — 索引状态快照（文件数、最后更新时间）
+
+POST   /kb/:id/search         — 手动搜索（sidebar 用，支持 hybrid/semantic/keyword）
+POST   /kb/:id/test           — 测试连接（第三方/自定义 API 用）
+
+GET    /kb/:id/chunks          — 分块预览（分页，含文件维度分组）
+GET    /kb/:id/chunks/:chunkId — 单个分块详情
+
+POST   /kb/:id/crawl           — 触发网页爬取（在线文档类型）
+GET    /kb/:id/crawl/progress   — 爬取进度 SSE 流
+
+GET    /kb/embedding/models    — 列出可用 embedding 模型
+PUT    /kb/embedding/config    — 切换 embedding 模型
+
+GET    /kb/health              — 健康检查
+```
+
+#### MCP Tools（AI 调用用）
+
+```
+search_knowledge(query, options?)
+  — 跨知识源检索，返回 ranked 结果 + 来源标注
+  — options:
+      kb_ids?: string[]          — 限定知识源（默认全部已启用）
+      top_k?: number             — 返回条数（默认 5）
+      mode?: "augmented"|"strict" — augmented=综合回答, strict=仅知识库内容
+      retrieval?: "hybrid"|"semantic"|"keyword" — 检索策略（默认 hybrid）
+
+list_knowledge_bases()
+  — 列出用户已配置且已启用的知识源（含类型、状态、文档数）
+
+get_document(doc_id)
+  — 获取原文内容（本地 RAG 返回全文/分块，第三方返回 API 结果）
+```
+
+### 9. UI 交互位置
+
+#### Settings → Knowledge Tab
+
+新增 tab 与现有 Connection / General / About 并列：
+
+- **知识源列表**：展示已配置的所有知识源（本地/第三方/自定义），含状态（已索引/已连接/未连接）
+- **添加知识源**：DropdownMenu 选择类型 → 类型专属配置向导
+  - 本地文件夹：选择路径 → 选择分块策略 → 开始索引
+  - 在线文档：输入 URL → 配置爬取范围 → 测试抓取 → 开始索引
+  - 第三方平台：输入凭证 → 测试连接 → 保存
+  - 自定义 API：配置 endpoint + auth + 响应映射 → 测试 → 保存
+- **Embedding 设置**：选择默认模型（本地/远程）、管理已下载的本地模型
+- **MarkItDown 状态**：显示 Python + markitdown 安装状态，提供安装引导
+
+#### Sidebar → Knowledge Panel
+
+在现有 MCP / Skills / Workspace / Artifacts Panel 旁边新增 Knowledge tab：
+
+- **知识源开关**：勾选当前 session 启用哪些知识源
+- **检索模式切换**：Augmented（默认）/ Strict 模式 toggle
+- **索引进度**：正在构建索引的知识源显示进度条
+- **手动搜索**：搜索框支持直接检索（不经过 AI），显示结果 + 分数
+- **最近引用**：展示 AI 在当前对话中检索过的知识条目
+- **管理入口**："管理知识源 →" 跳转到 Settings Knowledge tab
+
+#### Chat 中的展示
+
+AI 调用知识库搜索时，在现有 tool-call-block 中自然展示：
+
+```
+🔧 search_knowledge
+   query: "部署流程中的灰度策略"
+   ▸ 找到 3 个相关文档片段
+     1. deploy-guide.md §3.2 灰度发布 (score: 0.92)
+     2. RFC-0042.md §2 灰度比例策略 (score: 0.87)
+     3. ops-runbook.md §5 回滚流程 (score: 0.81)
+```
+
+### 10. 第三方平台适配
+
+每个第三方平台实现为 Knowledge Sidecar 内部的一个 Adapter（非独立进程）：
+
+```typescript
+interface KnowledgeAdapter {
+  type: string
+  testConnection(config: AdapterConfig): Promise<boolean>
+  search(query: string, options?: SearchOptions): Promise<SearchResult[]>
+  listBases?(config: AdapterConfig): Promise<KnowledgeBase[]>
+  getDocument?(docId: string): Promise<Document>
+}
+```
+
+| 平台 | 认证方式 | 实现优先级 |
+|------|---------|-----------|
+| 腾讯 IMA | Client ID + API Key | P1 (已有 POC) |
+| 百炼知识库 | API Key | P2 |
+| Obsidian | 本地 vault 路径 (直接文件读取) | P2 |
+| Notion | OAuth 2.0 | P3 |
+| NotebookLM | Google OAuth | P3 |
+
+### 11. 在线文档爬取（场景 D）
+
+参考 Cursor @Docs，支持用户粘贴文档站 URL 自动爬取索引：
+
+```
+用户输入: https://react.dev/reference/react
+          ↓
+Knowledge Sidecar:
+  1. 爬取: 从入口 URL 递归抓取同域页面（深度/页数可配）
+  2. 解析: HTML → Markdown（去导航/footer/广告）
+  3. 分块 + Embedding: 同本地文件管线
+  4. 存储: 同 index.db
+```
+
+**实现要点**：
+- 爬虫引擎：轻量 HTTP 抓取（fetch + cheerio），不需要 headless browser
+- 作用域控制：仅抓取同域/同路径前缀，防止爬到外部链接
+- 更新策略：手动触发重新爬取（文档站通常更新不频繁）
+- 去噪：提取 `<main>` / `<article>` 正文区域，过滤导航栏、侧边栏、页脚
+
+**配置界面**：
+
+```
+┌─ 添加在线文档 ─────────────────────────┐
+│                                        │
+│  文档 URL: [https://react.dev/ref...] │
+│  名称:     [React Reference]          │
+│                                        │
+│  爬取设置:                             │
+│  最大页数: [100]  最大深度: [3]        │
+│  路径前缀: [/reference/]  (可选)      │
+│                                        │
+│          [测试抓取]  [开始索引]         │
+└────────────────────────────────────────┘
+```
+
+### 12. 检索模式：Chat / Query 双模式
+
+参考 AnythingLLM，为 AI 调用知识库提供两种模式：
+
+| 模式 | 行为 | 适用场景 |
+|------|------|---------|
+| **Augmented**（默认） | AI 综合知识库检索结果 + 自身知识回答 | 通用对话、开发协助 |
+| **Strict** | AI **仅**基于知识库内容回答，无匹配则明确告知 | 合规问答、企业知识库、避免幻觉 |
+
+通过 MCP tool 参数传递：
+
+```
+search_knowledge(query, mode: "augmented" | "strict", ...)
+```
+
+Strict 模式下 AI 的 system prompt 附加约束："仅基于检索结果回答，如果知识库中没有相关内容，请明确告知用户。"
+
+用户在 Sidebar Knowledge Panel 中可以切换默认模式。
+
+### 13. 分块预览与质量可视化
+
+参考 RAGFlow 的分块可视化，提供轻量版预览界面，帮助用户理解和验证索引质量：
+
+**Settings → 知识库详情页**：
+
+```
+┌─ 项目文档 · 索引详情 ─────────────────────────────┐
+│                                                    │
+│  📊 索引概览                                        │
+│  文件数: 1,234  |  分块数: 8,567  |  存储: 142MB   │
+│  分块策略: Parent-Child  |  Embedding: BGE-small   │
+│  最后更新: 5 分钟前                                 │
+│                                                    │
+│  📄 文件列表                          🔍 搜索文件   │
+│  ┌──────────────────────────────────────────────┐  │
+│  │ deploy-guide.md          23 块  ✅ 已索引     │  │
+│  │ ├─ §1 环境准备           [3 块] ▸ 展开预览   │  │
+│  │ ├─ §2 部署流程           [5 块] ▸ 展开预览   │  │
+│  │ └─ §3 灰度策略           [4 块] ▸ 展开预览   │  │
+│  │                                              │  │
+│  │ architecture.pdf         45 块  ✅ 已索引     │  │
+│  │ config.json              2 块   ✅ 已索引     │  │
+│  │ video.mp4                —     ⏭️ 已跳过     │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                    │
+│  🧪 检索测试                                        │
+│  [输入测试查询...]              [搜索]              │
+│  → 结果预览 + 相似度分数 + 来源定位                  │
+│                                                    │
+└────────────────────────────────────────────────────┘
+```
+
+**设计要点**：
+- 文件维度浏览分块结果（不是编辑，是只读预览）
+- 展开可查看每个 chunk 的内容摘要
+- 内置"检索测试"框：输入查询 → 显示 top-K 结果 + 分数，用于调试检索质量
+- 跳过的文件（格式不支持、超大等）明确标注原因
+
+### 14. 自定义 API Connector
+
+用户可配置任意 REST API 作为知识源：
+
+```typescript
+interface CustomAPIConfig {
+  name: string
+  searchEndpoint: string           // https://kb.company.com/api/search
+  method: "GET" | "POST"
+  headers: Record<string, string>  // Authorization, etc.
+  bodyTemplate: object             // { "query": "{{query}}", "top_k": 5 }
+  responseMapping: {
+    results: string                // JSONPath: "data.items"
+    title: string                  // "item.title"
+    content: string                // "item.content"
+    url?: string                   // "item.source_url"
+  }
+}
+```
+
+Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请求/响应映射。
+
+## 分阶段实施
+
+| Phase | 内容 | 复杂度 | 依赖 |
+|-------|------|--------|------|
+| **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + 本地 Embedding (ONNX) + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 高 | 无 |
+| **2** | MarkItDown 集成 (PDF/docx) + Parent-Child 分块 + 索引进度 UI (SSE) + 增量更新 + 文件监听 | 中 | Phase 1 |
+| **3** | 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 中 | Phase 1 |
+| **4** | 在线文档爬取索引 (类 Cursor @Docs) + 自定义 API Connector + 远程 Embedding | 中 | Phase 1 |
+| **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 中 | Phase 1-3 |
+| **6** | 更多第三方平台 (Notion/百炼) + 知识源同步更新 | 中 | Phase 3 |
+
+Phase 1 的最小目标：用户选一个文件夹 → 自动索引（md/txt/代码文件）→ 混合检索 → 对话中 AI 能搜到内容。
+
+## 考虑过的替代方案
+
+### 1. 每个知识源一个独立 MCP Server (ADR-019 方案)
+
+ADR-019 的原方案。
+
+**未采用原因**：本地 RAG 需要持久化状态（向量库）和重计算（索引构建），无法用轻量 MCP Server 承载。将本地 RAG 放入独立 Sidecar 后，第三方平台也放入同一 Sidecar 作为 Adapter 更自然，避免 N 个进程的管理开销。
+
+### 2. 将 RAG 能力集成到 OpenCode Server
+
+在 OpenCode Server 中增加知识库模块。
+
+**未采用原因**：OpenCode 是 upstream 项目（vendor submodule），不应往里注入 Ultrawork 特有功能。且知识库索引是重计算操作，可能影响 OpenCode 的 AI 对话响应。
+
+### 3. 使用外部向量数据库 (Chroma / Qdrant)
+
+部署独立的向量数据库服务。
+
+**未采用原因**：桌面应用不适合额外启动数据库服务。SQLite + sqlite-vec 单文件方案对桌面场景足够，且 Bun 内置 SQLite 零依赖。
+
+### 4. 仅支持远程 Embedding API
+
+不内置本地模型，全部使用用户配置的 LLM Provider 的 embedding API。
+
+**未采用原因**：隐私和离线可用是桌面 AI Agent 的核心卖点。本地模型增加 ~50-100MB 包体积，换来零成本、零延迟、数据不出本机，值得。
+
+### 5. 用 Go 实现 Knowledge Sidecar
+
+与 OpenCode Server 语言一致。
+
+**未采用原因**：OpenCode 虽然是 Go 写的（更正：实际是 TypeScript + Effect-TS），但 Gateway Sidecar 已验证 TypeScript + Bun 的可行性。团队对 TypeScript 更熟悉，Bun 内置 SQLite 也减少了依赖复杂度。
+
+## 后果
+
+### 正面
+
+- 三类知识库场景统一架构，用户体验一致
+- 本地 RAG 开箱即用（本地 Embedding + SQLite），隐私优先
+- MCP 协议对接 AI，无需自建调用链路
+- 单一 Sidecar 进程管理简单，与 Gateway 复用 Tauri 管理模式
+- 增量索引 + 文件监听减少重建开销
+
+### 负面
+
+- Knowledge Sidecar 新增一个进程（目前已有 OpenCode + Gateway）
+- 内置 ONNX 模型增加 ~50-100MB 包体积
+- MarkItDown 依赖系统 Python，部分用户可能未安装
+- 本地 RAG 的索引构建耗时，需要完善的异步 UX
+- sqlite-vec 扩展需要在 Bun 中加载原生模块，可能有平台兼容性问题
+
+### 技术风险（调研发现）
+
+| 风险 | 影响 | 缓解方案 |
+|------|------|---------|
+| sqlite-vec macOS 需要自定义 SQLite 路径 | 打包复杂度增加 | `Database.setCustomSQLite()` 指定 homebrew 路径，或 bundle 自带 libsqlite3 |
+| sqlite-vec 无 HNSW/ANN 索引 | >100K 向量时暴力搜索变慢 | 分区键(partition key)按知识库隔离 + 控制每库规模；未来可迁移到 LanceDB |
+| transformers.js `bun build --compile` 崩溃 | Knowledge Sidecar 无法编译为单二进制 | 方案 B: onnxruntime-node N-API；方案 C: 独立 Node.js embedding 子进程 |
+| sqlite-vec pre-v1 API 不稳定 | 升级可能有 breaking changes | 封装 VectorStore 抽象层，隔离底层 API |
+| FTS5 中文分词不佳 | 中文关键词检索召回率低 | 预处理阶段用 jieba 分词，以空格分隔后存入 FTS5 |
+
+## 参考
+
+### 内部文档
+
+- ADR-019: 知识库集成 (Withdrawn) — 之前的 MCP 架构 POC
+- ADR-013: Channel Gateway 独立 Sidecar — Sidecar 架构模式参考
+- IMA OpenAPI: `research/knowledge-base-research/kb-api.md`
+
+---
+
+### 核心技术组件 — 实现参考
+
+#### sqlite-vec（向量检索）
+
+- **GitHub**: https://github.com/asg017/sqlite-vec
+- **文档**: https://alexgarcia.xyz/sqlite-vec/
+- **npm**: `sqlite-vec`
+- **Bun 官方示例**: https://github.com/asg017/sqlite-vec/blob/main/examples/simple-bun/demo.ts
+
+**平台支持**: Linux/macOS/Windows/WASM/Raspberry Pi 全平台。macOS 内置 SQLite 不允许加载扩展，**需要指定自定义 SQLite 路径**：
+
+```typescript
+import { Database } from "bun:sqlite";
+import * as sqliteVec from "sqlite-vec";
+
+// macOS 必须！否则扩展加载失败
+Database.setCustomSQLite("/usr/local/opt/sqlite3/lib/libsqlite3.dylib");
+
+const db = new Database(":memory:");
+sqliteVec.load(db);
+
+// 创建向量表（vec0 虚拟表）
+db.run("CREATE VIRTUAL TABLE vec_items USING vec0(embedding float[384])");
+
+// 插入
+const stmt = db.prepare("INSERT INTO vec_items(rowid, embedding) VALUES (?, vec_f32(?))");
+stmt.run(1, new Float32Array([0.1, 0.2, ...]));
+
+// KNN 搜索
+const results = db.prepare(
+  "SELECT rowid, distance FROM vec_items WHERE embedding MATCH ? ORDER BY distance LIMIT 5"
+).all(new Float32Array([0.3, 0.3, ...]));
+```
+
+**关键 API**:
+
+| 函数 | 用途 |
+|------|------|
+| `vec_f32(v)` | 创建 float32 向量 |
+| `vec_int8(v)` | 创建 int8 量化向量（省空间） |
+| `vec_distance_cosine(a,b)` | 余弦距离 |
+| `vec_distance_L2(a,b)` | 欧氏距离 |
+| `vec_normalize(v)` | L2 归一化 |
+| `vec_quantize_i8(v)` | 标量量化 |
+
+**已知限制**:
+- ⚠️ **无 HNSW/ANN 索引**，使用暴力 KNN 搜索。<100K 向量可接受，更大规模需评估
+- ⚠️ pre-v1 版本，API 可能有 breaking changes
+- ⚠️ Bun 中 rowid 返回 `BigInt` 类型，需注意类型转换
+- vec0 支持 **partition key**（按知识库 ID 分区，提高查询效率）和 **auxiliary 列**（存文本等辅助数据）
+
+#### SQLite FTS5（全文检索）
+
+- **文档**: https://www.sqlite.org/fts5.html
+- Bun 内置 SQLite 已包含 FTS5，无需额外加载
+- 支持中文分词需要 `simple` tokenizer 或自定义分词（中文场景可考虑 jieba 预处理）
+
+#### Embedding 模型运行
+
+**方案 A: @huggingface/transformers（推荐先尝试）**
+
+- **npm**: `@huggingface/transformers`
+- **文档**: https://huggingface.co/docs/transformers.js
+- 底层用 ONNX Runtime WASM，Bun 支持 WebAssembly
+- ⚠️ **已知问题**: `bun build --compile` 单二进制模式会崩溃（[GitHub issue #1672](https://github.com/huggingface/transformers.js/issues/1672)）。普通 `bun run` 可用
+
+```typescript
+import { pipeline } from '@huggingface/transformers';
+
+const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+const output = await extractor(['Hello world'], { pooling: 'mean', normalize: true });
+// output.dims = [1, 384], output.data = Float32Array
+```
+
+**方案 B: onnxruntime-node（性能更好）**
+
+- **npm**: `onnxruntime-node`
+- 使用 N-API 原生插件，Bun 支持 N-API ~95%（https://bun.sh/docs/runtime/node-api）
+- 需实际测试兼容性
+- 平台: macOS (x64+arm64), Linux (x64 CPU/CUDA, arm64), Windows (x64/arm64)
+
+**方案 C: 独立 Node.js 子进程（保底）**
+
+- 将 embedding 逻辑放在独立 Node.js 脚本中
+- Knowledge Sidecar 通过 IPC/HTTP 调用
+- 兼容性最好，但多一层 IPC 开销
+
+**可用 ONNX 嵌入模型**:
+
+| 模型 | 维度 | 语言 | 大小 | npm 下载量 |
+|------|------|------|------|-----------|
+| `Xenova/all-MiniLM-L6-v2` | 384 | 英文 | ~23MB | 月 370 万+ |
+| `Xenova/bge-small-zh-v1.5` | 512 | 中文 | ~50MB | — |
+| `BAAI/bge-small-zh-v1.5` | 512 | 中文 | ~90MB | 需自行转 ONNX |
+
+#### MarkItDown（文件转 Markdown）
+
+- **GitHub**: https://github.com/microsoft/markitdown
+- **语言**: Python 3.10+（99.7% Python）
+- **安装**: `pip install 'markitdown[all]'` 或按需 `markitdown[pdf,docx,pptx]`
+- **CLI**: `markitdown path-to-file.pdf > output.md`
+- **支持格式**: PDF, Word, Excel, PowerPoint, EPub, HTML, CSV, JSON, XML, 图片(OCR), 音频(转录)
+- **Docker**: 提供容器化部署
+- 微软 AutoGen 项目生态产品
+
+#### Cheerio（网页解析）
+
+- **npm**: `cheerio`（`bun add cheerio`）
+- **GitHub**: https://github.com/cheeriojs/cheerio
+- TypeScript 原生（65% TS）、Bun 完全兼容、轻量无浏览器依赖
+- 用于在线文档爬取中的 HTML → Markdown 转换
+
+```typescript
+import * as cheerio from 'cheerio';
+
+const html = await fetch(url).then(r => r.text());
+const $ = cheerio.load(html);
+const content = $('article, .content, main').text();
+const links = $('a[href]').map((_, el) => $(el).attr('href')).get();
+```
+
+---
+
+### 算法参考
+
+#### RRF（Reciprocal Rank Fusion）
+
+**权威参考**: https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking
+
+**公式**: `RRF_score(doc) = Σ 1/(rank_i + k)`，标准 **k=60**
+
+```typescript
+function reciprocalRankFusion(
+  resultSets: { id: string; rank: number }[][],
+  k: number = 60
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  for (const results of resultSets) {
+    for (const { id, rank } of results) {
+      scores.set(id, (scores.get(id) || 0) + 1 / (rank + k));
+    }
+  }
+  return scores;
+}
+
+// 使用: 融合向量检索 + BM25 结果
+const vectorResults = [{ id: "doc1", rank: 1 }, { id: "doc2", rank: 3 }];
+const bm25Results   = [{ id: "doc2", rank: 1 }, { id: "doc3", rank: 2 }];
+const fused = reciprocalRankFusion([vectorResults, bm25Results]);
+const ranked = [...fused.entries()].sort((a, b) => b[1] - a[1]);
+```
+
+Azure Search 支持加权 RRF（如向量结果 weight=2.0 更重视语义匹配）。
+
+#### Parent-Child 分块检索流程
+
+```typescript
+// 1. 向量搜索匹配 child chunks
+const childMatches = db.prepare(`
+  SELECT vc.chunk_id, vc.distance, c.parent_id
+  FROM vec_chunks vc
+  JOIN chunks c ON c.id = vc.chunk_id
+  WHERE vc.embedding MATCH ?
+  ORDER BY vc.distance LIMIT 10
+`).all(queryEmbedding);
+
+// 2. 去重获取 parent chunks
+const parentIds = [...new Set(childMatches.map(m => m.parent_id))];
+const parents = db.prepare(`
+  SELECT * FROM chunks WHERE id IN (${parentIds.map(() => '?').join(',')})
+`).all(...parentIds);
+
+// 3. 返回 parent 内容作为 LLM 上下文
+```
+
+分块参数参考:
+
+| 参数 | Parent | Child |
+|------|--------|-------|
+| chunk_size | 1000-2000 tokens | 200-400 tokens |
+| overlap | 200 tokens | 50 tokens |
+
+---
+
+### 开源 MCP 知识库服务器（可参考实现）
+
+| 项目 | Stars | 特点 | GitHub |
+|------|-------|------|--------|
+| **knowledge-mcp** | 48 | LightRAG 引擎，混合向量+知识图谱，多检索策略 | https://github.com/olafgeibig/knowledge-mcp |
+| **Axon.MCP.Server** | 164 | 代码库索引，Tree-sitter+pgvector，<500ms p95 | https://github.com/ali-kamali/Axon.MCP.Server |
+| **DocSentinel** | 88 | 多格式解析+RAG，安全领域 | https://github.com/arthurpanhku/DocSentinel |
+| **knowledgebase-mcp** | 3 | 高精度本地知识库，标准 MCP 实现 | https://github.com/PaulTheSecond/knowledgebase-mcp |
+| **ragflow-knowledge-mcp-server** | 5 | RAGFlow 的 MCP 接口包装 | https://github.com/lumerix7/ragflow-knowledge-mcp-server |
+
+**knowledge-mcp 架构**（最值得参考）：
+- 三层：CLI 工具 → LightRAG 引擎 → MCP Server (FastMCP)
+- 文档流：摄入 → 分块 → LLM 提取实体/关系 → 双存储（向量 + 知识图谱）
+- 多检索策略：向量相似度、实体中心、关系中心、混合
+- Python 实现，但架构可移植到 TypeScript
+
+---
+
+### 网页爬取工具
+
+| 工具 | 特点 | 适用场景 |
+|------|------|---------|
+| **Cheerio + fetch** | TS 原生，轻量，零成本 | 静态文档站（推荐默认方案） |
+| [Firecrawl](https://docs.firecrawl.dev) | 自动 JS 渲染、反 bot、sitemap、结构化输出，有官方 MCP Server | 复杂 JS 渲染站、大规模爬取 |
+| [Jina Reader](https://jina.ai/reader/) | `https://r.jina.ai/` 前缀即可获取 MD，自动图片 caption | 快速单页抓取、免费 20 RPM |
+
+Firecrawl 关键参数：`maxDiscoveryDepth`（爬取深度）、`maxConcurrency`（并发）、sitemap 模式（include/skip/only）。
+
+---
+
+### 行业产品 — 技术实现详情
+
+#### Cursor
+
+- **博客**: https://cursor.com/blog
+- **文档**: https://cursor.com/docs/context/codebase-indexing
+- **@Docs**: https://docs.cursor.com/context/@-symbols/@-docs
+- **深度分析**: [How Cursor Actually Indexes Your Codebase](https://towardsdatascience.com/how-cursor-actually-indexes-your-codebase/) (Towards Data Science)
+
+关键技术：自研 embedding 模型（代码专用）、AST 感知分块（函数/类边界）、Merkle Tree 增量更新（每 5-10 分钟）、Turbopuffer 云端向量库、路径加密（隐私）、索引 80% 即可搜索。
+
+#### Windsurf (Codeium)
+
+- **Memories**: https://docs.windsurf.com/windsurf/cascade/memories
+- **Flow 上下文引擎**: https://markaicode.com/windsurf-flow-context-engine/
+
+关键技术：本地 embedding（原始代码不离开本机）、SWE-grep（LLM-based 代码搜索，比传统 embedding 更准）、Flow 实时上下文（保存/测试/导航等操作自动注入）、Memories 按 workspace 隔离存储在 `~/.codeium/windsurf/memories/`。
+
+#### Dify
+
+- **知识库创建**: https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/
+- **Knowledge Pipeline**: https://docs.dify.ai/en/use-dify/knowledge/knowledge-pipeline/
+- **多模态检索**: https://dify.ai/blog/multimodal-retrieval-is-now-available-in-the-knowledge-base
+
+关键技术：三种分块（General / Parent-Child / Q&A）、三种检索（向量/全文/混合，可调权重）、可选 Reranker 模型重排序、经济模式（无 embedding，仅关键词倒排）、Vision embedding 多模态检索。
+
+**Parent-Child 实现细节**：Parent 可选 Paragraph 模式（按分隔符切）或 Full Doc 模式（整文档限 10K tokens）。Child 在 Parent 内部独立切分。⚠️ 创建后不可更改分块模式。
+
+#### RAGFlow
+
+- **GitHub**: https://github.com/infiniflow/ragflow
+- **使用指南**: https://www.knightli.com/en/2026/04/15/ragflow-rag-engine-guide/
+
+关键技术：**DeepDoc 深度文档理解**是最大亮点——布局分析（识别 10 种组件：Text/Title/Table/Figure 等）、OCR 集成、TSR 表格结构识别（行/列/表头/跨单元格）、自动旋转（评估 4 个角度的 OCR 置信度）。支持 PDF/DOCX/Excel/PPT 解析。分块可视化 + 人工干预。
+
+#### AnythingLLM
+
+- **GitHub**: https://github.com/Mintplex-Labs/anything-llm
+- **RAG 指南**: https://www.nullzen.dev/blog/anythingllm-rag-guide/
+- **文档**: https://docs.anythingllm.com/introduction
+
+关键技术：LanceDB 默认（零配置）、table-per-namespace 隔离、嵌入抽象层（30+ provider 可切换）、Chat/Query 双模式、搜索阈值 0.25（余弦）、批量嵌入（500 条/批）、向量缓存避免重复嵌入。
+
+**LanceDB 表 Schema**:
+```
+{ id: UUID, vector: float[], metadata: { source, documentId, text }, text: string }
+```
+
+#### Coze 扣子
+
+- **知识库指南**: https://zhuanlan.zhihu.com/p/695392042
+- **RAG 检索**: https://blog.csdn.net/AT_GCS/article/details/149905112
+- **开源**: Coze Studio + Coze Loop (Apache 2.0)，GitHub 48 小时 9000+ stars
+
+关键技术：三种知识库（文本/表格/图片）、三种分段方式（自动/自定义/按层级）、混合向量检索 + RRF 融合、余弦/欧式/IP 三种距离度量。
+
+#### GitHub Copilot Spaces
+
+- **文档**: https://docs.github.com/en/enterprise-cloud@latest/copilot/concepts/context/knowledge-bases
+- **Sunset 通知**: https://github.blog/changelog/2025-08-20-sunset-notice-copilot-knowledge-bases/
+- 从 Knowledge Bases 迁移到 Spaces：支持代码 + 自由文本 + Issues/PR + 图片混合知识，组织级 admin/editor/viewer 权限，通过 GitHub MCP Server 在 IDE 中访问。
+
+#### Obsidian + AI
+
+- **AI 集成指南**: https://www.nxcode.io/resources/news/obsidian-ai-second-brain-complete-guide-2026
+- 方向：从"插件内 AI" 转向 "AI 工具通过 MCP 接入笔记库"（Obsidian CLI v1.12 起 + MCP 集成）
