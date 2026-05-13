@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database} from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
@@ -10,6 +10,7 @@ import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
 import { useBrowserMCP } from "@/lib/use-browser-mcp"
 import { useChannels } from "@/lib/use-channels"
+import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
 import { useWorkspace } from "@/lib/workspace-context"
 import { Button } from "@/components/ui/button"
@@ -24,7 +25,7 @@ import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChanne
 import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "channels" | "skills" | "about"
+type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "channels" | "knowledge" | "skills" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
@@ -32,6 +33,7 @@ const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
   { key: "services", icon: Server, labelKey: "settingsPage.services" },
   { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
+  { key: "knowledge", icon: BookOpen, labelKey: "settingsPage.knowledge" },
   { key: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
   { key: "about", icon: Info, labelKey: "settingsPage.about" },
 ]
@@ -82,6 +84,7 @@ export function SettingsPage() {
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "services" && <ServicesSection />}
             {activeSection === "channels" && <ChannelsSection />}
+            {activeSection === "knowledge" && <KnowledgeSection />}
             {activeSection === "skills" && <SkillsSection />}
             {activeSection === "about" && <AboutSection />}
           </div>
@@ -1507,6 +1510,182 @@ function WeChatQRLogin({
         <Button variant="outline" size="sm" onClick={onCancel}>
           {t("button.cancel")}
         </Button>
+      </div>
+    </div>
+  )
+}
+
+function KnowledgeSection() {
+  const { t } = useI18n()
+  const {
+    sources, loading, error, actionLoading,
+    addFolder, removeFolder, reindexFolder, refresh,
+  } = useKnowledgeBase()
+  const [refreshing, setRefreshing] = useState(false)
+
+  const onRefresh = async () => {
+    setRefreshing(true)
+    try { await refresh() } finally { setRefreshing(false) }
+  }
+
+  const handleAddFolder = async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog")
+    const selected = await open({ directory: true, multiple: false })
+    if (selected) {
+      await addFolder(selected as string)
+    }
+  }
+
+  const completeSources = sources.filter((s) => s.status === "complete")
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("knowledge.title")}</h2>
+            {completeSources.length > 0 && (
+              <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                {completeSources.length}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("knowledge.description")}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+            {t("workspace.refresh")}
+          </Button>
+          <Button size="sm" onClick={handleAddFolder} disabled={!!actionLoading}>
+            <Plus className="mr-1.5 size-3.5" />
+            {t("knowledge.addFolder")}
+          </Button>
+        </div>
+      </div>
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
+        </div>
+      )}
+
+      {/* Error */}
+      {error && !loading && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-500/10 p-4 text-sm text-red-600 dark:border-red-800 dark:text-red-400">
+          <AlertCircle className="size-4 shrink-0" />
+          {t("knowledge.fetchError")}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && sources.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
+          <Database className="size-10 text-[var(--color-fg-muted)]" />
+          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("knowledge.noSources")}</p>
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("knowledge.noSourcesHint")}</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={handleAddFolder}>
+            <FolderOpen className="mr-1.5 size-3.5" />
+            {t("knowledge.addFolder")}
+          </Button>
+        </div>
+      )}
+
+      {/* Source cards */}
+      {!loading && !error && sources.length > 0 && (
+        <div className="space-y-3">
+          {sources.map((source) => (
+            <KnowledgeSourceCard
+              key={source.folderPath}
+              source={source}
+              loading={actionLoading === source.folderPath}
+              onReindex={() => reindexFolder(source.folderPath)}
+              onRemove={() => removeFolder(source.folderPath)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function KnowledgeSourceCard({
+  source,
+  loading,
+  onReindex,
+  onRemove,
+}: {
+  source: KBSource
+  loading: boolean
+  onReindex: () => void
+  onRemove: () => void
+}) {
+  const { t } = useI18n()
+  const isComplete = source.status === "complete"
+  const isIndexing = source.status === "indexing"
+  const isError = source.status === "error"
+
+  const statusLabel = isComplete
+    ? t("knowledge.complete")
+    : isIndexing
+    ? t("knowledge.indexing")
+    : isError
+    ? t("knowledge.error")
+    : t("knowledge.idle")
+
+  const dotColor = isComplete
+    ? "bg-green-500"
+    : isIndexing
+    ? "bg-amber-500 animate-pulse"
+    : isError
+    ? "bg-red-500"
+    : "bg-gray-400"
+
+  // Show just the last directory name
+  const folderName = source.folderPath.split("/").pop() || source.folderPath
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5">
+            <span className={cn("size-2.5 shrink-0 rounded-full", dotColor)} />
+            <FolderOpen className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
+            <span className="text-sm font-medium text-[var(--color-fg)]">{folderName}</span>
+          </div>
+          <p className={cn(
+            "mt-1 text-xs",
+            isError ? "text-red-500" : "text-[var(--color-fg-muted)]"
+          )}>
+            {source.error || statusLabel}
+            {isComplete && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
+          </p>
+          <p className="mt-1 truncate font-mono text-xs text-[var(--color-fg-muted)]" title={source.folderPath}>
+            {source.folderPath}
+          </p>
+        </div>
+        <div className="ml-4 flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onReindex}
+            disabled={loading || isIndexing}
+          >
+            {(loading || isIndexing) && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+            {t("knowledge.reindex")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRemove}
+            disabled={loading || isIndexing}
+            className="text-red-500 hover:bg-red-500/10 hover:text-red-600"
+          >
+            {t("knowledge.remove")}
+          </Button>
+        </div>
       </div>
     </div>
   )

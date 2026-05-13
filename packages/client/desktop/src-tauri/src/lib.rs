@@ -9,6 +9,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
+const KNOWLEDGE_PORT: u16 = 4098;
 const OPENCODE_APP_NAME: &str = "ultrawork";
 
 fn is_port_in_use(port: u16) -> bool {
@@ -745,6 +746,55 @@ fn get_global_config_dir() -> String {
     global_config_dir().to_string_lossy().to_string()
 }
 
+/// Returns the absolute path to a sidecar binary.
+/// Tauri places sidecar binaries next to the app binary in production,
+/// and in src-tauri/binaries/ during development.
+#[tauri::command]
+fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    use tauri::Manager;
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+    // In production, sidecar is at <resource_dir>/binaries/<name>-<target_triple>
+    // Tauri resolves the target triple automatically via sidecar() API,
+    // but for MCP config we need the exact path.
+    let target = if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64-apple-darwin"
+        } else {
+            "x86_64-apple-darwin"
+        }
+    } else if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
+    } else {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64-unknown-linux-gnu"
+        } else {
+            "x86_64-unknown-linux-gnu"
+        }
+    };
+
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let binary_name = format!("{}-{}{}", name, target, suffix);
+
+    // Try resource_dir first (production)
+    let prod_path = resource_dir.join("binaries").join(&binary_name);
+    if prod_path.exists() {
+        return Ok(prod_path.to_string_lossy().to_string());
+    }
+
+    // Fallback: src-tauri/binaries/ (development)
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(&binary_name);
+    if dev_path.exists() {
+        return Ok(dev_path.to_string_lossy().to_string());
+    }
+
+    Err(format!("Sidecar binary not found: {}", binary_name))
+}
+
 fn read_opencode_json(workspace: &str) -> Result<serde_json::Value, String> {
     let path = opencode_json_path(workspace);
     let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
@@ -894,6 +944,7 @@ pub fn run() {
             write_mcp_config,
             remove_mcp_config,
             get_global_config_dir,
+            get_sidecar_path,
         ])
         .setup(|app| {
             // One-time migration from shared opencode paths (must run before sidecar)
@@ -912,6 +963,22 @@ pub fn run() {
                     &[],
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
+                }
+            });
+
+            // Start Knowledge Sidecar in background (non-critical, don't block UI)
+            let kb_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(e) = start_sidecar(
+                    &kb_handle,
+                    "knowledge-sidecar",
+                    KNOWLEDGE_PORT,
+                    "/kb/health",
+                    None,
+                    &[],
+                    &[],
+                ) {
+                    eprintln!("Knowledge Sidecar startup failed: {}", e);
                 }
             });
 

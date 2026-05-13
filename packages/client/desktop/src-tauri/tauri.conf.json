@@ -37,7 +37,8 @@
     ],
     "externalBin": [
       "binaries/opencode-server",
-      "binaries/channel-gateway"
+      "binaries/channel-gateway",
+      "binaries/knowledge-sidecar"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",

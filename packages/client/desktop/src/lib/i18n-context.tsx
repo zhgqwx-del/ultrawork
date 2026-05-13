@@ -62,6 +62,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
     "settingsPage.services": "MCP Services",
     "settingsPage.channels": "Channels",
+    "settingsPage.knowledge": "Knowledge",
     "settingsPage.skills": "Skills",
     "settingsPage.capabilities.title": "Connection Settings",
 
@@ -266,6 +267,27 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.wechat.error": "Failed to get QR code",
     "channel.wechat.namePlaceholder": "e.g. My WeChat",
 
+    // Knowledge Base
+    "knowledge.title": "Knowledge Base",
+    "knowledge.description": "Add local folders as knowledge sources. The AI will search them when answering your questions.",
+    "knowledge.addFolder": "Add Folder",
+    "knowledge.noSources": "No knowledge sources",
+    "knowledge.noSourcesHint": "Add a folder to get started",
+    "knowledge.indexing": "Indexing...",
+    "knowledge.complete": "Indexed",
+    "knowledge.error": "Error",
+    "knowledge.idle": "Idle",
+    "knowledge.files": "{count} files",
+    "knowledge.reindex": "Re-index",
+    "knowledge.remove": "Remove",
+    "knowledge.indexComplete": "Indexed {files} files from {folder}",
+    "knowledge.indexFailed": "Failed to index folder",
+    "knowledge.removed": "Knowledge source removed",
+    "knowledge.removeFailed": "Failed to remove knowledge source",
+    "knowledge.reindexComplete": "Re-indexing complete",
+    "knowledge.reindexFailed": "Failed to re-index",
+    "knowledge.fetchError": "Failed to load knowledge sources",
+
     // MCP
     "mcp.noServers": "No MCP servers configured",
     "mcp.addServer": "Add MCP Server",
@@ -467,6 +489,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
     "settingsPage.services": "MCP 服务",
     "settingsPage.channels": "渠道",
+    "settingsPage.knowledge": "知识库",
     "settingsPage.skills": "技能",
     "settingsPage.capabilities.title": "连接设置",
 
@@ -670,6 +693,27 @@ const translations: Record<Language, Record<string, string>> = {
     "channel.wechat.expired": "二维码已过期，正在刷新...",
     "channel.wechat.error": "获取二维码失败",
     "channel.wechat.namePlaceholder": "例如 我的微信",
+
+    // Knowledge Base
+    "knowledge.title": "知识库",
+    "knowledge.description": "添加本地文件夹作为知识源，AI 在回答问题时会自动搜索这些内容。",
+    "knowledge.addFolder": "添加文件夹",
+    "knowledge.noSources": "暂无知识源",
+    "knowledge.noSourcesHint": "添加一个文件夹开始使用",
+    "knowledge.indexing": "索引中...",
+    "knowledge.complete": "已索引",
+    "knowledge.error": "错误",
+    "knowledge.idle": "空闲",
+    "knowledge.files": "{count} 个文件",
+    "knowledge.reindex": "重建索引",
+    "knowledge.remove": "移除",
+    "knowledge.indexComplete": "已从 {folder} 索引 {files} 个文件",
+    "knowledge.indexFailed": "文件夹索引失败",
+    "knowledge.removed": "知识源已移除",
+    "knowledge.removeFailed": "移除知识源失败",
+    "knowledge.reindexComplete": "重建索引完成",
+    "knowledge.reindexFailed": "重建索引失败",
+    "knowledge.fetchError": "加载知识源失败",
 
     // MCP
     "mcp.noServers": "未配置 MCP 服务",

@@ -6,6 +6,7 @@ import path from "path"
 // Shared proxy target configs
 const backend = { target: "http://localhost:4096", changeOrigin: true }
 const gateway = { target: "http://localhost:4097", changeOrigin: true }
+const knowledge = { target: "http://localhost:4098", changeOrigin: true }
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -56,6 +57,8 @@ export default defineConfig({
       "/experimental": backend,
       // Channel gateway proxy → :4097
       "/channel": gateway,
+      // Knowledge sidecar proxy → :4098
+      "/kb": knowledge,
     },
   },
 })

@@ -8,6 +8,7 @@
     "packages/core/*",
     "packages/client/*",
     "packages/channel/*",
+    "packages/knowledge/*",
     "packages/proactive/*"
   ],
   "scripts": {
@@ -18,6 +19,7 @@
     "build": "turbo run build",
     "build:opencode": "bun run scripts/build-opencode.ts",
     "build:gateway": "bun run scripts/build-gateway.ts",
+    "build:knowledge": "bun run scripts/build-knowledge.ts",
     "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
