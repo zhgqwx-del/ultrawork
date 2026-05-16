@@ -72,18 +72,26 @@ export function useKnowledgeBase() {
       })
 
       const mcpConfig = {
-        type: "local",
+        type: "local" as const,
         command: [sidecarPath, "mcp-stdio"],
         enabled: true,
       }
 
+      // 1. Write to workspace opencode.json (for persistence across restarts)
       await invoke("write_mcp_config", {
         workspace: workspacePath,
         name: MCP_NAME,
         config: mcpConfig,
       })
 
-      // Register with OpenCode backend
+      // 2. Write to OpenCode's config via PATCH /config (so it appears in status list)
+      try {
+        await api.patchConfig({ mcp: { [MCP_NAME]: mcpConfig } } as any)
+      } catch {
+        // Non-critical: status listing may not show it, but tool still works
+      }
+
+      // 3. Register and connect with OpenCode backend
       try {
         await api.createMCP(MCP_NAME, mcpConfig as any)
       } catch {
