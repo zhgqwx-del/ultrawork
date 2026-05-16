@@ -42,7 +42,6 @@ const BROWSER_MCP_NAME = "browser"
 export function useBrowserMCP(): BrowserMCPState {
   const api = useApi()
   const { t } = useI18n()
-  const [globalConfigDir, setGlobalConfigDir] = useState<string | null>(null)
   const [env, setEnv] = useState<BrowserEnvInfo | null>(null)
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,13 +53,9 @@ export function useBrowserMCP(): BrowserMCPState {
     let cancelled = false
     async function detect() {
       try {
-        const [info, configDir] = await Promise.all([
-          invoke<BrowserEnvInfo>("detect_browser_env"),
-          invoke<string>("get_global_config_dir"),
-        ])
+        const info = await invoke<BrowserEnvInfo>("detect_browser_env")
         if (!cancelled) {
           setEnv(info)
-          setGlobalConfigDir(configDir)
         }
       } catch (err) {
         console.error("Browser MCP detection failed:", err)
@@ -102,21 +97,18 @@ export function useBrowserMCP(): BrowserMCPState {
     const command = buildMcpCommand(envInfo, m)
     const config = { type: "local" as const, command, enabled: true, timeout: 30000 }
     // Persist to opencode.json so OpenCode auto-connects on restart
-    if (globalConfigDir) {
-      await invoke("write_mcp_config", {
-        workspace: globalConfigDir,
-        name: BROWSER_MCP_NAME,
-        config,
-      })
-    }
+    await invoke("write_mcp_config", {
+      name: BROWSER_MCP_NAME,
+      config,
+    })
     await api.createMCP(BROWSER_MCP_NAME, config)
     // Explicitly connect after registration
     await api.connectMCP(BROWSER_MCP_NAME)
-  }, [api, buildMcpCommand, globalConfigDir])
+  }, [api, buildMcpCommand])
 
   // Auto-restore: if MCP is installed but not connected in backend, register and persist
   useEffect(() => {
-    if (!env || !isInstalled || !globalConfigDir) return
+    if (!env || !isInstalled) return
     let cancelled = false
     ;(async () => {
       try {
@@ -132,7 +124,7 @@ export function useBrowserMCP(): BrowserMCPState {
     })()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [env, isInstalled, globalConfigDir])
+  }, [env, isInstalled])
 
   const setup = useCallback(async () => {
     if (!env) return

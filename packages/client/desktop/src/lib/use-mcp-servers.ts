@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
-import { useWorkspace } from "@/lib/workspace-context"
 import type { MCPStatusMap, MCPConfig } from "@agent/api-client"
 
 // Built-in MCP servers managed by dedicated UI (not shown in generic list)
@@ -21,10 +20,6 @@ function filterBuiltin(data: MCPStatusMap): MCPStatusMap {
 export function useMCPServers() {
   const api = useApi()
   const { t } = useI18n()
-  const { workspacePath, lastPath } = useWorkspace()
-  // workspacePath is null until user confirms in WorkspaceSelector;
-  // fall back to lastPath (persisted in localStorage) for MCP config I/O
-  const effectivePath = workspacePath ?? lastPath
   const [statusMap, setStatusMap] = useState<MCPStatusMap>({})
   const [configMap, setConfigMap] = useState<Record<string, MCPConfig>>({})
   const configMapRef = useRef(configMap)
@@ -34,12 +29,11 @@ export function useMCPServers() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   const fetchMCP = useCallback(async () => {
-    if (!effectivePath) return
     try {
       // 1. Backend runtime status (only reports config-file-based servers)
       const backendStatus = await api.getMCP()
-      // 2. Persisted configs from opencode.json
-      const savedConfigs = await invoke<Record<string, MCPConfig>>("read_mcp_config", { workspace: effectivePath })
+      // 2. Persisted configs from global opencode.json (~/.config/ultrawork/opencode.json)
+      const savedConfigs = await invoke<Record<string, MCPConfig>>("read_mcp_config")
       // 3. Merge: config is the source of truth for which MCPs exist;
       //    backend provides runtime status for those that are connected
       const merged: MCPStatusMap = {}
@@ -57,36 +51,34 @@ export function useMCPServers() {
     } finally {
       setLoading(false)
     }
-  }, [api, effectivePath])
+  }, [api])
 
   useEffect(() => { fetchMCP() }, [fetchMCP])
 
-  // One-time migration: localStorage → opencode.json
+  // One-time migration: localStorage → global opencode.json
   useEffect(() => {
-    if (!effectivePath) return
     const oldRaw = localStorage.getItem("ultrawork_mcp_configs")
     if (!oldRaw) return
     ;(async () => {
       try {
         const oldConfigs = JSON.parse(oldRaw) as Record<string, MCPConfig>
         for (const [name, config] of Object.entries(oldConfigs)) {
-          await invoke("write_mcp_config", { workspace: effectivePath, name, config })
+          await invoke("write_mcp_config", { name, config })
         }
         localStorage.removeItem("ultrawork_mcp_configs")
         localStorage.removeItem("ultrawork_mcp_statuses")
         localStorage.removeItem("ultrawork_mcp_hidden")
-        console.info("Migrated MCP configs from localStorage to opencode.json")
+        console.info("Migrated MCP configs from localStorage to global opencode.json")
         fetchMCP()
       } catch (err) {
         console.error("MCP config migration failed:", err)
       }
     })()
-  // Run once when workspace becomes available
+  // Run once on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectivePath])
+  }, [])
 
   const handleToggle = useCallback(async (name: string, currentStatus: string) => {
-    if (!effectivePath) return
     setActionLoading(name)
     try {
       if (currentStatus === "connected") {
@@ -94,7 +86,7 @@ export function useMCPServers() {
         const config = configMapRef.current[name]
         if (config) {
           await invoke("write_mcp_config", {
-            workspace: effectivePath, name,
+            name,
             config: { ...config, enabled: false },
           })
           setConfigMap(prev => ({ ...prev, [name]: { ...config, enabled: false } }))
@@ -104,7 +96,7 @@ export function useMCPServers() {
         const config = configMapRef.current[name]
         if (config) {
           await invoke("write_mcp_config", {
-            workspace: effectivePath, name,
+            name,
             config: { ...config, enabled: true },
           })
           setConfigMap(prev => ({ ...prev, [name]: { ...config, enabled: true } }))
@@ -118,15 +110,14 @@ export function useMCPServers() {
     } finally {
       setActionLoading(null)
     }
-  }, [api, t, effectivePath])
+  }, [api, t])
 
   const handleAdd = useCallback(async (name: string, config: MCPConfig) => {
-    if (!effectivePath) return
     setActionLoading("__add__")
     try {
       const configWithEnabled = { ...config, enabled: true }
-      // 1. Persist to opencode.json
-      await invoke("write_mcp_config", { workspace: effectivePath, name, config: configWithEnabled })
+      // 1. Persist to global opencode.json
+      await invoke("write_mcp_config", { name, config: configWithEnabled })
       // 2. Connect immediately via POST /mcp
       const raw = await api.createMCP(name, configWithEnabled)
       // 3. Update local state
@@ -139,16 +130,15 @@ export function useMCPServers() {
     } finally {
       setActionLoading(null)
     }
-  }, [api, t, effectivePath])
+  }, [api, t])
 
   const handleRemove = useCallback(async (name: string, currentStatus: string) => {
-    if (!effectivePath) return
     // 1. Disconnect if connected
     if (currentStatus === "connected") {
       await api.disconnectMCP(name).catch(() => {})
     }
-    // 2. Remove from opencode.json
-    await invoke("remove_mcp_config", { workspace: effectivePath, name })
+    // 2. Remove from global opencode.json
+    await invoke("remove_mcp_config", { name })
     // 3. Update local state
     setStatusMap(prev => {
       const next = { ...prev }
@@ -160,7 +150,7 @@ export function useMCPServers() {
       delete next[name]
       return next
     })
-  }, [api, effectivePath])
+  }, [api])
 
   return {
     statusMap,

@@ -58,12 +58,7 @@ export function useKnowledgeBase() {
 
   const ensureMCPRegistered = useCallback(async () => {
     try {
-      // Knowledge MCP is global — use ~/.config/ultrawork/ not workspace path
-      const globalConfigDir = await invoke<string>("get_global_config_dir")
-
-      const configs = await invoke<Record<string, unknown>>("read_mcp_config", {
-        workspace: globalConfigDir,
-      })
+      const configs = await invoke<Record<string, unknown>>("read_mcp_config")
       if (configs && configs[MCP_NAME]) return // Already registered
 
       // Get the sidecar binary path
@@ -79,7 +74,6 @@ export function useKnowledgeBase() {
 
       // 1. Write to global opencode.json (~/.config/ultrawork/opencode.json)
       await invoke("write_mcp_config", {
-        workspace: globalConfigDir,
         name: MCP_NAME,
         config: mcpConfig,
       })

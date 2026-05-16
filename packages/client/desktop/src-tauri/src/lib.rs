@@ -724,13 +724,10 @@ fn detect_browser_env() -> BrowserEnvInfo {
 }
 
 // ---------------------------------------------------------------------------
-// MCP config persistence — read/write opencode.json `mcp` field directly
-// (avoids PATCH /config which triggers Instance.dispose and kills all MCPs)
+// MCP config persistence — read/write global opencode.json `mcp` field
+// All MCP configs are stored in ~/.config/ultrawork/opencode.json (global only).
+// No workspace-level opencode.json is used for MCP configuration.
 // ---------------------------------------------------------------------------
-
-fn opencode_json_path(workspace: &str) -> PathBuf {
-    PathBuf::from(workspace).join("opencode.json")
-}
 
 fn global_config_dir() -> PathBuf {
     // Must match OpenCode's xdg-basedir: XDG_CONFIG_HOME or ~/.config (NOT ~/Library/Application Support on macOS)
@@ -739,6 +736,10 @@ fn global_config_dir() -> PathBuf {
         Ok(val) if !val.is_empty() => PathBuf::from(val).join(OPENCODE_APP_NAME),
         _ => dirs::home_dir().unwrap().join(".config").join(OPENCODE_APP_NAME),
     }
+}
+
+fn global_opencode_json_path() -> PathBuf {
+    global_config_dir().join("opencode.json")
 }
 
 #[tauri::command]
@@ -795,15 +796,20 @@ fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, Strin
     Err(format!("Sidecar binary not found: {}", binary_name))
 }
 
-fn read_opencode_json(workspace: &str) -> Result<serde_json::Value, String> {
-    let path = opencode_json_path(workspace);
+fn read_global_opencode_json() -> Result<serde_json::Value, String> {
+    let path = global_opencode_json_path();
     let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     serde_json::from_str(&content)
         .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
 }
 
-fn write_opencode_json(workspace: &str, root: &serde_json::Value) -> Result<(), String> {
-    let path = opencode_json_path(workspace);
+fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
+    let dir = global_config_dir();
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
+    }
+    let path = global_opencode_json_path();
     let mut json = serde_json::to_string_pretty(root)
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
     json.push('\n');
@@ -812,14 +818,14 @@ fn write_opencode_json(workspace: &str, root: &serde_json::Value) -> Result<(), 
 }
 
 #[tauri::command]
-fn read_mcp_config(workspace: String) -> Result<serde_json::Value, String> {
-    let root = read_opencode_json(&workspace)?;
+fn read_mcp_config() -> Result<serde_json::Value, String> {
+    let root = read_global_opencode_json()?;
     Ok(root.get("mcp").cloned().unwrap_or(serde_json::json!({})))
 }
 
 #[tauri::command]
-fn write_mcp_config(workspace: String, name: String, config: serde_json::Value) -> Result<(), String> {
-    let mut root = read_opencode_json(&workspace)?;
+fn write_mcp_config(name: String, config: serde_json::Value) -> Result<(), String> {
+    let mut root = read_global_opencode_json()?;
     let obj = root.as_object_mut()
         .ok_or("opencode.json root is not an object")?;
     let mcp = obj.entry("mcp")
@@ -827,24 +833,23 @@ fn write_mcp_config(workspace: String, name: String, config: serde_json::Value) 
     let mcp_obj = mcp.as_object_mut()
         .ok_or("opencode.json mcp field is not an object")?;
     mcp_obj.insert(name, config);
-    write_opencode_json(&workspace, &root)
+    write_global_opencode_json(&root)
 }
 
 #[tauri::command]
-fn remove_mcp_config(workspace: String, name: String) -> Result<(), String> {
-    let mut root = read_opencode_json(&workspace)?;
+fn remove_mcp_config(name: String) -> Result<(), String> {
+    let mut root = read_global_opencode_json()?;
     let obj = root.as_object_mut()
         .ok_or("opencode.json root is not an object")?;
     if let Some(mcp) = obj.get_mut("mcp") {
         if let Some(mcp_obj) = mcp.as_object_mut() {
             mcp_obj.remove(&name);
-            // Remove empty mcp field
             if mcp_obj.is_empty() {
                 obj.remove("mcp");
             }
         }
     }
-    write_opencode_json(&workspace, &root)
+    write_global_opencode_json(&root)
 }
 
 // ---------------------------------------------------------------------------
