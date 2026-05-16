@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,15 @@ const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
 const KNOWLEDGE_PORT: u16 = 4098;
 const OPENCODE_APP_NAME: &str = "ultrawork";
+
+// ── Sidecar process registry ─────────────────────────────────────────
+
+struct SidecarEntry {
+    port: u16,
+    pid: Option<u32>, // None when reusing an existing process (no spawn)
+}
+
+static SIDECAR_REGISTRY: Mutex<Vec<SidecarEntry>> = Mutex::new(Vec::new());
 
 fn is_port_in_use(port: u16) -> bool {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -60,6 +70,44 @@ fn kill_port_process(port: u16) {
     std::thread::sleep(Duration::from_millis(200));
 }
 
+/// Kill all registered sidecar processes on app exit.
+/// Two-phase: (1) SIGTERM by PID, (2) port-based fallback for survivors.
+fn shutdown_sidecars() {
+    println!("[shutdown] Cleaning up sidecar processes...");
+
+    let entries = match SIDECAR_REGISTRY.lock() {
+        Ok(mut reg) => std::mem::take(&mut *reg),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    };
+
+    // Phase 1: kill by PID
+    for entry in &entries {
+        if let Some(pid) = entry.pid {
+            println!("[shutdown] Killing sidecar pid {} (port {})", pid, entry.port);
+            Command::new("kill").arg(pid.to_string()).output().ok();
+        }
+    }
+
+    // Grace period for processes to terminate
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Phase 2: port-based fallback for survivors
+    for entry in &entries {
+        if is_port_in_use(entry.port) {
+            println!(
+                "[shutdown] Port {} still in use, force-killing by port",
+                entry.port
+            );
+            kill_port_process(entry.port);
+        }
+    }
+
+    // Also clean up browser MCP processes (Chrome/Playwright)
+    kill_browser_mcp_processes();
+
+    println!("[shutdown] Sidecar cleanup complete.");
+}
+
 /// Prepare a port: reuse healthy process, kill stale, or confirm free.
 /// Returns Ok(true) if a healthy process is already running (skip spawn),
 /// Ok(false) if port is free and ready for a new spawn.
@@ -81,12 +129,13 @@ fn prepare_port(port: u16, health_path: &str, health_auth: Option<&str>) -> Resu
 }
 
 /// Spawn a sidecar binary using ShellExt (works with App or AppHandle).
+/// Returns the PID of the spawned process.
 fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     shell_host: &T,
     name: &str,
     args: &[&str],
     env_vars: &[(&str, &str)],
-) -> Result<(), String> {
+) -> Result<u32, String> {
     let sidecar = shell_host
         .shell()
         .sidecar(name)
@@ -97,13 +146,16 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
         cmd = cmd.env(key, value);
     }
 
-    cmd.spawn()
+    let (_rx, child) = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", name, e))?;
-
-    Ok(())
+    let pid = child.pid();
+    // Dropping CommandChild does not kill the OS process — it continues running.
+    Ok(pid)
 }
 
 /// Generic sidecar launcher with port probe, stale cleanup, and health reuse.
+/// Registers the sidecar in the global registry for shutdown cleanup.
 fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     shell_host: &T,
     name: &str,
@@ -116,11 +168,17 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     let reused = prepare_port(port, health_path, health_auth)?;
     if reused {
         println!("{} already running on port {} (healthy), reusing", name, port);
+        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+            reg.push(SidecarEntry { port, pid: None });
+        }
         return Ok(());
     }
 
-    spawn_sidecar(shell_host, name, args, env_vars)?;
-    println!("{} started on port {}", name, port);
+    let pid = spawn_sidecar(shell_host, name, args, env_vars)?;
+    println!("{} started on port {} (pid {})", name, port, pid);
+    if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+        reg.push(SidecarEntry { port, pid: Some(pid) });
+    }
     Ok(())
 }
 
@@ -1014,6 +1072,11 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                shutdown_sidecars();
+            }
+        });
 }
