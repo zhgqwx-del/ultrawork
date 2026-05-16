@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
-import { useWorkspace } from "@/lib/workspace-context"
 import { useI18n } from "@/lib/i18n-context"
 
 const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
@@ -37,7 +36,6 @@ export function useKnowledgeBase() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const { workspacePath } = useWorkspace()
   const api = useApi()
   const { t } = useI18n()
 
@@ -59,10 +57,12 @@ export function useKnowledgeBase() {
   }, [fetchSources])
 
   const ensureMCPRegistered = useCallback(async () => {
-    if (!workspacePath) return
     try {
+      // Knowledge MCP is global — use ~/.config/ultrawork/ not workspace path
+      const globalConfigDir = await invoke<string>("get_global_config_dir")
+
       const configs = await invoke<Record<string, unknown>>("read_mcp_config", {
-        workspace: workspacePath,
+        workspace: globalConfigDir,
       })
       if (configs && configs[MCP_NAME]) return // Already registered
 
@@ -77,18 +77,18 @@ export function useKnowledgeBase() {
         enabled: true,
       }
 
-      // 1. Write to workspace opencode.json (for persistence across restarts)
+      // 1. Write to global opencode.json (~/.config/ultrawork/opencode.json)
       await invoke("write_mcp_config", {
-        workspace: workspacePath,
+        workspace: globalConfigDir,
         name: MCP_NAME,
         config: mcpConfig,
       })
 
-      // 2. Write to OpenCode's config via PATCH /config (so it appears in status list)
+      // 2. Write to OpenCode's runtime config (so it appears in status list)
       try {
         await api.patchConfig({ mcp: { [MCP_NAME]: mcpConfig } } as any)
       } catch {
-        // Non-critical: status listing may not show it, but tool still works
+        // Non-critical
       }
 
       // 3. Register and connect with OpenCode backend
@@ -100,7 +100,7 @@ export function useKnowledgeBase() {
     } catch (err) {
       console.error("Failed to register knowledge MCP:", err)
     }
-  }, [workspacePath, api])
+  }, [api])
 
   const addFolder = useCallback(
     async (folderPath: string) => {

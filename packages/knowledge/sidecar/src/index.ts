@@ -16,15 +16,20 @@ async function ensureDir(dir: string) {
   }
 }
 
+function initCore() {
+  const store = new KnowledgeStore(DB_PATH)
+  const embedder = createTfIdfEmbedder({ dimension: 384 })
+  const indexer = new Indexer(store, embedder)
+  const retriever = createRetriever(store, embedder)
+  return { store, embedder, indexer, retriever }
+}
+
 async function serve() {
   console.log("Knowledge Sidecar starting...")
 
   await ensureDir(DB_DIR)
 
-  const store = new KnowledgeStore(DB_PATH)
-  const embedder = createTfIdfEmbedder({ dimension: 384 })
-  const indexer = new Indexer(store, embedder)
-  const retriever = createRetriever(store, embedder)
+  const { store, indexer, retriever } = initCore()
   const app = createApp(indexer, retriever)
 
   const server = Bun.serve({
@@ -48,11 +53,20 @@ async function serve() {
   process.on("SIGTERM", shutdown)
 }
 
+async function mcpStdio() {
+  await ensureDir(DB_DIR)
+
+  const { indexer, retriever } = initCore()
+
+  // Direct mode — search in-process, no HTTP proxy needed
+  await startMcpBridge({ search: retriever, indexer })
+}
+
 async function main() {
   const subcommand = process.argv[2]
 
   if (subcommand === "mcp-stdio") {
-    await startMcpBridge()
+    await mcpStdio()
   } else {
     await serve()
   }

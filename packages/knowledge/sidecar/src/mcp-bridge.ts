@@ -1,45 +1,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
+import type { SearchOptions } from "./retriever"
+import type { SearchResult } from "./types"
+import type { Indexer } from "./indexer"
 
 const KB_BASE = "http://localhost:4098"
 
-async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${KB_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  })
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "")
-    throw new Error(`KB API ${resp.status}: ${body}`)
-  }
-  return resp.json()
+interface McpBridgeDeps {
+  search: (options: SearchOptions) => SearchResult[]
+  indexer: Indexer
 }
 
-interface SourceInfo {
-  folderPath: string
-  totalFiles: number
-  indexedFiles: number
-  status: string
-}
+/**
+ * Start MCP server in stdio mode.
+ * Can operate in two modes:
+ * - "direct": search/indexer injected directly (same process)
+ * - "proxy": fetch from HTTP API (separate process, used by compiled binary)
+ */
+export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
+  console.error("[mcp-bridge] Starting MCP stdio bridge...")
 
-/** Build a summary of available knowledge sources (called on each search) */
-async function getSourcesSummary(): Promise<string> {
-  try {
-    const { sources } = await kbFetch<{ sources: SourceInfo[] }>("/kb/sources")
-    if (!sources || sources.length === 0) return ""
-    const completed = sources.filter((s) => s.status === "complete")
-    if (completed.length === 0) return ""
-    return (
-      "\n\nCurrently indexed knowledge sources:\n" +
-      completed.map((s) => `- ${s.folderPath} (${s.indexedFiles} files)`).join("\n")
-    )
-  } catch {
-    return ""
-  }
-}
-
-export async function startMcpBridge(): Promise<void> {
   const server = new McpServer({
     name: "knowledge-base",
     version: "0.1.0",
@@ -53,52 +34,62 @@ export async function startMcpBridge(): Promise<void> {
       limit: z.number().optional().describe("Max results to return (default 5)"),
     },
     async ({ query, limit }) => {
+      console.error(`[mcp-bridge] knowledge_search called: query="${query}", limit=${limit}`)
       try {
-        const { results } = await kbFetch<{
-          results: {
-            chunkId: number
-            content: string
-            score: number
-            filePath: string
-            startLine: number
-            endLine: number
-          }[]
-        }>("/kb/search", {
-          method: "POST",
-          body: JSON.stringify({ query, limit: limit ?? 5 }),
-        })
+        let results: SearchResult[]
+        let sourceSummary = ""
 
-        // Always include current sources summary so AI knows what's available
-        const sourcesSummary = await getSourcesSummary()
+        if (deps) {
+          // Direct mode
+          results = deps.search({ query, limit: limit ?? 5 })
+          const sources = deps.indexer.listFolders()
+          if (sources.length > 0) {
+            sourceSummary = "\n\nCurrently indexed knowledge sources:\n" +
+              sources.filter((s) => s.status === "complete")
+                .map((s) => `- ${s.folderPath} (${s.indexedFiles} files)`)
+                .join("\n")
+          }
+        } else {
+          // Proxy mode — fetch from HTTP API
+          const resp = await fetch(`${KB_BASE}/kb/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query, limit: limit ?? 5 }),
+          })
+          if (!resp.ok) throw new Error(`KB API ${resp.status}`)
+          const data = await resp.json() as { results: SearchResult[] }
+          results = data.results
+
+          try {
+            const srcResp = await fetch(`${KB_BASE}/kb/sources`)
+            if (srcResp.ok) {
+              const srcData = await srcResp.json() as { sources: { folderPath: string; indexedFiles: number; status: string }[] }
+              if (srcData.sources.length > 0) {
+                sourceSummary = "\n\nCurrently indexed knowledge sources:\n" +
+                  srcData.sources.filter((s) => s.status === "complete")
+                    .map((s) => `- ${s.folderPath} (${s.indexedFiles} files)`)
+                    .join("\n")
+              }
+            }
+          } catch { /* ignore */ }
+        }
 
         if (!results || results.length === 0) {
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: `No relevant results found in the knowledge base.${sourcesSummary}`,
-              },
-            ],
+            content: [{ type: "text" as const, text: `No relevant results found in the knowledge base.${sourceSummary}` }],
           }
         }
 
-        const text =
-          results
-            .map(
-              (r, i) =>
-                `### Result ${i + 1} — ${r.filePath}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(3)})\n\n${r.content}`,
-            )
-            .join("\n\n---\n\n") + sourcesSummary
+        const text = results
+          .map((r, i) => `### Result ${i + 1} — ${r.filePath}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(3)})\n\n${r.content}`)
+          .join("\n\n---\n\n") + sourceSummary
 
+        console.error(`[mcp-bridge] Returning ${results.length} results`)
         return { content: [{ type: "text" as const, text }] }
       } catch (err) {
+        console.error(`[mcp-bridge] Search error:`, err)
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Knowledge base search failed: ${err instanceof Error ? err.message : String(err)}`,
-            },
-          ],
+          content: [{ type: "text" as const, text: `Knowledge base search failed: ${err instanceof Error ? err.message : String(err)}` }],
           isError: true,
         }
       }
@@ -110,36 +101,31 @@ export async function startMcpBridge(): Promise<void> {
     "List all indexed knowledge sources (folders) and their status.",
     {},
     async () => {
+      console.error("[mcp-bridge] knowledge_list_sources called")
       try {
-        const { sources } = await kbFetch<{ sources: SourceInfo[] }>("/kb/sources")
+        let sources: { folderPath: string; totalFiles: number; indexedFiles: number; status: string }[]
+
+        if (deps) {
+          sources = deps.indexer.listFolders()
+        } else {
+          const resp = await fetch(`${KB_BASE}/kb/sources`)
+          if (!resp.ok) throw new Error(`KB API ${resp.status}`)
+          const data = await resp.json() as { sources: typeof sources }
+          sources = data.sources
+        }
 
         if (!sources || sources.length === 0) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "No knowledge sources are currently indexed.",
-              },
-            ],
-          }
+          return { content: [{ type: "text" as const, text: "No knowledge sources are currently indexed." }] }
         }
 
         const text = sources
-          .map(
-            (s) =>
-              `- **${s.folderPath}**: ${s.indexedFiles}/${s.totalFiles} files indexed (${s.status})`,
-          )
+          .map((s) => `- **${s.folderPath}**: ${s.indexedFiles}/${s.totalFiles} files indexed (${s.status})`)
           .join("\n")
 
         return { content: [{ type: "text" as const, text }] }
       } catch (err) {
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Failed to list knowledge sources: ${err instanceof Error ? err.message : String(err)}`,
-            },
-          ],
+          content: [{ type: "text" as const, text: `Failed to list knowledge sources: ${err instanceof Error ? err.message : String(err)}` }],
           isError: true,
         }
       }
@@ -147,5 +133,7 @@ export async function startMcpBridge(): Promise<void> {
   )
 
   const transport = new StdioServerTransport()
+  console.error("[mcp-bridge] Connecting stdio transport...")
   await server.connect(transport)
+  console.error("[mcp-bridge] Connected, waiting for messages")
 }
