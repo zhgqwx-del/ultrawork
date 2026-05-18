@@ -707,8 +707,8 @@ Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请�
 
 | Phase | 内容 | 触发模式 | 复杂度 | 依赖 |
 |-------|------|---------|--------|------|
-| **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + 本地 Embedding (ONNX) + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI + system prompt 知识源摘要注入 | 方案 A（AI 自主） | 高 | 无 |
-| **2** | MarkItDown 集成 (PDF/docx) + Parent-Child 分块 + 索引进度 UI (SSE) + 增量更新 + 文件监听 | 方案 A | 中 | Phase 1 |
+| **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + 本地 Embedding + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 方案 A（AI 自主） | 高 | 无 |
+| **2** | MarkItDown 集成 (PDF/docx) + ONNX 神经 Embedding 升级 + Parent-Child 分块 + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | Phase 1 |
 | **3** | 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 方案 A | 中 | Phase 1 |
 | **4** | `@知识库名` 显式触发 + 在线文档爬取索引 + 自定义 API Connector + 远程 Embedding | 方案 A+C | 中 | Phase 1 |
 | **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 方案 A+C | 中 | Phase 1-3 |
@@ -716,6 +716,95 @@ Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请�
 | **7** | （条件触发）自动预检索（默认关闭，用户可开启）— 仅当 Phase 1-4 数据显示 AI 漏搜率不可接受时推进 | 方案 D | 中 | Phase 4+ |
 
 Phase 1 的最小目标：用户选一个文件夹 → 自动索引（md/txt/代码文件）→ AI 通过 MCP tool 自主检索 → 对话中能搜到并引用知识库内容。
+
+## Phase 1 实际实现说明
+
+Phase 1 已实现（2026-05-16）。以下记录实际实现与上文设计描述的差异及原因。
+
+### 有意的简化（Phase 2 补齐）
+
+| 设计描述 | 实际实现 | 原因 |
+|---------|---------|------|
+| **ONNX BGE-small 本地模型** (§4) | TF-IDF hashing embedder（纯 TS，384 维） | `@huggingface/transformers` 在 `bun build --compile` 下崩溃（[issue #1672](https://github.com/huggingface/transformers.js/issues/1672)）。TF-IDF 零依赖、编译安全，配合 FTS5 BM25 质量可接受。Phase 2 升级 ONNX |
+| **sqlite-vec FLOAT32[384] 向量列** (§7) | 独立 `chunk_embeddings` 表，BLOB 存储 + 内存 cosine 计算 | sqlite-vec 在 macOS 需要 `Database.setCustomSQLite()` 且 pre-v1 API 不稳定。BLOB + 内存 cosine 在 <100K chunks 下性能可接受。Phase 2 可引入 sqlite-vec |
+| **512 tokens 分块** (§5) | 40 行/chunk，10 行 overlap，自然边界切分 | Token 计数需要 tokenizer 依赖。行基分块零依赖，对 md/code 文件每行约 10-15 tokens，40 行 ≈ 400-600 tokens，近似设计值 |
+| **System prompt 知识源摘要注入** (§9) | 在 MCP tool response 中附带知识源信息 | System prompt 注入需要 OpenCode 侧配合（vendor patch），超出 sidecar 独立实现范围。Tool response 中附带信息让 AI 每次调用后都能看到可用知识源 |
+
+### 数据库 Schema（实际）
+
+与上文 §7 的理想化 schema 不同，Phase 1 实际使用更简化的 schema：
+
+```sql
+-- 知识源（对应设计中的 documents 表）
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folder_path TEXT NOT NULL,          -- 所属文件夹
+  file_path TEXT NOT NULL UNIQUE,     -- 文件绝对路径
+  file_hash TEXT NOT NULL,            -- SHA-256，增量索引用
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  chunk_count INTEGER DEFAULT 0
+);
+
+-- 分块
+CREATE TABLE chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'  -- { file_path, start_line, end_line }
+);
+
+-- FTS5 全文检索（自动同步触发器）
+CREATE VIRTUAL TABLE chunks_fts USING fts5(content, content='chunks', content_rowid='id');
+
+-- Embedding 存储（独立表，而非 sqlite-vec 向量列）
+CREATE TABLE chunk_embeddings (
+  chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL  -- Float32Array 序列化
+);
+```
+
+与设计 schema 的主要差异：INTEGER 自增 ID（非 TEXT UUID）、sources 替代 documents 命名、embedding 在独立表中以 BLOB 存储、无 parent_id（Phase 2 Parent-Child 分块时添加）。
+
+### HTTP API（实际）
+
+Phase 1 采用文件夹路径标识（而非设计中的 UUID ID），因为当前只有本地文件夹知识源：
+
+```
+GET    /kb/health                      — 健康检查
+GET    /kb/sources                     — 列出所有知识源
+POST   /kb/sources                     — 添加文件夹 { folderPath }
+GET    /kb/sources/:folderPath         — 知识源状态
+DELETE /kb/sources/:folderPath         — 删除知识源
+POST   /kb/sources/:folderPath/reindex — 重建索引
+POST   /kb/search                      — 搜索 { query, limit?, retrieval? }
+```
+
+Phase 3 引入第三方平台后，API 将迁移到统一的 ID-based 路由（`/kb/:id/...`）。
+
+### MCP Tools（实际）
+
+```
+knowledge_search(query, limit?)       — 混合检索，response 附带知识源信息
+knowledge_list_sources()              — 列出已索引知识源
+```
+
+与设计差异：`search_knowledge` 重命名为 `knowledge_search`（MCP 工具名加 namespace 前缀更清晰）、参数简化为 query + limit（`kb_ids`/`mode`/`retrieval` 待 Phase 4-5 添加）、`get_document` 待 Phase 2 添加。
+
+### MCP Bridge 双模式
+
+实现中增加了设计未提及的 **direct 模式**：
+
+- **Direct 模式**（默认 mcp-stdio）：search/indexer 在 MCP bridge 进程内直接运行，不经过 HTTP 代理。更高效，避免 localhost 网络开销。
+- **Proxy 模式**（fallback）：通过 HTTP 调用 :4098 API。用于独立调试。
+
+同一二进制的子命令切换：`knowledge-sidecar`（HTTP server）、`knowledge-sidecar mcp-stdio`（MCP stdio bridge, direct 模式）。
+
+### 配置路径
+
+所有 MCP 配置统一使用全局路径 `~/.config/ultrawork/opencode.json`，不使用工作区级别 opencode.json。Tauri command `read_mcp_config`/`write_mcp_config`/`remove_mcp_config` 已移除 workspace 参数。
+
+知识库索引数据存储在 `~/.ultrawork/knowledge/kb.db`（全局单库，非按工作区分库）。
 
 ## 考虑过的替代方案
 
