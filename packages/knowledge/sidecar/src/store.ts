@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import type { SourceRow, ChunkRow, ChunkMetadata } from "./types"
+import type { SourceRow, ChunkRow, ChunkMetadata, KnowledgeSourceRow } from "./types"
 
 export class KnowledgeStore {
   private db: Database
@@ -28,6 +28,7 @@ export class KnowledgeStore {
 
     if (currentVersion < 1) this.migrateV1()
     if (currentVersion < 2) this.migrateV2()
+    if (currentVersion < 3) this.migrateV3()
   }
 
   private getSchemaVersion(): number {
@@ -115,6 +116,138 @@ export class KnowledgeStore {
     this.db.query("INSERT INTO _migrations (version) VALUES (2)").run()
   }
 
+  /** V3: Unified knowledge_sources registry + ks_id foreign key */
+  private migrateV3(): void {
+    const hasTable = this.db
+      .query("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_sources'")
+      .get()
+
+    if (!hasTable) {
+      this.db.exec(`
+        CREATE TABLE knowledge_sources (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL DEFAULT 'local_folder',
+          name TEXT NOT NULL,
+          config_json TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          status TEXT NOT NULL DEFAULT 'idle',
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `)
+
+      // Migrate existing local folder sources
+      const folders = this.db
+        .query("SELECT DISTINCT folder_path FROM sources")
+        .all() as { folder_path: string }[]
+
+      const insertKS = this.db.prepare(
+        "INSERT INTO knowledge_sources (type, name, config_json, status) VALUES ('local_folder', ?, ?, 'complete') RETURNING id",
+      )
+      for (const { folder_path } of folders) {
+        const name = folder_path.split("/").pop() || folder_path
+        const configJson = JSON.stringify({ folderPath: folder_path })
+        insertKS.get(name, configJson)
+      }
+
+      // Add ks_id column to sources table
+      const hasKsId = this.db
+        .query("SELECT 1 FROM pragma_table_info('sources') WHERE name='ks_id'")
+        .get()
+
+      if (!hasKsId) {
+        this.db.exec("ALTER TABLE sources ADD COLUMN ks_id INTEGER REFERENCES knowledge_sources(id)")
+
+        // Backfill ks_id
+        this.db.exec(`
+          UPDATE sources SET ks_id = (
+            SELECT ks.id FROM knowledge_sources ks
+            WHERE json_extract(ks.config_json, '$.folderPath') = sources.folder_path
+          )
+        `)
+
+        this.db.exec("CREATE INDEX IF NOT EXISTS idx_sources_ks ON sources(ks_id)")
+      }
+    }
+
+    this.db.query("INSERT INTO _migrations (version) VALUES (3)").run()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Knowledge Sources CRUD (Phase 3)
+  // ---------------------------------------------------------------------------
+
+  createKnowledgeSource(
+    type: string,
+    name: string,
+    config: Record<string, unknown>,
+  ): number {
+    const result = this.db
+      .query(
+        "INSERT INTO knowledge_sources (type, name, config_json) VALUES (?, ?, ?) RETURNING id",
+      )
+      .get(type, name, JSON.stringify(config)) as { id: number }
+    return result.id
+  }
+
+  getKnowledgeSource(id: number): KnowledgeSourceRow | null {
+    return this.db
+      .query("SELECT * FROM knowledge_sources WHERE id = ?")
+      .get(id) as KnowledgeSourceRow | null
+  }
+
+  getKnowledgeSourceByFolderPath(folderPath: string): KnowledgeSourceRow | null {
+    return this.db
+      .query(
+        "SELECT * FROM knowledge_sources WHERE type = 'local_folder' AND json_extract(config_json, '$.folderPath') = ?",
+      )
+      .get(folderPath) as KnowledgeSourceRow | null
+  }
+
+  listKnowledgeSources(): KnowledgeSourceRow[] {
+    return this.db
+      .query("SELECT * FROM knowledge_sources ORDER BY created_at DESC")
+      .all() as KnowledgeSourceRow[]
+  }
+
+  updateKnowledgeSource(
+    id: number,
+    updates: Partial<{
+      name: string
+      config_json: string
+      enabled: number
+      status: string
+      error_message: string | null
+    }>,
+  ): void {
+    const fields: string[] = []
+    const values: (string | number | null)[] = []
+
+    for (const [key, value] of Object.entries(updates)) {
+      fields.push(`${key} = ?`)
+      values.push(value as string | number | null)
+    }
+    fields.push("updated_at = datetime('now')")
+    values.push(id)
+
+    this.db
+      .query(`UPDATE knowledge_sources SET ${fields.join(", ")} WHERE id = ?`)
+      .run(...values)
+  }
+
+  deleteKnowledgeSource(id: number): void {
+    // For local_folder type, also cascade delete from sources table
+    const ks = this.getKnowledgeSource(id)
+    if (ks && ks.type === "local_folder") {
+      const config = JSON.parse(ks.config_json) as { folderPath?: string }
+      if (config.folderPath) {
+        this.removeFolder(config.folderPath)
+      }
+    }
+    this.db.query("DELETE FROM knowledge_sources WHERE id = ?").run(id)
+  }
+
   /**
    * Check if legacy data exists (Phase 1 chunks without parent-child structure).
    * Returns folder paths that need re-indexing.
@@ -136,11 +269,14 @@ export class KnowledgeStore {
   // ---------------------------------------------------------------------------
 
   addSource(folderPath: string, filePath: string, fileHash: string): number {
+    // Link to knowledge_sources entry if exists
+    const ks = this.getKnowledgeSourceByFolderPath(folderPath)
+    const ksId = ks?.id ?? null
     const result = this.db
       .query(
-        "INSERT INTO sources (folder_path, file_path, file_hash) VALUES (?, ?, ?) RETURNING id",
+        "INSERT INTO sources (folder_path, file_path, file_hash, ks_id) VALUES (?, ?, ?, ?) RETURNING id",
       )
-      .get(folderPath, filePath, fileHash) as { id: number }
+      .get(folderPath, filePath, fileHash, ksId) as { id: number }
     return result.id
   }
 

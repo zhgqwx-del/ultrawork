@@ -86,3 +86,57 @@ export interface Embedder {
   embedBatch(texts: string[]): Float32Array[]
   readonly dimension: number
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3: Unified knowledge source registry
+// ---------------------------------------------------------------------------
+
+export type KnowledgeSourceType = "local_folder" | "ima" | "custom_api"
+
+export interface KnowledgeSourceRow {
+  id: number
+  type: KnowledgeSourceType
+  name: string
+  config_json: string
+  enabled: number
+  status: string
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LocalFolderConfig {
+  folderPath: string
+}
+
+export interface IMAConfig {
+  clientId: string
+  apiKey: string
+  baseUrl?: string // default: https://ima.qq.com
+  knowledgeBaseId?: string
+  knowledgeBaseName?: string
+}
+
+export interface CustomAPIConfig {
+  endpoint: string
+  method: "GET" | "POST"
+  headers: Record<string, string>
+  bodyTemplate?: Record<string, unknown>
+  responseMapping?: {
+    results: string
+    title: string
+    content: string
+    url?: string
+  }
+}
+
+/** Unified search result from any adapter */
+export interface AdapterSearchResult {
+  content: string
+  score: number
+  title?: string
+  url?: string
+  sourceId: number
+  sourceLabel: string
+  metadata?: Record<string, unknown>
+}

@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database} from "lucide-react"
 import { Logo } from "@/components/ui/logo"
+import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -1515,13 +1516,17 @@ function WeChatQRLogin({
   )
 }
 
+type KBFilterType = "all" | "local_folder" | "platform" | "custom_api"
+
 function KnowledgeSection() {
   const { t } = useI18n()
   const {
     sources, loading, error, actionLoading,
-    addFolder, removeFolder, reindexFolder, refresh,
+    addFolder, removeSource, reindexSource, testConnection, refresh,
   } = useKnowledgeBase()
   const [refreshing, setRefreshing] = useState(false)
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [filter, setFilter] = useState<KBFilterType>("all")
 
   const onRefresh = async () => {
     setRefreshing(true)
@@ -1536,7 +1541,26 @@ function KnowledgeSection() {
     }
   }
 
-  const completeSources = sources.filter((s) => s.status === "complete")
+  const activeSources = sources.filter((s) => s.status === "complete" || s.status === "connected")
+
+  // Count by category
+  const localCount = sources.filter((s) => s.type === "local_folder").length
+  const platformCount = sources.filter((s) => s.type === "ima").length
+  const apiCount = sources.filter((s) => s.type === "custom_api").length
+
+  // Filter sources
+  const filteredSources = filter === "all"
+    ? sources
+    : filter === "platform"
+      ? sources.filter((s) => s.type === "ima")
+      : sources.filter((s) => s.type === filter)
+
+  const filterChips: { key: KBFilterType; labelKey: string; count: number }[] = [
+    { key: "all", labelKey: "knowledge.filterAll", count: sources.length },
+    { key: "local_folder", labelKey: "knowledge.filterLocal", count: localCount },
+    { key: "platform", labelKey: "knowledge.filterPlatform", count: platformCount },
+    { key: "custom_api", labelKey: "knowledge.filterApi", count: apiCount },
+  ]
 
   return (
     <div className="space-y-6">
@@ -1545,9 +1569,9 @@ function KnowledgeSection() {
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("knowledge.title")}</h2>
-            {completeSources.length > 0 && (
+            {activeSources.length > 0 && (
               <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                {completeSources.length}
+                {activeSources.length}
               </span>
             )}
           </div>
@@ -1558,12 +1582,40 @@ function KnowledgeSection() {
             <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
             {t("workspace.refresh")}
           </Button>
-          <Button size="sm" onClick={handleAddFolder} disabled={!!actionLoading}>
+          <Button size="sm" onClick={() => setShowAddDialog(true)} disabled={!!actionLoading}>
             <Plus className="mr-1.5 size-3.5" />
-            {t("knowledge.addFolder")}
+            {t("knowledge.addSource")}
           </Button>
         </div>
       </div>
+
+      {/* Filter chips — only show when there are sources */}
+      {!loading && !error && sources.length > 0 && (
+        <div className="flex items-center gap-2">
+          {filterChips.map((chip) => (
+            <button
+              key={chip.key}
+              onClick={() => setFilter(chip.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                filter === chip.key
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                  : "border-[var(--color-border)] text-[var(--color-fg-muted)] hover:border-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+              )}
+            >
+              {t(chip.labelKey)}
+              <span className={cn(
+                "inline-flex size-4.5 items-center justify-center rounded-full text-[10px]",
+                filter === chip.key
+                  ? "bg-[var(--color-primary)]/20"
+                  : "bg-[var(--color-bg-hover)]",
+              )}>
+                {chip.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Loading */}
       {loading && (
@@ -1580,33 +1632,51 @@ function KnowledgeSection() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — no sources at all */}
       {!loading && !error && sources.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
           <Database className="size-10 text-[var(--color-fg-muted)]" />
           <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("knowledge.noSources")}</p>
           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("knowledge.noSourcesHint")}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={handleAddFolder}>
-            <FolderOpen className="mr-1.5 size-3.5" />
-            {t("knowledge.addFolder")}
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setShowAddDialog(true)}>
+            <Plus className="mr-1.5 size-3.5" />
+            {t("knowledge.addSource")}
           </Button>
         </div>
       )}
 
-      {/* Source cards */}
+      {/* Source cards (filtered) */}
       {!loading && !error && sources.length > 0 && (
-        <div className="space-y-3">
-          {sources.map((source) => (
-            <KnowledgeSourceCard
-              key={source.folderPath}
-              source={source}
-              loading={actionLoading === source.folderPath}
-              onReindex={() => reindexFolder(source.folderPath)}
-              onRemove={() => removeFolder(source.folderPath)}
-            />
-          ))}
-        </div>
+        filteredSources.length > 0 ? (
+          <div className="space-y-3">
+            {filteredSources.map((source) => (
+              <KnowledgeSourceCard
+                key={source.id}
+                source={source}
+                loading={actionLoading === String(source.id)}
+                onReindex={() => reindexSource(source.id)}
+                onRemove={() => removeSource(source.id)}
+                onTestConnection={() => testConnection(source.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12">
+            <p className="text-sm text-[var(--color-fg-muted)]">{t("knowledge.noSources")}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowAddDialog(true)}>
+              <Plus className="mr-1.5 size-3.5" />
+              {t("knowledge.addSource")}
+            </Button>
+          </div>
+        )
       )}
+
+      <AddSourceDialog
+        open={showAddDialog}
+        onOpenChange={setShowAddDialog}
+        onAdded={() => { setShowAddDialog(false); refresh() }}
+        onAddLocalFolder={handleAddFolder}
+      />
     </div>
   )
 }
@@ -1616,26 +1686,32 @@ function KnowledgeSourceCard({
   loading,
   onReindex,
   onRemove,
+  onTestConnection,
 }: {
   source: KBSource
   loading: boolean
   onReindex: () => void
   onRemove: () => void
+  onTestConnection: () => void
 }) {
   const { t } = useI18n()
+  const isLocalFolder = source.type === "local_folder"
   const isComplete = source.status === "complete"
+  const isConnected = source.status === "connected"
   const isIndexing = source.status === "indexing"
   const isError = source.status === "error"
 
   const statusLabel = isComplete
     ? t("knowledge.complete")
+    : isConnected
+    ? t("knowledge.connected")
     : isIndexing
     ? t("knowledge.indexing")
     : isError
     ? t("knowledge.error")
     : t("knowledge.idle")
 
-  const dotColor = isComplete
+  const dotColor = isComplete || isConnected
     ? "bg-green-500"
     : isIndexing
     ? "bg-amber-500 animate-pulse"
@@ -1643,12 +1719,11 @@ function KnowledgeSourceCard({
     ? "bg-red-500"
     : "bg-gray-400"
 
-  // Show just the last directory name
-  const folderName = source.folderPath.split("/").pop() || source.folderPath
+  const TypeIcon = isLocalFolder ? FolderOpen : Globe
 
   // Progress bar calculation
-  const progressPct = isIndexing && source.totalFiles > 0
-    ? Math.round((source.indexedFiles / source.totalFiles) * 100)
+  const progressPct = isIndexing && source.totalFiles && source.totalFiles > 0
+    ? Math.round(((source.indexedFiles ?? 0) / source.totalFiles) * 100)
     : 0
 
   return (
@@ -1657,19 +1732,24 @@ function KnowledgeSourceCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2.5">
             <span className={cn("size-2.5 shrink-0 rounded-full", dotColor)} />
-            <FolderOpen className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
-            <span className="text-sm font-medium text-[var(--color-fg)]">{folderName}</span>
+            <TypeIcon className="size-4 shrink-0 text-[var(--color-fg-muted)]" />
+            <span className="text-sm font-medium text-[var(--color-fg)]">{source.name}</span>
+            {!isLocalFolder && (
+              <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium text-purple-500">
+                {source.type.toUpperCase()}
+              </span>
+            )}
           </div>
           <p className={cn(
             "mt-1 text-xs",
             isError ? "text-red-500" : "text-[var(--color-fg-muted)]"
           )}>
             {source.error || statusLabel}
-            {isComplete && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
-            {isIndexing && source.totalFiles > 0 && ` — ${source.indexedFiles} / ${source.totalFiles}`}
+            {isLocalFolder && isComplete && source.indexedFiles != null && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
+            {isLocalFolder && isIndexing && source.totalFiles != null && source.totalFiles > 0 && ` — ${source.indexedFiles ?? 0} / ${source.totalFiles}`}
           </p>
           {/* Progress bar during indexing */}
-          {isIndexing && source.totalFiles > 0 && (
+          {isLocalFolder && isIndexing && source.totalFiles != null && source.totalFiles > 0 && (
             <div className="mt-2">
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
                 <div
@@ -1684,20 +1764,35 @@ function KnowledgeSourceCard({
               )}
             </div>
           )}
-          <p className="mt-1 truncate font-mono text-xs text-[var(--color-fg-muted)]" title={source.folderPath}>
-            {source.folderPath}
-          </p>
+          {isLocalFolder && source.folderPath && (
+            <p className="mt-1 truncate font-mono text-xs text-[var(--color-fg-muted)]" title={source.folderPath}>
+              {source.folderPath}
+            </p>
+          )}
         </div>
         <div className="ml-4 flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onReindex}
-            disabled={loading || isIndexing}
-          >
-            {(loading || isIndexing) && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
-            {t("knowledge.reindex")}
-          </Button>
+          {isLocalFolder && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onReindex}
+              disabled={loading || isIndexing}
+            >
+              {(loading || isIndexing) && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              {t("knowledge.reindex")}
+            </Button>
+          )}
+          {!isLocalFolder && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onTestConnection}
+              disabled={loading}
+            >
+              {loading && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              {isConnected ? t("knowledge.reconnect") : t("knowledge.testConnection")}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

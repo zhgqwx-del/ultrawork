@@ -705,13 +705,15 @@ Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请�
 |-------|------|---------|--------|------|
 | **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + TF-IDF Embedding + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 方案 A（AI 自主） | 高 | ✅ 2026-05-16 |
 | **2** | Parent-Child 双层分块 + 文档解析 (PDF/docx/xlsx/pptx, 纯 TS) + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | ✅ 2026-05-19 |
-| **3** | ONNX 神经 Embedding 升级 + 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 方案 A | 中 | 🔲 |
+| **3** | 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 + 统一 ID-based API + 跨源搜索 | 方案 A | 中 | ✅ 2026-05-20 |
 | **4** | `@知识库名` 显式触发 + 在线文档爬取索引 + 自定义 API Connector + 远程 Embedding | 方案 A+C | 中 | 🔲 |
 | **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 方案 A+C | 中 | 🔲 |
 | **6** | 更多第三方平台 (Notion/百炼) + 知识源同步更新 | 方案 A+C | 中 | 🔲 |
 | **7** | （条件触发）自动预检索（默认关闭，用户可开启）— 仅当数据显示 AI 漏搜率不可接受时推进 | 方案 D | 中 | 🔲 |
 
 > **Phase 2 调整说明（2026-05-19）**：原 Phase 2 包含 ONNX 神经 Embedding 升级，实施时因 `bun build --compile` 兼容性问题（`@huggingface/transformers` issue #1672 未解决、`onnxruntime-node` 需要子进程隔离增加复杂度）决定延后。ONNX 合并到原 Phase 3（第三方平台）一起实施，避免单独为 embedding 切换做一轮全量重索引。TF-IDF + FTS5 BM25 混合检索质量已可接受。
+>
+> **Phase 3 调整说明（2026-05-20）**：ONNX 神经 Embedding 升级再次延后（bun compile 兼容性仍未解决），Phase 3 聚焦第三方平台 Adapter + 凭证配置 + 跨源搜索。新增统一 `knowledge_sources` 表（Schema Migration v3）替代旧的 folderPath 标识，API 迁移为 ID-based 路由并保持向后兼容。ONNX 升级移至后续独立 Phase。
 
 Phase 1 的最小目标：用户选一个文件夹 → 自动索引（md/txt/代码文件）→ AI 通过 MCP tool 自主检索 → 对话中能搜到并引用知识库内容。
 
@@ -862,6 +864,89 @@ Phase 2 检索只搜 child 块，命中后查 `parent_id` 返回 parent 块内�
 
 **实现**：新建 `doc-parser.ts` 替代 `markitdown.ts`，`indexer.ts` 直接 import `convertDocument()`（移除了 `setMarkItDown()` 注入模式）。30s per-file timeout + graceful 降级。
 **已知局限**：PDF 复杂排版（扫描件、多栏）的文本提取质量有限，覆盖 80%+ 常见场景。
+
+## Phase 3 实际实现说明
+
+Phase 3 已实现（2026-05-20）。以下记录实际实现与上文设计描述的差异。
+
+### 范围调整
+
+| 设计内容 | 实际 | 原因 |
+|---------|------|------|
+| **ONNX 神经 Embedding 升级** (§4) | 再次延后 | `bun build --compile` 兼容性问题仍未解决，TF-IDF + FTS5 BM25 质量可接受 |
+| **第三方平台 Adapter** (§10) | IMA 已实现 | 百炼/Obsidian/Notion 待后续 Phase |
+| **Custom API Connector** (§14) | 类型已定义，UI 显示 Coming soon | 后端 `custom_api` 类型已预留，Phase 4 实现 |
+
+### Schema Migration v3（实际）
+
+新增 `knowledge_sources` 统一注册表，从旧 `sources.folder_path` 自动迁移：
+
+```sql
+CREATE TABLE knowledge_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL DEFAULT 'local_folder',  -- 'local_folder' | 'ima' | 'custom_api'
+  name TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}',      -- 类型专属配置（含凭证）
+  enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'idle',         -- 'idle'|'indexing'|'complete'|'connected'|'error'
+  error_message TEXT,
+  created_at TEXT, updated_at TEXT
+);
+ALTER TABLE sources ADD COLUMN ks_id INTEGER REFERENCES knowledge_sources(id);
+```
+
+`sources` 表新增 `ks_id` 外键，`addSource()` 自动查找并设置。
+
+### HTTP API 迁移（实际）
+
+API 从 folderPath-based 迁移为 ID-based，保持向后兼容：
+
+```
+GET    /kb/sources                      — 统一列表（合并 indexer 状态给 local_folder）
+POST   /kb/sources                      — { type, name, config } 或 legacy { folderPath }
+GET    /kb/sources/:id{[0-9]+}          — 按 ID 查询
+PUT    /kb/sources/:id{[0-9]+}          — 更新配置
+DELETE /kb/sources/:id{[0-9]+}          — 删除
+POST   /kb/sources/:id/test-connection  — 测试连接（所有类型）
+GET    /kb/sources/:id/bases            — 列出子知识库（IMA）
+POST   /kb/sources/:id/reindex          — 重索引（仅 local_folder）
+POST   /kb/search                       — 跨源搜索（本地 + 远程合并，返回 results + remoteResults）
+```
+
+旧的 `DELETE /kb/sources/:folderPath` 和 `POST /kb/sources/:folderPath/reindex` 路由保留作为兼容。
+
+### IMA Adapter（实际）
+
+IMA API base URL: `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima-openapi-apikey`。
+
+| 方法 | 端点 | 用途 |
+|------|------|------|
+| `testConnection` | `POST /openapi/wiki/v1/get_addable_knowledge_base_list` | 验证凭证 + 列出可用知识库 |
+| `search` | `POST /openapi/wiki/v1/search_knowledge` | 搜索知识库内容 |
+| `listBases` | 复用 testConnection | 返回知识库列表 |
+
+**已知限制**：IMA `search_knowledge` 只返回 `title` + `highlight_content`（搜索片段），不返回完整文档内容。`highlight_content` 在仅标题匹配时为空字符串。完整内容获取需要额外 API（`get_doc_content` 等），待后续增强。
+
+**IMA API 响应字段兼容**：IMA 实际返回 `code`/`msg`（非文档中的 `retcode`/`errmsg`），adapter 用 `responseCode()` 方法兼容两种格式。
+
+### 凭证安全
+
+- API 响应通过 `sanitizeConfig()` 过滤 `apiKey` 等敏感字段，只返回 `hasApiKey: true`
+- 数据库目录 `~/.ultrawork/knowledge/` 使用 `mode: 0o700` 权限
+- 凭证存储在 `knowledge_sources.config_json`（SQLite），暂未使用 OS Keychain
+
+### 前端变更
+
+- `AddSourceDialog`：三种类型选择（本地文件夹 / 腾讯 IMA / 自定义 API Coming soon）→ IMA 凭证表单 → 测试连接 → 选知识库 → 保存
+- `KnowledgeSection`：filter chips 按类型筛选（全部/本地文件夹/第三方平台/自定义 API）+ 数量徽章
+- `KnowledgeSourceCard`：按 type 分支渲染（local_folder 显示进度条+重索引，ima 显示连接状态+测试连接按钮）
+- `use-knowledge-base.ts`：`KBSource` 统一模型（id/type/config），方法改为 ID-based（`removeSource(id)`, `reindexSource(id)`, `testConnection(id)`）
+
+### MCP Bridge 变更
+
+- `knowledge_search`：跨源搜索（本地 retriever + 远程 adapter 并行，合并排序）
+- `knowledge_list_sources`：显示所有源类型 + ID（`[id=8] **微信用户的知识库** [IMA]`）
+- `source_ids` 参数：可选，默认搜全部，引导 AI 省略以获得最佳覆盖
 
 ## 考虑过的替代方案
 

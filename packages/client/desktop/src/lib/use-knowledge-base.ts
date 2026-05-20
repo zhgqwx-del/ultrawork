@@ -8,13 +8,19 @@ const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
 const MCP_NAME = "knowledge-base"
 
 export interface KBSource {
-  folderPath: string
-  totalFiles: number
-  indexedFiles: number
-  skippedFiles: number
-  status: "idle" | "indexing" | "complete" | "error"
-  error?: string
+  id: number
+  type: "local_folder" | "ima" | "custom_api"
+  name: string
+  config: Record<string, unknown>
+  enabled: boolean
+  status: "idle" | "indexing" | "complete" | "connected" | "error"
+  error?: string | null
+  // Local folder specific (merged from indexer status)
+  totalFiles?: number
+  indexedFiles?: number
+  skippedFiles?: number
   currentFile?: string
+  folderPath?: string
 }
 
 async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -55,9 +61,8 @@ export function useKnowledgeBase() {
     }
   }, [])
 
-  // SSE connection for real-time progress updates
+  // SSE connection for real-time progress updates (local folders)
   const connectSSE = useCallback(() => {
-    // Don't reconnect if already connected
     if (eventSourceRef.current) return
 
     const sseUrl = import.meta.env.DEV
@@ -68,26 +73,43 @@ export function useKnowledgeBase() {
       const es = new EventSource(sseUrl)
       eventSourceRef.current = es
 
-      // Update sources state from any SSE event (no toast)
+      // Update local folder sources from SSE events
       const handleStatusSync = (e: MessageEvent) => {
         try {
-          const event = JSON.parse(e.data) as KBSource
-          setSources((prev) => {
-            const idx = prev.findIndex((s) => s.folderPath === event.folderPath)
-            if (idx >= 0) {
-              const updated = [...prev]
-              updated[idx] = event
-              return updated
-            }
-            return [...prev, event]
-          })
+          const event = JSON.parse(e.data) as {
+            folderPath: string
+            status: string
+            totalFiles: number
+            indexedFiles: number
+            skippedFiles: number
+            currentFile?: string
+            error?: string
+          }
+          setSources((prev) =>
+            prev.map((s) =>
+              s.type === "local_folder" && s.folderPath === event.folderPath
+                ? {
+                    ...s,
+                    status: event.status as KBSource["status"],
+                    totalFiles: event.totalFiles,
+                    indexedFiles: event.indexedFiles,
+                    skippedFiles: event.skippedFiles,
+                    currentFile: event.currentFile,
+                    error: event.error,
+                  }
+                : s,
+            ),
+          )
         } catch { /* ignore parse errors */ }
       }
 
-      // Progress events: update state + show toast on completion/error
       const handleProgressEvent = (e: MessageEvent) => {
         try {
-          const event = JSON.parse(e.data) as KBSource
+          const event = JSON.parse(e.data) as {
+            folderPath: string
+            status: string
+            indexedFiles: number
+          }
           handleStatusSync(e)
 
           if (event.status === "complete") {
@@ -102,7 +124,6 @@ export function useKnowledgeBase() {
         } catch { /* ignore parse errors */ }
       }
 
-      // "status" = initial state sync (no toast), others = real progress (with toast)
       es.addEventListener("status", handleStatusSync)
       es.addEventListener("indexing", handleProgressEvent)
       es.addEventListener("complete", handleProgressEvent)
@@ -111,7 +132,6 @@ export function useKnowledgeBase() {
       es.onerror = () => {
         es.close()
         eventSourceRef.current = null
-        // Reconnect after a delay (clean up old timer first)
         if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null
@@ -119,7 +139,7 @@ export function useKnowledgeBase() {
         }, 5000)
       }
     } catch {
-      // SSE not available, fall back to polling
+      // SSE not available
     }
   }, [t])
 
@@ -143,9 +163,8 @@ export function useKnowledgeBase() {
   const ensureMCPRegistered = useCallback(async () => {
     try {
       const configs = await invoke<Record<string, unknown>>("read_mcp_config")
-      if (configs && configs[MCP_NAME]) return // Already registered
+      if (configs && configs[MCP_NAME]) return
 
-      // Get the sidecar binary path
       const sidecarPath = await invoke<string>("get_sidecar_path", {
         name: "knowledge-sidecar",
       })
@@ -156,25 +175,18 @@ export function useKnowledgeBase() {
         enabled: true,
       }
 
-      // 1. Write to global opencode.json (~/.config/ultrawork/opencode.json)
       await invoke("write_mcp_config", {
         name: MCP_NAME,
         config: mcpConfig,
       })
 
-      // 2. Write to OpenCode's runtime config (so it appears in status list)
       try {
         await api.patchConfig({ mcp: { [MCP_NAME]: mcpConfig } } as any)
-      } catch {
-        // Non-critical
-      }
+      } catch { /* Non-critical */ }
 
-      // 3. Register and connect with OpenCode backend
       try {
         await api.createMCP(MCP_NAME, mcpConfig as any)
-      } catch {
-        // OpenCode might not be ready yet, will connect on next restart
-      }
+      } catch { /* Will connect on next restart */ }
     } catch (err) {
       console.error("Failed to register knowledge MCP:", err)
     }
@@ -184,24 +196,26 @@ export function useKnowledgeBase() {
     async (folderPath: string) => {
       setActionLoading(folderPath)
       try {
-        // Ensure MCP is registered before first use
         await ensureMCPRegistered()
 
-        // Async mode — returns 202 immediately, progress via SSE
-        await kbFetch<KBSource>("/sources", {
+        const result = await kbFetch<{ id: number }>("/sources", {
           method: "POST",
           body: JSON.stringify({ folderPath }),
         })
 
-        // Optimistically add to sources list
         setSources((prev) => {
           if (prev.some((s) => s.folderPath === folderPath)) return prev
           return [...prev, {
+            id: result.id,
+            type: "local_folder" as const,
+            name: folderPath.split("/").pop() || folderPath,
+            config: { folderPath },
+            enabled: true,
+            status: "indexing" as const,
             folderPath,
             totalFiles: 0,
             indexedFiles: 0,
             skippedFiles: 0,
-            status: "indexing" as const,
           }]
         })
       } catch (err) {
@@ -214,18 +228,16 @@ export function useKnowledgeBase() {
     [ensureMCPRegistered, t],
   )
 
-  const removeFolder = useCallback(
-    async (folderPath: string) => {
-      setActionLoading(folderPath)
+  const removeSource = useCallback(
+    async (id: number) => {
+      setActionLoading(String(id))
       try {
-        await kbFetch(`/sources/${encodeURIComponent(folderPath)}`, {
-          method: "DELETE",
-        })
+        await kbFetch(`/sources/${id}`, { method: "DELETE" })
         toast.success(t("knowledge.removed"))
-        setSources((prev) => prev.filter((s) => s.folderPath !== folderPath))
+        setSources((prev) => prev.filter((s) => s.id !== id))
       } catch (err) {
         toast.error(t("knowledge.removeFailed"))
-        console.error("Failed to remove folder:", err)
+        console.error("Failed to remove source:", err)
       } finally {
         setActionLoading(null)
       }
@@ -233,24 +245,47 @@ export function useKnowledgeBase() {
     [t],
   )
 
-  const reindexFolder = useCallback(
-    async (folderPath: string) => {
-      setActionLoading(folderPath)
+  const reindexSource = useCallback(
+    async (id: number) => {
+      setActionLoading(String(id))
       try {
-        // Async mode — returns 202, progress via SSE
-        await kbFetch(`/sources/${encodeURIComponent(folderPath)}/reindex`, {
-          method: "POST",
-        })
-
-        // Optimistically update status
+        await kbFetch(`/sources/${id}/reindex`, { method: "POST" })
         setSources((prev) =>
           prev.map((s) =>
-            s.folderPath === folderPath ? { ...s, status: "indexing" as const, indexedFiles: 0 } : s,
+            s.id === id ? { ...s, status: "indexing" as const, indexedFiles: 0 } : s,
           ),
         )
       } catch (err) {
         toast.error(t("knowledge.reindexFailed"))
-        console.error("Failed to reindex folder:", err)
+        console.error("Failed to reindex source:", err)
+      } finally {
+        setActionLoading(null)
+      }
+    },
+    [t],
+  )
+
+  const testConnection = useCallback(
+    async (id: number) => {
+      setActionLoading(String(id))
+      try {
+        const result = await kbFetch<{ ok: boolean; message?: string }>(
+          `/sources/${id}/test-connection`,
+          { method: "POST" },
+        )
+        if (result.ok) {
+          toast.success(t("knowledge.connectionSuccess"))
+          setSources((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, status: "connected" as const, error: null } : s)),
+          )
+        } else {
+          toast.error(result.message || t("knowledge.connectionFailed"))
+          setSources((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, status: "error" as const, error: result.message } : s)),
+          )
+        }
+      } catch (err) {
+        toast.error(t("knowledge.connectionFailed"))
       } finally {
         setActionLoading(null)
       }
@@ -264,8 +299,10 @@ export function useKnowledgeBase() {
     error,
     actionLoading,
     addFolder,
-    removeFolder,
-    reindexFolder,
+    removeSource,
+    reindexSource,
+    testConnection,
     refresh: fetchSources,
+    ensureMCPRegistered,
   }
 }

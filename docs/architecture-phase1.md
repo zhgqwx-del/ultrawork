@@ -1691,8 +1691,10 @@ async function saveLLMApiKey(provider: string, key: string) {
 | SSE 索引进度                    | ✅ | 异步索引 + EventSource 实时进度条 + 当前文件名 |
 | 文件监听                        | ✅ | fs.watch recursive + 双层 debounce → 自动增量重索引 |
 | Settings Knowledge Tab          | ✅ | 添加/移除/重建索引 + 索引进度 UI |
-| ONNX 神经 Embedding             | 🔲 | Phase 3，bun compile 兼容性待解决 |
-| 第三方平台 Adapter               | 🔲 | IMA / Obsidian / 百炼 |
+| 第三方平台 Adapter (IMA)         | ✅ | KnowledgeAdapter 接口 + IMA 适配器 + 凭证配置向导 + 测试连接 + 跨源搜索 |
+| 统一 ID-based API                | ✅ | knowledge_sources 表 + Schema v3 迁移 + 向后兼容 folderPath 路由 |
+| Filter Chips 知识源分类          | ✅ | 全部/本地文件夹/第三方平台/自定义 API 筛选 |
+| ONNX 神经 Embedding             | 🔲 | bun compile 兼容性待解决，当前 TF-IDF 可接受 |
 | @知识库名 显式触发               | 🔲 | 输入框 @ 菜单选择知识源 |
 | Sidebar Knowledge Panel         | 🔲 | 知识源开关 / 手动搜索 / 最近引用 |
 

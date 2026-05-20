@@ -5,6 +5,9 @@ import { createApp } from "./kb-server"
 import { startMcpBridge } from "./mcp-bridge"
 import { createRetriever } from "./retriever"
 import { FileWatcher } from "./watcher"
+import { registerAdapter } from "./adapters/registry"
+import { LocalFolderAdapter } from "./adapters/local-folder"
+import { IMAAdapter } from "./adapters/ima"
 
 const KB_PORT = 4098
 const DB_DIR = `${process.env.HOME}/.ultrawork/knowledge`
@@ -13,7 +16,7 @@ const DB_PATH = `${DB_DIR}/kb.db`
 async function ensureDir(dir: string) {
   const fs = await import("fs")
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
 }
 
@@ -22,6 +25,10 @@ async function initCore() {
   const embedder = createTfIdfEmbedder({ dimension: 384 })
   const indexer = new Indexer(store, embedder)
   const retriever = createRetriever(store, embedder)
+
+  // Register adapters
+  registerAdapter(new LocalFolderAdapter(retriever))
+  registerAdapter(new IMAAdapter())
 
   return { store, embedder, indexer, retriever }
 }
@@ -36,7 +43,7 @@ async function serve() {
   // File watcher — auto re-index on changes
   const watcher = new FileWatcher()
 
-  const app = createApp(indexer, retriever, watcher)
+  const app = createApp({ indexer, search: retriever, store, watcher })
 
   const server = Bun.serve({
     port: KB_PORT,
@@ -101,7 +108,7 @@ async function mcpStdio() {
   process.on("SIGTERM", shutdown)
 
   // Direct mode — search in-process, no HTTP proxy needed
-  await startMcpBridge({ search: retriever, indexer })
+  await startMcpBridge({ search: retriever, indexer, store })
 }
 
 async function main() {

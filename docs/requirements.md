@@ -152,10 +152,17 @@ Monorepo 结构：
 - [x] 文件监听 — fs.watch recursive + 双层 debounce → 自动增量重索引
 - [x] Schema 迁移系统 — _migrations 版本管理 + Phase 1 数据自动重索引
 
+**Phase 3** ✅ (2026-05-20)
+- [x] 第三方平台 Adapter — KnowledgeAdapter 接口 + IMA 适配器（testConnection + search + listBases）
+- [x] 凭证配置向导 — AddSourceDialog 两步流程（类型选择 → IMA 凭证 → 测试连接 → 选知识库 → 保存）
+- [x] 统一 ID-based API — knowledge_sources 表 + Schema Migration v3 + 向后兼容旧 folderPath 路由
+- [x] 跨源搜索 — MCP knowledge_search 同时搜索本地文件夹 + IMA，合并排序返回
+- [x] Filter Chips — 知识源按类型筛选（全部/本地文件夹/第三方平台/自定义 API）
+- [x] 凭证安全 — API 响应过滤敏感字段 + DB 目录 0700 权限
+
 **后续规划**
-- [ ] ONNX 神经 Embedding 升级（Phase 3，bun compile 兼容性待解决）
+- [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
 - [x] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）✅ 2026-05-20
-- [ ] 第三方平台 Adapter（IMA 优先）+ 凭证配置向导
 - [ ] @知识库名 显式触发 + 在线文档爬取
 - [ ] Sidebar Knowledge Panel + Chat/Strict 双模式
 
