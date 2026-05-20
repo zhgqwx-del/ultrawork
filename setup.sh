@@ -3,10 +3,18 @@ set -euo pipefail
 
 # Ultrawork - One-click setup script
 # Usage: ./setup.sh [--dev | --build]
-#   --dev   : Setup + start dev server (default)
-#   --build : Setup + build release package
+#   --dev           : Setup + start dev server (default)
+#   --build         : Setup + build release package
+#   --force-build   : Force rebuild all sidecars (skip incremental cache)
 
 MODE="${1:---dev}"
+FORCE_BUILD=""
+# --force-build forces sidecar rebuild even if sources unchanged
+for arg in "$@"; do
+  if [ "$arg" = "--force-build" ]; then
+    FORCE_BUILD="--force"
+  fi
+done
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "========================================"
@@ -71,24 +79,19 @@ echo "  Installing vendor/opencode dependencies..."
 
 BINARIES_DIR="$ROOT_DIR/packages/client/desktop/src-tauri/binaries"
 
-build_sidecars() {
-  echo "[5/6] Building sidecar binaries (this may take a few minutes)..."
+echo "[5/6] Building sidecar binaries..."
+mkdir -p "$BINARIES_DIR"
 
-  echo "  Building OpenCode server..."
-  bun run build:opencode
+echo "  Building OpenCode server..."
+bun run build:opencode $FORCE_BUILD
 
-  echo "  Building Channel Gateway..."
-  bun run build:gateway
+echo "  Building Channel Gateway..."
+bun run build:gateway $FORCE_BUILD
 
-  echo "  Sidecar binaries ready in src-tauri/binaries/"
-}
+echo "  Building Knowledge Sidecar..."
+bun run build:knowledge $FORCE_BUILD
 
-if [ -d "$BINARIES_DIR" ] && ls "$BINARIES_DIR"/opencode-server-* &>/dev/null; then
-  echo "[5/6] Sidecar binaries already exist, skipping build"
-  echo "  (delete src-tauri/binaries/ and re-run to force rebuild)"
-else
-  build_sidecars
-fi
+echo "  Sidecar binaries ready in src-tauri/binaries/"
 
 # ── 6. Dev or Build ─────────────────────────
 
@@ -96,9 +99,10 @@ case "$MODE" in
   --dev)
     echo "[6/6] Starting dev server..."
     echo ""
-    echo "  Frontend: http://localhost:1420"
-    echo "  OpenCode: http://localhost:4096"
-    echo "  Gateway:  http://localhost:4097"
+    echo "  Frontend:  http://localhost:1420"
+    echo "  OpenCode:  http://localhost:4096"
+    echo "  Gateway:   http://localhost:4097"
+    echo "  Knowledge: http://localhost:4098"
     echo ""
     bun run tauri:dev
     ;;

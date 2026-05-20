@@ -175,11 +175,28 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     }
 
     let pid = spawn_sidecar(shell_host, name, args, env_vars)?;
-    println!("{} started on port {} (pid {})", name, port, pid);
     if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
         reg.push(SidecarEntry { port, pid: Some(pid) });
     }
-    Ok(())
+
+    // Wait for sidecar to become healthy before returning
+    let max_wait = Duration::from_secs(15);
+    let poll_interval = Duration::from_millis(200);
+    let start = std::time::Instant::now();
+    loop {
+        if check_health(port, health_path, health_auth) {
+            println!("{} ready on port {} (pid {})", name, port, pid);
+            return Ok(());
+        }
+        if start.elapsed() > max_wait {
+            println!(
+                "{} started on port {} (pid {}) but health check did not pass within {}s",
+                name, port, pid, max_wait.as_secs()
+            );
+            return Ok(()); // Don't fail — let frontend retry
+        }
+        std::thread::sleep(poll_interval);
+    }
 }
 
 // ── Default workspace ──────────────────────────────────────────────

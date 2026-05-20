@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
+import { needsRebuild, saveHash } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const opencodeDir = path.join(rootDir, "vendor/opencode/packages/opencode")
@@ -70,6 +71,35 @@ const binaryName = `opencode-${targetInfo.bunTarget}`
 const binarySuffix = targetInfo.exe ? ".exe" : ""
 const binaryPath = path.join(opencodeDir, `dist/${binaryName}/bin/opencode${binarySuffix}`)
 
+const force = process.argv.includes("--force")
+
+// Incremental build: hash submodule commit + patch file to detect changes.
+// This avoids re-hashing the entire vendor source tree (which is large).
+const targetName = `opencode-server-${tauriTarget}${binarySuffix}`
+const targetPath = path.join(tauriBinDir, targetName)
+const hashFilePath = path.join(tauriBinDir, `.opencode-server-${tauriTarget}.hash`)
+
+const computeOpencodeHash = async () => {
+  const hasher = new Bun.CryptoHasher("sha256")
+  // Include submodule HEAD commit
+  const submoduleHead = await $`cd ${vendorDir} && git rev-parse HEAD`.text()
+  hasher.update(submoduleHead.trim())
+  // Include patch file content
+  const patchContent = await Bun.file(patchFile).arrayBuffer().catch(() => new ArrayBuffer(0))
+  hasher.update(patchContent)
+  // Include build script itself (in case build logic changes)
+  hasher.update(await Bun.file(import.meta.path).arrayBuffer())
+  return hasher.digest("hex")
+}
+
+const currentHash = await computeOpencodeHash()
+
+if (!force && !await needsRebuild(hashFilePath, currentHash, targetPath)) {
+  const size = Bun.file(targetPath).size / 1024 / 1024
+  console.log(`OpenCode sidecar up-to-date, skipping build (${size.toFixed(1)} MB)`)
+  process.exit(0)
+}
+
 // Build the sidecar binary.
 // When cross-compiling (target != current platform), we need to build without --single
 // and the build script will produce binaries for all platforms.
@@ -131,11 +161,11 @@ console.log(`Binary built at: ${binaryPath}`)
 
 await $`mkdir -p ${tauriBinDir}`
 
-const targetName = `opencode-server-${tauriTarget}${binarySuffix}`
-const targetPath = path.join(tauriBinDir, targetName)
-
 await $`cp ${binaryPath} ${targetPath}`
 await $`chmod +x ${targetPath}`
+
+// Save hash after successful build
+await saveHash(hashFilePath, currentHash)
 
 const size = binaryFile.size / 1024 / 1024
 console.log(`✅ OpenCode sidecar ready: ${targetName} (${size.toFixed(1)} MB)`)
