@@ -13,6 +13,8 @@ export interface ChunkRow {
   content: string
   chunk_index: number
   metadata_json: string
+  parent_id: number | null
+  chunk_type: "parent" | "child"
 }
 
 export interface ChunkMetadata {
@@ -21,11 +23,23 @@ export interface ChunkMetadata {
   end_line: number
 }
 
+/** A parent chunk produced by the chunker */
 export interface Chunk {
   content: string
   startLine: number
   endLine: number
   chunkIndex: number
+}
+
+/** A child chunk that references its parent by index */
+export interface ChildChunk extends Chunk {
+  parentIndex: number
+}
+
+/** Result of dual-layer chunking */
+export interface ChunkResult {
+  parents: Chunk[]
+  children: ChildChunk[]
 }
 
 export interface SearchResult {
@@ -38,6 +52,11 @@ export interface SearchResult {
   folderPath: string
   startLine: number
   endLine: number
+  /** Parent chunk content (richer context for LLM) */
+  parentContent?: string
+  /** Parent chunk line range */
+  parentStartLine?: number
+  parentEndLine?: number
 }
 
 export interface IndexStatus {
@@ -46,6 +65,19 @@ export interface IndexStatus {
   indexedFiles: number
   skippedFiles: number
   status: "idle" | "indexing" | "complete" | "error"
+  error?: string
+  /** Currently processing file (relative path) */
+  currentFile?: string
+}
+
+/** Progress event emitted during indexing */
+export interface IndexProgressEvent {
+  folderPath: string
+  status: IndexStatus["status"]
+  totalFiles: number
+  indexedFiles: number
+  skippedFiles: number
+  currentFile?: string
   error?: string
 }
 

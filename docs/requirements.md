@@ -136,6 +136,29 @@ Monorepo 结构：
 - [x] 品牌 Logo 设计 + 全平台图标 + in-app Logo 组件
 - [x] 隐藏内置开发者命令（/init, /review）
 
+### 知识库能力 (ADR-026)
+
+**Phase 1** ✅ (2026-05-16)
+- [x] Knowledge Sidecar (:4098) — 独立 sidecar 进程，bun build --compile
+- [x] 本地文件夹 RAG — md/txt/代码 50+ 格式，TF-IDF embedding，FTS5 BM25 全文检索
+- [x] 混合检索 — BM25 + 向量语义 + RRF 融合排序 (k=60)
+- [x] MCP 对接 AI — knowledge_search + knowledge_list_sources，AI 自主调用
+- [x] Settings Knowledge tab — 添加/移除/重建索引
+
+**Phase 2** ✅ (2026-05-20)
+- [x] Parent-Child 双层分块 — 父块 ~60 行（LLM 上下文）+ 子块 ~12 行（精确匹配）
+- [x] MarkItDown 集成 — PDF/docx/xlsx/pptx 转 Markdown（需系统 Python，后续替换为纯 TS 库）
+- [x] SSE 索引进度 — 异步索引 + EventSource 实时进度条 + 当前文件名
+- [x] 文件监听 — fs.watch recursive + 双层 debounce → 自动增量重索引
+- [x] Schema 迁移系统 — _migrations 版本管理 + Phase 1 数据自动重索引
+
+**后续规划**
+- [ ] ONNX 神经 Embedding 升级（Phase 3，bun compile 兼容性待解决）
+- [ ] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）
+- [ ] 第三方平台 Adapter（IMA 优先）+ 凭证配置向导
+- [ ] @知识库名 显式触发 + 在线文档爬取
+- [ ] Sidebar Knowledge Panel + Chat/Strict 双模式
+
 ## Phase 1 未实现功能（规划中）
 
 - [ ] 引导流程（首次安装用户名/工作场景/工作目录预设）

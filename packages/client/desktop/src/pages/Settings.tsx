@@ -1646,6 +1646,11 @@ function KnowledgeSourceCard({
   // Show just the last directory name
   const folderName = source.folderPath.split("/").pop() || source.folderPath
 
+  // Progress bar calculation
+  const progressPct = isIndexing && source.totalFiles > 0
+    ? Math.round((source.indexedFiles / source.totalFiles) * 100)
+    : 0
+
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
       <div className="flex items-start justify-between">
@@ -1661,7 +1666,24 @@ function KnowledgeSourceCard({
           )}>
             {source.error || statusLabel}
             {isComplete && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
+            {isIndexing && source.totalFiles > 0 && ` — ${source.indexedFiles} / ${source.totalFiles}`}
           </p>
+          {/* Progress bar during indexing */}
+          {isIndexing && source.totalFiles > 0 && (
+            <div className="mt-2">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+                <div
+                  className="h-full rounded-full bg-amber-500 transition-all duration-300"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              {source.currentFile && (
+                <p className="mt-1 truncate text-xs text-[var(--color-fg-muted)]" title={source.currentFile}>
+                  {source.currentFile}
+                </p>
+              )}
+            </div>
+          )}
           <p className="mt-1 truncate font-mono text-xs text-[var(--color-fg-muted)]" title={source.folderPath}>
             {source.folderPath}
           </p>

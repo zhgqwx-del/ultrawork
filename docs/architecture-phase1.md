@@ -1679,6 +1679,23 @@ async function saveLLMApiKey(provider: string, key: string) {
 | Message Adaptation             | 🔲 | 当前直接发 markdown，未做平台特定格式化 |
 | Interactive Cards              | 🔲 | Permission/question 交互卡片（当前自动处理，不发卡片） |
 
+### Knowledge Base Features (ADR-026)
+
+| Feature                        | 状态 | Description                                           |
+|--------------------------------|------|-------------------------------------------------------|
+| Knowledge Sidecar (:4098)      | ✅ | 独立 sidecar 进程 (bun build --compile)，Hono HTTP API + MCP stdio bridge |
+| 本地文件夹 RAG                  | ✅ | md/txt/代码 50+ 格式，TF-IDF embedding，FTS5 BM25 全文检索 |
+| 混合检索 (BM25+向量+RRF)        | ✅ | 关键词 + 语义 + RRF 融合排序，AI 通过 MCP tool 自主调用 |
+| Parent-Child 双层分块           | ✅ | 父块 ~60 行（LLM 上下文）+ 子块 ~12 行（精确匹配） |
+| MarkItDown (PDF/docx/xlsx/pptx) | ✅ | Python CLI 转 Markdown，graceful 降级（后续替换为纯 TS 库） |
+| SSE 索引进度                    | ✅ | 异步索引 + EventSource 实时进度条 + 当前文件名 |
+| 文件监听                        | ✅ | fs.watch recursive + 双层 debounce → 自动增量重索引 |
+| Settings Knowledge Tab          | ✅ | 添加/移除/重建索引 + 索引进度 UI |
+| ONNX 神经 Embedding             | 🔲 | Phase 3，bun compile 兼容性待解决 |
+| 第三方平台 Adapter               | 🔲 | IMA / Obsidian / 百炼 |
+| @知识库名 显式触发               | 🔲 | 输入框 @ 菜单选择知识源 |
+| Sidebar Knowledge Panel         | 🔲 | 知识源开关 / 手动搜索 / 最近引用 |
+
 ### Agent Workspace Features 🔲 全部规划中
 
 | Feature                        | Description                                           |

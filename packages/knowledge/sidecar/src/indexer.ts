@@ -1,10 +1,10 @@
 import { readdir, stat } from "fs/promises"
 import { join, relative, extname } from "path"
 import { KnowledgeStore } from "./store"
-import type { Embedder, IndexStatus, ChunkMetadata } from "./types"
+import type { Embedder, IndexStatus, ChunkMetadata, IndexProgressEvent } from "./types"
 import { chunkText } from "./chunker"
 
-const SUPPORTED_EXTENSIONS = new Set([
+const TEXT_EXTENSIONS = new Set([
   ".md", ".mdx", ".txt", ".log",
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
   ".py", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp",
@@ -17,19 +17,32 @@ const SUPPORTED_EXTENSIONS = new Set([
   ".swift", ".kt", ".rb", ".php", ".lua",
 ])
 
+const BINARY_DOC_EXTENSIONS = new Set([
+  ".pdf", ".docx", ".xlsx", ".pptx",
+])
+
+const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ...BINARY_DOC_EXTENSIONS])
+
 const IGNORE_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".nuxt",
   "__pycache__", ".venv", "venv", "vendor", ".idea", ".vscode",
   "target", "coverage", ".turbo", ".cache",
 ])
 
-const MAX_FILE_SIZE = 1024 * 1024 // 1MB
+const MAX_TEXT_FILE_SIZE = 1024 * 1024 // 1MB
+const MAX_BINARY_FILE_SIZE = 50 * 1024 * 1024 // 50MB
 const MAX_FILES = 10000
+
+export type ProgressCallback = (event: IndexProgressEvent) => void
 
 export class Indexer {
   private store: KnowledgeStore
   private embedder: Embedder
   private statuses = new Map<string, IndexStatus>()
+  private markitdownConvert: ((filePath: string) => Promise<{ content: string; success: boolean }>) | null = null
+  private progressListeners: ProgressCallback[] = []
+  /** Guard against concurrent indexFolder() for the same path */
+  private indexingInProgress = new Set<string>()
 
   constructor(store: KnowledgeStore, embedder: Embedder) {
     this.store = store
@@ -47,7 +60,27 @@ export class Indexer {
     }
   }
 
+  /** Add a progress listener */
+  addProgressListener(cb: ProgressCallback): () => void {
+    this.progressListeners.push(cb)
+    return () => {
+      this.progressListeners = this.progressListeners.filter((l) => l !== cb)
+    }
+  }
+
+  /** Set the MarkItDown conversion function (injected to avoid circular deps) */
+  setMarkItDown(convert: (filePath: string) => Promise<{ content: string; success: boolean }>): void {
+    this.markitdownConvert = convert
+  }
+
   async indexFolder(folderPath: string): Promise<IndexStatus> {
+    // Prevent concurrent indexing of the same folder
+    if (this.indexingInProgress.has(folderPath)) {
+      console.log(`[indexer] Already indexing ${folderPath}, skipping`)
+      return this.getStatus(folderPath)
+    }
+    this.indexingInProgress.add(folderPath)
+
     const status: IndexStatus = {
       folderPath,
       totalFiles: 0,
@@ -56,15 +89,16 @@ export class Indexer {
       status: "indexing",
     }
     this.statuses.set(folderPath, status)
+    this.emitProgress(status)
 
     try {
       // Discover files
       const files = await this.discoverFiles(folderPath)
       status.totalFiles = files.length
+      this.emitProgress(status)
 
       // Track existing files to detect deletions
       const existingSources = this.store.listSources(folderPath)
-      const existingPaths = new Set(existingSources.map((s) => s.file_path))
       const discoveredPaths = new Set(files)
 
       // Remove deleted files
@@ -76,6 +110,10 @@ export class Indexer {
 
       // Index new and changed files
       for (const filePath of files) {
+        const relPath = relative(folderPath, filePath)
+        status.currentFile = relPath
+        this.emitProgress(status)
+
         try {
           await this.indexFile(folderPath, filePath)
           status.indexedFiles++
@@ -86,14 +124,51 @@ export class Indexer {
       }
 
       status.status = "complete"
+      status.currentFile = undefined
     } catch (err) {
       status.status = "error"
       status.error = err instanceof Error ? err.message : String(err)
       console.error(`Failed to index folder ${folderPath}:`, err)
     }
 
+    this.indexingInProgress.delete(folderPath)
     this.statuses.set(folderPath, status)
+    this.emitProgress(status)
     return status
+  }
+
+  /** Re-index a single file (used by file watcher) */
+  async reindexFile(folderPath: string, filePath: string): Promise<void> {
+    try {
+      await this.indexFile(folderPath, filePath)
+      // Update status
+      const current = this.statuses.get(folderPath)
+      if (current) {
+        this.emitProgress({ ...current, currentFile: relative(folderPath, filePath) })
+      }
+    } catch (err) {
+      console.error(`Failed to reindex ${filePath}:`, err)
+    }
+  }
+
+  /** Remove a single file from the index (used by file watcher on delete) */
+  removeFile(filePath: string): void {
+    this.store.removeSource(filePath)
+  }
+
+  private emitProgress(status: IndexStatus): void {
+    const event: IndexProgressEvent = {
+      folderPath: status.folderPath,
+      status: status.status,
+      totalFiles: status.totalFiles,
+      indexedFiles: status.indexedFiles,
+      skippedFiles: status.skippedFiles,
+      currentFile: status.currentFile,
+      error: status.error,
+    }
+    for (const listener of this.progressListeners) {
+      try { listener(event) } catch { /* ignore */ }
+    }
   }
 
   private async discoverFiles(folderPath: string): Promise<string[]> {
@@ -122,7 +197,10 @@ export class Indexer {
             const fullPath = join(dir, entry.name)
             try {
               const info = await stat(fullPath)
-              if (info.size <= MAX_FILE_SIZE && info.size > 0) {
+              const maxSize = BINARY_DOC_EXTENSIONS.has(ext)
+                ? MAX_BINARY_FILE_SIZE
+                : MAX_TEXT_FILE_SIZE
+              if (info.size <= maxSize && info.size > 0) {
                 files.push(fullPath)
               }
             } catch {
@@ -138,8 +216,21 @@ export class Indexer {
   }
 
   private async indexFile(folderPath: string, filePath: string): Promise<void> {
-    const file = Bun.file(filePath)
-    const content = await file.text()
+    const ext = extname(filePath).toLowerCase()
+    let content: string
+
+    if (BINARY_DOC_EXTENSIONS.has(ext)) {
+      // Binary document — needs MarkItDown conversion
+      if (!this.markitdownConvert) return // MarkItDown not available, skip
+      const result = await this.markitdownConvert(filePath)
+      if (!result.success || !result.content.trim()) return
+      content = result.content
+    } else {
+      // Text file — read directly
+      const file = Bun.file(filePath)
+      content = await file.text()
+    }
+
     const hasher = new Bun.CryptoHasher("sha256")
     hasher.update(content)
     const fileHash = hasher.digest("hex")
@@ -150,12 +241,12 @@ export class Indexer {
       return // Already up to date
     }
 
-    // Chunk the content
-    const chunks = chunkText(content)
-    if (chunks.length === 0) return
+    // Chunk the content (parent-child dual-layer)
+    const { parents, children } = chunkText(content)
+    if (parents.length === 0) return
 
-    // Generate embeddings
-    const embeddings = this.embedder.embedBatch(chunks.map((c) => c.content))
+    // Generate embeddings for child chunks only
+    const embeddings = this.embedder.embedBatch(children.map((c) => c.content))
 
     // Store
     let sourceId: number
@@ -170,19 +261,30 @@ export class Indexer {
 
     this.store.addChunks(
       sourceId,
-      chunks.map((chunk, i) => ({
-        content: chunk.content,
-        chunkIndex: chunk.chunkIndex,
+      parents.map((p) => ({
+        content: p.content,
+        chunkIndex: p.chunkIndex,
         metadata: {
           file_path: relPath,
-          start_line: chunk.startLine,
-          end_line: chunk.endLine,
+          start_line: p.startLine,
+          end_line: p.endLine,
         } satisfies ChunkMetadata,
+      })),
+      children.map((child, i) => ({
+        content: child.content,
+        chunkIndex: child.chunkIndex,
+        metadata: {
+          file_path: relPath,
+          start_line: child.startLine,
+          end_line: child.endLine,
+        } satisfies ChunkMetadata,
+        parentIndex: child.parentIndex,
         embedding: embeddings[i],
       })),
     )
 
-    this.store.updateSourceChunkCount(sourceId, chunks.length)
+    const totalChunks = parents.length + children.length
+    this.store.updateSourceChunkCount(sourceId, totalChunks)
   }
 
   async removeFolder(folderPath: string): Promise<void> {
@@ -225,5 +327,21 @@ export class Indexer {
     }
 
     return result
+  }
+
+  /** Check if legacy data needs re-indexing and trigger it */
+  async autoMigrate(): Promise<void> {
+    const folders = this.store.needsReindex()
+    if (folders.length === 0) return
+
+    console.log(`[indexer] Auto-migrating ${folders.length} folder(s) to parent-child chunks...`)
+    for (const folderPath of folders) {
+      try {
+        await this.indexFolder(folderPath)
+        console.log(`[indexer] Migrated: ${folderPath}`)
+      } catch (err) {
+        console.error(`[indexer] Failed to migrate ${folderPath}:`, err)
+      }
+    }
   }
 }

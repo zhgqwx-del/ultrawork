@@ -8,10 +8,37 @@ export class KnowledgeStore {
     this.db = new Database(dbPath)
     this.db.exec("PRAGMA journal_mode=WAL")
     this.db.exec("PRAGMA foreign_keys=ON")
-    this.initSchema()
+    this.migrate()
   }
 
-  private initSchema(): void {
+  // ---------------------------------------------------------------------------
+  // Schema migration
+  // ---------------------------------------------------------------------------
+
+  private migrate(): void {
+    // Ensure migrations table exists
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `)
+
+    const currentVersion = this.getSchemaVersion()
+
+    if (currentVersion < 1) this.migrateV1()
+    if (currentVersion < 2) this.migrateV2()
+  }
+
+  private getSchemaVersion(): number {
+    const row = this.db
+      .query("SELECT MAX(version) AS v FROM _migrations")
+      .get() as { v: number | null } | null
+    return row?.v ?? 0
+  }
+
+  /** V1: Original Phase 1 schema (for fresh installs) */
+  private migrateV1(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sources (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,10 +60,14 @@ export class KnowledgeStore {
       );
 
       CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id);
+
+      CREATE TABLE IF NOT EXISTS chunk_embeddings (
+        chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+        embedding BLOB NOT NULL
+      );
     `)
 
-    // FTS5 virtual table for full-text search
-    // Check if it already exists before creating
+    // FTS5 virtual table
     const ftsExists = this.db
       .query("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'")
       .get()
@@ -63,14 +94,46 @@ export class KnowledgeStore {
       `)
     }
 
-    // Embeddings table — simple float blob storage for cosine similarity
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS chunk_embeddings (
-        chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
-        embedding BLOB NOT NULL
-      );
-    `)
+    this.db.query("INSERT INTO _migrations (version) VALUES (1)").run()
   }
+
+  /** V2: Parent-Child chunking columns */
+  private migrateV2(): void {
+    // Add parent_id and chunk_type columns
+    // SQLite ALTER TABLE ADD COLUMN is safe for existing data
+    const hasParentId = this.db
+      .query("SELECT 1 FROM pragma_table_info('chunks') WHERE name='parent_id'")
+      .get()
+
+    if (!hasParentId) {
+      this.db.exec("ALTER TABLE chunks ADD COLUMN parent_id INTEGER REFERENCES chunks(id)")
+      this.db.exec("ALTER TABLE chunks ADD COLUMN chunk_type TEXT NOT NULL DEFAULT 'child'")
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(parent_id)")
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(chunk_type)")
+    }
+
+    this.db.query("INSERT INTO _migrations (version) VALUES (2)").run()
+  }
+
+  /**
+   * Check if legacy data exists (Phase 1 chunks without parent-child structure).
+   * Returns folder paths that need re-indexing.
+   */
+  needsReindex(): string[] {
+    const rows = this.db
+      .query(`
+        SELECT DISTINCT s.folder_path
+        FROM chunks c
+        JOIN sources s ON s.id = c.source_id
+        WHERE c.parent_id IS NULL AND c.chunk_type = 'child'
+      `)
+      .all() as { folder_path: string }[]
+    return rows.map((r) => r.folder_path)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Source CRUD
+  // ---------------------------------------------------------------------------
 
   addSource(folderPath: string, filePath: string, fileHash: string): number {
     const result = this.db
@@ -134,12 +197,20 @@ export class KnowledgeStore {
     this.db.query("DELETE FROM sources WHERE folder_path = ?").run(folderPath)
   }
 
+  // ---------------------------------------------------------------------------
+  // Chunk CRUD — Parent-Child aware
+  // ---------------------------------------------------------------------------
+
   addChunks(
     sourceId: number,
-    chunks: { content: string; chunkIndex: number; metadata: ChunkMetadata; embedding: Float32Array }[],
+    parents: { content: string; chunkIndex: number; metadata: ChunkMetadata }[],
+    children: { content: string; chunkIndex: number; metadata: ChunkMetadata; parentIndex: number; embedding: Float32Array }[],
   ): void {
-    const insertChunk = this.db.prepare(
-      "INSERT INTO chunks (source_id, content, chunk_index, metadata_json) VALUES (?, ?, ?, ?) RETURNING id",
+    const insertParent = this.db.prepare(
+      "INSERT INTO chunks (source_id, content, chunk_index, metadata_json, parent_id, chunk_type) VALUES (?, ?, ?, ?, NULL, 'parent') RETURNING id",
+    )
+    const insertChild = this.db.prepare(
+      "INSERT INTO chunks (source_id, content, chunk_index, metadata_json, parent_id, chunk_type) VALUES (?, ?, ?, ?, ?, 'child') RETURNING id",
     )
     const insertEmbed = this.db.prepare(
       "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)",
@@ -149,21 +220,40 @@ export class KnowledgeStore {
       // Remove old chunks for this source
       this.db.query("DELETE FROM chunks WHERE source_id = ?").run(sourceId)
 
-      for (const chunk of chunks) {
-        const row = insertChunk.get(
+      // Insert parents first, record their row IDs
+      const parentRowIds: number[] = []
+      for (const parent of parents) {
+        const row = insertParent.get(
           sourceId,
-          chunk.content,
-          chunk.chunkIndex,
-          JSON.stringify(chunk.metadata),
+          parent.content,
+          parent.chunkIndex,
+          JSON.stringify(parent.metadata),
         ) as { id: number }
-        // Store embedding as raw Float32Array buffer
-        insertEmbed.run(row.id, new Uint8Array(chunk.embedding.buffer))
+        parentRowIds.push(row.id)
+      }
+
+      // Insert children with parent references + embeddings
+      for (const child of children) {
+        const parentRowId = parentRowIds[child.parentIndex]
+        const row = insertChild.get(
+          sourceId,
+          child.content,
+          child.chunkIndex,
+          JSON.stringify(child.metadata),
+          parentRowId,
+        ) as { id: number }
+        insertEmbed.run(row.id, new Uint8Array(child.embedding.buffer))
       }
     })
 
     transaction()
   }
 
+  // ---------------------------------------------------------------------------
+  // Search
+  // ---------------------------------------------------------------------------
+
+  /** FTS5 search — only searches child chunks */
   searchFTS(query: string, limit: number = 10): (ChunkRow & { rank: number; folder_path: string })[] {
     return this.db
       .query(`
@@ -171,13 +261,14 @@ export class KnowledgeStore {
         FROM chunks_fts f
         JOIN chunks c ON c.id = f.rowid
         JOIN sources s ON s.id = c.source_id
-        WHERE chunks_fts MATCH ?
+        WHERE chunks_fts MATCH ? AND c.chunk_type = 'child'
         ORDER BY f.rank
         LIMIT ?
       `)
       .all(query, limit) as (ChunkRow & { rank: number; folder_path: string })[]
   }
 
+  /** Get all embeddings (only child chunks have embeddings) */
   getAllEmbeddings(): { chunkId: number; embedding: Float32Array }[] {
     const rows = this.db
       .query("SELECT chunk_id AS chunkId, embedding FROM chunk_embeddings")
@@ -236,6 +327,18 @@ export class KnowledgeStore {
         WHERE c.id IN (${placeholders})
       `)
       .all(...chunkIds) as (ChunkRow & { folder_path: string; file_path: string })[]
+  }
+
+  /** Get parent chunk by child's parent_id */
+  getParentChunk(parentId: number): (ChunkRow & { folder_path: string; file_path: string }) | null {
+    return this.getChunkById(parentId)
+  }
+
+  /** Batch-fetch parent chunks for a set of parent IDs */
+  getParentChunks(parentIds: number[]): Map<number, ChunkRow & { folder_path: string; file_path: string }> {
+    const unique = [...new Set(parentIds)]
+    const chunks = this.getChunksByIds(unique)
+    return new Map(chunks.map((c) => [c.id, c]))
   }
 
   getStats(): { sourceCount: number; chunkCount: number; folderCount: number } {

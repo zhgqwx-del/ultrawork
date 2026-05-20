@@ -705,15 +705,17 @@ Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请�
 
 ## 分阶段实施
 
-| Phase | 内容 | 触发模式 | 复杂度 | 依赖 |
+| Phase | 内容 | 触发模式 | 复杂度 | 状态 |
 |-------|------|---------|--------|------|
-| **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + 本地 Embedding + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 方案 A（AI 自主） | 高 | 无 |
-| **2** | MarkItDown 集成 (PDF/docx) + ONNX 神经 Embedding 升级 + Parent-Child 分块 + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | Phase 1 |
-| **3** | 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 方案 A | 中 | Phase 1 |
-| **4** | `@知识库名` 显式触发 + 在线文档爬取索引 + 自定义 API Connector + 远程 Embedding | 方案 A+C | 中 | Phase 1 |
-| **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 方案 A+C | 中 | Phase 1-3 |
-| **6** | 更多第三方平台 (Notion/百炼) + 知识源同步更新 | 方案 A+C | 中 | Phase 3 |
-| **7** | （条件触发）自动预检索（默认关闭，用户可开启）— 仅当 Phase 1-4 数据显示 AI 漏搜率不可接受时推进 | 方案 D | 中 | Phase 4+ |
+| **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + TF-IDF Embedding + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 方案 A（AI 自主） | 高 | ✅ 2026-05-16 |
+| **2** | Parent-Child 双层分块 + MarkItDown 集成 (PDF/docx/xlsx/pptx) + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | ✅ 2026-05-19 |
+| **3** | ONNX 神经 Embedding 升级 + 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 方案 A | 中 | 🔲 |
+| **4** | `@知识库名` 显式触发 + 在线文档爬取索引 + 自定义 API Connector + 远程 Embedding | 方案 A+C | 中 | 🔲 |
+| **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 方案 A+C | 中 | 🔲 |
+| **6** | 更多第三方平台 (Notion/百炼) + 知识源同步更新 | 方案 A+C | 中 | 🔲 |
+| **7** | （条件触发）自动预检索（默认关闭，用户可开启）— 仅当数据显示 AI 漏搜率不可接受时推进 | 方案 D | 中 | 🔲 |
+
+> **Phase 2 调整说明（2026-05-19）**：原 Phase 2 包含 ONNX 神经 Embedding 升级，实施时因 `bun build --compile` 兼容性问题（`@huggingface/transformers` issue #1672 未解决、`onnxruntime-node` 需要子进程隔离增加复杂度）决定延后。ONNX 合并到原 Phase 3（第三方平台）一起实施，避免单独为 embedding 切换做一轮全量重索引。TF-IDF + FTS5 BM25 混合检索质量已可接受。
 
 Phase 1 的最小目标：用户选一个文件夹 → 自动索引（md/txt/代码文件）→ AI 通过 MCP tool 自主检索 → 对话中能搜到并引用知识库内容。
 
@@ -721,18 +723,18 @@ Phase 1 的最小目标：用户选一个文件夹 → 自动索引（md/txt/代
 
 Phase 1 已实现（2026-05-16）。以下记录实际实现与上文设计描述的差异及原因。
 
-### 有意的简化（Phase 2 补齐）
+### 有意的简化
 
-| 设计描述 | 实际实现 | 原因 |
-|---------|---------|------|
-| **ONNX BGE-small 本地模型** (§4) | TF-IDF hashing embedder（纯 TS，384 维） | `@huggingface/transformers` 在 `bun build --compile` 下崩溃（[issue #1672](https://github.com/huggingface/transformers.js/issues/1672)）。TF-IDF 零依赖、编译安全，配合 FTS5 BM25 质量可接受。Phase 2 升级 ONNX |
-| **sqlite-vec FLOAT32[384] 向量列** (§7) | 独立 `chunk_embeddings` 表，BLOB 存储 + 内存 cosine 计算 | sqlite-vec 在 macOS 需要 `Database.setCustomSQLite()` 且 pre-v1 API 不稳定。BLOB + 内存 cosine 在 <100K chunks 下性能可接受。Phase 2 可引入 sqlite-vec |
-| **512 tokens 分块** (§5) | 40 行/chunk，10 行 overlap，自然边界切分 | Token 计数需要 tokenizer 依赖。行基分块零依赖，对 md/code 文件每行约 10-15 tokens，40 行 ≈ 400-600 tokens，近似设计值 |
-| **System prompt 知识源摘要注入** (§9) | 在 MCP tool response 中附带知识源信息 | System prompt 注入需要 OpenCode 侧配合（vendor patch），超出 sidecar 独立实现范围。Tool response 中附带信息让 AI 每次调用后都能看到可用知识源 |
+| 设计描述 | Phase 1 实际实现 | 原因 | 后续状态 |
+|---------|---------|------|---------|
+| **ONNX BGE-small 本地模型** (§4) | TF-IDF hashing embedder（纯 TS，384 维） | `@huggingface/transformers` 在 `bun build --compile` 下崩溃（[issue #1672](https://github.com/huggingface/transformers.js/issues/1672)）。TF-IDF 零依赖、编译安全，配合 FTS5 BM25 质量可接受 | → Phase 3 升级 |
+| **sqlite-vec FLOAT32[384] 向量列** (§7) | 独立 `chunk_embeddings` 表，BLOB 存储 + 内存 cosine 计算 | sqlite-vec 在 macOS 需要 `Database.setCustomSQLite()` 且 pre-v1 API 不稳定。BLOB + 内存 cosine 在 <100K chunks 下性能可接受 | → Phase 3 可引入 |
+| **512 tokens 分块** (§5) | Phase 1: 40 行/chunk → **Phase 2: Parent-Child 双层** | Token 计数需要 tokenizer 依赖。行基分块零依赖 | ✅ Phase 2 已升级 |
+| **System prompt 知识源摘要注入** (§9) | 在 MCP tool response 中附带知识源信息 | System prompt 注入需要 OpenCode 侧配合（vendor patch），超出 sidecar 独立实现范围 | 待评估 |
 
-### 数据库 Schema（实际）
+### 数据库 Schema（实际，Phase 2 更新）
 
-与上文 §7 的理想化 schema 不同，Phase 1 实际使用更简化的 schema：
+与上文 §7 的理想化 schema 不同，实际使用更简化的 schema。Phase 2 通过 migration v2 添加了 `parent_id`/`chunk_type` 列：
 
 ```sql
 -- 知识源（对应设计中的 documents 表）
@@ -745,42 +747,53 @@ CREATE TABLE sources (
   chunk_count INTEGER DEFAULT 0
 );
 
--- 分块
+-- 分块（Phase 2: 新增 parent_id + chunk_type）
 CREATE TABLE chunks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
-  metadata_json TEXT NOT NULL DEFAULT '{}'  -- { file_path, start_line, end_line }
+  metadata_json TEXT NOT NULL DEFAULT '{}',  -- { file_path, start_line, end_line }
+  parent_id INTEGER REFERENCES chunks(id),   -- Phase 2: 子块指向父块（父块为 NULL）
+  chunk_type TEXT NOT NULL DEFAULT 'child'   -- Phase 2: 'parent' | 'child'
+);
+
+-- Schema 版本管理（Phase 2 新增）
+CREATE TABLE _migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- FTS5 全文检索（自动同步触发器）
 CREATE VIRTUAL TABLE chunks_fts USING fts5(content, content='chunks', content_rowid='id');
 
--- Embedding 存储（独立表，而非 sqlite-vec 向量列）
+-- Embedding 存储（仅 child 块有 embedding）
 CREATE TABLE chunk_embeddings (
   chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
   embedding BLOB NOT NULL  -- Float32Array 序列化
 );
 ```
 
-与设计 schema 的主要差异：INTEGER 自增 ID（非 TEXT UUID）、sources 替代 documents 命名、embedding 在独立表中以 BLOB 存储、无 parent_id（Phase 2 Parent-Child 分块时添加）。
+与设计 schema 的主要差异：INTEGER 自增 ID（非 TEXT UUID）、sources 替代 documents 命名、embedding 在独立表中以 BLOB 存储。Phase 2 添加了 parent-child 关系但未引入设计中的 `FLOAT32[384]` 向量列（仍用 BLOB）。
 
-### HTTP API（实际）
+### HTTP API（实际，Phase 2 更新）
 
-Phase 1 采用文件夹路径标识（而非设计中的 UUID ID），因为当前只有本地文件夹知识源：
+采用文件夹路径标识（而非设计中的 UUID ID），因为当前只有本地文件夹知识源：
 
 ```
 GET    /kb/health                      — 健康检查
 GET    /kb/sources                     — 列出所有知识源
-POST   /kb/sources                     — 添加文件夹 { folderPath }
+POST   /kb/sources                     — 添加文件夹 { folderPath }（Phase 2: 异步返回 202，?sync=true 走同步）
+GET    /kb/sources/events              — Phase 2: SSE 实时索引进度流
 GET    /kb/sources/:folderPath         — 知识源状态
 DELETE /kb/sources/:folderPath         — 删除知识源
-POST   /kb/sources/:folderPath/reindex — 重建索引
+POST   /kb/sources/:folderPath/reindex — 重建索引（Phase 2: 异步 202，?sync=true 走同步）
 POST   /kb/search                      — 搜索 { query, limit?, retrieval? }
 ```
 
-Phase 3 引入第三方平台后，API 将迁移到统一的 ID-based 路由（`/kb/:id/...`）。
+Phase 2 变更：`POST /kb/sources` 和 `/reindex` 改为异步（返回 202），通过 `GET /kb/sources/events` SSE 推送实时进度。`?sync=true` 参数保留同步行为供 MCP bridge 使用。
+
+引入第三方平台后，API 将迁移到统一的 ID-based 路由（`/kb/:id/...`）。
 
 ### MCP Tools（实际）
 
@@ -805,6 +818,56 @@ knowledge_list_sources()              — 列出已索引知识源
 所有 MCP 配置统一使用全局路径 `~/.config/ultrawork/opencode.json`，不使用工作区级别 opencode.json。Tauri command `read_mcp_config`/`write_mcp_config`/`remove_mcp_config` 已移除 workspace 参数。
 
 知识库索引数据存储在 `~/.ultrawork/knowledge/kb.db`（全局单库，非按工作区分库）。
+
+## Phase 2 实际实现说明
+
+Phase 2 已实现（2026-05-19）。以下记录实际实现与上文设计描述的差异。
+
+### 范围调整
+
+| 设计内容 | 实际 | 原因 |
+|---------|------|------|
+| **ONNX 神经 Embedding 升级** (§4) | 延后到 Phase 3 | `bun build --compile` 兼容性问题未解决，子进程隔离方案增加过多复杂度。TF-IDF + FTS5 BM25 混合检索质量已可接受，不急于升级 |
+
+### Parent-Child 分块参数（实际）
+
+| 参数 | 设计值 (§5) | 实际值 | 说明 |
+|------|-----------|--------|------|
+| Parent 块大小 | ~1000 tokens | ~60 行 | 行基分块避免 tokenizer 依赖，60 行 ≈ 600-900 tokens |
+| Child 块大小 | ~200 tokens | ~12 行 | 12 行 ≈ 120-180 tokens，精确匹配单元 |
+| Child overlap | 50 tokens | 2 行 | 少量 overlap 够用，减少冗余 chunk 数量 |
+
+小文件（≤ 12 行）直接作为 parent+child 双重角色，不拆分。
+
+### 新增能力
+
+| 能力 | 说明 |
+|------|------|
+| **MarkItDown 集成** | 检测系统 Python + markitdown CLI → PDF/docx/xlsx/pptx 转 Markdown → 走标准分块管线。不可用时 graceful 跳过。**已知限制**：依赖系统 Python，桌面应用分发不友好，后续计划替换为纯 TS 方案（见下方说明） |
+| **SSE 索引进度** | `GET /kb/sources/events` 实时推送 per-file 进度。前端通过 `EventSource` 更新进度条和当前文件名 |
+| **文件监听** | `fs.watch({ recursive: true })` + 双层 debounce（文件 2s + 文件夹 5s batch）→ 单文件增量重索引 |
+| **Schema 迁移** | `_migrations` 表 + 版本化迁移。Phase 1 → Phase 2 自动添加 `parent_id`/`chunk_type` 列并触发全量重索引 |
+| **多监听器模式** | `indexer.addProgressListener()` 支持 SSE 广播和文件监听并行订阅进度事件 |
+
+### 检索变更
+
+Phase 2 检索只搜 child 块，命中后查 `parent_id` 返回 parent 块内容。同一 parent 下多个 child 命中只返回一次（去重）。`SearchResult` 新增 `parentContent`/`parentStartLine`/`parentEndLine` 字段，MCP bridge 展示 parent 上下文而非 child 片段。
+
+### 后续优化：MarkItDown → 纯 TS 文档解析
+
+当前 MarkItDown 依赖系统 Python，对桌面应用分发不友好（用户需额外安装 Python + `pip install markitdown`）。计划替换为纯 TS 库，消除外部依赖：
+
+| 格式 | 替代库 | 成熟度 |
+|------|--------|--------|
+| PDF | `pdf-parse`（基于 Mozilla pdf.js） | 非常成熟，npm 周下载 100 万+ |
+| DOCX | `mammoth` | 成熟，.docx → HTML/Markdown |
+| XLSX | `xlsx`（SheetJS） | 非常成熟，→ Markdown 表格 |
+| PPTX | ZIP 解压 + XML 解析 | 中等 |
+
+**优势**：零外部依赖、可 `bun build --compile`、无子进程开销、用户无感知。
+**劣势**：PDF 复杂排版（扫描件、多栏）的解析质量可能不如 markitdown。
+
+替换时只需重写 `markitdown.ts`，`indexer.ts` 调用接口不变。作为独立 Issue 跟踪。
 
 ## 考虑过的替代方案
 

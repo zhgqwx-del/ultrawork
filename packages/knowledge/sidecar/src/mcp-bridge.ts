@@ -23,12 +23,12 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
 
   const server = new McpServer({
     name: "knowledge-base",
-    version: "0.1.0",
+    version: "0.2.0",
   })
 
   server.tool(
     "knowledge_search",
-    "Search the user's local knowledge base for relevant documents and code. Use this tool when the user asks questions that might be answered by their indexed files and folders. The search uses hybrid retrieval (keyword + semantic) for best results.",
+    "Search the user's local knowledge base for relevant documents and code. Use this tool when the user asks questions that might be answered by their indexed files and folders. The search uses hybrid retrieval (keyword + semantic) for best results. Results include both the matched snippet and its broader context.",
     {
       query: z.string().describe("Natural language search query"),
       limit: z.number().optional().describe("Max results to return (default 5)"),
@@ -81,7 +81,7 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
         }
 
         const text = results
-          .map((r, i) => `### Result ${i + 1} — ${r.filePath}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(3)})\n\n${r.content}`)
+          .map((r, i) => formatResult(r, i + 1))
           .join("\n\n---\n\n") + sourceSummary
 
         console.error(`[mcp-bridge] Returning ${results.length} results`)
@@ -136,4 +136,20 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
   console.error("[mcp-bridge] Connecting stdio transport...")
   await server.connect(transport)
   console.error("[mcp-bridge] Connected, waiting for messages")
+}
+
+/**
+ * Format a search result for MCP output.
+ * Shows the parent (broader context) when available, with the matched child highlighted.
+ */
+function formatResult(r: SearchResult, index: number): string {
+  const location = `${r.filePath}:${r.startLine}-${r.endLine}`
+  const header = `### Result ${index} — ${location} (score: ${r.score.toFixed(3)})`
+
+  if (r.parentContent && r.parentStartLine != null && r.parentEndLine != null) {
+    const parentLocation = `${r.filePath}:${r.parentStartLine}-${r.parentEndLine}`
+    return `${header}\n\n**Context** (${parentLocation}):\n\n${r.parentContent}`
+  }
+
+  return `${header}\n\n${r.content}`
 }
