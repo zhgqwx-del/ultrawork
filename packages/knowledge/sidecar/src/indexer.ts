@@ -3,6 +3,7 @@ import { join, relative, extname } from "path"
 import { KnowledgeStore } from "./store"
 import type { Embedder, IndexStatus, ChunkMetadata, IndexProgressEvent } from "./types"
 import { chunkText } from "./chunker"
+import { BINARY_DOC_EXTENSIONS, convertDocument } from "./doc-parser"
 
 const TEXT_EXTENSIONS = new Set([
   ".md", ".mdx", ".txt", ".log",
@@ -15,10 +16,6 @@ const TEXT_EXTENSIONS = new Set([
   ".sql", ".graphql",
   ".env", ".ini", ".cfg",
   ".swift", ".kt", ".rb", ".php", ".lua",
-])
-
-const BINARY_DOC_EXTENSIONS = new Set([
-  ".pdf", ".docx", ".xlsx", ".pptx",
 ])
 
 const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ...BINARY_DOC_EXTENSIONS])
@@ -39,7 +36,6 @@ export class Indexer {
   private store: KnowledgeStore
   private embedder: Embedder
   private statuses = new Map<string, IndexStatus>()
-  private markitdownConvert: ((filePath: string) => Promise<{ content: string; success: boolean }>) | null = null
   private progressListeners: ProgressCallback[] = []
   /** Guard against concurrent indexFolder() for the same path */
   private indexingInProgress = new Set<string>()
@@ -66,11 +62,6 @@ export class Indexer {
     return () => {
       this.progressListeners = this.progressListeners.filter((l) => l !== cb)
     }
-  }
-
-  /** Set the MarkItDown conversion function (injected to avoid circular deps) */
-  setMarkItDown(convert: (filePath: string) => Promise<{ content: string; success: boolean }>): void {
-    this.markitdownConvert = convert
   }
 
   async indexFolder(folderPath: string): Promise<IndexStatus> {
@@ -220,9 +211,8 @@ export class Indexer {
     let content: string
 
     if (BINARY_DOC_EXTENSIONS.has(ext)) {
-      // Binary document — needs MarkItDown conversion
-      if (!this.markitdownConvert) return // MarkItDown not available, skip
-      const result = await this.markitdownConvert(filePath)
+      // Binary document — convert with pure TS parsers
+      const result = await convertDocument(filePath)
       if (!result.success || !result.content.trim()) return
       content = result.content
     } else {

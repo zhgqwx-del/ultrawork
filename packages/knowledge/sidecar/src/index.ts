@@ -4,7 +4,6 @@ import { Indexer } from "./indexer"
 import { createApp } from "./kb-server"
 import { startMcpBridge } from "./mcp-bridge"
 import { createRetriever } from "./retriever"
-import { detectMarkItDown, convertToMarkdown } from "./markitdown"
 import { FileWatcher } from "./watcher"
 
 const KB_PORT = 4098
@@ -23,12 +22,6 @@ async function initCore() {
   const embedder = createTfIdfEmbedder({ dimension: 384 })
   const indexer = new Indexer(store, embedder)
   const retriever = createRetriever(store, embedder)
-
-  // Detect and inject MarkItDown support (non-blocking)
-  const markitdown = await detectMarkItDown()
-  if (markitdown.available) {
-    indexer.setMarkItDown(convertToMarkdown)
-  }
 
   return { store, embedder, indexer, retriever }
 }

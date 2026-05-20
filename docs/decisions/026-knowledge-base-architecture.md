@@ -104,7 +104,7 @@ Windsurf / AnythingLLM / Obsidian 都强调本地优先。与云端 SaaS 产品�
 │  └─────────────────┘  └───────────────────────┘  │
 │                                                  │
 │  内部管线 (本地 RAG + 在线文档):                   │
-│  File/URL → MarkItDown(可选) → Markdown           │
+│  File/URL → doc-parser(纯TS) → Text/Markdown       │
 │          → Chunker (General / Parent-Child)        │
 │          → Embedder → sqlite-vec + FTS5            │
 │                                                  │
@@ -156,14 +156,16 @@ ADR-019 的方案是"每个知识源 = 一个 MCP Server 进程"。本次改为�
 - `bun:sqlite` 内置 SQLite 支持，零依赖
 - Tauri 生命周期管理模式可复用 Gateway 的实现
 
-### 3. 文件解析：TS 原生 + MarkItDown 可选增强
+### 3. 文件解析：全 TS 原生
+
+> **更新 (2026-05-20)**：富媒体格式已从 MarkItDown (Python) 替换为纯 TS 库，零外部依赖。
 
 本地 RAG 的文件解析采用分层策略：
 
 ```
 文件输入
   │
-  ├── 核心格式 (TS 原生, 零依赖, 开箱即用)
+  ├── 核心格式 (直接读取, 零依赖)
   │   ├── .md / .mdx        → 直接读取
   │   ├── .txt / .log       → 直接读取
   │   ├── 代码文件 (.ts/.py/.go/...)  → 直接读取 + 语言标注
@@ -171,22 +173,16 @@ ADR-019 的方案是"每个知识源 = 一个 MCP Server 进程"。本次改为�
   │   ├── .csv / .json      → 结构化转 Markdown 表格
   │   └── .xml              → 提取文本节点
   │
-  └── 富媒体格式 (需要 MarkItDown, 按需启用)
-      ├── .pdf              → markitdown CLI 转 Markdown
-      ├── .docx / .doc      → markitdown CLI 转 Markdown
-      ├── .xlsx / .xls      → markitdown CLI 转 Markdown
-      ├── .pptx             → markitdown CLI 转 Markdown
-      └── .epub             → markitdown CLI 转 Markdown
+  └── 富媒体格式 (纯 TS 库, 开箱即用)
+      ├── .pdf              → unpdf 文本提取
+      ├── .docx             → mammoth 文本提取
+      ├── .xlsx             → xlsx (SheetJS) → CSV 文本
+      └── .pptx             → jszip 解压 + XML <a:t> 文本节点提取
 ```
 
-**MarkItDown 集成方式**：
+**实现文件**：`packages/knowledge/sidecar/src/doc-parser.ts`，`convertDocument(filePath)` 按扩展名分发，30s per-file timeout + graceful 降级。
 
-- [microsoft/markitdown](https://github.com/microsoft/markitdown) 是 Python 工具（Python 3.10+）
-- 检测系统 Python 环境，有则通过 CLI 调用 `markitdown <file>`，无则提示用户安装
-- 富媒体格式在 Settings 中标注 "需要 Python + markitdown"，未安装时该格式显示为"不支持"
-- 未来可选：打包时内嵌精简 Python + markitdown wheel（增加包体积 ~30MB）
-
-**不用 MarkItDown 处理核心格式的理由**：核心格式（md/txt/代码/HTML/CSV/JSON）用 TS 原生解析更快且零依赖，覆盖 80%+ 日常场景。MarkItDown 的价值在于 PDF/Office 等二进制格式的转换。
+**核心格式不走 doc-parser 的理由**：核心格式（md/txt/代码/HTML/CSV/JSON）直接读取更快，覆盖 80%+ 日常场景。doc-parser 专门处理需要结构化解析的二进制格式。
 
 ### 4. Embedding：本地模型内置 + 远程 API 可选
 
@@ -539,7 +535,7 @@ Phase 3:       方案 D — 在 A+C 基础上增加 L2 自动预检索（默认�
   - 第三方平台：输入凭证 → 测试连接 → 保存
   - 自定义 API：配置 endpoint + auth + 响应映射 → 测试 → 保存
 - **Embedding 设置**：选择默认模型（本地/远程）、管理已下载的本地模型
-- **MarkItDown 状态**：显示 Python + markitdown 安装状态，提供安装引导
+- ~~**MarkItDown 状态**：显示 Python + markitdown 安装状态，提供安装引导~~ （已替换为纯 TS，不再需要安装状态显示）
 
 #### Sidebar → Knowledge Panel
 
@@ -708,7 +704,7 @@ Settings 中提供模板编辑器 + 测试按钮，让用户可视化配置请�
 | Phase | 内容 | 触发模式 | 复杂度 | 状态 |
 |-------|------|---------|--------|------|
 | **1** | Knowledge Sidecar 骨架 + 本地 md/txt/代码 RAG + TF-IDF Embedding + 混合检索 (BM25+向量+RRF) + Settings Knowledge tab 基础 UI | 方案 A（AI 自主） | 高 | ✅ 2026-05-16 |
-| **2** | Parent-Child 双层分块 + MarkItDown 集成 (PDF/docx/xlsx/pptx) + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | ✅ 2026-05-19 |
+| **2** | Parent-Child 双层分块 + 文档解析 (PDF/docx/xlsx/pptx, 纯 TS) + 索引进度 UI (SSE) + 文件监听 | 方案 A | 中 | ✅ 2026-05-19 |
 | **3** | ONNX 神经 Embedding 升级 + 第三方平台 Adapter (IMA 优先) + 凭证配置向导 + 测试连接 | 方案 A | 中 | 🔲 |
 | **4** | `@知识库名` 显式触发 + 在线文档爬取索引 + 自定义 API Connector + 远程 Embedding | 方案 A+C | 中 | 🔲 |
 | **5** | Sidebar Knowledge Panel + Chat/Strict 双模式 + 分块预览 + 检索测试 + 引用溯源 | 方案 A+C | 中 | 🔲 |
@@ -843,7 +839,7 @@ Phase 2 已实现（2026-05-19）。以下记录实际实现与上文设计描�
 
 | 能力 | 说明 |
 |------|------|
-| **MarkItDown 集成** | 检测系统 Python + markitdown CLI → PDF/docx/xlsx/pptx 转 Markdown → 走标准分块管线。不可用时 graceful 跳过。**已知限制**：依赖系统 Python，桌面应用分发不友好，后续计划替换为纯 TS 方案（见下方说明） |
+| **文档解析（PDF/docx/xlsx/pptx）** | 纯 TS 库（unpdf/mammoth/xlsx/jszip）直接提取文本 → 走标准分块管线。零外部依赖，始终可用。~~原为 MarkItDown (Python CLI)，2026-05-20 替换~~ |
 | **SSE 索引进度** | `GET /kb/sources/events` 实时推送 per-file 进度。前端通过 `EventSource` 更新进度条和当前文件名 |
 | **文件监听** | `fs.watch({ recursive: true })` + 双层 debounce（文件 2s + 文件夹 5s batch）→ 单文件增量重索引 |
 | **Schema 迁移** | `_migrations` 表 + 版本化迁移。Phase 1 → Phase 2 自动添加 `parent_id`/`chunk_type` 列并触发全量重索引 |
@@ -853,21 +849,19 @@ Phase 2 已实现（2026-05-19）。以下记录实际实现与上文设计描�
 
 Phase 2 检索只搜 child 块，命中后查 `parent_id` 返回 parent 块内容。同一 parent 下多个 child 命中只返回一次（去重）。`SearchResult` 新增 `parentContent`/`parentStartLine`/`parentEndLine` 字段，MCP bridge 展示 parent 上下文而非 child 片段。
 
-### 后续优化：MarkItDown → 纯 TS 文档解析
+### ~~后续优化：MarkItDown → 纯 TS 文档解析~~ ✅ 已完成 (2026-05-20)
 
-当前 MarkItDown 依赖系统 Python，对桌面应用分发不友好（用户需额外安装 Python + `pip install markitdown`）。计划替换为纯 TS 库，消除外部依赖：
+已用纯 TS 库替换 MarkItDown，消除 Python 外部依赖：
 
-| 格式 | 替代库 | 成熟度 |
-|------|--------|--------|
-| PDF | `pdf-parse`（基于 Mozilla pdf.js） | 非常成熟，npm 周下载 100 万+ |
-| DOCX | `mammoth` | 成熟，.docx → HTML/Markdown |
-| XLSX | `xlsx`（SheetJS） | 非常成熟，→ Markdown 表格 |
-| PPTX | ZIP 解压 + XML 解析 | 中等 |
+| 格式 | 库 | 说明 |
+|------|-----|------|
+| PDF | `unpdf`（serverless-friendly PDF 解析） | `extractText(buffer)` 提取文本，`bun build --compile` 兼容 |
+| DOCX | `mammoth` | `extractRawText({ buffer })` 提取纯文本 |
+| XLSX | `xlsx`（SheetJS） | 按 sheet 输出 CSV 格式文本 |
+| PPTX | `jszip` + XML regex | 解压 ZIP → 提取 `<a:t>` 文本节点 |
 
-**优势**：零外部依赖、可 `bun build --compile`、无子进程开销、用户无感知。
-**劣势**：PDF 复杂排版（扫描件、多栏）的解析质量可能不如 markitdown。
-
-替换时只需重写 `markitdown.ts`，`indexer.ts` 调用接口不变。作为独立 Issue 跟踪。
+**实现**：新建 `doc-parser.ts` 替代 `markitdown.ts`，`indexer.ts` 直接 import `convertDocument()`（移除了 `setMarkItDown()` 注入模式）。30s per-file timeout + graceful 降级。
+**已知局限**：PDF 复杂排版（扫描件、多栏）的文本提取质量有限，覆盖 80%+ 常见场景。
 
 ## 考虑过的替代方案
 
@@ -921,7 +915,7 @@ ADR-019 的原方案。
 
 - Knowledge Sidecar 新增一个进程（目前已有 OpenCode + Gateway）
 - 内置 ONNX 模型增加 ~50-100MB 包体积
-- MarkItDown 依赖系统 Python，部分用户可能未安装
+- ~~MarkItDown 依赖系统 Python，部分用户可能未安装~~ （已消除，2026-05-20 替换为纯 TS）
 - 本地 RAG 的索引构建耗时，需要完善的异步 UX
 - sqlite-vec 扩展需要在 Bun 中加载原生模块，可能有平台兼容性问题
 
@@ -1040,15 +1034,16 @@ const output = await extractor(['Hello world'], { pooling: 'mean', normalize: tr
 | `Xenova/bge-small-zh-v1.5` | 512 | 中文 | ~50MB | — |
 | `BAAI/bge-small-zh-v1.5` | 512 | 中文 | ~90MB | 需自行转 ONNX |
 
-#### MarkItDown（文件转 Markdown）
+#### ~~MarkItDown（文件转 Markdown）~~ → 已替换为纯 TS 方案 (2026-05-20)
 
-- **GitHub**: https://github.com/microsoft/markitdown
-- **语言**: Python 3.10+（99.7% Python）
-- **安装**: `pip install 'markitdown[all]'` 或按需 `markitdown[pdf,docx,pptx]`
-- **CLI**: `markitdown path-to-file.pdf > output.md`
-- **支持格式**: PDF, Word, Excel, PowerPoint, EPub, HTML, CSV, JSON, XML, 图片(OCR), 音频(转录)
-- **Docker**: 提供容器化部署
-- 微软 AutoGen 项目生态产品
+> 原方案使用 [microsoft/markitdown](https://github.com/microsoft/markitdown) (Python 3.10+)，已替换为以下纯 TS 库：
+
+| 库 | 用途 | npm |
+|----|------|-----|
+| `unpdf` | PDF 文本提取 (serverless-friendly) | `unpdf` |
+| `mammoth` | DOCX 文本提取 | `mammoth` |
+| `xlsx` (SheetJS) | XLSX → CSV 文本 | `xlsx` |
+| `jszip` | PPTX 解压 + XML 文本提取 | `jszip` |
 
 #### Cheerio（网页解析）
 

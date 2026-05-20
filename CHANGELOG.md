@@ -13,6 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 知识库架构设计文档 ADR-026：覆盖本地 RAG / 第三方平台 / 自定义 API / 在线文档 四类场景，含行业调研和实现参考
 
 ### Changed
+- 知识库文档解析从 MarkItDown (Python) 替换为纯 TS 库（unpdf/mammoth/xlsx/jszip），消除 Python 外部依赖
 - MCP 配置统一使用全局路径 `~/.config/ultrawork/opencode.json`，移除工作区级别 opencode.json 的 MCP 配置
 - macOS 标题栏切换为 Overlay 模式，隐藏原生标题文字，内容延伸到窗口顶部（ADR-023）
 - 窗口拖拽改用 `startDragging()` API（workaround for tauri-apps/tauri#9503）

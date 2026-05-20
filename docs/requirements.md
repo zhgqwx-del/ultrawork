@@ -147,14 +147,14 @@ Monorepo 结构：
 
 **Phase 2** ✅ (2026-05-20)
 - [x] Parent-Child 双层分块 — 父块 ~60 行（LLM 上下文）+ 子块 ~12 行（精确匹配）
-- [x] MarkItDown 集成 — PDF/docx/xlsx/pptx 转 Markdown（需系统 Python，后续替换为纯 TS 库）
+- [x] 二进制文档解析 — PDF/docx/xlsx/pptx 文本提取（纯 TS: unpdf/mammoth/xlsx/jszip，零外部依赖）
 - [x] SSE 索引进度 — 异步索引 + EventSource 实时进度条 + 当前文件名
 - [x] 文件监听 — fs.watch recursive + 双层 debounce → 自动增量重索引
 - [x] Schema 迁移系统 — _migrations 版本管理 + Phase 1 数据自动重索引
 
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（Phase 3，bun compile 兼容性待解决）
-- [ ] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）
+- [x] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）✅ 2026-05-20
 - [ ] 第三方平台 Adapter（IMA 优先）+ 凭证配置向导
 - [ ] @知识库名 显式触发 + 在线文档爬取
 - [ ] Sidebar Knowledge Panel + Chat/Strict 双模式
