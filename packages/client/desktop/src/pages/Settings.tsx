@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database} from "lucide-react"
@@ -1701,19 +1701,48 @@ function KnowledgeSourceCard({
   const isIndexing = source.status === "indexing"
   const isError = source.status === "error"
 
-  const statusLabel = isComplete
+  // After indexing completes, keep progress bar visible for a fixed duration
+  // so the user can see the final "N / N" state before it disappears
+  const FINISH_DISPLAY_MS = 1200
+  const [showProgress, setShowProgress] = useState(isIndexing)
+  const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (isIndexing) {
+      setShowProgress(true)
+      if (finishTimerRef.current) {
+        clearTimeout(finishTimerRef.current)
+        finishTimerRef.current = null
+      }
+    } else if (showProgress) {
+      // Indexing just ended — keep bar visible for FINISH_DISPLAY_MS
+      finishTimerRef.current = setTimeout(() => {
+        setShowProgress(false)
+        finishTimerRef.current = null
+      }, FINISH_DISPLAY_MS)
+    }
+    return () => {
+      if (finishTimerRef.current) clearTimeout(finishTimerRef.current)
+    }
+  }, [isIndexing]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Visual state: use real status, but during finish delay show "completing" progress
+  const visualIndexing = isIndexing || showProgress
+  const isFinishing = !isIndexing && showProgress // real status is complete but still showing progress
+
+  const statusLabel = isComplete && !isFinishing
     ? t("knowledge.complete")
     : isConnected
     ? t("knowledge.connected")
-    : isIndexing
+    : visualIndexing
     ? t("knowledge.indexing")
     : isError
     ? t("knowledge.error")
     : t("knowledge.idle")
 
-  const dotColor = isComplete || isConnected
+  const dotColor = (isComplete && !isFinishing) || isConnected
     ? "bg-green-500"
-    : isIndexing
+    : visualIndexing
     ? "bg-amber-500 animate-pulse"
     : isError
     ? "bg-red-500"
@@ -1722,8 +1751,9 @@ function KnowledgeSourceCard({
   const TypeIcon = isLocalFolder ? FolderOpen : Globe
 
   // Progress bar calculation
-  const progressPct = isIndexing && source.totalFiles && source.totalFiles > 0
-    ? Math.round(((source.indexedFiles ?? 0) / source.totalFiles) * 100)
+  const hasFileCount = source.totalFiles != null && source.totalFiles > 0
+  const progressPct = hasFileCount
+    ? Math.round(((source.indexedFiles ?? 0) / source.totalFiles!) * 100)
     : 0
 
   return (
@@ -1745,23 +1775,25 @@ function KnowledgeSourceCard({
             isError ? "text-red-500" : "text-[var(--color-fg-muted)]"
           )}>
             {source.error || statusLabel}
-            {isLocalFolder && isComplete && source.indexedFiles != null && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
-            {isLocalFolder && isIndexing && source.totalFiles != null && source.totalFiles > 0 && ` — ${source.indexedFiles ?? 0} / ${source.totalFiles}`}
+            {isLocalFolder && isComplete && !isFinishing && source.indexedFiles != null && ` — ${t("knowledge.files").replace("{count}", String(source.indexedFiles))}`}
+            {isLocalFolder && visualIndexing && hasFileCount && ` — ${source.indexedFiles ?? 0} / ${source.totalFiles}`}
           </p>
-          {/* Progress bar during indexing */}
-          {isLocalFolder && isIndexing && source.totalFiles != null && source.totalFiles > 0 && (
+          {/* Progress bar during indexing — always shown for consistency */}
+          {isLocalFolder && visualIndexing && (
             <div className="mt-2">
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
-                <div
-                  className="h-full rounded-full bg-amber-500 transition-all duration-300"
-                  style={{ width: `${progressPct}%` }}
-                />
+                {hasFileCount || isFinishing ? (
+                  <div
+                    className="h-full rounded-full bg-amber-500 transition-all duration-300"
+                    style={{ width: `${isFinishing ? 100 : progressPct}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-1/3 animate-[indeterminate_1.5s_ease-in-out_infinite] rounded-full bg-amber-500" />
+                )}
               </div>
-              {source.currentFile && (
-                <p className="mt-1 truncate text-xs text-[var(--color-fg-muted)]" title={source.currentFile}>
-                  {source.currentFile}
-                </p>
-              )}
+              <p className="mt-1 truncate text-xs text-[var(--color-fg-muted)]" title={source.currentFile || ""}>
+                {source.currentFile || (!hasFileCount && !isFinishing ? t("knowledge.scanning") : "")}
+              </p>
             </div>
           )}
           {isLocalFolder && source.folderPath && (
@@ -1776,9 +1808,9 @@ function KnowledgeSourceCard({
               variant="outline"
               size="sm"
               onClick={onReindex}
-              disabled={loading || isIndexing}
+              disabled={loading || visualIndexing}
             >
-              {(loading || isIndexing) && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              {(loading || visualIndexing) && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
               {t("knowledge.reindex")}
             </Button>
           )}
@@ -1797,7 +1829,7 @@ function KnowledgeSourceCard({
             variant="outline"
             size="sm"
             onClick={onRemove}
-            disabled={loading || isIndexing}
+            disabled={loading || visualIndexing}
             className="text-red-500 hover:bg-red-500/10 hover:text-red-600"
           >
             {t("knowledge.remove")}

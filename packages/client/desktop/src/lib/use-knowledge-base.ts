@@ -218,6 +218,10 @@ export function useKnowledgeBase() {
             skippedFiles: 0,
           }]
         })
+
+        // Fallback: refresh sources after a short delay to catch any SSE events
+        // that arrived before the optimistic state was set (race condition)
+        setTimeout(() => fetchSources(), 500)
       } catch (err) {
         toast.error(t("knowledge.indexFailed"))
         console.error("Failed to add folder:", err)
@@ -252,7 +256,7 @@ export function useKnowledgeBase() {
         await kbFetch(`/sources/${id}/reindex`, { method: "POST" })
         setSources((prev) =>
           prev.map((s) =>
-            s.id === id ? { ...s, status: "indexing" as const, indexedFiles: 0 } : s,
+            s.id === id ? { ...s, status: "indexing" as const, totalFiles: 0, indexedFiles: 0, currentFile: undefined } : s,
           ),
         )
       } catch (err) {

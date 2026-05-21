@@ -262,9 +262,11 @@ export function createApp(deps: AppDeps): Hono {
         return c.json(status)
       }
 
-      indexer.indexFolder(config.folderPath).catch((err) => {
-        console.error(`Background reindex failed for ${config.folderPath}:`, err)
-      })
+      setTimeout(() => {
+        indexer.indexFolder(config.folderPath).catch((err) => {
+          console.error(`Background reindex failed for ${config.folderPath}:`, err)
+        })
+      }, 50)
 
       return c.json({ id, folderPath: config.folderPath, status: "indexing" }, 202)
     } catch (err) {
@@ -314,9 +316,11 @@ export function createApp(deps: AppDeps): Hono {
         return c.json(status)
       }
 
-      indexer.indexFolder(folderPath).catch((err) => {
-        console.error(`Background reindex failed for ${folderPath}:`, err)
-      })
+      setTimeout(() => {
+        indexer.indexFolder(folderPath).catch((err) => {
+          console.error(`Background reindex failed for ${folderPath}:`, err)
+        })
+      }, 50)
 
       return c.json({ folderPath, status: "indexing" }, 202)
     } catch (err) {
@@ -404,9 +408,14 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ id: ks.id, ...status }, 201)
     }
 
-    indexer.indexFolder(folderPath).catch((err) => {
-      console.error(`Background indexing failed for ${folderPath}:`, err)
-    })
+    // Delay indexing start so the POST response reaches the frontend first.
+    // Without this, SSE events arrive before the frontend adds the source to state,
+    // causing events to be dropped (race condition).
+    setTimeout(() => {
+      indexer.indexFolder(folderPath).catch((err) => {
+        console.error(`Background indexing failed for ${folderPath}:`, err)
+      })
+    }, 50)
 
     return c.json(
       { id: ks.id, folderPath, type: "local_folder", name: ks.name, status: "indexing" },

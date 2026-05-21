@@ -112,6 +112,7 @@ export class Indexer {
           console.error(`Failed to index ${filePath}:`, err)
           status.skippedFiles++
         }
+        this.emitProgress(status)
       }
 
       status.status = "complete"
