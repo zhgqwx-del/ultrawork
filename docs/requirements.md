@@ -160,9 +160,17 @@ Monorepo 结构：
 - [x] Filter Chips — 知识源按类型筛选（全部/本地文件夹/第三方平台/自定义 API）
 - [x] 凭证安全 — API 响应过滤敏感字段 + DB 目录 0700 权限
 
+**Phase 4**（规划中）
+- [ ] IMA Notes API 集成 — `search_note_book` 正文全文搜索 + `get_doc_content` 全文读取，解决 Wiki API 只返回片段的限制
+- [ ] IMA 知识源模块区分 — 配置中选择"知识库"或"笔记"（复用同一凭证）
+- [ ] 检索 top-K 提高到 8-10（无 reranker，需更多候选保证召回率）
+- [ ] IMA 笔记写入 — AI 可通过 `import_doc`/`append_doc` 将分析结果保存回 IMA
+
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
 - [x] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）✅ 2026-05-20
+- [ ] Token-based 分块替代行数分块（parent 512-1024 tokens，等 ONNX 时一起升级）
+- [ ] 轻量 Reranker（cross-encoder 精排提升检索精度）
 - [ ] @知识库名 显式触发 + 在线文档爬取
 - [ ] Sidebar Knowledge Panel + Chat/Strict 双模式
 

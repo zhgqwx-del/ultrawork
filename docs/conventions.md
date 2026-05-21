@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-03-18 -->
+<!-- last-synced: 2026-05-21 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -189,3 +189,23 @@ MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri c
 ## 9. Logo 组件
 
 品牌 Logo 使用 SVG 棱镜设计（`src/components/ui/logo.tsx`）。组件内部使用 `useId()` 为 SVG gradient 生成唯一 ID，防止同页面多实例时 gradient ID 冲突。
+
+## 10. SSE 竞态防护（fire-and-forget 端点）
+
+当后端端点以 fire-and-forget 方式启动异步任务（如索引、重建）时，如果任务完成速度快于 HTTP 响应传递，SSE 事件会在前端状态就绪前到达，导致事件被丢弃（前端 `setSources` 的 map 找不到匹配项）。
+
+**修复模式（双重保障）：**
+
+```typescript
+// 后端：延迟启动异步任务，让 POST 响应先到达前端
+setTimeout(() => {
+  indexer.indexFolder(folderPath).catch(console.error)
+}, 50)
+return c.json({ status: "indexing" }, 202)
+
+// 前端：乐观更新后 fallback 刷新，兜底 SSE 事件丢失
+setSources((prev) => [...prev, { status: "indexing", totalFiles: 0, ... }])
+setTimeout(() => fetchSources(), 500)
+```
+
+**适用场景**：所有返回 202 并以 fire-and-forget 启动后台任务、依赖 SSE 推送进度的端点（如 `/kb/sources` POST、`/kb/sources/:id/reindex`）。

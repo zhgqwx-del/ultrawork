@@ -948,6 +948,62 @@ IMA API base URL: `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima
 - `knowledge_list_sources`：显示所有源类型 + ID（`[id=8] **微信用户的知识库** [IMA]`）
 - `source_ids` 参数：可选，默认搜全部，引导 AI 省略以获得最佳覆盖
 
+## Phase 4 规划：IMA Notes API + 检索优化
+
+> **调研日期**: 2026-05-21
+> **状态**: 规划中
+
+### 调研发现
+
+IMA 平台有两套独立的内容体系，使用不同的 API：
+
+| 内容体系 | API 前缀 | 全文读取 | 正文搜索 | 写入 | 当前状态 |
+|----------|---------|:-------:|:-------:|:---:|---------|
+| **知识库文件**（PDF/Word/网页） | `/openapi/wiki/v1` | 否（只返回片段） | 关键词匹配 | 上传文件 | Phase 3 已接入搜索 |
+| **笔记**（Notes） | `/openapi/note/v1` | **是**（`get_doc_content`） | **正文全文搜索** | 创建/追加 | **未接入** |
+
+**核心发现**：IMA 笔记系统提供完整的 RAG 能力链（搜索 → 全文读取），而知识库文件系统没有全文读取 API。当前 Phase 3 的 IMA 搜索效果有限，正是因为只接了 Wiki 模块。
+
+### Notes API 关键端点
+
+| 端点 | 功能 | 价值 |
+|------|------|------|
+| `search_note_book` | 搜索笔记（`search_type=1` 正文全文搜索） | 比 Wiki `search_knowledge` 质量更高 |
+| `get_doc_content` | 通过 `doc_id` 获取完整纯文本 | **解决当前只有片段的核心问题** |
+| `list_note_folder_by_cursor` | 列出笔记本 | 浏览结构 |
+| `list_note_by_folder_id` | 浏览笔记本内容 | 浏览结构 |
+| `import_doc` | 创建新笔记（Markdown） | AI 写回能力 |
+| `append_doc` | 追加内容到已有笔记 | AI 写回能力 |
+
+认证方式与 Wiki API 完全相同（`ima-openapi-clientid` + `ima-openapi-apikey`），无需额外凭证。
+
+### 实施计划
+
+**Phase 4a — IMA Notes 读取集成**（优先）
+
+1. `IMAAdapter` 新增 `searchNotes()` 方法：`search_note_book`（正文搜索） → 取 `doc_id` → `get_doc_content`（全文）
+2. 知识源配置区分 "IMA 知识库" 和 "IMA 笔记"（复用同一凭证，`config.module: "wiki" | "notes"`）
+3. `knowledge_search` 跨源搜索自动覆盖两个模块
+4. AddSourceDialog IMA 流程新增模块选择步骤
+
+**Phase 4b — 检索质量优化**
+
+1. 默认 top-K 从 5 提高到 8-10（无 reranker 时需要更多候选）
+2. 评估 token-based 分块替代行数分块（parent 512-1024 tokens）
+3. 评估轻量 Reranker（cross-encoder 精排）可行性
+
+**Phase 4c — IMA 写入能力**（可选）
+
+1. MCP 新增 `knowledge_save_note` 工具：AI 可将分析结果保存回 IMA 笔记
+2. 调用 `import_doc`（新建）或 `append_doc`（追加）
+
+### OpenClaw / SkillHub 评估结论
+
+`skillhub.cn/skills/ima-skills` 和 `ima.qq.com/agent-interface` 调研结论：
+- `agent-interface` 是凭证管理页面，非独立协议
+- IMA Skills 是 OpenClaw Skill 包装，底层调用同一套 HTTP API
+- 无需通过 OpenClaw Skill 协议接入，直接调 HTTP API 即可
+
 ## 考虑过的替代方案
 
 ### 1. 每个知识源一个独立 MCP Server (ADR-019 方案)
