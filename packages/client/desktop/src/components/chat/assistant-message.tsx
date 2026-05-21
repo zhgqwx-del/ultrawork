@@ -39,8 +39,8 @@ const MARKDOWN_COMPONENTS: Components = {
     )
   },
   p: ({ children }) => <p className="mb-4 last:mb-0 text-[var(--color-fg)]">{children}</p>,
-  ul: ({ children }) => <ul className="mb-4 ml-4 list-disc text-[var(--color-fg)]">{children}</ul>,
-  ol: ({ children }) => <ol className="mb-4 ml-4 list-decimal text-[var(--color-fg)]">{children}</ol>,
+  ul: ({ children }) => <ul className="mb-4 ml-6 list-disc text-[var(--color-fg)]">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-4 ml-6 list-decimal text-[var(--color-fg)]">{children}</ol>,
   li: ({ children }) => <li className="mb-1 text-[var(--color-fg)]">{children}</li>,
   h1: ({ children }) => <h1 className="mb-4 text-2xl font-bold text-[var(--color-fg)]">{children}</h1>,
   h2: ({ children }) => <h2 className="mb-3 text-xl font-bold text-[var(--color-fg)]">{children}</h2>,
