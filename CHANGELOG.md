@@ -21,10 +21,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
 ### Fixed
+- Session 幽灵残留：后端数据库丢失的 session 无法删除/重命名，现在 404 时自动清理本地状态；新增 `session.deleted` SSE 事件处理防止前端状态与后端不同步；引入 `ApiError` 类携带 HTTP 状态码替代脆弱的字符串匹配
 - Sidecar 进程生命周期：应用退出时自动清理所有 sidecar 进程（OpenCode/Gateway/Knowledge），消除 zombie 进程残留
 - 主内容区上下不对称：恢复顶部圆角和间距，与底部形成对称卡片布局（ADR-025）
 - 侧边栏折叠态 macOS 交通灯溢出：平台感知宽度适配（macOS 68px / 其他 48px）（ADR-025）
 - 侧边栏展开/折叠切换时 Logo 和底部头像垂直位置跳变（ADR-025）
+- 知识库本地文件夹索引进度条一致性：所有文件夹索引时统一显示进度条（扫描阶段不确定态 + 索引阶段确定态），重建索引时正确重置进度状态
 - 运行时模型切换后 `sending` 状态卡住导致输入框永久禁用（`server.instance.disposed` 事件重置状态）
 - `session.error` SSE 事件未处理，后端 API 错误（鉴权失败、额度不足等）静默吞掉无提示
 

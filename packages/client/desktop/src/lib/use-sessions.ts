@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import type { Session } from "@agent/api-client"
+import { ApiError } from "@agent/api-client"
 import { useApi } from "./use-api"
 import { useWorkspace } from "./workspace-context"
 import { useSSESubscribe } from "./sse-context"
@@ -88,7 +89,16 @@ export function useSessions() {
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
-      await api.deleteSession(sessionId)
+      try {
+        await api.deleteSession(sessionId)
+      } catch (err) {
+        // If server returns 404, the session is already gone — still remove locally
+        if (err instanceof ApiError && err.status === 404) {
+          // fall through to local cleanup
+        } else {
+          throw err
+        }
+      }
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
     },
     [api]
@@ -104,7 +114,16 @@ export function useSessions() {
 
   const renameSession = useCallback(
     async (sessionId: string, newTitle: string) => {
-      await api.updateSession(sessionId, { title: newTitle })
+      try {
+        await api.updateSession(sessionId, { title: newTitle })
+      } catch (err) {
+        // If server returns 404, remove the stale session from local state
+        if (err instanceof ApiError && err.status === 404) {
+          setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+          return
+        }
+        throw err
+      }
       setSessions((prev) =>
         prev.map((session) =>
           session.id === sessionId ? { ...session, title: newTitle } : session
@@ -137,6 +156,11 @@ export function useSessions() {
         if (prev.some((s) => s.id === sid)) return prev
         return [info as Session, ...prev]
       })
+    } else if (event.type === "session.deleted") {
+      const sid = event.properties?.id ?? event.properties?.sessionID
+      if (sid) {
+        setSessions((prev) => prev.filter((s) => s.id !== sid))
+      }
     }
   }, [workspacePath]))
 

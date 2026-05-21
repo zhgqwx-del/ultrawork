@@ -22,6 +22,16 @@ import type {
   PaginatedMessagesResponse,
 } from "./types"
 
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly statusText: string,
+  ) {
+    super(`API request failed: ${status} ${statusText}`)
+    this.name = "ApiError"
+  }
+}
+
 export class ApiClient {
   private baseUrl: string
   private username?: string
@@ -71,7 +81,7 @@ export class ApiClient {
     })
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
+      throw new ApiError(response.status, response.statusText)
     }
 
     // Handle empty responses (204 No Content, or empty body)
@@ -102,7 +112,7 @@ export class ApiClient {
     })
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
+      throw new ApiError(response.status, response.statusText)
     }
 
     if (response.status === 204 || response.headers.get("content-length") === "0") {

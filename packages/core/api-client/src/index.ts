@@ -1,4 +1,4 @@
-export { ApiClient, createApiClient } from "./client"
+export { ApiClient, ApiError, createApiClient } from "./client"
 export type {
   ApiClientConfig,
   SessionCreateRequest,

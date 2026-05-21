@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { ApiClient, createApiClient } from "../client"
+import { ApiClient, ApiError, createApiClient } from "../client"
 
 // Mock global fetch
 const mockFetch = vi.fn()
@@ -115,11 +115,18 @@ describe("ApiClient", () => {
   // --- request() error handling ---
 
   describe("request error handling", () => {
-    it("throws on non-ok response", async () => {
+    it("throws ApiError on non-ok response", async () => {
       mockFetch.mockResolvedValueOnce(errorResponse(401, "Unauthorized"))
       await expect(client.listSessions()).rejects.toThrow(
         "API request failed: 401 Unauthorized"
       )
+      mockFetch.mockResolvedValueOnce(errorResponse(404, "Not Found"))
+      try {
+        await client.listSessions()
+      } catch (err) {
+        expect(err).toBeInstanceOf(ApiError)
+        expect((err as ApiError).status).toBe(404)
+      }
     })
 
     it("returns undefined for 204 No Content", async () => {
