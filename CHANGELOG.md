@@ -22,6 +22,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
 ### Fixed
+- IMA 凭证验证错误提示显示原始 JSON：HTTP 401 响应 `{code:200002, msg:"skill auth failed"}` 未解析，现在正确提取 msg 展示友好提示
+- IMA Notes 模块无笔记本时添加流程死胡同：`list_notebook` 无用户笔记本返回空数组，现在合成"全部笔记"虚拟条目兜底
+- AddSourceDialog 凭证验证异常时临时 source 未清理：`handleTestConnection` 网络异常后 tempId 不在 catch 作用域内，残留孤儿记录
+- AddSourceDialog 选择知识库/笔记本双击竞态：快速双击可重复创建 source，新增 savingRef 互斥锁
 - Session 幽灵残留：后端数据库丢失的 session 无法删除/重命名，现在 404 时自动清理本地状态；新增 `session.deleted` SSE 事件处理防止前端状态与后端不同步；引入 `ApiError` 类携带 HTTP 状态码替代脆弱的字符串匹配
 - Sidecar 进程生命周期：应用退出时自动清理所有 sidecar 进程（OpenCode/Gateway/Knowledge），消除 zombie 进程残留
 - 主内容区上下不对称：恢复顶部圆角和间距，与底部形成对称卡片布局（ADR-025）

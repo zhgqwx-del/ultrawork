@@ -102,6 +102,13 @@ export class IMAAdapter implements KnowledgeAdapter {
 
       if (!resp.ok) {
         const text = await resp.text().catch(() => "")
+        // IMA may return JSON with code/msg even on HTTP errors (e.g. 401)
+        try {
+          const parsed = JSON.parse(text) as IMAResponse<unknown>
+          if (parsed.code || parsed.msg) {
+            return parsed as IMAResponse<T>
+          }
+        } catch { /* not JSON, fall through */ }
         return { retcode: resp.status, errmsg: `HTTP ${resp.status}: ${text}` }
       }
 
@@ -449,6 +456,7 @@ export class IMAAdapter implements KnowledgeAdapter {
   private formatErrorMessage(code: number, resp: IMAResponse<unknown>): string {
     switch (code) {
       case 20004: return "API Key authentication failed"
+      case 200002: return "Authentication failed — check Client ID and API Key"
       case 110030: return "No permission"
       case 110021: return "Rate limited, please try again later"
       default: return this.responseMsg(resp) || `Error code: ${code}`

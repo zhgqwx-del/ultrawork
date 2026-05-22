@@ -1020,6 +1020,12 @@ IMA 平台有两套独立的内容体系，使用不同的 API：
 - `list_notebook` 首页 cursor 为 `"0"`（非空字符串），limit 上限 20
 - `search_note` 使用 offset 分页（start/end），非 cursor 分页
 
+**测试中发现并修复的问题**：
+- `list_notebook` 无笔记本时返回空数组（系统文件夹不在返回中）→ 合成 `__all_notes__`（"全部笔记 / All Notes"）虚拟条目作为首选项，`search_note` 不依赖 folder_id
+- IMA HTTP 401 返回 JSON body `{code:200002, msg:"skill auth failed"}`，但 `imaFetch` 的 `!resp.ok` 分支未解析 JSON → 修复：非 200 响应先尝试解析 JSON 提取 `code/msg`，`formatErrorMessage` 新增 200002 映射
+- `handleTestConnection` 凭证验证创建临时 source 后异常时未清理 → 提升 `tempId` 到 try 外层，catch 中清理
+- `handleSelectBase` 快速双击可重复提交 → 新增 `savingRef` 互斥锁
+
 ### Phase 4b — 检索质量优化（规划中）
 
 1. 默认 top-K 从 5 提高到 8-10（无 reranker 时需要更多候选）
