@@ -1118,6 +1118,36 @@ IMA 平台有两套独立的内容体系，使用不同的 API：
 - `ima.qq.com/agent-interface` 是凭证管理页面，非独立协议
 - 无需通过 OpenClaw Skill 协议接入，直接调 HTTP API 即可
 
+### IMA 扫码认证调研结论（2026-05-22）
+
+**用户诉求**：AddSourceDialog 输入 Client ID + API Key 体验差，希望支持微信扫码自动获取凭证。
+
+**调研的两条技术路径**：
+
+| 路径 | 机制 | 可行性 | 原因 |
+|------|------|:---:|------|
+| **A. IMA 网页端** | 微信扫码登录 `ima.qq.com/agent-interface` → 调用 `/cgi-bin/openapi_auth/` CGI 管理 API Key | 不可行 | CGI 依赖 IMA 网页 session cookie，无公开 OAuth 端点供第三方调用 |
+| **B. QClaw 内部网关** | 微信 OAuth2 扫码 → `jprx.m.qq.com` 网关 `wxLogin` → `createApiKey` | 技术上可行但不可用 | AppID `wx9d11056dd75b7240` 属于 QClaw，非公开 API，反向工程违反 ToS |
+
+**路径 B 的详细技术信息**（来自 [photon-hq/qclaw-wechat-client](https://github.com/photon-hq/qclaw-wechat-client)，已归档 2026-03-22）：
+- 完整流程：`getWxLoginState(guid)` → `buildWxLoginUrl(state)` 展示二维码 → 用户微信扫码 → `wxLogin(guid, code, state)` 获取 JWT → `createApiKey()` 获取 API Key
+- 网关：`https://jprx.m.qq.com/data/{id}/forward`（腾讯内部 jprx 转发）
+- 返回：`{ token: JWT, openclaw_channel_token, user_info: { nickname, avatar_url } }`
+- API Key 端点 `data/4055/forward` 返回 `{ key: "..." }`
+
+**与现有 iLink 协议的关系**：
+- 项目中已有微信 iLink Bot 扫码登录实现（`packages/channel/gateway/src/adapters/wechat/ilink-api.ts`），UX 模式可复用（展示二维码 → 轮询状态 → 获取凭证）
+- 但 iLink 是微信生态的 Bot 消息协议（扫码得 `bot_token` 用于收发消息），与 IMA OpenAPI 的 `clientId + apiKey` 凭证体系完全独立
+- 如果未来 IMA 开放 OAuth 端点，可直接复用 iLink 的扫码 UI 组件和轮询模式
+
+**结论**：IMA 当前不支持第三方应用通过扫码获取凭证。保持手动输入方式，但可优化 UX。
+
+**已规划的 UX 优化**（不改变认证机制，降低手动输入摩擦）：
+
+1. **一键打开凭证页面**：凭证输入页面增加按钮直接在系统浏览器打开 `ima.qq.com/agent-interface`
+2. **凭证复用**：当用户已有一个 IMA 源（Wiki 或 Notes）时，添加新 IMA 源自动复用已有凭证，跳过输入步骤直接进入模块选择
+3. **凭证持久化提示**：首次输入成功后提示用户凭证已安全存储，后续无需重复输入
+
 ## 考虑过的替代方案
 
 ### 1. 每个知识源一个独立 MCP Server (ADR-019 方案)
