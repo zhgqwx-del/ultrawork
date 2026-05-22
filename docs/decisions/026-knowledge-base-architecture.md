@@ -949,6 +949,19 @@ IMA API base URL: `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima
 - `knowledge_list_sources`：显示所有源类型 + ID（`[id=8] **微信用户的知识库** [IMA]`）
 - `source_ids` 参数：可选，默认搜全部，引导 AI 省略以获得最佳覆盖
 
+## 知识库能力全景：Phase 完成度总览
+
+| Phase | 内容 | 状态 | 日期 |
+|-------|------|:---:|------|
+| **Phase 1** | Knowledge Sidecar + 本地文件夹 RAG（TF-IDF + FTS5 BM25 + RRF 混合检索）+ MCP bridge + Settings UI | ✅ | 2026-05-16 |
+| **Phase 2** | Parent-Child 双层分块 + 纯 TS 文档解析（PDF/docx/xlsx/pptx）+ SSE 进度 + 文件监听 + Schema 迁移 | ✅ | 2026-05-20 |
+| **Phase 3** | 第三方平台 Adapter（IMA Wiki 搜索）+ 凭证向导 + 统一 ID-based API + 跨源搜索 + Filter Chips | ✅ | 2026-05-20 |
+| **Phase 4a** | IMA Notes 全文搜索+读取 + Wiki get_media_info 增强 + 模块选择 UI（对齐 ima-skill v1.1.7） | ✅ | 2026-05-22 |
+| **Phase 4b** | 检索质量优化（top-K / token 分块 / Reranker） | 📋 规划 | — |
+| **Phase 4c** | IMA 写入能力（新建笔记 / 追加内容 / MCP 工具） | 📋 规划 | — |
+| **Phase 4d** | Wiki 管理能力（网页导入 / 文件上传 / 跨 KB 搜索） | 📋 规划 | — |
+| **Phase 5** | 在线文档/网页爬取索引（类 Cursor @Docs） | 💭 构想 | — |
+
 ## Phase 4：IMA Notes API + 检索增强
 
 > **调研日期**: 2026-05-21
@@ -1034,17 +1047,66 @@ IMA 平台有两套独立的内容体系，使用不同的 API：
 
 ### Phase 4c — IMA 写入能力（规划中）
 
-1. MCP 新增 `knowledge_save_note` 工具：AI 可将分析结果保存回 IMA 笔记
-2. 调用 `import_doc`（新建 Markdown）或 `append_doc`（追加到已有笔记）
-3. UTF-8 编码校验（官方文档强制要求，非 UTF-8 导致不可逆乱码）
-4. 内容大小上限处理（Error 100009 → 拆分为多次 append_doc）
+**目标**：AI 可将分析结果、摘要、会议纪要等保存回 IMA 笔记。
+
+**MCP 工具设计**：
+
+| 工具名 | 功能 | 触发场景 |
+|--------|------|---------|
+| `knowledge_save_note` | 新建笔记或追加到已有笔记 | "帮我记一下"、"保存为笔记"、"把分析结果写到笔记里" |
+
+**API 端点**（来自 ima-skill v1.1.7 官方文档）：
+
+| 端点 | 功能 | 关键参数 |
+|------|------|---------|
+| `import_doc` | 新建笔记 | `content_format`=1(固定 Markdown), `content`, 可选 `folder_id` |
+| `append_doc` | 追加到已有笔记 | `note_id`, `content_format`=1, `content` |
+| `search_note` | 搜索目标笔记（追加前定位） | search_type=0 按标题搜索 |
+
+**实现要点**（来自官方文档强制规则）：
+
+1. **UTF-8 编码校验（强制）**：所有写入字段（`content`、`title`）必须为合法 UTF-8，非 UTF-8 导致 IMA 中不可逆乱码。来源无论是用户输入、文件读取还是 WebFetch，都需显式校验
+2. **内容大小上限**：超过限制返回 Error 210009 → 拆分为多次 `append_doc` 写入
+3. **本地图片不支持**：`content` 仅支持 Markdown 文本，写入前必须过滤 `file:///` 路径的图片引用，保留 `http(s)://` 网络图片
+4. **新建 vs 追加区分**：用户说"新建/创建笔记"→ `import_doc`；"追加到 XX 笔记"→ 先 `search_note` 找 `note_id` 再 `append_doc`；模糊场景（"帮我记一下"）→ 工具需先询问用户意图
+5. **append_doc 是不可撤销操作**：追加前必须确认目标笔记，不可自行猜测
+6. **返回值**：两个端点均返回 `note_id`，可用于后续操作
+
+**错误码**：
+
+| 错误码 | 含义 | 处理 |
+|--------|------|------|
+| 210005 | 不是笔记作者 | 提示用户只能写自己的笔记 |
+| 210009 | 超过大小限制 | 自动拆分为多次 append_doc |
+| 210006 | 笔记已删除 | 提示用户该笔记不存在 |
+| 210035 | 笔记本不存在 | 检查 folder_id |
 
 ### Phase 4d — Wiki 管理能力（规划中）
 
-1. `search_knowledge_base`：按名称搜索知识库（fan-out 跨 KB 搜索的基础）
-2. `get_knowledge_list`：浏览知识库文件夹内容
-3. `import_urls`：添加网页/微信文章到知识库
-4. 文件上传流程（`create_media` → COS Upload → `add_knowledge`）需依赖 `preflight-check` + COS SDK
+**目标**：完整的知识库内容管理——浏览、搜索知识库列表、导入网页、上传文件。
+
+**API 端点（按优先级排序）**：
+
+| 端点 | 功能 | 复杂度 | 价值 |
+|------|------|:---:|------|
+| `search_knowledge_base` | 按名称搜索知识库列表 | 低 | fan-out 跨 KB 搜索基础 |
+| `get_knowledge_base` | 获取知识库详情（描述、推荐问题） | 低 | UI 展示增强 |
+| `get_knowledge_list` | 浏览知识库文件夹内容 | 低 | 文件夹结构导航 |
+| `import_urls` | 添加网页/微信文章到知识库 | 中 | 1-10 个 URL 批量，服务端自动识别类型 |
+| `create_media` → COS → `add_knowledge` | 上传文件 | 高 | 完整 COS 上传流程，需 preflight-check + 临时凭证 + 分片 |
+
+**文件上传流程（复杂度最高）**：
+1. `preflight-check`：检测文件类型 + 大小校验（PDF≤200MB, Excel/TXT≤10MB, 图片≤30MB）
+2. `check_repeated_names`：重名检查（支持批量 ≤2000 个）
+3. `create_media`：获取 COS 临时上传凭证
+4. COS Upload：使用临时凭证上传到腾讯云 COS
+5. `add_knowledge`：注册到知识库（title 必须等于 file_name）
+
+**已知约束**（来自 ima-skill v1.1.7）：
+- `search_knowledge` 无跨 KB 端点，需客户端 fan-out（`search_knowledge_base` 枚举 → 并行 `search_knowledge`）
+- 静默 100 结果截断，无 `is_end`/`next_cursor` 可用于翻页
+- 订阅的知识库（非创建者）返回 220030 无权限
+- 视频类型（Bilibili/YouTube）不支持通过 API 添加，仅 IMA 桌面端
 
 ### OpenClaw / SkillHub 评估结论
 
