@@ -113,8 +113,14 @@ export interface IMAConfig {
   clientId: string
   apiKey: string
   baseUrl?: string // default: https://ima.qq.com
+  /** "wiki" = knowledge base files (Phase 3), "notes" = IMA notes with full-text (Phase 4a) */
+  module?: "wiki" | "notes"
   knowledgeBaseId?: string
   knowledgeBaseName?: string
+  /** Notes module: selected notebook ID */
+  notebookId?: string
+  /** Notes module: selected notebook name */
+  notebookName?: string
 }
 
 export interface CustomAPIConfig {

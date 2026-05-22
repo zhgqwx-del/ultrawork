@@ -318,6 +318,14 @@ const translations: Record<Language, Record<string, string>> = {
     "knowledge.filterLocal": "Local Folders",
     "knowledge.filterPlatform": "Platforms",
     "knowledge.filterApi": "Custom API",
+    "knowledge.selectModule": "Select Module",
+    "knowledge.imaWiki": "Knowledge Base Files",
+    "knowledge.imaWikiDescription": "Search uploaded files (PDF, Word, web pages) — returns snippets",
+    "knowledge.imaNotes": "Notes",
+    "knowledge.imaNotesDescription": "Search notes with full-text retrieval — higher quality results",
+    "knowledge.selectNotebook": "Select Notebook",
+    "knowledge.noNotebooksFound": "No notebooks found",
+    "knowledge.notes": "{count} notes",
 
     // MCP
     "mcp.noServers": "No MCP servers configured",
@@ -776,6 +784,14 @@ const translations: Record<Language, Record<string, string>> = {
     "knowledge.filterLocal": "本地文件夹",
     "knowledge.filterPlatform": "第三方平台",
     "knowledge.filterApi": "自定义 API",
+    "knowledge.selectModule": "选择模块",
+    "knowledge.imaWiki": "知识库文件",
+    "knowledge.imaWikiDescription": "搜索上传的文件（PDF、Word、网页）— 返回片段",
+    "knowledge.imaNotes": "笔记",
+    "knowledge.imaNotesDescription": "搜索笔记并获取全文 — 检索质量更高",
+    "knowledge.selectNotebook": "选择笔记本",
+    "knowledge.noNotebooksFound": "未找到笔记本",
+    "knowledge.notes": "{count} 篇笔记",
 
     // MCP
     "mcp.noServers": "未配置 MCP 服务",

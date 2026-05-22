@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react"
-import { FolderOpen, Globe, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Plug } from "lucide-react"
+import { useState, useCallback, useRef } from "react"
+import { FolderOpen, Globe, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Plug, FileText, BookOpen } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -33,11 +33,15 @@ interface RemoteBase {
   documentCount?: number
 }
 
+type IMAModule = "wiki" | "notes"
+
 type Step =
   | { type: "select" }
   | { type: "ima-credentials" }
   | { type: "ima-testing" }
-  | { type: "ima-select-base"; sourceId: number; bases: RemoteBase[] }
+  | { type: "ima-select-module" }
+  | { type: "ima-loading-bases"; module: IMAModule }
+  | { type: "ima-select-base"; sourceId: number; bases: RemoteBase[]; module: IMAModule }
   | { type: "ima-error"; message: string }
   | { type: "ima-saving" }
 
@@ -54,12 +58,14 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
   const [clientId, setClientId] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [showApiKey, setShowApiKey] = useState(false)
+  const savingRef = useRef(false)
 
   const reset = useCallback(() => {
     setStep({ type: "select" })
     setClientId("")
     setApiKey("")
     setShowApiKey(false)
+    savingRef.current = false
   }, [])
 
   const handleOpenChange = useCallback(
@@ -75,40 +81,82 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
     onAddLocalFolder()
   }, [handleOpenChange, onAddLocalFolder])
 
+  /** Test credentials by trying the Wiki API (lightweight call) */
   const handleTestConnection = useCallback(async () => {
     setStep({ type: "ima-testing" })
-    let createdId: number | null = null
+    let tempId: number | null = null
     try {
-      // Create IMA source
-      const { id } = await kbFetch<{ id: number }>("/sources", {
+      // Quick validation: try listing wiki bases (same auth for both modules)
+      const tempSource = await kbFetch<{ id: number }>("/sources", {
         method: "POST",
         body: JSON.stringify({
           type: "ima",
           name: "Tencent IMA",
-          config: { clientId, apiKey },
+          config: { clientId, apiKey, module: "wiki" },
+        }),
+      })
+      tempId = tempSource.id
+
+      const result = await kbFetch<{ ok: boolean; message?: string }>(
+        `/sources/${tempId}/test-connection`,
+        { method: "POST" },
+      )
+
+      // Clean up temp source — we'll create the real one after module selection
+      await kbFetch(`/sources/${tempId}`, { method: "DELETE" }).catch(() => {})
+      tempId = null
+
+      if (result.ok) {
+        setStep({ type: "ima-select-module" })
+      } else {
+        setStep({ type: "ima-error", message: result.message || t("knowledge.connectionFailed") })
+      }
+    } catch (err) {
+      if (tempId != null) {
+        await kbFetch(`/sources/${tempId}`, { method: "DELETE" }).catch(() => {})
+      }
+      setStep({
+        type: "ima-error",
+        message: err instanceof Error ? err.message : t("knowledge.connectionFailed"),
+      })
+    }
+  }, [clientId, apiKey, t])
+
+  /** After module selection, create source and load bases/notebooks */
+  const handleSelectModule = useCallback(async (module: IMAModule) => {
+    setStep({ type: "ima-loading-bases", module })
+    let createdId: number | null = null
+    try {
+      const sourceName = module === "notes" ? "IMA Notes" : "IMA Wiki"
+      const { id } = await kbFetch<{ id: number }>("/sources", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "ima",
+          name: sourceName,
+          config: { clientId, apiKey, module },
         }),
       })
       createdId = id
 
-      // Test connection
+      // Test connection to get bases/notebooks list
       const result = await kbFetch<{ ok: boolean; message?: string; bases?: RemoteBase[] }>(
         `/sources/${id}/test-connection`,
         { method: "POST" },
       )
 
       if (result.ok && result.bases && result.bases.length > 0) {
-        setStep({ type: "ima-select-base", sourceId: id, bases: result.bases })
-      } else if (result.ok && (!result.bases || result.bases.length === 0)) {
+        setStep({ type: "ima-select-base", sourceId: id, bases: result.bases, module })
+      } else if (result.ok) {
         await kbFetch(`/sources/${id}`, { method: "DELETE" }).catch(() => {})
-        createdId = null
-        setStep({ type: "ima-error", message: t("knowledge.noBasesFound") })
+        const noItemsMsg = module === "notes"
+          ? t("knowledge.noNotebooksFound")
+          : t("knowledge.noBasesFound")
+        setStep({ type: "ima-error", message: noItemsMsg })
       } else {
         await kbFetch(`/sources/${id}`, { method: "DELETE" }).catch(() => {})
-        createdId = null
         setStep({ type: "ima-error", message: result.message || t("knowledge.connectionFailed") })
       }
     } catch (err) {
-      // Clean up orphaned source if creation succeeded but test failed
       if (createdId != null) {
         await kbFetch(`/sources/${createdId}`, { method: "DELETE" }).catch(() => {})
       }
@@ -121,10 +169,12 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
 
   const handleSelectBase = useCallback(
     async (base: RemoteBase) => {
-      if (step.type !== "ima-select-base") return
+      if (step.type !== "ima-select-base" || savingRef.current) return
+      savingRef.current = true
       setStep({ type: "ima-saving" })
       try {
-        // Update source with selected knowledge base
+        const isNotes = step.module === "notes"
+        // Update source with selected base/notebook
         await kbFetch(`/sources/${step.sourceId}`, {
           method: "PUT",
           body: JSON.stringify({
@@ -132,8 +182,10 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
             config: {
               clientId,
               apiKey,
-              knowledgeBaseId: base.id,
-              knowledgeBaseName: base.name,
+              module: step.module,
+              ...(isNotes
+                ? { notebookId: base.id, notebookName: base.name }
+                : { knowledgeBaseId: base.id, knowledgeBaseName: base.name }),
             },
           }),
         })
@@ -144,6 +196,7 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
         handleOpenChange(false)
         onAdded()
       } catch (err) {
+        savingRef.current = false
         setStep({
           type: "ima-error",
           message: err instanceof Error ? err.message : "Failed to save",
@@ -285,12 +338,74 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
           </>
         )}
 
+        {step.type === "ima-select-module" && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <button onClick={() => setStep({ type: "ima-credentials" })} className="rounded p-0.5 hover:bg-[var(--color-bg-hover)]">
+                  <ArrowLeft className="size-4" />
+                </button>
+                {t("knowledge.selectModule")}
+              </DialogTitle>
+              <DialogDescription>{t("knowledge.connectionSuccess")}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <button
+                onClick={() => handleSelectModule("wiki")}
+                className="flex w-full items-center gap-3 rounded-lg border border-[var(--color-border)] p-4 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+              >
+                <div className="flex size-10 items-center justify-center rounded-lg bg-orange-500/10">
+                  <FileText className="size-5 text-orange-500" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-fg)]">
+                    {t("knowledge.imaWiki")}
+                  </div>
+                  <div className="text-xs text-[var(--color-fg-muted)]">
+                    {t("knowledge.imaWikiDescription")}
+                  </div>
+                </div>
+              </button>
+              <button
+                onClick={() => handleSelectModule("notes")}
+                className="flex w-full items-center gap-3 rounded-lg border border-[var(--color-border)] p-4 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+              >
+                <div className="flex size-10 items-center justify-center rounded-lg bg-green-500/10">
+                  <BookOpen className="size-5 text-green-500" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-fg)]">
+                    {t("knowledge.imaNotes")}
+                  </div>
+                  <div className="text-xs text-[var(--color-fg-muted)]">
+                    {t("knowledge.imaNotesDescription")}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </>
+        )}
+
+        {step.type === "ima-loading-bases" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{t("knowledge.imaKnowledge")}</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col items-center justify-center py-8">
+              <Loader2 className="size-8 animate-spin text-[var(--color-fg-muted)]" />
+              <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("knowledge.testing")}</p>
+            </div>
+          </>
+        )}
+
         {step.type === "ima-select-base" && (
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CheckCircle2 className="size-4 text-green-500" />
-                {t("knowledge.selectKnowledgeBase")}
+                {step.module === "notes"
+                  ? t("knowledge.selectNotebook")
+                  : t("knowledge.selectKnowledgeBase")}
               </DialogTitle>
               <DialogDescription>{t("knowledge.connectionSuccess")}</DialogDescription>
             </DialogHeader>
@@ -313,7 +428,9 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
                   </div>
                   {base.documentCount != null && (
                     <span className="ml-2 shrink-0 text-xs text-[var(--color-fg-muted)]">
-                      {t("knowledge.documents").replace("{count}", String(base.documentCount))}
+                      {step.module === "notes"
+                        ? t("knowledge.notes").replace("{count}", String(base.documentCount))
+                        : t("knowledge.documents").replace("{count}", String(base.documentCount))}
                     </span>
                   )}
                 </button>

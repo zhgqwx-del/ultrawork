@@ -1,7 +1,8 @@
 # ADR-026: 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API
 
-**状态**: Proposed
+**状态**: Accepted (Phase 1-3 + Phase 4a 实现)
 **日期**: 2026-05-13
+**最后更新**: 2026-05-22 (Phase 4a 完成，对齐官方 ima-skill v1.1.7)
 **关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考)
 
 ## 背景
@@ -948,60 +949,105 @@ IMA API base URL: `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima
 - `knowledge_list_sources`：显示所有源类型 + ID（`[id=8] **微信用户的知识库** [IMA]`）
 - `source_ids` 参数：可选，默认搜全部，引导 AI 省略以获得最佳覆盖
 
-## Phase 4 规划：IMA Notes API + 检索优化
+## Phase 4：IMA Notes API + 检索增强
 
 > **调研日期**: 2026-05-21
-> **状态**: 规划中
+> **Phase 4a 完成日期**: 2026-05-22
 
 ### 调研发现
 
 IMA 平台有两套独立的内容体系，使用不同的 API：
 
-| 内容体系 | API 前缀 | 全文读取 | 正文搜索 | 写入 | 当前状态 |
+| 内容体系 | API 前缀 | 全文读取 | 正文搜索 | 写入 | 状态 |
 |----------|---------|:-------:|:-------:|:---:|---------|
-| **知识库文件**（PDF/Word/网页） | `/openapi/wiki/v1` | 否（只返回片段） | 关键词匹配 | 上传文件 | Phase 3 已接入搜索 |
-| **笔记**（Notes） | `/openapi/note/v1` | **是**（`get_doc_content`） | **正文全文搜索** | 创建/追加 | **未接入** |
+| **知识库文件**（PDF/Word/网页） | `/openapi/wiki/v1` | 通过 `get_media_info` 间接 | 关键词匹配 | 上传文件 | Phase 3 已接入 + Phase 4a 增强 |
+| **笔记**（Notes） | `/openapi/note/v1` | **是**（`get_doc_content`） | **正文全文搜索** | 创建/追加 | **Phase 4a 已接入** |
 
-**核心发现**：IMA 笔记系统提供完整的 RAG 能力链（搜索 → 全文读取），而知识库文件系统没有全文读取 API。当前 Phase 3 的 IMA 搜索效果有限，正是因为只接了 Wiki 模块。
+**核心发现**：IMA 笔记系统提供完整的 RAG 能力链（搜索 → 全文读取），而知识库文件系统没有全文读取 API。Phase 3 的 IMA 搜索效果有限正是因为只接了 Wiki 模块。
 
-### Notes API 关键端点
+### 官方 API 参考（对齐 ima-skill v1.1.7）
 
-| 端点 | 功能 | 价值 |
-|------|------|------|
-| `search_note_book` | 搜索笔记（`search_type=1` 正文全文搜索） | 比 Wiki `search_knowledge` 质量更高 |
-| `get_doc_content` | 通过 `doc_id` 获取完整纯文本 | **解决当前只有片段的核心问题** |
-| `list_note_folder_by_cursor` | 列出笔记本 | 浏览结构 |
-| `list_note_by_folder_id` | 浏览笔记本内容 | 浏览结构 |
-| `import_doc` | 创建新笔记（Markdown） | AI 写回能力 |
-| `append_doc` | 追加内容到已有笔记 | AI 写回能力 |
+2026-05-22 获取到官方 ima-skill 源码包（v1.1.7），包含 Notes 和 Knowledge Base 两个子模块的完整 API 文档。以下端点信息已与官方实现精确对齐。
 
-认证方式与 Wiki API 完全相同（`ima-openapi-clientid` + `ima-openapi-apikey`），无需额外凭证。
+#### Notes 模块（`/openapi/note/v1`）
 
-### 实施计划
+| 端点 | 功能 | Phase 4a 状态 | 关键参数 |
+|------|------|:---:|---------|
+| `search_note` | 搜索笔记 | ✅ 已实现 | `search_type`(0=标题/1=正文), `query_info`({title?/content?}), offset 分页(start/end) |
+| `get_doc_content` | 获取笔记全文 | ✅ 已实现 | `note_id`(非 doc_id), `target_content_format`(0=纯文本,推荐) |
+| `list_notebook` | 列出笔记本 | ✅ 已实现 | `cursor`(首页"0"), `limit`(≤20); 响应: `note_folder_infos[]` |
+| `list_note` | 浏览笔记本内容 | 未实现 | `folder_id`, cursor 分页 |
+| `import_doc` | 创建新笔记(Markdown) | 未实现(Phase 4c) | `content_format`=1(固定), `content`, 可选 `folder_id` |
+| `append_doc` | 追加内容到已有笔记 | 未实现(Phase 4c) | `note_id`, `content_format`=1, `content` |
 
-**Phase 4a — IMA Notes 读取集成**（优先）
+> **搜索响应嵌套结构**：`search_note_infos[].note_book_info.note_id`（非平铺），含 `note_ext_info.folder_id/folder_name`。
+>
+> **笔记本类型过滤**：`folder_type` 0=用户自建, 1=全部笔记(根目录), 2=未分类。UI 只展示 `folder_type=0`。
+>
+> **Error 210005 (not author)**：共享/订阅笔记的预期行为，`get_doc_content` 做容错降级。
 
-1. `IMAAdapter` 新增 `searchNotes()` 方法：`search_note_book`（正文搜索） → 取 `doc_id` → `get_doc_content`（全文）
-2. 知识源配置区分 "IMA 知识库" 和 "IMA 笔记"（复用同一凭证，`config.module: "wiki" | "notes"`）
-3. `knowledge_search` 跨源搜索自动覆盖两个模块
-4. AddSourceDialog IMA 流程新增模块选择步骤
+#### Knowledge Base 模块（`/openapi/wiki/v1`）
 
-**Phase 4b — 检索质量优化**
+| 端点 | 功能 | 当前状态 | 关键参数 |
+|------|------|:---:|---------|
+| `search_knowledge` | 搜索知识库内容 | ✅ Phase 3 | `query`, `knowledge_base_id`, cursor 分页 |
+| `get_addable_knowledge_base_list` | 列出可添加的知识库 | ✅ Phase 3 | cursor 分页, limit(≤50) |
+| `get_media_info` | 获取媒体原文信息 | ✅ Phase 4a | `media_id`; 笔记类型(media_type=11)跨模块到 `get_doc_content` |
+| `search_knowledge_base` | 按名称搜索知识库列表 | 未实现 | `query`, cursor, limit(≤20) |
+| `get_knowledge_base` | 获取知识库详情 | 未实现 | `ids`(1-20个) |
+| `get_knowledge_list` | 浏览知识库内容/文件夹 | 未实现 | `knowledge_base_id`, 可选 `folder_id`, cursor 分页 |
+| `create_media` → COS → `add_knowledge` | 上传文件 | 未实现 | 完整 COS 上传流程 |
+| `import_urls` | 添加网页/微信文章 | 未实现 | `urls`(1-10个), `knowledge_base_id` |
+| `check_repeated_names` | 文件重名检查 | 未实现 | `params[].name/media_type` |
+
+### Phase 4a 实现详情（✅ 已完成 2026-05-22）
+
+**目标**：IMA Notes 读取集成 + Wiki 搜索增强
+
+**实际实现**：
+
+1. **`IMAAdapter` Notes 搜索+全文**：`search_note`（search_type=1 正文搜索）→ `get_doc_content`（note_id + target_content_format=0）并行获取全文
+2. **`IMAConfig.module` 字段**：`"wiki" | "notes"` 区分两种模式，复用同一凭证；`notebookId/notebookName` 字段存储选中的笔记本
+3. **AddSourceDialog 模块选择步骤**：凭证验证 → 新增"知识库文件 vs 笔记"选择 → 分支到不同的 base/notebook 列表
+4. **Wiki 搜索 `get_media_info` 增强**：搜索结果中笔记类型条目（media_type=11）自动跨模块读取全文（`get_media_info` → `notebook_ext_info.notebook_id` → `get_doc_content`）
+5. **`knowledge_search` 自动覆盖**：MCP bridge 和 HTTP 搜索端点已自动搜索所有 enabled sources，Notes 类型 IMA 源无缝接入
+6. **i18n**：7 个新键（selectModule/imaWiki/imaNotes/selectNotebook 等），中英双语
+
+**关键修正（对齐 ima-skill v1.1.7）**：
+- 端点名 `list_note_folder_by_cursor` → `list_notebook`, `search_note_book` → `search_note`
+- 参数 `doc_id` → `note_id`, 新增必填 `target_content_format: 0`
+- 响应嵌套结构 `search_note_infos[].note_book_info.note_id`
+- `list_notebook` 首页 cursor 为 `"0"`（非空字符串），limit 上限 20
+- `search_note` 使用 offset 分页（start/end），非 cursor 分页
+
+### Phase 4b — 检索质量优化（规划中）
 
 1. 默认 top-K 从 5 提高到 8-10（无 reranker 时需要更多候选）
 2. 评估 token-based 分块替代行数分块（parent 512-1024 tokens）
 3. 评估轻量 Reranker（cross-encoder 精排）可行性
 
-**Phase 4c — IMA 写入能力**（可选）
+### Phase 4c — IMA 写入能力（规划中）
 
 1. MCP 新增 `knowledge_save_note` 工具：AI 可将分析结果保存回 IMA 笔记
-2. 调用 `import_doc`（新建）或 `append_doc`（追加）
+2. 调用 `import_doc`（新建 Markdown）或 `append_doc`（追加到已有笔记）
+3. UTF-8 编码校验（官方文档强制要求，非 UTF-8 导致不可逆乱码）
+4. 内容大小上限处理（Error 100009 → 拆分为多次 append_doc）
+
+### Phase 4d — Wiki 管理能力（规划中）
+
+1. `search_knowledge_base`：按名称搜索知识库（fan-out 跨 KB 搜索的基础）
+2. `get_knowledge_list`：浏览知识库文件夹内容
+3. `import_urls`：添加网页/微信文章到知识库
+4. 文件上传流程（`create_media` → COS Upload → `add_knowledge`）需依赖 `preflight-check` + COS SDK
 
 ### OpenClaw / SkillHub 评估结论
 
-`skillhub.cn/skills/ima-skills` 和 `ima.qq.com/agent-interface` 调研结论：
-- `agent-interface` 是凭证管理页面，非独立协议
-- IMA Skills 是 OpenClaw Skill 包装，底层调用同一套 HTTP API
+2026-05-22 获取到官方 ima-skill v1.1.7 源码包（从 `skillhub.cn/skills/ima-skills` 下载），完整对齐：
+- **官方 ima-skill 结构**：根 `SKILL.md` + `notes/SKILL.md` + `knowledge-base/SKILL.md` + `ima_api.cjs`（统一 HTTP 客户端）
+- **`ima_api.cjs`**：Node.js CJS 脚本，凭证优先级 options > env > `~/.config/ima/` 文件，含每日自动更新检查
+- **已知限制**：`search_knowledge` 无跨 KB 端点（需客户端 fan-out）、无相关性评分、静默 100 结果截断
+- **权限模型**：`get_doc_content` 要求 note author 身份（Error 210005），订阅知识库 `search_knowledge` 返回 220030
+- `ima.qq.com/agent-interface` 是凭证管理页面，非独立协议
 - 无需通过 OpenClaw Skill 协议接入，直接调 HTTP API 即可
 
 ## 考虑过的替代方案

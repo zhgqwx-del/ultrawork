@@ -126,6 +126,10 @@ export class Indexer {
     this.indexingInProgress.delete(folderPath)
     this.statuses.set(folderPath, status)
     this.emitProgress(status)
+
+    // Persist final status to DB so it survives sidecar restart & REST fetches
+    this.syncStatusToDB(folderPath, status)
+
     return status
   }
 
@@ -281,6 +285,21 @@ export class Indexer {
   async removeFolder(folderPath: string): Promise<void> {
     this.store.removeFolder(folderPath)
     this.statuses.delete(folderPath)
+  }
+
+  /** Persist indexing result to knowledge_sources DB row */
+  private syncStatusToDB(folderPath: string, status: IndexStatus): void {
+    try {
+      const ks = this.store.getKnowledgeSourceByFolderPath(folderPath)
+      if (ks) {
+        this.store.updateKnowledgeSource(ks.id, {
+          status: status.status,
+          error_message: status.error ?? null,
+        })
+      }
+    } catch (err) {
+      console.error(`[indexer] Failed to sync status to DB for ${folderPath}:`, err)
+    }
   }
 
   getStatus(folderPath: string): IndexStatus {

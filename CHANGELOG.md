@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段
 - 知识库能力 Phase 3（ADR-026）：第三方平台 Adapter（IMA 优先）+ 凭证配置向导 + 测试连接 + 统一 ID-based API（Schema v3）+ 跨源搜索（本地+IMA 合并排序）+ Filter Chips 知识源分类筛选
 - 知识库能力 Phase 2（ADR-026）：Parent-Child 双层分块（父块 ~60 行上下文 + 子块 ~12 行精确匹配）+ MarkItDown 集成 (PDF/docx/xlsx/pptx) + SSE 索引进度实时推送 + 文件监听自动重索引 + Schema 迁移系统
 - 知识库能力 Phase 1（ADR-026）：Knowledge Sidecar (:4098) + 本地文件夹 RAG + 混合检索 (BM25+TF-IDF+RRF) + MCP tool 对接 AI + Settings 知识库管理 UI
@@ -26,6 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 主内容区上下不对称：恢复顶部圆角和间距，与底部形成对称卡片布局（ADR-025）
 - 侧边栏折叠态 macOS 交通灯溢出：平台感知宽度适配（macOS 68px / 其他 48px）（ADR-025）
 - 侧边栏展开/折叠切换时 Logo 和底部头像垂直位置跳变（ADR-025）
+- 知识库状态点刷新后回退：初次加载显示绿点（已索引），刷新后变灰点（空闲）。根因：`GET /kb/sources` 列表端点漏合并 indexer 运行时 status 字段 + indexer 完成索引后不写回 DB。修复：REST 端点补充 `status` 合并 + indexer 新增 `syncStatusToDB()` 持久化
 - 知识库索引 SSE 竞态条件：后端索引完成过快导致 SSE 事件在前端 source 加入 state 之前到达被丢弃，进度条永久停在扫描态。修复：后端延迟 50ms 启动索引 + 前端 500ms fallback 刷新
 - 知识库本地文件夹索引进度条一致性：所有文件夹索引时统一显示进度条（扫描阶段不确定态 + 索引阶段确定态 + 完成过渡 1.2s），重建索引时正确重置进度状态
 - 运行时模型切换后 `sending` 状态卡住导致输入框永久禁用（`server.instance.disposed` 事件重置状态）

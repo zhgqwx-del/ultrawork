@@ -61,6 +61,7 @@ export function createApp(deps: AppDeps): Hono {
           const indexerStatus = indexer.getStatus(config.folderPath)
           return {
             ...ksToResponse(ks),
+            status: indexerStatus.status, // runtime status overrides DB
             totalFiles: indexerStatus.totalFiles,
             indexedFiles: indexerStatus.indexedFiles,
             skippedFiles: indexerStatus.skippedFiles,
@@ -131,6 +132,7 @@ export function createApp(deps: AppDeps): Hono {
       }
 
       // Remote source types (IMA, custom_api): just create and return
+      console.log(`[kb-server] create source: type=${type} name=${name} module=${(config as any).module ?? "n/a"}`)
       const id = store.createKnowledgeSource(type, name, config)
       return c.json({ id, type, name, status: "idle" }, 201)
     } catch (err) {
@@ -215,7 +217,9 @@ export function createApp(deps: AppDeps): Hono {
       if (!adapter) return c.json({ error: `No adapter for type: ${ks.type}` }, 400)
 
       const config = JSON.parse(ks.config_json)
+      console.log(`[kb-server] test-connection id=${id} type=${ks.type} module=${config.module ?? "default"}`)
       const result = await adapter.testConnection(config)
+      console.log(`[kb-server] test-connection result: ok=${result.ok} bases=${result.bases?.length ?? 0}${result.message ? ` msg=${result.message}` : ""}`)
 
       store.updateKnowledgeSource(id, {
         status: result.ok ? "connected" : "error",
@@ -224,6 +228,7 @@ export function createApp(deps: AppDeps): Hono {
 
       return c.json(result)
     } catch (err) {
+      console.error(`[kb-server] test-connection error:`, err)
       return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500)
     }
   })
@@ -362,16 +367,20 @@ export function createApp(deps: AppDeps): Hono {
         return true
       })
 
+      console.log(`[kb-server] search query="${body.query}" local=${localResults.length} remoteSources=${remoteSources.length}`)
+
       const remoteResults: import("./types").AdapterSearchResult[] = []
       for (const ks of remoteSources) {
         const adapter = getAdapter(ks.type)
         if (!adapter) continue
         try {
           const config = JSON.parse(ks.config_json)
+          console.log(`[kb-server] searching adapter: id=${ks.id} type=${ks.type} module=${config.module ?? "wiki"}`)
           const results = await adapter.search(body.query, config, { limit: maxResults })
+          console.log(`[kb-server] adapter ${ks.id} returned ${results.length} results, hasFullContent=${results.filter(r => r.metadata?.hasFullContent).length}`)
           remoteResults.push(...results.map((r) => ({ ...r, sourceId: ks.id })))
         } catch (err) {
-          console.error(`[search] Adapter ${ks.type} error:`, err)
+          console.error(`[kb-server] adapter ${ks.type} search error:`, err)
         }
       }
 
