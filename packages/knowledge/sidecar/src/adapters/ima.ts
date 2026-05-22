@@ -1,4 +1,4 @@
-import type { KnowledgeAdapter, TestConnectionResult, RemoteKnowledgeBase } from "./types"
+import type { KnowledgeAdapter, TestConnectionResult, RemoteKnowledgeBase, WriteNoteResult } from "./types"
 import type { AdapterSearchResult, IMAConfig } from "../types"
 
 const DEFAULT_BASE_URL = "https://ima.qq.com"
@@ -450,6 +450,97 @@ export class IMAAdapter implements KnowledgeAdapter {
   }
 
   // ---------------------------------------------------------------------------
+  // Notes write operations (Phase 4c)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create a new note via `import_doc`.
+   *
+   * Official API: POST /openapi/note/v1/import_doc
+   * - content_format: 1 (Markdown only)
+   * - content: Markdown string (must be valid UTF-8, no local images)
+   * - folder_id: optional notebook ID
+   */
+  async createNote(
+    config: unknown,
+    content: string,
+    options?: { title?: string; folderId?: string },
+  ): Promise<WriteNoteResult> {
+    const imaConfig = config as IMAConfig
+    const body: Record<string, unknown> = {
+      content_format: 1,
+      content: sanitizeNoteContent(content, options?.title),
+    }
+    if (options?.folderId && options.folderId !== "__all_notes__") {
+      body.folder_id = options.folderId
+    }
+
+    console.log(`[ima] import_doc: ${content.length} chars, folder=${options?.folderId ?? "default"}`)
+    const resp = await this.imaFetch<{ note_id: string }>(
+      imaConfig,
+      "/openapi/note/v1/import_doc",
+      body,
+      DOC_CONTENT_TIMEOUT,
+    )
+
+    const code = this.responseCode(resp)
+    if (code !== 0) {
+      throw new Error(this.formatNoteWriteError(code, resp))
+    }
+
+    const noteId = resp.data?.note_id
+    if (!noteId) throw new Error("import_doc returned no note_id")
+    console.log(`[ima] import_doc success: note_id=${noteId}`)
+    return { noteId }
+  }
+
+  /**
+   * Append content to an existing note via `append_doc`.
+   *
+   * Official API: POST /openapi/note/v1/append_doc
+   * - note_id: target note (must be user's own note)
+   * - content_format: 1 (Markdown only)
+   * - content: Markdown string to append
+   */
+  async appendNote(
+    config: unknown,
+    noteId: string,
+    content: string,
+  ): Promise<WriteNoteResult> {
+    const imaConfig = config as IMAConfig
+
+    console.log(`[ima] append_doc: note_id=${noteId}, ${content.length} chars`)
+    const resp = await this.imaFetch<{ note_id: string }>(
+      imaConfig,
+      "/openapi/note/v1/append_doc",
+      {
+        note_id: noteId,
+        content_format: 1,
+        content: sanitizeNoteContent(content),
+      },
+      DOC_CONTENT_TIMEOUT,
+    )
+
+    const code = this.responseCode(resp)
+    if (code !== 0) {
+      throw new Error(this.formatNoteWriteError(code, resp))
+    }
+
+    console.log(`[ima] append_doc success: note_id=${noteId}`)
+    return { noteId: resp.data?.note_id ?? noteId }
+  }
+
+  private formatNoteWriteError(code: number, resp: IMAResponse<unknown>): string {
+    switch (code) {
+      case 210005: return "Permission denied — you can only write to your own notes"
+      case 210009: return "Content too large — try splitting into smaller parts"
+      case 210006: return "Note has been deleted"
+      case 210035: return "Notebook not found"
+      default: return this.formatErrorMessage(code, resp)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
@@ -462,4 +553,23 @@ export class IMAAdapter implements KnowledgeAdapter {
       default: return this.responseMsg(resp) || `Error code: ${code}`
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+/** Strip local image references from Markdown content (IMA notes don't support local images) */
+const LOCAL_IMG_RE = /!\[([^\]]*)\]\((file:\/\/\/[^)]+|\/[Uu]sers\/[^)]+|[A-Z]:\\[^)]+)\)/g
+
+function sanitizeNoteContent(content: string, title?: string): string {
+  let result = content.replace(LOCAL_IMG_RE, "")
+  // Prepend title as H1 if provided and content doesn't already start with one
+  if (title && !result.trimStart().startsWith("# ")) {
+    result = `# ${title}\n\n${result}`
+  }
+  if (!result.trim()) {
+    throw new Error("Note content is empty after sanitization")
+  }
+  return result
 }

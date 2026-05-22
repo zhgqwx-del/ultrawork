@@ -13,6 +13,11 @@ export interface RemoteKnowledgeBase {
   documentCount?: number
 }
 
+/** Result of a note write operation (create or append) */
+export interface WriteNoteResult {
+  noteId: string
+}
+
 export interface KnowledgeAdapter {
   readonly type: string
 
@@ -28,4 +33,10 @@ export interface KnowledgeAdapter {
 
   /** Optional: list available sub-bases (e.g. IMA has multiple knowledge bases) */
   listBases?(config: unknown): Promise<RemoteKnowledgeBase[]>
+
+  /** Optional: create a new note with Markdown content */
+  createNote?(config: unknown, content: string, options?: { title?: string; folderId?: string }): Promise<WriteNoteResult>
+
+  /** Optional: append Markdown content to an existing note */
+  appendNote?(config: unknown, noteId: string, content: string): Promise<WriteNoteResult>
 }

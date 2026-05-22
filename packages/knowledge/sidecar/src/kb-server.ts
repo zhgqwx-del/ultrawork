@@ -391,6 +391,84 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   // ---------------------------------------------------------------------------
+  // Notes write endpoints (Phase 4c)
+  // ---------------------------------------------------------------------------
+
+  app.post("/kb/notes/create", async (c) => {
+    try {
+      const body = await c.req.json<{
+        content: string
+        title?: string
+        source_id?: number
+      }>()
+
+      if (!body.content?.trim()) {
+        return c.json({ error: "content is required" }, 400)
+      }
+
+      const source = findNotesSource(body.source_id)
+      if (!source) return c.json({ error: "No connected IMA Notes source found" }, 400)
+
+      const config = JSON.parse(source.ks.config_json)
+      const adapter = getAdapter(source.ks.type)
+      if (!adapter?.createNote) return c.json({ error: "Adapter does not support note creation" }, 400)
+
+      console.log(`[kb-server] notes/create: source=${source.ks.id} ${body.content.length} chars`)
+      const result = await adapter.createNote(config, body.content, {
+        title: body.title,
+        folderId: config.notebookId,
+      })
+      return c.json(result, 201)
+    } catch (err) {
+      console.error(`[kb-server] notes/create error:`, err)
+      return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500)
+    }
+  })
+
+  app.post("/kb/notes/append", async (c) => {
+    try {
+      const body = await c.req.json<{
+        content: string
+        note_id: string
+        source_id?: number
+      }>()
+
+      if (!body.content?.trim()) {
+        return c.json({ error: "content is required" }, 400)
+      }
+      if (!body.note_id) {
+        return c.json({ error: "note_id is required" }, 400)
+      }
+
+      const source = findNotesSource(body.source_id)
+      if (!source) return c.json({ error: "No connected IMA Notes source found" }, 400)
+
+      const config = JSON.parse(source.ks.config_json)
+      const adapter = getAdapter(source.ks.type)
+      if (!adapter?.appendNote) return c.json({ error: "Adapter does not support note append" }, 400)
+
+      console.log(`[kb-server] notes/append: source=${source.ks.id} note_id=${body.note_id} ${body.content.length} chars`)
+      const result = await adapter.appendNote(config, body.note_id, body.content)
+      return c.json(result)
+    } catch (err) {
+      console.error(`[kb-server] notes/append error:`, err)
+      return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500)
+    }
+  })
+
+  /** Find a connected IMA Notes source, optionally by ID */
+  function findNotesSource(sourceId?: number) {
+    const ksSources = store.listKnowledgeSources()
+    const ks = ksSources.find((s) => {
+      if (s.type !== "ima" || s.enabled !== 1) return false
+      if (sourceId) return s.id === sourceId
+      const config = JSON.parse(s.config_json)
+      return config.module === "notes"
+    })
+    return ks ? { ks } : null
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 

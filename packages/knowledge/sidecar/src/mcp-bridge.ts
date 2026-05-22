@@ -26,7 +26,7 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
 
   const server = new McpServer({
     name: "knowledge-base",
-    version: "0.3.0",
+    version: "0.4.0",
   })
 
   server.tool(
@@ -222,6 +222,92 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
       } catch (err) {
         return {
           content: [{ type: "text" as const, text: `Failed to list knowledge sources: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
+        }
+      }
+    },
+  )
+
+  server.tool(
+    "knowledge_save_note",
+    "Save content as a note to the user's IMA knowledge platform. Use this when the user asks to save, record, or write something to their notes (e.g. '帮我记一下', '保存为笔记', 'save this to my notes'). Can create a new note or append to an existing one. Only works with IMA Notes sources that are connected.",
+    {
+      content: z.string().describe("Markdown content to save"),
+      title: z.string().optional().describe("Title for a new note (ignored when appending). If omitted, the first line of content is used."),
+      note_id: z.string().optional().describe("If provided, append to this existing note instead of creating a new one. Get note_id from a previous knowledge_search result's metadata.noteId field."),
+      source_id: z.number().optional().describe("ID of the IMA Notes source to use. Omit to auto-select the first connected IMA Notes source."),
+    },
+    async ({ content, title, note_id, source_id }) => {
+      console.error(`[mcp-bridge] knowledge_save_note called: note_id=${note_id ?? "new"}, source_id=${source_id ?? "auto"}, ${content.length} chars`)
+      try {
+        if (!deps) {
+          // Proxy mode — call HTTP API
+          const resp = await fetch(`${KB_BASE}/kb/notes/${note_id ? "append" : "create"}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content, title, note_id, source_id }),
+          })
+          if (!resp.ok) {
+            const body = await resp.text().catch(() => "")
+            throw new Error(`KB API ${resp.status}: ${body}`)
+          }
+          const data = await resp.json() as { noteId: string }
+          const action = note_id ? "appended to" : "created"
+          return {
+            content: [{ type: "text" as const, text: `Note ${action} successfully (note_id: ${data.noteId})` }],
+          }
+        }
+
+        // Direct mode — find the IMA Notes source and call adapter
+        const ksSources = deps.store.listKnowledgeSources()
+        const notesSource = ksSources.find((ks) => {
+          if (ks.type !== "ima" || ks.enabled !== 1) return false
+          if (source_id) return ks.id === source_id
+          const config = JSON.parse(ks.config_json)
+          return config.module === "notes"
+        })
+
+        if (!notesSource) {
+          return {
+            content: [{ type: "text" as const, text: "No connected IMA Notes source found. Please add one in Settings → Knowledge Base first." }],
+            isError: true,
+          }
+        }
+
+        const config = JSON.parse(notesSource.config_json)
+        const adapter = getAdapter(notesSource.type)
+
+        let result
+        if (note_id) {
+          if (!adapter?.appendNote) {
+            return {
+              content: [{ type: "text" as const, text: `Adapter ${notesSource.type} does not support appending to notes.` }],
+              isError: true,
+            }
+          }
+          result = await adapter.appendNote(config, note_id, content)
+        } else {
+          if (!adapter?.createNote) {
+            return {
+              content: [{ type: "text" as const, text: `Adapter ${notesSource.type} does not support creating notes.` }],
+              isError: true,
+            }
+          }
+          result = await adapter.createNote(config, content, {
+            title,
+            folderId: config.notebookId,
+          })
+        }
+
+        const action = note_id ? "Appended to" : "Created"
+        console.error(`[mcp-bridge] ${action} note: ${result.noteId}`)
+        return {
+          content: [{ type: "text" as const, text: `${action} note successfully.\n\n- **note_id**: ${result.noteId}\n- **source**: ${notesSource.name}` }],
+        }
+      } catch (err) {
+        console.error(`[mcp-bridge] knowledge_save_note error:`, err)
+        return {
+          content: [{ type: "text" as const, text: `Failed to save note: ${err instanceof Error ? err.message : String(err)}` }],
           isError: true,
         }
       }

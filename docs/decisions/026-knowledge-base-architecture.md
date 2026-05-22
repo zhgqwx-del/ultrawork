@@ -1,8 +1,8 @@
 # ADR-026: 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API
 
-**状态**: Accepted (Phase 1-3 + Phase 4a 实现)
+**状态**: Accepted (Phase 1-3 + Phase 4a + 4c 实现)
 **日期**: 2026-05-13
-**最后更新**: 2026-05-22 (Phase 4a 完成，对齐官方 ima-skill v1.1.7)
+**最后更新**: 2026-05-22 (Phase 4a + 4c 完成，对齐官方 ima-skill v1.1.7)
 **关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考)
 
 ## 背景
@@ -958,7 +958,7 @@ IMA API base URL: `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima
 | **Phase 3** | 第三方平台 Adapter（IMA Wiki 搜索）+ 凭证向导 + 统一 ID-based API + 跨源搜索 + Filter Chips | ✅ | 2026-05-20 |
 | **Phase 4a** | IMA Notes 全文搜索+读取 + Wiki get_media_info 增强 + 模块选择 UI（对齐 ima-skill v1.1.7） | ✅ | 2026-05-22 |
 | **Phase 4b** | 检索质量优化（top-K / token 分块 / Reranker） | 📋 规划 | — |
-| **Phase 4c** | IMA 写入能力（新建笔记 / 追加内容 / MCP 工具） | 📋 规划 | — |
+| **Phase 4c** | IMA 写入能力（新建笔记 / 追加内容 / MCP 工具 `knowledge_save_note`） | ✅ | 2026-05-22 |
 | **Phase 4d** | Wiki 管理能力（网页导入 / 文件上传 / 跨 KB 搜索） | 📋 规划 | — |
 | **Phase 5** | 在线文档/网页爬取索引（类 Cursor @Docs） | 💭 构想 | — |
 
@@ -990,8 +990,8 @@ IMA 平台有两套独立的内容体系，使用不同的 API：
 | `get_doc_content` | 获取笔记全文 | ✅ 已实现 | `note_id`(非 doc_id), `target_content_format`(0=纯文本,推荐) |
 | `list_notebook` | 列出笔记本 | ✅ 已实现 | `cursor`(首页"0"), `limit`(≤20); 响应: `note_folder_infos[]` |
 | `list_note` | 浏览笔记本内容 | 未实现 | `folder_id`, cursor 分页 |
-| `import_doc` | 创建新笔记(Markdown) | 未实现(Phase 4c) | `content_format`=1(固定), `content`, 可选 `folder_id` |
-| `append_doc` | 追加内容到已有笔记 | 未实现(Phase 4c) | `note_id`, `content_format`=1, `content` |
+| `import_doc` | 创建新笔记(Markdown) | ✅ Phase 4c | `content_format`=1(固定), `content`, 可选 `folder_id` |
+| `append_doc` | 追加内容到已有笔记 | ✅ Phase 4c | `note_id`, `content_format`=1, `content` |
 
 > **搜索响应嵌套结构**：`search_note_infos[].note_book_info.note_id`（非平铺），含 `note_ext_info.folder_id/folder_name`。
 >
@@ -1045,41 +1045,42 @@ IMA 平台有两套独立的内容体系，使用不同的 API：
 2. 评估 token-based 分块替代行数分块（parent 512-1024 tokens）
 3. 评估轻量 Reranker（cross-encoder 精排）可行性
 
-### Phase 4c — IMA 写入能力（规划中）
+### Phase 4c — IMA 写入能力（✅ 已完成 2026-05-22）
 
 **目标**：AI 可将分析结果、摘要、会议纪要等保存回 IMA 笔记。
 
-**MCP 工具设计**：
+**实际实现**：
 
-| 工具名 | 功能 | 触发场景 |
+1. **`KnowledgeAdapter` 接口扩展**：新增可选 `createNote()` + `appendNote()` 方法签名（`WriteNoteResult` 返回 `noteId`）
+2. **`IMAAdapter.createNote`**：调用 `import_doc`（content_format=1 Markdown），支持 `folder_id` 指定笔记本
+3. **`IMAAdapter.appendNote`**：调用 `append_doc`（note_id + content_format=1），追加到已有笔记
+4. **`sanitizeNoteContent`**：写入前过滤本地图片引用（`file:///`、`/Users/`、`C:\` 路径），可选 title 自动生成 H1 标题
+5. **MCP 工具 `knowledge_save_note`**：AI 可自主调用，参数 `content` + 可选 `title`/`note_id`/`source_id`，有 `note_id` 时追加否则新建，auto-select 首个 Notes 源
+6. **HTTP 端点**：`POST /kb/notes/create` + `POST /kb/notes/append`（供 MCP proxy 模式调用）
+7. **MCP bridge 版本升至 0.4.0**
+
+**MCP 工具 `knowledge_save_note`**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `content` | string（必填） | Markdown 内容 |
+| `title` | string（可选） | 新建笔记标题（追加时忽略） |
+| `note_id` | string（可选） | 传则追加到该笔记，否则新建 |
+| `source_id` | number（可选） | 指定 IMA Notes 源 ID，省略自动选首个 |
+
+**写入安全规则**：
+- 本地图片引用自动过滤（`/Users/`、`file:///`、`C:\` 路径），保留 `http(s)://` 网络图片
+- 空内容拒绝（sanitizeNoteContent 校验）
+- `__all_notes__` 虚拟 folder_id 自动跳过不传给 API
+
+**错误码处理**：
+
+| 错误码 | 含义 | 响应消息 |
 |--------|------|---------|
-| `knowledge_save_note` | 新建笔记或追加到已有笔记 | "帮我记一下"、"保存为笔记"、"把分析结果写到笔记里" |
-
-**API 端点**（来自 ima-skill v1.1.7 官方文档）：
-
-| 端点 | 功能 | 关键参数 |
-|------|------|---------|
-| `import_doc` | 新建笔记 | `content_format`=1(固定 Markdown), `content`, 可选 `folder_id` |
-| `append_doc` | 追加到已有笔记 | `note_id`, `content_format`=1, `content` |
-| `search_note` | 搜索目标笔记（追加前定位） | search_type=0 按标题搜索 |
-
-**实现要点**（来自官方文档强制规则）：
-
-1. **UTF-8 编码校验（强制）**：所有写入字段（`content`、`title`）必须为合法 UTF-8，非 UTF-8 导致 IMA 中不可逆乱码。来源无论是用户输入、文件读取还是 WebFetch，都需显式校验
-2. **内容大小上限**：超过限制返回 Error 210009 → 拆分为多次 `append_doc` 写入
-3. **本地图片不支持**：`content` 仅支持 Markdown 文本，写入前必须过滤 `file:///` 路径的图片引用，保留 `http(s)://` 网络图片
-4. **新建 vs 追加区分**：用户说"新建/创建笔记"→ `import_doc`；"追加到 XX 笔记"→ 先 `search_note` 找 `note_id` 再 `append_doc`；模糊场景（"帮我记一下"）→ 工具需先询问用户意图
-5. **append_doc 是不可撤销操作**：追加前必须确认目标笔记，不可自行猜测
-6. **返回值**：两个端点均返回 `note_id`，可用于后续操作
-
-**错误码**：
-
-| 错误码 | 含义 | 处理 |
-|--------|------|------|
-| 210005 | 不是笔记作者 | 提示用户只能写自己的笔记 |
-| 210009 | 超过大小限制 | 自动拆分为多次 append_doc |
-| 210006 | 笔记已删除 | 提示用户该笔记不存在 |
-| 210035 | 笔记本不存在 | 检查 folder_id |
+| 210005 | 不是笔记作者 | "Permission denied — you can only write to your own notes" |
+| 210009 | 超过大小限制 | "Content too large — try splitting into smaller parts" |
+| 210006 | 笔记已删除 | "Note has been deleted" |
+| 210035 | 笔记本不存在 | "Notebook not found" |
 
 ### Phase 4d — Wiki 管理能力（规划中）
 
