@@ -1676,6 +1676,7 @@ function KnowledgeSection() {
         onOpenChange={setShowAddDialog}
         onAdded={() => { setShowAddDialog(false); refresh() }}
         onAddLocalFolder={handleAddFolder}
+        existingSources={sources}
       />
     </div>
   )

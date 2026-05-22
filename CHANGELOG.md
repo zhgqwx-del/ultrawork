@@ -8,7 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
-- 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段
+- 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段 + IMA 凭证 UX 优化（一键打开凭证页面 + clientId 自动复用 + 首次保存成功 toast 提示）
 - 知识库能力 Phase 3（ADR-026）：第三方平台 Adapter（IMA 优先）+ 凭证配置向导 + 测试连接 + 统一 ID-based API（Schema v3）+ 跨源搜索（本地+IMA 合并排序）+ Filter Chips 知识源分类筛选
 - 知识库能力 Phase 2（ADR-026）：Parent-Child 双层分块（父块 ~60 行上下文 + 子块 ~12 行精确匹配）+ MarkItDown 集成 (PDF/docx/xlsx/pptx) + SSE 索引进度实时推送 + 文件监听自动重索引 + Schema 迁移系统
 - 知识库能力 Phase 1（ADR-026）：Knowledge Sidecar (:4098) + 本地文件夹 RAG + 混合检索 (BM25+TF-IDF+RRF) + MCP tool 对接 AI + Settings 知识库管理 UI

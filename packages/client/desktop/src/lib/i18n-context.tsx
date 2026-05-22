@@ -326,6 +326,8 @@ const translations: Record<Language, Record<string, string>> = {
     "knowledge.selectNotebook": "Select Notebook",
     "knowledge.noNotebooksFound": "No notebooks found",
     "knowledge.notes": "{count} notes",
+    "knowledge.openCredentialPage": "Open credential page in browser",
+    "knowledge.credentialsSaved": "IMA credentials saved — no need to re-enter next time",
 
     // MCP
     "mcp.noServers": "No MCP servers configured",
@@ -792,6 +794,8 @@ const translations: Record<Language, Record<string, string>> = {
     "knowledge.selectNotebook": "选择笔记本",
     "knowledge.noNotebooksFound": "未找到笔记本",
     "knowledge.notes": "{count} 篇笔记",
+    "knowledge.openCredentialPage": "在浏览器中打开凭证页面",
+    "knowledge.credentialsSaved": "IMA 凭证已保存，下次添加无需重复输入",
 
     // MCP
     "mcp.noServers": "未配置 MCP 服务",

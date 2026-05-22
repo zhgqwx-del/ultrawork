@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react"
-import { FolderOpen, Globe, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Plug, FileText, BookOpen } from "lucide-react"
+import { FolderOpen, Globe, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Plug, FileText, BookOpen, ExternalLink } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -9,8 +9,10 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/lib/i18n-context"
+import { toast } from "sonner"
 
 const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
+const IMA_CREDENTIAL_URL = "https://ima.qq.com/agent-interface"
 
 async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${KB_BASE}${path}`, {
@@ -45,20 +47,46 @@ type Step =
   | { type: "ima-error"; message: string }
   | { type: "ima-saving" }
 
+/** Existing IMA source config shape (after sanitization — apiKey stripped, hasApiKey present) */
+interface ExistingIMASource {
+  type: "ima"
+  config: {
+    clientId?: string
+    hasApiKey?: boolean
+    module?: string
+    [key: string]: unknown
+  }
+}
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   onAdded: () => void
   onAddLocalFolder: () => void
+  /** Existing sources — used to detect reusable IMA credentials */
+  existingSources?: { type: string; config: Record<string, unknown> }[]
 }
 
-export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder }: Props) {
+export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder, existingSources }: Props) {
   const { t } = useI18n()
   const [step, setStep] = useState<Step>({ type: "select" })
   const [clientId, setClientId] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [showApiKey, setShowApiKey] = useState(false)
   const savingRef = useRef(false)
+  const isFirstIMASource = useRef(true)
+
+  /** Check if there's an existing IMA source whose credentials we can reuse */
+  const getExistingIMACredentials = useCallback((): { clientId: string } | null => {
+    if (!existingSources) return null
+    const imaSrc = existingSources.find(
+      (s) => s.type === "ima" && s.config?.clientId,
+    ) as ExistingIMASource | undefined
+    if (imaSrc?.config?.clientId && imaSrc.config.hasApiKey) {
+      return { clientId: imaSrc.config.clientId }
+    }
+    return null
+  }, [existingSources])
 
   const reset = useCallback(() => {
     setStep({ type: "select" })
@@ -80,6 +108,30 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
     handleOpenChange(false)
     onAddLocalFolder()
   }, [handleOpenChange, onAddLocalFolder])
+
+  /** Handle IMA button click — pre-fill clientId if reusable from existing source */
+  const handleSelectIMA = useCallback(() => {
+    const existing = getExistingIMACredentials()
+    if (existing) {
+      // Pre-fill clientId; apiKey is stripped by sanitizeConfig so user must re-enter it
+      isFirstIMASource.current = false
+      setClientId(existing.clientId)
+    } else {
+      isFirstIMASource.current = true
+    }
+    setStep({ type: "ima-credentials" })
+  }, [getExistingIMACredentials])
+
+  /** Open IMA credential page in system browser */
+  const handleOpenCredentialPage = useCallback(async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener")
+      await openUrl(IMA_CREDENTIAL_URL)
+    } catch {
+      // Fallback for dev mode / non-Tauri environment
+      window.open(IMA_CREDENTIAL_URL, "_blank")
+    }
+  }, [])
 
   /** Test credentials by trying the Wiki API (lightweight call) */
   const handleTestConnection = useCallback(async () => {
@@ -193,6 +245,11 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
         // Set status to connected
         await kbFetch(`/sources/${step.sourceId}/test-connection`, { method: "POST" })
 
+        // Show persistence toast on first IMA source
+        if (isFirstIMASource.current) {
+          toast.success(t("knowledge.credentialsSaved"))
+        }
+
         handleOpenChange(false)
         onAdded()
       } catch (err) {
@@ -203,7 +260,7 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
         })
       }
     },
-    [step, clientId, apiKey, handleOpenChange, onAdded],
+    [step, clientId, apiKey, handleOpenChange, onAdded, t],
   )
 
   return (
@@ -233,7 +290,7 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
                 </div>
               </button>
               <button
-                onClick={() => setStep({ type: "ima-credentials" })}
+                onClick={handleSelectIMA}
                 className="flex w-full items-center gap-3 rounded-lg border border-[var(--color-border)] p-4 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
               >
                 <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/10">
@@ -279,9 +336,18 @@ export function AddSourceDialog({ open, onOpenChange, onAdded, onAddLocalFolder 
                 </button>
                 {t("knowledge.imaKnowledge")}
               </DialogTitle>
-              <DialogDescription>{t("knowledge.imaInstructions")}</DialogDescription>
+              <DialogDescription>
+                {t("knowledge.imaInstructions")}
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
+              <button
+                onClick={handleOpenCredentialPage}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-fg)]"
+              >
+                <ExternalLink className="size-3.5" />
+                {t("knowledge.openCredentialPage")}
+              </button>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-[var(--color-fg-muted)]">
                   {t("knowledge.clientId")}
