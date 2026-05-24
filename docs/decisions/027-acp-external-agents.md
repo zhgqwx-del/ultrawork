@@ -356,9 +356,16 @@ GET  /acp/health               → 健康检查
 - 复用现有 sidecar 管理模式（类似 Gateway、Knowledge）
 - 退出时统一清理 ACP Sidecar + 所有 ACP Agent 子进程
 
-### Phase 3: Agent 管理 UX
+### Phase 3: ACP 消息流打通 + Agent 管理 UX
 
-**目标**: 完善 Agent 配置、认证、状态指示等用户体验。
+**目标 A — ACP 消息流打通**: 当用户选择 ACP Agent 时，消息发送和接收走 ACP Sidecar 而非 OpenCode。
+
+- `use-session-messages.ts` 中 `sendMessage` 根据 agent source 分流
+- ACP Agent: 调用 `createACPSession()` → `promptACPSession()` → SSE 订阅 `/acp/session/:id/events`
+- ACP SSE 事件注入到现有的消息状态管理（复用 `setMessages` / `setSending`）
+- OpenCode Agent: 保持现有 `promptAsync` 流程不变
+
+**目标 B — Agent 管理 UX**: 完善配置、认证、状态指示。
 
 - Settings 页面新增 "Agents" Tab（列表、添加、编辑、删除）
 - Agent 认证向导（类似知识库 IMA 凭证配置 — `AddSourceDialog` 模式）
@@ -377,7 +384,8 @@ GET  /acp/health               → 健康检查
 | **2b** | ACP Sidecar HTTP API | ~1 天 | 2a |
 | **2c** | 前端 Agent Router 集成 | ~2 天 | 1b + 2b |
 | **2d** | Tauri 进程管理集成 | ~1 天 | 2a |
-| **3** | Agent 管理 Settings + 认证 + 状态 | ~3 天 | 2 |
+| **3a** | ACP 消息流打通 (sendMessage 分流 + ACP SSE 订阅) | ~2 天 | 2 |
+| **3b** | Agent 管理 Settings + 认证 + 状态 | ~3 天 | 3a |
 
 ## ACP Client 实现参考：acpx
 

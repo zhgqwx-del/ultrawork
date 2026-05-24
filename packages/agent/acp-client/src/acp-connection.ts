@@ -12,6 +12,7 @@ import {
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from "@agentclientprotocol/sdk"
+import { resolve, relative } from "path"
 import type { ACPAgentConfig, ACPAgentStatus, ACPSSEEvent } from "./types"
 
 export type SSEEventCallback = (event: ACPSSEEvent) => void
@@ -48,6 +49,9 @@ export class ACPConnection {
 
   // [Fix 3] Pending request tracking — batch reject on process exit
   private pendingRequests: Set<PendingRequest> = new Set()
+
+  // Session CWD tracking — for file operation sandboxing
+  private sessionCwds: Map<string, string> = new Map()
 
   constructor(config: ACPAgentConfig) {
     this.agentId = config.id
@@ -153,6 +157,7 @@ export class ACPConnection {
     const result = await this.runRequest(() =>
       this.connection!.newSession({ cwd, mcpServers: [] }),
     )
+    this.sessionCwds.set(result.sessionId, resolve(cwd))
     return result.sessionId
   }
 
@@ -289,17 +294,21 @@ export class ACPConnection {
       },
       async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
         try {
+          self.validatePath(params.sessionId, params.path)
           const content = await Bun.file(params.path).text()
           return { content }
-        } catch {
+        } catch (err) {
+          console.error(`[ACP:${self.agentId}] readTextFile denied or failed: ${params.path}`, err)
           return { content: "" }
         }
       },
       async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
         try {
+          self.validatePath(params.sessionId, params.path)
           await Bun.write(params.path, params.content)
           return {}
-        } catch {
+        } catch (err) {
+          console.error(`[ACP:${self.agentId}] writeTextFile denied or failed: ${params.path}`, err)
           return {}
         }
       },
@@ -414,6 +423,19 @@ export class ACPConnection {
 
   // ── Internal helpers ───────────────────────────────────────────────
 
+  /** Validate that a file path is within the session's working directory */
+  private validatePath(sessionId: string, filePath: string): void {
+    const cwd = this.sessionCwds.get(sessionId)
+    if (!cwd) {
+      throw new Error(`No CWD registered for session ${sessionId}`)
+    }
+    const resolved = resolve(filePath)
+    const rel = relative(cwd, resolved)
+    if (rel.startsWith("..") || resolve(cwd, rel) !== resolved) {
+      throw new Error(`Path "${filePath}" is outside session working directory "${cwd}"`)
+    }
+  }
+
   private ensureConnected(): void {
     if (this._status !== "connected" || !this.connection) {
       throw new Error(`Agent "${this.agentId}" is not connected (status: ${this._status})`)
@@ -448,6 +470,7 @@ export class ACPConnection {
       new Error(`Agent "${this.agentId}" disconnected`),
     )
     this.sseCallbacks.clear()
+    this.sessionCwds.clear()
     this.sessionUpdateChain = Promise.resolve()
     try {
       this.process?.kill()

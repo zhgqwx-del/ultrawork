@@ -105,34 +105,52 @@ export function createApp(manager: ACPManager): Hono {
     }
 
     return streamSSE(c, async (stream) => {
-      // Send initial connected event
-      await stream.writeSSE({ data: JSON.stringify({ type: "acp.connected", properties: { sessionId } }) })
+      let closed = false
+      const cleanup = () => {
+        if (closed) return
+        closed = true
+        clearInterval(heartbeat)
+        conn.offSessionEvent(sessionId)
+      }
 
       // Subscribe to session events
       const onEvent = async (event: { type: string; properties: Record<string, unknown> }) => {
+        if (closed) return
         try {
           await stream.writeSSE({ data: JSON.stringify(event) })
         } catch {
-          // Stream closed
+          cleanup()
         }
       }
       conn.onSessionEvent(sessionId, onEvent)
 
+      // Send initial connected event
+      try {
+        await stream.writeSSE({ data: JSON.stringify({ type: "acp.connected", properties: { sessionId } }) })
+      } catch {
+        cleanup()
+        return
+      }
+
       // Keep connection alive with heartbeat
       const heartbeat = setInterval(async () => {
+        if (closed) { clearInterval(heartbeat); return }
         try {
           await stream.writeSSE({ data: JSON.stringify({ type: "heartbeat", properties: {} }) })
         } catch {
-          clearInterval(heartbeat)
+          cleanup()
         }
       }, 15000)
 
-      // Wait until the stream is closed by client
-      await stream.sleep(Number.MAX_SAFE_INTEGER)
+      // stream.onAbort fires when the client disconnects
+      stream.onAbort(() => { cleanup() })
 
-      // Cleanup
-      clearInterval(heartbeat)
-      conn.offSessionEvent(sessionId)
+      // Wait until the stream is closed
+      try {
+        await stream.sleep(Number.MAX_SAFE_INTEGER)
+      } finally {
+        cleanup()
+      }
     })
   })
 

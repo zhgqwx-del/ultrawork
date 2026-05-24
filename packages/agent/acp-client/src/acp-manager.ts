@@ -25,16 +25,32 @@ export class ACPManager {
         return
       }
       const data: AgentsFile = await file.json()
-      if (!data.agents) return
+      if (!data.agents || typeof data.agents !== "object") return
 
       for (const [id, config] of Object.entries(data.agents)) {
-        const agentConfig: ACPAgentConfig = { id, ...config }
+        // Validate required fields
+        if (!config.command || typeof config.command !== "string") {
+          console.error(`[ACP] Agent "${id}": missing or invalid "command" field, skipping`)
+          continue
+        }
+        if (!config.label || typeof config.label !== "string") {
+          console.error(`[ACP] Agent "${id}": missing or invalid "label" field, skipping`)
+          continue
+        }
+        const agentConfig: ACPAgentConfig = {
+          id,
+          label: config.label,
+          description: config.description,
+          command: config.command,
+          args: Array.isArray(config.args) ? config.args : [],
+          env: config.env && typeof config.env === "object" ? config.env : undefined,
+        }
         this.configs.set(id, agentConfig)
         this.connections.set(id, new ACPConnection(agentConfig))
       }
       console.log(`[ACP] Loaded ${this.configs.size} agent config(s)`)
     } catch (err) {
-      console.error("[ACP] Failed to load agents.json:", err)
+      console.error(`[ACP] Failed to load ${CONFIG_PATH}:`, err)
     }
   }
 
