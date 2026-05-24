@@ -54,7 +54,7 @@ export function AgentSelector({ className }: AgentSelectorProps) {
             />
           )}
 
-          {/* External ACP agents (future) */}
+          {/* External ACP agents */}
           {acpAgents.length > 0 && (
             <>
               <div className="border-t border-[var(--color-border)]" />
@@ -66,6 +66,7 @@ export function AgentSelector({ className }: AgentSelectorProps) {
                   setCurrentAgent(id)
                   setOpen(false)
                 }}
+                showStatus
               />
             </>
           )}
@@ -75,16 +76,28 @@ export function AgentSelector({ className }: AgentSelectorProps) {
   )
 }
 
+/** Status indicator dot for ACP agents */
+function StatusDot({ status }: { status: UnifiedAgent["status"] }) {
+  const colorClass =
+    status === "connected" ? "bg-green-500" :
+    status === "connecting" ? "bg-yellow-500 animate-pulse" :
+    status === "error" ? "bg-red-500" :
+    "bg-[var(--color-fg-muted)]"
+  return <span className={cn("inline-block size-1.5 rounded-full shrink-0", colorClass)} />
+}
+
 function AgentGroup({
   label,
   agents,
   currentAgentId,
   onSelect,
+  showStatus = false,
 }: {
   label: string
   agents: UnifiedAgent[]
   currentAgentId: string
   onSelect: (id: string) => void
+  showStatus?: boolean
 }) {
   return (
     <div>
@@ -102,7 +115,10 @@ function AgentGroup({
           )}
         >
           <div className="flex-1 min-w-0">
-            <div className="truncate font-medium text-[var(--color-fg)]">{agent.name}</div>
+            <div className="flex items-center gap-1.5">
+              {showStatus && <StatusDot status={agent.status} />}
+              <span className="truncate font-medium text-[var(--color-fg)]">{agent.name}</span>
+            </div>
             {agent.description && (
               <div className="truncate text-[var(--color-fg-muted)]">{agent.description}</div>
             )}

@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import { useAgents, DEFAULT_AGENT_ID } from "./use-agents"
 import { useSSESubscribe } from "./sse-context"
 import { parseAgentId, makeAgentId } from "./agent-types"
-import type { UnifiedAgent } from "./agent-types"
+import type { UnifiedAgent, AgentSource } from "./agent-types"
 import type { SSEEvent } from "./sse-client"
 
 interface AgentContextValue {
@@ -23,6 +23,10 @@ interface AgentContextValue {
    * Returns undefined if using default agent (no explicit agent param needed).
    */
   getPromptAgent: () => string | undefined
+  /** Whether the currently selected agent is an external ACP agent */
+  isACPAgent: boolean
+  /** Get the current agent source and raw ID */
+  getCurrentAgentParsed: () => { source: AgentSource; rawId: string }
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined)
@@ -79,6 +83,16 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
   )
   useSSESubscribe(handleSSEEvent)
 
+  const isACPAgent = useMemo(
+    () => parseAgentId(currentAgentId).source === "acp",
+    [currentAgentId],
+  )
+
+  const getCurrentAgentParsed = useCallback(
+    () => parseAgentId(currentAgentId),
+    [currentAgentId],
+  )
+
   const value = useMemo(
     () => ({
       agents,
@@ -88,8 +102,10 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       setCurrentAgent,
       refreshAgents: refresh,
       getPromptAgent,
+      isACPAgent,
+      getCurrentAgentParsed,
     }),
-    [agents, loading, currentAgentId, currentAgent, setCurrentAgent, refresh, getPromptAgent],
+    [agents, loading, currentAgentId, currentAgent, setCurrentAgent, refresh, getPromptAgent, isACPAgent, getCurrentAgentParsed],
   )
 
   return (

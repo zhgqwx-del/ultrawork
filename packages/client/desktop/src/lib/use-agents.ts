@@ -1,14 +1,33 @@
 import { useState, useEffect, useCallback } from "react"
 import { useApi } from "./use-api"
-import { fromOpenCodeAgent } from "./agent-types"
-import type { UnifiedAgent } from "./agent-types"
+import { fromOpenCodeAgent, makeAgentId } from "./agent-types"
+import { fetchACPAgents } from "./agent-router"
+import type { UnifiedAgent, AgentStatus } from "./agent-types"
+import type { ACPAgentInfo } from "./agent-router"
 
 /** Default agent ID when no agent is selected or API is unavailable */
 export const DEFAULT_AGENT_ID = "opencode:build"
 
+/** Convert an ACP agent info (from sidecar) to UnifiedAgent */
+function fromACPAgent(agent: ACPAgentInfo): UnifiedAgent {
+  const statusMap: Record<string, AgentStatus> = {
+    disconnected: "available",
+    connecting: "connecting",
+    connected: "connected",
+    error: "error",
+  }
+  return {
+    id: makeAgentId("acp", agent.id),
+    name: agent.label,
+    description: agent.description,
+    source: "acp",
+    status: statusMap[agent.status] ?? "available",
+  }
+}
+
 /**
- * Fetches OpenCode built-in agents from GET /agent and converts to UnifiedAgent[].
- * In the future, this hook will also merge in external ACP agents.
+ * Fetches agents from both OpenCode (GET /agent) and ACP Sidecar (GET /acp/agents),
+ * merges them into a unified list.
  */
 export function useAgents() {
   const api = useApi()
@@ -16,20 +35,29 @@ export function useAgents() {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    try {
-      const rawAgents = await api.getAgents()
-      // Filter: only show primary/all agents that are not hidden
-      const visible = rawAgents.filter(
+    // Fetch from both sources in parallel
+    const [openCodeResult, acpResult] = await Promise.allSettled([
+      api.getAgents(),
+      fetchACPAgents(),
+    ])
+
+    const unified: UnifiedAgent[] = []
+
+    // OpenCode built-in agents
+    if (openCodeResult.status === "fulfilled") {
+      const visible = openCodeResult.value.filter(
         (a) => a.mode !== "subagent" && a.hidden !== true,
       )
-      const unified = visible.map(fromOpenCodeAgent)
-      setAgents(unified)
-    } catch {
-      // Server may not be ready yet — keep empty list
-      setAgents([])
-    } finally {
-      setLoading(false)
+      unified.push(...visible.map(fromOpenCodeAgent))
     }
+
+    // External ACP agents
+    if (acpResult.status === "fulfilled") {
+      unified.push(...acpResult.value.map(fromACPAgent))
+    }
+
+    setAgents(unified)
+    setLoading(false)
   }, [api])
 
   useEffect(() => {
