@@ -221,6 +221,8 @@ OpenCode Agent 和 ACP Agent 都实现同一接口，前端只和 `AgentRouter` 
 
 **关键**: ACP Sidecar 负责协议转换，前端**完全复用现有消息渲染组件**，无需区分消息来源。
 
+**ACP 消息持久化**: ACP 对话消息不存入 OpenCode 后端数据库（两套独立 session 体系），采用**前端内存缓存**（模块级 Map，keyed by OpenCode sessionId）。用户切换 session 再切回时从缓存恢复。缓存不跨应用重启——后续可升级为 IndexedDB 持久化。
+
 #### 决策 4: Agent 配置与注册
 
 ```jsonc

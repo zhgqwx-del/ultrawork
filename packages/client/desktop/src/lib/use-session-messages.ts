@@ -10,6 +10,13 @@ import { createACPSession, promptACPSession, cancelACPSession } from "@/lib/agen
 import { useACPSSE } from "@/lib/use-acp-sse"
 import { useWorkspace } from "@/lib/workspace-context"
 
+// --- ACP message cache (survives navigation, not app restart) ---
+// Keyed by OpenCode sessionId → { messages, acpSessionId }
+const acpMessageCache = new Map<string, {
+  messages: SendMessageResponse[]
+  acpSessionId: string
+}>()
+
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
 const TURN_BATCH = 8           // Turns to reveal per backfill gesture
@@ -67,6 +74,13 @@ export function useSessionMessages(
   // --- ACP session state ---
   const [acpSessionId, setAcpSessionId] = useState<string | null>(null)
 
+  // Keep ACP message cache up-to-date as messages stream in
+  useEffect(() => {
+    if (sessionId && acpSessionId && messages.length > 0) {
+      acpMessageCache.set(sessionId, { messages, acpSessionId })
+    }
+  }, [sessionId, acpSessionId, messages])
+
   // --- Windowed display messages ---
   const displayMessages = useMemo(() => {
     if (turnStart <= 0) return messages
@@ -86,9 +100,23 @@ export function useSessionMessages(
   }, [messages, turnStart])
 
   // --- Session navigation reset ---
+  const prevSessionIdRef = useRef<string | undefined>(undefined)
+
   useEffect(() => {
     const opts = optionsRef.current
-    setMessages([])
+
+    // Save ACP messages from previous session before clearing
+    const prevId = prevSessionIdRef.current
+    const prevAcpSid = acpSessionId
+    if (prevId && prevAcpSid && messagesRef.current.length > 0) {
+      acpMessageCache.set(prevId, {
+        messages: messagesRef.current,
+        acpSessionId: prevAcpSid,
+      })
+    }
+    prevSessionIdRef.current = sessionId
+
+    // Reset state
     setStreamingMessageId(null)
     setToolCompletionCount(0)
     setStopped(false)
@@ -99,6 +127,20 @@ export function useSessionMessages(
     setHistoryLoading(false)
     frozenMessageIdsRef.current = new Set()
     prefetchUntilRef.current = 0
+
+    // Restore ACP messages if returning to a cached ACP session
+    const cached = sessionId ? acpMessageCache.get(sessionId) : undefined
+    if (cached) {
+      setMessages(cached.messages)
+      setAcpSessionId(cached.acpSessionId)
+      setLoading(false)
+      setSending(false)
+      sendingRef.current = false
+      return
+    }
+
+    // No cache — fresh session
+    setMessages([])
     setAcpSessionId(null)
 
     const isSendingFromNav = !!opts?.initialSending
