@@ -54,10 +54,10 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
     // For OpenCode agents, pass the raw ID (e.g. "build", "plan") to promptAsync
     // For ACP agents (future), routing is handled by AgentRouter, not promptAsync
     const { source, rawId } = parseAgentId(currentAgentId)
-    if (source === "opencode") {
+    if (source === "opencode" && rawId) {
       return rawId
     }
-    // ACP agents don't use promptAsync — return undefined
+    // ACP agents or invalid state — return undefined (backend uses default)
     return undefined
   }, [currentAgentId])
 

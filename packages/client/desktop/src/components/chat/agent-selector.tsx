@@ -44,7 +44,7 @@ export function AgentSelector({ className }: AgentSelectorProps) {
           {/* OpenCode built-in agents */}
           {openCodeAgents.length > 0 && (
             <AgentGroup
-              label="OpenCode"
+              label={t("agent.builtin")}
               agents={openCodeAgents}
               currentAgentId={currentAgentId}
               onSelect={(id) => {

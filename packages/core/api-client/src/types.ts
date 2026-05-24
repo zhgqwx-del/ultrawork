@@ -283,7 +283,7 @@ export interface OpenCodeConfig {
 // --- Agent types ---
 
 export interface Agent {
-  id: string
+  id?: string
   name: string
   description?: string
   mode?: "subagent" | "primary" | "all"

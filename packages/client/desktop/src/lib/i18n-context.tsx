@@ -197,6 +197,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Agent selector
     "agent.noAgent": "No agent",
+    "agent.builtin": "Built-in",
     "agent.external": "External Agents",
 
     // Model management
@@ -669,6 +670,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Agent selector
     "agent.noAgent": "未选择 Agent",
+    "agent.builtin": "内置",
     "agent.external": "外部 Agent",
 
     // Model management

@@ -46,10 +46,12 @@ export function parseAgentId(agentId: string): { source: AgentSource; rawId: str
   }
 }
 
-/** Convert an OpenCode Agent (from GET /agent) to UnifiedAgent */
+/** Convert an OpenCode Agent (from GET /agent) to UnifiedAgent.
+ *  Backend Agent.Info uses `name` as identifier (no `id` field). */
 export function fromOpenCodeAgent(agent: Agent): UnifiedAgent {
+  const agentKey = agent.id || agent.name
   return {
-    id: makeAgentId("opencode", agent.id),
+    id: makeAgentId("opencode", agentKey),
     name: agent.name,
     description: agent.description,
     source: "opencode",
