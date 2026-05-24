@@ -133,6 +133,7 @@ export function useSessionMessages(
           if (idRef.current === sessionId) {
             sendingRef.current = false
             setSending(false)
+            setStreamingMessageId(null)
             markSessionIdle(sessionId)
           }
         } catch (err) {
@@ -140,6 +141,7 @@ export function useSessionMessages(
           if (idRef.current === sessionId) {
             sendingRef.current = false
             setSending(false)
+            setStreamingMessageId(null)
             markSessionIdle(sessionId)
           }
         }
@@ -612,10 +614,11 @@ export function useSessionMessages(
             await new Promise((r) => setTimeout(r, 300))
           }
           await promptACPSession(sid, userMessage)
-          // Prompt completed — reset sending state
+          // Prompt completed — reset sending + streaming state
           if (idRef.current === sessionId) {
             sendingRef.current = false
             setSending(false)
+            setStreamingMessageId(null)
             markSessionIdle(sessionId)
           }
         } catch (err) {
