@@ -145,9 +145,10 @@ export function createApp(manager: ACPManager): Hono {
       // stream.onAbort fires when the client disconnects
       stream.onAbort(() => { cleanup() })
 
-      // Wait until the stream is closed
+      // Keep alive until client disconnects (stream.onAbort handles cleanup)
+      // Use 2^31-1 (max 32-bit signed int) to avoid overflow warning
       try {
-        await stream.sleep(Number.MAX_SAFE_INTEGER)
+        await stream.sleep(2_147_483_647)
       } finally {
         cleanup()
       }
