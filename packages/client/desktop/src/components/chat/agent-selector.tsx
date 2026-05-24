@@ -12,8 +12,14 @@ interface AgentSelectorProps {
 
 export function AgentSelector({ className }: AgentSelectorProps) {
   const [open, setOpen] = useState(false)
-  const { agents, currentAgentId, currentAgent, setCurrentAgent } = useAgent()
+  const { agents, currentAgentId, currentAgent, setCurrentAgent, refreshAgents } = useAgent()
   const { t } = useI18n()
+
+  // Refresh agent status when popover opens (ACP agents may have changed status)
+  const handleOpenChange = (isOpen: boolean) => {
+    setOpen(isOpen)
+    if (isOpen) refreshAgents()
+  }
 
   // Don't render if no agents available (server not ready or no primary agents)
   if (agents.length === 0) return null
@@ -25,7 +31,7 @@ export function AgentSelector({ className }: AgentSelectorProps) {
   const currentLabel = currentAgent?.name ?? t("agent.noAgent")
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
