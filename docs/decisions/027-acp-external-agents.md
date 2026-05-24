@@ -1,6 +1,6 @@
 # ADR-027: 多 Agent 架构 — ACP 协议集成与统一 Agent 抽象
 
-**状态**: Proposed
+**状态**: Accepted (Phase 1-3 实现)
 **日期**: 2026-05-24
 **关联**: ADR-013 (Gateway Sidecar 模式参考), ADR-020 (Config 隔离)
 
@@ -367,13 +367,14 @@ GET  /acp/health               → 健康检查
 - ACP SSE 事件注入到现有的消息状态管理（复用 `setMessages` / `setSending`）
 - OpenCode Agent: 保持现有 `promptAsync` 流程不变
 
-**目标 B — Agent 管理 UX**: 完善配置、认证、状态指示。
+**目标 B — Agent 管理 UX**: 完善配置、认证、状态指示。✅ 已实现
 
-- Settings 页面新增 "Agents" Tab（列表、添加、编辑、删除）
-- Agent 认证向导（类似知识库 IMA 凭证配置 — `AddSourceDialog` 模式）
-- Agent 连接测试（spawn → initialize → 检查 agentCapabilities）
-- Agent 状态指示器（侧边栏 + Agent 选择器内）
-- 错误诊断提示（command not found → 安装引导）
+- Settings 页面新增 "外部 Agent" Tab（Bot 图标）：Agent 列表 + 连接状态图标 + 连接/编辑/删除操作
+- AddAgentDialog 完整配置表单：ID / 显示名称 / 描述 / 启动命令 / 参数 / 环境变量（认证 Token 通过 env 配置）
+- Agent 连接测试：卡片上 Connect 按钮（spawn → initialize），成功/失败 toast 反馈
+- Agent 状态指示器：Agent 选择器（绿/黄/红/灰点）+ Settings 卡片（CheckCircle/XCircle/AlertCircle 图标 + 状态文字 + 错误信息）
+- ACP Sidecar API 扩展：PUT /acp/agents/:id（保存）+ DELETE /acp/agents/:id（删除）+ GET /acp/agents/:id/config（编辑）+ POST /acp/config/reload（热加载）
+- 配置持久化：保存后自动写入 `~/.config/ultrawork/agents.json` + 自动 connect
 
 ### Phase 总览
 
