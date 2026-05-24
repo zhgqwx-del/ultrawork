@@ -8,6 +8,7 @@ import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
 import { createACPSession, promptACPSession, cancelACPSession } from "@/lib/agent-router"
 import { useACPSSE } from "@/lib/use-acp-sse"
+import { useWorkspace } from "@/lib/workspace-context"
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -33,6 +34,7 @@ export function useSessionMessages(
   const { updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
   const api = useApi()
   const { t } = useI18n()
+  const { workspacePath } = useWorkspace()
 
   // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
@@ -97,6 +99,7 @@ export function useSessionMessages(
     setHistoryLoading(false)
     frozenMessageIdsRef.current = new Set()
     prefetchUntilRef.current = 0
+    setAcpSessionId(null)
 
     const isSendingFromNav = !!opts?.initialSending
     setSending(isSendingFromNav)
@@ -607,7 +610,7 @@ export function useSessionMessages(
           let sid = acpSessionId
           if (!sid) {
             // First message in this session — create ACP session
-            const cwd = "/"
+            const cwd = workspacePath || "/"
             sid = await createACPSession(acpAgentId, cwd)
             setAcpSessionId(sid)
             // Small delay to let SSE subscription establish before prompt
