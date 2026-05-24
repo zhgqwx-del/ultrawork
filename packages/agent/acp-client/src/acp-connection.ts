@@ -16,9 +16,20 @@ import type { ACPAgentConfig, ACPAgentStatus, ACPSSEEvent } from "./types"
 
 export type SSEEventCallback = (event: ACPSSEEvent) => void
 
+/** Tracks a pending connection request for batch reject on disconnect */
+interface PendingRequest {
+  reject: (err: Error) => void
+  settled: boolean
+}
+
 /**
  * Manages a single ACP agent subprocess connection.
  * Handles spawn → initialize → session/prompt lifecycle.
+ *
+ * Key patterns (aligned with acpx reference implementation):
+ * - Process exit monitoring: detect agent crashes and update status
+ * - Session update ordering: promise chain ensures sequential processing
+ * - Pending request tracking: batch reject on unexpected disconnect
  */
 export class ACPConnection {
   readonly agentId: string
@@ -28,7 +39,15 @@ export class ACPConnection {
   private _status: ACPAgentStatus = "disconnected"
   private _error: string | undefined
   private _protocolVersion: number | undefined
+
+  // SSE event subscribers (per session)
   private sseCallbacks: Map<string, SSEEventCallback> = new Map()
+
+  // [Fix 2] Session update ordering — promise chain ensures sequential processing
+  private sessionUpdateChain: Promise<void> = Promise.resolve()
+
+  // [Fix 3] Pending request tracking — batch reject on process exit
+  private pendingRequests: Set<PendingRequest> = new Set()
 
   constructor(config: ACPAgentConfig) {
     this.agentId = config.id
@@ -77,7 +96,10 @@ export class ACPConnection {
         env,
       })
 
-      // Drain stderr to log file
+      // [Fix 1] Monitor process exit — detect crashes and update status
+      this.watchProcessExit()
+
+      // Drain stderr to log
       this.drainStderr()
 
       // Create JSON-RPC stream over stdio
@@ -92,16 +114,18 @@ export class ACPConnection {
         stream,
       )
 
-      // Perform initialize handshake
-      const initResult = await this.connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true,
+      // Perform initialize handshake (race against process crash)
+      const initResult = await this.runRequest(() =>
+        this.connection!.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
           },
-        },
-      })
+        }),
+      )
 
       this._protocolVersion = initResult.protocolVersion
       this._status = "connected"
@@ -126,36 +150,131 @@ export class ACPConnection {
   /** Create a new ACP session */
   async newSession(cwd: string): Promise<string> {
     this.ensureConnected()
-    const result = await this.connection!.newSession({
-      cwd,
-      mcpServers: [],
-    })
+    const result = await this.runRequest(() =>
+      this.connection!.newSession({ cwd, mcpServers: [] }),
+    )
     return result.sessionId
   }
 
   /** Send a prompt to an ACP session */
   async prompt(sessionId: string, text: string): Promise<{ stopReason: string }> {
     this.ensureConnected()
-    const result = await this.connection!.prompt({
-      sessionId,
-      prompt: [{ type: "text", text }],
-    })
+    const result = await this.runRequest(() =>
+      this.connection!.prompt({
+        sessionId,
+        prompt: [{ type: "text", text }],
+      }),
+    )
     return { stopReason: result.stopReason }
   }
 
   /** Cancel an in-progress prompt */
   async cancel(sessionId: string): Promise<void> {
-    this.ensureConnected()
-    await this.connection!.cancel({ sessionId })
+    if (this._status !== "connected" || !this.connection) return
+    try {
+      await this.connection.cancel({ sessionId })
+    } catch {
+      // Agent may have already exited — ignore
+    }
   }
 
-  // --- Internal ---
+  // ── Fix 1: Process exit monitoring ─────────────────────────────────
+
+  /**
+   * Watch for subprocess exit and update connection status.
+   * On unexpected exit during an active session, reject all pending requests.
+   */
+  private watchProcessExit(): void {
+    if (!this.process) return
+    const proc = this.process
+
+    // Bun.spawn Subprocess has an `exited` promise
+    proc.exited.then((exitCode) => {
+      // Only handle if this is still our active process
+      if (this.process !== proc) return
+
+      const wasConnected = this._status === "connected"
+      this._status = "error"
+      this._error = `Agent process exited with code ${exitCode}`
+      console.error(`[ACP] Agent "${this.agentId}" process exited (code ${exitCode})`)
+
+      // Reject all pending requests
+      this.rejectPendingRequests(
+        new Error(`Agent "${this.agentId}" disconnected: process exited (code ${exitCode})`),
+      )
+
+      // Notify SSE subscribers that the agent is gone
+      if (wasConnected) {
+        for (const [sessionId] of this.sseCallbacks) {
+          this.emitSSE(sessionId, {
+            type: "session.error",
+            properties: {
+              sessionID: sessionId,
+              error: `Agent process exited unexpectedly (code ${exitCode})`,
+            },
+          })
+        }
+      }
+
+      // Clear process reference (don't kill — already exited)
+      this.process = null
+      this.connection = null
+    })
+  }
+
+  // ── Fix 3: Pending request tracking ────────────────────────────────
+
+  /**
+   * Wrap a connection request to track it in the pending set.
+   * If the agent process exits, all pending requests are rejected.
+   */
+  private async runRequest<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const pending: PendingRequest = { reject, settled: false }
+
+      const finish = (cb: () => void) => {
+        if (pending.settled) return
+        pending.settled = true
+        this.pendingRequests.delete(pending)
+        cb()
+      }
+
+      this.pendingRequests.add(pending)
+      Promise.resolve()
+        .then(fn)
+        .then(
+          (value) => finish(() => resolve(value)),
+          (error) => finish(() => reject(error)),
+        )
+    })
+  }
+
+  /** Reject all pending requests (called on process exit) */
+  private rejectPendingRequests(error: Error): void {
+    for (const pending of this.pendingRequests) {
+      if (!pending.settled) {
+        pending.settled = true
+        pending.reject(error)
+      }
+    }
+    this.pendingRequests.clear()
+  }
+
+  // ── Client interface implementation ────────────────────────────────
 
   private createClient(): Client {
     const self = this
     return {
+      // [Fix 2] Session update ordering via promise chain
       async sessionUpdate(params: SessionNotification): Promise<void> {
-        self.handleSessionUpdate(params)
+        self.sessionUpdateChain = self.sessionUpdateChain.then(async () => {
+          try {
+            self.handleSessionUpdate(params)
+          } catch (err) {
+            console.error(`[ACP] Error handling session update:`, err)
+          }
+        })
+        await self.sessionUpdateChain
       },
       async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
         // Auto-approve for now — Phase 3 will add proper permission UI
@@ -187,8 +306,11 @@ export class ACPConnection {
     }
   }
 
+  // ── Session update → SSE event translation ─────────────────────────
+
   /**
    * Convert ACP session/update notifications to Ultrawork SSE events.
+   * Called sequentially via sessionUpdateChain (Fix 2).
    */
   private handleSessionUpdate(params: SessionNotification): void {
     const sessionId = params.sessionId
@@ -286,10 +408,11 @@ export class ACPConnection {
         break
       }
       default:
-        // Other update types (plan, config_option_update, etc.) — log and skip
         break
     }
   }
+
+  // ── Internal helpers ───────────────────────────────────────────────
 
   private ensureConnected(): void {
     if (this._status !== "connected" || !this.connection) {
@@ -320,7 +443,12 @@ export class ACPConnection {
   }
 
   private cleanup(): void {
+    // Reject any pending requests
+    this.rejectPendingRequests(
+      new Error(`Agent "${this.agentId}" disconnected`),
+    )
     this.sseCallbacks.clear()
+    this.sessionUpdateChain = Promise.resolve()
     try {
       this.process?.kill()
     } catch {

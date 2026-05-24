@@ -379,23 +379,50 @@ GET  /acp/health               → 健康检查
 | **2d** | Tauri 进程管理集成 | ~1 天 | 2a |
 | **3** | Agent 管理 Settings + 认证 + 状态 | ~3 天 | 2 |
 
+## ACP Client 实现参考：acpx
+
+调研了 [openclaw/acpx](https://github.com/openclaw/acpx)（v0.8.0, 2026-05）——目前最成熟的 ACP Client 开源实现。核心发现：
+
+### 关键实现模式（已对齐到 Ultrawork ACP Client）
+
+| 模式 | acpx 实现 | Ultrawork 对齐状态 |
+|------|----------|-------------------|
+| **进程退出监听** | error/exit/close 事件 + lastAgentExit 记录 + rejectPendingRequests | ✅ `proc.exited` promise + status 更新 + SSE error 通知 |
+| **事件串行排序** | sessionUpdateChain promise chain + 序列号 + drain 检测 | ✅ promise chain 串行 |
+| **Pending request 追踪** | runConnectionRequest 包装 + pending set + 批量 reject | ✅ runRequest 包装 + PendingRequest set |
+| **Cancel 纪律** | cancellingSessionIds set + permission abort signal | ⏳ 基础 cancel 已实现，abort signal Phase 3 补 |
+| **Session 恢复** | loadSession + suppressReplayUpdates + drain wait | ⏳ Phase 3 补 |
+| **权限策略** | --approve-all / --approve-reads / --deny-all + 策略模式 | ⏳ 当前 auto-approve，Phase 3 补 UI |
+| **Terminal 操作** | 完整 terminal-manager (spawn/output/kill/cleanup) | ⏳ 未实现，后续按需补 |
+| **CWD 沙箱** | readTextFile/writeTextFile 路径校验限制在 cwd 内 | ⏳ 当前无校验，Phase 3 补 |
+| **Stream tapping** | 可观测性回调（onAcpMessage/onAcpOutputMessage） | ⏳ 后续按需补 |
+
+### 未纳入的 acpx 能力（不影响 MVP）
+
+- **Session 持久化**: acpx 在 `~/.acpx/sessions/` 持久化会话状态。Ultrawork 的 session 由 OpenCode 管理，ACP session 暂无需持久化。
+- **Flow 编排**: acpx 支持 TypeScript workflow modules（多步 prompt 流程）。超出 Ultrawork 当前范围。
+- **Queue ownership**: acpx 的 idle TTL + queue IPC 模型用于 CLI 多进程共享。Ultrawork 单进程不需要。
+
 ## 风险与注意事项
 
 1. **ACP 协议版本演进** — 当前 v1，仍在活跃迭代。通过 `initialize` 做版本协商，避免硬编码
-2. **stdout 纯净性** — ACP Agent 的非 JSON-RPC 输出会污染通信。需将 Agent 子进程的 stderr 重定向到日志文件
+2. **stdout 纯净性** — ACP Agent 的非 JSON-RPC 输出会污染通信。stderr 已重定向到 console.error 日志
 3. **外部 Agent 可用性** — 用户机器上不一定安装了 qodercli/opencode 等，需要友好的提示和安装引导
 4. **安全** — Agent 凭证（API Key/Token）需安全存储，考虑复用 Knowledge Sidecar 的 `sanitizeConfig` 模式或 Tauri keychain
 5. **消息模型差异** — ACP 的 `ContentBlock` 类型（text/image/resource/diff/terminal）与 OpenCode 的 `MessagePart` 类型有差异，event-bridge 映射层需覆盖全部类型
-6. **文件操作权限** — ACP Agent 可能通过 `fs/read_text_file` 反向请求读写文件。ACP Sidecar 需实现这些 Client 能力，并做安全校验（限制在工作区内）
-7. **进程生命周期** — 多个 ACP Agent 子进程需要可靠的清理机制，参考现有 sidecar PID 注册表 + `RunEvent::Exit` 模式
+6. **文件操作权限** — ACP Agent 通过 `fs/read_text_file` / `fs/write_text_file` 反向请求读写文件。当前已实现基础 fs 操作，CWD 沙箱校验待 Phase 3 补齐
+7. **进程生命周期** — 已实现进程退出监听 + pending request 批量 reject + Tauri RunEvent::Exit 统一清理
 
 ## 参考资料
 
 - [ACP 协议官网](https://agentclientprotocol.com/)
 - [ACP 协议规范 (Overview)](https://agentclientprotocol.com/protocol/overview)
-- [ACP TypeScript SDK](https://github.com/agentclientprotocol/agent-client-protocol) — `@agentclientprotocol/sdk`
+- [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) — `@agentclientprotocol/sdk` v0.21.1
+- [openclaw/acpx](https://github.com/openclaw/acpx) — 生产级 ACP Client 参考实现（v0.8.0, TypeScript）
+- [ACPX ACP Coverage Roadmap](https://github.com/openclaw/acpx/blob/main/docs/2026-02-19-acp-coverage-roadmap.md)
+- [OpenClaw ACP Agents 文档](https://docs.openclaw.ai/tools/acp-agents)
 - [OpenCode ACP 文档](https://opencode.ai/docs/zh-cn/acp/)
-- [OpenCode ACP 源码](https://github.com/sst/opencode) — `packages/opencode/src/acp/`
+- [OpenCode ACP 源码](https://github.com/sst/opencode) — `packages/opencode/src/acp/`（Agent Side 参考）
 - [Qoder ACP 文档](https://docs.qoder.com/en/cli/acp)
 - [Zed agent_servers 配置](https://zed.dev/docs/agent/acp)
 - 桌面文件: `~/Desktop/ACP技术调研/ACP协议技术调研报告.docx` — 完整的 ACP vs A2A 调研
