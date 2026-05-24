@@ -286,6 +286,8 @@ export interface Agent {
   id: string
   name: string
   description?: string
+  mode?: "subagent" | "primary" | "all"
+  hidden?: boolean
   model?: string
   system?: string
 }
