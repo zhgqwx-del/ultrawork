@@ -91,6 +91,9 @@ bun run build:gateway $FORCE_BUILD
 echo "  Building Knowledge Sidecar..."
 bun run build:knowledge $FORCE_BUILD
 
+echo "  Building ACP Client..."
+bun run build:acp $FORCE_BUILD
+
 echo "  Sidecar binaries ready in src-tauri/binaries/"
 
 # ── 6. Dev or Build ─────────────────────────
@@ -103,6 +106,7 @@ case "$MODE" in
     echo "  OpenCode:  http://localhost:4096"
     echo "  Gateway:   http://localhost:4097"
     echo "  Knowledge: http://localhost:4098"
+    echo "  ACP Client: http://localhost:4099"
     echo ""
     bun run tauri:dev
     ;;

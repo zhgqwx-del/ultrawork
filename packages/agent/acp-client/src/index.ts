@@ -19,6 +19,17 @@ async function serve() {
 
   console.log(`[ACP] Listening on http://localhost:${server.port}`)
 
+  // Auto-connect all configured agents in background
+  const agents = manager.getAgents()
+  if (agents.length > 0) {
+    console.log(`[ACP] Auto-connecting ${agents.length} agent(s)...`)
+    for (const agent of agents) {
+      manager.connect(agent.id).catch((err) => {
+        console.error(`[ACP] Auto-connect failed for "${agent.id}":`, err instanceof Error ? err.message : err)
+      })
+    }
+  }
+
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async () => {
