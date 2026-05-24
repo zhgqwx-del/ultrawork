@@ -6,6 +6,8 @@ import { useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
+import { createACPSession, promptACPSession, cancelACPSession } from "@/lib/agent-router"
+import { useACPSSE } from "@/lib/use-acp-sse"
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -20,6 +22,8 @@ interface UseSessionMessagesOptions {
   initialSending?: boolean
   /** Pre-fill user message text for optimistic UI */
   initialMessageText?: string
+  /** ACP agent raw ID — when set, initial message routes via ACP Sidecar */
+  acpAgentId?: string
 }
 
 export function useSessionMessages(
@@ -57,6 +61,9 @@ export function useSessionMessages(
   const optionsRef = useRef(options)
   optionsRef.current = options
   const prefetchUntilRef = useRef(0)
+
+  // --- ACP session state ---
+  const [acpSessionId, setAcpSessionId] = useState<string | null>(null)
 
   // --- Windowed display messages ---
   const displayMessages = useMemo(() => {
@@ -112,7 +119,36 @@ export function useSessionMessages(
       }
     }
 
-    // 8-second safety timeout for Home→Session navigation
+    // ACP agent: trigger initial prompt via ACP Sidecar
+    if (isSendingFromNav && sessionId && opts?.acpAgentId && opts?.initialMessageText) {
+      const agentId = opts.acpAgentId
+      const text = opts.initialMessageText
+      const sendInitialACP = async () => {
+        try {
+          const cwd = "/"
+          const sid = await createACPSession(agentId, cwd)
+          setAcpSessionId(sid)
+          await new Promise((r) => setTimeout(r, 300))
+          await promptACPSession(sid, text)
+          if (idRef.current === sessionId) {
+            sendingRef.current = false
+            setSending(false)
+            markSessionIdle(sessionId)
+          }
+        } catch (err) {
+          console.error("Failed to send initial ACP message:", err)
+          if (idRef.current === sessionId) {
+            sendingRef.current = false
+            setSending(false)
+            markSessionIdle(sessionId)
+          }
+        }
+      }
+      sendInitialACP()
+      return
+    }
+
+    // 8-second safety timeout for Home→Session navigation (OpenCode only)
     if (isSendingFromNav && sessionId) {
       const sid = sessionId
       const timer = setTimeout(() => {
@@ -460,6 +496,9 @@ export function useSessionMessages(
 
   useSSESubscribe(handleSSEEvent)
 
+  // ACP SSE: forward events from ACP Sidecar into the same handler
+  useACPSSE(acpSessionId, handleSSEEvent)
+
   // --- Cleanup: mark session idle on unmount/session change ---
   useEffect(() => {
     return () => {
@@ -504,7 +543,11 @@ export function useSessionMessages(
     frozenMessageIdsRef.current = frozenIds
     setStoppedAtMessageId(stoppedId)
 
-    if (sessionId) {
+    if (acpSessionId) {
+      // ACP agent: cancel via ACP Sidecar
+      cancelACPSession(acpSessionId).catch(() => { setSending(false) })
+    } else if (sessionId) {
+      // OpenCode agent: abort + revert
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
@@ -518,12 +561,13 @@ export function useSessionMessages(
           setSending(false)
         })
     }
-  }, [sessionId, api, markSessionIdle])
+  }, [sessionId, acpSessionId, api, markSessionIdle])
 
   const sendMessage = useCallback((
     text: string,
     model?: string | null,
     agent?: string,
+    acpAgentId?: string,
   ) => {
     if (!sessionId || !text.trim() || sending || sendingRef.current) return
     sendingRef.current = true
@@ -552,21 +596,56 @@ export function useSessionMessages(
     }
     setMessages((prev) => [...prev, tempUserMessage])
 
-    api.promptAsync(sessionId, userMessage, { model: model || undefined, agent: agent || undefined }).catch((err) => {
-      console.error("Failed to send message:", err)
-      if (idRef.current !== sessionId) return
-      sendingRef.current = false
-      setSending(false)
-      markSessionIdle(sessionId)
-      if (wasStopped) {
-        setStopped(true)
-        stoppedRef.current = true
-        if (prevFrozenIds) frozenMessageIdsRef.current = prevFrozenIds
+    // Route to ACP Sidecar or OpenCode based on agent type
+    if (acpAgentId) {
+      // ACP agent: create session (if first message) → subscribe SSE → prompt
+      const sendViaACP = async () => {
+        try {
+          let sid = acpSessionId
+          if (!sid) {
+            // First message in this session — create ACP session
+            const cwd = "/"
+            sid = await createACPSession(acpAgentId, cwd)
+            setAcpSessionId(sid)
+            // Small delay to let SSE subscription establish before prompt
+            await new Promise((r) => setTimeout(r, 300))
+          }
+          await promptACPSession(sid, userMessage)
+          // Prompt completed — reset sending state
+          if (idRef.current === sessionId) {
+            sendingRef.current = false
+            setSending(false)
+            markSessionIdle(sessionId)
+          }
+        } catch (err) {
+          console.error("Failed to send ACP message:", err)
+          if (idRef.current !== sessionId) return
+          sendingRef.current = false
+          setSending(false)
+          markSessionIdle(sessionId)
+          setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
+          toast.error(t("error.sendMessage"))
+        }
       }
-      setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
-      toast.error(t("error.sendMessage"))
-    })
-  }, [sessionId, sending, api, markSessionActive, markSessionIdle, t])
+      sendViaACP()
+    } else {
+      // OpenCode agent: existing flow
+      api.promptAsync(sessionId, userMessage, { model: model || undefined, agent: agent || undefined }).catch((err) => {
+        console.error("Failed to send message:", err)
+        if (idRef.current !== sessionId) return
+        sendingRef.current = false
+        setSending(false)
+        markSessionIdle(sessionId)
+        if (wasStopped) {
+          setStopped(true)
+          stoppedRef.current = true
+          if (prevFrozenIds) frozenMessageIdsRef.current = prevFrozenIds
+        }
+        setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
+        toast.error(t("error.sendMessage"))
+      })
+    }
+  }, [sessionId, sending, acpSessionId, api, markSessionActive, markSessionIdle, t])
 
   return {
     messages: displayMessages,

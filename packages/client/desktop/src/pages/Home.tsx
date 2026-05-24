@@ -39,7 +39,7 @@ export function HomePage() {
   const api = useApi()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
-  const { getPromptAgent } = useAgent()
+  const { getPromptAgent, isACPAgent, getCurrentAgentParsed } = useAgent()
 
   const handleSend = async () => {
     const text = input.trim()
@@ -47,16 +47,26 @@ export function HomePage() {
 
     setSending(true)
     try {
-      const session = await createSession()
-      setInput("")
-      // Navigate immediately for instant UX; promptAsync returns 204 fire-and-forget.
-      // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
-      navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
-      const agent = getPromptAgent()
-      api.promptAsync(session.id, text, { model: currentModel || undefined, agent }).catch((err) => {
-        console.error("Failed to send message:", err)
-        toast.error(t("error.sendMessage"))
-      })
+      if (isACPAgent) {
+        // ACP agent: create an OpenCode session as a container (for sidebar display),
+        // then navigate. Actual ACP session + prompt happens in Session.tsx's sendMessage.
+        const session = await createSession()
+        setInput("")
+        const { rawId } = getCurrentAgentParsed()
+        navigate(`/session/${session.id}`, {
+          state: { sending: true, messageText: text, acpAgentId: rawId },
+        })
+      } else {
+        // OpenCode agent: existing flow
+        const session = await createSession()
+        setInput("")
+        navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
+        const agent = getPromptAgent()
+        api.promptAsync(session.id, text, { model: currentModel || undefined, agent }).catch((err) => {
+          console.error("Failed to send message:", err)
+          toast.error(t("error.sendMessage"))
+        })
+      }
     } catch (err) {
       console.error("Failed to create session:", err)
       toast.error(t("error.createSession"))

@@ -25,7 +25,7 @@ export function SessionPage() {
   const { sessions } = useSessionsContext()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
-  const { getPromptAgent } = useAgent()
+  const { getPromptAgent, isACPAgent, getCurrentAgentParsed } = useAgent()
   const { rightOpen, toggleRight } = useSidebar()
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -37,7 +37,7 @@ export function SessionPage() {
   const session = sessions.find(s => s.id === id)
 
   // Read navigation state once per session change
-  const navState = location.state as { sending?: boolean; messageText?: string } | null
+  const navState = location.state as { sending?: boolean; messageText?: string; acpAgentId?: string } | null
 
   // --- Message management hook ---
   const {
@@ -59,6 +59,7 @@ export function SessionPage() {
   } = useSessionMessages(id, {
     initialSending: !!navState?.sending,
     initialMessageText: navState?.messageText,
+    acpAgentId: navState?.acpAgentId,
   })
 
   // --- Permission/Question management hook ---
@@ -90,7 +91,13 @@ export function SessionPage() {
 
   const handleSend = () => {
     if (!input.trim()) return
-    sendMessage(input.trim(), currentModel, getPromptAgent())
+    const { rawId } = getCurrentAgentParsed()
+    sendMessage(
+      input.trim(),
+      currentModel,
+      getPromptAgent(),
+      isACPAgent ? rawId : undefined,
+    )
     setInput("")
     // Force scroll to bottom after sending, even if user was viewing history
     scrollToBottom(true)
