@@ -56,6 +56,7 @@
 | [024](./024-workspace-path-display.md) | 工作目录路径展示优化 | 2026-05-12 | Proposed |
 | [025](./025-window-layout-symmetry.md) | 窗口布局对称性修复与平台感知适配 | 2026-05-12 | Accepted |
 | [026](./026-knowledge-base-architecture.md) | 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API | 2026-05-13 | Accepted (Phase 1-3 + 4a + 4c 实现) |
+| [027](./027-acp-external-agents.md) | 多 Agent 架构 — ACP 协议集成与统一 Agent 抽象 | 2026-05-24 | Proposed |
 
 ## 新增 ADR
 
