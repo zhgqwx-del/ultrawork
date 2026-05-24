@@ -53,6 +53,9 @@ export class ACPConnection {
   // Session CWD tracking — for file operation sandboxing
   private sessionCwds: Map<string, string> = new Map()
 
+  // Per-session message counter — ensures unique messageID per prompt turn
+  private sessionMsgCounters: Map<string, number> = new Map()
+
   constructor(config: ACPAgentConfig) {
     this.agentId = config.id
     this.config = config
@@ -169,6 +172,10 @@ export class ACPConnection {
   /** Send a prompt to an ACP session */
   async prompt(sessionId: string, text: string): Promise<{ stopReason: string }> {
     this.ensureConnected()
+    // Increment message counter for unique IDs per turn
+    const count = (this.sessionMsgCounters.get(sessionId) ?? 0) + 1
+    this.sessionMsgCounters.set(sessionId, count)
+
     const result = await this.runRequest(() =>
       this.connection!.prompt({
         sessionId,
@@ -329,6 +336,8 @@ export class ACPConnection {
   private handleSessionUpdate(params: SessionNotification): void {
     const sessionId = params.sessionId
     const update = params.update
+    const msgN = this.sessionMsgCounters.get(sessionId) ?? 0
+    const msgId = `acp-${sessionId}-msg-${msgN}`
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
@@ -337,8 +346,8 @@ export class ACPConnection {
             type: "message.part.delta",
             properties: {
               sessionID: sessionId,
-              messageID: `acp-${sessionId}-msg`,
-              partID: `acp-${sessionId}-part-text`,
+              messageID: msgId,
+              partID: `${msgId}-part-text`,
               field: "text",
               delta: update.content.text,
             },
@@ -352,8 +361,8 @@ export class ACPConnection {
             type: "message.part.delta",
             properties: {
               sessionID: sessionId,
-              messageID: `acp-${sessionId}-msg`,
-              partID: `acp-${sessionId}-part-reasoning`,
+              messageID: msgId,
+              partID: `${msgId}-part-reasoning`,
               field: "text",
               delta: update.content.text,
             },
@@ -369,7 +378,7 @@ export class ACPConnection {
               type: "tool",
               id: `acp-tool-${update.toolCallId}`,
               sessionID: sessionId,
-              messageID: `acp-${sessionId}-msg`,
+              messageID: msgId,
               tool: update.title ?? "tool",
               state: {
                 status: update.status === "completed" ? "completed" : "running",
@@ -392,7 +401,7 @@ export class ACPConnection {
               type: "tool",
               id: `acp-tool-${update.toolCallId}`,
               sessionID: sessionId,
-              messageID: `acp-${sessionId}-msg`,
+              messageID: msgId,
               tool: "tool",
               state: {
                 status: update.status === "completed" ? "completed" : "running",
@@ -412,7 +421,7 @@ export class ACPConnection {
           type: "message.updated",
           properties: {
             info: {
-              id: `acp-${sessionId}-msg`,
+              id: msgId,
               sessionID: sessionId,
               role: "assistant",
               time: { created: Date.now() },
@@ -476,6 +485,7 @@ export class ACPConnection {
     )
     this.sseCallbacks.clear()
     this.sessionCwds.clear()
+    this.sessionMsgCounters.clear()
     this.sessionUpdateChain = Promise.resolve()
     try {
       this.process?.kill()

@@ -30,25 +30,18 @@ export function useACPSSE(
 
         // Rewrite sessionID in event properties to match OpenCode session ID,
         // so handleSSEEvent's session filter passes these events through.
-        const props = event.properties as Record<string, unknown>
-        if (props.sessionID) props.sessionID = openCodeSessionId
-        if (props.messageID && typeof props.messageID === "string" && props.messageID.startsWith("acp-")) {
-          // Keep ACP message IDs unique but make them findable
-          props.messageID = `acp-${openCodeSessionId}-msg`
+        // Keep messageID/partID as-is (they include per-turn counters for uniqueness).
+        const rewriteSessionID = (obj: Record<string, unknown>) => {
+          if (obj.sessionID) obj.sessionID = openCodeSessionId
         }
+
+        const props = event.properties as Record<string, unknown>
+        rewriteSessionID(props)
         if (props.part && typeof props.part === "object") {
-          const part = props.part as Record<string, unknown>
-          if (part.sessionID) part.sessionID = openCodeSessionId
-          if (part.messageID && typeof part.messageID === "string" && part.messageID.startsWith("acp-")) {
-            part.messageID = `acp-${openCodeSessionId}-msg`
-          }
+          rewriteSessionID(props.part as Record<string, unknown>)
         }
         if (props.info && typeof props.info === "object") {
-          const info = props.info as Record<string, unknown>
-          if (info.sessionID) info.sessionID = openCodeSessionId
-          if (info.id && typeof info.id === "string" && info.id.startsWith("acp-")) {
-            info.id = `acp-${openCodeSessionId}-msg`
-          }
+          rewriteSessionID(props.info as Record<string, unknown>)
         }
 
         onEventRef.current(event)
