@@ -154,6 +154,64 @@ export class ACPManager {
     return { sessionId, agentId: info.agentId, createdAt: info.createdAt }
   }
 
+  /** Add or update an agent config and save to disk */
+  async saveAgent(config: ACPAgentConfig): Promise<void> {
+    // Disconnect old connection if exists
+    if (this.connections.has(config.id)) {
+      await this.disconnect(config.id).catch(() => {})
+    }
+    this.configs.set(config.id, config)
+    this.connections.set(config.id, new ACPConnection(config))
+    await this.persistConfigs()
+    // Auto-connect the new agent
+    this.connect(config.id).catch((err) => {
+      console.error(`[ACP] Auto-connect failed for "${config.id}":`, err instanceof Error ? err.message : err)
+    })
+  }
+
+  /** Remove an agent config and save to disk */
+  async removeAgent(agentId: string): Promise<void> {
+    if (this.connections.has(agentId)) {
+      await this.disconnect(agentId).catch(() => {})
+    }
+    this.configs.delete(agentId)
+    this.connections.delete(agentId)
+    await this.persistConfigs()
+  }
+
+  /** Reload configs from disk (disconnect removed, connect new) */
+  async reloadConfigs(): Promise<void> {
+    // Disconnect all current agents
+    await this.shutdown()
+    this.configs.clear()
+    // Reload
+    await this.loadConfigs()
+    // Auto-connect all
+    for (const agent of this.getAgents()) {
+      this.connect(agent.id).catch((err) => {
+        console.error(`[ACP] Auto-connect failed for "${agent.id}":`, err instanceof Error ? err.message : err)
+      })
+    }
+  }
+
+  /** Get a specific agent's config (for editing) */
+  getAgentConfig(agentId: string): ACPAgentConfig | undefined {
+    return this.configs.get(agentId)
+  }
+
+  /** Write current configs to ~/.config/ultrawork/agents.json */
+  private async persistConfigs(): Promise<void> {
+    const agents: Record<string, Omit<ACPAgentConfig, "id">> = {}
+    for (const [id, config] of this.configs) {
+      const { id: _id, ...rest } = config
+      agents[id] = rest
+    }
+    const data: AgentsFile = { agents }
+    const dir = CONFIG_PATH.substring(0, CONFIG_PATH.lastIndexOf("/"))
+    await Bun.write(CONFIG_PATH, JSON.stringify(data, null, 2) + "\n")
+    console.log(`[ACP] Saved ${this.configs.size} agent config(s) to ${CONFIG_PATH}`)
+  }
+
   /** Disconnect all agents and clean up */
   async shutdown(): Promise<void> {
     console.log("[ACP] Shutting down all agents...")

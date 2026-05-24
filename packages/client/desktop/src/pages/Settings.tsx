@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
+import { AgentsSection } from "@/components/settings/agents-section"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -26,13 +27,14 @@ import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChanne
 import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "channels" | "knowledge" | "skills" | "about"
+type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "agents" | "channels" | "knowledge" | "skills" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
   { key: "services", icon: Server, labelKey: "settingsPage.services" },
+  { key: "agents", icon: Bot, labelKey: "settingsPage.agents" },
   { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
   { key: "knowledge", icon: BookOpen, labelKey: "settingsPage.knowledge" },
   { key: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
@@ -84,6 +86,7 @@ export function SettingsPage() {
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "services" && <ServicesSection />}
+            {activeSection === "agents" && <AgentsSection />}
             {activeSection === "channels" && <ChannelsSection />}
             {activeSection === "knowledge" && <KnowledgeSection />}
             {activeSection === "skills" && <SkillsSection />}

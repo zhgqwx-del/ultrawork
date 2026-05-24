@@ -45,6 +45,64 @@ export function createApp(manager: ACPManager): Hono {
     }
   })
 
+  // Save (add/update) an agent config
+  app.put("/acp/agents/:id", async (c) => {
+    try {
+      const id = c.req.param("id")
+      const body = await c.req.json<{
+        label: string
+        description?: string
+        command: string
+        args?: string[]
+        env?: Record<string, string>
+      }>()
+      if (!body.label || !body.command) {
+        return c.json({ error: "label and command are required" }, 400)
+      }
+      await manager.saveAgent({
+        id,
+        label: body.label,
+        description: body.description,
+        command: body.command,
+        args: body.args ?? [],
+        env: body.env,
+      })
+      return c.json({ ok: true })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed"
+      return c.json({ error: msg }, 500)
+    }
+  })
+
+  // Delete an agent config
+  app.delete("/acp/agents/:id", async (c) => {
+    try {
+      await manager.removeAgent(c.req.param("id"))
+      return c.json({ ok: true })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed"
+      return c.json({ error: msg }, 500)
+    }
+  })
+
+  // Get agent config (for editing)
+  app.get("/acp/agents/:id/config", (c) => {
+    const config = manager.getAgentConfig(c.req.param("id"))
+    if (!config) return c.json({ error: "Agent not found" }, 404)
+    return c.json(config)
+  })
+
+  // Reload all configs from disk
+  app.post("/acp/config/reload", async (c) => {
+    try {
+      await manager.reloadConfigs()
+      return c.json({ ok: true, agents: manager.getAgents() })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Reload failed"
+      return c.json({ error: msg }, 500)
+    }
+  })
+
   app.post("/acp/agents/:id/disconnect", async (c) => {
     try {
       await manager.disconnect(c.req.param("id"))
