@@ -497,7 +497,8 @@ export function useSessionMessages(
   useSSESubscribe(handleSSEEvent)
 
   // ACP SSE: forward events from ACP Sidecar into the same handler
-  useACPSSE(acpSessionId, handleSSEEvent)
+  // Rewrites ACP sessionID → OpenCode sessionID so handleSSEEvent's filter passes
+  useACPSSE(acpSessionId, sessionId, handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
   useEffect(() => {
