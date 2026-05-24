@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 多 Agent 架构 — ACP 协议集成（ADR-027）：Ultrawork 作为独立桌面 Agent 客户端，支持 OpenCode 内置 Agent（Build/Plan）+ 外部 ACP Agent（Qoder 等）统一选择和使用
+  - Phase 1: 统一 Agent 抽象层（UnifiedAgent 接口 + useAgents hook + AgentProvider 上下文）+ Agent 选择器 UI（底部下拉，分组展示内置/外部 Agent）+ Plan↔Build 自动切换检测
+  - Phase 2: ACP Client Sidecar (:4099) — spawn 外部 ACP Agent 子进程，JSON-RPC over stdio 通信，session/update → SSE 事件转换，进程退出监听 + 事件串行排序 + pending request 追踪
+  - Phase 3a: ACP 消息流端到端打通 — sendMessage ACP 分流 + ACP SSE 订阅 + 消息状态复用 + 前端内存缓存（导航时保留 ACP 聊天历史）
+  - Tauri 集成：ACP Sidecar 进程管理 + setup.sh 集成 + auto-connect on startup
 - 知识库能力 Phase 4c（ADR-026）：IMA 写入能力 — MCP 工具 `knowledge_save_note`（AI 自主新建/追加笔记）+ HTTP 端点 `/kb/notes/create` + `/kb/notes/append` + 本地图片自动过滤 + 写入错误码处理
 - 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段 + IMA 凭证 UX 优化（一键打开凭证页面 + clientId 自动复用 + 首次保存成功 toast 提示）
 - 知识库能力 Phase 3（ADR-026）：第三方平台 Adapter（IMA 优先）+ 凭证配置向导 + 测试连接 + 统一 ID-based API（Schema v3）+ 跨源搜索（本地+IMA 合并排序）+ Filter Chips 知识源分类筛选
