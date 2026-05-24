@@ -9,7 +9,8 @@
     "packages/client/*",
     "packages/channel/*",
     "packages/knowledge/*",
-    "packages/proactive/*"
+    "packages/proactive/*",
+    "packages/agent/*"
   ],
   "scripts": {
     "dev": "turbo run dev",
