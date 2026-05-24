@@ -38,7 +38,8 @@
     "externalBin": [
       "binaries/opencode-server",
       "binaries/channel-gateway",
-      "binaries/knowledge-sidecar"
+      "binaries/knowledge-sidecar",
+      "binaries/acp-client"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",

@@ -11,6 +11,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
 const KNOWLEDGE_PORT: u16 = 4098;
+const ACP_CLIENT_PORT: u16 = 4099;
 const OPENCODE_APP_NAME: &str = "ultrawork";
 
 // ── Sidecar process registry ─────────────────────────────────────────
@@ -1059,6 +1060,22 @@ pub fn run() {
                     &[],
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
+                }
+            });
+
+            // Start ACP Client Sidecar in background (non-critical, don't block UI)
+            let acp_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(e) = start_sidecar(
+                    &acp_handle,
+                    "acp-client",
+                    ACP_CLIENT_PORT,
+                    "/acp/health",
+                    None,
+                    &[],
+                    &[],
+                ) {
+                    eprintln!("ACP Client Sidecar startup failed: {}", e);
                 }
             });
 
