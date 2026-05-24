@@ -5,10 +5,11 @@ import { handleDrag } from "@/components/layout/drag-region"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useModel } from "@/lib/model-context"
+import { useAgent } from "@/lib/agent-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
-import { ChatInput, MessageList, ModelSelector } from "@/components/chat"
+import { ChatInput, MessageList, ModelSelector, AgentSelector } from "@/components/chat"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
@@ -24,6 +25,7 @@ export function SessionPage() {
   const { sessions } = useSessionsContext()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
+  const { getPromptAgent } = useAgent()
   const { rightOpen, toggleRight } = useSidebar()
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -88,7 +90,7 @@ export function SessionPage() {
 
   const handleSend = () => {
     if (!input.trim()) return
-    sendMessage(input.trim(), currentModel)
+    sendMessage(input.trim(), currentModel, getPromptAgent())
     setInput("")
     // Force scroll to bottom after sending, even if user was viewing history
     scrollToBottom(true)
@@ -180,11 +182,14 @@ export function SessionPage() {
                 loading={sending}
                 variant="reply"
                 leftSlot={
-                  <ModelSelector
-                    currentModel={currentModel}
-                    onModelChange={setModel}
-                    onOpenModelDialog={openModelDialog}
-                  />
+                  <>
+                    <AgentSelector />
+                    <ModelSelector
+                      currentModel={currentModel}
+                      onModelChange={setModel}
+                      onOpenModelDialog={openModelDialog}
+                    />
+                  </>
                 }
               />
             </div>

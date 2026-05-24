@@ -6,6 +6,7 @@ import { ConfigProvider } from "./lib/config-context"
 import { ThemeProvider, useTheme } from "./lib/theme-context"
 import { I18nProvider } from "./lib/i18n-context"
 import { ModelProvider, useModel } from "./lib/model-context"
+import { AgentProvider } from "./lib/agent-context"
 import { WorkspaceProvider } from "./lib/workspace-context"
 import { SSEProvider } from "./lib/sse-context"
 import { ModelDialog } from "./components/settings/model-dialog"
@@ -46,8 +47,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <WorkspaceProvider>
             <SSEProvider>
               <ModelProvider>
-                <RouterProvider router={router} />
-                <ModelDialogSingleton />
+                <AgentProvider>
+                  <RouterProvider router={router} />
+                  <ModelDialogSingleton />
+                </AgentProvider>
               </ModelProvider>
             </SSEProvider>
           </WorkspaceProvider>

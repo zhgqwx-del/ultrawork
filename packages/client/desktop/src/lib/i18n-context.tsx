@@ -195,6 +195,10 @@ const translations: Record<Language, Record<string, string>> = {
     "question.back": "Back",
     "question.customInput": "Or type a custom answer...",
 
+    // Agent selector
+    "agent.noAgent": "No agent",
+    "agent.external": "External Agents",
+
     // Model management
     "model.noModel": "No model",
     "model.selectModel": "Select Model",
@@ -662,6 +666,10 @@ const translations: Record<Language, Record<string, string>> = {
     "question.next": "下一个",
     "question.back": "返回",
     "question.customInput": "或输入自定义答案...",
+
+    // Agent selector
+    "agent.noAgent": "未选择 Agent",
+    "agent.external": "外部 Agent",
 
     // Model management
     "model.noModel": "未选择模型",

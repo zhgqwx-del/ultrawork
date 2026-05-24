@@ -523,6 +523,7 @@ export function useSessionMessages(
   const sendMessage = useCallback((
     text: string,
     model?: string | null,
+    agent?: string,
   ) => {
     if (!sessionId || !text.trim() || sending || sendingRef.current) return
     sendingRef.current = true
@@ -551,7 +552,7 @@ export function useSessionMessages(
     }
     setMessages((prev) => [...prev, tempUserMessage])
 
-    api.promptAsync(sessionId, userMessage, { model: model || undefined }).catch((err) => {
+    api.promptAsync(sessionId, userMessage, { model: model || undefined, agent: agent || undefined }).catch((err) => {
       console.error("Failed to send message:", err)
       if (idRef.current !== sessionId) return
       sendingRef.current = false

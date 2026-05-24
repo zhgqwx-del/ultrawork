@@ -5,7 +5,8 @@ import { FolderOpen, Pen, FileText } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useModel } from "@/lib/model-context"
-import { ChatInput, ModelSelector } from "@/components/chat"
+import { useAgent } from "@/lib/agent-context"
+import { ChatInput, ModelSelector, AgentSelector } from "@/components/chat"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -38,6 +39,7 @@ export function HomePage() {
   const api = useApi()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
+  const { getPromptAgent } = useAgent()
 
   const handleSend = async () => {
     const text = input.trim()
@@ -50,7 +52,8 @@ export function HomePage() {
       // Navigate immediately for instant UX; promptAsync returns 204 fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
-      api.promptAsync(session.id, text, { model: currentModel || undefined }).catch((err) => {
+      const agent = getPromptAgent()
+      api.promptAsync(session.id, text, { model: currentModel || undefined, agent }).catch((err) => {
         console.error("Failed to send message:", err)
         toast.error(t("error.sendMessage"))
       })
@@ -113,11 +116,14 @@ export function HomePage() {
             className="w-full"
             ctaLabel={t("home.startNow")}
             leftSlot={
-              <ModelSelector
-                currentModel={currentModel}
-                onModelChange={setModel}
-                onOpenModelDialog={openModelDialog}
-              />
+              <>
+                <AgentSelector />
+                <ModelSelector
+                  currentModel={currentModel}
+                  onModelChange={setModel}
+                  onOpenModelDialog={openModelDialog}
+                />
+              </>
             }
           />
         </div>
