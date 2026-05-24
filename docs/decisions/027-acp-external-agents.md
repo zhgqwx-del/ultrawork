@@ -422,6 +422,18 @@ GET  /acp/health               → 健康检查
 4. **权限自动批准** — ACP Agent 的文件读写权限请求当前自动选择 allow_once/allow_always，无用户确认 UI。后续应集成到前端 PermissionDock 组件。
 5. **ACP SSE 事件类型不完整** — 仅映射了 agent_message_chunk / agent_thought_chunk / tool_call / tool_call_update / usage_update，其他类型（error 等）静默忽略。
 
+## 后续迭代方向
+
+| 方向 | 内容 | 优先级 | 触发时机 |
+|------|------|--------|---------|
+| **消息持久化** | ACP 对话历史从内存缓存升级为 IndexedDB，支持跨应用重启 | 高 | 用户反馈对话丢失时 |
+| **Session Agent 锁定** | 选定 Agent 后锁定当前 session，防止混合消息；或 UI 提示切换 Agent 会新建 session | 高 | 用户误操作导致混合 |
+| **权限确认 UI** | ACP Agent 的文件读写权限请求集成到前端 PermissionDock，用户可逐条审批 | 中 | 安全需求提升时 |
+| **Sidecar 健康状态** | Agent 选择器显示 Sidecar 连接状态，不可用时禁用 ACP Agent + 友好错误提示 | 中 | 分发给其他用户时 |
+| **更多 Agent 接入** | Claude Code (`claude agent acp`)、Gemini CLI、OpenCode ACP 等预置配置模板 | 低 | 有具体 Agent 需求时 |
+| **SSE 事件完整映射** | 补齐 plan、error、config_option_update 等 ACP 事件类型的前端渲染 | 低 | Agent 使用 plan 模式时 |
+| **凭证安全** | Agent 环境变量中的 Token 从明文 JSON 迁移到 Tauri keychain / 系统密钥链 | 低 | 安全审计时 |
+
 ## 风险与注意事项
 
 1. **ACP 协议版本演进** — 当前 v1，仍在活跃迭代。通过 `initialize` 做版本协商，避免硬编码
