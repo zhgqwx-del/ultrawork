@@ -73,13 +73,8 @@ export function useSessionMessages(
 
   // --- ACP session state ---
   const [acpSessionId, setAcpSessionId] = useState<string | null>(null)
-
-  // Keep ACP message cache up-to-date as messages stream in
-  useEffect(() => {
-    if (sessionId && acpSessionId && messages.length > 0) {
-      acpMessageCache.set(sessionId, { messages, acpSessionId })
-    }
-  }, [sessionId, acpSessionId, messages])
+  const acpSessionIdRef = useRef<string | null>(null)
+  acpSessionIdRef.current = acpSessionId
 
   // --- Windowed display messages ---
   const displayMessages = useMemo(() => {
@@ -105,12 +100,13 @@ export function useSessionMessages(
   useEffect(() => {
     const opts = optionsRef.current
 
-    // Save ACP messages from previous session before clearing
+    // Save ACP messages from previous session before clearing (use refs to
+    // avoid React batch timing issues — refs always have the latest values)
     const prevId = prevSessionIdRef.current
-    const prevAcpSid = acpSessionId
+    const prevAcpSid = acpSessionIdRef.current
     if (prevId && prevAcpSid && messagesRef.current.length > 0) {
       acpMessageCache.set(prevId, {
-        messages: messagesRef.current,
+        messages: [...messagesRef.current],
         acpSessionId: prevAcpSid,
       })
     }
