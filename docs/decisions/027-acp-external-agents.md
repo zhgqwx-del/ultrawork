@@ -404,7 +404,7 @@ GET  /acp/health               → 健康检查
 | **Session 恢复** | loadSession + suppressReplayUpdates + drain wait | ⏳ Phase 3 补 |
 | **权限策略** | --approve-all / --approve-reads / --deny-all + 策略模式 | ⏳ 当前 auto-approve，Phase 3 补 UI |
 | **Terminal 操作** | 完整 terminal-manager (spawn/output/kill/cleanup) | ⏳ 未实现，后续按需补 |
-| **CWD 沙箱** | readTextFile/writeTextFile 路径校验限制在 cwd 内 | ⏳ 当前无校验，Phase 3 补 |
+| **CWD 沙箱** | readTextFile/writeTextFile 路径校验限制在 cwd 内 | ✅ validatePath 校验 resolved path 在 session CWD 内 |
 | **Stream tapping** | 可观测性回调（onAcpMessage/onAcpOutputMessage） | ⏳ 后续按需补 |
 
 ### 未纳入的 acpx 能力（不影响 MVP）
@@ -412,6 +412,14 @@ GET  /acp/health               → 健康检查
 - **Session 持久化**: acpx 在 `~/.acpx/sessions/` 持久化会话状态。Ultrawork 的 session 由 OpenCode 管理，ACP session 暂无需持久化。
 - **Flow 编排**: acpx 支持 TypeScript workflow modules（多步 prompt 流程）。超出 Ultrawork 当前范围。
 - **Queue ownership**: acpx 的 idle TTL + queue IPC 模型用于 CLI 多进程共享。Ultrawork 单进程不需要。
+
+## 已知限制（待后续迭代）
+
+1. **ACP 消息不跨应用重启** — ACP 对话历史仅存前端内存缓存（模块级 Map），应用重启后丢失。后续可升级为 IndexedDB 持久化。
+2. **不支持同一 session 混合 Agent** — 每个 session 要么走 OpenCode 要么走 ACP，不支持在同一会话中切换 Agent。原因：两者 session 体系独立（OpenCode 消息在后端 DB，ACP 消息在前端内存），混合会导致消息来源不一致。后续可通过 UI 限制（选定 Agent 后锁定当前 session）或消息归一化（ACP 消息回写 OpenCode DB）来解决。
+3. **ACP Sidecar 不运行时无友好提示** — 用户选择 ACP Agent 发送消息，如果 Sidecar 未启动，只显示通用错误 toast。后续应在 Agent 选择器上显示 Sidecar 连接状态，不可用时禁用 ACP Agent。
+4. **权限自动批准** — ACP Agent 的文件读写权限请求当前自动选择 allow_once/allow_always，无用户确认 UI。后续应集成到前端 PermissionDock 组件。
+5. **ACP SSE 事件类型不完整** — 仅映射了 agent_message_chunk / agent_thought_chunk / tool_call / tool_call_update / usage_update，其他类型（error 等）静默忽略。
 
 ## 风险与注意事项
 
