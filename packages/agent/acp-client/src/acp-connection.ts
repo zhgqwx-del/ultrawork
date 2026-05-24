@@ -107,8 +107,13 @@ export class ACPConnection {
       this.drainStderr()
 
       // Create JSON-RPC stream over stdio
-      const input = this.process.stdin as unknown as WritableStream<Uint8Array>
-      const output = this.process.stdout as unknown as ReadableStream<Uint8Array>
+      // Bun's Subprocess.stdin is a FileSink (not WritableStream), need to wrap it
+      const rawStdin = this.process.stdin as import("bun").FileSink
+      const input = new WritableStream<Uint8Array>({
+        write(chunk) { rawStdin.write(chunk) },
+        close() { rawStdin.end() },
+      })
+      const output = this.process.stdout as ReadableStream<Uint8Array>
       const stream = ndJsonStream(input, output)
 
       // Create client-side connection
