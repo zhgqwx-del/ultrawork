@@ -1,7 +1,7 @@
 # ADR-027: 多 Agent 架构 — ACP 协议集成与统一 Agent 抽象
 
-**状态**: Accepted (Phase 1-3 实现)
-**日期**: 2026-05-24
+**状态**: Accepted (Phase 1-3c 实现)
+**日期**: 2026-05-25 (Phase 3c 稳定性修复)
 **关联**: ADR-013 (Gateway Sidecar 模式参考), ADR-020 (Config 隔离)
 
 ## 背景
@@ -413,6 +413,33 @@ GET  /acp/health               → 健康检查
 - **Session 持久化**: acpx 在 `~/.acpx/sessions/` 持久化会话状态。Ultrawork 的 session 由 OpenCode 管理，ACP session 暂无需持久化。
 - **Flow 编排**: acpx 支持 TypeScript workflow modules（多步 prompt 流程）。超出 Ultrawork 当前范围。
 - **Queue ownership**: acpx 的 idle TTL + queue IPC 模型用于 CLI 多进程共享。Ultrawork 单进程不需要。
+
+## 已发现并修复的问题（Phase 3c, 2026-05-25）
+
+实际使用中发现并修复了多个 Agent 连接生命周期问题：
+
+### 连接状态管理
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 保存 Agent 后 UI 永久卡在"连接中..." | `saveAgent()` auto-connect 是 fire-and-forget，前端 `loadAgents()` 拿到中间态后无后续刷新 | 前端 `pollUntilSettled()` 轮询至终态（30×600ms=18s） |
+| Agent 卡在 connecting 后无法重连 | `connect()` guard `if (status === "connecting") return` 阻止重试 | 改为 cleanup 旧连接后重新发起 |
+| initialize 握手无超时 | 如果 agent 进程不响应 JSON-RPC，`connect()` 永远 hang | 新增 15 秒超时 `Promise.race` |
+| SSE 断开后静默丢消息 | EventSource `onerror` 只 log 不重连 | 新增 3 次指数退避重连 + 失败后发 `session.error` 合成事件 |
+| ACP cancel 后 sending 状态不重置 | `cancelACPSession().catch()` 只处理失败，成功时不重置 | `.then()` 也重置 `setSending(false)` |
+
+### macOS 平台适配
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| GUI 启动后找不到 agent 可执行文件 | Tauri GUI 应用不加载 `.zshrc`，PATH 只有最小集，qodercli 在 `~/.local/bin` 找不到 | ACP Sidecar 启动时传入 `rich_path()` 环境变量 |
+| 输入框智能标点替换 `--acp` → `—acp` | macOS WebKit 自动将双连字符替换为 em dash | 输入框 `autoCorrect="off"` + 保存时 `sanitizeCliText()` 还原 |
+
+### 其他改进
+
+- `rich_path()` 新增 `~/.cargo/bin` 路径覆盖
+- `handleEdit` 加载配置失败时显示 toast 提示（原静默吞错）
+- `cancelACPSession()` 补齐 HTTP 错误检查
 
 ## 已知限制（待后续迭代）
 

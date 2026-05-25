@@ -55,7 +55,11 @@ export async function promptACPSession(sessionId: string, text: string): Promise
 
 /** Cancel an ACP session prompt */
 export async function cancelACPSession(sessionId: string): Promise<void> {
-  await fetch(`${ACP_BASE_URL}/acp/session/${sessionId}/cancel`, { method: "POST" })
+  const res = await fetch(`${ACP_BASE_URL}/acp/session/${sessionId}/cancel`, { method: "POST" })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: "Cancel failed" }))
+    throw new Error(body.error || "Cancel failed")
+  }
 }
 
 /** Get SSE event stream URL for an ACP session */

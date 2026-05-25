@@ -506,6 +506,7 @@ fn rich_path() -> String {
     let extras = [
         format!("{home}/.volta/bin"),
         format!("{home}/.local/bin"),
+        format!("{home}/.cargo/bin"),
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
     ];
@@ -1064,7 +1065,10 @@ pub fn run() {
             });
 
             // Start ACP Client Sidecar in background (non-critical, don't block UI)
+            // Pass enriched PATH so agent subprocesses (qodercli, opencode, etc.)
+            // can be found even when launched from GUI context.
             let acp_handle = app.handle().clone();
+            let acp_path = rich_path();
             std::thread::spawn(move || {
                 if let Err(e) = start_sidecar(
                     &acp_handle,
@@ -1073,7 +1077,7 @@ pub fn run() {
                     "/acp/health",
                     None,
                     &[],
-                    &[],
+                    &[("PATH", &acp_path)],
                 ) {
                     eprintln!("ACP Client Sidecar startup failed: {}", e);
                 }

@@ -80,11 +80,19 @@ export class ACPConnection {
     if (cb) cb(event)
   }
 
+  /** Timeout for the ACP initialize handshake (ms) */
+  private static CONNECT_TIMEOUT = 15_000
+
   /**
    * Spawn the agent subprocess and perform ACP initialize handshake.
    */
   async connect(): Promise<void> {
-    if (this._status === "connected" || this._status === "connecting") return
+    if (this._status === "connected") return
+
+    // If already connecting (e.g. from a stuck auto-connect), kill the old attempt
+    if (this._status === "connecting") {
+      this.cleanup()
+    }
 
     this._status = "connecting"
     this._error = undefined
@@ -126,8 +134,8 @@ export class ACPConnection {
         stream,
       )
 
-      // Perform initialize handshake (race against process crash)
-      const initResult = await this.runRequest(() =>
+      // Perform initialize handshake with timeout (race against process crash + timeout)
+      const initPromise = this.runRequest(() =>
         this.connection!.initialize({
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {
@@ -138,6 +146,17 @@ export class ACPConnection {
           },
         }),
       )
+
+      let timeoutTimer: ReturnType<typeof setTimeout>
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(
+          () => reject(new Error(`Initialize handshake timed out after ${ACPConnection.CONNECT_TIMEOUT / 1000}s`)),
+          ACPConnection.CONNECT_TIMEOUT,
+        )
+      })
+
+      const initResult = await Promise.race([initPromise, timeoutPromise])
+      clearTimeout(timeoutTimer!)
 
       this._protocolVersion = initResult.protocolVersion
       this._status = "connected"

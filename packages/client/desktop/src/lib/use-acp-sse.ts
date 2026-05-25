@@ -8,6 +8,7 @@ import type { SSEEvent } from "./sse-client"
  * handleSSEEvent filter (which matches by OpenCode session ID) passes them through.
  *
  * Automatically connects when acpSessionId is set, disconnects on cleanup.
+ * On connection loss, retries up to 3 times with exponential backoff.
  */
 export function useACPSSE(
   acpSessionId: string | null,
@@ -20,42 +21,72 @@ export function useACPSSE(
   useEffect(() => {
     if (!acpSessionId || !openCodeSessionId) return
 
-    const url = getACPSessionEventsURL(acpSessionId)
-    const eventSource = new EventSource(url)
+    let closed = false
+    let retryCount = 0
+    let retryTimer: ReturnType<typeof setTimeout>
+    let es: EventSource
+    const MAX_RETRIES = 3
 
-    eventSource.onmessage = (e) => {
-      try {
-        const event: SSEEvent = JSON.parse(e.data)
-        if (event.type === "heartbeat" || event.type === "acp.connected") return
+    const connectSSE = () => {
+      const url = getACPSessionEventsURL(acpSessionId)
+      es = new EventSource(url)
 
-        // Rewrite sessionID in event properties to match OpenCode session ID,
-        // so handleSSEEvent's session filter passes these events through.
-        // Keep messageID/partID as-is (they include per-turn counters for uniqueness).
-        const rewriteSessionID = (obj: Record<string, unknown>) => {
-          if (obj.sessionID) obj.sessionID = openCodeSessionId
+      es.onopen = () => { retryCount = 0 }
+
+      es.onmessage = (e) => {
+        try {
+          const event: SSEEvent = JSON.parse(e.data)
+          if (event.type === "heartbeat" || event.type === "acp.connected") return
+
+          // Rewrite sessionID in event properties to match OpenCode session ID,
+          // so handleSSEEvent's session filter passes these events through.
+          const rewriteSessionID = (obj: Record<string, unknown>) => {
+            if (obj.sessionID) obj.sessionID = openCodeSessionId
+          }
+
+          const props = event.properties as Record<string, unknown>
+          rewriteSessionID(props)
+          if (props.part && typeof props.part === "object") {
+            rewriteSessionID(props.part as Record<string, unknown>)
+          }
+          if (props.info && typeof props.info === "object") {
+            rewriteSessionID(props.info as Record<string, unknown>)
+          }
+
+          onEventRef.current(event)
+        } catch {
+          // Malformed event — skip
         }
+      }
 
-        const props = event.properties as Record<string, unknown>
-        rewriteSessionID(props)
-        if (props.part && typeof props.part === "object") {
-          rewriteSessionID(props.part as Record<string, unknown>)
+      es.onerror = () => {
+        if (closed) return
+        es.close()
+        if (retryCount < MAX_RETRIES) {
+          const delay = 1000 * Math.pow(2, retryCount)
+          retryCount++
+          console.warn(`[ACP SSE] Connection lost, retry ${retryCount}/${MAX_RETRIES} in ${delay}ms`)
+          retryTimer = setTimeout(connectSSE, delay)
+        } else {
+          console.error(`[ACP SSE] Connection lost after ${MAX_RETRIES} retries for session ${acpSessionId}`)
+          // Emit a synthetic error event so the UI can surface it
+          onEventRef.current({
+            type: "session.error",
+            properties: {
+              sessionID: openCodeSessionId,
+              error: "ACP SSE connection lost",
+            },
+          })
         }
-        if (props.info && typeof props.info === "object") {
-          rewriteSessionID(props.info as Record<string, unknown>)
-        }
-
-        onEventRef.current(event)
-      } catch {
-        // Malformed event — skip
       }
     }
 
-    eventSource.onerror = () => {
-      console.warn(`[ACP SSE] Connection error for session ${acpSessionId}`)
-    }
+    connectSSE()
 
     return () => {
-      eventSource.close()
+      closed = true
+      clearTimeout(retryTimer)
+      es?.close()
     }
   }, [acpSessionId, openCodeSessionId])
 }

@@ -589,7 +589,9 @@ export function useSessionMessages(
 
     if (acpSessionId) {
       // ACP agent: cancel via ACP Sidecar
-      cancelACPSession(acpSessionId).catch(() => { setSending(false) })
+      cancelACPSession(acpSessionId)
+        .then(() => { setSending(false) })
+        .catch(() => { setSending(false) })
     } else if (sessionId) {
       // OpenCode agent: abort + revert
       const lastUserMsg = [...currentMsgs].reverse().find(

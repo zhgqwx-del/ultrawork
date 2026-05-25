@@ -50,6 +50,18 @@ export function AgentsSection() {
     }
   }
 
+  /** Poll agent status until it leaves "connecting" state */
+  const pollUntilSettled = async (agentId: string) => {
+    const maxAttempts = 30 // 30 × 600ms = 18s, covers the 15s backend timeout
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 600))
+      const list = await fetchACPAgents()
+      setAgents(list)
+      const agent = list.find((a) => a.id === agentId)
+      if (!agent || agent.status !== "connecting") return
+    }
+  }
+
   const handleConnect = async (id: string) => {
     setActionLoading(id)
     try {
@@ -59,6 +71,7 @@ export function AgentsSection() {
       refreshAgents()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("agents.connectFailed"))
+      await loadAgents()
     } finally {
       setActionLoading(null)
     }
@@ -70,7 +83,9 @@ export function AgentsSection() {
       toast.success(t("agents.saveSuccess"))
       setShowAddDialog(false)
       setEditingAgent(null)
-      await loadAgents()
+      // Save triggers fire-and-forget auto-connect on the backend.
+      // Poll until the agent reaches a final status.
+      await pollUntilSettled(config.id)
       refreshAgents()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("agents.saveFailed"))
@@ -85,13 +100,15 @@ export function AgentsSection() {
       command: "",
       args: [],
     })
+    setShowAddDialog(true)
     // Load full config from sidecar
     import("@/lib/agent-router").then(({ getACPAgentConfig }) => {
       getACPAgentConfig(agent.id).then((config) => {
         setEditingAgent(config)
+      }).catch(() => {
+        toast.error(t("agents.connectFailed"))
       })
     })
-    setShowAddDialog(true)
   }
 
   const connectedCount = agents.filter((a) => a.status === "connected").length
@@ -260,6 +277,13 @@ function AddAgentDialog({
     }
   }, [initial])
 
+  /** Fix macOS smart punctuation: em/en dashes → double hyphens, smart quotes → straight */
+  const sanitizeCliText = (s: string) =>
+    s.replace(/\u2014/g, "--")   // em dash → --
+     .replace(/\u2013/g, "-")    // en dash → -
+     .replace(/[\u2018\u2019]/g, "'")  // smart single quotes
+     .replace(/[\u201C\u201D]/g, '"')  // smart double quotes
+
   const handleSubmit = async () => {
     if (!id.trim() || !label.trim() || !command.trim()) return
     setSaving(true)
@@ -276,8 +300,8 @@ function AddAgentDialog({
         id: id.trim(),
         label: label.trim(),
         description: description.trim() || undefined,
-        command: command.trim(),
-        args: args.trim() ? args.trim().split(/\s+/) : [],
+        command: sanitizeCliText(command.trim()),
+        args: args.trim() ? sanitizeCliText(args.trim()).split(/\s+/) : [],
         env: Object.keys(env).length > 0 ? env : undefined,
       })
     } finally {
@@ -337,6 +361,9 @@ function AddAgentDialog({
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="qodercli"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
             />
           </div>
 
@@ -348,6 +375,9 @@ function AddAgentDialog({
               value={args}
               onChange={(e) => setArgs(e.target.value)}
               placeholder="--acp"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
             />
             <p className="mt-0.5 text-[10px] text-[var(--color-fg-muted)]">{t("agents.fieldArgsHint")}</p>
           </div>
@@ -360,6 +390,9 @@ function AddAgentDialog({
               value={envText}
               onChange={(e) => setEnvText(e.target.value)}
               placeholder={"QODER_PERSONAL_ACCESS_TOKEN=your_token"}
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
             />
             <p className="mt-0.5 text-[10px] text-[var(--color-fg-muted)]">{t("agents.fieldEnvHint")}</p>
           </div>

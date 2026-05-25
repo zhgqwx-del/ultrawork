@@ -29,6 +29,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
 ### Fixed
+- ACP Agent 连接生命周期稳定性修复（ADR-027 Phase 3c）：
+  - 保存 Agent 后 UI 永久卡在"连接中..."：auto-connect fire-and-forget 后前端无后续刷新，新增 `pollUntilSettled()` 轮询至终态
+  - Agent 卡在 connecting 状态后无法重连：`connect()` guard 阻止重试，改为 cleanup 后重新发起
+  - initialize 握手无超时：agent 进程不响应时永远 hang，新增 15 秒超时
+  - ACP SSE 断开后静默丢消息：新增 3 次指数退避重连 + 失败后发合成 error 事件
+  - ACP cancel 后 sending 状态不重置
+  - macOS GUI 启动后找不到 agent 可执行文件：ACP Sidecar 启动时传入 `rich_path()` 环境变量
+  - macOS 智能标点替换 `--acp` → `—acp`：输入框禁用自动纠正 + 保存时 `sanitizeCliText()` 还原
+  - Agent 编辑对话框加载配置失败时静默吞错：补齐 toast 提示
 - IMA 凭证验证错误提示显示原始 JSON：HTTP 401 响应 `{code:200002, msg:"skill auth failed"}` 未解析，现在正确提取 msg 展示友好提示
 - IMA Notes 模块无笔记本时添加流程死胡同：`list_notebook` 无用户笔记本返回空数组，现在合成"全部笔记"虚拟条目兜底
 - AddSourceDialog 凭证验证异常时临时 source 未清理：`handleTestConnection` 网络异常后 tempId 不在 catch 作用域内，残留孤儿记录
