@@ -10,6 +10,7 @@ const args = new Set(process.argv.slice(2))
 const skipSidecar = args.has("--skip-sidecar")
 const skipNotarize = args.has("--skip-notarize")
 const verbose = args.has("--verbose")
+const nativeOnly = args.has("--native")  // dev escape hatch: skip cross-compile
 
 // ── Resolve Tauri target triple ────────────────────────────────────
 const getCurrentTauriTarget = () => {
@@ -22,7 +23,15 @@ const getCurrentTauriTarget = () => {
   }
 }
 
-const tauriTarget = getCurrentTauriTarget()
+// On macOS we build a Universal binary (arm64 + x86_64) by default.
+// Tauri internally lipo-merges externalBin files when --target=universal-apple-darwin.
+const isMacOS = process.platform === "darwin"
+const tauriTarget = isMacOS && !nativeOnly ? "universal-apple-darwin" : getCurrentTauriTarget()
+const sidecarTargets = (() => {
+  if (!isMacOS) return [getCurrentTauriTarget()]
+  if (nativeOnly) return [getCurrentTauriTarget()]
+  return ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+})()
 
 // ── Environment checks ────────────────────────────────────────────
 const signingIdentity = process.env.APPLE_SIGNING_IDENTITY
@@ -44,20 +53,22 @@ if (!skipNotarize && !canNotarize) {
 }
 
 console.log(`\n🚀 Ultrawork Release Build`)
-console.log(`   Target: ${tauriTarget}`)
-console.log(`   Identity: ${signingIdentity}`)
-console.log(`   Notarize: ${!skipNotarize && canNotarize ? "yes" : "no"}`)
+console.log(`   Tauri target:    ${tauriTarget}`)
+console.log(`   Sidecar targets: ${sidecarTargets.join(", ")}`)
+console.log(`   Identity:        ${signingIdentity}`)
+console.log(`   Notarize:        ${!skipNotarize && canNotarize ? "yes" : "no"}`)
 console.log()
 
-// ── Step 1: Build sidecars ────────────────────────────────────────
+// ── Step 1: Build sidecars (each arch) ────────────────────────────
 if (skipSidecar) {
   console.log("⏭️  Skipping sidecar build (--skip-sidecar)")
 } else {
-  console.log("📦 Building OpenCode sidecar...")
-  await $`bun run ${path.join(rootDir, "scripts/build-opencode.ts")}`.quiet(!verbose)
-
-  console.log("📦 Building Channel Gateway sidecar...")
-  await $`bun run ${path.join(rootDir, "scripts/build-gateway.ts")}`.quiet(!verbose)
+  for (const target of sidecarTargets) {
+    console.log(`📦 Building sidecars for ${target}...`)
+    await $`bun run ${path.join(rootDir, "scripts/build-opencode.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-gateway.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
+  }
 }
 
 // ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY) ───
