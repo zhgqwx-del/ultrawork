@@ -914,37 +914,36 @@ fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
     load_or_create_sidecar_credentials()
 }
 
-/// Returns the absolute path to a sidecar binary.
-/// Tauri places sidecar binaries next to the app binary in production,
-/// and in src-tauri/binaries/ during development.
-#[tauri::command]
-fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
+// Tauri target triple for the currently-running build. Used to construct sidecar
+// binary names of the form `<base>-<target>` (no .exe suffix on non-windows).
+const fn current_target_triple() -> &'static str {
+    if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" }
+    } else if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    }
+}
+
+fn sidecar_binary_name(name: &str) -> String {
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    format!("{}-{}{}", name, current_target_triple(), suffix)
+}
+
+/// Resolve the absolute path to a sidecar binary. Tauri places sidecars next to
+/// the app binary in production (resource_dir/binaries/), and in src-tauri/binaries/
+/// during development. Used by the get_sidecar_path command AND by the startup
+/// repair logic that fixes stale MCP paths.
+fn resolve_sidecar_path(app: &tauri::AppHandle, name: &str) -> Result<String, String> {
     use tauri::Manager;
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    // In production, sidecar is at <resource_dir>/binaries/<name>-<target_triple>
-    // Tauri resolves the target triple automatically via sidecar() API,
-    // but for MCP config we need the exact path.
-    let target = if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "aarch64-apple-darwin"
-        } else {
-            "x86_64-apple-darwin"
-        }
-    } else if cfg!(target_os = "windows") {
-        "x86_64-pc-windows-msvc"
-    } else {
-        if cfg!(target_arch = "aarch64") {
-            "aarch64-unknown-linux-gnu"
-        } else {
-            "x86_64-unknown-linux-gnu"
-        }
-    };
-
-    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
-    let binary_name = format!("{}-{}{}", name, target, suffix);
+    let binary_name = sidecar_binary_name(name);
 
     // Try resource_dir first (production)
     let prod_path = resource_dir.join("binaries").join(&binary_name);
@@ -961,6 +960,60 @@ fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, Strin
     }
 
     Err(format!("Sidecar binary not found: {}", binary_name))
+}
+
+#[tauri::command]
+fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    resolve_sidecar_path(&app, &name)
+}
+
+// Sidecars that Ultrawork registers as MCPs in opencode.json. Used to detect
+// stale paths at startup (e.g. after the .app is moved or after a user switches
+// from dev to a packaged DMG on the same machine).
+const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
+
+/// At startup, scan the global opencode.json for MCP entries whose command[0]
+/// points to an ultrawork sidecar binary that no longer exists at the recorded
+/// path. Rewrite those entries with the current resolved path. Anything that
+/// isn't recognizable as a managed sidecar is left untouched.
+fn repair_sidecar_mcp_paths(app: &tauri::AppHandle) {
+    // Pre-resolve the current path for every known sidecar; basename keyed.
+    let mut resolved: std::collections::HashMap<String, String> = Default::default();
+    for sidecar in KNOWN_SIDECAR_NAMES {
+        let basename = sidecar_binary_name(sidecar);
+        if let Ok(path) = resolve_sidecar_path(app, sidecar) {
+            resolved.insert(basename, path);
+        }
+    }
+    if resolved.is_empty() {
+        return;
+    }
+
+    let result = modify_global_opencode_json(|root| {
+        let Some(mcp) = root.get_mut("mcp").and_then(|m| m.as_object_mut()) else {
+            return Ok(());
+        };
+        for (_name, cfg) in mcp.iter_mut() {
+            let Some(cmd) = cfg.get_mut("command").and_then(|c| c.as_array_mut()) else { continue };
+            let Some(first) = cmd.first_mut() else { continue };
+            let Some(current) = first.as_str() else { continue };
+
+            let basename = std::path::Path::new(current)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let Some(want) = resolved.get(basename) else { continue };
+            if want == current { continue }
+            if std::path::Path::new(current).exists() { continue }
+
+            println!("[repair] MCP path stale: {} -> {}", current, want);
+            *first = serde_json::Value::String(want.clone());
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        eprintln!("[repair] failed to update MCP paths: {}", e);
+    }
 }
 
 fn read_global_opencode_json() -> Result<serde_json::Value, String> {
@@ -1158,6 +1211,12 @@ pub fn run() {
         .setup(|app| {
             // One-time migration from shared opencode paths (must run before sidecar)
             migrate_from_opencode();
+
+            // Heal stale sidecar paths in opencode.json (e.g. user moved the .app
+            // bundle, or migrated from a dev build to a packaged DMG on the same
+            // machine). Must run before the OpenCode sidecar starts so it loads
+            // the corrected MCP config.
+            repair_sidecar_mcp_paths(&app.handle().clone());
 
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
