@@ -10,7 +10,8 @@ const args = new Set(process.argv.slice(2))
 const skipSidecar = args.has("--skip-sidecar")
 const skipNotarize = args.has("--skip-notarize")
 const verbose = args.has("--verbose")
-const nativeOnly = args.has("--native")  // dev escape hatch: skip cross-compile
+const nativeOnly = args.has("--native")     // dev escape hatch: skip cross-compile
+const unsigned  = args.has("--unsigned")    // ad-hoc sign only; produces app that runs locally but fails Gatekeeper for redistribution
 
 // ── Resolve Tauri target triple ────────────────────────────────────
 const getCurrentTauriTarget = () => {
@@ -35,8 +36,8 @@ const sidecarTargets = (() => {
 
 // ── Environment checks ────────────────────────────────────────────
 const signingIdentity = process.env.APPLE_SIGNING_IDENTITY
-if (!signingIdentity) {
-  console.error("❌ APPLE_SIGNING_IDENTITY is required")
+if (!unsigned && !signingIdentity) {
+  console.error("❌ APPLE_SIGNING_IDENTITY is required (or pass --unsigned for ad-hoc build)")
   console.error("   Set it to your 'Developer ID Application: ...' identity")
   console.error("   List identities: security find-identity -v -p codesigning")
   process.exit(1)
@@ -45,9 +46,14 @@ if (!signingIdentity) {
 const appleId = process.env.APPLE_ID
 const applePassword = process.env.APPLE_PASSWORD
 const appleTeamId = process.env.APPLE_TEAM_ID
-const canNotarize = !!(appleId && applePassword && appleTeamId)
+const canNotarize = !unsigned && !!(appleId && applePassword && appleTeamId)
 
-if (!skipNotarize && !canNotarize) {
+if (unsigned) {
+  console.warn("⚠️  --unsigned: producing ad-hoc signed build")
+  console.warn("   The .app will run on your machine but the DMG will fail Gatekeeper")
+  console.warn("   on other Macs. End users must run:")
+  console.warn("     xattr -dr com.apple.quarantine /Applications/Ultrawork.app")
+} else if (!skipNotarize && !canNotarize) {
   console.warn("⚠️  Notarization credentials missing (APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID)")
   console.warn("   Will sign only. Use --skip-notarize to suppress this warning.")
 }
@@ -55,8 +61,8 @@ if (!skipNotarize && !canNotarize) {
 console.log(`\n🚀 Ultrawork Release Build`)
 console.log(`   Tauri target:    ${tauriTarget}`)
 console.log(`   Sidecar targets: ${sidecarTargets.join(", ")}`)
-console.log(`   Identity:        ${signingIdentity}`)
-console.log(`   Notarize:        ${!skipNotarize && canNotarize ? "yes" : "no"}`)
+console.log(`   Identity:        ${unsigned ? "(ad-hoc / unsigned)" : signingIdentity}`)
+console.log(`   Notarize:        ${canNotarize ? "yes" : "no"}`)
 console.log()
 
 // ── Step 1: Build sidecars (each arch) ────────────────────────────
@@ -71,10 +77,13 @@ if (skipSidecar) {
   }
 }
 
-// ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY) ───
+// ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY when set) ──
 console.log("\n🔨 Running tauri build...")
+const tauriEnv = unsigned
+  ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "APPLE_SIGNING_IDENTITY"))
+  : { ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity! }
 await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget}`
-  .env({ ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity })
+  .env(tauriEnv)
   .quiet(!verbose)
 
 // ── Locate build outputs ──────────────────────────────────────────
@@ -88,13 +97,23 @@ console.log(`\n✅ Build complete`)
 console.log(`   .app: ${appPath}`)
 if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
 
-// ── Step 3: Verify code signing ───────────────────────────────────
-console.log("\n🔏 Verifying code signature...")
-await $`codesign --verify --deep --strict ${appPath}`
-console.log("   Signature valid ✓")
+// ── Step 3: Verify code signing (or ad-hoc sign for --unsigned) ───
+if (unsigned) {
+  console.log("\n🔏 Ad-hoc signing (no Dev ID)...")
+  await $`codesign --force --deep -s - ${appPath}`
+  if (dmgPath) {
+    // DMG itself can't be ad-hoc signed meaningfully — Gatekeeper will reject it for redistribution.
+    console.warn(`   Note: ${path.basename(dmgPath)} is unsigned. End users must run`)
+    console.warn(`   'xattr -dr com.apple.quarantine /Applications/Ultrawork.app' after install.`)
+  }
+} else {
+  console.log("\n🔏 Verifying code signature...")
+  await $`codesign --verify --deep --strict ${appPath}`
+  console.log("   Signature valid ✓")
 
-if (verbose) {
-  await $`codesign -dv --verbose=2 ${appPath}`
+  if (verbose) {
+    await $`codesign -dv --verbose=2 ${appPath}`
+  }
 }
 
 // ── Step 4: Notarize & staple ─────────────────────────────────────
@@ -134,8 +153,14 @@ console.log("🎉 Release build complete!")
 console.log(`   .app: ${appPath}`)
 if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
 console.log()
-console.log("Verify with:")
-console.log(`   codesign -dv --verbose=2 "${appPath}"`)
-if (!skipNotarize && canNotarize) {
-  console.log(`   spctl --assess --type open --context context:primary-signature "${appPath}"`)
+if (unsigned) {
+  console.log("⚠️  Unsigned build — for local use or trusted-channel distribution only.")
+  console.log("   End users must remove the quarantine attribute after install:")
+  console.log(`     xattr -dr com.apple.quarantine /Applications/Ultrawork.app`)
+} else {
+  console.log("Verify with:")
+  console.log(`   codesign -dv --verbose=2 "${appPath}"`)
+  if (canNotarize) {
+    console.log(`   spctl --assess --type open --context context:primary-signature "${appPath}"`)
+  }
 }

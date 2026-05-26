@@ -189,11 +189,10 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
             return Ok(());
         }
         if start.elapsed() > max_wait {
-            println!(
-                "{} started on port {} (pid {}) but health check did not pass within {}s",
-                name, port, pid, max_wait.as_secs()
-            );
-            return Ok(()); // Don't fail — let frontend retry
+            return Err(format!(
+                "{} spawned (pid {}) on port {} but did not pass health check at {} within {}s",
+                name, pid, port, health_path, max_wait.as_secs()
+            ));
         }
         std::thread::sleep(poll_interval);
     }
@@ -955,6 +954,8 @@ fn read_global_opencode_json() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
 }
 
+// Atomic write: serialize to a sibling .tmp file, then rename over the target.
+// rename(2) is atomic on the same filesystem, so readers never see a partial file.
 fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
     let dir = global_config_dir();
     if !dir.exists() {
@@ -962,46 +963,70 @@ fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
             .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
     }
     let path = global_opencode_json_path();
+    let tmp_path = path.with_extension("json.tmp");
+
     let mut json = serde_json::to_string_pretty(root)
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
     json.push('\n');
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+
+    std::fs::write(&tmp_path, json)
+        .map_err(|e| format!("Failed to write {}: {}", tmp_path.display(), e))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename {} -> {}: {}", tmp_path.display(), path.display(), e))
+}
+
+// Serialize all read-modify-write cycles against opencode.json so two Tauri
+// commands cannot interleave (e.g. add-MCP racing with remove-MCP). Cross-process
+// races (Ultrawork ↔ OpenCode sidecar both writing) still rely on the atomic
+// rename above: last writer wins, but the file is never corrupt.
+static OPENCODE_JSON_LOCK: Mutex<()> = Mutex::new(());
+
+fn modify_global_opencode_json<F>(modifier: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_json::Value) -> Result<(), String>,
+{
+    let _guard = OPENCODE_JSON_LOCK.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+    let mut root = read_global_opencode_json()?;
+    modifier(&mut root)?;
+    write_global_opencode_json(&root)
 }
 
 #[tauri::command]
 fn read_mcp_config() -> Result<serde_json::Value, String> {
+    let _guard = OPENCODE_JSON_LOCK.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
     let root = read_global_opencode_json()?;
     Ok(root.get("mcp").cloned().unwrap_or(serde_json::json!({})))
 }
 
 #[tauri::command]
 fn write_mcp_config(name: String, config: serde_json::Value) -> Result<(), String> {
-    let mut root = read_global_opencode_json()?;
-    let obj = root.as_object_mut()
-        .ok_or("opencode.json root is not an object")?;
-    let mcp = obj.entry("mcp")
-        .or_insert_with(|| serde_json::json!({}));
-    let mcp_obj = mcp.as_object_mut()
-        .ok_or("opencode.json mcp field is not an object")?;
-    mcp_obj.insert(name, config);
-    write_global_opencode_json(&root)
+    modify_global_opencode_json(|root| {
+        let obj = root.as_object_mut()
+            .ok_or("opencode.json root is not an object")?;
+        let mcp = obj.entry("mcp")
+            .or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp.as_object_mut()
+            .ok_or("opencode.json mcp field is not an object")?;
+        mcp_obj.insert(name, config);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 fn remove_mcp_config(name: String) -> Result<(), String> {
-    let mut root = read_global_opencode_json()?;
-    let obj = root.as_object_mut()
-        .ok_or("opencode.json root is not an object")?;
-    if let Some(mcp) = obj.get_mut("mcp") {
-        if let Some(mcp_obj) = mcp.as_object_mut() {
-            mcp_obj.remove(&name);
-            if mcp_obj.is_empty() {
-                obj.remove("mcp");
+    modify_global_opencode_json(|root| {
+        let obj = root.as_object_mut()
+            .ok_or("opencode.json root is not an object")?;
+        if let Some(mcp) = obj.get_mut("mcp") {
+            if let Some(mcp_obj) = mcp.as_object_mut() {
+                mcp_obj.remove(&name);
+                if mcp_obj.is_empty() {
+                    obj.remove("mcp");
+                }
             }
         }
-    }
-    write_global_opencode_json(&root)
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1146,11 @@ pub fn run() {
                     &[],
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
+                    use tauri::Emitter;
+                    let _ = gw_handle.emit(
+                        "sidecar-startup-failed",
+                        serde_json::json!({ "name": "channel-gateway", "error": e }),
+                    );
                 }
             });
 
@@ -1137,6 +1167,11 @@ pub fn run() {
                     &[],
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
+                    use tauri::Emitter;
+                    let _ = kb_handle.emit(
+                        "sidecar-startup-failed",
+                        serde_json::json!({ "name": "knowledge-sidecar", "error": e }),
+                    );
                 }
             });
 

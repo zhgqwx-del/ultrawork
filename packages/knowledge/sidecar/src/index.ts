@@ -46,11 +46,12 @@ async function serve() {
   const app = createApp({ indexer, search: retriever, store, watcher })
 
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: KB_PORT,
     fetch: (req) => app.fetch(req),
   })
 
-  console.log(`Knowledge Sidecar listening on port ${server.port}`)
+  console.log(`Knowledge Sidecar listening on 127.0.0.1:${server.port}`)
   watcher.onChange((folderPath, filePath, eventType) => {
     if (eventType === "change") {
       indexer.reindexFile(folderPath, filePath).catch((err) => {
