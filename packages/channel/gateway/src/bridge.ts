@@ -3,8 +3,20 @@ import type { ApiClient, MessagePart } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
 import { loadSessionMap, saveSessionMap } from "./session-store.js";
 
-const OPENCODE_BASE_URL = "http://localhost:4096";
-const OPENCODE_PASSWORD = "test123";
+const OPENCODE_BASE_URL = "http://127.0.0.1:4096";
+
+// Password is injected by the Tauri host (lib.rs spawns channel-gateway with
+// OPENCODE_SERVER_PASSWORD set to the per-install random credential). Lazy
+// lookup so tests can import this module without setting the env var.
+function getOpencodePassword(): string {
+  const pw = process.env.OPENCODE_SERVER_PASSWORD;
+  if (!pw) {
+    throw new Error(
+      "OPENCODE_SERVER_PASSWORD is not set — the Tauri host must spawn channel-gateway with this env var",
+    );
+  }
+  return pw;
+}
 const MAX_REPLY_LENGTH = 20_000; // Safe limit for messaging platforms (DingTalk, WeChat, etc.)
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
@@ -78,7 +90,7 @@ export class Bridge {
       client = createApiClient({
         baseUrl: OPENCODE_BASE_URL,
         username: "opencode",
-        password: OPENCODE_PASSWORD,
+        password: getOpencodePassword(),
         workingDirectory: workspaceDir,
       });
       this.clients.set(workspaceDir, client);
@@ -312,7 +324,7 @@ export class Bridge {
   ): Promise<void> {
     const params = new URLSearchParams({ directory: workspaceDir });
     const url = `${OPENCODE_BASE_URL}/event?${params}`;
-    const credentials = btoa(`opencode:${OPENCODE_PASSWORD}`);
+    const credentials = btoa(`opencode:${getOpencodePassword()}`);
     let backoff = 1000; // Start at 1s, max 30s
     let firstConnect = true;
 

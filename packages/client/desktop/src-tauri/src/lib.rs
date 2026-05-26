@@ -189,6 +189,12 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
             return Ok(());
         }
         if start.elapsed() > max_wait {
+            // Kill the unhealthy child and drop it from the registry — otherwise it
+            // would leak as a zombie sidecar until app shutdown.
+            Command::new("kill").arg(pid.to_string()).output().ok();
+            if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+                reg.retain(|e| e.pid != Some(pid));
+            }
             return Err(format!(
                 "{} spawned (pid {}) on port {} but did not pass health check at {} within {}s",
                 name, pid, port, health_path, max_wait.as_secs()
@@ -875,19 +881,29 @@ fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
     };
     let json = serde_json::to_string_pretty(&creds)
         .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
 
-    // Restrict to owner-read/write on Unix; Windows ACLs default to user-only.
+    // Restrict to owner-read/write on Unix from the moment the file is created,
+    // not after the fact — std::fs::write would create with the umask (often 0644)
+    // and leave a microsecond window where another process can read the credential.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path)
-            .map_err(|e| format!("metadata({}): {}", path.display(), e))?
-            .permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(&path, perms)
-            .map_err(|e| format!("set_permissions({}): {}", path.display(), e))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
+        f.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: rely on default ACL (user-only) inherited from %APPDATA% parent.
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
     }
 
     Ok(creds)
@@ -954,8 +970,10 @@ fn read_global_opencode_json() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
 }
 
-// Atomic write: serialize to a sibling .tmp file, then rename over the target.
+// Atomic write: serialize to a per-writer .tmp file, then rename over the target.
 // rename(2) is atomic on the same filesystem, so readers never see a partial file.
+// Including pid + nanos in the tmp filename means two writers (e.g. Ultrawork and
+// the OpenCode sidecar updating the same file) never clobber each other's tmp.
 fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
     let dir = global_config_dir();
     if !dir.exists() {
@@ -963,7 +981,11 @@ fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
             .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
     }
     let path = global_opencode_json_path();
-    let tmp_path = path.with_extension("json.tmp");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), nanos));
 
     let mut json = serde_json::to_string_pretty(root)
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
@@ -971,8 +993,12 @@ fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
 
     std::fs::write(&tmp_path, json)
         .map_err(|e| format!("Failed to write {}: {}", tmp_path.display(), e))?;
-    std::fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename {} -> {}: {}", tmp_path.display(), path.display(), e))
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        // Best-effort cleanup of the orphan tmp file
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to rename {} -> {}: {}", tmp_path.display(), path.display(), e));
+    }
+    Ok(())
 }
 
 // Serialize all read-modify-write cycles against opencode.json so two Tauri
@@ -1133,8 +1159,33 @@ pub fn run() {
             // One-time migration from shared opencode paths (must run before sidecar)
             migrate_from_opencode();
 
+            // Load (or first-time generate) the per-install sidecar credentials before
+            // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
+            // call the OpenCode HTTP API, and OpenCode itself reads it from env.
+            let creds = match load_or_create_sidecar_credentials() {
+                Ok(c) => c,
+                Err(e) => {
+                    app.dialog()
+                        .message(format!(
+                            "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
+                            e
+                        ))
+                        .kind(MessageDialogKind::Error)
+                        .title("Startup Error")
+                        .blocking_show();
+                    return Ok(());
+                }
+            };
+            let auth_header = {
+                use base64::Engine;
+                let token = base64::engine::general_purpose::STANDARD
+                    .encode(format!("{}:{}", creds.username, creds.password));
+                format!("Basic {}", token)
+            };
+
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
             let gw_handle = app.handle().clone();
+            let gw_password = creds.password.clone();
             std::thread::spawn(move || {
                 if let Err(e) = start_sidecar(
                     &gw_handle,
@@ -1143,7 +1194,7 @@ pub fn run() {
                     "/channel/health",
                     None,
                     &[],
-                    &[],
+                    &[("OPENCODE_SERVER_PASSWORD", gw_password.as_str())],
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
                     use tauri::Emitter;
@@ -1175,28 +1226,9 @@ pub fn run() {
                 }
             });
 
-            // Start OpenCode Server sidecar (critical — blocks until ready)
+            // Start OpenCode Server sidecar (critical — blocks until ready).
+            // Credentials and auth_header were loaded at the top of setup().
             let oc_port = OPENCODE_PORT.to_string();
-            let creds = match load_or_create_sidecar_credentials() {
-                Ok(c) => c,
-                Err(e) => {
-                    app.dialog()
-                        .message(format!(
-                            "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
-                            e
-                        ))
-                        .kind(MessageDialogKind::Error)
-                        .title("Startup Error")
-                        .blocking_show();
-                    return Ok(());
-                }
-            };
-            let auth_header = {
-                use base64::Engine;
-                let token = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{}:{}", creds.username, creds.password));
-                format!("Basic {}", token)
-            };
             if let Err(e) = start_sidecar(
                 app,
                 "opencode-server",
