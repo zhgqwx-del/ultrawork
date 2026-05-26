@@ -91,7 +91,13 @@ bun run tauri:dev
 | `bun run release -- --unsigned` | 内部测试：ad-hoc 签名，跳过 Notarization |
 | `bun run release -- --skip-notarize` | 仅签名不公证（需 `APPLE_SIGNING_IDENTITY`） |
 
-**Universal DMG**（默认）会生成同时支持 Apple Silicon 与 Intel Mac 的单一安装包，构建时间和包体积都是单架构的 ~2 倍。
+**Universal DMG**（默认）会生成同时支持 Apple Silicon 与 Intel Mac 的单一安装包，构建时间和包体积都是单架构的 ~2 倍。Apple Silicon 开发机需要先装 x86_64 Rust target：
+
+```bash
+rustup target add x86_64-apple-darwin
+```
+
+`setup.sh` 第 1 步会自动检查并安装（幂等）。
 
 签名 / 公证所需环境变量：
 
