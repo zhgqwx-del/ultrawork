@@ -822,6 +822,83 @@ fn get_global_config_dir() -> String {
     global_config_dir().to_string_lossy().to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Sidecar credentials — random per-install password persisted to
+// ~/.config/ultrawork/sidecar-auth.json with 0600 perms.
+//
+// Env var override: ULTRAWORK_SIDECAR_PASSWORD (used for CI/scripted tests;
+// not persisted).
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SidecarCredentials {
+    username: String,
+    password: String,
+}
+
+fn sidecar_credentials_path() -> PathBuf {
+    global_config_dir().join("sidecar-auth.json")
+}
+
+fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    // Env var escape hatch for tests / scripted access
+    if let Ok(pass) = std::env::var("ULTRAWORK_SIDECAR_PASSWORD") {
+        if !pass.is_empty() {
+            return Ok(SidecarCredentials {
+                username: std::env::var("ULTRAWORK_SIDECAR_USERNAME")
+                    .unwrap_or_else(|_| "opencode".to_string()),
+                password: pass,
+            });
+        }
+    }
+
+    let path = sidecar_credentials_path();
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let creds: SidecarCredentials = serde_json::from_str(&content)
+            .map_err(|e| format!("Invalid sidecar credentials in {}: {}", path.display(), e))?;
+        return Ok(creds);
+    }
+
+    // First run: generate random password
+    let dir = global_config_dir();
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("getrandom failed: {}", e))?;
+    let password = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    let creds = SidecarCredentials {
+        username: "opencode".to_string(),
+        password,
+    };
+    let json = serde_json::to_string_pretty(&creds)
+        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+    // Restrict to owner-read/write on Unix; Windows ACLs default to user-only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)
+            .map_err(|e| format!("metadata({}): {}", path.display(), e))?
+            .permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&path, perms)
+            .map_err(|e| format!("set_permissions({}): {}", path.display(), e))?;
+    }
+
+    Ok(creds)
+}
+
+#[tauri::command]
+fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    load_or_create_sidecar_credentials()
+}
+
 /// Returns the absolute path to a sidecar binary.
 /// Tauri places sidecar binaries next to the app binary in production,
 /// and in src-tauri/binaries/ during development.
@@ -1025,6 +1102,7 @@ pub fn run() {
             remove_mcp_config,
             get_global_config_dir,
             get_sidecar_path,
+            get_sidecar_credentials,
         ])
         .setup(|app| {
             // One-time migration from shared opencode paths (must run before sidecar)
@@ -1064,15 +1142,35 @@ pub fn run() {
 
             // Start OpenCode Server sidecar (critical — blocks until ready)
             let oc_port = OPENCODE_PORT.to_string();
+            let creds = match load_or_create_sidecar_credentials() {
+                Ok(c) => c,
+                Err(e) => {
+                    app.dialog()
+                        .message(format!(
+                            "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
+                            e
+                        ))
+                        .kind(MessageDialogKind::Error)
+                        .title("Startup Error")
+                        .blocking_show();
+                    return Ok(());
+                }
+            };
+            let auth_header = {
+                use base64::Engine;
+                let token = base64::engine::general_purpose::STANDARD
+                    .encode(format!("{}:{}", creds.username, creds.password));
+                format!("Basic {}", token)
+            };
             if let Err(e) = start_sidecar(
                 app,
                 "opencode-server",
                 OPENCODE_PORT,
                 "/global/health",
-                Some("Basic b3BlbmNvZGU6dGVzdDEyMw=="), // opencode:test123
+                Some(&auth_header),
                 &["serve", "--port", &oc_port],
                 &[
-                    ("OPENCODE_SERVER_PASSWORD", "test123"),
+                    ("OPENCODE_SERVER_PASSWORD", creds.password.as_str()),
                     ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
                 ],
             ) {

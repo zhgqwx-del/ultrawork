@@ -4176,7 +4176,9 @@ dependencies = [
 name = "ultrawork"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "dirs 5.0.1",
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "tauri",

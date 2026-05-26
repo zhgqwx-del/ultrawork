@@ -6,10 +6,12 @@ export interface AppConfig {
   language: "en" | "zh"
 }
 
+// apiPassword/apiUsername default to empty; ConfigProvider fetches the
+// per-install random credentials from the Tauri backend on mount.
 export const DEFAULT_CONFIG: AppConfig = {
   apiBaseUrl: import.meta.env.DEV ? "" : "http://localhost:4096",
-  apiPassword: "test123",
-  apiUsername: "opencode",
+  apiPassword: "",
+  apiUsername: "",
   theme: "system",
   language: "en",
 }
@@ -22,11 +24,7 @@ export class ConfigStorage {
       const stored = localStorage.getItem(CONFIG_STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
-        const merged = { ...DEFAULT_CONFIG, ...parsed }
-        // Ensure credentials fall back to defaults if stored as empty
-        if (!merged.apiPassword) merged.apiPassword = DEFAULT_CONFIG.apiPassword
-        if (!merged.apiUsername) merged.apiUsername = DEFAULT_CONFIG.apiUsername
-        return merged
+        return { ...DEFAULT_CONFIG, ...parsed }
       }
     } catch (err) {
       console.error("Failed to load config:", err)
