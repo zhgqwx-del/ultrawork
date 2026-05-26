@@ -114,9 +114,24 @@ export class WeChatAdapter implements ChannelAdapter {
 
   private async pollLoop(signal: AbortSignal): Promise<void> {
     let consecutiveFailures = 0;
+    let firstIteration = true;
 
     while (!signal.aborted) {
       try {
+        // Optimistically mark the channel "connected" before the very first
+        // request returns. ilink's getupdates is a long poll that can block
+        // for up to ~35s waiting for the next inbound message, so making the
+        // UI wait for that response feels broken. A valid bot_token (verified
+        // during QR scan) is the actual auth signal — if it's wrong, the
+        // catch block below will flip the state to "error".
+        if (firstIteration) {
+          firstIteration = false;
+          if (this.state !== "connected") {
+            this.state = "connected";
+            this.errorMsg = undefined;
+            this.fetchTypingTicket();
+          }
+        }
         const resp = await this.api.getUpdates(this.updatesCursor);
 
         // Check for session expiry
