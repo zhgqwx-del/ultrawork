@@ -1,3 +1,32 @@
+diff --git a/packages/opencode/script/build.ts b/packages/opencode/script/build.ts
+index b104dd267..a94791e3b 100755
+--- a/packages/opencode/script/build.ts
++++ b/packages/opencode/script/build.ts
+@@ -63,6 +63,10 @@ console.log(`Loaded ${migrations.length} migrations`)
+ const singleFlag = process.argv.includes("--single")
+ const baselineFlag = process.argv.includes("--baseline")
+ const skipInstall = process.argv.includes("--skip-install")
++// --target=<os>-<arch> filters to a single explicit target (used by Ultrawork
++// to cross-compile darwin-x64 from darwin-arm64 without running native smoke
++// tests for unrelated targets).
++const targetFlag = process.argv.find((a) => a.startsWith("--target="))?.slice("--target=".length)
+ const plugin = createSolidTransformPlugin()
+ const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+ 
+@@ -154,7 +158,12 @@ const allTargets: {
+   },
+ ]
+ 
+-const targets = singleFlag
++const targets = targetFlag
++  ? allTargets.filter((item) => {
++      // Match `<os>-<arch>` (no abi, no avx2 baseline variant)
++      return `${item.os}-${item.arch}` === targetFlag && !item.abi && item.avx2 !== false
++    })
++  : singleFlag
+   ? allTargets.filter((item) => {
+       if (item.os !== process.platform || item.arch !== process.arch) {
+         return false
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
 index 850bcc28b..efc900b8a 100644
 --- a/packages/opencode/src/config/config.ts

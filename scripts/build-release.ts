@@ -77,6 +77,26 @@ if (skipSidecar) {
   }
 }
 
+// ── Step 1b: lipo merge per-arch sidecars into a universal binary ─
+// Tauri's universal-apple-darwin bundler looks for files with the
+// `-universal-apple-darwin` suffix in binaries/; it does not lipo
+// per-arch files automatically. Produce the merged binary ourselves.
+if (isMacOS && !nativeOnly && !skipSidecar) {
+  const binariesDir = path.join(rootDir, "packages/client/desktop/src-tauri/binaries")
+  const SIDECAR_BASES = ["opencode-server", "channel-gateway", "knowledge-sidecar"]
+  console.log("\n🪢 Creating universal sidecar binaries via lipo...")
+  for (const base of SIDECAR_BASES) {
+    const arm = path.join(binariesDir, `${base}-aarch64-apple-darwin`)
+    const x64 = path.join(binariesDir, `${base}-x86_64-apple-darwin`)
+    const universal = path.join(binariesDir, `${base}-universal-apple-darwin`)
+    await $`lipo -create ${arm} ${x64} -output ${universal}`
+    // Re-sign: lipo doesn't preserve a usable signature on universal output.
+    await $`codesign --remove-signature ${universal} 2>/dev/null; codesign -s - ${universal}`.nothrow()
+    const size = Bun.file(universal).size / 1024 / 1024
+    console.log(`   ${base}-universal-apple-darwin (${size.toFixed(1)} MB)`)
+  }
+}
+
 // ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY when set) ──
 console.log("\n🔨 Running tauri build...")
 const tauriEnv = unsigned

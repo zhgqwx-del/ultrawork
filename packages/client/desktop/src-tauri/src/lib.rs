@@ -933,38 +933,37 @@ fn sidecar_binary_name(name: &str) -> String {
     format!("{}-{}{}", name, current_target_triple(), suffix)
 }
 
-/// Resolve the absolute path to a sidecar binary. Tauri places sidecars next to
-/// the app binary in production (resource_dir/binaries/), and in src-tauri/binaries/
-/// during development. Used by the get_sidecar_path command AND by the startup
-/// repair logic that fixes stale MCP paths.
-fn resolve_sidecar_path(app: &tauri::AppHandle, name: &str) -> Result<String, String> {
-    use tauri::Manager;
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let binary_name = sidecar_binary_name(name);
-
-    // Try resource_dir first (production)
-    let prod_path = resource_dir.join("binaries").join(&binary_name);
-    if prod_path.exists() {
-        return Ok(prod_path.to_string_lossy().to_string());
+/// Resolve the absolute path to a sidecar binary. Tauri's macOS bundler copies
+/// each externalBin into <App>/Contents/MacOS/<name> (no architecture suffix)
+/// alongside the main executable. In development the binaries live at
+/// src-tauri/binaries/<name>-<target>. Used by the get_sidecar_path command and
+/// by the startup repair logic that fixes stale MCP paths.
+fn resolve_sidecar_path(name: &str) -> Result<String, String> {
+    // Production: sibling of the running executable, no arch suffix.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+            let prod = dir.join(format!("{}{}", name, suffix));
+            if prod.exists() {
+                return Ok(prod.to_string_lossy().to_string());
+            }
+        }
     }
 
-    // Fallback: src-tauri/binaries/ (development)
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // Development: src-tauri/binaries/<name>-<target>
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
-        .join(&binary_name);
-    if dev_path.exists() {
-        return Ok(dev_path.to_string_lossy().to_string());
+        .join(sidecar_binary_name(name));
+    if dev.exists() {
+        return Ok(dev.to_string_lossy().to_string());
     }
 
-    Err(format!("Sidecar binary not found: {}", binary_name))
+    Err(format!("Sidecar binary not found for: {}", name))
 }
 
 #[tauri::command]
-fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
-    resolve_sidecar_path(&app, &name)
+fn get_sidecar_path(name: String) -> Result<String, String> {
+    resolve_sidecar_path(&name)
 }
 
 // Sidecars that Ultrawork registers as MCPs in opencode.json. Used to detect
@@ -976,13 +975,16 @@ const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
 /// points to an ultrawork sidecar binary that no longer exists at the recorded
 /// path. Rewrite those entries with the current resolved path. Anything that
 /// isn't recognizable as a managed sidecar is left untouched.
-fn repair_sidecar_mcp_paths(app: &tauri::AppHandle) {
-    // Pre-resolve the current path for every known sidecar; basename keyed.
-    let mut resolved: std::collections::HashMap<String, String> = Default::default();
+///
+/// The basename heuristic recognizes both shapes:
+///   * dev:        <name>-<target-triple>        (e.g. knowledge-sidecar-aarch64-apple-darwin)
+///   * production: <name>                        (e.g. knowledge-sidecar — Tauri strips the suffix when bundling)
+fn repair_sidecar_mcp_paths() {
+    // Pre-resolve the current path for every known sidecar.
+    let mut resolved: std::collections::HashMap<&str, String> = Default::default();
     for sidecar in KNOWN_SIDECAR_NAMES {
-        let basename = sidecar_binary_name(sidecar);
-        if let Ok(path) = resolve_sidecar_path(app, sidecar) {
-            resolved.insert(basename, path);
+        if let Ok(path) = resolve_sidecar_path(sidecar) {
+            resolved.insert(sidecar, path);
         }
     }
     if resolved.is_empty() {
@@ -1002,7 +1004,12 @@ fn repair_sidecar_mcp_paths(app: &tauri::AppHandle) {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
-            let Some(want) = resolved.get(basename) else { continue };
+            // Match either the bare name (production) or `<name>-...` (dev with target suffix).
+            let matched: Option<&str> = KNOWN_SIDECAR_NAMES.iter()
+                .find(|&&s| basename == s || basename.starts_with(&format!("{}-", s)))
+                .copied();
+            let Some(name) = matched else { continue };
+            let Some(want) = resolved.get(name) else { continue };
             if want == current { continue }
             if std::path::Path::new(current).exists() { continue }
 
@@ -1216,7 +1223,7 @@ pub fn run() {
             // bundle, or migrated from a dev build to a packaged DMG on the same
             // machine). Must run before the OpenCode sidecar starts so it loads
             // the corrected MCP config.
-            repair_sidecar_mcp_paths(&app.handle().clone());
+            repair_sidecar_mcp_paths();
 
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to

@@ -124,8 +124,11 @@ if (isNative) {
     console.warn(`⚠️  vendor build exited ${result.exitCode} — binary is fresh, continuing (smoke test / signing issue)`)
   }
 } else {
-  console.log(`Cross-compiling: building all targets to extract ${targetInfo.bunTarget}...`)
-  const result = await $`cd ${opencodeDir} && bun run build`.nothrow()
+  // Cross-compile a single target via the vendor patch's --target flag.
+  // This avoids building (and smoke-testing) every other target — which would
+  // fail on Apple Silicon for the native arm64 binary that needs re-signing.
+  console.log(`Cross-compiling target ${targetInfo.bunTarget}...`)
+  const result = await $`cd ${opencodeDir} && bun run build --target=${targetInfo.bunTarget}`.nothrow()
   if (result.exitCode !== 0) {
     const stat = await Bun.file(binaryPath).stat().catch(() => null)
     if (!stat || stat.mtimeMs < buildStart) {
