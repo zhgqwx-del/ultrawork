@@ -933,31 +933,119 @@ fn sidecar_binary_name(name: &str) -> String {
     format!("{}-{}{}", name, current_target_triple(), suffix)
 }
 
-/// Resolve the absolute path to a sidecar binary. Tauri's macOS bundler copies
-/// each externalBin into <App>/Contents/MacOS/<name> (no architecture suffix)
-/// alongside the main executable. In development the binaries live at
-/// src-tauri/binaries/<name>-<target>. Used by the get_sidecar_path command and
-/// by the startup repair logic that fixes stale MCP paths.
-fn resolve_sidecar_path(name: &str) -> Result<String, String> {
-    // Production: sibling of the running executable, no arch suffix.
+// Sidecars that Ultrawork copies into ~/.ultrawork/sidecars/ at startup and
+// registers as MCPs in opencode.json. Anchoring the MCP command path in the
+// user data dir (instead of the .app or dev tree) keeps it stable across .app
+// moves, dev→DMG migration, and cross-machine config copies.
+const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
+
+fn user_sidecars_dir() -> PathBuf {
+    ultrawork_dir().join("sidecars")
+}
+
+fn user_sidecar_path(name: &str) -> PathBuf {
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    user_sidecars_dir().join(format!("{}{}", name, suffix))
+}
+
+/// Locate the bundled source binary for a sidecar. Production sources live at
+/// <App>/Contents/MacOS/<name> (Tauri strips the arch suffix when bundling);
+/// development sources live at src-tauri/binaries/<name>-<target>.
+fn source_sidecar_path(name: &str) -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
             let prod = dir.join(format!("{}{}", name, suffix));
             if prod.exists() {
-                return Ok(prod.to_string_lossy().to_string());
+                return Some(prod);
             }
         }
     }
-
-    // Development: src-tauri/binaries/<name>-<target>
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
         .join(sidecar_binary_name(name));
     if dev.exists() {
-        return Ok(dev.to_string_lossy().to_string());
+        return Some(dev);
+    }
+    None
+}
+
+/// Copy each known sidecar from its bundled source into ~/.ultrawork/sidecars/.
+/// Idempotent — skips when the target exists and matches the source by size +
+/// mtime. Runs at app startup before any MCP command path is resolved.
+fn ensure_sidecar_copies() {
+    let dir = user_sidecars_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("[sidecar-copy] failed to create {}: {}", dir.display(), e);
+        return;
     }
 
+    for &name in KNOWN_SIDECAR_NAMES {
+        let Some(source) = source_sidecar_path(name) else {
+            eprintln!("[sidecar-copy] no source found for {}; skipping", name);
+            continue;
+        };
+        let target = user_sidecar_path(name);
+        let marker = dir.join(format!(".{}.source", name));
+
+        // Idempotence: store "<size>:<mtime-nanos>" of the source on each copy
+        // and skip when the source still matches.
+        let source_token: Option<String> = std::fs::metadata(&source).ok().and_then(|m| {
+            let mtime = m.modified().ok()?
+                .duration_since(std::time::UNIX_EPOCH).ok()?
+                .as_nanos();
+            Some(format!("{}:{}", m.len(), mtime))
+        });
+        let stored = std::fs::read_to_string(&marker).ok();
+        if target.exists() && source_token.is_some() && stored.as_deref() == source_token.as_deref() {
+            continue;
+        }
+
+        match std::fs::copy(&source, &target) {
+            Ok(bytes) => {
+                println!(
+                    "[sidecar-copy] {} -> {} ({:.1} MB)",
+                    source.display(),
+                    target.display(),
+                    bytes as f64 / 1_048_576.0,
+                );
+                if let Some(token) = source_token {
+                    let _ = std::fs::write(&marker, token);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = std::fs::metadata(&target) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&target, perms);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[sidecar-copy] failed to copy {} -> {}: {}",
+                    source.display(),
+                    target.display(),
+                    e,
+                );
+            }
+        }
+    }
+}
+
+/// Resolve the canonical (user-local) path of a sidecar. After
+/// ensure_sidecar_copies has run, every known sidecar lives at
+/// ~/.ultrawork/sidecars/<name>. The bundled source is a fallback for the
+/// edge case where the copy hasn't happened yet (e.g. install-time race).
+fn resolve_sidecar_path(name: &str) -> Result<String, String> {
+    let canonical = user_sidecar_path(name);
+    if canonical.exists() {
+        return Ok(canonical.to_string_lossy().to_string());
+    }
+    if let Some(source) = source_sidecar_path(name) {
+        return Ok(source.to_string_lossy().to_string());
+    }
     Err(format!("Sidecar binary not found for: {}", name))
 }
 
@@ -966,29 +1054,14 @@ fn get_sidecar_path(name: String) -> Result<String, String> {
     resolve_sidecar_path(&name)
 }
 
-// Sidecars that Ultrawork registers as MCPs in opencode.json. Used to detect
-// stale paths at startup (e.g. after the .app is moved or after a user switches
-// from dev to a packaged DMG on the same machine).
-const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
-
-/// At startup, scan the global opencode.json for MCP entries whose command[0]
-/// points to an ultrawork sidecar binary that no longer exists at the recorded
-/// path. Rewrite those entries with the current resolved path. Anything that
-/// isn't recognizable as a managed sidecar is left untouched.
-///
-/// The basename heuristic recognizes both shapes:
-///   * dev:        <name>-<target-triple>        (e.g. knowledge-sidecar-aarch64-apple-darwin)
-///   * production: <name>                        (e.g. knowledge-sidecar — Tauri strips the suffix when bundling)
-fn repair_sidecar_mcp_paths() {
-    // Pre-resolve the current path for every known sidecar.
-    let mut resolved: std::collections::HashMap<&str, String> = Default::default();
-    for sidecar in KNOWN_SIDECAR_NAMES {
-        if let Ok(path) = resolve_sidecar_path(sidecar) {
-            resolved.insert(sidecar, path);
-        }
-    }
-    if resolved.is_empty() {
-        return;
+/// Migrate any pre-existing MCP entries to the canonical ~/.ultrawork/sidecars/<name>
+/// path. Recognises both the dev-tree basename (`<name>-<target>`) and the
+/// production basename Tauri uses (`<name>`). Anything not recognisable as a
+/// managed sidecar is left alone.
+fn canonicalize_sidecar_mcp_paths() {
+    let mut canonical: std::collections::HashMap<&str, String> = Default::default();
+    for &sidecar in KNOWN_SIDECAR_NAMES {
+        canonical.insert(sidecar, user_sidecar_path(sidecar).to_string_lossy().to_string());
     }
 
     let result = modify_global_opencode_json(|root| {
@@ -1004,22 +1077,20 @@ fn repair_sidecar_mcp_paths() {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
-            // Match either the bare name (production) or `<name>-...` (dev with target suffix).
             let matched: Option<&str> = KNOWN_SIDECAR_NAMES.iter()
                 .find(|&&s| basename == s || basename.starts_with(&format!("{}-", s)))
                 .copied();
             let Some(name) = matched else { continue };
-            let Some(want) = resolved.get(name) else { continue };
+            let Some(want) = canonical.get(name) else { continue };
             if want == current { continue }
-            if std::path::Path::new(current).exists() { continue }
 
-            println!("[repair] MCP path stale: {} -> {}", current, want);
+            println!("[sidecar-mcp] migrate path: {} -> {}", current, want);
             *first = serde_json::Value::String(want.clone());
         }
         Ok(())
     });
     if let Err(e) = result {
-        eprintln!("[repair] failed to update MCP paths: {}", e);
+        eprintln!("[sidecar-mcp] failed to update MCP paths: {}", e);
     }
 }
 
@@ -1219,11 +1290,14 @@ pub fn run() {
             // One-time migration from shared opencode paths (must run before sidecar)
             migrate_from_opencode();
 
-            // Heal stale sidecar paths in opencode.json (e.g. user moved the .app
-            // bundle, or migrated from a dev build to a packaged DMG on the same
-            // machine). Must run before the OpenCode sidecar starts so it loads
-            // the corrected MCP config.
-            repair_sidecar_mcp_paths();
+            // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
+            // and any external tooling can use a stable user-local path.
+            ensure_sidecar_copies();
+
+            // Stage 2: migrate any pre-existing MCP entries in opencode.json to
+            // point at the canonical user-local path (handles dev → DMG and old
+            // app-bundle paths in pre-existing configs).
+            canonicalize_sidecar_mcp_paths();
 
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
