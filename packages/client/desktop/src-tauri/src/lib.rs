@@ -1277,15 +1277,18 @@ fn warm_opencode_mcp(port: u16, auth_header: String) {
         // before we ask it to do heavy work.
         std::thread::sleep(Duration::from_millis(500));
 
-        // We pass the user's home dir as the workspace context. Our MCP
-        // configs live in the global ~/.config/ultrawork/opencode.json
-        // and are merged into every workspace, so this is enough to spawn
-        // global MCP children even if the user later picks a different
-        // workspace.
-        let dir = dirs::home_dir()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "/".to_string());
-        let encoded_dir = url_encode(&dir);
+        // OpenCode caches MCP state per-workspace (keyed by directory in
+        // InstanceState), so we have to warm the directory the user is
+        // actually about to open. Use ~/.ultrawork/workspace/ — that's the
+        // default workspace for fresh installs and a stable fallback for
+        // existing users when no last-used workspace is known. Returning
+        // users on a custom workspace get a separate init when their
+        // frontend's getMCP fires, but our patch B caps that at ~5s.
+        let dir = ultrawork_dir().join("workspace");
+        // Ensure the directory exists (frontend's ensure_default_workspace
+        // runs later on React mount; we'd race with that on first launch).
+        let _ = std::fs::create_dir_all(&dir);
+        let encoded_dir = url_encode(&dir.to_string_lossy());
 
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
