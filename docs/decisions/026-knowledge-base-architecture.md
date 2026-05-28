@@ -2,8 +2,16 @@
 
 **状态**: Accepted (Phase 1-3 + Phase 4a + 4c 实现)
 **日期**: 2026-05-13
-**最后更新**: 2026-05-22 (Phase 4a + 4c 完成，对齐官方 ima-skill v1.1.7)
-**关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考)
+**最后更新**: 2026-05-28（发布前 readiness review 调整：sidecar 位置 + MCP 配置写入路径）
+**关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考), ADR-028 (release-readiness 硬化)
+
+## 2026-05-28 更新（详见 ADR-028）
+
+> **Sidecar 实际运行位置变更**：Knowledge sidecar binary 从直接由 `.app/Contents/MacOS/knowledge-sidecar` 启动，改为启动期复制到 `~/.ultrawork/sidecars/knowledge-sidecar` 后从此处运行（Option C）。MCP 注册写入 opencode.json 的路径也指向用户级副本，路径不再随 `.app` 移动或 dev→DMG 迁移失效。
+>
+> **MCP 配置写入路径收敛**：`useKnowledgeBase.ensureMCPRegistered` 不再同时调 `api.patchConfig`（会把 MCP 写到工作区 opencode.json，违反 ADR-020 全局化原则）。仅保留 `write_mcp_config`（全局）+ `api.createMCP`（运行时注册，不持久化）。
+>
+> **首次 MCP init 性能**：vendor patch 把 MCP connect 超时拆出 `CONNECT_TIMEOUT = 5s`（runtime tool 调用仍 30s），Tauri 端启动期 fire `GET /mcp` 急切触发 OpenCode lazy MCP init。首次发消息体感延时从 5-30s 降到 <1s。
 
 ## 背景
 

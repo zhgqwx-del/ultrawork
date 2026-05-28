@@ -12,15 +12,21 @@
 | Bun | 1.3.x | `bun --version` |
 | Rust + Cargo | 1.70+ | `rustc --version && cargo --version` |
 | Xcode CLI Tools | - | `xcode-select -p` |
-| Apple Developer 账号 | - | [developer.apple.com](https://developer.apple.com) |
+| Apple Developer 账号 | -（签名+公证可选，不签名分发参考 §5）| [developer.apple.com](https://developer.apple.com) |
+| Rust target `x86_64-apple-darwin` | Apple Silicon 主机必装 | `rustup target list --installed` |
 
 ```bash
 # 确认工具链
-bun --version        # 1.3.10
-rustc --version      # 1.94.0
-cargo --version      # 1.94.0
+bun --version        # 1.3.10+
+rustc --version
+cargo --version
 xcode-select -p      # /Library/Developer/CommandLineTools
+
+# Apple Silicon 上额外需要 x86_64 target（Universal DMG 必需）
+rustup target add x86_64-apple-darwin
 ```
+
+> `setup.sh` 第 1 步会在 Apple Silicon 主机上自动检测 + 安装 `x86_64-apple-darwin` target（幂等）。
 
 ---
 
@@ -123,88 +129,86 @@ export APPLE_KEYCHAIN_PROFILE="ultrawork-notarize"
 
 ## 四、完整打包步骤
 
-### 4.1 一键打包（推荐）
+`bun run release` 是发布构建的唯一入口（脚本：`scripts/build-release.ts`）。会自动跑以下流程：
+
+1. 检查环境变量（`APPLE_SIGNING_IDENTITY` / `APPLE_ID` 等，可选）
+2. 双架构编译三个 sidecar（OpenCode / Gateway / Knowledge）— `aarch64-apple-darwin` + `x86_64-apple-darwin`
+3. `lipo -create` 合并每个 sidecar 成 universal binary（`<name>-universal-apple-darwin`），ad-hoc 重签
+4. `tauri build --target universal-apple-darwin` 编译 Rust 端 + 前端 + lipo 主二进制 + 打包 `.app` + 打包 DMG
+5. 验证签名 / 公证（如配置）/ stapler
+
+### 4.1 签名 + 公证（正式发布）
 
 ```bash
 cd /Users/zhangguoqiang/ai-workspace/claude-workspace/ultrawork01/ultrawork
 
-# Step 1: 安装依赖
-bun install
+# 必需：签名身份
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 
-# Step 2: 构建 OpenCode Sidecar 二进制
-bun run build:opencode
+# 可选：公证凭证（缺则跳过公证，只签名）
+export APPLE_ID="you@example.com"
+export APPLE_PASSWORD="app-specific-password"   # https://appleid.apple.com 生成
+export APPLE_TEAM_ID="TEAMID"
 
-# Step 3: 设置签名环境变量
-export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAM_ID)"
-export APPLE_KEYCHAIN_PROFILE="ultrawork-notarize"
-
-# Step 4: 打包 Tauri 应用（含前端构建 + Rust 编译 + 签名 + 公证）
-bun run tauri:build
+bun run release
 ```
 
-### 4.2 分步执行（排查问题用）
+### 4.2 未签名构建（内部测试 / 本地分发）
 
 ```bash
-cd /Users/zhangguoqiang/ai-workspace/claude-workspace/ultrawork01/ultrawork
-
-# ---- Step 1: 安装依赖 ----
-bun install
-
-# ---- Step 2: 构建 Sidecar (OpenCode + Gateway) ----
-bun run build:opencode
-# 验证：
-ls -lh packages/client/desktop/src-tauri/binaries/opencode-server-aarch64-apple-darwin
-# 应为 ~114MB
-
-bun run build:gateway
-# 验证：
-ls -lh packages/client/desktop/src-tauri/binaries/opencode-gateway-aarch64-apple-darwin
-# 应为 ~61MB
-
-# ---- Step 3: 构建前端 ----
-cd packages/client/desktop
-bun run build
-# 验证：
-ls dist/index.html  # 应存在
-cd ../../..
-
-# ---- Step 4: TypeCheck（可选但推荐）----
-bun run --bun turbo run typecheck
-
-# ---- Step 5: Tauri 编译打包 ----
-cd packages/client/desktop
-bun run --bun tauri build
-# 首次编译 Rust 较慢（5-10分钟），后续增量编译 ~1分钟
-
-# ---- Step 6: 验证产物 ----
-ls -lh src-tauri/target/release/bundle/dmg/
-ls -lh src-tauri/target/release/bundle/macos/
+bun run release -- --unsigned
 ```
 
-### 4.3 产物位置
+- 不需要 Apple Developer 账号
+- 产物 ad-hoc 签名，可在本机运行
+- 对方机器装上后**必须解 quarantine**，详见 §5
+
+### 4.3 其他 flag
+
+| flag | 作用 |
+|------|------|
+| `--skip-sidecar` | 跳过 sidecar 编译（dev 调试 Tauri/前端时省时间） |
+| `--skip-notarize` | 跳过公证（签名仍执行） |
+| `--native` | 只编译当前架构（不出 Universal）。CI 调试用 |
+| `--verbose` | 显示底层 tauri/cargo 输出 |
+
+### 4.4 产物位置
 
 ```
-packages/client/desktop/src-tauri/target/release/bundle/
+packages/client/desktop/src-tauri/target/universal-apple-darwin/release/bundle/
 ├── dmg/
-│   └── Ultrawork_0.1.0_aarch64.dmg      ← 可分发 DMG 安装包
+│   └── Ultrawork_0.1.0_universal.dmg      ← 可分发 DMG（含 arm64 + x86_64）
 └── macos/
-    └── Ultrawork.app/                     ← 独立 .app 应用包
+    └── Ultrawork.app/                       ← 独立 .app 应用包
+        └── Contents/MacOS/
+            ├── ultrawork                    ← 主二进制（Universal）
+            ├── opencode-server              ← Sidecar 二进制（Universal，~248MB）
+            ├── channel-gateway              ← Sidecar 二进制（Universal，~124MB）
+            └── knowledge-sidecar            ← Sidecar 二进制（Universal，~133MB）
 ```
+
+### 4.5 Sidecar 副本机制（运行时）
+
+应用启动期间，`ensure_sidecar_copies()` 会把 `Contents/MacOS/<name>` 复制到 `~/.ultrawork/sidecars/<name>`（详见 ADR-028）。MCP 注册的路径指向用户级副本，不随 `.app` 移动或升级失效。Marker 文件 `~/.ultrawork/sidecars/.<name>.source` 存源端 `size:mtime-ns`，app 升级后源端 size 变化自动触发覆盖。
 
 ---
 
 ## 五、不签名时的临时方案
 
-如果暂时不配置证书，未签名的 `.app` 会被 Gatekeeper 拦截。用户需要：
+未签名的 `.app` 被 macOS Gatekeeper 拦截（"无法打开 - 来自身份不明的开发者"）。对方电脑需要：
 
 ```bash
-# 方式 1：移除 quarantine 属性（开发测试用）
-xattr -cr /Applications/Ultrawork.app
-
-# 方式 2：在 System Preferences → Privacy & Security → 点击 "仍要打开"
+# 解 quarantine 后正常打开（推荐，一行搞定）
+xattr -dr com.apple.quarantine /Applications/Ultrawork.app
 ```
 
-> 注意：这只适用于你自己的机器。**分发给他人必须签名+公证。**
+或：
+
+```bash
+# 在系统设置 → 隐私与安全性 → 滚到底部点"仍要打开"
+```
+
+> **注意**：未签名 DMG 适合内部分发 / 朋友圈测试。**公开分发应使用 Apple Developer ID 签名 + 公证**，否则对方每次升级都要手动绕过 Gatekeeper，体验差。
 
 ---
 
