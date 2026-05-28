@@ -1,3 +1,32 @@
+diff --git a/packages/opencode/script/build.ts b/packages/opencode/script/build.ts
+index b104dd267..a94791e3b 100755
+--- a/packages/opencode/script/build.ts
++++ b/packages/opencode/script/build.ts
+@@ -63,6 +63,10 @@ console.log(`Loaded ${migrations.length} migrations`)
+ const singleFlag = process.argv.includes("--single")
+ const baselineFlag = process.argv.includes("--baseline")
+ const skipInstall = process.argv.includes("--skip-install")
++// --target=<os>-<arch> filters to a single explicit target (used by Ultrawork
++// to cross-compile darwin-x64 from darwin-arm64 without running native smoke
++// tests for unrelated targets).
++const targetFlag = process.argv.find((a) => a.startsWith("--target="))?.slice("--target=".length)
+ const plugin = createSolidTransformPlugin()
+ const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+ 
+@@ -154,7 +158,12 @@ const allTargets: {
+   },
+ ]
+ 
+-const targets = singleFlag
++const targets = targetFlag
++  ? allTargets.filter((item) => {
++      // Match `<os>-<arch>` (no abi, no avx2 baseline variant)
++      return `${item.os}-${item.arch}` === targetFlag && !item.abi && item.avx2 !== false
++    })
++  : singleFlag
+   ? allTargets.filter((item) => {
+       if (item.os !== process.platform || item.arch !== process.arch) {
+         return false
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
 index 850bcc28b..efc900b8a 100644
 --- a/packages/opencode/src/config/config.ts
@@ -112,3 +141,37 @@ index 869019e2c..6509ec1ba 100644
  
  const data = path.join(xdgData!, app)
  const cache = path.join(xdgCache!, app)
+diff --git a/packages/opencode/src/mcp/index.ts b/packages/opencode/src/mcp/index.ts
+index 8c92bb6b2..2df9b9772 100644
+--- a/packages/opencode/src/mcp/index.ts
++++ b/packages/opencode/src/mcp/index.ts
+@@ -33,6 +33,11 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
+ export namespace MCP {
+   const log = Log.create({ service: "mcp" })
+   const DEFAULT_TIMEOUT = 30_000
++  // Ultrawork patch: cap the per-MCP connect handshake to a much shorter
++  // window than DEFAULT_TIMEOUT. Effect.forEach awaits the slowest MCP,
++  // so a single misconfigured server (DNS hang, wrong endpoint, missing
++  // binary) would otherwise stall the first prompt for 30s.
++  const CONNECT_TIMEOUT = 5_000
+ 
+   export const Resource = z
+     .object({
+@@ -312,7 +317,7 @@ export namespace MCP {
+           },
+         ]
+ 
+-        const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
++        const connectTimeout = mcp.timeout ?? CONNECT_TIMEOUT
+         let lastStatus: Status | undefined
+ 
+         for (const { name, transport } of transports) {
+@@ -395,7 +400,7 @@ export namespace MCP {
+           log.info(`mcp stderr: ${chunk.toString()}`, { key })
+         })
+ 
+-        const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
++        const connectTimeout = mcp.timeout ?? CONNECT_TIMEOUT
+         return yield* connectTransport(transport, connectTimeout).pipe(
+           Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
+             client,

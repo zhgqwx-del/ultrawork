@@ -34,6 +34,17 @@ check_cmd() {
 check_cmd bun    "Install: curl -fsSL https://bun.sh/install | bash"
 check_cmd cargo  "Install: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
 
+# On Apple Silicon, the universal DMG build needs the x86_64 Rust target too.
+# Idempotent — rustup is a no-op if already installed.
+if [ "$(uname)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+  if command -v rustup &>/dev/null; then
+    if ! rustup target list --installed 2>/dev/null | grep -q "^x86_64-apple-darwin$"; then
+      echo "  Installing Rust target x86_64-apple-darwin (needed for Universal DMG)..."
+      rustup target add x86_64-apple-darwin
+    fi
+  fi
+fi
+
 echo "[1/6] Prerequisites OK (bun, cargo)"
 
 # ── 2. Init submodules ──────────────────────

@@ -8,8 +8,10 @@ describe("ConfigStorage", () => {
 
   describe("DEFAULT_CONFIG", () => {
     it("has correct default values", () => {
-      expect(DEFAULT_CONFIG.apiPassword).toBe("test123")
-      expect(DEFAULT_CONFIG.apiUsername).toBe("opencode")
+      // apiPassword/apiUsername default to empty — ConfigProvider fetches the
+      // random per-install credentials from the Tauri backend on mount.
+      expect(DEFAULT_CONFIG.apiPassword).toBe("")
+      expect(DEFAULT_CONFIG.apiUsername).toBe("")
       expect(DEFAULT_CONFIG.theme).toBe("system")
       expect(DEFAULT_CONFIG.language).toBe("en")
     })
@@ -29,30 +31,22 @@ describe("ConfigStorage", () => {
     it("merges stored config with defaults", () => {
       localStorage.setItem(
         "ultrawork-config",
-        JSON.stringify({ theme: "dark", language: "zh" })
+        JSON.stringify({ theme: "dark", language: "zh", apiPassword: "stored-pw" })
       )
       const config = ConfigStorage.load()
       expect(config.theme).toBe("dark")
       expect(config.language).toBe("zh")
-      expect(config.apiPassword).toBe(DEFAULT_CONFIG.apiPassword)
+      expect(config.apiPassword).toBe("stored-pw")
     })
 
-    it("falls back to default password when stored password is empty", () => {
+    it("preserves empty credentials so ConfigProvider can fill them from Tauri", () => {
       localStorage.setItem(
         "ultrawork-config",
-        JSON.stringify({ apiPassword: "" })
+        JSON.stringify({ apiPassword: "", apiUsername: "" })
       )
       const config = ConfigStorage.load()
-      expect(config.apiPassword).toBe(DEFAULT_CONFIG.apiPassword)
-    })
-
-    it("falls back to default username when stored username is empty", () => {
-      localStorage.setItem(
-        "ultrawork-config",
-        JSON.stringify({ apiUsername: "" })
-      )
-      const config = ConfigStorage.load()
-      expect(config.apiUsername).toBe(DEFAULT_CONFIG.apiUsername)
+      expect(config.apiPassword).toBe("")
+      expect(config.apiUsername).toBe("")
     })
 
     it("returns DEFAULT_CONFIG on invalid JSON", () => {

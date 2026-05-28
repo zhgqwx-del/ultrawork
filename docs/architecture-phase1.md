@@ -700,24 +700,38 @@ The Agent Workspace is a **runtime product feature** -- when the built software 
 ```
 ~/.ultrawork/                          # User's home directory
 ├── channels.json                      #   ✅ Channel Gateway 配置持久化 (mutex 保护)
+├── session-map.json                   #   ✅ 钉钉/微信 chatId → sessionId 映射
 ├── node/                              #   ✅ 内嵌 Node.js v22 (Browser MCP 运行时)
 ├── mcp/                               #   ✅ Browser MCP 安装目录
 │   ├── playwright/                    #     Playwright MCP server
 │   └── chrome-devtools/               #     Chrome DevTools MCP server
+├── sidecars/                          #   ✅ 启动期复制的 sidecar 副本（ADR-028 Option C）
+│   ├── knowledge-sidecar              #     从 .app/Contents/MacOS/ 复制；MCP 路径稳定
+│   └── .knowledge-sidecar.source      #     幂等 marker（源端 size:mtime-ns）
+├── knowledge/                         #   ✅ 知识库 SQLite + FTS5 数据（ADR-026）
+│   └── kb.db
+├── workspace/                         #   ✅ 默认工作区目录（ensure_default_workspace）
+├── chrome-profile/                    #   ✅ Browser MCP Chrome user-data-dir
 ├── config.json                        #   🔲 Global settings, version info
 ├── IDENTITY.md                        #   🔲 Who the agent is (factual identity)
 ├── SOUL.md                            #   🔲 How the agent behaves (personality & style)
 ├── MEMORY.md                          #   🔲 Long-term factual memory (with dedup)
 ├── HISTORY.md                         #   🔲 Chronological event log (rotated)
 ├── credentials/                       #   🔲 API keys, tokens (gitignored)
-├── cache/                             #   🔲 Session cache, history archives
-│   └── HISTORY.2026-02-01.md          #   Archived history (rotated)
-└── opencode/
-    └── config.json                    #   🔲 OpenCode configuration
+└── cache/                             #   🔲 Session cache, history archives
+    └── HISTORY.2026-02-01.md          #   Archived history (rotated)
+
+~/.config/ultrawork/                   # XDG config（与 OpenCode CLI 隔离，ADR-020）
+├── opencode.json                      #   ✅ MCP 全局配置（写入原子 + Mutex 串行，ADR-028）
+└── sidecar-auth.json                  #   ✅ Sidecar 凭证（首启随机 32B hex，0600，ADR-028）
+
+~/.local/share/ultrawork/              # XDG data
+├── auth.json                          #   ✅ Provider API keys（OpenCode 管理，0600）
+└── opencode*.db*                      #   ✅ OpenCode SQLite (sessions, messages)
 ```
 
 > **注**: ✅ 标记的文件/目录已在实现中使用，🔲 标记的属于 @agent/workspace 规划，尚未实现。
-> 另有 MCP 全局配置存储在 `~/.config/opencode/opencode.json`（Browser MCP 跨工作区自动恢复）。
+> Sidecar 副本机制：`.app/Contents/MacOS/<name>` 是源（DMG 自带），启动期 `ensure_sidecar_copies` 复制到 `~/.ultrawork/sidecars/<name>`，MCP 注册的路径指向用户级副本。详见 [ADR-028](./decisions/028-release-readiness-hardening.md)。
 
 ### Why Unified User-Level Directory?
 

@@ -6,12 +6,23 @@ export interface AppConfig {
   language: "en" | "zh"
 }
 
+// Detect the user's preferred UI language from the browser/system locale.
+// Falls back to "en" when navigator isn't available (SSR/tests) or the
+// locale isn't Chinese.
+function detectDefaultLanguage(): "en" | "zh" {
+  if (typeof navigator === "undefined") return "en"
+  const lang = (navigator.language || (navigator.languages?.[0] ?? "")).toLowerCase()
+  return lang.startsWith("zh") ? "zh" : "en"
+}
+
+// apiPassword/apiUsername default to empty; ConfigProvider fetches the
+// per-install random credentials from the Tauri backend on mount.
 export const DEFAULT_CONFIG: AppConfig = {
   apiBaseUrl: import.meta.env.DEV ? "" : "http://localhost:4096",
-  apiPassword: "test123",
-  apiUsername: "opencode",
+  apiPassword: "",
+  apiUsername: "",
   theme: "system",
-  language: "en",
+  language: detectDefaultLanguage(),
 }
 
 const CONFIG_STORAGE_KEY = "ultrawork-config"
@@ -22,11 +33,7 @@ export class ConfigStorage {
       const stored = localStorage.getItem(CONFIG_STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
-        const merged = { ...DEFAULT_CONFIG, ...parsed }
-        // Ensure credentials fall back to defaults if stored as empty
-        if (!merged.apiPassword) merged.apiPassword = DEFAULT_CONFIG.apiPassword
-        if (!merged.apiUsername) merged.apiUsername = DEFAULT_CONFIG.apiUsername
-        return merged
+        return { ...DEFAULT_CONFIG, ...parsed }
       }
     } catch (err) {
       console.error("Failed to load config:", err)

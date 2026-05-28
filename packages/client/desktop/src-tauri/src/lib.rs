@@ -189,11 +189,16 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
             return Ok(());
         }
         if start.elapsed() > max_wait {
-            println!(
-                "{} started on port {} (pid {}) but health check did not pass within {}s",
-                name, port, pid, max_wait.as_secs()
-            );
-            return Ok(()); // Don't fail — let frontend retry
+            // Kill the unhealthy child and drop it from the registry — otherwise it
+            // would leak as a zombie sidecar until app shutdown.
+            Command::new("kill").arg(pid.to_string()).output().ok();
+            if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+                reg.retain(|e| e.pid != Some(pid));
+            }
+            return Err(format!(
+                "{} spawned (pid {}) on port {} but did not pass health check at {} within {}s",
+                name, pid, port, health_path, max_wait.as_secs()
+            ));
         }
         std::thread::sleep(poll_interval);
     }
@@ -822,53 +827,271 @@ fn get_global_config_dir() -> String {
     global_config_dir().to_string_lossy().to_string()
 }
 
-/// Returns the absolute path to a sidecar binary.
-/// Tauri places sidecar binaries next to the app binary in production,
-/// and in src-tauri/binaries/ during development.
-#[tauri::command]
-fn get_sidecar_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
-    use tauri::Manager;
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    // In production, sidecar is at <resource_dir>/binaries/<name>-<target_triple>
-    // Tauri resolves the target triple automatically via sidecar() API,
-    // but for MCP config we need the exact path.
-    let target = if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "aarch64-apple-darwin"
-        } else {
-            "x86_64-apple-darwin"
+// ---------------------------------------------------------------------------
+// Sidecar credentials — random per-install password persisted to
+// ~/.config/ultrawork/sidecar-auth.json with 0600 perms.
+//
+// Env var override: ULTRAWORK_SIDECAR_PASSWORD (used for CI/scripted tests;
+// not persisted).
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SidecarCredentials {
+    username: String,
+    password: String,
+}
+
+fn sidecar_credentials_path() -> PathBuf {
+    global_config_dir().join("sidecar-auth.json")
+}
+
+fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    // Env var escape hatch for tests / scripted access
+    if let Ok(pass) = std::env::var("ULTRAWORK_SIDECAR_PASSWORD") {
+        if !pass.is_empty() {
+            return Ok(SidecarCredentials {
+                username: std::env::var("ULTRAWORK_SIDECAR_USERNAME")
+                    .unwrap_or_else(|_| "opencode".to_string()),
+                password: pass,
+            });
         }
+    }
+
+    let path = sidecar_credentials_path();
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let creds: SidecarCredentials = serde_json::from_str(&content)
+            .map_err(|e| format!("Invalid sidecar credentials in {}: {}", path.display(), e))?;
+        return Ok(creds);
+    }
+
+    // First run: generate random password
+    let dir = global_config_dir();
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("getrandom failed: {}", e))?;
+    let password = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    let creds = SidecarCredentials {
+        username: "opencode".to_string(),
+        password,
+    };
+    let json = serde_json::to_string_pretty(&creds)
+        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+
+    // Restrict to owner-read/write on Unix from the moment the file is created,
+    // not after the fact — std::fs::write would create with the umask (often 0644)
+    // and leave a microsecond window where another process can read the credential.
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
+        f.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: rely on default ACL (user-only) inherited from %APPDATA% parent.
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    }
+
+    Ok(creds)
+}
+
+#[tauri::command]
+fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    load_or_create_sidecar_credentials()
+}
+
+// Tauri target triple for the currently-running build. Used to construct sidecar
+// binary names of the form `<base>-<target>` (no .exe suffix on non-windows).
+const fn current_target_triple() -> &'static str {
+    if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" }
     } else if cfg!(target_os = "windows") {
         "x86_64-pc-windows-msvc"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64-unknown-linux-gnu"
     } else {
-        if cfg!(target_arch = "aarch64") {
-            "aarch64-unknown-linux-gnu"
-        } else {
-            "x86_64-unknown-linux-gnu"
-        }
-    };
+        "x86_64-unknown-linux-gnu"
+    }
+}
 
+fn sidecar_binary_name(name: &str) -> String {
     let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
-    let binary_name = format!("{}-{}{}", name, target, suffix);
+    format!("{}-{}{}", name, current_target_triple(), suffix)
+}
 
-    // Try resource_dir first (production)
-    let prod_path = resource_dir.join("binaries").join(&binary_name);
-    if prod_path.exists() {
-        return Ok(prod_path.to_string_lossy().to_string());
+// Sidecars that Ultrawork copies into ~/.ultrawork/sidecars/ at startup and
+// registers as MCPs in opencode.json. Anchoring the MCP command path in the
+// user data dir (instead of the .app or dev tree) keeps it stable across .app
+// moves, dev→DMG migration, and cross-machine config copies.
+const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
+
+fn user_sidecars_dir() -> PathBuf {
+    ultrawork_dir().join("sidecars")
+}
+
+fn user_sidecar_path(name: &str) -> PathBuf {
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    user_sidecars_dir().join(format!("{}{}", name, suffix))
+}
+
+/// Locate the bundled source binary for a sidecar. Production sources live at
+/// <App>/Contents/MacOS/<name> (Tauri strips the arch suffix when bundling);
+/// development sources live at src-tauri/binaries/<name>-<target>.
+fn source_sidecar_path(name: &str) -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+            let prod = dir.join(format!("{}{}", name, suffix));
+            if prod.exists() {
+                return Some(prod);
+            }
+        }
     }
-
-    // Fallback: src-tauri/binaries/ (development)
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
-        .join(&binary_name);
-    if dev_path.exists() {
-        return Ok(dev_path.to_string_lossy().to_string());
+        .join(sidecar_binary_name(name));
+    if dev.exists() {
+        return Some(dev);
+    }
+    None
+}
+
+/// Copy each known sidecar from its bundled source into ~/.ultrawork/sidecars/.
+/// Idempotent — skips when the target exists and matches the source by size +
+/// mtime. Runs at app startup before any MCP command path is resolved.
+fn ensure_sidecar_copies() {
+    let dir = user_sidecars_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("[sidecar-copy] failed to create {}: {}", dir.display(), e);
+        return;
     }
 
-    Err(format!("Sidecar binary not found: {}", binary_name))
+    for &name in KNOWN_SIDECAR_NAMES {
+        let Some(source) = source_sidecar_path(name) else {
+            eprintln!("[sidecar-copy] no source found for {}; skipping", name);
+            continue;
+        };
+        let target = user_sidecar_path(name);
+        let marker = dir.join(format!(".{}.source", name));
+
+        // Idempotence: store "<size>:<mtime-nanos>" of the source on each copy
+        // and skip when the source still matches.
+        let source_token: Option<String> = std::fs::metadata(&source).ok().and_then(|m| {
+            let mtime = m.modified().ok()?
+                .duration_since(std::time::UNIX_EPOCH).ok()?
+                .as_nanos();
+            Some(format!("{}:{}", m.len(), mtime))
+        });
+        let stored = std::fs::read_to_string(&marker).ok();
+        if target.exists() && source_token.is_some() && stored.as_deref() == source_token.as_deref() {
+            continue;
+        }
+
+        match std::fs::copy(&source, &target) {
+            Ok(bytes) => {
+                println!(
+                    "[sidecar-copy] {} -> {} ({:.1} MB)",
+                    source.display(),
+                    target.display(),
+                    bytes as f64 / 1_048_576.0,
+                );
+                if let Some(token) = source_token {
+                    let _ = std::fs::write(&marker, token);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = std::fs::metadata(&target) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&target, perms);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[sidecar-copy] failed to copy {} -> {}: {}",
+                    source.display(),
+                    target.display(),
+                    e,
+                );
+            }
+        }
+    }
+}
+
+/// Resolve the canonical (user-local) path of a sidecar. After
+/// ensure_sidecar_copies has run, every known sidecar lives at
+/// ~/.ultrawork/sidecars/<name>. The bundled source is a fallback for the
+/// edge case where the copy hasn't happened yet (e.g. install-time race).
+fn resolve_sidecar_path(name: &str) -> Result<String, String> {
+    let canonical = user_sidecar_path(name);
+    if canonical.exists() {
+        return Ok(canonical.to_string_lossy().to_string());
+    }
+    if let Some(source) = source_sidecar_path(name) {
+        return Ok(source.to_string_lossy().to_string());
+    }
+    Err(format!("Sidecar binary not found for: {}", name))
+}
+
+#[tauri::command]
+fn get_sidecar_path(name: String) -> Result<String, String> {
+    resolve_sidecar_path(&name)
+}
+
+/// Migrate any pre-existing MCP entries to the canonical ~/.ultrawork/sidecars/<name>
+/// path. Recognises both the dev-tree basename (`<name>-<target>`) and the
+/// production basename Tauri uses (`<name>`). Anything not recognisable as a
+/// managed sidecar is left alone.
+fn canonicalize_sidecar_mcp_paths() {
+    let mut canonical: std::collections::HashMap<&str, String> = Default::default();
+    for &sidecar in KNOWN_SIDECAR_NAMES {
+        canonical.insert(sidecar, user_sidecar_path(sidecar).to_string_lossy().to_string());
+    }
+
+    let result = modify_global_opencode_json(|root| {
+        let Some(mcp) = root.get_mut("mcp").and_then(|m| m.as_object_mut()) else {
+            return Ok(());
+        };
+        for (_name, cfg) in mcp.iter_mut() {
+            let Some(cmd) = cfg.get_mut("command").and_then(|c| c.as_array_mut()) else { continue };
+            let Some(first) = cmd.first_mut() else { continue };
+            let Some(current) = first.as_str() else { continue };
+
+            let basename = std::path::Path::new(current)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let matched: Option<&str> = KNOWN_SIDECAR_NAMES.iter()
+                .find(|&&s| basename == s || basename.starts_with(&format!("{}-", s)))
+                .copied();
+            let Some(name) = matched else { continue };
+            let Some(want) = canonical.get(name) else { continue };
+            if want == current { continue }
+
+            println!("[sidecar-mcp] migrate path: {} -> {}", current, want);
+            *first = serde_json::Value::String(want.clone());
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        eprintln!("[sidecar-mcp] failed to update MCP paths: {}", e);
+    }
 }
 
 fn read_global_opencode_json() -> Result<serde_json::Value, String> {
@@ -878,6 +1101,10 @@ fn read_global_opencode_json() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
 }
 
+// Atomic write: serialize to a per-writer .tmp file, then rename over the target.
+// rename(2) is atomic on the same filesystem, so readers never see a partial file.
+// Including pid + nanos in the tmp filename means two writers (e.g. Ultrawork and
+// the OpenCode sidecar updating the same file) never clobber each other's tmp.
 fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
     let dir = global_config_dir();
     if !dir.exists() {
@@ -885,46 +1112,78 @@ fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
             .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
     }
     let path = global_opencode_json_path();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), nanos));
+
     let mut json = serde_json::to_string_pretty(root)
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
     json.push('\n');
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+
+    std::fs::write(&tmp_path, json)
+        .map_err(|e| format!("Failed to write {}: {}", tmp_path.display(), e))?;
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        // Best-effort cleanup of the orphan tmp file
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to rename {} -> {}: {}", tmp_path.display(), path.display(), e));
+    }
+    Ok(())
+}
+
+// Serialize all read-modify-write cycles against opencode.json so two Tauri
+// commands cannot interleave (e.g. add-MCP racing with remove-MCP). Cross-process
+// races (Ultrawork ↔ OpenCode sidecar both writing) still rely on the atomic
+// rename above: last writer wins, but the file is never corrupt.
+static OPENCODE_JSON_LOCK: Mutex<()> = Mutex::new(());
+
+fn modify_global_opencode_json<F>(modifier: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_json::Value) -> Result<(), String>,
+{
+    let _guard = OPENCODE_JSON_LOCK.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+    let mut root = read_global_opencode_json()?;
+    modifier(&mut root)?;
+    write_global_opencode_json(&root)
 }
 
 #[tauri::command]
 fn read_mcp_config() -> Result<serde_json::Value, String> {
+    let _guard = OPENCODE_JSON_LOCK.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
     let root = read_global_opencode_json()?;
     Ok(root.get("mcp").cloned().unwrap_or(serde_json::json!({})))
 }
 
 #[tauri::command]
 fn write_mcp_config(name: String, config: serde_json::Value) -> Result<(), String> {
-    let mut root = read_global_opencode_json()?;
-    let obj = root.as_object_mut()
-        .ok_or("opencode.json root is not an object")?;
-    let mcp = obj.entry("mcp")
-        .or_insert_with(|| serde_json::json!({}));
-    let mcp_obj = mcp.as_object_mut()
-        .ok_or("opencode.json mcp field is not an object")?;
-    mcp_obj.insert(name, config);
-    write_global_opencode_json(&root)
+    modify_global_opencode_json(|root| {
+        let obj = root.as_object_mut()
+            .ok_or("opencode.json root is not an object")?;
+        let mcp = obj.entry("mcp")
+            .or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp.as_object_mut()
+            .ok_or("opencode.json mcp field is not an object")?;
+        mcp_obj.insert(name, config);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 fn remove_mcp_config(name: String) -> Result<(), String> {
-    let mut root = read_global_opencode_json()?;
-    let obj = root.as_object_mut()
-        .ok_or("opencode.json root is not an object")?;
-    if let Some(mcp) = obj.get_mut("mcp") {
-        if let Some(mcp_obj) = mcp.as_object_mut() {
-            mcp_obj.remove(&name);
-            if mcp_obj.is_empty() {
-                obj.remove("mcp");
+    modify_global_opencode_json(|root| {
+        let obj = root.as_object_mut()
+            .ok_or("opencode.json root is not an object")?;
+        if let Some(mcp) = obj.get_mut("mcp") {
+            if let Some(mcp_obj) = mcp.as_object_mut() {
+                mcp_obj.remove(&name);
+                if mcp_obj.is_empty() {
+                    obj.remove("mcp");
+                }
             }
         }
-    }
-    write_global_opencode_json(&root)
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1249,69 @@ fn migrate_from_opencode() {
     println!("[migration] Migration complete.");
 }
 
+/// Percent-encode a string for use in HTTP headers (matches the encoding
+/// the frontend's api-client uses for x-opencode-directory).
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Trigger OpenCode's lazy MCP InstanceState init so the first user prompt
+/// doesn't pay the per-MCP spawn/connect cost. OpenCode constructs its MCP
+/// state on first access (via GET /mcp or POST /session/{id}/prompt_async),
+/// and that build awaits every MCP server's handshake (now capped to 5s by
+/// the vendor patch). Firing this in the background once OpenCode is healthy
+/// means by the time the React UI is up and the user hits send, the init has
+/// already completed (or is close to done).
+///
+/// Fire-and-forget. Failures are non-fatal.
+fn warm_opencode_mcp(port: u16, auth_header: String) {
+    std::thread::spawn(move || {
+        // Small delay to let OpenCode finish any post-health bookkeeping
+        // before we ask it to do heavy work.
+        std::thread::sleep(Duration::from_millis(500));
+
+        // OpenCode caches MCP state per-workspace (keyed by directory in
+        // InstanceState), so we have to warm the directory the user is
+        // actually about to open. Use ~/.ultrawork/workspace/ — that's the
+        // default workspace for fresh installs and a stable fallback for
+        // existing users when no last-used workspace is known. Returning
+        // users on a custom workspace get a separate init when their
+        // frontend's getMCP fires, but our patch B caps that at ~5s.
+        let dir = ultrawork_dir().join("workspace");
+        // Ensure the directory exists (frontend's ensure_default_workspace
+        // runs later on React mount; we'd race with that on first launch).
+        let _ = std::fs::create_dir_all(&dir);
+        let encoded_dir = url_encode(&dir.to_string_lossy());
+
+        let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+        let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
+            eprintln!("[mcp-warm] failed to connect to OpenCode :{}", port);
+            return;
+        };
+        let request = format!(
+            "GET /mcp HTTP/1.0\r\nHost: 127.0.0.1:{}\r\nAuthorization: {}\r\nx-opencode-directory: {}\r\nConnection: close\r\n\r\n",
+            port, auth_header, encoded_dir,
+        );
+        if stream.write_all(request.as_bytes()).is_err() {
+            return;
+        }
+        // Read the first byte of the response to confirm the request reached
+        // the handler — that's enough to guarantee MCP.status() ran server-side
+        // and the lazy InstanceState init kicked off. After that we drop.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+        let mut first = [0u8; 1];
+        let _ = stream.read(&mut first);
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    });
+}
+
 fn copy_if_exists(src: &std::path::Path, dst: &std::path::Path) {
     if src.exists() {
         match std::fs::copy(src, dst) {
@@ -1025,13 +1347,48 @@ pub fn run() {
             remove_mcp_config,
             get_global_config_dir,
             get_sidecar_path,
+            get_sidecar_credentials,
         ])
         .setup(|app| {
             // One-time migration from shared opencode paths (must run before sidecar)
             migrate_from_opencode();
 
+            // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
+            // and any external tooling can use a stable user-local path.
+            ensure_sidecar_copies();
+
+            // Stage 2: migrate any pre-existing MCP entries in opencode.json to
+            // point at the canonical user-local path (handles dev → DMG and old
+            // app-bundle paths in pre-existing configs).
+            canonicalize_sidecar_mcp_paths();
+
+            // Load (or first-time generate) the per-install sidecar credentials before
+            // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
+            // call the OpenCode HTTP API, and OpenCode itself reads it from env.
+            let creds = match load_or_create_sidecar_credentials() {
+                Ok(c) => c,
+                Err(e) => {
+                    app.dialog()
+                        .message(format!(
+                            "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
+                            e
+                        ))
+                        .kind(MessageDialogKind::Error)
+                        .title("Startup Error")
+                        .blocking_show();
+                    return Ok(());
+                }
+            };
+            let auth_header = {
+                use base64::Engine;
+                let token = base64::engine::general_purpose::STANDARD
+                    .encode(format!("{}:{}", creds.username, creds.password));
+                format!("Basic {}", token)
+            };
+
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
             let gw_handle = app.handle().clone();
+            let gw_password = creds.password.clone();
             std::thread::spawn(move || {
                 if let Err(e) = start_sidecar(
                     &gw_handle,
@@ -1040,9 +1397,14 @@ pub fn run() {
                     "/channel/health",
                     None,
                     &[],
-                    &[],
+                    &[("OPENCODE_SERVER_PASSWORD", gw_password.as_str())],
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
+                    use tauri::Emitter;
+                    let _ = gw_handle.emit(
+                        "sidecar-startup-failed",
+                        serde_json::json!({ "name": "channel-gateway", "error": e }),
+                    );
                 }
             });
 
@@ -1059,20 +1421,26 @@ pub fn run() {
                     &[],
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
+                    use tauri::Emitter;
+                    let _ = kb_handle.emit(
+                        "sidecar-startup-failed",
+                        serde_json::json!({ "name": "knowledge-sidecar", "error": e }),
+                    );
                 }
             });
 
-            // Start OpenCode Server sidecar (critical — blocks until ready)
+            // Start OpenCode Server sidecar (critical — blocks until ready).
+            // Credentials and auth_header were loaded at the top of setup().
             let oc_port = OPENCODE_PORT.to_string();
             if let Err(e) = start_sidecar(
                 app,
                 "opencode-server",
                 OPENCODE_PORT,
                 "/global/health",
-                Some("Basic b3BlbmNvZGU6dGVzdDEyMw=="), // opencode:test123
+                Some(&auth_header),
                 &["serve", "--port", &oc_port],
                 &[
-                    ("OPENCODE_SERVER_PASSWORD", "test123"),
+                    ("OPENCODE_SERVER_PASSWORD", creds.password.as_str()),
                     ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
                 ],
             ) {
@@ -1085,6 +1453,11 @@ pub fn run() {
                     .kind(MessageDialogKind::Error)
                     .title("Startup Error")
                     .blocking_show();
+            } else {
+                // OpenCode is healthy — eagerly trigger MCP InstanceState init in
+                // the background so the first user prompt doesn't pay the per-MCP
+                // spawn/connect cost.
+                warm_opencode_mcp(OPENCODE_PORT, auth_header.clone());
             }
 
             Ok(())

@@ -30,11 +30,12 @@ async function main() {
   const app = createApp(manager);
 
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: GATEWAY_PORT,
     fetch: (req) => app.fetch(req),
   });
 
-  console.log(`Channel Gateway listening on port ${server.port}`);
+  console.log(`Channel Gateway listening on 127.0.0.1:${server.port}`);
 
   // Graceful shutdown (guard against double signal)
   let shuttingDown = false;

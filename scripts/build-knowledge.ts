@@ -8,6 +8,15 @@ const knowledgeDir = path.join(rootDir, "packages/knowledge/sidecar")
 const tauriDir = path.join(rootDir, "packages/client/desktop/src-tauri")
 const tauriBinDir = path.join(tauriDir, "binaries")
 
+// Map Tauri target triple → bun --target value
+const BUN_TARGET_MAP: Record<string, { bunTarget: string; exe: boolean }> = {
+  "aarch64-apple-darwin":      { bunTarget: "bun-darwin-arm64",  exe: false },
+  "x86_64-apple-darwin":       { bunTarget: "bun-darwin-x64",    exe: false },
+  "x86_64-pc-windows-msvc":    { bunTarget: "bun-windows-x64",   exe: true  },
+  "x86_64-unknown-linux-gnu":  { bunTarget: "bun-linux-x64",     exe: false },
+  "aarch64-unknown-linux-gnu": { bunTarget: "bun-linux-arm64",   exe: false },
+}
+
 // Resolve current platform's Tauri target triple
 const getCurrentTauriTarget = () => {
   if (process.platform === "darwin") {
@@ -19,9 +28,21 @@ const getCurrentTauriTarget = () => {
   }
 }
 
-const tauriTarget = getCurrentTauriTarget()
-const isWindows = process.platform === "win32"
-const suffix = isWindows ? ".exe" : ""
+// Parse --target flag (optional; defaults to current platform)
+const targetFlag = (() => {
+  const idx = process.argv.indexOf("--target")
+  return idx !== -1 ? process.argv[idx + 1] : undefined
+})()
+
+const tauriTarget = targetFlag || getCurrentTauriTarget()
+const targetInfo = BUN_TARGET_MAP[tauriTarget]
+if (!targetInfo) {
+  console.error(`❌ Unknown target: ${tauriTarget}`)
+  console.error(`   Supported: ${Object.keys(BUN_TARGET_MAP).join(", ")}`)
+  process.exit(1)
+}
+
+const suffix = targetInfo.exe ? ".exe" : ""
 const force = process.argv.includes("--force")
 
 await $`mkdir -p ${tauriBinDir}`
@@ -47,10 +68,12 @@ if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {
 
 console.log(`Building Knowledge Sidecar for target: ${tauriTarget}`)
 
-await $`cd ${knowledgeDir} && bun build --compile src/index.ts --outfile ${outFile}`
+await $`cd ${knowledgeDir} && bun build --compile --target=${targetInfo.bunTarget} src/index.ts --outfile ${outFile}`
 
-// Apple Silicon requires a valid ad-hoc signature to run bun-compiled binaries.
-if (process.platform === "darwin") {
+// Apple Silicon requires a valid ad-hoc signature to run bun-compiled macOS binaries.
+// Only applies when output is a macOS binary AND we're running on macOS (codesign unavailable on linux/windows).
+const isMacOSTarget = tauriTarget.endsWith("-apple-darwin")
+if (process.platform === "darwin" && isMacOSTarget) {
   const resign = await $`codesign --remove-signature ${outFile} 2>/dev/null; codesign -s - ${outFile}`.nothrow()
   if (resign.exitCode !== 0) {
     console.error(`Failed to ad-hoc sign binary (exit ${resign.exitCode})`)

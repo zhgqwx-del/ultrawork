@@ -28,32 +28,63 @@ export function useMCPServers() {
   const [error, setError] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
-  const fetchMCP = useCallback(async () => {
+  const fetchMCP = useCallback(async (): Promise<boolean> => {
     try {
       // 1. Backend runtime status (only reports config-file-based servers)
       const backendStatus = await api.getMCP()
       // 2. Persisted configs from global opencode.json (~/.config/ultrawork/opencode.json)
       const savedConfigs = await invoke<Record<string, MCPConfig>>("read_mcp_config")
       // 3. Merge: config is the source of truth for which MCPs exist;
-      //    backend provides runtime status for those that are connected
+      //    backend provides runtime status for those that are connected.
+      //    When an MCP is enabled in config but missing from the runtime
+      //    response, assume OpenCode hasn't finished registering yet — show
+      //    "connected" optimistically (the actual call will fail visibly if
+      //    the MCP is broken). Only show "disabled" when config explicitly
+      //    has enabled: false.
       const merged: MCPStatusMap = {}
+      let hasPendingRuntime = false
       for (const [name, config] of Object.entries(savedConfigs)) {
         if (BUILTIN_MCP_NAMES.has(name)) continue
         const runtime = backendStatus[name]
-        merged[name] = runtime ?? (config.enabled === false ? { status: "disabled" } : { status: "disabled" })
+        if (runtime) {
+          merged[name] = runtime
+        } else if (config.enabled === false) {
+          merged[name] = { status: "disabled" }
+        } else {
+          merged[name] = { status: "connected" }
+          hasPendingRuntime = true
+        }
       }
       setStatusMap(merged)
       setConfigMap(savedConfigs)
       setError(false)
+      return hasPendingRuntime
     } catch (err) {
       console.error("Failed to fetch MCP:", err)
       setError(true)
+      return false
     } finally {
       setLoading(false)
     }
   }, [api])
 
-  useEffect(() => { fetchMCP() }, [fetchMCP])
+  // Re-fetch a few times while any enabled MCP is still missing from the runtime
+  // response. OpenCode's MCP registration can lag the initial UI mount, especially
+  // on first launch when sidecars are still being copied/spawned.
+  useEffect(() => {
+    let cancelled = false
+    let attempt = 0
+    const RETRY_DELAYS_MS = [2000, 4000, 8000]
+    const run = async () => {
+      const stillPending = await fetchMCP()
+      if (!stillPending) return
+      if (cancelled || attempt >= RETRY_DELAYS_MS.length) return
+      const delay = RETRY_DELAYS_MS[attempt++]!
+      setTimeout(() => { if (!cancelled) void run() }, delay)
+    }
+    void run()
+    return () => { cancelled = true }
+  }, [fetchMCP])
 
   // One-time migration: localStorage → global opencode.json
   useEffect(() => {

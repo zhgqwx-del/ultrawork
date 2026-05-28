@@ -1033,7 +1033,15 @@ function ChannelsSection() {
 
   const onWeChatDone = () => {
     setShowAdd(false)
+    // WeChat's auto-connect runs in the background after addChannel resolves
+    // (the adapter starts a long-poll loop and reports "connecting" until the
+    // first poll succeeds). One refresh would catch the "connecting" snapshot
+    // and the UI would stay stale. Schedule a few more refreshes to catch the
+    // state flip whenever it lands (typically within ~10s on a healthy link).
     refresh()
+    for (const delay of [2000, 5000, 10000, 20000, 35000]) {
+      setTimeout(() => { refresh() }, delay)
+    }
   }
 
   return (

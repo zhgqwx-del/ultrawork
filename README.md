@@ -84,13 +84,37 @@ bun run tauri:dev
 
 ### 构建发布包
 
+| 命令 | 用途 |
+|------|------|
+| `./setup.sh --build` | 一键构建（带 sidecar 重编译） |
+| `bun run release` | 完整发布流程：双架构 sidecar + Universal DMG + 签名 + Notarization |
+| `bun run release -- --unsigned` | 内部测试：ad-hoc 签名，跳过 Notarization |
+| `bun run release -- --skip-notarize` | 仅签名不公证（需 `APPLE_SIGNING_IDENTITY`） |
+
+**Universal DMG**（默认）会生成同时支持 Apple Silicon 与 Intel Mac 的单一安装包，构建时间和包体积都是单架构的 ~2 倍。Apple Silicon 开发机需要先装 x86_64 Rust target：
+
 ```bash
-./setup.sh --build
-# 或手动：
-bun run tauri:build
+rustup target add x86_64-apple-darwin
 ```
 
-产物位于 `packages/client/desktop/src-tauri/target/release/bundle/`。
+`setup.sh` 第 1 步会自动检查并安装（幂等）。
+
+签名 / 公证所需环境变量：
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export APPLE_ID="you@example.com"
+export APPLE_PASSWORD="app-specific-password"     # 见 https://appleid.apple.com
+export APPLE_TEAM_ID="TEAMID"
+```
+
+未签名 DMG 分发给他人时，对方需要先解除隔离才能打开：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Ultrawork.app
+```
+
+产物位于 `packages/client/desktop/src-tauri/target/{aarch64-apple-darwin,universal-apple-darwin}/release/bundle/`。
 
 ## 开发指南
 
@@ -98,10 +122,13 @@ bun run tauri:build
 
 ```bash
 bun run tauri:dev          # 启动开发服务器（前端 HMR + Rust 热重载）
-bun run typecheck          # 全量 TypeScript 类型检查 (4 个包)
+bun run typecheck          # 全量 TypeScript 类型检查
 bun run build:opencode     # 重新编译 OpenCode sidecar
 bun run build:gateway      # 重新编译 Channel Gateway sidecar
+bun run build:knowledge    # 重新编译 Knowledge sidecar
 ```
+
+构建脚本支持 `--target` 参数跨编译，例如 `bun run build:gateway -- --target x86_64-apple-darwin`。
 
 ### 测试
 
@@ -120,8 +147,15 @@ cd packages/client/desktop && bun run --bun vitest run
 | Vite Dev Server | 1420 | 前端开发服务器 |
 | OpenCode Server | 4096 | AI Agent 后端 (sidecar) |
 | Channel Gateway | 4097 | 渠道网关 (sidecar) |
+| Knowledge Sidecar | 4098 | 知识库 RAG (sidecar) |
 
-Vite 开发模式下自动将 API 请求代理到后端端口。
+所有 sidecar 都仅绑定 `127.0.0.1`。Vite 开发模式自动将 API 请求代理到后端端口。
+
+### Sidecar 凭证
+
+应用首次启动时会在 `~/.config/ultrawork/sidecar-auth.json`（Unix 权限 `0600`）生成 32 字节随机密码，OpenCode sidecar 与前端共用。删除该文件可强制重置。
+
+CI / 脚本化测试可用 `ULTRAWORK_SIDECAR_PASSWORD=xxx` 环境变量覆盖（不会持久化）。
 
 ### Vendor 补丁
 
@@ -132,6 +166,29 @@ Vite 开发模式下自动将 API 请求代理到后端端口。
 更新 submodule 后需重新 apply：
 ```bash
 cd vendor/opencode && git apply ../../patches/vendor-opencode-config-fix.patch
+```
+
+### 故障排查 / 完全重置
+
+如果需要把工作树和运行时数据回退到"初次 clone"的状态（用于重现安装问题、清理坏状态），执行：
+
+```bash
+git submodule deinit -f vendor/opencode                      # submodule 回到未初始化
+rm -rf node_modules .turbo                                   # JS 依赖与 turbo 缓存
+rm -rf packages/client/desktop/src-tauri/binaries/*          # 已编译的 sidecar 二进制
+rm -rf ~/.ultrawork ~/.config/ultrawork                      # 运行时数据 + 凭证 + MCP 配置
+bun pm cache rm                                              # 可选：碰到 integrity 错误时清 bun cache
+
+./setup.sh --dev                                             # 重新初始化（约 5–10 分钟）
+```
+
+> ⚠️ 删除 `~/.ultrawork` 会清掉本地知识库索引、Channel 配置、Browser MCP 下载的 Node.js 和 Playwright 等。仅在确认重置时操作。
+
+如果只是想清依赖重装（保留运行时数据）：
+
+```bash
+rm -rf node_modules .turbo packages/client/desktop/src-tauri/binaries/*
+./setup.sh --dev
 ```
 
 ## 核心功能

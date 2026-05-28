@@ -16,7 +16,7 @@
   "dependencies": {
     "@agent/api-client": "workspace:*",
     "dingtalk-stream": "^2.1.4",
-    "hono": "^4.7.0"
+    "hono": "^4.12.23"
   },
   "devDependencies": {
     "@types/bun": "^1.3.9",

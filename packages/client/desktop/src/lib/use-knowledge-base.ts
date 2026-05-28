@@ -175,15 +175,17 @@ export function useKnowledgeBase() {
         enabled: true,
       }
 
+      // Persist only to the global config (~/.config/ultrawork/opencode.json)
+      // per ADR-020. Do NOT also call api.patchConfig — that endpoint writes
+      // into OpenCode's working directory, which would duplicate the MCP entry
+      // into every workspace's opencode.json.
       await invoke("write_mcp_config", {
         name: MCP_NAME,
         config: mcpConfig,
       })
 
-      try {
-        await api.patchConfig({ mcp: { [MCP_NAME]: mcpConfig } } as any)
-      } catch { /* Non-critical */ }
-
+      // Runtime registration (POST /mcp) so the already-running OpenCode picks
+      // up the new MCP without a restart. This call does not persist.
       try {
         await api.createMCP(MCP_NAME, mcpConfig as any)
       } catch { /* Will connect on next restart */ }

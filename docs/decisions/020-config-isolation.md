@@ -1,7 +1,14 @@
 # ADR-020: Ultrawork 与 OpenCode 配置隔离
-**状态**: Proposed
+**状态**: Accepted
 **日期**: 2026-04-20
-**关联**: ADR-002 (OpenCode Sidecar)
+**最后更新**: 2026-05-28（发布前 readiness review：sidecar 凭证随机化 + 工作区 opencode.json 不再被 MCP 写入）
+**关联**: ADR-002 (OpenCode Sidecar), ADR-028 (release-readiness 硬化)
+
+## 2026-05-28 更新（详见 ADR-028）
+
+> **Sidecar 凭证随机化**：之前硬编码 `opencode:test123`（多处引用：lib.rs basic auth header + `OPENCODE_SERVER_PASSWORD` env + 前端 `DEFAULT_CONFIG` + Gateway bridge.ts），现在改首启随机生成 32 字节 hex，持久化到 `~/.config/ultrawork/sidecar-auth.json`（Unix 0600 权限）。前端通过 `get_sidecar_credentials` Tauri command 读取，旧 `test123` 自动迁移。`ULTRAWORK_SIDECAR_PASSWORD` env 可覆盖（不持久化）。
+>
+> **MCP 配置写入路径收敛**：本 ADR 已声明"MCP 配置只读写全局 opencode.json"，但 `useKnowledgeBase.ensureMCPRegistered` 之前仍调 `api.patchConfig` 把 MCP 写到工作区 opencode.json（违反约定）。已删除该调用，仅保留 `write_mcp_config` 全局写入 + `api.createMCP` 运行时注册。老用户工作区 opencode.json 残留 MCP 段不影响功能（OpenCode 合并 global + workspace），可手动清理。
 
 ## 背景
 

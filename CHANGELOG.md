@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 发布前 readiness 硬化（ADR-028）：macOS Universal DMG 构建支持（`build-release.ts --unsigned` 模式 + 双架构 sidecar cross-compile + Tauri `universal-apple-darwin` lipo 合并）+ Sidecar 凭证随机化（首启生成 32 字节 hex 持久化到 `~/.config/ultrawork/sidecar-auth.json` 0600 权限 + `ULTRAWORK_SIDECAR_PASSWORD` env 覆盖）+ Sidecar 副本机制（启动期从 `.app/Contents/MacOS/<name>` 复制到 `~/.ultrawork/sidecars/<name>`，路径稳定 + 跟随 app 升级自动覆盖）+ MCP 启动急切 warm-up（Rust 端 OpenCode 健康后 fire `GET /mcp` 触发服务端 lazy InstanceState init，首发消息体感时延降到 <1s）+ Tauri capability 收紧（去 shell/fs 过宽权限）+ Bun.serve 显式 127.0.0.1 绑定（不再 LAN 暴露）+ opencode.json 原子写 + Mutex（跨进程并发更新不损坏 JSON）+ 完整 README 故障排查 + 系统语言自动检测
 - 知识库能力 Phase 4c（ADR-026）：IMA 写入能力 — MCP 工具 `knowledge_save_note`（AI 自主新建/追加笔记）+ HTTP 端点 `/kb/notes/create` + `/kb/notes/append` + 本地图片自动过滤 + 写入错误码处理
 - 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段 + IMA 凭证 UX 优化（一键打开凭证页面 + clientId 自动复用 + 首次保存成功 toast 提示）
 - 知识库能力 Phase 3（ADR-026）：第三方平台 Adapter（IMA 优先）+ 凭证配置向导 + 测试连接 + 统一 ID-based API（Schema v3）+ 跨源搜索（本地+IMA 合并排序）+ Filter Chips 知识源分类筛选
@@ -16,13 +17,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 知识库架构设计文档 ADR-026：覆盖本地 RAG / 第三方平台 / 自定义 API / 在线文档 四类场景，含行业调研和实现参考
 
 ### Changed
+- Sidecar 运行位置：`knowledge-sidecar` 从 `.app/Contents/MacOS/` 改为启动期复制到 `~/.ultrawork/sidecars/<name>` 后从此处运行（Option C，ADR-028）。MCP 路径不再随 `.app` 移动或开发模式切换而失效。Marker 文件 `.<name>.source` 用源端 size+mtime 做幂等检测，app 升级时自动覆盖。
+- Sidecar 凭证：从硬编码 `opencode:test123` 改为首启随机生成 32 字节 hex，持久化到 `~/.config/ultrawork/sidecar-auth.json`（Unix 0600 权限，避免 umask race）。前端通过 `get_sidecar_credentials` Tauri command 拿凭证，旧 `test123` 默认自动迁移。Gateway 通过 spawn env `OPENCODE_SERVER_PASSWORD` 接收凭证。`ULTRAWORK_SIDECAR_PASSWORD` env 可覆盖（不持久化，CI/测试用）。
+- macOS 应用 bundle identifier 从 `com.ultrawork.app` 改为 `com.ultrawork.desktop`（Tauri 警告 `.app` 后缀与 macOS app bundle 扩展冲突）
+- Bun.serve sidecar 显式 `hostname: "127.0.0.1"`：Gateway/Knowledge 不再默认 0.0.0.0 LAN 暴露
+- Tauri capability 收紧：移除 `shell:default`、`shell:allow-spawn`、`shell:allow-execute`、全部 `fs:*`，仅保留 `core:default` + `core:window:allow-start-dragging` + `dialog:default` + `dialog:allow-open` + `opener:default`（前端不直调 plugin-shell / plugin-fs，IPC 走 custom Tauri command）
+- `opencode.json` 写入改为 tmp + rename 原子操作（tmp 名带 pid + nanos 避免跨进程冲突），全局 `OPENCODE_JSON_LOCK` 串行化 RMW
+- MCP CONNECT_TIMEOUT 拆分（vendor patch）：MCP 启动连接握手用 5s，listTools / tool 执行保持 30s。坏 MCP 最长拖 5s 而非 30s（ADR-028）
+- 默认语言改为按系统 locale 自动检测（`navigator.language` 以 `zh` 开头 → 中文；其他 → 英文），替代之前的硬编码 `en`
 - 知识库文档解析从 MarkItDown (Python) 替换为纯 TS 库（unpdf/mammoth/xlsx/jszip），消除 Python 外部依赖
 - MCP 配置统一使用全局路径 `~/.config/ultrawork/opencode.json`，移除工作区级别 opencode.json 的 MCP 配置
 - macOS 标题栏切换为 Overlay 模式，隐藏原生标题文字，内容延伸到窗口顶部（ADR-023）
 - 窗口拖拽改用 `startDragging()` API（workaround for tauri-apps/tauri#9503）
 - 工作目录头部重构：项目名突出显示 + 智能缩略路径 + Finder 打开 + 一键复制（ADR-024）
 
+### Security
+- 移除硬编码 sidecar 凭证（`opencode:test123`），改首启随机 32 字节 hex + 文件级 0600 权限。详见 ADR-028。
+- Sidecar 网络绑定收紧到 127.0.0.1（Gateway / Knowledge / OpenCode），关闭同 LAN 暴露面。
+- Tauri capabilities 缩减到实际使用项，去掉前端 `shell:allow-spawn` / `shell:allow-execute` / `fs:*` 权限。
+- 升级 `hono` 4.7→4.12.23，修补 ~10 个上游 advisory（DoS / 路径遍历 / 原型污染 / cookie 处理等）。
+
 ### Fixed
+- MCP 面板 `knowledge-base` 永远显示"已禁用"：`use-mcp-servers.ts:43` 三元表达式 typo（两个分支都返回 `disabled`），叠加 OpenCode lazy MCP init 时序，导致 runtime 拿不到状态时 UI 永远显示 disabled。修复 typo + 自动 2/4/8s 三轮重试。
+- 微信 Channel 添加后 sidebar 状态长时间停留在"连接中"：WeChat adapter `connect()` 启动长轮询后立即返回，state 留在 "connecting" 等首次 `getUpdates` 长轮询响应；同时前端 `onWeChatDone` 只 refresh 一次刚好抓到瞬时状态。修复：adapter 改为发出首次请求即乐观切到 `connected`（失败由 catch 路径回到 error），且前端多次定时 refresh。
+- Gateway → OpenCode 调用全部 401：`bridge.ts` 硬编码 `OPENCODE_PASSWORD = "test123"`，凭证随机化后所有 Channel（DingTalk/WeChat）功能无声响中断。修复：Gateway 改 lazy 读 `process.env.OPENCODE_SERVER_PASSWORD`，Tauri spawn 时通过 env 传入。
+- `~/.config/ultrawork/sidecar-auth.json` umask race：原 `fs::write` 用默认 umask 创建（通常 0644）后再 `chmod 0600`，中间有微秒窗口本机其他用户可读凭证。修复：`OpenOptions::mode(0o600).open()` 一次创建。
+- `opencode.json` tmp 文件名冲突：之前固定 `opencode.json.tmp`，跨进程并发写时互相覆盖。修复：tmp 名加 pid + nanos，rename 失败时清理孤儿。
+- `start_sidecar` 健康检查超时残留 pid：之前静默返回 Ok，spawn 的 sidecar 进程继续运行到 app 关闭。修复：超时时 `kill` pid + 从 registry 移除 + 返回 Err。
+- 知识库 MCP 配置写两份：`useKnowledgeBase.ensureMCPRegistered` 之前同时调 `write_mcp_config`（全局，符合 ADR-020）和 `api.patchConfig`（写工作区 opencode.json）。删除后者，仅保留全局 + `api.createMCP` 运行时注册。
+- 测试脚本 `scripts/test-long-session.ts` 和 `test-api-client.ts` 硬编码 `test123` → 凭证随机化后全部 401。修复：改读 `~/.config/ultrawork/sidecar-auth.json` + `ULTRAWORK_SIDECAR_PASSWORD` env 兜底。
+- 孤儿文件 `packages/client/desktop/src-tauri/opencode.json`（含开发者本机绝对路径）从工作树移除。
 - IMA 凭证验证错误提示显示原始 JSON：HTTP 401 响应 `{code:200002, msg:"skill auth failed"}` 未解析，现在正确提取 msg 展示友好提示
 - IMA Notes 模块无笔记本时添加流程死胡同：`list_notebook` 无用户笔记本返回空数组，现在合成"全部笔记"虚拟条目兜底
 - AddSourceDialog 凭证验证异常时临时 source 未清理：`handleTestConnection` 网络异常后 tempId 不在 catch 作用域内，残留孤儿记录
