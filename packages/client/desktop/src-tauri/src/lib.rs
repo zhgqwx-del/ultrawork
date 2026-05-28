@@ -1249,6 +1249,66 @@ fn migrate_from_opencode() {
     println!("[migration] Migration complete.");
 }
 
+/// Percent-encode a string for use in HTTP headers (matches the encoding
+/// the frontend's api-client uses for x-opencode-directory).
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Trigger OpenCode's lazy MCP InstanceState init so the first user prompt
+/// doesn't pay the per-MCP spawn/connect cost. OpenCode constructs its MCP
+/// state on first access (via GET /mcp or POST /session/{id}/prompt_async),
+/// and that build awaits every MCP server's handshake (now capped to 5s by
+/// the vendor patch). Firing this in the background once OpenCode is healthy
+/// means by the time the React UI is up and the user hits send, the init has
+/// already completed (or is close to done).
+///
+/// Fire-and-forget. Failures are non-fatal.
+fn warm_opencode_mcp(port: u16, auth_header: String) {
+    std::thread::spawn(move || {
+        // Small delay to let OpenCode finish any post-health bookkeeping
+        // before we ask it to do heavy work.
+        std::thread::sleep(Duration::from_millis(500));
+
+        // We pass the user's home dir as the workspace context. Our MCP
+        // configs live in the global ~/.config/ultrawork/opencode.json
+        // and are merged into every workspace, so this is enough to spawn
+        // global MCP children even if the user later picks a different
+        // workspace.
+        let dir = dirs::home_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_string());
+        let encoded_dir = url_encode(&dir);
+
+        let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+        let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
+            eprintln!("[mcp-warm] failed to connect to OpenCode :{}", port);
+            return;
+        };
+        let request = format!(
+            "GET /mcp HTTP/1.0\r\nHost: 127.0.0.1:{}\r\nAuthorization: {}\r\nx-opencode-directory: {}\r\nConnection: close\r\n\r\n",
+            port, auth_header, encoded_dir,
+        );
+        if stream.write_all(request.as_bytes()).is_err() {
+            return;
+        }
+        // Read the first byte of the response to confirm the request reached
+        // the handler — that's enough to guarantee MCP.status() ran server-side
+        // and the lazy InstanceState init kicked off. After that we drop.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+        let mut first = [0u8; 1];
+        let _ = stream.read(&mut first);
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    });
+}
+
 fn copy_if_exists(src: &std::path::Path, dst: &std::path::Path) {
     if src.exists() {
         match std::fs::copy(src, dst) {
@@ -1390,6 +1450,11 @@ pub fn run() {
                     .kind(MessageDialogKind::Error)
                     .title("Startup Error")
                     .blocking_show();
+            } else {
+                // OpenCode is healthy — eagerly trigger MCP InstanceState init in
+                // the background so the first user prompt doesn't pay the per-MCP
+                // spawn/connect cost.
+                warm_opencode_mcp(OPENCODE_PORT, auth_header.clone());
             }
 
             Ok(())
