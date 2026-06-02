@@ -1,6 +1,6 @@
 # Ultrawork 文档地图
 
-> 全部文档 43 个 Markdown 文件，按用途分四层：入口层、功能层、决策层、归档层。
+> 全部文档 44 个 Markdown 文件，按用途分四层：入口层、功能层、决策层、归档层。
 
 ## 目录树
 
@@ -21,6 +21,7 @@ ultrawork/
 │   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（从 MEMORY.md 提炼）
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
 │   ├── requirements.md                #   需求文档：产品功能需求与验收标准
+│   ├── knowledge-base-replication-guide.md  # 知识库能力复制指南：组件清单 + 触发/噪音控制 + 启动方式 + 目标 Agent prompt
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
@@ -115,7 +116,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 7 | 开发者 | 按需更新 |
+| **功能层** | `docs/*.md` | 8 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 18 | 架构师/新成员 | 有重大决策时新增 |
 | **归档层** | `docs/archive/` | 8 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 5+ | 产品/设计 | 需求变更时 |

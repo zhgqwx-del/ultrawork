@@ -13,6 +13,42 @@
 >
 > **首次 MCP init 性能**：vendor patch 把 MCP connect 超时拆出 `CONNECT_TIMEOUT = 5s`（runtime tool 调用仍 30s），Tauri 端启动期 fire `GET /mcp` 急切触发 OpenCode lazy MCP init。首次发消息体感延时从 5-30s 降到 <1s。
 
+## 2026-06-02 更新：触发策略实现现状澄清 + 噪音优先立场（供复制参考）
+
+> ⚠️ **给阅读本 ADR 去"复制"知识库能力的人**：§9「检索触发时机」描述了方案 A 及三项增强（增强1 system prompt 注入知识源摘要 / 增强2 动态 tool description 主题词 / 增强3 首轮对话引导），还有 §9 演进路线里的 `@知识库` 显式触发。**这些里只有"方案 A 的最朴素形态"真正落地了，三项增强与 `@` 触发均未实现。** 复制时请以本节为准，不要照 §9 的理想叙述实现。
+
+### 触发与上下文影响的实现真相（核对源码 2026-06-02）
+
+| 维度 | 设计（§9 理想） | **实际实现** | 源码位置 |
+|------|----------------|-------------|---------|
+| 触发模式 | 方案 A + 三增强，路线含 @ 触发 | **纯方案 A（AI 自主 MCP tool call），无任何增强** | — |
+| system prompt 注入 | 增强1/3 注入知识源摘要 + 首轮引导 | **无。** prompt 只含 env + skills + instructions(CLAUDE/AGENTS) | `vendor/opencode/.../session/prompt.ts`, `instruction.ts` |
+| tool description | 增强2 动态注入知识源名 + 高频主题词 | **静态通用字符串**，不含任何具体源名/主题 | `mcp-bridge.ts:34/184/233` |
+| 每轮常驻开销 | — | **仅 3 个工具 schema**（`knowledge_search` / `knowledge_list_sources` / `knowledge_save_note`），不随轮次或库内容增长 | `mcp-bridge.ts` |
+| 知识库内容进入上下文 | — | **仅当 LLM 主动调用 `knowledge_search` 后**，作为该次 tool-call 返回值；无自动预检索、无阈值注入 | `mcp-bridge.ts:40-179` |
+| `@知识库` 显式触发 | 路线图 Phase 4 | **未实现** | — |
+
+**结论**：当前实现把"误触发/噪音"压到了很低——不调用即零干扰、零 token；代价是"AI 不知道库里有什么、可能漏搜"（§9 自承的方案 A 核心弱点），且本应缓解它的增强项都没做。
+
+### 噪音优先立场（本阶段决策）
+
+当前阶段产品取舍：**优先保证"不需要知识库时零噪音/零误触发"。当前方案 A 的噪音已经很低、是可接受的**（不调用即零干扰；误触发代价有界，见下）。在此基础上规划的演进是 **A → A+@ 共存 → 收尾清理** 的三步加法，而非用 `@` 替换方案 A：
+
+1. **保留方案 A**（AI 自主 MCP tool call）作为基线——已实现，低噪音可接受；
+2. **叠加 `@` 显式触发**（与方案 A 共存）：用户 `@源名` 时把检索结果**当轮**注入 prompt（独立 text part，不进 system prompt、下轮自动消失）。这是 §9 演进路线里的 A+C，是**加法**——不打 `@` 的消息脚印与今天完全一致，噪音不升；打 `@` 的消息获得用户掌控的精确检索；
+3. **删源即注销 MCP**：`removeSource` 删到 0 个知识源时一并 `remove_mcp_config`，消除"零源仍挂工具"残留。
+
+仍**不实现** §9 的增强1/2/3（system prompt 注入）与自动预检索（§替代方案5 / Phase 7）——它们是"无差别提高主动检索率"的常驻手段，与"零噪音优先"相悖；`@` 共存方案以"逐条消息 opt-in"达到同样的"需要时找得到"，却不引入常驻噪音。
+
+噪音控制的关键事实（复制时务必理解）：
+
+- **MCP 是否注册 = 工具是否常驻**。一旦注册 `knowledge-base` MCP（`use-knowledge-base.ts:163 ensureMCPRegistered`，在 `addFolder` 时触发），3 个工具就常驻工具列表。要做到"零 ambient footprint"，杠杆是**不注册 MCP**（改由显式 `@`/命令按需检索）。
+- **知识源的 `enabled` 只过滤"搜哪些源"，不影响"工具是否出现"**（`mcp-bridge.ts:50`）。即使禁用全部源，工具仍在列表里。
+- **误触发代价有界**：方案 A 下即使 AI 多搜一次，最坏返回 `"No relevant results found"`（`mcp-bridge.ts:160`），不污染后续上下文、不会把错误内容当事实，且 tool-call-block 全程可见。
+- **已知小坑**：`removeSource`（`use-knowledge-base.ts:237`）删源时**不注销 MCP**——删到 0 个知识源后，3 个工具仍挂着。噪音优先的复制应在删到 0 源时一并 `remove_mcp_config`。
+
+> 复制落地步骤、组件清单、启动方式与给目标 Agent 的 prompt，见 `docs/knowledge-base-replication-guide.md`。
+
 ## 背景
 
 Ultrawork 作为桌面 AI Agent，用户希望能接入多种知识库让 AI 在对话中按需检索。ADR-019 曾做过 IMA MCP Server 的 POC 并验证可行，但仅覆盖了"第三方云端知识库"单一场景。实际用户需求可归纳为三类：
