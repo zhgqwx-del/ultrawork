@@ -15,6 +15,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 知识库能力 Phase 2（ADR-026）：Parent-Child 双层分块（父块 ~60 行上下文 + 子块 ~12 行精确匹配）+ MarkItDown 集成 (PDF/docx/xlsx/pptx) + SSE 索引进度实时推送 + 文件监听自动重索引 + Schema 迁移系统
 - 知识库能力 Phase 1（ADR-026）：Knowledge Sidecar (:4098) + 本地文件夹 RAG + 混合检索 (BM25+TF-IDF+RRF) + MCP tool 对接 AI + Settings 知识库管理 UI
 - 知识库架构设计文档 ADR-026：覆盖本地 RAG / 第三方平台 / 自定义 API / 在线文档 四类场景，含行业调研和实现参考
+- 技术讨论文档 Discussion 004：OpenCode 多 Agent 机制调研（默认 agent 决议 / 自定义 agent 配置 / task 子 agent 委派 + 在 Ultrawork 里的实际呈现），纯代码分析，含完整源码定位
 
 ### Changed
 - Sidecar 运行位置：`knowledge-sidecar` 从 `.app/Contents/MacOS/` 改为启动期复制到 `~/.ultrawork/sidecars/<name>` 后从此处运行（Option C，ADR-028）。MCP 路径不再随 `.app` 移动或开发模式切换而失效。Marker 文件 `.<name>.source` 用源端 size+mtime 做幂等检测，app 升级时自动覆盖。
