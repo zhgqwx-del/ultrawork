@@ -15,3 +15,4 @@
 | [006-custom-llm-provider.md](./006-custom-llm-provider.md) | 自定义 LLM Provider 机制调研 — 兼容 OpenAI/Anthropic 协议的自带 Key + Base URL 接入 | 2026-06-04 | 调研记录 |
 | [007-opencode-builtin-tools.md](./007-opencode-builtin-tools.md) | OpenCode 内置工具全景调研 — 功能/使用场景/实现路径/启用条件 | 2026-06-04 | 调研记录 |
 | [008-opencode-builtin-agents-orchestration.md](./008-opencode-builtin-agents-orchestration.md) | OpenCode 内置 Agent 全景、相互调用机制与 runLoop 引擎 — 谁能调用谁/谁来调度/怎么驱动 | 2026-06-04 | 调研记录 |
+| [009-tauri-vs-electron.md](./009-tauri-vs-electron.md) | 桌面端框架调研 — Tauri 现状、Electron 对比、能力边界与迁移代价评估 | 2026-06-04 | 调研记录 |
