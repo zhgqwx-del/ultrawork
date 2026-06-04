@@ -46,7 +46,9 @@ ultrawork/
 │   │   ├── 003-sidecar-sharing.md     #   OpenCode Sidecar 能力共享 — 多进程复用
 │   │   ├── 004-opencode-multi-agent.md  # OpenCode 多 Agent 机制调研
 │   │   ├── 005-permission-question-dock.md  # Permission/Question Dock 机制调研
-│   │   └── 006-custom-llm-provider.md #   自定义 LLM Provider 机制调研
+│   │   ├── 006-custom-llm-provider.md #   自定义 LLM Provider 机制调研
+│   │   ├── 007-opencode-builtin-tools.md  # OpenCode 内置工具全景调研
+│   │   └── 008-opencode-builtin-agents-orchestration.md  # 内置 Agent 全景与 runLoop 引擎
 │   │
 │   └── archive/                       # ═══ 历史归档层 ═══
 │       ├── progress-raw.md            #   完整开发进度（Phase 1 → Round 15 全部记录）
@@ -125,7 +127,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 28 (README + 27 ADR) | 架构师/新成员 | 有重大决策时新增 |
-| **讨论层** | `docs/discussions/` | 6 (README + 5) | 架构师 | 探索阶段记录 |
+| **讨论层** | `docs/discussions/` | 8 (README + 7) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | auto-memory (本地) | 4 | Claude Code | 每次 session |
