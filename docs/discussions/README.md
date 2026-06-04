@@ -12,3 +12,4 @@
 | [003-sidecar-sharing.md](./003-sidecar-sharing.md) | OpenCode Sidecar 能力共享 — 多进程复用方案 | 2026-05-13 | 讨论中 |
 | [004-opencode-multi-agent.md](./004-opencode-multi-agent.md) | OpenCode 多 Agent 机制调研 — 默认/自定义/子 Agent 委派 | 2026-06-03 | 调研记录 |
 | [005-permission-question-dock.md](./005-permission-question-dock.md) | Permission Dock 与 Question Dock 机制调研 — 挂起式权限/提问端到端实现 | 2026-06-04 | 调研记录 |
+| [006-custom-llm-provider.md](./006-custom-llm-provider.md) | 自定义 LLM Provider 机制调研 — 兼容 OpenAI/Anthropic 协议的自带 Key + Base URL 接入 | 2026-06-04 | 调研记录 |

@@ -17,6 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - 知识库架构设计文档 ADR-026：覆盖本地 RAG / 第三方平台 / 自定义 API / 在线文档 四类场景，含行业调研和实现参考
 - 技术讨论文档 Discussion 004：OpenCode 多 Agent 机制调研（默认 agent 决议 / 自定义 agent 配置 / task 子 agent 委派 + 在 Ultrawork 里的实际呈现），纯代码分析，含完整源码定位
 - 技术讨论文档 Discussion 005：Permission Dock 与 Question Dock 机制调研（服务端 Effect Deferred 挂起式询问原理 / SSE 事件链路 / 前端底部输入区「占位替换卡片」UI 形态 / 渠道无头场景 Gateway 自动批准-拒绝策略），纯代码分析，含完整源码定位
+- 技术讨论文档 Discussion 006：自定义 LLM Provider 机制调研（provider 四层数据 merge / `opencode.json` provider schema / `@ai-sdk/openai-compatible` 默认 SDK + Anthropic 兼容 / `resolveSDK` baseURL·apiKey·headers 注入链 / 前端与 api-client 现状缺口 / 兼容 OpenAI·Anthropic 协议的自带 Key+Base URL 实现路径），含源码定位 + 真实 HTTP API 实测结论（PATCH /config 后 GET /provider 同进程即时生效、深合并保留 mcp、GET /config 读运行时内存态）
 
 ### Changed
 - Sidecar 运行位置：`knowledge-sidecar` 从 `.app/Contents/MacOS/` 改为启动期复制到 `~/.ultrawork/sidecars/<name>` 后从此处运行（Option C，ADR-028）。MCP 路径不再随 `.app` 移动或开发模式切换而失效。Marker 文件 `.<name>.source` 用源端 size+mtime 做幂等检测，app 升级时自动覆盖。
