@@ -17,7 +17,7 @@
 
 ```bash
 # 确认工具链
-bun --version        # 1.3.10+
+bun --version        # 1.3.12+
 rustc --version
 cargo --version
 xcode-select -p      # /Library/Developer/CommandLineTools
@@ -94,7 +94,8 @@ xcrun notarytool store-credentials "ultrawork-notarize" \
     ],
     "externalBin": [
       "binaries/opencode-server",
-      "binaries/opencode-gateway"
+      "binaries/channel-gateway",
+      "binaries/knowledge-sidecar"
     ],
     "macOS": {
       "signingIdentity": null,
@@ -382,7 +383,7 @@ bun run --bun tauri build
           submodules: recursive
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.12
       - uses: dtolnay/rust-toolchain@stable
       - run: bun install
       - run: bun run build:opencode
@@ -408,7 +409,7 @@ bun run --bun tauri build
           submodules: recursive
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.12
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         run: |
@@ -469,7 +470,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.12
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -548,7 +549,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.12
 
       - uses: dtolnay/rust-toolchain@stable
 

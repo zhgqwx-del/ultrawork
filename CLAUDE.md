@@ -136,6 +136,8 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `global/index.ts` | `OPENCODE_APP_NAME` env var 控制 app 名称 | ADR-020 |
 | `config/config.ts` | managed dir 对齐 + endsWith 过滤 + PINNED_PLUGIN_VERSION + config.json→opencode.json 修复 | ADR-020 |
 | `config/paths.ts` | 跳过 `~/.opencode/` home 目录搜索 | ADR-020 |
+| `mcp/index.ts` | MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s） | ADR-028 |
+| `script/build.ts` | 新增 `--target=<os>-<arch>` 单目标过滤，支持跨编译 darwin-x64（Universal DMG） | ADR-028 |
 
 ### 修改 vendor/opencode 的完整流程
 
@@ -146,10 +148,13 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 vim vendor/opencode/packages/opencode/src/...
 
 # 2. 重新生成 patch 文件（覆盖旧的）
+#    ⚠️ 必须列全 patch 涉及的所有文件，漏掉任何一个都会在重新生成时丢失对应改动
 cd vendor/opencode && git diff -- \
   packages/opencode/src/config/config.ts \
   packages/opencode/src/config/paths.ts \
   packages/opencode/src/global/index.ts \
+  packages/opencode/src/mcp/index.ts \
+  packages/opencode/script/build.ts \
   > ../../patches/vendor-opencode-config-fix.patch
 
 # 3. 如果新增了文件，在上面的 git diff 命令中追加路径

@@ -1,6 +1,6 @@
 # Ultrawork 文档地图
 
-> 全部文档 44 个 Markdown 文件，按用途分四层：入口层、功能层、决策层、归档层。
+> 全部文档约 63 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
 
 ## 目录树
 
@@ -22,30 +22,35 @@ ultrawork/
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
 │   ├── requirements.md                #   需求文档：产品功能需求与验收标准
 │   ├── knowledge-base-replication-guide.md  # 知识库能力复制指南：组件清单 + 触发/噪音控制 + 启动方式 + 目标 Agent prompt
+│   ├── mcp-technical-flow.md          #   MCP 技术流程：MCP 配置/连接/工具调用的端到端链路
+│   ├── test-config-isolation.md       #   配置隔离测试说明（ADR-020 验证）
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
-│   │   ├── README.md                  #   ADR 索引：模板说明 + 15 条决策一览表
-│   │   ├── 001-tauri-react.md         #   Tauri 2 + React 19 技术选型（Phase 1）
-│   │   ├── 002-opencode-sidecar.md    #   OpenCode 编译为 Headless Sidecar（Phase 1）
-│   │   ├── 003-shadcn-tailwind.md     #   shadcn/ui + Tailwind CSS 4 组件体系（Phase 2）
-│   │   ├── 004-structured-message-parts.md  # 结构化消息 7 Part Types 渲染（Round 2）
-│   │   ├── 005-permission-question-dock.md  # Permission & Question 底部 Dock 交互（Round 3）
-│   │   ├── 006-model-management.md    #   模型管理独立 Dialog + Popover 快速切换（Round 4）
-│   │   ├── 007-workspace-isolation.md #   工作区目录隔离 via x-opencode-directory（Round 5）
-│   │   ├── 008-sse-global-polling-fallback.md  # SSE 全局化 + 3s 轮询兜底（Round 5）
-│   │   ├── 009-artifact-preview-split.md  # 产物预览 50/50 分屏 + CodeMirror（Round 7）
-│   │   ├── 010-shared-hook-pattern.md #   共享 Hook 提取模式 useMCPServers/useSkills（Round 10）
-│   │   ├── 011-mcp-localstorage-persistence.md  # MCP 状态 localStorage 持久化（Round 11, Superseded → opencode.json）
-│   │   ├── 012-optimistic-message-active-tracking.md  # 乐观消息 + 活跃状态追踪（Round 12）
-│   │   ├── 013-channel-gateway-sidecar.md  # Channel Gateway 独立 Sidecar 进程（Round 13）
-│   │   ├── 014-dingtalk-stream-sdk.md #   DingTalk Stream SDK 选型（Round 13）
-│   │   ├── 015-dark-mode-codemirror.md  # 深色模式纯黑 + CodeMirror 6（Round 15）
-│   │   ├── 016-browser-mcp-node-detection.md  # Browser MCP — 检测 Node.js + 按需安装（2026-03-15）
-│   │   └── 017-browser-mcp-dual-mode.md  # Browser MCP 双模式 — Playwright 默认 + DevTools 可选（2026-03-17）
+│   │   ├── README.md                  #   ADR 索引：模板说明 + 27 条决策一览表（权威索引）
+│   │   ├── 001..017                   #   Phase 1 → Round 17 早期决策（Tauri/Sidecar/消息渲染/Dock/模型/工作区/SSE/MCP/暗色模式/Browser MCP 等）
+│   │   ├── 018-wechat-channel-ilink.md       # 微信 Channel ilink 协议接入（2026-03-24）
+│   │   ├── 019-knowledge-base-integration.md # 知识库集成方案（Withdrawn）
+│   │   ├── 020-config-isolation.md           # Ultrawork 与 OpenCode 配置隔离
+│   │   ├── 021-long-session-performance.md   # 长对话性能优化
+│   │   ├── 022-model-switch-side-effects.md  # 运行时模型切换副作用修复
+│   │   ├── 023-titlebar-overlay.md           # macOS 标题栏 Overlay 模式
+│   │   ├── 024-workspace-path-display.md     # 工作目录路径展示优化
+│   │   ├── 025-window-layout-symmetry.md     # 窗口布局对称性修复
+│   │   ├── 026-knowledge-base-architecture.md # 知识库能力架构（本地 RAG + IMA + 自定义 API）
+│   │   └── 028-release-readiness-hardening.md # 发布前 readiness 硬化（ADR-027 由 feat/acp-support 分支预留）
+│   │
+│   ├── discussions/                   # ═══ 讨论层（探索阶段，可能演变为 ADR）═══
+│   │   ├── README.md                  #   讨论索引
+│   │   ├── 001-mobile-relay.md        #   移动端与桌面端通信 — Relay Server 方案
+│   │   ├── 003-sidecar-sharing.md     #   OpenCode Sidecar 能力共享 — 多进程复用
+│   │   ├── 004-opencode-multi-agent.md  # OpenCode 多 Agent 机制调研
+│   │   ├── 005-permission-question-dock.md  # Permission/Question Dock 机制调研
+│   │   └── 006-custom-llm-provider.md #   自定义 LLM Provider 机制调研
 │   │
 │   └── archive/                       # ═══ 历史归档层 ═══
-│       ├── progress-raw.md            #   完整开发进度（2982 行，Phase 1 → Round 15 全部记录）
+│       ├── progress-raw.md            #   完整开发进度（Phase 1 → Round 15 全部记录）
+│       ├── initial-monorepo-plan.md   #   项目初始化计划（原根目录 .plan.md，归档）
 │       ├── reviews/
 │       │   ├── review-phase1.md       #   Phase 1 代码审查
 │       │   ├── review-2.3-markdown.md #   Phase 2.3 Markdown 渲染审查
@@ -73,10 +78,12 @@ ultrawork/
 │       ├── qoderwork/                 #   QoderWork 参考（3 张截图）
 │       └── workany/                   #   WorkAny 参考（2 张截图）
 │
-└── .claude/memory/                    # ═══ AI 工作记忆（本地，不入 git）═══
-    ├── MEMORY.md                      #   Claude 跨 session 记忆
+└── (Claude Code auto-memory)          # ═══ AI 工作记忆（本地，不入 git）═══
+    │  实际位置：~/.claude/projects/<project-hash>/memory/（非项目内 .claude/memory/）
+    ├── MEMORY.md                      #   Claude 跨 session 记忆（环境/API/状态索引）
     ├── dingtalk-channel-plan.md       #   钉钉渠道方案详细记录
-    └── vendor-patches.md              #   Vendor 补丁记录
+    ├── vendor-patches.md              #   Vendor 补丁记录
+    └── project_sidecar_process_cleanup.md  # Sidecar 进程清理方案记录
 ```
 
 ## 按角色的阅读路径
@@ -116,11 +123,12 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 8 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 18 | 架构师/新成员 | 有重大决策时新增 |
-| **归档层** | `docs/archive/` | 8 | 考古/追溯 | 只追加不修改 |
-| **设计层** | `design/` | 5+ | 产品/设计 | 需求变更时 |
-| **AI 记忆** | `.claude/memory/` (本地) | 3 | Claude Code | 每次 session |
+| **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
+| **决策层** | `docs/decisions/` | 28 (README + 27 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **讨论层** | `docs/discussions/` | 6 (README + 5) | 架构师 | 探索阶段记录 |
+| **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
+| **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
+| **AI 记忆** | auto-memory (本地) | 4 | Claude Code | 每次 session |
 
 ## 维护规则
 

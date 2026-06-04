@@ -1,8 +1,8 @@
 # Desktop Agent - Phase 1 Architecture Design
 
-> **Implementation Status Note (2026-03-18)**
+> **Implementation Status Note (更新于 2026-06-04)**
 >
-> 本文档是 Phase 1 的完整架构设计。截至 Issue#18，**Desktop Client** 和 **Channel Gateway (DingTalk)** 已全面实现，其余模块仍为规划状态。
+> 本文档是 Phase 1 的完整架构设计。当前 **Desktop Client**、**Channel Gateway (DingTalk + WeChat)** 与 **Knowledge Sidecar** 已实现，其余抽象层模块仍为规划状态。
 >
 > **已实现 vs 规划对照：**
 >
@@ -11,7 +11,8 @@
 > | Desktop Client (Tauri) | ✅ 已实现 | React 19 + Vite 7 + Tailwind 4（原设计为 SolidJS，实际采用 React） |
 > | @agent/api-client | ✅ 已实现 | TypeScript SDK，REST + SSE |
 > | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
-> | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode, Bridge 会话桥接, Hono HTTP API, 配置持久化 `~/.ultrawork/channels.json` |
+> | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode + WeChat ilink, Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json` |
+> | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
 > | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
@@ -26,7 +27,7 @@
 > - 路由：**react-router-dom v7**
 >
 > **Desktop 后续新增功能（文档发布后实现）：**
-> - MCP 服务持久化：localStorage → `opencode.json` + 全局 `~/.config/opencode/opencode.json`，重启自动恢复
+> - MCP 服务持久化：localStorage → `opencode.json` + 全局 `~/.config/ultrawork/opencode.json`，重启自动恢复
 > - Browser MCP：内嵌 Node.js v22 + Playwright MCP 默认 + DevTools 可选（`~/.ultrawork/node/` + `~/.ultrawork/mcp/`）
 > - 品牌 Logo：棱镜 SVG 设计 + 全平台图标 + in-app Logo 组件
 > - 内置命令隐藏：/init, /review 对普通用户不可见
@@ -38,7 +39,8 @@
 A desktop-grade AI agent built on top of OpenCode's server capabilities. Phase 1 focuses on:
 
 - **Desktop Client (Tauri)**: ✅ Full-featured desktop application as the primary platform
-- **IM Channel Integrations**: ✅ DingTalk (Stream Mode) / 🔲 Feishu, Slack via Channel Gateway
+- **IM Channel Integrations**: ✅ DingTalk (Stream Mode), WeChat (ilink) / 🔲 Feishu, Slack via Channel Gateway
+- **Knowledge Base**: ✅ Local folder RAG + third-party (IMA) sources via Knowledge Sidecar, exposed to the Agent over MCP (ADR-026)
 - **Local/Remote Mode Operation**: ✅ (local) / 🔲 (remote) OpenCode running as sidecar (Desktop) or remote server (Channels)
 - **Agent Workspace**: 🔲 Persistent identity, personality, and memory across sessions
 - **Proactive Services**: 🔲 Background heartbeat monitoring and scheduled LLM tasks
@@ -119,7 +121,8 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 | | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
 | | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
 | **Client** | `@agent/client-desktop` | ✅ Desktop Application - Full-featured Tauri app with local sidecar, React 19 + Vite 7 + Tailwind 4. |
-| **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket), Bridge 会话桥接, Hono HTTP API, 配置持久化 `~/.ultrawork/channels.json`. Feishu/Slack 待实现. |
+| **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket) + WeChat ilink (HTTP 长轮询), Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json`. Feishu/Slack 待实现. |
+| **Knowledge** | `@agent/knowledge-sidecar` | ✅ 已实现 — Knowledge Base Service. 独立 sidecar :4098 (Tauri 托管), 本地文件夹 RAG (Parent-Child 分块 + TF-IDF + FTS5 BM25 + RRF) + 第三方平台 IMA adapter (Wiki/Notes) + MCP stdio bridge, DB `~/.ultrawork/knowledge/kb.db` (SQLite WAL). 详见 ADR-026. |
 | **Proactive** | `@agent/proactive-heartbeat` | 🔲 Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
 | | `@agent/proactive-cron` | 🔲 Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
 

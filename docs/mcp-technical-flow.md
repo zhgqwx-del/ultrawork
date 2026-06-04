@@ -158,7 +158,7 @@ useMCPServers.handleAdd(name, config)          [use-mcp-servers.ts:123-142]
 | 工作区配置 | `{workspace}/opencode.json` → `mcp` 字段 | 普通 MCP Server | 当前工作区 |
 | 全局配置 | `~/.config/ultrawork/opencode.json` → `mcp` 字段 | Browser MCP | 跨工作区 |
 | Sidecar 内存 | MCP Service 的 InstanceState | 运行时连接状态 + 工具缓存 | 当前进程 |
-| OAuth 凭证 | `~/.opencode/data/mcp-auth.json`（权限 0o600） | OAuth token/client info | 全局 |
+| OAuth 凭证 | `~/.local/share/ultrawork/mcp-auth.json`（权限 0o600） | OAuth token/client info | 全局 |
 
 ### 3.2 opencode.json MCP 配置格式
 
@@ -830,7 +830,7 @@ connectRemote() 遇到 UnauthorizedError
 
 ### 8.4 凭证存储格式
 
-**文件**: `~/.opencode/data/mcp-auth.json`
+**文件**: `~/.local/share/ultrawork/mcp-auth.json`
 
 ```jsonc
 {

@@ -333,7 +333,7 @@
 > **C2 Bugfix — MCP 连接/断开/删除/持久化**:
 > - **Disconnect 后列表清空**: 后端 `GET /mcp` 不返回已断开的 server。修复: disconnect 后本地设 `disabled` 状态，不依赖后端返回。
 > - **Connect 无反应**: 后端断开后遗忘 server，`connectMCP(name)` 无效。修复: 存储 `configMap`，reconnect 时用 `createMCP` 重新注册。
-> - **重启后 MCP 丢失**: React state 重启即失。修复: `configMap` 持久化到 `opencode.json`（通过 Tauri command 读写），启动时合并后端+本地数据。（注：最初用 localStorage，Issue#18 迁移到 opencode.json + 全局 `~/.config/opencode/opencode.json`）
+> - **重启后 MCP 丢失**: React state 重启即失。修复: `configMap` 持久化到 `opencode.json`（通过 Tauri command 读写），启动时合并后端+本地数据。（注：最初用 localStorage，Issue#18 迁移到 opencode.json + 全局 `~/.config/ultrawork/opencode.json`）
 > - **已删除 server 复活**: 后端 `POST /mcp` 返回全量 map（含 mcp-auth.json 中残留的 server）。修复: 新增 `hiddenSet` 记录用户删除的 server，所有后端响应经 `filterHidden()` 过滤。
 > - **新增删除功能**: 非连接状态显示 Trash2 删除按钮，支持从列表移除不需要的 server。
 

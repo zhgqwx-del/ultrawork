@@ -14,8 +14,10 @@ ultrawork/
 │   │   └── desktop/               # Tauri 桌面应用 (React + Vite)
 │   │       ├── src/               # 前端源码
 │   │       └── src-tauri/         # Rust 后端 + sidecar 二进制
-│   └── channel/
-│       └── gateway/               # 渠道网关 (钉钉等即时通讯集成)
+│   ├── channel/
+│   │   └── gateway/               # 渠道网关 (钉钉 / 微信即时通讯集成)
+│   └── knowledge/
+│       └── sidecar/               # 知识库 sidecar (本地 RAG + IMA 第三方平台 + MCP)
 ├── vendor/
 │   └── opencode/                  # OpenCode 上游 (git submodule)
 ├── patches/                       # Vendor 补丁文件
@@ -33,13 +35,14 @@ ultrawork/
 | 状态 | React Context + SSE |
 | 构建 | Turborepo + Bun |
 | AI 后端 | OpenCode Server (Bun 编译二进制，作为 sidecar 运行) |
-| 渠道网关 | Hono + DingTalk Stream SDK (Bun 编译二进制) |
+| 渠道网关 | Hono on Bun.serve + DingTalk Stream SDK + 微信 ilink (Bun 编译二进制) |
+| 知识库 | Knowledge Sidecar — 本地 RAG (TF-IDF + FTS5 + RRF) + IMA 第三方平台 + MCP (Bun 编译二进制) |
 
 ## 前置依赖
 
 | 工具 | 最低版本 | 安装方式 |
 |------|----------|----------|
-| **Bun** | >= 1.3.10 | `curl -fsSL https://bun.sh/install \| bash` |
+| **Bun** | >= 1.3.12 | `curl -fsSL https://bun.sh/install \| bash` |
 | **Rust** | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | **Xcode CLT** | - | macOS: `xcode-select --install` |
 
@@ -78,7 +81,10 @@ bun run build:opencode
 # 5. 编译 Channel Gateway sidecar（约 61MB）
 bun run build:gateway
 
-# 6. 启动开发服务器
+# 6. 编译 Knowledge sidecar
+bun run build:knowledge
+
+# 7. 启动开发服务器
 bun run tauri:dev
 ```
 
@@ -161,7 +167,7 @@ CI / 脚本化测试可用 `ULTRAWORK_SIDECAR_PASSWORD=xxx` 环境变量覆盖�
 
 `vendor/opencode` 是上游 OpenCode 的 git submodule。本项目的修改以 patch 文件形式保存在 `patches/` 目录：
 
-- `vendor-opencode-config-fix.patch` — 修复 `Config.update()` 写入文件名为 `opencode.json`（上游错误地写入 `config.json`）
+- `vendor-opencode-config-fix.patch` — 单文件累加补丁，含：配置隔离（`OPENCODE_APP_NAME` + managed dir 对齐 + 跳过 `~/.opencode/` 搜索，ADR-020）、`Config.update()` 写入文件名修复（上游误写 `config.json`）、MCP 启动握手超时拆为 5s（ADR-028）、构建脚本 `--target=` 跨编译过滤（Universal DMG，ADR-028）
 
 更新 submodule 后需重新 apply：
 ```bash
@@ -197,10 +203,11 @@ rm -rf node_modules .turbo packages/client/desktop/src-tauri/binaries/*
 - SSE 流式响应 — 全局 SSE 连接，跨页面不丢事件
 - 工作区管理 — 多目录隔离，按工作区过滤 Session
 - 模型管理 — Provider 配置、模型快速切换
-- MCP 集成 — 远程/本地 MCP 服务器管理
+- MCP 集成 — 远程/本地 MCP 服务器管理 + Browser MCP（Playwright/DevTools）
+- 知识库 — 本地文件夹 RAG（混合检索）+ IMA 第三方平台接入，经 MCP 提供给 Agent
 - 权限/问答 — Agent 权限授权 Dock、交互式问答 Dock
 - 文件预览 — 50/50 分屏预览（代码/Markdown/图片/Diff）
-- 渠道网关 — 钉钉等即时通讯接入，通过 Gateway sidecar 桥接
+- 渠道网关 — 钉钉 / 微信即时通讯接入，通过 Gateway sidecar 桥接
 - 国际化 — 中文/英文
 
 ## 项目文档

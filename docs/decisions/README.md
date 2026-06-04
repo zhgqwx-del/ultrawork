@@ -49,11 +49,11 @@
 | [017](./017-browser-mcp-dual-mode.md) | Browser MCP 双模式 — Playwright 默认 + DevTools 可选 | 2026-03-17 | Accepted |
 | [018](./018-wechat-channel-ilink.md) | 微信 Channel — ilink 协议接入 | 2026-03-24 | Accepted (Phase 1+2 实现) |
 | [019](./019-knowledge-base-integration.md) | 知识库集成 — IMA 优先 + MCP 架构 | 2026-03-31 | Withdrawn |
-| [020](./020-config-isolation.md) | Ultrawork 与 OpenCode 配置隔离 | 2026-04-20 | Proposed |
-| [021](./021-long-session-performance.md) | 长对话性能优化 — 渐进式渲染与分页加载 | 2026-04-23 | Proposed |
+| [020](./020-config-isolation.md) | Ultrawork 与 OpenCode 配置隔离 | 2026-04-20 | Accepted (✅ 已实现) |
+| [021](./021-long-session-performance.md) | 长对话性能优化 — 渐进式渲染与分页加载 | 2026-04-23 | Accepted (✅ 已实现) |
 | [022](./022-model-switch-side-effects.md) | 运行时模型切换的副作用分析与修复 | 2026-04-24 | Accepted |
 | [023](./023-titlebar-overlay.md) | macOS 标题栏 Overlay 模式 | 2026-05-08 | Accepted |
-| [024](./024-workspace-path-display.md) | 工作目录路径展示优化 | 2026-05-12 | Proposed |
+| [024](./024-workspace-path-display.md) | 工作目录路径展示优化 | 2026-05-12 | Accepted (✅ 已实现) |
 | [025](./025-window-layout-symmetry.md) | 窗口布局对称性修复与平台感知适配 | 2026-05-12 | Accepted |
 | [026](./026-knowledge-base-architecture.md) | 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API | 2026-05-13 | Accepted (Phase 1-3 + 4a + 4c 实现) |
 | [028](./028-release-readiness-hardening.md) | 发布前 readiness 硬化 — sidecar 副本 / 凭证随机化 / 安全收紧 / MCP 启动性能 | 2026-05-28 | Accepted |
