@@ -1,5 +1,5 @@
 # ADR-011: MCP 状态 localStorage 持久化
-**状态**: Accepted
+**状态**: Superseded（→ opencode.json 全局持久化，Issue#18）
 **日期**: 2026-03-07
 **关联轮次**: Round 11
 
