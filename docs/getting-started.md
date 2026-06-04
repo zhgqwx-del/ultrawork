@@ -4,7 +4,7 @@
 
 | 工具 | 最低版本 | 安装方式 |
 |------|----------|----------|
-| **Bun** | >= 1.3.10 | `curl -fsSL https://bun.sh/install \| bash` |
+| **Bun** | >= 1.3.12 | `curl -fsSL https://bun.sh/install \| bash` |
 | **Rust** | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | **Xcode CLT** | - | macOS: `xcode-select --install` |
 
@@ -44,7 +44,10 @@ bun run build:opencode
 # 5. 编译 Channel Gateway sidecar（约 61MB）
 bun run build:gateway
 
-# 6. 启动开发服务器
+# 6. 编译 Knowledge sidecar
+bun run build:knowledge
+
+# 7. 启动开发服务器
 bun run tauri:dev
 ```
 
@@ -60,7 +63,7 @@ bun run tauri:dev    # 启动 Tauri 桌面应用（前端 HMR + Rust 热重载�
 
 ### 模型与 API Key
 
-LLM 模型配置位于 `~/.config/opencode/opencode.json`：
+LLM 模型配置位于 `~/.config/ultrawork/opencode.json`（配置隔离后，ADR-020；非 OpenCode CLI 的 `~/.config/opencode/`）：
 
 ```json
 {
@@ -95,9 +98,10 @@ export OPENCODE_API_KEY="sk-xxx..."
 
 ```bash
 bun run tauri:dev          # 启动开发服务器（前端 HMR + Rust 热重载）
-bun run typecheck          # 全量 TypeScript 类型检查 (4 个包)
+bun run typecheck          # 全量 TypeScript 类型检查 (5 个包)
 bun run build:opencode     # 重新编译 OpenCode sidecar
 bun run build:gateway      # 重新编译 Channel Gateway sidecar
+bun run build:knowledge    # 重新编译 Knowledge sidecar
 
 # Gateway 单元测试 (113 cases)
 cd packages/channel/gateway && bun run --bun vitest run
@@ -113,6 +117,7 @@ cd packages/client/desktop && bun run --bun vitest run
 | Vite Dev Server | 1420 | 前端开发服务器 |
 | OpenCode Server | 4096 | AI Agent 后端 (sidecar) |
 | Channel Gateway | 4097 | 渠道网关 (sidecar) |
+| Knowledge Sidecar | 4098 | 知识库 RAG (sidecar) |
 
 Vite 开发模式下自动将 API 请求代理到后端端口（配置见 `vite.config.ts`）。
 

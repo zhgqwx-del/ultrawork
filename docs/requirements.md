@@ -113,13 +113,14 @@ Monorepo 结构：
 - [x] TypeScript 严格类型检查
 - [x] 47 项单元测试
 - [x] Tauri opener 插件（外部链接）
-- [x] MCP 状态持久化（已从 localStorage 迁移到 opencode.json + 全局 `~/.config/opencode/opencode.json`）
+- [x] MCP 状态持久化（已从 localStorage 迁移到 opencode.json + 全局 `~/.config/ultrawork/opencode.json`）
 - [x] vendor opencode.json patch + sidecar 重编译
 
 ### Channel Gateway (Issue#13-17)
 
 - [x] 渠道(Channels)配置 — 钉钉企业内部机器人 (dingtalk-stream WebSocket Stream Mode)
-- [x] IM Channel Gateway — 独立 sidecar 进程 :4097 + Hono HTTP API + Bridge 会话桥接
+- [x] 微信 Channel — ilink 协议 + QR 扫码登录 + 文本收发 + 语音 STT + 断开重连（ADR-018, Phase 1+2）
+- [x] IM Channel Gateway — 独立 sidecar 进程 :4097 + Hono on Bun.serve + Bridge 会话桥接
 - [x] Desktop Channels 设置页面 — ChannelsSection + use-channels hook
 - [x] Sidecar 启动健壮性 — 端口冲突检测 + 残留清理
 - [x] Gateway 配置持久化 — `~/.ultrawork/channels.json` + mutex + 重启自动恢复
@@ -128,7 +129,7 @@ Monorepo 结构：
 
 - [x] Browser MCP 双模式 — Playwright MCP 默认 + DevTools 可选
 - [x] 内嵌 Node.js v22 按需下载（`~/.ultrawork/node/`）
-- [x] MCP 持久化迁移 — localStorage → opencode.json + 全局 `~/.config/opencode/opencode.json`
+- [x] MCP 持久化迁移 — localStorage → opencode.json + 全局 `~/.config/ultrawork/opencode.json`
 - [x] 浏览器 MCP 跨工作区自动恢复
 
 ### 其他 (Issue#16-18)

@@ -174,7 +174,7 @@ bun run --bun tauri build               # 打包 DMG
 ## 7. MCP 持久化
 
 ### 存储迁移（Issue#18）
-MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri command 读写工作区配置文件）。浏览器 MCP 全局配置存储在 `~/.config/opencode/opencode.json`，跨工作区自动恢复。
+MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri command 读写工作区配置文件）。浏览器 MCP 全局配置存储在 `~/.config/ultrawork/opencode.json`，跨工作区自动恢复。
 
 ### Browser MCP 双模式
 - **Playwright MCP**（默认）：`~/.ultrawork/mcp/playwright/`

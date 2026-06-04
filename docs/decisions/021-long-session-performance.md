@@ -1,5 +1,5 @@
 # ADR-021: 长对话性能优化 — 渐进式渲染与分页加载
-**状态**: Proposed
+**状态**: Accepted (✅ 已实现)
 **日期**: 2026-04-23
 **关联**: ADR-004 (Structured Message Parts), ADR-008 (SSE Global + Polling Fallback), ADR-012 (Optimistic Message + Active Tracking)
 

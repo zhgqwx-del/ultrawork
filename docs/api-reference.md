@@ -1,7 +1,14 @@
 # OpenCode API 调研结果
 
 **调研时间**: 2026-03-05
-**状态**: Milestone 1 完成
+**状态**: Milestone 1 完成（早期快照）
+
+> ⚠️ **本文档是 2026-03-05 的早期调研快照，部分内容已过时。** 当前权威的 API 形态以代码为准：
+> - **发送消息**：现已统一为 `POST /session/:id/prompt_async`（返回 204，异步）。下文的 `POST /:sessionID/message` 同步端点已不再使用。
+> - **运行时模型切换**：用 `prompt_async` 的 `model` 字段 `{ providerID, modelID }`（`PATCH /config` 只写磁盘，不影响运行时）。
+> - **消息分页**：`GET /session/:id/message?limit=N&before=CURSOR`，响应头 `X-Next-Cursor`（`getMessagesPaginated()`）。
+> - 本文未覆盖的端点（permission / question / provider / mcp / agent / skill / command / file / knowledge）：见 `packages/core/api-client/src/client.ts` 与 AGENTS.md「OpenCode API Reference」段。
+> - 认证现为随机生成凭证（ADR-028），非固定 env password。
 
 ## 📋 调研目标
 
@@ -27,7 +34,8 @@
 | GET | `/` | 列出所有 sessions | 支持过滤和分页 |
 | DELETE | `/:sessionID` | 删除 session | 永久删除 |
 | PATCH | `/:sessionID` | 更新 session | 更新 title 等元数据 |
-| POST | `/:sessionID/message` | **发送消息** | ⚠️ 关键端点 |
+| POST | `/:sessionID/message` | ~~发送消息~~ | ⚠️ 已弃用，改用 `/:sessionID/prompt_async`（204） |
+| POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 字段可覆盖运行时模型 |
 | GET | `/:sessionID/message` | 获取消息列表 | 返回所有消息 |
 | POST | `/:sessionID/abort` | 中止 session | 停止 AI 处理 |
 
