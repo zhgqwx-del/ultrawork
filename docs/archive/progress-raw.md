@@ -2978,5 +2978,49 @@ bun run --bun turbo run typecheck
 
 ---
 
-**最后更新**: 2026-03-09
-**当前阶段**: Round 15 深色模式 + CodeMirror + Bridge 可靠性 ✅ 完成
+## Round 16 → 2026-05 里程碑（从 MEMORY.md Current Status 归档，倒序：新→旧）
+
+> 这些是 Round 15 之后的一行式里程碑摘要，原存于 Claude 工作记忆 MEMORY.md 的 `## Current Status`，
+> 2026-06-04 文档对齐收尾时归档至此以精简记忆。详细技术细节见对应 ADR / CHANGELOG / 各模块源码。
+
+- 知识库 Phase 4c（ADR-026）：IMA 写入能力 — MCP 工具 `knowledge_save_note`（AI 自主新建/追加笔记）+ HTTP 端点 `/kb/notes/create` + `/kb/notes/append` + KnowledgeAdapter 接口扩展 createNote/appendNote + sanitizeNoteContent 本地图片过滤 + 写入错误码 210005/210009/210006 ✅ 完成 (2026-05-22)
+- 知识库 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）+ search_note 全文搜索 → get_doc_content 全文读取 + Wiki 搜索 get_media_info 增强（笔记类型跨模块读取）+ AddSourceDialog 模块选择（知识库文件 vs 笔记）+ IMAConfig.module 字段 + 凭证 UX 优化（一键打开凭证页 + clientId 复用 + 首次保存 toast）+ i18n 9 新键 ✅ 完成 (2026-05-22)
+- 知识库 Phase 3（ADR-026）：第三方平台 Adapter（IMA 实现：testConnection + search + listBases）+ 凭证配置向导（AddSourceDialog 两步流程）+ 统一 ID-based API（knowledge_sources 表 + Schema v3 迁移 + 向后兼容 folderPath）+ 跨源搜索（MCP + HTTP 端点均支持本地+IMA 合并结果）+ Filter Chips 知识源分类筛选 + 凭证安全（sanitizeConfig + DB 0700 权限）+ ONNX 再次延后 ✅ 完成 (2026-05-20)
+- Session 幽灵残留修复：后端 DB 丢失的 session 无法删除/重命名 → ApiError 类（携带 HTTP status）+ deleteSession/renameSession 404 容错 + session.deleted SSE 事件处理 ✅ 完成 (2026-05-21)
+- Sidecar 进程生命周期优化：应用退出时通过 RunEvent::Exit + PID 注册表 + 端口 fallback 两阶段清理所有 sidecar（OpenCode/Gateway/Knowledge）+ Browser MCP 进程，消除 zombie 进程残留 ✅ 完成 (2026-05-16)
+- 知识库 Phase 2（ADR-026）：Parent-Child 双层分块（父块 ~60 行 / 子块 ~12 行）+ 二进制文档解析（PDF/docx/xlsx/pptx, 纯 TS）+ SSE 索引进度实时推送 + 文件监听自动重索引（fs.watch recursive + 双层 debounce）+ Schema 迁移系统（_migrations 表 + 自动重索引旧数据）+ 并发索引 guard + ONNX 延后到 Phase 3 ✅ 完成 (2026-05-20)
+- 知识库 Phase 1（ADR-026）：Knowledge Sidecar :4098 + 本地文件夹 RAG（md/txt/代码 25+ 格式）+ TF-IDF embedding + SQLite FTS5 + 混合检索 (BM25+向量+RRF) + MCP stdio bridge + Settings Knowledge tab + i18n ✅ 完成 (2026-05-16)
+- MCP 配置统一全局化：所有 MCP config 只读写 `~/.config/ultrawork/opencode.json`，移除工作区级别 opencode.json 的 MCP 使用，Tauri command 移除 workspace 参数 ✅ 完成 (2026-05-16)
+- 窗口布局对称性修复（ADR-025）：主内容区四角圆角对称 + macOS 折叠态交通灯适配（平台感知宽度）+ 展开/折叠元素对齐 ✅ 完成 (2026-05-12)
+- 工作目录路径展示优化（ADR-024）：项目名突出 + shortenPath 智能缩略 + 文件夹icon打开Finder + 复制按钮 ✅ 完成 (2026-05-12)
+- macOS 标题栏 Overlay 模式（ADR-023）：隐藏原生标题栏 + startDragging() 手动拖拽 + sidebar/TopBar padding 适配 ✅ 完成 (2026-05-08)
+- 运行时模型切换副作用修复（ADR-022）：session.error toast 提示 + server.instance.disposed 后 sending 状态重置 ✅ 完成 (2026-04-24)
+- 长对话性能优化（ADR-021）：React.memo 全组件 + content-visibility + 分页加载(limit=80) + 历史窗口(15轮初始/8轮backfill) + useSessionScroll hook(markAuto/ResizeObserver/settle delays)。Session.tsx 拆分为 useSessionMessages + useSessionPermission + useSessionScroll 三个 hook ✅ 完成 (2026-04-23)
+- 模型管理对话框搜索修复：搜索按已连接模型名过滤（Provider+Model 双层）、自动展开、配置后清空搜索词 ✅ 完成 (2026-04-22)
+- Config 隔离：Ultrawork 与 OpenCode CLI 配置完全隔离（OPENCODE_APP_NAME=ultrawork），含老用户自动迁移、vendor patch auto-apply。ADR-020 ✅ 完成 (2026-04-22)
+- opencode sidecar 启动 npm reify 问题修复：`installDependencies` 固定 `@opencode-ai/plugin@1.3.13` + 快速路径；`sync:plugin-version` 脚本自动化版本同步；`build-opencode.ts` 支持 bun ≥1.3.12 自动签名 ✅ 完成 (2026-04-14)
+- Gateway stale session 自动恢复 + session.error SSE 兜底 + build-gateway.ts ad-hoc 签名修复 ✅ 完成 (2026-04-16)
+- bun 升级至 1.3.12（原 1.3.10）✅ (2026-04-14)
+- vendor/opencode 子模块更新至 `8e9e79d`（origin/dev 2026-04-03），模型列表更新（含 qwen3.6-plus-free 等），config.ts patch 已适配新版 ✅ 完成 (2026-04-03)
+- 知识库集成 POC：IMA MCP Server POC 已验证可行，代码已从仓库清理（ADR-019 标记 Withdrawn）🗑️ (2026-04-24)
+- Session 重复 bug 修复：createSession 乐观插入与 SSE session.updated 竞态导致 sidebar 重复，已加幂等 guard ✅ 修复 (2026-03-31)
+- 微信渠道 UX 优化：添加微信时跳过名称输入、直接弹二维码 + 自动命名 + QR 轮询 404 容错 ✅ 完成 (2026-03-30)
+- 微信 Channel Phase 1+2：ilink 协议 + QR 扫码登录 + 文本收发 + 语音 STT + 侧边栏状态指示器 + 打字指示器 + 断开重连 ✅ 完成 (2026-03-24)
+- 钉钉 Channel 增强：即时确认（⏳）+ session 命名（[钉钉·用户名]）+ sessionMap 持久化 + 侧边栏实时更新 + /new 重置对话 + 稳定性修复（queue/poll 泄漏、shutdown flush）✅ 完成 (2026-03-22)
+- MCP 服务设置增强：DropdownMenu（手动添加 / JSON 导入）+ 请求头 + 环境变量编辑 ✅ 完成 (2026-03-21)
+- 侧边栏 & 产物预览优化：文件类型图标 + Finder 显示 + 系统应用打开 + 二进制文件卡 + HTML 浏览器打开 ✅ 完成 (2026-03-21)
+- 工作区启动优化：自动恢复上次工作区 + 首次安装默认工作区（~/.ultrawork/workspace/）✅ 完成 (2026-03-18)
+- MCP 服务持久化改造：localStorage → opencode.json + Tauri command + 文案统一 + 浏览器 MCP 全局自动恢复 ✅ 完成 (2026-03-18)
+- 隐藏内置开发者命令（/init, /review）+ 清理 test-greeting skill ✅ 完成 (2026-03-17)
+- 品牌 Logo 设计 + 全平台图标 + in-app Logo 组件 ✅ 完成 (2026-03-16)
+- 产物预览面板位置调整（聊天左 + 预览右）✅ 完成 (2026-03-15)
+- Browser MCP 双模式（按需下载 Node.js + Playwright 默认 + DevTools 可选 + 进程清理 + 产物提取修复）✅ 完成 (2026-03-17)
+- Round→Issue# 迁移 + document-map 修复 ✅ 完成 (2026-03-10)
+- Round 18 Submodule + TypeScript build 修复 ✅ 完成
+- Round 17 DMG Gateway CORS + URL 修复 ✅ 完成
+- Round 16 文档重组 ✅ 完成
+
+---
+
+**最后更新**: 2026-06-04（追加 Round 16 → 2026-05 里程碑归档）
+**当前阶段**: 见 MEMORY.md `## Current Status`（仅保留最近 + 活跃里程碑）
