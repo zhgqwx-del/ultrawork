@@ -1,0 +1,96 @@
+# 踩坑清单 (Gotchas)
+
+<!-- last-synced: 2026-06-06 -->
+
+> 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
+> 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
+> 来源：从开发过程的本地工作记忆固化而来，确保团队/AI 协作者 clone 仓库即可获得这些经验，而非重复踩坑。
+> 新增坑点流程：开发中先记入 auto-memory 的 staging 区，"收尾"时判定为"稳定+团队需要"的固化到此处（详见 [`CLAUDE.md`](../CLAUDE.md) 收尾流程）。
+
+---
+
+## 1. OpenCode API 类型契约（与直觉不符）
+
+调用 OpenCode API / 处理 SSE 时，以下字段结构是**实测确认**的，与命名直觉不同。端点完整清单见 [`api-reference.md`](./api-reference.md)。
+
+- **PartBase**：每个 MessagePart 都带 `id`、`sessionID`、`messageID` 字段。
+- **ToolState**：是**嵌套的可辨识联合**（`{ status: "pending"|"running"|"completed"|"error", ... }`），**不是字符串**。
+- **PatchPart**：`{ hash, files: string[] }` —— 不是 `{ path, content, operations }`。
+- **FilePart**：`{ mime, url, filename? }` —— 不是 `{ mediaType, path }`。
+- **StepFinishPart.tokens**：包含 `cache: { read, write }`。
+- **SendMessageRequest.parts**：简单的 `{ type, text? }[]`（**不带** PartBase 字段）。
+- **prompt_async model override**：`model` 字段是 `{ providerID: string, modelID: string }` **对象**（不是字符串）；客户端从 `"provider/model"` 字符串解析。
+- **SSE 事件**：`message.part.updated`（完整 part upsert）/ `message.part.delta`（按 partID+field 增量 append）/ `message.updated` / `message.part.removed`。
+- **SSE 阻塞事件**：`permission.asked`、`question.asked` —— properties 直接是请求对象本身（**不嵌套**）。
+- **Permission API**：`POST /permission/{id}/reply` body 为 `{ reply: "once"|"always"|"reject" }`。
+- **Question API**：`POST /question/{id}/reply` body 为 `{ answers: string[][] }`；`POST /question/{id}/reject`。
+- **构建顺序**：改了 `api-client` 的类型后，必须先在 api-client 里 `tsc --build`，再 typecheck client（否则 client 读到旧 `.d.ts`）。
+
+## 2. OpenCode Server 运行时限制
+
+- **`PATCH /config` 不影响运行时**：只写磁盘 `opencode.json`。运行时模型切换**必须**用 `prompt_async` 的 `model` 参数。
+- **`POST /session/:id/prompt_async` 是唯一发送方式**，返回 204（无 body，调 `.json()` 前先判空）。
+- **File API 路径必须相对** + 带 `x-opencode-directory` header。绝对路径会被 join 成错误路径。
+- **工具参数统一 camelCase**：`filePath`（不是 `file_path`）。
+- **Session 列表不按目录过滤**：客户端需自行按工作区过滤。
+- **Permission 规则**：`general` agent 默认 `"*": "allow"`；要拦截需在 `opencode.json` 设 `"permission": { "edit": "ask" }`。
+- **SQLite WAL disk I/O**：偶发 500；恢复手段 `PRAGMA wal_checkpoint(TRUNCATE)` + 重启。
+- **Config.update 文件名 bug**：vendor 已 patch 修复（`config.json` → `opencode.json`），详见 auto-memory `vendor-patches.md`。
+
+## 3. MCP
+
+- **MCP local 必须用 `bunx --bun`**：用 `npx` 会 spawn 多层进程导致 stdio pipe 断裂、`Connection closed`。
+- **MCP 启动连接超时 5s**：vendor patch 把启动握手 `CONNECT_TIMEOUT` 从 30s 拆到 5s（runtime tool 调用仍 30s）。坏 MCP 最多拖 5s（ADR-028）。
+- **Browser MCP 用内嵌 Node.js v22**（`~/.ultrawork/node/`），不依赖系统 Node。
+- **Browser MCP npm 调用**：必须用 `node npm-cli.js install ...`，**不能**直接调 `bin/npm`（symlink 相对路径会断裂）。
+- **Playwright MCP 工具名前缀叠加**：注册名 `browser` + 工具名 `browser_take_screenshot` → 实际调用名是 `browser_browser_take_screenshot`。
+- **Playwright 截图产物**：返回 base64 attachment；是否落盘取决于 AI 是否传 `path` 参数；temp 路径在 `/var/folders/.../playwright-mcp-output/`。
+- **MCP 持久化**：服务配置存 `opencode.json`（已从 localStorage 迁移，Issue#18）；Browser MCP 全局配置存 `~/.config/ultrawork/opencode.json`，跨工作区自动恢复。
+
+## 4. Gateway / Channel（:4097）
+
+- **重编译必须用 `bun run build:gateway`**（或 `scripts/build-gateway.ts`）：`turbo run build` 只输出到 `dist/`，**不会**更新 sidecar binaries 目录。改完不重编译 = 不生效，且 Tauri 会复用旧进程，需重启。
+- **测试 Mock**：`DWClient` / `TokenManager` 必须用 `class` mock，不能用 `vi.fn()`。
+- **CORS 白名单**：仅允许 `tauri://localhost` / `https://tauri.localhost` / `http://localhost:1420`，不要用 `origin: "*"`。
+- **配置/映射持久化**：`~/.ultrawork/channels.json`（+ mutex）、`~/.ultrawork/session-map.json`（chatId → sessionId，重启恢复）。
+- **日志**：`/tmp/gateway.log`。
+
+### 微信 ilink 协议实测坑点
+
+- base URL `https://ilinkai.weixin.qq.com`，认证 `Bearer bot_token` + `ilink_bot_token` header。
+- `get_bot_qrcode` 返回的 `qrcode` 是 **token（非 URL）**，`qrcode_img_content` 才是真正的扫码 URL。
+- `getconfig` 首次调用会报 `GetTypingTicket rpc failed`，**不能用于连接验证**；直接启动 `getupdates` 长轮询即可。
+- `getupdates` 长轮询超时时返回的响应**无 `ret` 字段**，需兼容 `ret=undefined` 视为正常。
+- 收消息：HTTP 长轮询 `getupdates`（35s），cursor 同步；session 过期 `errcode=-14`。
+- 发消息：`sendmessage` POST，markdown 转纯文本；语音消息用 STT text 当文本输入。
+
+## 5. Knowledge / IMA（:4098）
+
+- **DB**：`~/.ultrawork/knowledge/kb.db`（SQLite WAL + FTS5 + `_migrations` 版本管理）。
+- **MCP 注册名** `knowledge-base`，command `[sidecarPath, "mcp-stdio"]`，direct（同进程）+ proxy（HTTP `/kb/search`）双模式。
+- **ONNX 仍延后**：`bun build --compile` 兼容性未解决，继续用 TF-IDF（质量可接受）。
+- **IMA API**：base URL `https://ima.qq.com`，认证头 `ima-openapi-clientid` + `ima-openapi-apikey`；响应字段用 `code`/`msg`（**不是** `retcode`/`errmsg`）。对齐 ima-skill v1.1.7。
+- **IMA Wiki `search_knowledge` 限制**：只返回 highlight_content 片段；无跨 KB 端点（需客户端 fan-out）；静默 100 结果截断；订阅 KB 返回 `220030` 无权限。笔记类型条目可经 `get_media_info`(media_type=11) 跨模块到 `get_doc_content` 取全文，非笔记类型仍只有片段。
+- **IMA Notes 限制**：`get_doc_content` Error `210005` = not author（共享笔记预期行为，已容错降级）；`list_notebook` 无用户笔记本时返回空数组（系统文件夹不在返回），已合成 `__all_notes__` 虚拟条目兜底；笔记写入需 UTF-8 校验（非 UTF-8 会不可逆乱码）。
+- **IMA HTTP 错误**：HTTP 401 返回 JSON body `{code:200002, msg:"skill auth failed"}`；`imaFetch` 已处理非 200 的 JSON 解析；`formatErrorMessage` 覆盖 `20004/200002/110030/110021`。
+- **IMA 扫码认证不可行**：无公开 OAuth 端点（详见 ADR-026）。
+
+## 6. Tauri / 桌面
+
+- **`open_file_with_system` / `reveal_file_in_finder`**：用 macOS `open` / `open -R` 命令，绕过 Tauri opener plugin 的 scope 限制。
+- **Tauri opener scope 坑**：`opener:allow-open-path` 需配 scope 且对隐藏目录（如 `.ultrawork`）不可靠，改用自定义 Tauri command + `Command::new("open")` 更可靠。
+- **`window.open` 打不开系统浏览器**：Tauri WebView 中必须用 `@tauri-apps/plugin-opener` 的 `openUrl()`。
+- **titleBarStyle Overlay 坑**：`data-tauri-drag-region` 在 Overlay 模式不生效（tauri-apps/tauri#9503），须用 `getCurrentWindow().startDragging()` + `onMouseDown`，且需 `core:window:allow-start-dragging` 权限（不在 `core:window:default` 中）。
+- **Finder 启动 PATH 受限**：从 Finder 启动的 app PATH 不含 nvm/homebrew 等，Tauri `rich_path()` 手动扫描补齐（启动 sidecar 时传入）。
+- **Production vs Dev URL**：Dev 有 Vite proxy（相对路径转发），Production 没有。所有 localhost 服务请求必须区分环境：`import.meta.env.DEV ? "" : "http://localhost:4096"`。
+- **健康检查端点是 `/global/health`**（不是 `/health` / `/api/health`）。
+
+## 7. 构建 / 运行时
+
+- **系统 Node.js v14 太旧**：不支持 `??=` 等现代语法。所有脚本必须用 `bun run --bun` 执行，不要直接 `npx` / `node`。
+- **Universal DMG 构建**：`bun run release [-- --unsigned]`，跨编译双架构 sidecar + Tauri `universal-apple-darwin` lipo 合并。Apple Silicon 主机需先 `rustup target add x86_64-apple-darwin`。
+- **Vendor patch apply 后必须重编译 sidecar**（`bun run build:opencode`）。详见 [`CLAUDE.md`](../CLAUDE.md) §Vendor Patch 管理。
+
+---
+
+> 维护说明：本清单中"已 patch / 已修复"的条目反映的是**写入时**的状态。引用具体文件/函数/flag 前请确认其仍存在（尤其 vendor 升级后）。可疑或过期条目应在"收尾"时清理。

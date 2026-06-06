@@ -7,16 +7,18 @@
 | 文件 | 内容 |
 |------|------|
 | **本文件 (CLAUDE.md)** | 工作流程指令 |
-| **AGENTS.md** | 项目概览、包结构、API 摘要 |
-| **.claude/memory/MEMORY.md** | 环境变量、API 类型细节、已知坑点、当前状态 |
+| **AGENTS.md** | 项目概览、包结构、API 摘要、关键文件地图 |
+| **.claude/memory/MEMORY.md** | 索引 + 瞬时状态（环境、Current Status、Pending Issues、知识索引指针） |
 
 以下文件**不会自动加载**，需要在相关任务开始前主动 Read：
 
 | 文件 | 何时需要 |
 |------|---------|
-| `docs/conventions.md` | 写新组件/修改状态管理/处理 SSE 时 |
+| `docs/conventions.md` | 写新组件/修改状态管理/处理 SSE 时（正向模式） |
+| `docs/gotchas.md` | 调 OpenCode/MCP/Gateway/IMA/Tauri API 或排查诡异行为时（反向坑点，**强烈建议任务前必读对应章节**） |
 | `docs/architecture-phase1.md` | 理解系统架构、模块职责时 |
-| `docs/api-reference.md` | 调用 OpenCode API、排查请求格式时 |
+| `docs/api-reference.md` | 调用 OpenCode API、排查请求格式时（端点 SSOT） |
+| `docs/quality-gates.md` | 改动合入/收尾前对照完成定义时 |
 | `docs/decisions/README.md` | 需要了解某个技术选型的背景时 |
 | `docs/requirements.md` | 确认功能需求和验收标准时 |
 | `docs/testing.md` | 编写或运行测试时 |
@@ -33,11 +35,13 @@
 | 任务类型 | 需要额外 Read 的文件 |
 |----------|---------------------|
 | 新建 UI 组件 | `docs/conventions.md`（组件模式、状态管理约定） |
-| 修改 SSE/消息流 | `docs/conventions.md` §3 + §5 |
-| 调用 OpenCode API | `docs/api-reference.md` |
-| 修改 Gateway/Channel | MEMORY.md §Gateway 已自动加载，够用 |
+| 修改 SSE/消息流 | `docs/conventions.md` §3 + §5 + `docs/gotchas.md` §1 |
+| 调用 OpenCode API | `docs/api-reference.md` + `docs/gotchas.md` §1-2 |
+| 修改 Gateway/Channel | `docs/gotchas.md` §4 + `AGENTS.md` §Key Files |
+| 知识库/IMA | `docs/gotchas.md` §5 + ADR-026 |
+| Tauri/桌面壳 | `docs/gotchas.md` §6 |
 | 架构层变更 | `docs/architecture-phase1.md` + 相关 ADR |
-| 修复 Bug | 先定位文件，再按涉及模块选读 |
+| 修复 Bug | 先定位文件，再按涉及模块选读（含 `docs/gotchas.md`） |
 | 全新功能/跨模块 | `docs/conventions.md` + `docs/architecture-phase1.md` |
 
 ### 2. 检查当前状态
@@ -50,11 +54,27 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 
 ---
 
+## 记忆与文档分工（重要）
+
+为保障"长期 + 团队"质量，知识按"是否稳定、是否团队需要"分流，**不要把稳定的团队知识只留在本地 MEMORY**（本地记忆不入 git、不可共享、不可评审）：
+
+| 知识类型 | 落点 | 说明 |
+|---------|------|------|
+| 稳定的反向坑点 / 上游非直觉契约 | `docs/gotchas.md`（SSOT） | OpenCode/MCP/Gateway/IMA/Tauri/构建 |
+| 正向开发模式 | `docs/conventions.md` | 状态管理、SSE、组件 |
+| API 端点 | `docs/api-reference.md`（SSOT） | 其余处只放摘要 + 指针 |
+| 关键文件地图 | `AGENTS.md` §Key Files | 每次自动加载且入 git |
+| 架构决策 | `docs/decisions/NNN-*.md` | |
+| **瞬时 / 个人 / 状态** | **MEMORY.md** | 环境、Current Status、staging、Pending Issues、偏好 |
+| 分支专属 / 未合并 | auto-memory 专题文件 | 如 `acp-branch.md` |
+
+**SSOT 原则**：每类事实指定唯一权威源，其余位置放"摘要 + 链接"，避免多副本各自漂移。高频救命项（bunx 不用 npx、路径相对、camelCase、`/global/health`）允许刻意冗余，但仍以 gotchas 为准。
+
 ## 开发过程中
 
 ### 发现新模式/坑点时
-**写到 MEMORY.md 的 `## New Patterns (pending sync)` staging 区**（一行摘要即可）。
-不要直接改 `docs/conventions.md`——等任务收尾时统一整理。
+**先写到 MEMORY.md 的 `## New Patterns (pending sync)` staging 区**（一行摘要即可）。
+不要开发中直接改 git 文档——等任务收尾时按上表分流：正向模式→`conventions.md`，反向坑点→`gotchas.md`，个人/瞬时→留 MEMORY。
 
 ### 做了重大技术选型时
 记下来，任务收尾时写 ADR。开发中不必停下来写。
@@ -65,12 +85,13 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 
 用户说「收尾」「wrap up」或类似指令时，按顺序执行：
 
-### Step 1: 同步 conventions.md
+### Step 1: 同步 staging 区（conventions.md / gotchas.md）
 1. 读取 MEMORY.md 的 `## New Patterns (pending sync)` 区域
-2. 如果有新条目：
-   - 将每条模式格式化为完整描述（含代码示例），追加到 `docs/conventions.md` 对应章节
-   - 如果不属于任何现有章节，在末尾新增章节
-   - 更新 `docs/conventions.md` 顶部的 `<!-- last-synced: YYYY-MM-DD -->` 标记
+2. 如果有新条目，按"记忆与文档分工"表分流：
+   - **正向模式** → 格式化（含代码示例）追加到 `docs/conventions.md` 对应章节
+   - **反向坑点 / 上游契约** → 追加到 `docs/gotchas.md` 对应章节
+   - 不属于现有章节则在末尾新增
+   - 更新对应文件顶部的 `<!-- last-synced: YYYY-MM-DD -->` 标记
    - 清空 MEMORY.md 的 staging 区（保留注释模板）
 3. 如果没有新条目，跳过
 
@@ -78,9 +99,16 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 在 `## [Unreleased]` 下追加本次任务变更摘要（Added/Changed/Fixed）。
 - 条目格式：`#issue-number: 描述`（如有关联 Issue）
 
-### Step 3: 更新 MEMORY.md
+### Step 3: 更新 MEMORY.md + 体检
 - 更新 `## Current Status` 区域，标记本次任务完成
-- 如果有新的 Key Files 或 API 发现，更新对应 section
+- 新的 Key Files → 写入 `AGENTS.md` §Key Files（不要堆回 MEMORY）；新 API 端点 → `docs/api-reference.md`
+- **MEMORY 体检**（防膨胀，防地基被截断）：
+  - 确认行数 **< 200**（`wc -l`）；逼近则把 detail 下沉到 git 文档或专题记忆文件，只留指针
+  - 检查是否有"稳定 + 团队需要"的坑点滞留在 MEMORY 各 section → 固化到 `docs/gotchas.md`
+  - 删除已失效 / 已纠错 / 已合并的条目（如分支专属内容合并后清理）
+
+### Step 3.5: 文档漂移校验
+运行 `bun run --bun scripts/check-docs.ts`，修复报告的漂移（ADR 计数、失效引用路径、MEMORY 行数等）。
 
 ### Step 4: 检查状态文档
 如果本次任务涉及**模块状态变更**（新模块实现、功能完成、技术迁移等），检查并更新以下文档中的过时标记：
@@ -93,6 +121,8 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `docs/document-map.md` | 文件计数、新增文档条目 |
 | `docs/build-and-deploy.md` | 新 sidecar / 构建步骤变更 |
 | `docs/testing.md` | 测试描述中引用的技术细节是否过时 |
+| `docs/gotchas.md` | 引用的"已修复/已 patch"坑点是否仍准确（vendor 升级后尤其） |
+| `AGENTS.md` | Key Files 地图、ADR 计数、包状态是否过时 |
 
 > **判断标准**：如果只是 bug fix 或小改动，通常不需要更新状态文档。涉及新模块上线、持久化方案迁移、新 adapter 等里程碑式变更时才触发此步骤。
 

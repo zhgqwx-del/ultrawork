@@ -1,4 +1,10 @@
-# Desktop Agent - Monorepo Architecture Design
+# Desktop Agent - 远期愿景架构（Phase 2+ 完整目标）
+
+> ⚠️ **远期愿景文档，非当前实现。** 本文描述的是完整目标架构（多端 Web/Mobile、企业管理、Control Plane、跨端协同等），**绝大部分尚未实现**。
+> **当前实际架构以 [`architecture-phase1.md`](./architecture-phase1.md) 为准**（含已实现模块的状态表与数据流）。读取本文时不要将其内容当作现状。
+> Phase 1 已实现部分的纯重叠章节（connector 数据流、Key APIs、Build、Updating）已从本文移除，统一以 phase1 为准；本文聚焦 Phase 2+ 独有内容（Context Awareness / Control Plane / Session Hub / 多端 / Observability / Security 等）。
+> 未纳入开发索引；最后更新 2026-03-10（重构 2026-06-06）。
+> 技术栈：早期设想 SolidJS，**实际为 React 19 + Vite 7 + Tailwind 4 + Tauri 2**；文中残留涉及框架描述一律以 phase1 为准。
 
 ## Overview
 
@@ -91,20 +97,20 @@ The monorepo uses a **two-level directory structure** to clearly separate archit
 
 | Layer | Package | Functional Positioning |
 |-------|---------|----------------------|
-| **Core** | `@agent/api-client` | OpenCode Server SDK - Type-safe REST API calls and SSE event streaming. Foundation for all OpenCode communication. |
-| | `@agent/server-manager` | Process Lifecycle Manager - Spawns OpenCode sidecar, monitors health, handles crash recovery with auto-restart. Local mode only. |
+| **Core** | `@agent/api-client` | ✅ 已实现 — OpenCode REST/SSE SDK。细节见 [`architecture-phase1.md`](./architecture-phase1.md)。 |
+| | `@agent/server-manager` | ✅ 已实现 — sidecar 生命周期（spawn / health / auto-restart）。细节见 phase1。 |
 | | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. |
 | | `@agent/supervisor` | Enterprise Agent - Connects to Control Plane for heartbeat reporting, metrics collection, and remote policy enforcement. |
-| | `@agent/ui` | UI Component Library - Shared SolidJS components (chat, diff, markdown, dialogs) ensuring consistent UX across platforms. |
+| | `@agent/ui` | UI Component Library - Shared React components (chat, diff, markdown, dialogs) ensuring consistent UX across platforms. |
 | | `@agent/workspace` | Runtime Workspace Manager - Manages .agent/ directory and .opencode/ config scaffolding. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Phase 1: project-bound; Phase 2: explicit CRUD with central registry. |
 | | `@agent/notifier` | Notification Dispatcher - Unified outbound notification to multiple targets: IM channels (DingTalk/Feishu/Slack webhooks), desktop (Tauri), client push (WebSocket/SSE), and file output. |
 | | `@agent/hub` | Session Coordination Hub - Central registry for cross-surface session coordination. Handles identity federation (mapping IM/client user IDs to unified identity), session routing (resume conversations across surfaces), state broadcast (real-time sync to connected surfaces), conflict resolution (sequential prompt queuing per session), and notification deduplication (prevent duplicate alerts when user is active on multiple surfaces). |
 | **Control** | `@agent/control-api` | Management API Service - Centralized backend for agent registry, usage metrics, policy engine, and audit logging. |
 | | `@agent/control-console` | Admin Dashboard - Web UI for IT administrators to monitor agents, view analytics, and manage policies. |
 | **Client** | `@agent/client-web` | Web Application - Lightweight browser client connecting to remote OpenCode Server. Quick access without installation. |
-| | `@agent/client-desktop` | Desktop Application - Full-featured Tauri app with local sidecar, context awareness, offline support, and native OS integration. |
+| | `@agent/client-desktop` | ✅ 已实现 — Tauri + React 19 桌面端（context-sensor / offline 为 Phase 2+）。细节见 phase1。 |
 | | `@agent/client-mobile` | Mobile Application - iOS/Android app optimized for on-the-go interactions. Connects to remote server. |
-| **Channel** | `@agent/channel-gateway` | IM Gateway Service - Bridges IM platforms (DingTalk, Feishu, Slack) to OpenCode via webhook adaptation. |
+| **Channel** | `@agent/channel-gateway` | ✅ 已实现（DingTalk + WeChat；Feishu/Slack 待实现）— IM 网关 sidecar :4097。细节见 phase1。 |
 | **Context** | `@agent/context-sensor` | Environment Sensing Module - Captures user context from multiple sources, analyzes intent, triggers proactive suggestions. Desktop only. |
 | | `@agent/context-extension` | Browser Extension - Chrome/Firefox extension for capturing web browsing context via Native Messaging API. |
 | **Proactive** | `@agent/proactive-heartbeat` | Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users via clients/channels. |
@@ -249,7 +255,7 @@ your-agent/
 │   │   └── ui/                   # @agent/ui
 │   │       │
 │   │       │  [Functional Positioning]
-│   │       │  Shared SolidJS UI component library for all client apps.
+│   │       │  Shared React UI component library for all client apps.
 │   │       │  Ensures consistent UX across Web/Desktop/Mobile.
 │   │       │  Handles real-time SSE streaming display, code rendering,
 │   │       │  and interactive dialogs. Theme-aware and responsive.
@@ -440,7 +446,7 @@ your-agent/
 │   │   │   │  - Secure credential storage via OS keychain
 │   │   │   │  Recommended for power users and enterprise deployment.
 │   │   │   │
-│   │   │   ├── src/              #   SolidJS frontend (same components as web)
+│   │   │   ├── src/              #   React frontend (same components as web)
 │   │   │   ├── src-tauri/        #   Rust backend for native capabilities
 │   │   │   │   └── src/
 │   │   │   │       ├── lib.rs    #     Tauri commands, sidecar spawn, IPC bridge
@@ -463,7 +469,7 @@ your-agent/
 │   │       │  Features: chat UI, push notifications, session sync.
 │   │       │  Optimized for on-the-go quick interactions.
 │   │       │
-│   │       ├── src/              #   SolidJS frontend (responsive mobile layout)
+│   │       ├── src/              #   React frontend (responsive mobile layout)
 │   │       ├── ios/              #   iOS native project (Xcode)
 │   │       ├── android/          #   Android native project (Gradle)
 │   │       └── package.json      #   deps: @agent/api-client, @agent/ui
@@ -730,7 +736,7 @@ for automatic workspace context injection.
 | `@agent/server-manager` | `core/server-manager` | Sidecar lifecycle: spawn, health check, auto-restart (local only) | `@agent/api-client`, `@agent/supervisor` |
 | `@agent/connector` | `core/connector` | Unified local/remote connection abstraction + workspace context injection + session lifecycle hooks | `@agent/api-client`, `@agent/server-manager`, `@agent/workspace` |
 | `@agent/supervisor` | `core/supervisor` | Enterprise agent: heartbeat, metrics, policy enforcement | `@agent/api-client` |
-| `@agent/ui` | `core/ui` | SolidJS component library: chat, diff, markdown, dialogs | `@agent/api-client` |
+| `@agent/ui` | `core/ui` | React component library: chat, diff, markdown, dialogs | `@agent/api-client` |
 | `@agent/workspace` | `core/workspace` | Runtime .agent/ manager + .opencode/ scaffolding: IDENTITY, SOUL, MEMORY, HISTORY, context assembly | none |
 | `@agent/control-api` | `control/api` | Central management API: registry, metrics, policies, audit | none (standalone) |
 | `@agent/control-console` | `control/console` | Admin dashboard: monitoring, analytics, policy management | none (REST to control-api) |
@@ -767,137 +773,7 @@ for automatic workspace context injection.
 
 ![Data Flow Overview](images/architecture-full-dataflow.png)
 
-### Connection Establishment (via @agent/connector)
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        Connection Flow                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  LOCAL MODE (Desktop default)                                           │
-│  ─────────────────────────────                                          │
-│                                                                          │
-│  createConnector({ mode: "local" })                                     │
-│       │                                                                  │
-│       ├──► server-manager.spawn()     → Start OpenCode binary           │
-│       │         │                                                        │
-│       │         ├──► health.waitReady()  → Wait for server ready        │
-│       │         │                                                        │
-│       │         └──► supervisor.init()   → Initialize enterprise agent  │
-│       │                                                                  │
-│       └──► api-client.create(localUrl)  → Create SDK instance           │
-│                 │                                                        │
-│                 └──► Return Connection { client, status, ... }          │
-│                                                                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  REMOTE MODE (Web/Mobile default)                                       │
-│  ────────────────────────────────                                       │
-│                                                                          │
-│  createConnector({ mode: "remote", remote: { baseUrl, apiKey } })       │
-│       │                                                                  │
-│       ├──► auth.authenticate(apiKey)    → Validate credentials          │
-│       │                                                                  │
-│       ├──► health.check(baseUrl)        → Verify server reachable       │
-│       │                                                                  │
-│       └──► api-client.create(baseUrl)   → Create SDK instance           │
-│                 │                                                        │
-│                 └──► Return Connection { client, status, ... }          │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Connector API
-
-```typescript
-// @agent/connector/src/types.ts
-
-interface ConnectionConfig {
-  mode: "local" | "remote"
-  
-  // Local mode options (Desktop)
-  local?: {
-    binary?: string           // Path to opencode binary (default: auto-detect)
-    workingDir?: string       // Project directory (default: cwd)
-    port?: number             // Server port (default: auto-assign)
-    autoRestart?: boolean     // Restart on crash (default: true)
-  }
-  
-  // Remote mode options (Web/Mobile/Enterprise)
-  remote?: {
-    baseUrl: string           // e.g., "https://agent.company.com"
-    apiKey?: string           // API key authentication
-    jwt?: string              // JWT token authentication
-    timeout?: number          // Connection timeout (default: 30000ms)
-  }
-  
-  // Common options
-  healthCheckInterval?: number  // Health check interval (default: 5000ms)
-  reconnect?: {
-    enabled: boolean          // Auto-reconnect on disconnect (default: true)
-    maxRetries?: number       // Max retry attempts (default: Infinity)
-    backoff?: "linear" | "exponential"  // Backoff strategy (default: exponential)
-  }
-}
-
-interface Connection {
-  readonly client: ApiClient           // OpenCode API client
-  readonly status: ConnectionStatus    // Current connection status
-  readonly mode: "local" | "remote"    // Active connection mode
-  
-  connect(): Promise<void>             // Establish connection
-  disconnect(): Promise<void>          // Close connection
-  reconnect(): Promise<void>           // Force reconnection
-  
-  onStatusChange(cb: (status: ConnectionStatus) => void): () => void
-  onError(cb: (error: ConnectionError) => void): () => void
-}
-
-type ConnectionStatus = 
-  | { state: "disconnected" }
-  | { state: "connecting" }
-  | { state: "connected"; serverVersion: string }
-  | { state: "reconnecting"; attempt: number }
-  | { state: "error"; error: ConnectionError }
-```
-
-### Connector Usage Examples
-
-```typescript
-// Desktop App - Local mode (default)
-const conn = createConnector({
-  mode: "local",
-  local: {
-    workingDir: "/path/to/project",
-    autoRestart: true
-  }
-})
-await conn.connect()
-
-// Desktop App - Remote mode (enterprise)
-const conn = createConnector({
-  mode: "remote",
-  remote: {
-    baseUrl: process.env.AGENT_SERVER_URL,
-    apiKey: await keychain.get("agent-api-key")
-  }
-})
-await conn.connect()
-
-// Web App - Remote mode only
-const conn = createConnector({
-  mode: "remote",
-  remote: {
-    baseUrl: "https://agent.company.com",
-    jwt: authToken
-  }
-})
-await conn.connect()
-
-// All clients use same API after connection
-const session = await conn.client.sessionCreate()
-await conn.client.sessionPrompt(session.id, { ... })
-```
+> **连接建立 / Connector API / 用法示例**（原 Phase-1 重叠内容）已移除——connector 抽象的设计草案见 [`architecture-phase1.md` Part II](./architecture-phase1.md#part-ii--规划中未实现--设计草案)。下面是**完整目标架构**的多端 / IM / 企业 / 上下文感知数据流（Phase 2+）。
 
 ### Rich Clients (Web / Desktop / Mobile)
 
@@ -1615,6 +1491,8 @@ interface ProactiveBudget {
 
 ## Agent Workspace
 
+> ⚠️ **本节的 per-project `.agent/` 模型为早期 Phase-1 设想，已被取代。** 实际实现演进为**用户级 `~/.ultrawork/`**（一个用户一份身份/记忆，非按项目），且身份/记忆持久化本身仍 🔲 未实现——现状以 [`architecture-phase1.md`](./architecture-phase1.md)（§Agent Workspace + Part II）为准。下文保留作早期设计记录与 Phase 2 CRUD/注册表愿景。
+
 The Agent Workspace is a **runtime product feature** -- when the built software runs in an end-user's project, it manages a `.agent/` directory that persists identity, personality, memory, and status across sessions. The workspace also scaffolds OpenCode configuration so each project has its own independent agent setup.
 
 This feature is designed in two phases:
@@ -1703,7 +1581,7 @@ Defines **who** the agent is -- factual, stable attributes. Analogous to a resum
 
 ## Expertise
 - **Primary Languages**: TypeScript, Rust, Go
-- **Frameworks**: SolidJS, Hono, Tauri
+- **Frameworks**: React, Hono, Tauri
 - **Domains**: Real-time systems, API design, database optimization
 - **Certifications**: AWS Solutions Architect (context for cloud discussions)
 
@@ -2803,76 +2681,9 @@ Benefits:
 - Policies can be updated at runtime without restart
 - Clear separation of concerns
 
-## Key OpenCode Server APIs
+## Key OpenCode Server APIs / Build / Updating
 
-A conversation client needs approximately 8 endpoints:
-
-| Endpoint              | Purpose                          |
-|-----------------------|----------------------------------|
-| `session.create`      | Create a new session             |
-| `session.prompt`      | Send message (returns SSE stream)|
-| `session.messages`    | Get message history              |
-| `session.list`        | List sessions                    |
-| `session.abort`       | Abort current generation         |
-| `permission.reply`    | Respond to permission request    |
-| `question.reply`      | Answer agent question            |
-| `event.subscribe`     | Subscribe to SSE event stream    |
-
-Full API spec available at `http://localhost:4096/doc` when server is running.
-
-## Build Pipeline
-
-```jsonc
-// turbo.json
-{
-  "pipeline": {
-    "build:opencode": {},
-    "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
-    },
-    "dev": {
-      "dependsOn": ["build:opencode"],
-      "persistent": true
-    }
-  }
-}
-```
-
-```jsonc
-// package.json (root)
-{
-  "workspaces": ["packages/*"],
-  "scripts": {
-    "build:opencode": "bun run scripts/build-opencode.ts",
-    "dev:web": "turbo run dev --filter=web",
-    "dev:desktop": "turbo run dev --filter=desktop",
-    "dev:mobile": "turbo run dev --filter=mobile",
-    "dev:gateway": "turbo run dev --filter=channel-gateway",
-    "dev:control": "turbo run dev --filter=control-plane --filter=admin-console",
-    "build": "bun run build:opencode && turbo run build",
-    "build:extension": "turbo run build --filter=browser-extension",
-    "update:opencode": "cd vendor/opencode && git pull origin dev && cd ../.. && bun run build:opencode"
-  }
-}
-```
-
-## Updating OpenCode
-
-```bash
-# 1. Pull latest
-cd vendor/opencode && git fetch origin dev && git checkout dev && git pull
-
-# 2. Rebuild binary
-cd ../.. && bun run build:opencode
-
-# 3. Regenerate types if API changed
-curl http://localhost:4096/doc > packages/api-client/openapi.json
-bunx openapi-typescript packages/api-client/openapi.json -o packages/api-client/src/types.ts
-
-# 4. Verify compatibility
-turbo run test
-```
+> Phase-1 已实现部分（约 8 个会话端点、turbo 构建流水线、OpenCode 升级步骤）以 [`architecture-phase1.md`](./architecture-phase1.md) 与 [`api-reference.md`](./api-reference.md) 为准，此处不再重复。
 
 ## Deployment Topology
 
@@ -3472,7 +3283,9 @@ Option D (connector integration) was chosen because:
 - **Hub as separate core package**: Clean separation of concerns. Connector does connection lifecycle; hub does cross-surface coordination. Surfaces that don't need multi-surface features simply skip hub registration.
 - **Opt-in design**: Hub is optional. A single-surface deployment (just Desktop, no channels) works without hub. Hub only matters when multiple surfaces need coordination.
 
-### Why SolidJS?
+### Why SolidJS?（历史设想 → 实际采用 React 19）
+
+> ⚠️ **此为早期设想，最终未采用。实际实现为 React 19**。下列为当初倾向 SolidJS 的考量，保留作决策记录。
 
 - Consistent with OpenCode's existing `packages/app` (can reuse components)
 - Fine-grained reactivity model suits real-time SSE streaming
@@ -3484,7 +3297,7 @@ Option D (connector integration) was chosen because:
 |---------------------|----------------------------------|
 | Runtime             | Bun                              |
 | Build               | Turborepo                        |
-| UI Framework        | SolidJS                          |
+| UI Framework        | React 19                          |
 | Desktop Shell       | Tauri (Rust)                     |
 | Mobile Shell        | Capacitor or Tauri Mobile        |
 | Gateway Server      | Hono (on Bun)                    |
@@ -4503,7 +4316,7 @@ The root-level AI quick reference. Keep it minimal (< 500 lines) and link to det
 
 ## Project Overview
 - **Name**: Your Agent
-- **Tech Stack**: Bun, TypeScript, SolidJS, Tauri
+- **Tech Stack**: Bun, TypeScript, React, Tauri
 - **Architecture**: See `docs/architecture-full.md`
 
 ## Critical Rules

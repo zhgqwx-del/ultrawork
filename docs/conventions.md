@@ -97,6 +97,8 @@ Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permi
 ### request\<T\> void 处理
 检查 204/empty body 后才调 `.json()`，用于 replyPermission/replyQuestion/abortSession。
 
+> 📍 本节是「应该怎么做」。OpenCode API 的**非直觉类型契约与运行时限制**（PartBase/ToolState/PatchPart 结构、PATCH /config 不影响运行时、File API 相对路径、camelCase 等）见 [`gotchas.md`](./gotchas.md) §1-2（权威 SSOT）；端点完整清单见 [`api-reference.md`](./api-reference.md)。
+
 ## 5. 组件模式
 
 ### 乐观消息
@@ -179,6 +181,8 @@ bun run --bun tauri build               # 打包 DMG
 注意：仅 `turbo run build` 会编译到 `gateway/dist/`，**不会**更新 sidecar binaries 目录。
 
 ## 7. MCP 持久化
+
+> 📍 MCP 的**踩坑点**（必须用 `bunx --bun` 不用 `npx`、Browser MCP npm 调用方式、工具名前缀叠加、CONNECT_TIMEOUT）见 [`gotchas.md`](./gotchas.md) §3（SSOT）。本节只讲持久化约定。
 
 ### 存储迁移（Issue#18）
 MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri command 读写工作区配置文件）。浏览器 MCP 全局配置存储在 `~/.config/ultrawork/opencode.json`，跨工作区自动恢复。
