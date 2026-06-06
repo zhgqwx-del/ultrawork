@@ -1,0 +1,258 @@
+import { memo, useMemo } from "react"
+import type { SendMessageResponse, MessagePart, ToolPart, FilePart, PatchPart } from "@agent/api-client"
+import type { Artifact } from "@/components/session/artifact-preview"
+import { MarkdownContent, FileBlock, PatchBlock } from "./message-parts"
+import { ExecutionFlow } from "./execution-flow"
+import { useI18n } from "@/lib/i18n-context"
+
+interface AssistantTurnProps {
+  /** All assistant messages produced by a single user turn, in order. */
+  messages: SendMessageResponse[]
+  isStreaming?: boolean
+  isStopped?: boolean
+  onArtifactClick?: (artifact: Artifact) => void
+}
+
+const OUTPUT_TYPES = new Set(["text", "file", "patch"])
+// Parts that render as a visible row inside the execution flow.
+const VISIBLE_FLOW_TYPES = new Set(["reasoning", "tool", "text", "file", "patch"])
+
+function isOutputPart(part: MessagePart): boolean {
+  return OUTPUT_TYPES.has(part.type)
+}
+
+function fmtTok(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
+
+interface TurnModel {
+  process: MessagePart[]
+  answer: MessagePart[]
+  stepCount: number
+  tokens: { input: number; output: number; reasoning: number }
+  cache: { read: number; write: number }
+  cost: number
+  durationMs?: number
+  /** Last message completion time (ms epoch), for the turn footer timestamp. */
+  completedAt?: number
+  /** Model id used for this turn (from message info). */
+  modelID?: string
+  hasError: boolean
+  visibleProcessCount: number
+}
+
+export function buildTurnModel(messages: SendMessageResponse[], isStreaming: boolean): TurnModel {
+  const lastMsg = messages[messages.length - 1]
+  const lastId = lastMsg?.info.id
+  // The final answer step never contains tool calls (the loop only exits once a
+  // step produces no tools). So if the last message still has a tool part, it is
+  // an in-flight tool step, not the answer — keep everything as process until the
+  // real answer message arrives. This avoids briefly showing mid-step narration
+  // text as the final answer during streaming.
+  const lastIsAnswerStep = !!lastMsg && !lastMsg.parts.some((p) => p.type === "tool")
+
+  const process: MessagePart[] = []
+  const answer: MessagePart[] = []
+
+  for (const msg of messages) {
+    const isLast = msg.info.id === lastId
+    for (const part of msg.parts) {
+      // The final answer is the set of output parts in the last message of the turn.
+      // Everything else (earlier messages, plus the last message's reasoning/steps) is process.
+      if (isLast && lastIsAnswerStep && isOutputPart(part)) {
+        answer.push(part)
+      } else {
+        process.push(part)
+      }
+    }
+  }
+
+  // Aggregate token usage / cost from message-level info; fall back to step-finish parts.
+  let input = 0
+  let output = 0
+  let reasoning = 0
+  let cacheRead = 0
+  let cacheWrite = 0
+  let cost = 0
+  for (const msg of messages) {
+    const tk = msg.info.tokens
+    if (tk) {
+      input += tk.input ?? 0
+      output += tk.output ?? 0
+      reasoning += tk.reasoning ?? 0
+      cacheRead += tk.cache?.read ?? 0
+      cacheWrite += tk.cache?.write ?? 0
+    }
+    if (typeof msg.info.cost === "number") cost += msg.info.cost
+  }
+  // Fallbacks sum across ALL step-finish parts (message-level info may be absent
+  // on optimistic / streaming-synthesized messages).
+  if (input + output + reasoning === 0) {
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if (part.type === "step-finish" && part.tokens) {
+          input += part.tokens.input ?? 0
+          output += part.tokens.output ?? 0
+          reasoning += part.tokens.reasoning ?? 0
+          cacheRead += part.tokens.cache?.read ?? 0
+          cacheWrite += part.tokens.cache?.write ?? 0
+        }
+      }
+    }
+  }
+  if (cost === 0) {
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if (part.type === "step-finish" && typeof part.cost === "number") cost += part.cost
+      }
+    }
+  }
+
+  // Model id + completion timestamp for the turn footer (prefer the last message).
+  let modelID: string | undefined
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].info.modelID) {
+      modelID = messages[i].info.modelID
+      break
+    }
+  }
+  const completedAt = lastMsg?.info.time?.completed ?? lastMsg?.info.time?.created
+
+  // Wall-clock duration: first message created → last message completed.
+  const firstCreated = messages[0]?.info.time?.created
+  const lastCompleted = lastMsg?.info.time?.completed
+  const durationMs =
+    !isStreaming && firstCreated != null && lastCompleted != null && lastCompleted > firstCreated
+      ? lastCompleted - firstCreated
+      : undefined
+
+  // Error if any tool ended in error.
+  let hasError = false
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.type === "tool" && (part as ToolPart).state?.status === "error") {
+        hasError = true
+        break
+      }
+    }
+    if (hasError) break
+  }
+
+  const visibleProcessCount = process.filter((p) => VISIBLE_FLOW_TYPES.has(p.type)).length
+
+  return {
+    process,
+    answer,
+    stepCount: messages.length,
+    tokens: { input, output, reasoning },
+    cache: { read: cacheRead, write: cacheWrite },
+    cost,
+    durationMs,
+    completedAt,
+    modelID,
+    hasError,
+    visibleProcessCount,
+  }
+}
+
+export const AssistantTurn = memo(function AssistantTurn({
+  messages,
+  isStreaming = false,
+  isStopped = false,
+  onArtifactClick,
+}: AssistantTurnProps) {
+  const { t } = useI18n()
+  const model = useMemo(() => buildTurnModel(messages, isStreaming), [messages, isStreaming])
+
+  const hasAnswerText = model.answer.some((p) => p.type === "text" && (p as { text?: string }).text?.trim())
+
+  // Turn footer: timestamp · tokens · cache · cost · model — shown once the turn
+  // has finished (mirrors the per-step stats line of the pre-execution-flow UI).
+  const totalTokens = model.tokens.input + model.tokens.output + model.tokens.reasoning
+  const footerItems: string[] = []
+  if (!isStreaming && (totalTokens > 0 || model.completedAt != null)) {
+    if (model.completedAt != null) footerItems.push(new Date(model.completedAt).toLocaleString())
+    footerItems.push(`${t("message.tokensInput")}: ${fmtTok(model.tokens.input)}`)
+    footerItems.push(`${t("message.tokensOutput")}: ${fmtTok(model.tokens.output)}`)
+    if (model.tokens.reasoning > 0) footerItems.push(`${t("message.tokensReasoning")}: ${fmtTok(model.tokens.reasoning)}`)
+    if (model.cache.read > 0 || model.cache.write > 0)
+      footerItems.push(`${t("message.cache")}: ${fmtTok(model.cache.read)}r/${fmtTok(model.cache.write)}w`)
+    if (model.cost > 0) footerItems.push(`$${model.cost.toFixed(4)}`)
+    if (model.modelID) footerItems.push(`${t("message.model")}: ${model.modelID}`)
+  }
+
+  return (
+    <div className="py-3">
+      {model.visibleProcessCount > 0 && (
+        <ExecutionFlow
+          parts={model.process}
+          stepCount={model.stepCount}
+          tokens={model.tokens}
+          cost={model.cost}
+          durationMs={model.durationMs}
+          isStreaming={isStreaming}
+          hasError={model.hasError}
+          isStopped={isStopped}
+          onArtifactClick={onArtifactClick}
+        />
+      )}
+
+      <div className="space-y-0">
+        {model.answer.map((part, i) => {
+          const key = "id" in part && part.id ? (part.id as string) : `answer-${i}`
+          switch (part.type) {
+            case "text":
+              return <MarkdownContent key={key} text={(part as { text?: string }).text || ""} />
+            case "file":
+              return <FileBlock key={key} part={part as FilePart} onArtifactClick={onArtifactClick} />
+            case "patch":
+              return <PatchBlock key={key} part={part as PatchPart} onArtifactClick={onArtifactClick} />
+            default:
+              return null
+          }
+        })}
+      </div>
+
+      {isStreaming && !hasAnswerText && (
+        <div className="flex items-center gap-2 py-2">
+          <div className="flex items-center gap-1">
+            <span className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-primary)]" />
+            <span className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-primary)] [animation-delay:0.2s]" />
+            <span className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-primary)] [animation-delay:0.4s]" />
+          </div>
+          <span className="text-xs text-[var(--color-fg-muted)]">{t("message.aiTyping")}</span>
+        </div>
+      )}
+
+      {footerItems.length > 0 && (
+        <div className="mt-2 flex items-center gap-3 text-[10px] text-[var(--color-fg-muted)]">
+          <div className="h-px flex-1 bg-[var(--color-border)]" />
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-center">
+            {footerItems.join("  ·  ")}
+          </div>
+          <div className="h-px flex-1 bg-[var(--color-border)]" />
+        </div>
+      )}
+    </div>
+  )
+},
+// Custom comparison: groupIntoTurns rebuilds the `messages` array each render, but
+// the underlying message objects keep their identity unless that specific message
+// changed (use-session-messages swaps only the updated one). Comparing element
+// references lets historical turns skip re-render/recompute while the streaming
+// turn (whose last message object changes each token) still updates.
+function turnPropsEqual(prev: AssistantTurnProps, next: AssistantTurnProps): boolean {
+  if (
+    prev.isStreaming !== next.isStreaming ||
+    prev.isStopped !== next.isStopped ||
+    prev.onArtifactClick !== next.onArtifactClick ||
+    prev.messages.length !== next.messages.length
+  ) {
+    return false
+  }
+  for (let i = 0; i < prev.messages.length; i++) {
+    if (prev.messages[i] !== next.messages[i]) return false
+  }
+  return true
+})

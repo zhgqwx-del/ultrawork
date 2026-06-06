@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- 主对话「执行流程」收纳（ADR-029）：把一个 user 回合产出的 N 条 assistant message（每工具循环 step 一条）合并渲染——中间过程（思考/工具/叙述）收进可折叠的执行流程时间线（无卡片包裹、连续左竖线、行内二级展开工具 INPUT/OUTPUT、状态图标 spinner/停止/✗/✓、思考中 pulse），最终答案在容器外干净渲染，回合结束追加居中带横线的统计页脚（时间·输入·输出·推理·缓存·成本·模型）。流式判定改用 finish 终态避免多步抖动；`AssistantTurn` 自定义 memo 比较器避免流式中历史回合重渲染。新增组件 `assistant-turn`/`execution-flow`/`message-parts` + 回合逻辑单测（8 例）
 - 发布前 readiness 硬化（ADR-028）：macOS Universal DMG 构建支持（`build-release.ts --unsigned` 模式 + 双架构 sidecar cross-compile + Tauri `universal-apple-darwin` lipo 合并）+ Sidecar 凭证随机化（首启生成 32 字节 hex 持久化到 `~/.config/ultrawork/sidecar-auth.json` 0600 权限 + `ULTRAWORK_SIDECAR_PASSWORD` env 覆盖）+ Sidecar 副本机制（启动期从 `.app/Contents/MacOS/<name>` 复制到 `~/.ultrawork/sidecars/<name>`，路径稳定 + 跟随 app 升级自动覆盖）+ MCP 启动急切 warm-up（Rust 端 OpenCode 健康后 fire `GET /mcp` 触发服务端 lazy InstanceState init，首发消息体感时延降到 <1s）+ Tauri capability 收紧（去 shell/fs 过宽权限）+ Bun.serve 显式 127.0.0.1 绑定（不再 LAN 暴露）+ opencode.json 原子写 + Mutex（跨进程并发更新不损坏 JSON）+ 完整 README 故障排查 + 系统语言自动检测
 - 知识库能力 Phase 4c（ADR-026）：IMA 写入能力 — MCP 工具 `knowledge_save_note`（AI 自主新建/追加笔记）+ HTTP 端点 `/kb/notes/create` + `/kb/notes/append` + 本地图片自动过滤 + 写入错误码处理
 - 知识库能力 Phase 4a（ADR-026）：IMA Notes API 集成（对齐官方 ima-skill v1.1.7）— Notes 全文搜索 (search_note) + 全文读取 (get_doc_content) + Wiki 搜索 get_media_info 增强（笔记类型条目跨模块读取全文）+ AddSourceDialog 新增模块选择步骤（知识库文件 vs 笔记）+ IMAConfig.module 字段 + IMA 凭证 UX 优化（一键打开凭证页面 + clientId 自动复用 + 首次保存成功 toast 提示）
