@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-05-21 -->
+<!-- last-synced: 2026-06-06 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -128,6 +128,13 @@ ArtifactPreview 使用 `!e.defaultPrevented` 检查，避免与 CommandSelector 
 
 ### getMessages merge
 `prev.length === 0 ? msgs : [...msgs, ...sseOnly]` — 必须配合 session 切换时 `setMessages([])`。
+
+### 回合分组渲染（执行流程）
+OpenCode 一个 user 回合会产出 **N 条 assistant message**（每个工具循环 step 一条，`finish="tool-calls"` 则继续；详见 [ADR-029](decisions/029-execution-flow-turn-grouping.md)）。主对话**不要按 message 平铺渲染**，而是：
+- `message-list.tsx` 的 `groupIntoTurns()` 把「一条 user + 其后连续 assistant」聚成一个回合，渲染 `AssistantTurn`。
+- `AssistantTurn` 的 `buildTurnModel()` 把整回合 parts 切成「过程」（收进无卡片包裹的 `ExecutionFlow` 折叠时间线）与「答案」（最后一条**无 tool** message 的输出 part，容器外渲染）；末尾渲染居中带横线的统计页脚。
+- **回合是否在生成**：用「末条 `finish` 终态(存在且≠`tool-calls`) + 是否末回合 + 未 stop」判定，**不要**用瞬时 `streamingMessageId`（step 间/工具执行期会置 null → 抖动）。
+- **memo**：`groupIntoTurns` 每渲染重建数组，`AssistantTurn` 必须用自定义比较器（按 `messages` 元素引用比较）才能让历史回合在流式中跳过重渲染——历史 message 对象引用稳定（state 只换变化的那条）。
 
 ## 6. 构建与部署
 

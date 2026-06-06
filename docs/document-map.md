@@ -1,6 +1,6 @@
 # Ultrawork 文档地图
 
-> 全部文档约 63 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
+> 全部文档约 64 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
 
 ## 目录树
 
@@ -27,7 +27,7 @@ ultrawork/
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
-│   │   ├── README.md                  #   ADR 索引：模板说明 + 27 条决策一览表（权威索引）
+│   │   ├── README.md                  #   ADR 索引：模板说明 + 28 条决策一览表（权威索引）
 │   │   ├── 001..017                   #   Phase 1 → Round 17 早期决策（Tauri/Sidecar/消息渲染/Dock/模型/工作区/SSE/MCP/暗色模式/Browser MCP 等）
 │   │   ├── 018-wechat-channel-ilink.md       # 微信 Channel ilink 协议接入（2026-03-24）
 │   │   ├── 019-knowledge-base-integration.md # 知识库集成方案（Withdrawn）
@@ -38,7 +38,8 @@ ultrawork/
 │   │   ├── 024-workspace-path-display.md     # 工作目录路径展示优化
 │   │   ├── 025-window-layout-symmetry.md     # 窗口布局对称性修复
 │   │   ├── 026-knowledge-base-architecture.md # 知识库能力架构（本地 RAG + IMA + 自定义 API）
-│   │   └── 028-release-readiness-hardening.md # 发布前 readiness 硬化（ADR-027 由 feat/acp-support 分支预留）
+│   │   ├── 028-release-readiness-hardening.md # 发布前 readiness 硬化（ADR-027 由 feat/acp-support 分支预留）
+│   │   └── 029-execution-flow-turn-grouping.md # 主对话「执行流程」收纳 — 回合级消息分组与过程/答案分层
 │   │
 │   ├── discussions/                   # ═══ 讨论层（探索阶段，可能演变为 ADR）═══
 │   │   ├── README.md                  #   讨论索引
@@ -127,7 +128,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 28 (README + 27 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **决策层** | `docs/decisions/` | 29 (README + 28 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 9 (README + 8) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |

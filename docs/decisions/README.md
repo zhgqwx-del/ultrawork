@@ -57,6 +57,7 @@
 | [025](./025-window-layout-symmetry.md) | 窗口布局对称性修复与平台感知适配 | 2026-05-12 | Accepted |
 | [026](./026-knowledge-base-architecture.md) | 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API | 2026-05-13 | Accepted (Phase 1-3 + 4a + 4c 实现) |
 | [028](./028-release-readiness-hardening.md) | 发布前 readiness 硬化 — sidecar 副本 / 凭证随机化 / 安全收紧 / MCP 启动性能 | 2026-05-28 | Accepted |
+| [029](./029-execution-flow-turn-grouping.md) | 主对话「执行流程」收纳 — 回合级消息分组与过程/答案分层 | 2026-06-06 | Accepted (✅ 已实现) |
 
 > ADR-027 已被 `feat/acp-support` 分支占用（待合并）。
 
