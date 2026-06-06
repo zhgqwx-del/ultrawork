@@ -32,7 +32,32 @@
 > - 品牌 Logo：棱镜 SVG 设计 + 全平台图标 + in-app Logo 组件
 > - 内置命令隐藏：/init, /review 对普通用户不可见
 >
-> 已实现功能详见 `REQUIREMENTS.md` 和 `PROGRESS.md`。
+> 已实现功能详见 [`docs/requirements.md`](./requirements.md) 和 [`docs/archive/progress-raw.md`](./archive/progress-raw.md)。
+
+---
+
+## TL;DR
+
+本文分两部分：
+
+- **Part I = 已实现的现状架构**——可信赖为当前事实。已落地五大件：
+  **Desktop Client**（Tauri + React 19）、**Channel Gateway**（独立 sidecar :4097，DingTalk Stream Mode + WeChat ilink）、**Knowledge Sidecar**（独立 sidecar :4098，本地 RAG + IMA + MCP）、**@agent/api-client**（REST/SSE SDK）、**@agent/server-manager**（sidecar 生命周期）。
+- **Part II = 规划中的设计草案（🔲 未实现）**——connector 抽象、Agent Workspace 身份/记忆持久化、Proactive Services、Process Lifecycle 进程注册表。**阅读现状时可跳过 Part II。**
+
+> 更宏观的远期愿景（多端 Web/Mobile、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
+
+## 目录
+
+**Part I · 现状（已实现）**
+- [Overview](#overview) · [System Architecture](#system-architecture) · [Integration Strategy](#integration-strategy)
+- [Directory Structure](#directory-structure) · [Package Dependency Graph](#package-dependency-graph)
+- [Data Flow](#data-flow)（IM Channels 已实现流程）· [Agent Workspace](#agent-workspace)（`~/.ultrawork/` 现状布局）
+- [Key OpenCode Server APIs](#key-opencode-server-apis) · [Build Pipeline](#build-pipeline) · [Deployment Topology](#deployment-topology)
+- [Error Handling & Resilience](#error-handling--resilience) · [Configuration Management](#configuration-management)
+- [Technology Stack](#technology-stack) · [Feature Summary (Phase 1)](#feature-summary-phase-1) · [Development Priority](#development-priority) · [Design Decisions](#design-decisions)
+
+**Part II · 规划中（🔲 未实现 · 设计草案）**
+- 连接抽象 @agent/connector · Agent Workspace 持久化（IDENTITY/SOUL/MEMORY/HISTORY）· Proactive Services Layer · Process Lifecycle Model
 
 ## Overview
 
@@ -525,130 +550,7 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 
 ![Phase 1 Data Flow](images/architecture-phase1-dataflow.png)
 
-### Connection Establishment (via @agent/connector)
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        Connection Flow (Local Mode)                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  createConnector({ mode: "local" })                                     │
-│       │                                                                  │
-│       ├──► server-manager.spawn()     → Start OpenCode binary           │
-│       │         │                                                        │
-│       │         └──► health.waitReady()  → Wait for server ready        │
-│       │                                                                  │
-│       └──► api-client.create(localUrl)  → Create SDK instance           │
-│                 │                                                        │
-│                 └──► Return Connection { client, status, ... }          │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Connector API
-
-```typescript
-// @agent/connector/src/types.ts
-
-interface ConnectionConfig {
-  mode: "local" | "remote"
-  
-  // Local mode options (Desktop)
-  local?: {
-    binary?: string           // Path to opencode binary (default: auto-detect)
-    workingDir?: string       // Project directory (default: cwd)
-    port?: number             // Server port (default: auto-assign)
-    autoRestart?: boolean     // Restart on crash (default: true)
-  }
-  
-  // Remote mode options (Channel Gateway)
-  remote?: {
-    baseUrl: string           // e.g., "https://agent.company.com"
-    apiKey?: string           // API key authentication
-    jwt?: string              // JWT token authentication
-    timeout?: number          // Connection timeout (default: 30000ms)
-  }
-  
-  // Common options
-  healthCheckInterval?: number  // Health check interval (default: 5000ms)
-  reconnect?: {
-    enabled: boolean          // Auto-reconnect on disconnect (default: true)
-    maxRetries?: number       // Max retry attempts (default: Infinity)
-    backoff?: "linear" | "exponential"  // Backoff strategy (default: exponential)
-  }
-}
-
-interface Connection {
-  readonly client: ApiClient           // OpenCode API client
-  readonly status: ConnectionStatus    // Current connection status
-  readonly mode: "local" | "remote"    // Active connection mode
-  
-  connect(): Promise<void>             // Establish connection
-  disconnect(): Promise<void>          // Close connection
-  reconnect(): Promise<void>           // Force reconnection
-  
-  onStatusChange(cb: (status: ConnectionStatus) => void): () => void
-  onError(cb: (error: ConnectionError) => void): () => void
-}
-
-type ConnectionStatus = 
-  | { state: "disconnected" }
-  | { state: "connecting" }
-  | { state: "connected"; serverVersion: string }
-  | { state: "reconnecting"; attempt: number }
-  | { state: "error"; error: ConnectionError }
-```
-
-### Connection Mode by Client
-
-| Client | Default Mode | Notes |
-|--------|-------------|-------|
-| Desktop | `local` | Spawns OpenCode as sidecar |
-| Channel Gateway | `remote` | Connects to shared/deployed server |
-
-### Connector Usage Example
-
-```typescript
-// Desktop App - Local mode
-const conn = createConnector({
-  mode: "local",
-  local: {
-    workingDir: "/path/to/project",
-    autoRestart: true
-  }
-})
-await conn.connect()
-
-// Use API after connection
-const session = await conn.client.sessionCreate()
-await conn.client.sessionPrompt(session.id, { ... })
-```
-
-### Desktop Client Flow
-
-```
-App startup
-  -> createConnector({ mode: "local" })
-    -> conn.connect()
-      -> Connection established
-  -> Load workspace context
-
-User input
-  -> conn.client.sessionPrompt(sessionId)
-    -> OpenCode Server
-      -> SSE Stream response
-        -> api-client.events.subscribe()
-          -> ui renders chunks in real time
-
-If permission requested:
-  -> ui/permission dialog
-    -> api-client.permissionReply()
-
-Session end
-  -> workspace.extractFacts(session.messages)
-    -> workspace.appendMemory(newFacts)
-    -> workspace.appendHistory(sessionSummary)
-```
+> Desktop 当前**直连 `@agent/api-client`**（REST + SSE）发起会话，未经 connector 抽象；其连接建立与 connector API 设计草案见 [Part II · 连接抽象 @agent/connector](#规划连接抽象-agentconnector)。下面是**已实现的 IM 渠道数据流**。
 
 ### IM Channels Flow (DingTalk) ✅ 已实现
 
@@ -696,9 +598,11 @@ Feishu 和 Slack adapter 尚未实现，预留了 `adapters/` 目录结构。
 
 ## Agent Workspace
 
-The Agent Workspace is a **runtime product feature** -- when the built software runs, it manages a `~/.ultrawork/` directory in the user's home that persists identity, personality, memory, and status across sessions. This is a **unified user-level directory**, not per-project.
+`~/.ultrawork/` 是一个**统一的用户级目录**（非按项目），承载 Ultrawork 各模块的运行时数据。**当前已实现的部分**是该目录下的配置与数据存储（Channel Gateway 配置、知识库 DB、sidecar 副本、Browser MCP 运行时、默认工作区等，见下表 ✅ 项）。
 
-### Directory Layout
+> 🔲 文档原设想的「agent 身份/人格/记忆跨会话持久化」（IDENTITY.md / SOUL.md / MEMORY.md / HISTORY.md 及读写生命周期）**尚未实现**，设计草案见 [Part II · Agent Workspace 持久化](#规划agent-workspace-持久化identity--soul--memory--history)。
+
+### ~/.ultrawork/ 目录布局（现状）
 
 ```
 ~/.ultrawork/                          # User's home directory
@@ -744,403 +648,6 @@ The Desktop Agent is a **personal assistant** tied to the user, not to specific 
 2. **Unified memory** - Facts learned in project A should be available when working on project B
 3. **Simpler UX** - No confusion about "which directory am I reading from"
 4. **Works with IM channels** - DingTalk/Feishu messages aren't project-bound
-
-### Workspace Initialization
-
-On first application launch:
-
-```
-Desktop app starts
-  |
-  v
-@agent/workspace checks ~/.ultrawork/
-  |
-  v
-Does ~/.ultrawork/ exist?
-  |
-  ├── No  -> Full initialization:
-  │         1. Create ~/.ultrawork/ directory
-  │         2. Create config.json with version info
-  │         3. Create IDENTITY.md with default template
-  │         4. Create SOUL.md with default template
-  │         5. Create MEMORY.md and HISTORY.md with headers
-  │         6. Create cache/, credentials/, opencode/ subdirectories
-  │         7. Create opencode/config.json with defaults
-  │
-  └── Yes -> Verify structure integrity, create missing files with defaults
-  |
-  v
-Workspace ready. Load context for session.
-```
-
-### File Specifications
-
-#### IDENTITY.md -- Agent Identity (Factual)
-
-Defines **who** the agent is -- factual, stable attributes.
-
-```markdown
-# Identity
-
-## Profile
-- **Name**: Atlas
-- **Role**: Senior full-stack engineer
-- **Team**: Platform Engineering
-
-## Expertise
-- **Primary Languages**: TypeScript, Rust, Go
-- **Frameworks**: SolidJS, Hono, Tauri
-- **Domains**: Real-time systems, API design, database optimization
-```
-
-#### SOUL.md -- Agent Personality & Style
-
-Defines **how** the agent behaves -- personality traits, communication style.
-
-```markdown
-# Soul
-
-## Personality
-- Concise and direct; avoid unnecessary preamble
-- Prefer working code over lengthy explanations
-- Challenge assumptions when you spot design flaws
-
-## Communication Style
-- Use technical terminology without simplification
-- When suggesting changes, show diffs not descriptions
-- Ask clarifying questions before making large refactors
-
-## Work Approach
-- Read existing code before proposing changes
-- Favor minimal, focused changes over sweeping refactors
-- Run tests after every modification
-
-## Boundaries
-- Never commit directly to main branch
-- Always run tests before declaring a task complete
-- Flag security-sensitive changes for human review
-```
-
-#### HEARTBEAT.md -- Periodic Status Snapshot
-
-Written by `@agent/proactive-heartbeat` on a schedule.
-
-```markdown
-# Heartbeat
-
-> Auto-generated by agent. Do not edit manually.
-> Last updated: 2026-03-02T14:30:00Z
-
-## Status: In Progress
-
-## Active Sessions
-
-### feature/auth-flow (session-abc123)
-- **State**: Working
-- **Summary**: Implementing JWT token refresh. Middleware interceptor done.
-- **Recent Tools**: Write(src/auth/refresh.ts), Bash(bun test)
-- **Test Results**: 42 passed, 2 failing
-
-## Since Last Heartbeat (14:00 -> 14:30)
-- Completed: Auth middleware integration
-- In Progress: Token storage layer
-- Issues: 2 test failures in expiry edge cases
-```
-
-#### MEMORY.md -- Long-term Factual Memory
-
-Distilled knowledge the agent has learned across all projects and sessions.
-
-```markdown
-# Memory
-
-> Agent-managed long-term memory. Auto-updated at session end.
-> Facts are deduplicated and consolidated periodically.
-
-## Project Facts
-- Database: PostgreSQL 15 with row-level security enabled
-- CI requires Node 20 (not 22); see .github/workflows/ci.yml
-- The `utils/` directory is deprecated; use `lib/` for new utilities
-
-## User Preferences
-- Prefers functional style over class-based components
-- Wants explicit error types, not string error messages
-
-## Codebase Patterns
-- All API routes follow the pattern: src/api/v1/<resource>/route.ts
-- Database queries use Drizzle ORM; raw SQL only in migrations
-
-## Gotchas & Pitfalls
-- The `session` table has a unique constraint on (user_id, slug)
-- File watcher in dev mode triggers double rebuilds; debounce with 200ms delay
-```
-
-#### HISTORY.md -- Chronological Event Log
-
-A timeline of significant agent actions and discoveries.
-
-```markdown
-# History
-
-> Chronological event log. Append-only. Rotated periodically.
-> Each entry includes timestamp and summary of actions taken.
-
-## 2026-03-02T14:30:00Z
-Auth middleware integration complete
-- Implemented JWT refresh token rotation in src/auth/refresh.ts
-- 2 tests still failing (edge cases in token expiry)
-
-## 2026-03-02T09:15:00Z
-Database migration v4 applied
-- Added `refresh_token` column to `sessions` table
-```
-
-### Workspace Integration Model
-
-`@agent/workspace` is a **library** (not a service or process). Rather than each consumer independently loading context, workspace context flows through `@agent/connector` as the centralized integration point. All consumers already use `connector` to talk to OpenCode Server, so workspace context injection and fact extraction happen at the connector level.
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                  Workspace Context Integration (Option C)                 │
-│                                                                           │
-│            ┌─────────────┐                                               │
-│            │  @agent/     │──── loadContext() ────┐                       │
-│            │  workspace   │                       │                       │
-│            │  (library)   │◄── appendMemory() ────┤                       │
-│            │              │◄── appendHistory() ───┤                       │
-│            └──────┬───────┘                       │                       │
-│                   │ file I/O (flock)              │                       │
-│                   v                               │                       │
-│            ~/.ultrawork/                          │                       │
-│            ├── IDENTITY.md                        │                       │
-│            ├── SOUL.md                  ┌─────────┴──────────┐           │
-│            ├── MEMORY.md                │  @agent/connector   │           │
-│            └── HISTORY.md               │  (integration hub)  │           │
-│                                         │                     │           │
-│                                         │  sessionCreate():   │           │
-│                                         │   1. loadContext()   │           │
-│                                         │   2. inject system   │           │
-│                                         │      prompt          │           │
-│                                         │                     │           │
-│                                         │  onSessionEnd():    │           │
-│                                         │   1. extractFacts() │           │
-│                                         │   2. appendMemory() │           │
-│                                         │   3. appendHistory()│           │
-│                                         └──────────┬──────────┘           │
-│                                                    │                      │
-│                        ┌───────────────────────────┼──────────────┐       │
-│                        │                           │              │       │
-│                   Desktop App             Channel Gateway   Proactive     │
-│                   (local mode)            (remote mode)     Services      │
-│                                                                           │
-│  Desktop UI also writes directly to workspace files for user settings:   │
-│  - Update IDENTITY.md (agent name, role, expertise)                      │
-│  - Update SOUL.md (personality, communication style)                     │
-│  - Review/edit MEMORY.md (manual curation)                               │
-│  These are user-initiated, single-writer, no concurrency concern.        │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-**Why this approach works:**
-
-| Consumer | Connector Mode | How it gets workspace context |
-|----------|---------------|-------------------------------|
-| Desktop App | `local` | Connector calls `workspace.loadContext()` locally, injects into session |
-| Channel Gateway | `remote` | Connector on server side injects context; gateway gets it via session |
-| Heartbeat | `local` | Same connector; context injected into analysis session |
-| Cron | `local` | Same connector; context injected into job session |
-
-**Concurrency model:**
-
-- `loadContext()` is read-only, safe for parallel callers
-- `appendMemory()` and `appendHistory()` use advisory file locks (`flock`) to serialize writes
-- Desktop UI writes (IDENTITY.md, SOUL.md edits) are user-initiated and single-writer by nature
-- Heartbeat writes to HEARTBEAT.md exclusively (no other writer)
-
-### Read/Write Lifecycle
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Session Lifecycle                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  SESSION START (handled by @agent/connector)                     │
-│  1. connector intercepts sessionCreate()                         │
-│  2. connector calls workspace.loadContext():                     │
-│     - Read IDENTITY.md -> agent identity for system prompt       │
-│     - Read SOUL.md     -> personality/style for system prompt    │
-│     - Read MEMORY.md   -> relevant facts for context             │
-│     - Read HISTORY.md  -> recent events for temporal context     │
-│  3. connector injects context bundle as system prompt prefix     │
-│  4. connector forwards to OpenCode session creation              │
-│  5. All consumers (Desktop, Gateway, Proactive) get this         │
-│     behavior automatically -- no per-consumer logic needed       │
-│                                                                   │
-│  DURING SESSION                                                   │
-│  6. @agent/proactive-heartbeat may update HEARTBEAT.md           │
-│     (independent timer, not tied to session)                     │
-│                                                                   │
-│  SESSION END (handled by @agent/connector)                       │
-│  7. connector detects session completion                         │
-│  8. connector calls workspace.extractFacts(session.messages):    │
-│     -> LLM extracts new facts, preferences, patterns, gotchas   │
-│  9. connector calls workspace.appendMemory(newFacts)             │
-│     -> Deduplicates against existing entries (with flock)        │
-│  10. connector calls workspace.appendHistory(sessionSummary)     │
-│     -> Structured event entry with timestamp (with flock)        │
-│                                                                   │
-│  PERIODIC (via @agent/proactive-cron)                            │
-│  11. Memory consolidation: LLM merges duplicates in MEMORY.md   │
-│  12. History rotation: archive on size/date boundary             │
-│                                                                   │
-│  DESKTOP UI (direct file writes)                                 │
-│  13. User edits IDENTITY.md via settings page -> direct write    │
-│  14. User edits SOUL.md via settings page -> direct write        │
-│  15. User reviews/curates MEMORY.md -> direct write              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Configuration
-
-```typescript
-interface WorkspaceConfig {
-  root: string                      // ~/.ultrawork/ path (default: os.homedir()/.ultrawork)
-
-  identity: {
-    enabled: boolean                // Include identity in sessions (default: true)
-  }
-
-  soul: {
-    enabled: boolean                // Inject personality into sessions (default: true)
-    maxPromptLength: number         // Truncate if too long (default: 2000 chars)
-  }
-
-  memory: {
-    enabled: boolean                // Enable memory read/write (default: true)
-    extractOnSessionEnd: boolean    // Auto-extract facts after session (default: true)
-    maxFileSize: number             // Max MEMORY.md size (default: 100KB)
-  }
-
-  history: {
-    enabled: boolean                // Enable event logging (default: true)
-    rotationPolicy: "monthly" | "weekly" | "size"
-    maxSizeBytes: number            // Max size before rotation (default: 1MB)
-    maxArchives: number             // Keep N archived history files (default: 6)
-  }
-
-  opencode: {
-    enabled: boolean                // Scaffold opencode/ config (default: true)
-  }
-}
-```
-
-## Proactive Services Layer
-
-Proactive Services are **independent background services** that autonomously initiate LLM interactions on a schedule.
-
-### Design Principles
-
-1. **Independent Services** - Each proactive service runs as its own process
-2. **Token-Cost Aware** - Every scheduled LLM call costs tokens; services provide clear cost visibility
-3. **Non-Intrusive** - Results are written to files and/or pushed as notifications
-4. **Configurable** - Users control intervals, schedules, notification targets
-5. **Resilient** - Gracefully handle OpenCode unavailability
-
-### Heartbeat Service
-
-Independent background service that periodically inspects session state, uses LLM to produce a structured progress summary, and writes it to `.agent/HEARTBEAT.md`.
-
-#### Execution Flow
-
-```
-Timer fires (every N minutes, default 30)
-  |
-  v
-Collector: query OpenCode API
-  - List active sessions
-  - Get recent messages per session
-  - Get tool execution history
-  |
-  v
-Analyzer: send collected state to LLM
-  - Summarize what was accomplished
-  - Identify current task status
-  - Flag potential issues
-  - Determine notification urgency
-  |
-  v
-Writer: update .agent/HEARTBEAT.md
-  - Atomic write (write to temp, rename)
-  - Git-friendly format
-  |
-  v
-Notifier: push to configured targets (if notable/urgent)
-  - Normal: file only
-  - Notable: file + desktop notification
-  - Urgent: file + desktop notification (high priority)
-```
-
-#### Configuration
-
-```typescript
-interface HeartbeatConfig {
-  enabled: boolean               // Master switch (default: true)
-  interval: number               // Minutes between heartbeats (default: 30)
-  output: string                 // Output file path (default: ".agent/HEARTBEAT.md")
-  model?: string                 // LLM model for analysis
-  notify: NotifyConfig           // Notification configuration
-}
-```
-
-### Cron Service
-
-Independent background service with HTTP API that manages and executes scheduled LLM-powered tasks.
-
-#### HTTP API
-
-```
-POST   /api/jobs          Create a new cron job
-GET    /api/jobs          List all jobs (with status)
-GET    /api/jobs/:id      Get job details
-PUT    /api/jobs/:id      Update job definition
-DELETE /api/jobs/:id      Delete a job
-POST   /api/jobs/:id/run  Trigger immediate execution
-GET    /api/history       List execution history
-```
-
-#### Schedule Types
-
-| Type | Format | Example |
-|------|--------|---------|
-| Cron expression | Standard 5-field cron | `0 9 * * 1-5` (weekdays at 9:00) |
-| Interval | Duration string | `2h` (every 2 hours) |
-| Fixed time | ISO time | `09:00` (daily at 9:00 local time) |
-
-#### Job Definition
-
-```typescript
-interface CronJob {
-  id: string
-  name: string                     // Human-readable name
-  schedule: CronSchedule           // When to execute
-  prompt: string                   // The prompt to send to OpenCode
-  agent?: string                   // Agent to use (default: "build")
-  output: JobOutput                // How to deliver results
-  notify?: NotifyConfig            // Notification targets
-  enabled: boolean                 // Enable/disable toggle
-  maxRetries: number               // Retry on failure (default: 1)
-  timeout: number                  // Max execution time in ms
-}
-```
-
-#### Built-in Job Templates
-
-| Template | Purpose | Default Schedule |
-|----------|---------|-----------------|
-| `dependency-check` | Scan for outdated/vulnerable dependencies | Weekly (Mon 9:00) |
-| `code-review` | Review uncommitted changes for issues | Daily (18:00) |
-| `test-health` | Run tests and summarize failures | Every 4 hours |
-| `progress-report` | Generate progress summary from git log | Weekly (Fri 17:00) |
 
 ## Key OpenCode Server APIs
 
@@ -1238,311 +745,6 @@ Desktop App     ->  Tauri (embedded sidecar on random port)
 |                                          |  | DingTalk/Feishu |         |
 |                                          |  +-----------------+         |
 +-------------------------------------------------------------------------+
-```
-
-## Process Lifecycle Model
-
-### Overview
-
-The system adopts a **detach-on-exit** strategy: the Desktop App spawns OpenCode Server as a sidecar, but **detaches** it on exit instead of killing it. This allows proactive services (heartbeat, cron) and the Channel Gateway to continue operating after the desktop window is closed. On the next launch, the desktop discovers the existing server and reconnects.
-
-### Process Classification
-
-| Process | Lifecycle | Managed By |
-|---------|-----------|------------|
-| Desktop App (Tauri) | **Ephemeral** -- starts/stops with user interaction | OS / user |
-| OpenCode Server | **Resident** -- survives desktop exit, reattached on next launch | `server-manager` + process registry |
-| Heartbeat Service | **Resident** -- independent background process | self-managed, reads process registry |
-| Cron Service | **Resident** -- independent background process with HTTP API | self-managed, reads process registry |
-| Channel Gateway | **Sidecar** -- Tauri 托管，与桌面端同生同死 | ✅ `server-manager` 管理 (bun build --compile, :4097)。实际为 Tauri sidecar，非独立部署 |
-
-### Process Registry
-
-All managed processes register in `~/.ultrawork/daemon.json`. This is the single source of truth for process discovery. **🔲 尚未实现** — 当前 Desktop 和 Gateway 使用固定端口 (4096/4097)，无进程注册表。
-
-```jsonc
-// ~/.ultrawork/daemon.json
-{
-  "version": 1,
-  "opencode": {
-    "pid": 12345,
-    "port": 4096,
-    "password": "auto-generated-secret",
-    "workingDir": "/Users/alice/projects/my-app",
-    "startedAt": "2026-03-02T10:00:00Z",
-    "startedBy": "desktop"           // "desktop" | "cli" | "proactive"
-  },
-  "heartbeat": {
-    "pid": 12350,
-    "startedAt": "2026-03-02T10:00:05Z"
-  },
-  "cron": {
-    "pid": 12355,
-    "port": 4097,
-    "startedAt": "2026-03-02T10:00:05Z"
-  }
-}
-```
-
-File locking: all writes to `daemon.json` use advisory file lock (`flock`) to prevent race conditions between desktop and proactive services.
-
-### Desktop Startup Flow
-
-```
-Desktop app launches
-  |
-  v
-server-manager reads ~/.ultrawork/daemon.json
-  |
-  ├── Entry exists?
-  │     |
-  │     ├── Yes --> Health check: GET http://127.0.0.1:{port}/global/health
-  │     │     |
-  │     │     ├── Healthy --> Reuse (reconnect). Done.
-  │     │     |
-  │     │     └── Unreachable / wrong PID
-  │     │           |
-  │     │           v
-  │     │         Clean stale entry from daemon.json
-  │     │           |
-  │     │           v
-  │     │         (fall through to spawn)
-  │     |
-  │     └── No entry
-  │           |
-  v           v
-  Spawn new OpenCode Server
-    |
-    v
-  Write { pid, port, password, workingDir, startedAt } to daemon.json
-    |
-    v
-  Wait for health check pass
-    |
-    v
-  Also start heartbeat + cron if not already running (check their PIDs)
-    |
-    v
-  Connection established. Desktop ready.
-```
-
-### Desktop Exit Flow
-
-```
-User closes desktop window
-  |
-  v
-Desktop exit handler:
-  1. Flush any pending workspace writes (MEMORY.md, HISTORY.md)
-  2. Do NOT kill OpenCode Server process
-  3. Do NOT kill heartbeat/cron processes
-  4. Optionally show system tray icon (user preference)
-  5. Exit Tauri process
-  |
-  v
-OpenCode Server continues running (detached)
-Heartbeat continues on schedule
-Cron continues executing jobs
-```
-
-User preference controls exit behavior:
-
-| Setting | Behavior |
-|---------|----------|
-| `exitMode: "background"` (default) | Close window, server stays alive, tray icon shown |
-| `exitMode: "minimize"` | Minimize to tray (desktop process stays alive too) |
-| `exitMode: "quit"` | Full shutdown: kill server + proactive services + exit |
-
-### Working Directory Switching
-
-OpenCode Server is project-scoped (bound to a working directory). When the user switches projects in the Desktop UI:
-
-```
-User switches to project B (currently on project A)
-  |
-  v
-server-manager checks daemon.json
-  |
-  ├── workingDir == project B? --> Already correct, no action
-  |
-  └── workingDir == project A
-        |
-        v
-      Gracefully shutdown current OpenCode Server
-      (wait for active sessions to drain, timeout 10s)
-        |
-        v
-      Spawn new OpenCode Server with workingDir = project B
-        |
-        v
-      Update daemon.json with new pid, port, workingDir
-        |
-        v
-      Proactive services automatically pick up new server via registry
-```
-
-Note: Phase 1 supports **one active OpenCode Server at a time** per user. Multi-project concurrent servers are deferred to Phase 2.
-
-### Crash Recovery (Resident Processes)
-
-With the desktop potentially closed, a separate crash recovery mechanism is needed for the detached server.
-
-**Primary watchdog: Heartbeat Service**
-
-The heartbeat service already polls OpenCode on its interval (default 30 min). It is extended to act as a lightweight watchdog:
-
-```
-Heartbeat timer fires
-  |
-  v
-Read daemon.json for OpenCode connection info
-  |
-  v
-Health check: GET http://127.0.0.1:{port}/global/health
-  |
-  ├── Healthy --> Proceed with normal heartbeat (collect, analyze, write)
-  |
-  └── Unreachable
-        |
-        v
-      Verify PID is dead (kill -0 {pid})
-        |
-        ├── Process alive but unresponsive
-        │     |
-        │     v
-        │   Wait 30s, retry health check
-        │     |
-        │     ├── Recovered --> Continue
-        │     └── Still dead --> Force kill PID, then restart
-        |
-        └── Process dead
-              |
-              v
-            Restart OpenCode Server:
-              1. Read workingDir from daemon.json
-              2. Spawn new server (same working dir)
-              3. Update daemon.json with new PID/port
-              4. Write restart event to HEARTBEAT.md
-              5. Notify via @agent/notifier (desktop notification if app running, IM if configured)
-              |
-              v
-            If restart fails after 3 attempts:
-              1. Write failure to HEARTBEAT.md
-              2. Send urgent notification
-              3. Stop retry, wait for next heartbeat cycle or desktop launch
-```
-
-**Heartbeat self-recovery**: if the heartbeat service itself crashes, the next desktop launch detects its PID is dead (via daemon.json) and restarts it.
-
-**Cron self-recovery**: same pattern -- desktop launch checks cron PID, restarts if dead.
-
-### Clean Shutdown
-
-Full system shutdown can be triggered from:
-
-1. **Desktop UI**: "Quit Agent" menu action (vs "Close Window")
-2. **System tray**: "Quit" option
-3. **CLI** (future): `ultrawork stop`
-
-Shutdown sequence:
-
-```
-Quit signal received
-  |
-  v
-1. Signal cron service to stop (graceful: finish current job, max 30s)
-2. Signal heartbeat to stop (graceful: finish current cycle)
-3. Signal OpenCode Server to shutdown (graceful: drain sessions, max 10s)
-4. Wait for all processes to exit (timeout 15s, then SIGKILL)
-5. Remove daemon.json entries (or clear the file)
-6. Exit desktop process
-```
-
-### Auto-Idle Shutdown
-
-To prevent indefinite resource consumption when the user is away:
-
-```
-OpenCode Server tracks last activity timestamp:
-  - Last session.prompt call
-  - Last heartbeat inspection
-  - Last cron job execution
-
-If no activity for N hours (default: 4, configurable):
-  1. Heartbeat writes "idle shutdown" event to HEARTBEAT.md
-  2. Heartbeat sends notification: "Agent going to sleep due to inactivity"
-  3. Heartbeat triggers clean shutdown of OpenCode Server
-  4. Proactive services enter standby (stop polling, keep process alive)
-  5. Next desktop launch wakes everything up (normal startup flow)
-```
-
-### System Tray Integration
-
-When `exitMode: "background"` (default), the desktop shows a system tray icon:
-
-| Tray State | Icon | Tooltip |
-|------------|------|---------|
-| Server running, desktop open | Green dot | "Agent active" |
-| Server running, desktop closed | Gray dot | "Agent running in background" |
-| Server crashed / stopped | Red dot | "Agent stopped" |
-
-Tray menu:
-
-```
-- Open Desktop          (show/focus main window)
-- Current Project: my-app
-- Status: Running (2 sessions)
-- ---
-- Pause Proactive Services
-- ---
-- Quit Agent             (full shutdown)
-```
-
-### Summary: Process Lifecycle State Machine
-
-```
-                    ┌──────────────────────────────────────────┐
-                    │         Desktop App Launches              │
-                    │  server-manager reads daemon.json         │
-                    └─────────────────┬────────────────────────┘
-                                      │
-                          ┌───────────┴───────────┐
-                          │                       │
-                    Server found?           Not found
-                    Health OK?                    │
-                          │                       │
-                        Yes                 Spawn server
-                          │               Write daemon.json
-                          │                Start proactive
-                          │                       │
-                          └───────────┬───────────┘
-                                      │
-                                      v
-                              ┌───────────────┐
-                              │   RUNNING      │
-                              │ Desktop + Svr  │
-                              │ + Proactive    │
-                              └───────┬───────┘
-                                      │
-                              Desktop closes
-                              (exitMode: background)
-                                      │
-                                      v
-                              ┌───────────────┐
-                              │  BACKGROUND    │◄── Heartbeat acts as watchdog
-                              │  Server alive  │    Cron runs on schedule
-                              │  No desktop UI │    Auto-idle shutdown timer
-                              └───────┬───────┘
-                                      │
-                         ┌────────────┼────────────┐
-                         │            │            │
-                   Desktop      Idle timeout   Crash detected
-                   re-opens    (4h default)    (heartbeat)
-                         │            │            │
-                         v            v            v
-                      RUNNING    STANDBY      RECOVERY
-                                (proactive    (restart or
-                                 paused)      notify failure)
 ```
 
 ## Error Handling & Resilience
@@ -1852,7 +1054,9 @@ Option D (connector integration) was chosen because:
 - SOUL is **behavioral** (personality, communication style) -- tunable per-project
 - Clean separation allows mixing different identities with different personalities
 
-### Why SolidJS?
+### Why SolidJS?（历史设想 → 实际采用 React 19）
+
+> ⚠️ **此为早期设想，最终未采用。实际实现为 React 19**（生态成熟、shadcn/ui + Radix 组件可用、团队熟悉度高）。下列为当初倾向 SolidJS 的考量，保留作决策记录。
 
 - Consistent with OpenCode's existing `packages/app`
 - Fine-grained reactivity model suits real-time SSE streaming
@@ -1867,3 +1071,853 @@ The following features are planned for Phase 2:
 - **Web/Mobile Clients**: Lightweight browser and mobile clients
 - **Session Coordination Hub**: Cross-surface session continuity and identity federation
 - **Workspace Central Registry**: N:1 workspace-to-project mapping
+
+---
+
+# Part II · 规划中（未实现 · 设计草案）
+
+> 以下内容为 **设计草案，尚未实现**（原散落在 Part I 各处，现统一收拢）。AI 阅读现状时可跳过本部分；实现这些模块时再参考。
+> 更宏观的远期愿景（多端、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
+
+## 规划：连接抽象 @agent/connector
+
+> 🔲 未实现。Desktop / Channel Gateway 当前**直连 `@agent/api-client`**，未经 connector 抽象。
+
+### Connection Establishment (via @agent/connector)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Connection Flow (Local Mode)                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  createConnector({ mode: "local" })                                     │
+│       │                                                                  │
+│       ├──► server-manager.spawn()     → Start OpenCode binary           │
+│       │         │                                                        │
+│       │         └──► health.waitReady()  → Wait for server ready        │
+│       │                                                                  │
+│       └──► api-client.create(localUrl)  → Create SDK instance           │
+│                 │                                                        │
+│                 └──► Return Connection { client, status, ... }          │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Connector API
+
+```typescript
+// @agent/connector/src/types.ts
+
+interface ConnectionConfig {
+  mode: "local" | "remote"
+  
+  // Local mode options (Desktop)
+  local?: {
+    binary?: string           // Path to opencode binary (default: auto-detect)
+    workingDir?: string       // Project directory (default: cwd)
+    port?: number             // Server port (default: auto-assign)
+    autoRestart?: boolean     // Restart on crash (default: true)
+  }
+  
+  // Remote mode options (Channel Gateway)
+  remote?: {
+    baseUrl: string           // e.g., "https://agent.company.com"
+    apiKey?: string           // API key authentication
+    jwt?: string              // JWT token authentication
+    timeout?: number          // Connection timeout (default: 30000ms)
+  }
+  
+  // Common options
+  healthCheckInterval?: number  // Health check interval (default: 5000ms)
+  reconnect?: {
+    enabled: boolean          // Auto-reconnect on disconnect (default: true)
+    maxRetries?: number       // Max retry attempts (default: Infinity)
+    backoff?: "linear" | "exponential"  // Backoff strategy (default: exponential)
+  }
+}
+
+interface Connection {
+  readonly client: ApiClient           // OpenCode API client
+  readonly status: ConnectionStatus    // Current connection status
+  readonly mode: "local" | "remote"    // Active connection mode
+  
+  connect(): Promise<void>             // Establish connection
+  disconnect(): Promise<void>          // Close connection
+  reconnect(): Promise<void>           // Force reconnection
+  
+  onStatusChange(cb: (status: ConnectionStatus) => void): () => void
+  onError(cb: (error: ConnectionError) => void): () => void
+}
+
+type ConnectionStatus = 
+  | { state: "disconnected" }
+  | { state: "connecting" }
+  | { state: "connected"; serverVersion: string }
+  | { state: "reconnecting"; attempt: number }
+  | { state: "error"; error: ConnectionError }
+```
+
+### Connection Mode by Client
+
+| Client | Default Mode | Notes |
+|--------|-------------|-------|
+| Desktop | `local` | Spawns OpenCode as sidecar |
+| Channel Gateway | `remote` | Connects to shared/deployed server |
+
+### Connector Usage Example
+
+```typescript
+// Desktop App - Local mode
+const conn = createConnector({
+  mode: "local",
+  local: {
+    workingDir: "/path/to/project",
+    autoRestart: true
+  }
+})
+await conn.connect()
+
+// Use API after connection
+const session = await conn.client.sessionCreate()
+await conn.client.sessionPrompt(session.id, { ... })
+```
+
+### Desktop Client Flow
+
+```
+App startup
+  -> createConnector({ mode: "local" })
+    -> conn.connect()
+      -> Connection established
+  -> Load workspace context
+
+User input
+  -> conn.client.sessionPrompt(sessionId)
+    -> OpenCode Server
+      -> SSE Stream response
+        -> api-client.events.subscribe()
+          -> ui renders chunks in real time
+
+If permission requested:
+  -> ui/permission dialog
+    -> api-client.permissionReply()
+
+Session end
+  -> workspace.extractFacts(session.messages)
+    -> workspace.appendMemory(newFacts)
+    -> workspace.appendHistory(sessionSummary)
+```
+
+
+## 规划：Agent Workspace 持久化（IDENTITY / SOUL / MEMORY / HISTORY）
+
+> 🔲 未实现。`~/.ultrawork/` 目录已存在并被 Gateway/Knowledge 等使用（见 Part I「~/.ultrawork/ 目录布局（现状）」），但下列 agent 身份/人格/记忆持久化文件与读写生命周期尚属设计草案。
+
+### Workspace Initialization
+
+On first application launch:
+
+```
+Desktop app starts
+  |
+  v
+@agent/workspace checks ~/.ultrawork/
+  |
+  v
+Does ~/.ultrawork/ exist?
+  |
+  ├── No  -> Full initialization:
+  │         1. Create ~/.ultrawork/ directory
+  │         2. Create config.json with version info
+  │         3. Create IDENTITY.md with default template
+  │         4. Create SOUL.md with default template
+  │         5. Create MEMORY.md and HISTORY.md with headers
+  │         6. Create cache/, credentials/, opencode/ subdirectories
+  │         7. Create opencode/config.json with defaults
+  │
+  └── Yes -> Verify structure integrity, create missing files with defaults
+  |
+  v
+Workspace ready. Load context for session.
+```
+
+### File Specifications
+
+#### IDENTITY.md -- Agent Identity (Factual)
+
+Defines **who** the agent is -- factual, stable attributes.
+
+```markdown
+# Identity
+
+## Profile
+- **Name**: Atlas
+- **Role**: Senior full-stack engineer
+- **Team**: Platform Engineering
+
+## Expertise
+- **Primary Languages**: TypeScript, Rust, Go
+- **Frameworks**: SolidJS, Hono, Tauri
+- **Domains**: Real-time systems, API design, database optimization
+```
+
+#### SOUL.md -- Agent Personality & Style
+
+Defines **how** the agent behaves -- personality traits, communication style.
+
+```markdown
+# Soul
+
+## Personality
+- Concise and direct; avoid unnecessary preamble
+- Prefer working code over lengthy explanations
+- Challenge assumptions when you spot design flaws
+
+## Communication Style
+- Use technical terminology without simplification
+- When suggesting changes, show diffs not descriptions
+- Ask clarifying questions before making large refactors
+
+## Work Approach
+- Read existing code before proposing changes
+- Favor minimal, focused changes over sweeping refactors
+- Run tests after every modification
+
+## Boundaries
+- Never commit directly to main branch
+- Always run tests before declaring a task complete
+- Flag security-sensitive changes for human review
+```
+
+#### HEARTBEAT.md -- Periodic Status Snapshot
+
+Written by `@agent/proactive-heartbeat` on a schedule.
+
+```markdown
+# Heartbeat
+
+> Auto-generated by agent. Do not edit manually.
+> Last updated: 2026-03-02T14:30:00Z
+
+## Status: In Progress
+
+## Active Sessions
+
+### feature/auth-flow (session-abc123)
+- **State**: Working
+- **Summary**: Implementing JWT token refresh. Middleware interceptor done.
+- **Recent Tools**: Write(src/auth/refresh.ts), Bash(bun test)
+- **Test Results**: 42 passed, 2 failing
+
+## Since Last Heartbeat (14:00 -> 14:30)
+- Completed: Auth middleware integration
+- In Progress: Token storage layer
+- Issues: 2 test failures in expiry edge cases
+```
+
+#### MEMORY.md -- Long-term Factual Memory
+
+Distilled knowledge the agent has learned across all projects and sessions.
+
+```markdown
+# Memory
+
+> Agent-managed long-term memory. Auto-updated at session end.
+> Facts are deduplicated and consolidated periodically.
+
+## Project Facts
+- Database: PostgreSQL 15 with row-level security enabled
+- CI requires Node 20 (not 22); see .github/workflows/ci.yml
+- The `utils/` directory is deprecated; use `lib/` for new utilities
+
+## User Preferences
+- Prefers functional style over class-based components
+- Wants explicit error types, not string error messages
+
+## Codebase Patterns
+- All API routes follow the pattern: src/api/v1/<resource>/route.ts
+- Database queries use Drizzle ORM; raw SQL only in migrations
+
+## Gotchas & Pitfalls
+- The `session` table has a unique constraint on (user_id, slug)
+- File watcher in dev mode triggers double rebuilds; debounce with 200ms delay
+```
+
+#### HISTORY.md -- Chronological Event Log
+
+A timeline of significant agent actions and discoveries.
+
+```markdown
+# History
+
+> Chronological event log. Append-only. Rotated periodically.
+> Each entry includes timestamp and summary of actions taken.
+
+## 2026-03-02T14:30:00Z
+Auth middleware integration complete
+- Implemented JWT refresh token rotation in src/auth/refresh.ts
+- 2 tests still failing (edge cases in token expiry)
+
+## 2026-03-02T09:15:00Z
+Database migration v4 applied
+- Added `refresh_token` column to `sessions` table
+```
+
+### Workspace Integration Model
+
+`@agent/workspace` is a **library** (not a service or process). Rather than each consumer independently loading context, workspace context flows through `@agent/connector` as the centralized integration point. All consumers already use `connector` to talk to OpenCode Server, so workspace context injection and fact extraction happen at the connector level.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                  Workspace Context Integration (Option C)                 │
+│                                                                           │
+│            ┌─────────────┐                                               │
+│            │  @agent/     │──── loadContext() ────┐                       │
+│            │  workspace   │                       │                       │
+│            │  (library)   │◄── appendMemory() ────┤                       │
+│            │              │◄── appendHistory() ───┤                       │
+│            └──────┬───────┘                       │                       │
+│                   │ file I/O (flock)              │                       │
+│                   v                               │                       │
+│            ~/.ultrawork/                          │                       │
+│            ├── IDENTITY.md                        │                       │
+│            ├── SOUL.md                  ┌─────────┴──────────┐           │
+│            ├── MEMORY.md                │  @agent/connector   │           │
+│            └── HISTORY.md               │  (integration hub)  │           │
+│                                         │                     │           │
+│                                         │  sessionCreate():   │           │
+│                                         │   1. loadContext()   │           │
+│                                         │   2. inject system   │           │
+│                                         │      prompt          │           │
+│                                         │                     │           │
+│                                         │  onSessionEnd():    │           │
+│                                         │   1. extractFacts() │           │
+│                                         │   2. appendMemory() │           │
+│                                         │   3. appendHistory()│           │
+│                                         └──────────┬──────────┘           │
+│                                                    │                      │
+│                        ┌───────────────────────────┼──────────────┐       │
+│                        │                           │              │       │
+│                   Desktop App             Channel Gateway   Proactive     │
+│                   (local mode)            (remote mode)     Services      │
+│                                                                           │
+│  Desktop UI also writes directly to workspace files for user settings:   │
+│  - Update IDENTITY.md (agent name, role, expertise)                      │
+│  - Update SOUL.md (personality, communication style)                     │
+│  - Review/edit MEMORY.md (manual curation)                               │
+│  These are user-initiated, single-writer, no concurrency concern.        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this approach works:**
+
+| Consumer | Connector Mode | How it gets workspace context |
+|----------|---------------|-------------------------------|
+| Desktop App | `local` | Connector calls `workspace.loadContext()` locally, injects into session |
+| Channel Gateway | `remote` | Connector on server side injects context; gateway gets it via session |
+| Heartbeat | `local` | Same connector; context injected into analysis session |
+| Cron | `local` | Same connector; context injected into job session |
+
+**Concurrency model:**
+
+- `loadContext()` is read-only, safe for parallel callers
+- `appendMemory()` and `appendHistory()` use advisory file locks (`flock`) to serialize writes
+- Desktop UI writes (IDENTITY.md, SOUL.md edits) are user-initiated and single-writer by nature
+- Heartbeat writes to HEARTBEAT.md exclusively (no other writer)
+
+### Read/Write Lifecycle
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Session Lifecycle                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  SESSION START (handled by @agent/connector)                     │
+│  1. connector intercepts sessionCreate()                         │
+│  2. connector calls workspace.loadContext():                     │
+│     - Read IDENTITY.md -> agent identity for system prompt       │
+│     - Read SOUL.md     -> personality/style for system prompt    │
+│     - Read MEMORY.md   -> relevant facts for context             │
+│     - Read HISTORY.md  -> recent events for temporal context     │
+│  3. connector injects context bundle as system prompt prefix     │
+│  4. connector forwards to OpenCode session creation              │
+│  5. All consumers (Desktop, Gateway, Proactive) get this         │
+│     behavior automatically -- no per-consumer logic needed       │
+│                                                                   │
+│  DURING SESSION                                                   │
+│  6. @agent/proactive-heartbeat may update HEARTBEAT.md           │
+│     (independent timer, not tied to session)                     │
+│                                                                   │
+│  SESSION END (handled by @agent/connector)                       │
+│  7. connector detects session completion                         │
+│  8. connector calls workspace.extractFacts(session.messages):    │
+│     -> LLM extracts new facts, preferences, patterns, gotchas   │
+│  9. connector calls workspace.appendMemory(newFacts)             │
+│     -> Deduplicates against existing entries (with flock)        │
+│  10. connector calls workspace.appendHistory(sessionSummary)     │
+│     -> Structured event entry with timestamp (with flock)        │
+│                                                                   │
+│  PERIODIC (via @agent/proactive-cron)                            │
+│  11. Memory consolidation: LLM merges duplicates in MEMORY.md   │
+│  12. History rotation: archive on size/date boundary             │
+│                                                                   │
+│  DESKTOP UI (direct file writes)                                 │
+│  13. User edits IDENTITY.md via settings page -> direct write    │
+│  14. User edits SOUL.md via settings page -> direct write        │
+│  15. User reviews/curates MEMORY.md -> direct write              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration
+
+```typescript
+interface WorkspaceConfig {
+  root: string                      // ~/.ultrawork/ path (default: os.homedir()/.ultrawork)
+
+  identity: {
+    enabled: boolean                // Include identity in sessions (default: true)
+  }
+
+  soul: {
+    enabled: boolean                // Inject personality into sessions (default: true)
+    maxPromptLength: number         // Truncate if too long (default: 2000 chars)
+  }
+
+  memory: {
+    enabled: boolean                // Enable memory read/write (default: true)
+    extractOnSessionEnd: boolean    // Auto-extract facts after session (default: true)
+    maxFileSize: number             // Max MEMORY.md size (default: 100KB)
+  }
+
+  history: {
+    enabled: boolean                // Enable event logging (default: true)
+    rotationPolicy: "monthly" | "weekly" | "size"
+    maxSizeBytes: number            // Max size before rotation (default: 1MB)
+    maxArchives: number             // Keep N archived history files (default: 6)
+  }
+
+  opencode: {
+    enabled: boolean                // Scaffold opencode/ config (default: true)
+  }
+}
+```
+
+
+## Proactive Services Layer
+
+> 🔲 未实现（设计草案）。Heartbeat / Cron 两个后台服务及 `@agent/notifier` 均未落地。
+
+Proactive Services are **independent background services** that autonomously initiate LLM interactions on a schedule.
+
+### Design Principles
+
+1. **Independent Services** - Each proactive service runs as its own process
+2. **Token-Cost Aware** - Every scheduled LLM call costs tokens; services provide clear cost visibility
+3. **Non-Intrusive** - Results are written to files and/or pushed as notifications
+4. **Configurable** - Users control intervals, schedules, notification targets
+5. **Resilient** - Gracefully handle OpenCode unavailability
+
+### Heartbeat Service
+
+Independent background service that periodically inspects session state, uses LLM to produce a structured progress summary, and writes it to `.agent/HEARTBEAT.md`.
+
+#### Execution Flow
+
+```
+Timer fires (every N minutes, default 30)
+  |
+  v
+Collector: query OpenCode API
+  - List active sessions
+  - Get recent messages per session
+  - Get tool execution history
+  |
+  v
+Analyzer: send collected state to LLM
+  - Summarize what was accomplished
+  - Identify current task status
+  - Flag potential issues
+  - Determine notification urgency
+  |
+  v
+Writer: update .agent/HEARTBEAT.md
+  - Atomic write (write to temp, rename)
+  - Git-friendly format
+  |
+  v
+Notifier: push to configured targets (if notable/urgent)
+  - Normal: file only
+  - Notable: file + desktop notification
+  - Urgent: file + desktop notification (high priority)
+```
+
+#### Configuration
+
+```typescript
+interface HeartbeatConfig {
+  enabled: boolean               // Master switch (default: true)
+  interval: number               // Minutes between heartbeats (default: 30)
+  output: string                 // Output file path (default: ".agent/HEARTBEAT.md")
+  model?: string                 // LLM model for analysis
+  notify: NotifyConfig           // Notification configuration
+}
+```
+
+### Cron Service
+
+Independent background service with HTTP API that manages and executes scheduled LLM-powered tasks.
+
+#### HTTP API
+
+```
+POST   /api/jobs          Create a new cron job
+GET    /api/jobs          List all jobs (with status)
+GET    /api/jobs/:id      Get job details
+PUT    /api/jobs/:id      Update job definition
+DELETE /api/jobs/:id      Delete a job
+POST   /api/jobs/:id/run  Trigger immediate execution
+GET    /api/history       List execution history
+```
+
+#### Schedule Types
+
+| Type | Format | Example |
+|------|--------|---------|
+| Cron expression | Standard 5-field cron | `0 9 * * 1-5` (weekdays at 9:00) |
+| Interval | Duration string | `2h` (every 2 hours) |
+| Fixed time | ISO time | `09:00` (daily at 9:00 local time) |
+
+#### Job Definition
+
+```typescript
+interface CronJob {
+  id: string
+  name: string                     // Human-readable name
+  schedule: CronSchedule           // When to execute
+  prompt: string                   // The prompt to send to OpenCode
+  agent?: string                   // Agent to use (default: "build")
+  output: JobOutput                // How to deliver results
+  notify?: NotifyConfig            // Notification targets
+  enabled: boolean                 // Enable/disable toggle
+  maxRetries: number               // Retry on failure (default: 1)
+  timeout: number                  // Max execution time in ms
+}
+```
+
+#### Built-in Job Templates
+
+| Template | Purpose | Default Schedule |
+|----------|---------|-----------------|
+| `dependency-check` | Scan for outdated/vulnerable dependencies | Weekly (Mon 9:00) |
+| `code-review` | Review uncommitted changes for issues | Daily (18:00) |
+| `test-health` | Run tests and summarize failures | Every 4 hours |
+| `progress-report` | Generate progress summary from git log | Weekly (Fri 17:00) |
+
+
+## Process Lifecycle Model
+
+> 🔲 未实现（设计草案）。进程注册表 `~/.ultrawork/daemon.json`、detach-on-exit、heartbeat watchdog、auto-idle 等均未落地——当前 Desktop/Gateway 用固定端口（4096/4097），Gateway 为 Tauri sidecar 与桌面端同生同死。
+
+### Overview
+
+The system adopts a **detach-on-exit** strategy: the Desktop App spawns OpenCode Server as a sidecar, but **detaches** it on exit instead of killing it. This allows proactive services (heartbeat, cron) and the Channel Gateway to continue operating after the desktop window is closed. On the next launch, the desktop discovers the existing server and reconnects.
+
+### Process Classification
+
+| Process | Lifecycle | Managed By |
+|---------|-----------|------------|
+| Desktop App (Tauri) | **Ephemeral** -- starts/stops with user interaction | OS / user |
+| OpenCode Server | **Resident** -- survives desktop exit, reattached on next launch | `server-manager` + process registry |
+| Heartbeat Service | **Resident** -- independent background process | self-managed, reads process registry |
+| Cron Service | **Resident** -- independent background process with HTTP API | self-managed, reads process registry |
+| Channel Gateway | **Sidecar** -- Tauri 托管，与桌面端同生同死 | ✅ `server-manager` 管理 (bun build --compile, :4097)。实际为 Tauri sidecar，非独立部署 |
+
+### Process Registry
+
+All managed processes register in `~/.ultrawork/daemon.json`. This is the single source of truth for process discovery. **🔲 尚未实现** — 当前 Desktop 和 Gateway 使用固定端口 (4096/4097)，无进程注册表。
+
+```jsonc
+// ~/.ultrawork/daemon.json
+{
+  "version": 1,
+  "opencode": {
+    "pid": 12345,
+    "port": 4096,
+    "password": "auto-generated-secret",
+    "workingDir": "/Users/alice/projects/my-app",
+    "startedAt": "2026-03-02T10:00:00Z",
+    "startedBy": "desktop"           // "desktop" | "cli" | "proactive"
+  },
+  "heartbeat": {
+    "pid": 12350,
+    "startedAt": "2026-03-02T10:00:05Z"
+  },
+  "cron": {
+    "pid": 12355,
+    "port": 4097,
+    "startedAt": "2026-03-02T10:00:05Z"
+  }
+}
+```
+
+File locking: all writes to `daemon.json` use advisory file lock (`flock`) to prevent race conditions between desktop and proactive services.
+
+### Desktop Startup Flow
+
+```
+Desktop app launches
+  |
+  v
+server-manager reads ~/.ultrawork/daemon.json
+  |
+  ├── Entry exists?
+  │     |
+  │     ├── Yes --> Health check: GET http://127.0.0.1:{port}/global/health
+  │     │     |
+  │     │     ├── Healthy --> Reuse (reconnect). Done.
+  │     │     |
+  │     │     └── Unreachable / wrong PID
+  │     │           |
+  │     │           v
+  │     │         Clean stale entry from daemon.json
+  │     │           |
+  │     │           v
+  │     │         (fall through to spawn)
+  │     |
+  │     └── No entry
+  │           |
+  v           v
+  Spawn new OpenCode Server
+    |
+    v
+  Write { pid, port, password, workingDir, startedAt } to daemon.json
+    |
+    v
+  Wait for health check pass
+    |
+    v
+  Also start heartbeat + cron if not already running (check their PIDs)
+    |
+    v
+  Connection established. Desktop ready.
+```
+
+### Desktop Exit Flow
+
+```
+User closes desktop window
+  |
+  v
+Desktop exit handler:
+  1. Flush any pending workspace writes (MEMORY.md, HISTORY.md)
+  2. Do NOT kill OpenCode Server process
+  3. Do NOT kill heartbeat/cron processes
+  4. Optionally show system tray icon (user preference)
+  5. Exit Tauri process
+  |
+  v
+OpenCode Server continues running (detached)
+Heartbeat continues on schedule
+Cron continues executing jobs
+```
+
+User preference controls exit behavior:
+
+| Setting | Behavior |
+|---------|----------|
+| `exitMode: "background"` (default) | Close window, server stays alive, tray icon shown |
+| `exitMode: "minimize"` | Minimize to tray (desktop process stays alive too) |
+| `exitMode: "quit"` | Full shutdown: kill server + proactive services + exit |
+
+### Working Directory Switching
+
+OpenCode Server is project-scoped (bound to a working directory). When the user switches projects in the Desktop UI:
+
+```
+User switches to project B (currently on project A)
+  |
+  v
+server-manager checks daemon.json
+  |
+  ├── workingDir == project B? --> Already correct, no action
+  |
+  └── workingDir == project A
+        |
+        v
+      Gracefully shutdown current OpenCode Server
+      (wait for active sessions to drain, timeout 10s)
+        |
+        v
+      Spawn new OpenCode Server with workingDir = project B
+        |
+        v
+      Update daemon.json with new pid, port, workingDir
+        |
+        v
+      Proactive services automatically pick up new server via registry
+```
+
+Note: Phase 1 supports **one active OpenCode Server at a time** per user. Multi-project concurrent servers are deferred to Phase 2.
+
+### Crash Recovery (Resident Processes)
+
+With the desktop potentially closed, a separate crash recovery mechanism is needed for the detached server.
+
+**Primary watchdog: Heartbeat Service**
+
+The heartbeat service already polls OpenCode on its interval (default 30 min). It is extended to act as a lightweight watchdog:
+
+```
+Heartbeat timer fires
+  |
+  v
+Read daemon.json for OpenCode connection info
+  |
+  v
+Health check: GET http://127.0.0.1:{port}/global/health
+  |
+  ├── Healthy --> Proceed with normal heartbeat (collect, analyze, write)
+  |
+  └── Unreachable
+        |
+        v
+      Verify PID is dead (kill -0 {pid})
+        |
+        ├── Process alive but unresponsive
+        │     |
+        │     v
+        │   Wait 30s, retry health check
+        │     |
+        │     ├── Recovered --> Continue
+        │     └── Still dead --> Force kill PID, then restart
+        |
+        └── Process dead
+              |
+              v
+            Restart OpenCode Server:
+              1. Read workingDir from daemon.json
+              2. Spawn new server (same working dir)
+              3. Update daemon.json with new PID/port
+              4. Write restart event to HEARTBEAT.md
+              5. Notify via @agent/notifier (desktop notification if app running, IM if configured)
+              |
+              v
+            If restart fails after 3 attempts:
+              1. Write failure to HEARTBEAT.md
+              2. Send urgent notification
+              3. Stop retry, wait for next heartbeat cycle or desktop launch
+```
+
+**Heartbeat self-recovery**: if the heartbeat service itself crashes, the next desktop launch detects its PID is dead (via daemon.json) and restarts it.
+
+**Cron self-recovery**: same pattern -- desktop launch checks cron PID, restarts if dead.
+
+### Clean Shutdown
+
+Full system shutdown can be triggered from:
+
+1. **Desktop UI**: "Quit Agent" menu action (vs "Close Window")
+2. **System tray**: "Quit" option
+3. **CLI** (future): `ultrawork stop`
+
+Shutdown sequence:
+
+```
+Quit signal received
+  |
+  v
+1. Signal cron service to stop (graceful: finish current job, max 30s)
+2. Signal heartbeat to stop (graceful: finish current cycle)
+3. Signal OpenCode Server to shutdown (graceful: drain sessions, max 10s)
+4. Wait for all processes to exit (timeout 15s, then SIGKILL)
+5. Remove daemon.json entries (or clear the file)
+6. Exit desktop process
+```
+
+### Auto-Idle Shutdown
+
+To prevent indefinite resource consumption when the user is away:
+
+```
+OpenCode Server tracks last activity timestamp:
+  - Last session.prompt call
+  - Last heartbeat inspection
+  - Last cron job execution
+
+If no activity for N hours (default: 4, configurable):
+  1. Heartbeat writes "idle shutdown" event to HEARTBEAT.md
+  2. Heartbeat sends notification: "Agent going to sleep due to inactivity"
+  3. Heartbeat triggers clean shutdown of OpenCode Server
+  4. Proactive services enter standby (stop polling, keep process alive)
+  5. Next desktop launch wakes everything up (normal startup flow)
+```
+
+### System Tray Integration
+
+When `exitMode: "background"` (default), the desktop shows a system tray icon:
+
+| Tray State | Icon | Tooltip |
+|------------|------|---------|
+| Server running, desktop open | Green dot | "Agent active" |
+| Server running, desktop closed | Gray dot | "Agent running in background" |
+| Server crashed / stopped | Red dot | "Agent stopped" |
+
+Tray menu:
+
+```
+- Open Desktop          (show/focus main window)
+- Current Project: my-app
+- Status: Running (2 sessions)
+- ---
+- Pause Proactive Services
+- ---
+- Quit Agent             (full shutdown)
+```
+
+### Summary: Process Lifecycle State Machine
+
+```
+                    ┌──────────────────────────────────────────┐
+                    │         Desktop App Launches              │
+                    │  server-manager reads daemon.json         │
+                    └─────────────────┬────────────────────────┘
+                                      │
+                          ┌───────────┴───────────┐
+                          │                       │
+                    Server found?           Not found
+                    Health OK?                    │
+                          │                       │
+                        Yes                 Spawn server
+                          │               Write daemon.json
+                          │                Start proactive
+                          │                       │
+                          └───────────┬───────────┘
+                                      │
+                                      v
+                              ┌───────────────┐
+                              │   RUNNING      │
+                              │ Desktop + Svr  │
+                              │ + Proactive    │
+                              └───────┬───────┘
+                                      │
+                              Desktop closes
+                              (exitMode: background)
+                                      │
+                                      v
+                              ┌───────────────┐
+                              │  BACKGROUND    │◄── Heartbeat acts as watchdog
+                              │  Server alive  │    Cron runs on schedule
+                              │  No desktop UI │    Auto-idle shutdown timer
+                              └───────┬───────┘
+                                      │
+                         ┌────────────┼────────────┐
+                         │            │            │
+                   Desktop      Idle timeout   Crash detected
+                   re-opens    (4h default)    (heartbeat)
+                         │            │            │
+                         v            v            v
+                      RUNNING    STANDBY      RECOVERY
+                                (proactive    (restart or
+                                 paused)      notify failure)
+```
+

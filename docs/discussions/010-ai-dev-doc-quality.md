@@ -238,4 +238,15 @@
 | 5 流程（B1/B2/F1） | `CLAUDE.md` 加「记忆与文档分工」节 + 收尾 Step 3 加 MEMORY 体检 + Step 3.5 漂移校验；新建 **`docs/quality-gates.md`** |
 | 6 整理（E/G） | discussions README 加「调研记录 vs 讨论中」状态语义；`architecture-full.md` 顶部标注「远期愿景·非当前实现」；清理候选按用户选择**只标注不删除** |
 
-**未来可叠加**（本轮未做，非阻塞）：check-docs 接 pre-commit / CI；给其余超长 ADR（026/021、discussion 001/003）补 TL;DR。
+### P2 架构文档重构（2026-06-06 补做，分支 `docs/quality-system-hardening`）
+
+第 6 步遗留的两份大架构文档重构（原第二轮 P1 暂留「待下一轮」）已执行，经用户确认两项策略：
+
+| 文档 | 落地内容 |
+|------|---------|
+| `architecture-phase1.md`（1869→1919 行） | 拆 **Part I 现状 / Part II 规划中（🔲 设计草案）**：connector 抽象、Agent Workspace 身份/记忆持久化（IDENTITY/SOUL/MEMORY/HISTORY + 读写生命周期）、Proactive Services、Process Lifecycle 进程注册表 → 统一下移 Part II；Part I 前半保持纯现状。顶部加 TL;DR + 目录。`~/.ultrawork/` 现状布局留 Part I（✅ 已实现目录 vs 🔲 规划文件分清）。 |
+| `architecture-full.md`（4732→4540 行） | **超集文档**（Phase-1/2 同章节交织，无法整章删）→ 用户选「只删纯重叠段 + 表内瘦身」：删 connector 数据流 / Key APIs / Build / Updating（−197 行，改指针）；Module Overview 表已实现包行瘦身为指针；旧 `.agent/` per-project 模型标注「已被 `~/.ultrawork/` 取代」；彻底 SolidJS→React（留决策记录）；标题/顶部收敛为「远期愿景 Phase 2+」。 |
+
+> 关键判断：full.md 并非可按整章删除的「16 个 Phase-1 章节」，而是 Phase-1/2 在 Directory/System Architecture/Feature Summary 等共享章节内**逐行交织**的超集——整章删会丢 Phase-2 内容（hub/supervisor/web/mobile/context/control-plane 包）。故采用「纯重叠段删除 + 交织章节表内瘦身/指针」。check:docs 0 漂移。
+
+**未来可叠加**（本轮未做，非阻塞）：check-docs 接 pre-commit / CI；给其余超长 ADR（026/021、discussion 001/003）补 TL;DR；full.md 的大 ASCII 目录树仍含 Phase-1 包细节（本轮以顶部指针标注、未逐包拆解，留作进一步瘦身候选）。
