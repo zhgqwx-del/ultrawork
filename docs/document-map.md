@@ -1,6 +1,7 @@
 # Ultrawork 文档地图
 
-> 全部文档约 64 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
+> 全部文档约 70 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
+> （计数为约数，非权威；准确性由 `scripts/check-docs.ts` 校验 ADR/路径等可机检项。）
 
 ## 目录树
 
@@ -18,7 +19,9 @@ ultrawork/
 │   ├── architecture-full.md           #   完整架构设计：含 Control Plane、多端、企业管理（暂未纳入开发索引）
 │   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台
 │   ├── api-reference.md               #   API 参考：OpenCode Server 全部端点、请求/响应格式、认证
-│   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（从 MEMORY.md 提炼）
+│   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（正向模式）
+│   ├── gotchas.md                      #   踩坑清单：OpenCode/MCP/Gateway/IMA/Tauri 反向陷阱 + 上游非直觉契约（SSOT，从 MEMORY 固化）
+│   ├── quality-gates.md                #   质量门禁：改动合入/收尾前的完成定义 checklist
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
 │   ├── requirements.md                #   需求文档：产品功能需求与验收标准
 │   ├── knowledge-base-replication-guide.md  # 知识库能力复制指南：组件清单 + 触发/噪音控制 + 启动方式 + 目标 Agent prompt
@@ -41,16 +44,18 @@ ultrawork/
 │   │   ├── 028-release-readiness-hardening.md # 发布前 readiness 硬化（ADR-027 由 feat/acp-support 分支预留）
 │   │   └── 029-execution-flow-turn-grouping.md # 主对话「执行流程」收纳 — 回合级消息分组与过程/答案分层
 │   │
-│   ├── discussions/                   # ═══ 讨论层（探索阶段，可能演变为 ADR）═══
-│   │   ├── README.md                  #   讨论索引
+│   ├── discussions/                   # ═══ 讨论层（探索/调研，提案可能演变为 ADR）═══
+│   │   ├── README.md                  #   讨论索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」）
 │   │   ├── 001-mobile-relay.md        #   移动端与桌面端通信 — Relay Server 方案
+│   │   ├── 002-commercialization.md   #   商业化方案讨论
 │   │   ├── 003-sidecar-sharing.md     #   OpenCode Sidecar 能力共享 — 多进程复用
 │   │   ├── 004-opencode-multi-agent.md  # OpenCode 多 Agent 机制调研
 │   │   ├── 005-permission-question-dock.md  # Permission/Question Dock 机制调研
 │   │   ├── 006-custom-llm-provider.md #   自定义 LLM Provider 机制调研
 │   │   ├── 007-opencode-builtin-tools.md  # OpenCode 内置工具全景调研
 │   │   ├── 008-opencode-builtin-agents-orchestration.md  # 内置 Agent 全景与 runLoop 引擎
-│   │   └── 009-tauri-vs-electron.md     #   桌面端框架调研 — Tauri vs Electron 迁移评估
+│   │   ├── 009-tauri-vs-electron.md     #   桌面端框架调研 — Tauri vs Electron 迁移评估
+│   │   └── 010-ai-dev-doc-quality.md    #   AI 驱动开发的文档质量保障体系 — 诊断与优化方案
 │   │
 │   └── archive/                       # ═══ 历史归档层 ═══
 │       ├── progress-raw.md            #   完整开发进度（Phase 1 → Round 15 全部记录）
@@ -84,7 +89,9 @@ ultrawork/
 │
 └── (Claude Code auto-memory)          # ═══ AI 工作记忆（本地，不入 git）═══
     │  实际位置：~/.claude/projects/<project-hash>/memory/（非项目内 .claude/memory/）
-    ├── MEMORY.md                      #   Claude 跨 session 记忆（环境/API/状态索引）
+    ├── MEMORY.md                      #   索引 + 瞬时状态（< 200 行；稳定知识已下沉到 git 文档）
+    ├── acp-branch.md                  #   ACP feat/acp-support 分支专题（main 无此功能）
+    ├── vendor-opencode-bump-survey.md #   vendor/opencode 升级调研记录
     ├── dingtalk-channel-plan.md       #   钉钉渠道方案详细记录
     ├── vendor-patches.md              #   Vendor 补丁记录
     └── project_sidecar_process_cleanup.md  # Sidecar 进程清理方案记录
@@ -127,18 +134,20 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
+| **功能层** | `docs/*.md` | 14 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 29 (README + 28 ADR) | 架构师/新成员 | 有重大决策时新增 |
-| **讨论层** | `docs/discussions/` | 9 (README + 8) | 架构师 | 探索阶段记录 |
+| **讨论层** | `docs/discussions/` | 11 (README + 10) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
-| **AI 记忆** | auto-memory (本地) | 4 | Claude Code | 每次 session |
+| **AI 记忆** | auto-memory (本地) | 6 | Claude Code | 每次 session |
 
 ## 维护规则
 
 1. **根目录只保留 4 个 .md**：README、AGENTS、CLAUDE、CHANGELOG
 2. **新功能文档**放 `docs/`，新决策放 `docs/decisions/NNN-*.md`
-3. **任务收尾**更新 CHANGELOG → 同步 conventions.md → 如有 ADR 则新建（详见 CLAUDE.md）
+3. **任务收尾**更新 CHANGELOG → 同步 staging（conventions.md / gotchas.md）→ 如有 ADR 则新建（详见 CLAUDE.md）
 4. **归档只追加不修改**，保证历史可追溯
 5. **设计资料**不入 git 主仓（`.gitignore` 排除 .fig 和 prototype/node_modules）
-6. **`.claude/memory/`** 是 Claude Code 本地工作记忆，不入版本控制（已在 `.gitignore` 中排除）。GitHub 上看不到此目录
+6. **`.claude/memory/`** 是 Claude Code 本地工作记忆，不入版本控制（已在 `.gitignore` 中排除）。GitHub 上看不到此目录。**稳定的团队知识不要只留在此**——应固化到 git 文档（见 CLAUDE.md §记忆与文档分工）
+7. **SSOT 原则**：每类事实指定唯一权威源（API 端点→`api-reference.md`、坑点→`gotchas.md`、命令→`getting-started.md`、关键文件→`AGENTS.md`），其余位置放摘要 + 链接，避免多副本漂移
+8. **漂移校验**：`bun run --bun scripts/check-docs.ts` 机检 ADR 计数 / 引用路径 / MEMORY 行数；收尾时运行

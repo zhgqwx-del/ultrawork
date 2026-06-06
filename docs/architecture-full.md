@@ -1,5 +1,9 @@
 # Desktop Agent - Monorepo Architecture Design
 
+> ⚠️ **远期愿景文档，非当前实现。** 本文描述的是完整目标架构（多端 Web/Mobile、企业管理、Control Plane、跨端协同等），**绝大部分尚未实现**。
+> **当前实际架构以 [`architecture-phase1.md`](./architecture-phase1.md) 为准**（含已实现模块的状态表与数据流）。读取本文时不要将其内容当作现状。
+> 未纳入开发索引；最后更新 2026-03-10。
+
 ## Overview
 
 A desktop-grade AI agent built on top of OpenCode's server capabilities, supporting:

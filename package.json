@@ -21,6 +21,7 @@
     "build:gateway": "bun run scripts/build-gateway.ts",
     "build:knowledge": "bun run scripts/build-knowledge.ts",
     "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
+    "check:docs": "bun run scripts/check-docs.ts",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",

@@ -86,12 +86,46 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - Health: `GET /global/health`
 - Model override: `prompt_async` `model` field `{ providerID, modelID }`
 
+## Key Files (关键文件地图)
+
+> main 分支文件。`feat/acp-support` 分支独有文件见该分支 / auto-memory `acp-branch.md`。
+
+**Desktop — chat / session 组件**
+- `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
+- `src/components/session/` — progress-panel, artifacts-panel, workspace-panel, artifact-preview, mcp-panel, skills-panel
+- `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）
+- `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
+- `src/components/settings/model-dialog.tsx` — ModelDialog + AddProviderDialog
+- `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
+
+**Desktop — hooks / lib**
+- `src/lib/sse-context.tsx` — SSEProvider + useSSESubscribe（全局单连接）
+- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止
+- `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback
+- `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
+- `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts` / `use-channels.ts` / `use-knowledge-base.ts`
+- `src/lib/path-utils.ts`（shortenPath/pathBasename）、`src/lib/platform.ts`（isMacOS）
+
+**Tauri 命令（`src-tauri/src/lib.rs`）**
+- `open_file_with_system`（`open`）、`reveal_file_in_finder`（`open -R`）、`get_sidecar_credentials`、`rich_path()`（补 PATH）
+
+**Gateway（`packages/channel/gateway/src/`）**
+- `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
+- `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, types.ts（ilink 协议类型）
+
+**Knowledge Sidecar（`packages/knowledge/sidecar/src/`）**
+- `store.ts`（SQLite + FTS5 + 迁移）, `chunker.ts`（Parent-Child 分块）, `indexer.ts`（增量索引）, `retriever.ts`（BM25 + TF-IDF + RRF）
+- `doc-parser.ts`（unpdf/mammoth/xlsx/jszip）, `watcher.ts`（fs.watch + debounce）, `mcp-bridge.ts`（knowledge_search/list_sources/save_note）
+- `adapters/` — types.ts（KnowledgeAdapter 接口）, registry.ts, ima.ts, local-folder.ts
+
 ## Key Documentation
 
 - [docs/architecture-phase1.md](./docs/architecture-phase1.md) — Phase 1 architecture design
-- [docs/api-reference.md](./docs/api-reference.md) — OpenCode API findings
-- [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (27 ADRs, 001–028 除 027)
+- [docs/api-reference.md](./docs/api-reference.md) — OpenCode API findings（端点权威源 / SSOT）
+- [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
+- [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
+- [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (28 ADRs, 001–029 除 027)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

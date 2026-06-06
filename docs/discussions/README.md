@@ -4,6 +4,10 @@
 
 > 与 `decisions/` (ADR) 的区别：ADR 记录已确定的技术决策；discussions 记录探索阶段的讨论，可能演变为 ADR，也可能被否决。
 
+**状态语义**（影响可信度，AI/读者据此判断该不该信赖）：
+- **调研记录**：对上游/现状的**事实性调研**（如 OpenCode 内置工具、Permission 机制、Tauri 现状）。结论可作为**权威参考**信赖，不是"待定提案"。
+- **讨论中**：尚未定论的**方案提案/评估**，可能被采纳或否决，不应当作既定事实引用。
+
 ## Index
 
 | 文件 | 主题 | 日期 | 状态 |
@@ -16,3 +20,4 @@
 | [007-opencode-builtin-tools.md](./007-opencode-builtin-tools.md) | OpenCode 内置工具全景调研 — 功能/使用场景/实现路径/启用条件 | 2026-06-04 | 调研记录 |
 | [008-opencode-builtin-agents-orchestration.md](./008-opencode-builtin-agents-orchestration.md) | OpenCode 内置 Agent 全景、相互调用机制与 runLoop 引擎 — 谁能调用谁/谁来调度/怎么驱动 | 2026-06-04 | 调研记录 |
 | [009-tauri-vs-electron.md](./009-tauri-vs-electron.md) | 桌面端框架调研 — Tauri 现状、Electron 对比、能力边界与迁移代价评估 | 2026-06-04 | 调研记录 |
+| [010-ai-dev-doc-quality.md](./010-ai-dev-doc-quality.md) | AI 驱动开发的文档质量保障体系 — 现状诊断与优化方案 | 2026-06-06 | 已落地 |
