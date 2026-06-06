@@ -3,6 +3,7 @@
 > ⚠️ **远期愿景文档，非当前实现。** 本文描述的是完整目标架构（多端 Web/Mobile、企业管理、Control Plane、跨端协同等），**绝大部分尚未实现**。
 > **当前实际架构以 [`architecture-phase1.md`](./architecture-phase1.md) 为准**（含已实现模块的状态表与数据流）。读取本文时不要将其内容当作现状。
 > 未纳入开发索引；最后更新 2026-03-10。
+> ⚠️ **技术栈已变更**：本文多处描述前端为 **SolidJS**，这是早期设想；实际实现为 **React 19 + Vite 7 + Tailwind 4 + Tauri 2**（见 phase1）。涉及框架的描述一律以 phase1 为准。
 
 ## Overview
 

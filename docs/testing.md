@@ -16,8 +16,12 @@
 | UI 组件 (session) | `desktop/src/components/session/` | 组件测试 | ✅ 大部分 |
 | UI 组件 (layout) | `desktop/src/components/layout/` | 组件测试 | ⚠️ 部分 |
 | Pages | `desktop/src/pages/` | 集成测试 | ⚠️ 部分 |
+| Channel Gateway | `packages/channel/gateway/src` | 单元测试 | ✅ 完全（120+ cases：bridge / channel-manager / adapters） |
+| Knowledge Sidecar | `packages/knowledge/sidecar/src` | 单元测试 | ⚠️ 覆盖薄（当前仅 `doc-parser.test.ts`，见下方缺口提示） |
 | Tauri 集成 | 原生功能 | E2E | ❌ 手动 |
 | OpenCode 联调 | 端到端流程 | E2E | ❌ 手动 |
+
+> ⚠️ **覆盖缺口（Knowledge Sidecar）**：`:4098` 是 Phase 1 已上线模块，但单测目前仅覆盖 `doc-parser`。`store`（SQLite/FTS5/迁移）、`chunker`（Parent-Child 分块）、`retriever`（BM25+TF-IDF+RRF）、`indexer`（增量索引）、`mcp-bridge`（跨源搜索）、各 `adapters`（IMA/local-folder）均缺测试。新增知识库功能时应补齐对应单测。
 
 ---
 
@@ -446,6 +450,14 @@ packages/client/desktop/
         permission-dock.test.tsx  # PermissionDock 组件
         question-dock.test.tsx    # QuestionDock 组件
         step-indicator.test.tsx   # StepIndicator 组件
+
+packages/channel/gateway/
+  src/                          # bridge / channel-manager / gateway-server /
+    *.test.ts                   # session-store / adapters（dingtalk + wechat），120+ cases
+
+packages/knowledge/sidecar/
+  src/
+    doc-parser.test.ts          # 文档解析（当前唯一；store/chunker/retriever/indexer/mcp-bridge/adapters 待补）
 ```
 
 ---

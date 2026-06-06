@@ -103,11 +103,14 @@ bun run build:opencode     # 重新编译 OpenCode sidecar
 bun run build:gateway      # 重新编译 Channel Gateway sidecar
 bun run build:knowledge    # 重新编译 Knowledge sidecar
 
-# Gateway 单元测试 (113 cases)
+# Gateway 单元测试 (120+ cases)
 cd packages/channel/gateway && bun run --bun vitest run
 
-# Desktop 单元测试 (123 cases)
+# Desktop 单元测试 (130+ cases)
 cd packages/client/desktop && bun run --bun vitest run
+
+# Knowledge Sidecar 单元测试
+cd packages/knowledge/sidecar && bun run --bun vitest run
 ```
 
 ## 端口说明

@@ -1,5 +1,9 @@
 # Config Isolation 手动测试计划
 
+> ℹ️ **状态（2026-06）**：本文是 ADR-020（配置隔离）的**手动测试计划**，最后更新 2026-04-24。配置隔离已落地。
+> 此后相关链路有演进未反映在此：**sidecar 凭证随机化 + MCP 配置路径收敛到全局 opencode.json**（见 [ADR-028](./decisions/028-release-readiness-hardening.md)）。
+> 通用的"改动合入前检查项"见 [`quality-gates.md`](./quality-gates.md) §2。本文保留作为 ADR-020 专项手动验证清单，重大变更时再同步或并入 quality-gates。
+
 对应 ADR: `docs/decisions/020-config-isolation.md`
 
 ## 前置条件

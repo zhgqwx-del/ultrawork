@@ -5,6 +5,15 @@
 **最后更新**: 2026-05-28（发布前 readiness review 调整：sidecar 位置 + MCP 配置写入路径）
 **关联**: ADR-019 (Withdrawn), ADR-013 (Gateway Sidecar 模式参考), ADR-028 (release-readiness 硬化)
 
+## TL;DR / 快速导览
+
+> ⚠️ 本文很长且经多次更新。读前先看本节，并注意区分「设计规划」与「已落地」。
+
+- **核心决策**：本地 RAG + 第三方平台（IMA）+ 自定义 API 统一收敛到单一 **Knowledge Sidecar (:4098) + MCP bridge**；AI 通过 MCP tool 自主调用（噪音优先立场，非 @ 触发）。
+- **已落地**（截至 2026-06）：Phase 1（本地 RAG/混合检索）+ 2（Parent-Child 分块/文档解析）+ 3（IMA adapter/统一 ID API/跨源搜索）+ 4a（IMA Notes）+ 4c（笔记写入）。
+- **仅规划、未实现**：检索增强（top-K/reranker）、Wiki 管理（上传/网页导入）、@ 触发——见文末「实现现状澄清」与 ADR 内 🔲 标记，**勿按设计理想当作现状**。
+- **关键约束**：MCP 配置只写全局 `~/.config/ultrawork/opencode.json`，禁止 `api.patchConfig` 写工作区（详见下方 2026-05-28 更新，对齐 ADR-020）。
+
 ## 2026-05-28 更新（详见 ADR-028）
 
 > **Sidecar 实际运行位置变更**：Knowledge sidecar binary 从直接由 `.app/Contents/MacOS/knowledge-sidecar` 启动，改为启动期复制到 `~/.ultrawork/sidecars/knowledge-sidecar` 后从此处运行（Option C）。MCP 注册写入 opencode.json 的路径也指向用户级副本，路径不再随 `.app` 移动或 dev→DMG 迁移失效。

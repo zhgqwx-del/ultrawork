@@ -3,6 +3,12 @@
 **日期**: 2026-04-23
 **关联**: ADR-004 (Structured Message Parts), ADR-008 (SSE Global + Polling Fallback), ADR-012 (Optimistic Message + Active Tracking)
 
+> ℹ️ **代码现状说明（2026-06）**：本 ADR「背景/分析」段引用的行号是**决策当时的快照**。此后 `Session.tsx`（原 763 行）已按 §2.1 方案拆分为 ~252 行组装层 + `useSessionMessages` / `useSessionPermission` / `useSessionScroll` 三个 hook（见 `src/lib/`）；`message-list.tsx` 现 ~143 行。定位代码以现有文件为准，勿按文中旧行号查找。
+
+## TL;DR
+
+长对话（100+ 轮）前端卡顿，根因是全量 message 数组 + 无 memo 导致每次 SSE 全表重渲染。三板斧：① 历史窗口分页加载（`getMessagesPaginated` + `X-Next-Cursor`）；② 逐项 memo（按 `part.id`/引用稳定性）；③ Session 组件拆分到 hook 降低重渲染范围。详见下文。
+
 ---
 
 ## 背景
