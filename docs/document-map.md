@@ -17,6 +17,7 @@ ultrawork/
 │   ├── getting-started.md             #   快速上手：依赖安装、Clone、启动、FAQ、AI 协作工作流
 │   ├── architecture-phase1.md         #   架构设计：Part I 已实现现状（系统架构图/模块职责/数据流）+ Part II 规划中设计草案
 │   ├── architecture-full.md           #   远期愿景架构（Phase 2+）：Control Plane、多端、企业管理、跨端协同（暂未纳入开发索引；已移除与 phase1 的重叠章节）
+│   ├── agent-os-target-architecture.md #  Agent OS 目标架构（开发起点）：ADR-027/030/031 + discussions 011-014 收敛；§0 决策基线表 + 渲染统一/connector/orchestrator 分层 + 阶段0-4 路线图
 │   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台
 │   ├── api-reference.md               #   API 参考：OpenCode Server 全部端点、请求/响应格式、认证
 │   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（正向模式）
@@ -137,7 +138,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 14 | 开发者 | 按需更新 |
+| **功能层** | `docs/*.md` | 15 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 32 (README + 31 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 11 (README + 10) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |

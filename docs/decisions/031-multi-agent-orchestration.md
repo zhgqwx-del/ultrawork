@@ -135,7 +135,8 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 - **战略**：openclaw+acpx / Jockey 已在做编排；Ultrawork 差异化仍须靠 ACP 之外（国内 IM + 知识库），编排是能力补齐非护城河。
 
 ### 待决策（落地前）
-1. orchestrator 落地形态：独立包 `packages/core/orchestrator` vs 并入 connector 上层？
-2. 首发模式优先级：Pipeline 还是 Fan-out 先做？（建议 Pipeline——产物串接最易验证价值。）
-3. delegate 工具是否对所有主 agent 默认可见，还是仅在用户显式开启「编排模式」时注入？（建议后者，符合「按需高级档」。）
-4. 实时子会话归属 vs 懒加载：MVP 懒加载是否足够，何时投入实时。
+> ✅ **已全部拍板（2026-06-08）**，结果见 [`agent-os-target-architecture.md`](../agent-os-target-architecture.md) §0 决策基线表（D1-D4）。
+1. orchestrator 落地形态：独立包 vs 并入 connector → **独立包 `packages/core/orchestrator`**（connector 只做控制+事件）。
+2. 首发模式优先级：Pipeline 还是 Fan-out → **Pipeline 先做**（产物串接最易验证价值），Fan-out 紧随。
+3. delegate 工具默认可见 vs 仅「编排模式」opt-in 注入 → **仅 opt-in 注入**（按需高级档）。
+4. 实时子会话归属 vs 懒加载 → **MVP 懒加载**，实时内联留后续（接 P1-3 Phase 2）。

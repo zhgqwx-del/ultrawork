@@ -121,7 +121,8 @@ W1 发「opencode 形状」后前端基本无需改；仅补 `use-session-messag
 - **战略竞合**：Jockey（Tauri+ACP）、openclaw+acpx 已在做通用 ACP host；Ultrawork 差异化须靠 ACP **之外**的层（国内 IM 深度 + 本地 RAG + 中文场景），而非「又一个能接 claude code 的壳」。
 
 ### 待决策（落地前拍板）
-1. 首批做满哪 1–2 个 agent（建议 claude + opencode）。
-2. `feat/acp-support` rebase 合入 vs 参考重写。
-3. SDK 版本统一到 0.21.x 还是跟 vendor 0.16.1。
-4. W4 宿主 MCP 透传范围（仅知识库 vs 全部已配置 MCP）。
+> ✅ **已全部拍板（2026-06-08）**，结果见 [`agent-os-target-architecture.md`](../agent-os-target-architecture.md) §0 决策基线表（B1-B4）。
+1. 首批做满哪 1–2 个 agent → **claude + opencode**（qoder/gemini 二期）。
+2. `feat/acp-support` rebase 合入 vs 参考重写 → **参考重写**（在当前 main 上重建，保留 ADR-029 渲染器）。
+3. SDK 版本统一到 0.21.x 还是跟 vendor 0.16.1 → **pin 最新 stable ≥0.21.x**（host SDK 与 vendor 自带 0.16.1 无关，opencode 走 REST）。
+4. W4 宿主 MCP 透传范围 → **仅知识库（:4098），默认关、显式 opt-in**。

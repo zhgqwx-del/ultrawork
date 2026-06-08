@@ -147,6 +147,7 @@ interface Connector {
 - **Gateway 时序**：bridge 的 permission/question 轮询兜底（ADR-008）语义须在 connector 完整保留，否则 IM 侧权限自动应答回退。
 
 ### 待决策（落地前）
-1. 迁移顺序：先 Desktop 收敛还是先建 OpenCodeBackend 等价层跑通？（建议先等价层，再 Desktop，再 Gateway，最后 ACPBackend。）
-2. queue-owner（连接复用/排队）阶段2 就做，还是留阶段3 编排时再引入？
-3. 公共事件模型是否就锁定为「opencode SSE 形状」，还是借此机会定义中立 schema（成本更高，需同时改 opencode 消费侧）？建议阶段2 先沿用 opencode 形状（ADR-027 D-3），中立化留后续。
+> ✅ **已全部拍板（2026-06-08）**，结果见 [`agent-os-target-architecture.md`](../agent-os-target-architecture.md) §0 决策基线表（C1-C3）。
+1. 迁移顺序 → **OpenCodeBackend 等价层 → Desktop → Gateway → ACPBackend**。
+2. queue-owner（连接复用/排队）阶段2 就做还是留阶段3 → **阶段2 只预留接口边界，实现留阶段3**。
+3. 公共事件模型锁定「opencode SSE 形状」还是定义中立 schema → **阶段2 沿用 opencode 形状（ADR-027 D-3），中立化留后续**。
