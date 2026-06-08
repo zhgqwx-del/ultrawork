@@ -21,3 +21,7 @@
 | [008-opencode-builtin-agents-orchestration.md](./008-opencode-builtin-agents-orchestration.md) | OpenCode 内置 Agent 全景、相互调用机制与 runLoop 引擎 — 谁能调用谁/谁来调度/怎么驱动 | 2026-06-04 | 调研记录 |
 | [009-tauri-vs-electron.md](./009-tauri-vs-electron.md) | 桌面端框架调研 — Tauri 现状、Electron 对比、能力边界与迁移代价评估 | 2026-06-04 | 调研记录 |
 | [010-ai-dev-doc-quality.md](./010-ai-dev-doc-quality.md) | AI 驱动开发的文档质量保障体系 — 现状诊断与优化方案 | 2026-06-06 | 已落地 |
+| [011-architecture-comparison.md](./011-architecture-comparison.md) | Ultrawork 架构横向对标 — openclaw / hermes-agent / opencode desktop（多维对比 + 优劣 + 建议） | 2026-06-08 | 调研记录 + 讨论中 |
+| [012-p1-execution-plan.md](./012-p1-execution-plan.md) | P1 可执行方案 — IM 流式重构 / 持久记忆注入 / 多 Agent UI 暴露（MVP+Phase2 拆解） | 2026-06-08 | 讨论中 |
+| [013-agent-os-acp-multi-backend.md](./013-agent-os-acp-multi-backend.md) | Ultrawork 作为统一交互层 / Agent OS — 经 ACP 调度多 agent 后端（opencode/claude code/qoder…）可行性与路径 | 2026-06-08 | 讨论中 |
+| [014-stage1-acp-normalization-plan.md](./014-stage1-acp-normalization-plan.md) | 阶段1 可执行方案 — ACP 单 agent 异构归一化（事件桥/权限/能力/进程，含 re-baseline 与映射对照表） | 2026-06-08 | 已正式化为 ADR-027 实现章节 |

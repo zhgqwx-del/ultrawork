@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- ACP「统一交互层 / Agent OS」架构调研线（纯文档，无代码）：① 横向对标 discussion 011（Ultrawork vs openclaw / hermes-agent / opencode desktop，多维对比 + 优劣 + 建议）；② P1 可执行方案 discussion 012（IM 流式重构 / 持久记忆注入 / 多 Agent UI 暴露，MVP+Phase2）；③ Agent OS 可行性 discussion 013（经 ACP 调度多 agent 后端 — 三档模型「会话级→delegate/编排→自动调度」、否决「对等换手」伪命题、connector 分层、源码级纠偏 openclaw acpx/dispatch 失实命令）；④ 阶段1 实现底稿 discussion 014（ACP 单 agent 异构归一化，file:line 级事件桥/权限/能力/进程 + 映射对照表）。均含对 acpx/openclaw 真实源码的逐文件调研
+- ADR-027 ACP 多 Agent 后端支持（正式化，原为 `feat/acp-support` 分支预留编号）：经 ACP 统一调度多 agent 后端（opencode 留 REST / claude·qoder·gemini 走 ACP）；D-1~D-5 决策（三档模型、归一化放 sidecar 复用 ADR-029 渲染器、先档1 后档2 依赖关系）+ 阶段1（W0 re-baseline → W1 事件桥 → W2 前端 → W3 权限 → W4 能力协商 → W5 进程稳定性，含 acpx 源码级常量）实现章节
+- ADR-030 @agent/connector 控制+事件统一层：后端无关的 `call + subscribe` 抽象 + 可插拔 backend（OpenCodeBackend 包 api-client / ACPBackend 包 agent-router），收敛 Desktop+Gateway 三套 SSE/三份鉴权/两份退避重复；修正 architecture-phase1 Part II connector 草案两处缺陷（漏 SSE、未含 ACP backend）；为阶段3 暴露 spawn/steer 原语
+- ADR-031 多 Agent 编排（档2 delegate）：自建 orchestrator（opencode 当不了跨厂商编排器）+ delegate 工具（agent 驱动，经宿主 MCP）+ workflow recipe（代码驱动）混合；交付物契约回卷（非 transcript 注入）；治理护栏（maxConcurrent / maxDepth=1 / 子 agent 便宜模型 / 预算超时）；首发 Pipeline+Fan-out（模式由原语组合，非内置）；嵌套委派 UI 接 ADR-029/P1-3
 - 文档质量保障体系优化（Discussion 010）：新增 `docs/gotchas.md`（踩坑清单 SSOT — OpenCode 类型契约 / Server 运行时限制 / MCP / Gateway / IMA / Tauri / 构建 7 章，从本地工作记忆固化进 git，团队/AI clone 即得）+ `docs/quality-gates.md`（改动合入/收尾前的完成定义 checklist）+ `scripts/check-docs.ts` + `bun run check:docs`（机械校验 ADR 计数 / 文档引用路径存在性 / MEMORY 行数，可挂 CI/pre-commit）
 - 技术讨论文档 Discussion 010：AI 驱动开发的文档质量保障体系 — 现状诊断（MEMORY 超限被截断 / 救命知识只在本地记忆 / 收尾同步有损 / 文档-代码漂移无校验 / 多副本无 SSOT）+ 按类别优化方案 + 优先级路线图（已落地）
 - 主对话「执行流程」收纳（ADR-029）：把一个 user 回合产出的 N 条 assistant message（每工具循环 step 一条）合并渲染——中间过程（思考/工具/叙述）收进可折叠的执行流程时间线（无卡片包裹、连续左竖线、行内二级展开工具 INPUT/OUTPUT、状态图标 spinner/停止/✗/✓、思考中 pulse），最终答案在容器外干净渲染，回合结束追加居中带横线的统计页脚（时间·输入·输出·推理·缓存·成本·模型）。流式判定改用 finish 终态避免多步抖动；`AssistantTurn` 自定义 memo 比较器避免流式中历史回合重渲染。新增组件 `assistant-turn`/`execution-flow`/`message-parts` + 回合逻辑单测（8 例）

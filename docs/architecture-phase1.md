@@ -1082,6 +1082,8 @@ The following features are planned for Phase 2:
 ## 规划：连接抽象 @agent/connector
 
 > 🔲 未实现。Desktop / Channel Gateway 当前**直连 `@agent/api-client`**，未经 connector 抽象。
+>
+> ⚠️ **本草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（2026-06-08）。ADR-030 修正了本草案两处缺陷——① 漏了 SSE 统一（本草案误以为 `api-client.events.subscribe()` 存在）、② 未含 ACP backend（本草案早于 ACP/ADR-027）——并把 connector 重定义为「后端无关的控制 + 事件统一层 + 可插拔 backend（OpenCode REST + ACP）」。**以 ADR-030 为准**；下方草案保留作历史参考。
 
 ### Connection Establishment (via @agent/connector)
 

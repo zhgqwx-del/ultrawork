@@ -57,10 +57,12 @@
 | [025](./025-window-layout-symmetry.md) | 窗口布局对称性修复与平台感知适配 | 2026-05-12 | Accepted |
 | [026](./026-knowledge-base-architecture.md) | 知识库能力架构 — 本地 RAG + 第三方平台 + 自定义 API | 2026-05-13 | Accepted (Phase 1-3 + 4a + 4c 实现) |
 | [028](./028-release-readiness-hardening.md) | 发布前 readiness 硬化 — sidecar 副本 / 凭证随机化 / 安全收紧 / MCP 启动性能 | 2026-05-28 | Accepted |
-| 027 | ACP 多 Agent 支持（占位） | 2026-05-25 | Pending（在 `feat/acp-support` 分支，未合并 main） |
+| [027](./027-acp-multi-agent-backend.md) | ACP 多 Agent 后端支持 — 经 Agent Client Protocol 统一调度多 agent | 2026-05-25 / 2026-06-08 | Accepted（架构决策）· 实现规划中（阶段1 待 re-baseline） |
 | [029](./029-execution-flow-turn-grouping.md) | 主对话「执行流程」收纳 — 回合级消息分组与过程/答案分层 | 2026-06-06 | Accepted (✅ 已实现) |
+| [030](./030-agent-connector-control-layer.md) | @agent/connector — 后端无关的控制 + 事件统一层（OpenCode REST + ACP 双 backend） | 2026-06-08 | Accepted（架构决策）· 实现规划中（阶段2，依赖 ADR-027） |
+| [031](./031-multi-agent-orchestration.md) | 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式 | 2026-06-08 | Accepted（架构决策）· 实现规划中（阶段3，依赖 ADR-027/030） |
 
-> ADR-027 编号为 `feat/acp-support` 分支预留（ACP 多 Agent 架构）。该分支合并 main 后补正式 ADR 文件；在此之前 main 上无 027 文件，索引中以上方占位行保持编号连续。
+> ADR-027 的探索过程见 [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性）与 [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）。代码在 `feat/acp-support` 分支（MVP，未合并），需 re-baseline 后按本 ADR 阶段1 落地。
 
 ## 新增 ADR
 
