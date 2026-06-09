@@ -65,14 +65,15 @@ connector **只做控制 + 事件统一**。**不含**：
 ### D-8 · backend 分类法：传输族 × adapter + 选型（2026-06-09 修订，来源 [015](../discussions/015-backend-taxonomy-non-acp.md)）
 `BackendKind` **不是封闭 union**（不要硬编码 `"opencode" | "acp"`）；按两轴建模，新接 agent = 注册一个新 adapter，主架构不变：
 
-- **传输族 transport**：
-  - `acp-stdio`：**一个通用 adapter 接 N 个原生 ACP agent**（claude/qoder/gemini/hermes…），边际成本 ≈ `agent name→命令` 配置 + per-agent 怪癖。**最省。**
-  - `rest-http`：**每产品一个 bespoke adapter**（各自 HTTP 形状不同），归一化成本高。`opencode` 属此族且为 **default + reference**。
+- **真正的轴 = 协议族（ACP 标准 vs 产品自有），不是线缆**（stdio/HTTP/WebSocket 是 adapter 内部细节，不改 adapter 复用粒度）。两族**对等并列**（无主从）；agent 按支持情况分布其上：
+  - `acp-stdio`：ACP 标准、stdio。**一个通用 adapter 接 N 个原生 ACP agent**（claude/qoder/gemini/hermes…），边际成本 ≈ `agent name→命令` 配置 + per-agent 怪癖。**最省。**
+  - `product-native`：产品自有协议，**线缆 = HTTP+SSE 或 WebSocket**。**每产品一个 bespoke adapter**，归一化成本高。`opencode`（HTTP+SSE）属此族且为 **default + reference**；`openclaw` 的 native 面是 **WebSocket Gateway**。
   - `acp-remote`（WIP）：ACP over HTTP/WS，补远程 agent 短板，待上游 GA。
-- **选型决策树**（按 agent **原生/干净的路径**选，不看它「号称支持什么」——「支持 ACP 非二元」，见 015）：
-  - **A** 原生 stdio ACP 且富保真 → `acp-stdio` 通用 adapter（claude/gemini/**hermes**）。
-  - **B** HTTP 是其主路径且深度是我们要的 → `rest-http` 专用 adapter（**opencode**，且 default）。
-  - **C** 名义支持 ACP 但实为有损桥 / 本质是 HTTP 平台 → 黑盒二等后端 + capabilities 降级（D-5）；具体走「降级 `acp-stdio`（复用通用 adapter，省）」还是「`rest-http` bespoke（稳定契约，贵）」**待真·实测再定**（**openclaw**：其 `openclaw acp` 是 Gateway 薄桥，缺权限/MCP/diff）。
+  - > WebSocket / HTTP+SSE 都归 `product-native` 内的线缆，**不单列成对等族**——两者都「每产品一个 adapter」，经济性相同。
+- **选型决策树**（按 agent **原生/干净路径 + 保真 + 性能**选，不看它「号称支持什么」——「支持 ACP 非二元」，见 015）：
+  - **A** 原生 stdio ACP 且富保真 → `acp-stdio` 通用 adapter（claude/gemini/**hermes**/**qoder**）。
+  - **B** 产品自有协议是其主路径且深度够 → `product-native` bespoke（HTTP+SSE / WebSocket；**opencode**=HTTP+SSE，且 default）。
+  - **C** 名义支持 ACP 但实为有损桥 / 本质是产品平台 → 黑盒二等后端 + capabilities 降级（D-5）；**多面时选 native+保真+性能最优的**（**openclaw**：ACP 桥最差 < OpenAI HTTP < **WebSocket Gateway native 最富**——有 approvals/agent events）。走「降级 `acp-stdio`（最省，但走最差面）」vs「`product-native` WS bespoke（贵，native 最富）」**待真·实测再定**。
   - **D** 仅远程可达 → `acp-remote`(WIP) 或其 HTTP API。
 - **不变量**：所有 backend 一律 `implements AgentBackend`（D-1 接口）统一在 connector 后；黑盒后端是「能力更弱的 backend」，**不是另起炉灶的并行客户端**。
 
@@ -87,7 +88,7 @@ connector **只做控制 + 事件统一**。**不含**：
 
 ### 接口草图（示意，落地以实现为准）
 ```ts
-type TransportFamily = "acp-stdio" | "rest-http" | "acp-remote"   // D-8
+type TransportFamily = "acp-stdio" | "product-native" | "acp-remote"   // D-8；product-native 线缆 = HTTP+SSE | WebSocket
 type BackendKind = string   // 开放注册（"opencode" / "acp" / "openclaw" / "hermes" …），不再封闭 union
 interface BackendCapabilities {   // 不对称能力 + 黑盒降级（D-5）：消费方据此条件渲染
   providers:boolean; mcp:boolean; file:boolean; agentCrud:boolean; loadSession:boolean; image:boolean

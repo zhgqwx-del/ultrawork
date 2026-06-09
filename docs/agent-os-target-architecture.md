@@ -38,8 +38,8 @@
 | C1 | 迁移顺序 | **OpenCodeBackend 等价层 → Desktop → Gateway → ACPBackend** | ADR-030 待决1 |
 | C2 | queue-owner | **阶段2 只预留接口边界，实现留阶段3** | ADR-030 待决2 |
 | C3 | 公共事件模型 | **沿用 opencode SSE 形状**，中立化留后续 | ADR-030 待决3 |
-| C4 | backend 分类法 | **`BackendKind` 开放化 + 传输族（acp-stdio / rest-http / acp-remote）× adapter + 选型决策树**；opencode = default+reference；黑盒后端经 capabilities 降级 | ADR-030 D-8 / [015](./discussions/015-backend-taxonomy-non-acp.md) |
-| C5 | openclaw / hermes / qoder 接入 | **hermes·qoder** 原生富 ACP → branch A（acp-stdio 通用，零增量，非首批；qoder 启动命令 `qoder acp` vs `qodercli --acp` 待实测锁定）；**openclaw** 薄桥缺权限/MCP → branch C 黑盒、低优先、不进首批、路径待实测 | [015](./discussions/015-backend-taxonomy-non-acp.md) |
+| C4 | backend 分类法 | **`BackendKind` 开放化 + 协议族（acp-stdio / product-native〔HTTP+SSE/WebSocket〕/ acp-remote）× adapter + 选型决策树（native+保真+性能）**；两族对等、轴是协议非线缆；opencode = default+reference；黑盒后端经 capabilities 降级 | ADR-030 D-8 / [015](./discussions/015-backend-taxonomy-non-acp.md) |
+| C5 | openclaw / hermes / qoder 接入 | **hermes·qoder** 原生富 ACP → branch A（acp-stdio 通用，零增量，非首批；qoder 启动命令 `qoder acp` vs `qodercli --acp` 待实测锁定）；**openclaw** → branch C 黑盒、低优先、不进首批：对外三面（ACP 桥最差 < OpenAI HTTP < **WebSocket Gateway native 最富**），接哪面待实测 | [015](./discussions/015-backend-taxonomy-non-acp.md) |
 | **阶段3（编排）** | | | |
 | D1 | orchestrator 形态 | **独立包 `packages/core/orchestrator`**（connector 只做控制+事件） | ADR-031 待决1 |
 | D2 | 首发模式 | **Pipeline 先做**（产物串接，确定性最强），Fan-out 紧随 | ADR-031 待决2 |
@@ -135,9 +135,10 @@
 ### 3.3 ② 控制统一 — @agent/connector（ADR-030）
 新增包 `packages/core/connector`，定义后端无关控制面，下挂可插拔 backend adapter。**包装而非取代** api-client。**backend 类是开放的**（`BackendKind` 非封闭 union，见 §0 C4 / ADR-030 D-8 的「传输族 × adapter」分类法）；首发两个 backend：
 
-- **OpenCodeBackend**（传输族 `rest-http`，**default + reference**）= 包装现有 `ApiClient`（REST）+ `SSEClient`（事件），REST 路径不变。公共事件模型即其 SSE 形状（C3）。
+- **OpenCodeBackend**（传输族 `product-native`，线缆 HTTP+SSE，**default + reference**）= 包装现有 `ApiClient`（REST）+ `SSEClient`（事件），REST 路径不变。公共事件模型即其 SSE 形状（C3）。
 - **ACPBackend**（传输族 `acp-stdio`，**一个 adapter 复用整族**）= 包装 **重写后** 的 acp-client 前端 router（**B2 决策：不复用 `feat/acp-support` 分支的 router，在当前 main 上参考重建**）+ EventSource。claude/qoder/gemini/hermes 等原生 ACP agent 共用它。
-- **未来扩展**：再接 agent = 注册新 adapter，按决策树选传输族（原生富 ACP→acp-stdio；HTTP 平台/黑盒如 openclaw→rest-http 或降级 acp-stdio，capabilities 降级）。主架构不变。
+- **两族对等**：`acp-stdio`（ACP 标准，一个 adapter N agent）与 `product-native`（产品自有，线缆 HTTP+SSE 或 WebSocket，每产品一个 adapter）并列，无主从——轴是「协议」非「线缆」。
+- **未来扩展**：再接 agent = 注册新 adapter，按决策树选（原生富 ACP→acp-stdio；产品平台/黑盒如 openclaw→product-native，**走其 native 线缆**——openclaw 即 WebSocket Gateway——或降级 acp-stdio，capabilities 降级）。主架构不变。
 
 - **核心公共面**（两 backend 都实现）：`createSession / prompt / cancel / revert / subscribe / listAgents / status`。
 - **能力声明** `capabilities`（不做最小公约数阉割）：消费方按 `capabilities` 条件调用 backend-specific 方法（`getProviders/getMCP/getFileTree` 仅 opencode；`agentConfig CRUD/connect` 仅 ACP）。
@@ -145,7 +146,7 @@
 - **会话级 backend 绑定（D-4）**：`bindSession(sessionId, kind)`，消费方只调 `connector.prompt(sessionId, ...)`，由 connector 派发到对应 adapter。
 
 ```ts
-type TransportFamily = "acp-stdio" | "rest-http" | "acp-remote"   // D-8
+type TransportFamily = "acp-stdio" | "product-native" | "acp-remote"   // D-8；product-native 线缆 = HTTP+SSE | WebSocket
 type BackendKind = string   // 开放注册（opencode/acp/openclaw/hermes…），非封闭 union
 interface BackendCapabilities { providers; mcp; file; agentCrud; loadSession; image;
   permissions; fileDiffs; plan; reasoning; historyReplay }   // 黑盒后端把对应项声明 false
