@@ -8,9 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- ADR-030 修订（D-8 backend 分类法泛化，来源 discussion 015）：`BackendKind` 从封闭 union 开放化；引入「传输族（acp-stdio / rest-http / acp-remote）× adapter」两轴 + 选型决策树（按 agent 原生/干净路径选，非看其「号称支持什么」）；opencode 显式标 default + reference；`BackendCapabilities` 扩展黑盒降级字段（permissions/fileDiffs/plan/reasoning/historyReplay）。同步更新 `agent-os-target-architecture.md` §0（新增 C4/C5）+ §3.3（backend 类开放、传输族标注、未来扩展）
 - ADR-027/030/031 末尾「待决策」项标记为已拍板，统一指向 `docs/agent-os-target-architecture.md` §0 决策基线表（防止「ADR 仍写待决策、目标架构已定」的漂移）
 
 ### Added
+- discussion 015「Backend 接入分类法 —「支持 ACP 非二元」与非-ACP/HTTP 后端」（调研记录 + 讨论中）：openclaw vs hermes 的 ACP 实现文档/资料级调研——**openclaw** `openclaw acp` 是 Gateway 薄桥（ACP→WebSocket 二次组装，缺权限/MCP/diff/plan，loadSession 空线程）→ branch C 黑盒二等后端；**hermes** `hermes acp` 原生包 AIAgent loop（权限/file diff/plan/流式全有）→ branch A acp-stdio 通用零增量。提出传输族 × adapter 两轴 + 选型决策树 + 黑盒 capabilities 降级 + opencode default/reference 特权；含置信度说明与 §11 信息缺口（desk research，真·实测待落地前做）
 - 《Ultrawork as Agent OS — 目标架构》设计文档（`docs/agent-os-target-architecture.md`，开发起点）：独立完备地把 ADR-027/030/031 + discussions 011-014 收敛为目标架构。含 §0 决策基线表（17 项待决策已逐条拍板——战略保持 REST / 不做 ACP Server、首批 claude+opencode、`feat/acp-support` **参考重写**、SDK ≥0.21.x、宿主 MCP 仅知识库 opt-in、迁移顺序、queue-owner 延后、orchestrator 独立包、Pipeline 先、delegate opt-in、懒加载等）+ 分层总览图（渲染统一 sidecar → 控制统一 connector → 编排 orchestrator）+ 端到端数据流（档1 单会话 / 档2 delegate）+ Gateway×多agent IM 流式适配 + 安全治理护栏 + 阶段0-4 路线图 + 立即可做的开发起点（claude+opencode，标出 W1 turn 整形为最高风险点）
 - ACP「统一交互层 / Agent OS」架构调研线（纯文档，无代码）：① 横向对标 discussion 011（Ultrawork vs openclaw / hermes-agent / opencode desktop，多维对比 + 优劣 + 建议）；② P1 可执行方案 discussion 012（IM 流式重构 / 持久记忆注入 / 多 Agent UI 暴露，MVP+Phase2）；③ Agent OS 可行性 discussion 013（经 ACP 调度多 agent 后端 — 三档模型「会话级→delegate/编排→自动调度」、否决「对等换手」伪命题、connector 分层、源码级纠偏 openclaw acpx/dispatch 失实命令）；④ 阶段1 实现底稿 discussion 014（ACP 单 agent 异构归一化，file:line 级事件桥/权限/能力/进程 + 映射对照表）。均含对 acpx/openclaw 真实源码的逐文件调研
 - ADR-027 ACP 多 Agent 后端支持（正式化，原为 `feat/acp-support` 分支预留编号）：经 ACP 统一调度多 agent 后端（opencode 留 REST / claude·qoder·gemini 走 ACP）；D-1~D-5 决策（三档模型、归一化放 sidecar 复用 ADR-029 渲染器、先档1 后档2 依赖关系）+ 阶段1（W0 re-baseline → W1 事件桥 → W2 前端 → W3 权限 → W4 能力协商 → W5 进程稳定性，含 acpx 源码级常量）实现章节

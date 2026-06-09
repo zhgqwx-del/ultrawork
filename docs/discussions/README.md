@@ -25,3 +25,4 @@
 | [012-p1-execution-plan.md](./012-p1-execution-plan.md) | P1 可执行方案 — IM 流式重构 / 持久记忆注入 / 多 Agent UI 暴露（MVP+Phase2 拆解） | 2026-06-08 | 讨论中 |
 | [013-agent-os-acp-multi-backend.md](./013-agent-os-acp-multi-backend.md) | Ultrawork 作为统一交互层 / Agent OS — 经 ACP 调度多 agent 后端（opencode/claude code/qoder…）可行性与路径 | 2026-06-08 | 讨论中 |
 | [014-stage1-acp-normalization-plan.md](./014-stage1-acp-normalization-plan.md) | 阶段1 可执行方案 — ACP 单 agent 异构归一化（事件桥/权限/能力/进程，含 re-baseline 与映射对照表） | 2026-06-08 | 已正式化为 ADR-027 实现章节 |
+| [015-backend-taxonomy-non-acp.md](./015-backend-taxonomy-non-acp.md) | Backend 接入分类法 —「支持 ACP 非二元」与非-ACP/HTTP 后端（openclaw 薄桥 vs hermes 原生，源级实测 + 传输族×adapter 两轴 + 选型决策树） | 2026-06-09 | 调研记录 + 讨论中 |

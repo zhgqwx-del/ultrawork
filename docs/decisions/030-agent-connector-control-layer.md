@@ -1,10 +1,10 @@
-# ADR-030: @agent/connector — 后端无关的控制 + 事件统一层（OpenCode REST + ACP 双 backend）
+# ADR-030: @agent/connector — 后端无关的控制 + 事件统一层（可插拔 backend：OpenCode REST / ACP / 其它）
 
 **状态**: Accepted（架构决策）· 实现规划中（阶段2，依赖阶段1/ADR-027 落地）
-**日期**: 2026-06-08
+**日期**: 2026-06-08 · 2026-06-09 修订（D-8 backend 分类法泛化：传输族 × adapter + 选型决策树 + 黑盒降级）
 **关联**: ADR-002 (OpenCode Headless Sidecar), ADR-008 (SSE 全局化 + 轮询兜底), ADR-013 (Channel Gateway Sidecar), ADR-027 (ACP 多 Agent 后端支持)
 **取代/细化**: `docs/architecture-phase1.md` Part II「连接抽象 @agent/connector」草案（修正其两处缺陷，见下）
-**探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md) §6.6（控制统一 + 可插拔 backend）
+**探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md) §6.6（控制统一 + 可插拔 backend）· [discussions/015](../discussions/015-backend-taxonomy-non-acp.md)（backend 分类法 / 选型决策树 / openclaw·hermes 调研，D-8 来源）
 
 ---
 
@@ -44,13 +44,15 @@ connector 提供 `subscribe()`，**吸收三套 SSE 实现的公共逻辑**：�
 ### D-3 · 公共事件模型 = ADR-027 的模型（opencode SSE 形状）
 backend 向上吐出**统一事件**（`SendMessageResponse[]` / SSE 事件联合）。ACP 事件已在 sidecar（ADR-027 D-3）归一化成此形状，故 connector 消费侧**与 backend 无关**。`use-session-messages.ts` 的 `handleSSEEvent` 成为「消费公共事件模型」的唯一实现，Desktop/Gateway 共享。
 
-### D-4 · backend 选择 = 会话级绑定（对齐 ADR-027 D-2 档1）
-一个会话绑定到一个 backend（opencode-REST 或 ACP）。把分散的路由判定（`agent-context.getPromptAgent` + `use-session-messages` 分支分流）**收敛进 connector**：消费方只调 `connector.prompt(sessionId, ...)`，由 connector 按会话的 backend 绑定派发到对应 adapter。
+### D-4 · backend 选择 = 会话级绑定（对齐 ADR-027 D-2 档1）；opencode = default
+一个会话绑定到一个 backend。把分散的路由判定（`agent-context.getPromptAgent` + `use-session-messages` 分支分流）**收敛进 connector**：消费方只调 `connector.prompt(sessionId, ...)`，由 connector 按会话的 backend 绑定派发到对应 adapter。
+- **opencode 是 `defaultBackend`**（对齐 Ultrawork 现状 + ADR-027 D-1 的 REST 深度集成）：新会话不显式选 backend 时默认绑 opencode。泛化（D-8）是「加宽 backend 类」，**不降级 opencode 的默认/基准地位**。
 
 ### D-5 · 核心公共面 + 能力声明（不强求最小公约数）
 两 backend 能力不对称（opencode 有 config/provider/mcp/file/diff；ACP 有 agent CRUD/connect）。connector 设：
 - **核心公共面**（两者都实现）：`createSession / prompt / cancel / revert / subscribe / listAgents / connectionStatus`。
 - **能力声明** `capabilities`（由 `initialize`/backend 类型决定，对齐 ADR-027 W4）：消费方按 `capabilities` 条件调用 backend-specific 方法（如 `getProviders` 仅 opencode、`agentConfigCRUD` 仅 ACP）。不做 lowest-common-denominator 阉割。
+- **黑盒后端降级**（D-8 branch C）：聚合型/二次组装后端（如 openclaw，[015](../discussions/015-backend-taxonomy-non-acp.md)）可能缺权限/MCP/diff/plan——用 `capabilities` 把对应项声明 `false`（`permissions/mcpInjection/fileDiffs/plan/reasoning/historyReplay`），UI 条件渲染 + 诚实标注「只回成果」。同一 `capabilities` 机制覆盖「能力更强」与「能力更弱」两侧。
 
 ### D-6 · 暴露阶段3 所需原语
 backend adapter 接口即「可插拔 backend 边界」（acpx 模型）：对上暴露 `createSession / prompt / cancel / subscribe`（= spawn/steer/await 的底座）。connector 之上的 orchestrator（阶段3）**只消费这些原语**，不碰协议/进程细节。可借鉴 acpx 的 **queue-owner**（复用一个 agent 连接、串行/排队多请求、`waitForCompletion` 控 fire-and-forget）。
@@ -59,6 +61,20 @@ backend adapter 接口即「可插拔 backend 边界」（acpx 模型）：对�
 connector **只做控制 + 事件统一**。**不含**：
 - **记忆/工作区注入**（Part II 草案把 IDENTITY/SOUL/MEMORY 注入捆进 connector）——分离关注点，归 [012](../discussions/012-p1-execution-plan.md) P1-2 / 记忆专项，connector 只提供注入的挂载时机（如 `onSessionCreate` hook），不拥有记忆逻辑。
 - **编排**（spawn 拓扑/dispatch）——归 ADR-027 阶段3，建在 connector 原语之上。
+
+### D-8 · backend 分类法：传输族 × adapter + 选型（2026-06-09 修订，来源 [015](../discussions/015-backend-taxonomy-non-acp.md)）
+`BackendKind` **不是封闭 union**（不要硬编码 `"opencode" | "acp"`）；按两轴建模，新接 agent = 注册一个新 adapter，主架构不变：
+
+- **传输族 transport**：
+  - `acp-stdio`：**一个通用 adapter 接 N 个原生 ACP agent**（claude/qoder/gemini/hermes…），边际成本 ≈ `agent name→命令` 配置 + per-agent 怪癖。**最省。**
+  - `rest-http`：**每产品一个 bespoke adapter**（各自 HTTP 形状不同），归一化成本高。`opencode` 属此族且为 **default + reference**。
+  - `acp-remote`（WIP）：ACP over HTTP/WS，补远程 agent 短板，待上游 GA。
+- **选型决策树**（按 agent **原生/干净的路径**选，不看它「号称支持什么」——「支持 ACP 非二元」，见 015）：
+  - **A** 原生 stdio ACP 且富保真 → `acp-stdio` 通用 adapter（claude/gemini/**hermes**）。
+  - **B** HTTP 是其主路径且深度是我们要的 → `rest-http` 专用 adapter（**opencode**，且 default）。
+  - **C** 名义支持 ACP 但实为有损桥 / 本质是 HTTP 平台 → 黑盒二等后端 + capabilities 降级（D-5）；具体走「降级 `acp-stdio`（复用通用 adapter，省）」还是「`rest-http` bespoke（稳定契约，贵）」**待真·实测再定**（**openclaw**：其 `openclaw acp` 是 Gateway 薄桥，缺权限/MCP/diff）。
+  - **D** 仅远程可达 → `acp-remote`(WIP) 或其 HTTP API。
+- **不变量**：所有 backend 一律 `implements AgentBackend`（D-1 接口）统一在 connector 后；黑盒后端是「能力更弱的 backend」，**不是另起炉灶的并行客户端**。
 
 ---
 
@@ -71,11 +87,16 @@ connector **只做控制 + 事件统一**。**不含**：
 
 ### 接口草图（示意，落地以实现为准）
 ```ts
-type BackendKind = "opencode" | "acp"
-interface BackendCapabilities { providers:boolean; mcp:boolean; file:boolean; agentCrud:boolean; loadSession:boolean; image:boolean }
+type TransportFamily = "acp-stdio" | "rest-http" | "acp-remote"   // D-8
+type BackendKind = string   // 开放注册（"opencode" / "acp" / "openclaw" / "hermes" …），不再封闭 union
+interface BackendCapabilities {   // 不对称能力 + 黑盒降级（D-5）：消费方据此条件渲染
+  providers:boolean; mcp:boolean; file:boolean; agentCrud:boolean; loadSession:boolean; image:boolean
+  permissions:boolean; fileDiffs:boolean; plan:boolean; reasoning:boolean; historyReplay:boolean
+}
 
 interface AgentBackend {                       // 可插拔 backend 边界（acpx 模型）
   readonly kind: BackendKind
+  readonly transport: TransportFamily          // D-8：决定 adapter 复用粒度
   readonly capabilities: BackendCapabilities
   // 核心公共面
   createSession(opts): Promise<SessionRef>
