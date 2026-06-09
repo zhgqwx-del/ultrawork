@@ -14,7 +14,7 @@
 1. **「支持 ACP」不是二元的**——这是本文核心结论。同样一句「支持 ACP」，实现质量可以天差地别。openclaw 与 hermes 恰好是两个极端，提供了完美对照。
 2. **openclaw**：✅ 有 ACP server（`openclaw acp`），**能被 ACP 客户端调用**；但它是 **Gateway 的薄桥**（`ACP stdio → WebSocket Gateway` 二次组装），**缺权限请求 / 丢弃 MCP / 无 diff·plan·thought / loadSession 返回空线程**——保真度严重不足。它还有干净的 OpenAI 兼容 HTTP API。
 3. **hermes**：✅ 有 ACP server（`hermes acp`），且是 **原生实现**（直接包 `AIAgent` 执行循环）——**权限 / file diffs / plan / 每 token 流式全有**，与 claude/gemini 同级。
-4. **架构含义**：backend 接入按「**传输族 × adapter 粒度**」两轴建模；选 backend 走「**该 agent 干净/原生的那条路**」而非看它「号称支持什么」。→ **hermes 落 branch A**（acp-stdio 通用 adapter，近零增量）；**openclaw 落 branch C**（黑盒二等后端、capabilities 降级、低优先；接入路径「acp-stdio 降级 vs rest-http bespoke」待定）。
+4. **架构含义**：backend 接入按「**传输族 × adapter 粒度**」两轴建模；选 backend 走「**该 agent 干净/原生的那条路**」而非看它「号称支持什么」。→ **hermes / qoder 落 branch A**（acp-stdio 通用 adapter，近零增量）；**openclaw 落 branch C**（黑盒二等后端、capabilities 降级、低优先；接入路径「acp-stdio 降级 vs rest-http bespoke」待定）。
 5. **opencode 保持特权**：泛化抽象是「加宽 backend 类」而非「拉平 opencode」——opencode 是 `rest-http` 的 **default + reference**（公共事件模型即其 SSE 形状）。
 6. **落地**：据本文修订 ADR-030（`BackendKind` 开放化 + 传输族 + 选型决策树 + 黑盒 capabilities 降级），并同步目标架构 §3.3/图。**主架构（分层/connector/orchestrator）不变。**
 
@@ -83,7 +83,7 @@ Gateway 暴露 `POST /v1/chat/completions`（默认关，需开）：`model:"ope
 
 ---
 
-## 4. hermes-agent 调研（据官方 ACP Internals 文档）
+## 4. 原生富 ACP agent 调研 — hermes 与 qoder（branch A）
 
 ### 4.1 原生 ACP server（不是桥）
 `hermes acp` 子命令「runs the agent in a fundamentally different I/O mode (JSON-RPC over stdio) and **wraps the AIAgent execution loop** with protocol-specific message framing, capability negotiation, and session lifecycle management」。`acp_adapter/server.py` 直接实现 ACP agent 协议（stdout 走 JSON-RPC，日志走 stderr）——**直接包自己的 agent loop，无内部协议转译。**
@@ -104,6 +104,19 @@ Gateway 暴露 `POST /v1/chat/completions`（默认关，需开）：`model:"ope
 - **也有** OpenAI 兼容 HTTP API（:8642，`API_SERVER_ENABLED` + `API_SERVER_KEY`，`/v1/chat/completions`、`/v1/models`、`/health`）——**但其 ACP 已是富流，无须退到 HTTP**（与 openclaw 相反）。
 
 > **hermes 定性**：原生富 ACP，与 claude/gemini 同级。**branch A**——acp-stdio 通用 adapter 直接覆盖，**不必写 bespoke backend**，近零增量（仅配置 + unstable-protocol 怪癖）。
+
+### 4.4 qoder-cli（阿里 Qoder CLI，branch A 第二例）
+**原生 ACP agent**（非桥）：Zed ACP agent 注册页定性为「A full-featured CLI coding agent with **ACP support**」，列能力「**Subagent / MCP server integration / Slash commands(/init,/review) / Permission configuration / Multimodal input**」——即权限 + MCP + 多模态齐，与 claude/gemini/hermes 同级。
+
+- **落档**：**branch A**（acp-stdio 通用 adapter，零增量），与 hermes 同。Qoder CLI「implements this protocol standard to integrate with any client that implements the ACP protocol」。
+- **⚠️启动命令两源不一（必实测）**：
+  - **Zed agent 页**：command `qoder`，args `["acp"]` → `qoder acp`。
+  - **Qoder 官方 CLI 文档 + acpx adapter**：command `qodercli`，args `["--acp"]` → `qodercli --acp`（acpx 内置映射 `qoder → qodercli --acp`）。
+  - → **二进制名（`qoder` vs `qodercli`）与 flag（子命令 `acp` vs `--acp`）都有歧义**，落地前以实机 `--version`/`--help` 探测确认（这正是 [013](./013-agent-os-acp-multi-backend.md) 信息缺口里那条，现缩小但未完全消除）。
+- **认证**：`QODER_PERSONAL_ACCESS_TOKEN` env，启动自动登录（Zed/acpx 均在 agent server env 注入）。
+- **per-agent 怪癖**：acpx 已知 **启动 ~750ms + benign stdout 过滤**（见 [014](./014-stage1-acp-normalization-plan.md) W5）；另有第三方报告 **slash 命令经 ACP 在某些 client 不可用**（JetBrains YouTrack LLM-25183），落地前验证 `/init`、`/review` 透传。
+
+> **qoder 定性**：原生富 ACP（权限/MCP/多模态齐），**branch A 零增量**；唯一注意点是**启动命令/flag 需实测锁定** + slash 命令透传待验。国内场景值得作 claude/opencode 之后的优先验证项。
 
 ---
 
@@ -134,7 +147,7 @@ Gateway 暴露 `POST /v1/chat/completions`（默认关，需开）：`model:"ope
 
 ### 6.2 选型决策树（按 agent 原生/干净路径选，不看「号称支持什么」）
 ```
-A. 原生 stdio ACP 且富保真          → acp-stdio（通用 adapter，最省）   例：claude / gemini / hermes
+A. 原生 stdio ACP 且富保真          → acp-stdio（通用 adapter，最省）   例：claude / gemini / hermes / qoder
 B. HTTP 是其主路径且深度是我们要的  → rest-http 专用 adapter            例：opencode（且为 default）
 C. 名义支持 ACP 但实为有损桥 / 本质是 HTTP 平台
        → 黑盒二等后端 + capabilities 降级；具体走「降级 acp-stdio（复用通用
@@ -199,7 +212,7 @@ UI 按 capabilities 条件渲染 + 诚实标注「该后端只回成果，无权
 - **openclaw 源码未直读**：缺口表依赖官方 CLI/Gateway 文档 + **单一第三方博客**；「ignoring N MCP servers」等**代码级**断言仅第三方来源，须读 `openclaw acp` 桥源码核验。
 - **hermes 据官方文档（描述源码），非直读码**：`acp_adapter/{server,tools,permissions}.py` 的行为按官方 ACP Internals 描述采信；`use_unstable_protocol=True` 的**具体协议版本 / 协商行为未定**，落地前须实测 `initialize` 结果。
 - **真·实测全部待做**：两者都未 spawn 运行、未观察真实 `session/update`。openclaw 缺口、hermes 富保真都需运行验证后才能从「调研结论」升级为「实测结论」。
-- **qoder 未覆盖**：承 [013](./013-agent-os-acp-multi-backend.md) 信息缺口（`qoder acp` vs `--acp` flag 有歧义），本文未涉及，仍待实测。
+- **qoder 启动命令仍有歧义**：本文已调研定性为 branch A 原生富 ACP（§4.4），但**启动命令两源不一**（Zed 页 `qoder acp` vs Qoder 文档/acpx `qodercli --acp`，含二进制名 `qoder` vs `qodercli`）+ slash 命令经 ACP 透传，须实机 `--version`/`--help` 探测锁定（缩小了 013 缺口但未完全消除）。
 - **openclaw HTTP 路径的渲染足够性未验**：其 `/v1/chat/completions` 是否流式吐足够的 tool_call 细节供 ADR-029 渲染器用，未实测。
 
 ---
@@ -207,4 +220,5 @@ UI 按 capabilities 条件渲染 + 诚实标注「该后端只回成果，无权
 ### 来源
 - **openclaw**：[`openclaw acp` CLI 文档（ACP server + Gateway 桥 + 限制）](https://docs.openclaw.ai/cli/acp) · [ACP protocol gaps 逐条](https://shashikantjagtap.net/openclaw-acp-what-coding-agent-users-need-to-know-about-protocol-gaps/) · [Gateway OpenAI 兼容 HTTP API](https://docs.openclaw.ai/gateway/openai-http-api) · [acpx 仓库（ACP client）](https://github.com/openclaw/acpx) · [ACP agents 文档](https://docs.openclaw.ai/tools/acp-agents)
 - **hermes**：[ACP Internals（acp_adapter/server·tools·permissions）](https://hermes-agent.nousresearch.com/docs/developer-guide/acp-internals) · [ACP Server Mode Issue #569](https://github.com/NousResearch/hermes-agent/issues/569) · [DeepWiki: ACP Server & IDE Integration](https://deepwiki.com/NousResearch/hermes-agent/10.6-acp-server-and-ide-integration) · [HTTP API Server 文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server/)
+- **qoder**：[Qoder CLI ACP 文档](https://docs.qoder.com/cli/acp) · [Zed ACP agent 页（qoder-cli，能力/命令）](https://zed.dev/acp/agent/qoder-cli) · [acpx（qoder→qodercli --acp 映射）](https://acpx.sh/) · [JetBrains YouTrack LLM-25183（qoder/opencode slash 命令问题）](https://youtrack.jetbrains.com/issue/LLM-25183)
 - **内部**：[013 Agent OS 可行性](./013-agent-os-acp-multi-backend.md) · [ADR-027](../decisions/027-acp-multi-agent-backend.md) / [ADR-030](../decisions/030-agent-connector-control-layer.md) / [ADR-031](../decisions/031-multi-agent-orchestration.md) · [agent-os-target-architecture.md](../agent-os-target-architecture.md)

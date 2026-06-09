@@ -39,7 +39,7 @@
 | C2 | queue-owner | **阶段2 只预留接口边界，实现留阶段3** | ADR-030 待决2 |
 | C3 | 公共事件模型 | **沿用 opencode SSE 形状**，中立化留后续 | ADR-030 待决3 |
 | C4 | backend 分类法 | **`BackendKind` 开放化 + 传输族（acp-stdio / rest-http / acp-remote）× adapter + 选型决策树**；opencode = default+reference；黑盒后端经 capabilities 降级 | ADR-030 D-8 / [015](./discussions/015-backend-taxonomy-non-acp.md) |
-| C5 | openclaw / hermes 接入 | **hermes** 原生富 ACP → branch A（acp-stdio 通用，零增量，非首批）；**openclaw** 薄桥缺权限/MCP → branch C 黑盒、低优先、不进首批、路径待实测 | [015](./discussions/015-backend-taxonomy-non-acp.md) |
+| C5 | openclaw / hermes / qoder 接入 | **hermes·qoder** 原生富 ACP → branch A（acp-stdio 通用，零增量，非首批；qoder 启动命令 `qoder acp` vs `qodercli --acp` 待实测锁定）；**openclaw** 薄桥缺权限/MCP → branch C 黑盒、低优先、不进首批、路径待实测 | [015](./discussions/015-backend-taxonomy-non-acp.md) |
 | **阶段3（编排）** | | | |
 | D1 | orchestrator 形态 | **独立包 `packages/core/orchestrator`**（connector 只做控制+事件） | ADR-031 待决1 |
 | D2 | 首发模式 | **Pipeline 先做**（产物串接，确定性最强），Fan-out 紧随 | ADR-031 待决2 |
