@@ -21,6 +21,7 @@
     "build:opencode": "bun run scripts/build-opencode.ts",
     "build:gateway": "bun run scripts/build-gateway.ts",
     "build:knowledge": "bun run scripts/build-knowledge.ts",
+    "build:acp": "bun run scripts/build-acp.ts",
     "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
     "check:docs": "bun run scripts/check-docs.ts",
     "typecheck": "turbo run typecheck",

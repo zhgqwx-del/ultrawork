@@ -74,6 +74,7 @@ if (skipSidecar) {
     await $`bun run ${path.join(rootDir, "scripts/build-opencode.ts")} --target ${target}`.quiet(!verbose)
     await $`bun run ${path.join(rootDir, "scripts/build-gateway.ts")} --target ${target}`.quiet(!verbose)
     await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-acp.ts")} --target ${target}`.quiet(!verbose)
   }
 }
 
@@ -83,7 +84,7 @@ if (skipSidecar) {
 // per-arch files automatically. Produce the merged binary ourselves.
 if (isMacOS && !nativeOnly && !skipSidecar) {
   const binariesDir = path.join(rootDir, "packages/client/desktop/src-tauri/binaries")
-  const SIDECAR_BASES = ["opencode-server", "channel-gateway", "knowledge-sidecar"]
+  const SIDECAR_BASES = ["opencode-server", "channel-gateway", "knowledge-sidecar", "acp-client"]
   console.log("\n🪢 Creating universal sidecar binaries via lipo...")
   for (const base of SIDECAR_BASES) {
     const arm = path.join(binariesDir, `${base}-aarch64-apple-darwin`)
