@@ -77,6 +77,8 @@
 - **IPC 事件集** → 编排 UI 的事件模型参考（接 ADR-029 ExecutionFlow + ADR-031 D-7 嵌套委派）。
 - **SQLite 持久化** → 补 [013](./013-agent-os-acp-multi-backend.md) §5 的「消息/会话不跨重启」缺口。
 - **per-agent 独立权限 + badge / 并行面板 UI** → 编排/并行会话 UI 参考。
+- **UI 共存范式（源码核实）**：Team Mode = 独立页 `renderer/pages/team`；非-Team = 普通 `renderer/pages/conversation` 单会话页**完全不变**——编排**不织进单聊天、另开 surface**。→ 我们档2 走独立 opt-in 路由的现成模式，**主聊天零侵入**（接 [agent-os-target-architecture.md](../agent-os-target-architecture.md) §3.6）。
+- **许可证**：Apache-2.0 → 可借鉴甚至 copy 代码（保留归属/NOTICE）；但 Tauri vs Electron + SSE vs IPC，多为**模式参考**而非 1:1 搬运，编排 handler 源不公开须自研。
 
 ## 7. 竞品定位与护城河含义
 - AionUi 比 [Jockey / openclaw+acpx](./013-agent-os-acp-multi-backend.md#8-风险与取舍) **更贴**我们的形态，且**已 ship 档1+档2**。→ **「能调度多 agent + 跨厂商编排」本身不是护城河**，是追平项。

@@ -58,6 +58,7 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 - delegate 在主对话表现为一张**专用工具卡片**（识别 `delegate`/`task`，展示 `targetAgent + 子任务描述`），归入 ADR-029 的 ExecutionFlow。
 - 卡片可展开看**子会话过程**：MVP 用**懒加载**（展开时拉子会话历史，复杂度低）；实时归属（子会话 SSE 内联）留后续（接 [012](../discussions/012-p1-execution-plan.md) P1-3 Phase 2）。
 - 并行多 delegate = 多卡片；默认折叠，避免信息密度淹没主对话。
+- **不破坏现有 UX（接 [agent-os-target-architecture.md](../agent-os-target-architecture.md) §3.6）**：档2 默认 opt-in（D-3），且**建议承载在独立 orchestration/team 路由**——主对话内仅在用户于该会话显式委派时出现卡片，复杂并行编排放独立面，单会话聊天保持纯净。**现网范式**：AionUi 即 Team Mode 独立页 `pages/team` / 非-Team 普通 `pages/conversation` 不变（[016](../discussions/016-aionui-multi-agent-competitor.md) 源码核实）。
 
 ### D-8 · 范围边界
 - **不含档3 自动调度**（router 自动决定派给谁）——留 ADR-027 阶段4。本 ADR 是「用户/主 agent 显式委派」。

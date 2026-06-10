@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- 共存/UX 影响分析（参考 AionUi 源码核实）：新增 `agent-os-target-architecture.md` §3.6「对现有交互/UI 的影响与共存策略」——档1 原地增量零侵入（D-3 复用 ADR-029 渲染器）、档2 独立 opt-in 面（镜像 AionUi `pages/team` 与 `pages/conversation` 分离的现网范式）、唯二回归风险区（W1 turn 整形质量 / connector 迁移），结论「不需要 UI/UE 大改」。ADR-031 D-7 加「档2 走独立 orchestration 路由、主聊天零侵入」；016 §6 加 UI 共存范式 + Apache-2.0 许可证说明（可借鉴/copy，多为模式参考）
 - AionUi 调研源码核验（016 升级置信度 + 一处反向修正）：直读 `iOfficeAI/AionUi`（含完整稀疏检出）核实——✅`NON_ACP_BACKENDS`/`resolveConversationType`（`teamMapper.ts:51`，逐字一致，源码级坐实 ADR-030 D-8）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`teamTypes.ts`）、SQLite `teams`/`mailbox`/`team_tasks` 表（`schema.ts`）。⚠️**反向发现并修正**：Team MCP Server 的**分发/mailbox handler 源不在公开 repo**（src 里无文件读写那两张表、唯一 stdio MCP 源是 imageGenServer、`team-mcp-stdio.js` 是预构建产物 glob）——Team Mode 运行期真实（e2e + 打包件）但 handler 不可读。016/ADR-031 据此把「Team MCP Server 源码核验」降为「数据层/schema 源码核验 + 运行期真实、handler 源不公开（只借鉴数据流、不照抄实现）」；ADR-030 D-8 佐证不受影响（teamMapper 是真实源码）
 - 跨文档对齐 review（清同类残留）：`decisions/README.md` ADR-030 索引标题改「可插拔 backend：OpenCode REST / ACP / 其它」（原「双 backend」与已改 ADR 标题打架）；`architecture-phase1.md` Part II connector 草案（表行 + §规划章节 banner）补「已被 ADR-030 取代/细化 + D-8 开放 backend 类」指针；ADR-027 D-1 + ADR-030 D-5 的「两/双 backend」加「首发两类，D-8 后泛化为开放可插拔 backend 类」指针
 - `agent-os-target-architecture.md` 全文对齐 review：修正 §3.1 协议层（外部后端补 product-native 非-ACP 一支，不再写成「外部必走 ACP」）、§9 信息缺口（qoder flag 已调研 + openclaw 三面，指向 015 §11）、TL;DR（补 backend 分类法 #4 + 协议层措辞）、§2 图注（backend 类开放）、§6 护栏标 ADR-031 D-5、头部加修订标记

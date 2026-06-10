@@ -206,6 +206,19 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 - **流式合并（接 P1-1）**：把 `agent_message_chunk` 经 block 合并再下发——参数量级对齐 openclaw 实证：`coalesceIdleMs ≈ 300` + `maxChunkChars ≈ 1200`（013 §7）。这层在 connector 之上、Gateway 侧实现，对 backend 透明。
 - **权限/question**：保留 Gateway 现有轮询兜底语义（ADR-008），由 connector 完整透传，避免 IM 侧权限自动应答回退（ADR-030 风险项）。
 
+### 3.6 对现有交互/UI 的影响与共存策略（不破坏现有 UX）
+**核心判断：本架构不需要对现有 Ultrawork 交互/界面做大改——档1 原地增量、档2 独立 opt-in 面。**
+
+- **档1 = 原地增量、零侵入**：
+  - D-3 sidecar 归一化成 opencode SSE 形状 → **复用 ADR-029 渲染器**，`/session/:id` 单会话对 opencode/claude 渲染一致；opencode 仍走 REST 不变。
+  - 可见新增仅：输入区 **agent-selector** + Settings **agent 管理**（`feat/acp-support` 已原型）。现有单 agent 流不动。
+- **档2 = 独立 opt-in 面、不侵入主聊天**：D3 opt-in（默认不注入）+ D4 嵌套懒加载；**建议新增独立 orchestration/team 路由**承载编排（Ultrawork 已是多路由 `/workspace`·`/session/:id`·`/settings`，加一个即可），主聊天保持纯净。
+- **现网共存范式（AionUi，源码核实）**：Team Mode = 独立页 `pages/team`（并行面板 / per-agent slot / Leader 蓝边 / per-agent 独立权限 badge / 运行时换模型）；非-Team = 普通 `pages/conversation` 单会话页**完全不变**——**不把编排织进单聊天，而是另开 surface**。我们镜像此模式。
+- **两个真实回归风险区（唯二需盯紧；其余都是加法/独立面）**：
+  1. **W1 turn 整形质量** → 只影响**非-opencode 会话**渲染（opencode 走 REST 不受影响）。
+  2. **阶段2 connector 迁移回归**（16 个 useApi 迁移）→ 影响**现有 opencode**；靠「OpenCodeBackend 首版严格等价 + 逐点回归」兜（ADR-030 风险项）。
+- **资源**：每 ACP agent 一子进程，**按需 lazy 启动**（不学 AionUi 默认并行多 agent）；默认 opencode 路径不变。
+
 ---
 
 ## 4. 端到端数据流
