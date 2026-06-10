@@ -4,7 +4,7 @@
 > **日期**：2026-06-10
 > **范围**：纯调研 + 分析，**不修改代码**。
 > **缘起**：[iOfficeAI/AionUi](https://github.com/iOfficeAI/AionUi) 是与本项目「Agent OS」愿景**几乎同形态**的开源桌面多-agent 客户端，且**已 ship 档1（并行多后端）+ 档2（Team Mode 编排）**。评估它对 [ADR-027](../decisions/027-acp-multi-agent-backend.md)/[030](../decisions/030-agent-connector-control-layer.md)/[031](../decisions/031-multi-agent-orchestration.md) + [agent-os-target-architecture.md](../agent-os-target-architecture.md) 的验证、参考与竞品含义。
-> **置信度**：本文是 **desk research**——基于用户桌面调研 doc《AionUi 多agent调研》（含从仓库提取的代码片段如 `NON_ACP_BACKENDS`、状态机、数据模型）+ GitHub/wiki/DeepWiki/官网 web 检索。**非本人直接读 AionUi 源码、非运行实测**；代码级断言以用户调研 doc 为准，落地参考前建议直读对应源码核验（见 §9）。
+> **置信度**：核心代码级断言（`NON_ACP_BACKENDS`、Team/TeamAgent 数据模型、`TeamMcpPhase` 状态机、IPC 事件、Team MCP Server、SQLite mailbox/team_tasks 表）**已于 2026-06-10 直读 AionUi 源码核验**（`gh` × `iOfficeAI/AionUi`，文件:行见 §4/§9）——与用户桌面调研 doc 一致。**仍未做运行实测**（mailbox 实际行为/失败恢复/冲突协调按代码结构推断）。其余（官网/wiki 描述、roadmap）为 web 检索。
 > **承接**：[011](./011-architecture-comparison.md)（横向对标）· [013](./013-agent-os-acp-multi-backend.md)（Agent OS 可行性）· [015](./015-backend-taxonomy-non-acp.md)（backend 分类法）。
 
 ---
@@ -28,7 +28,7 @@
 | 层面 | AionUi |
 |------|--------|
 | 协议 | ACP（JSON-RPC 2.0，本地 stdio / 远端 HTTP·WebSocket）；SDK `@agentclientprotocol/sdk` v0.18.2 |
-| **协议路由** | `const NON_ACP_BACKENDS = new Set(['aionrs','openclaw-gateway','nanobot','remote'])`；`resolveConversationType(backend) = NON_ACP_BACKENDS.has(backend) ? backend : 'acp'`——**ACP 是默认，少数后端走原生协议** |
+| **协议路由** | ✅源码 `common/adapter/teamMapper.ts:51`：`const NON_ACP_BACKENDS = new Set(['aionrs','openclaw-gateway','nanobot','remote'])`；`resolveConversationType(backend) = NON_ACP_BACKENDS.has(backend) ? backend : 'acp'`——**ACP 是默认，少数后端走原生协议** |
 | agent 发现 | 启动扫 `PATH` + 常见二进制目录，自动点亮已装 CLI |
 | 连接 | 每个外部 agent 一个独立子进程，ACP 桥接 JSON-RPC |
 | 认证 | **不代管凭证**——每个 CLI 自管 auth/config |
@@ -42,12 +42,12 @@
 ## 4. Team Mode（= 我们的档2 delegate 编排）
 **架构**：Leader Agent 接收用户任务 → 拆解 → 经**内置 Team MCP Server** 分派子任务 → Teammate（Claude/Codex/Gemini/Snow/aionrs）并行执行 → **异步 mailbox 回传** → Leader 汇总输出。
 
-- **Team 数据模型**：`TTeam{ workspace, workspace_mode:'shared'|'isolated', leader_agent_id, agents[] }`；`TeamAgent{ slot_id, conversation_id（每 agent 独立会话）, role:'leader'|'teammate', agent_type, conversation_type:'acp'|'aionrs'|'openclaw-gateway', status, model?, cli_path? }`。
-- **Team MCP Server**（协作枢纽，内嵌 MCP server）：任务分发（Leader→Teammate）+ 结果回收（mailbox）+ 共享任务板（持久化看板）。
-- **MCP 注入管线状态机**：`tcp_ready → session_injecting → session_ready → mcp_tools_waiting → mcp_tools_ready`（失败 → `session_error / degraded / load_failed`）。
+- **Team 数据模型**（✅源码 `common/types/team/teamTypes.ts:16-44`）：`TTeam{ workspace, workspace_mode:'shared'|'isolated', leader_agent_id, agents[] }`；`TeamAgent{ slot_id, conversation_id（每 agent 独立会话）, role:'leader'|'teammate', agent_type, conversation_type, status:'pending'|'idle'|'active'|'completed'|'failed', model?, cli_path? }`（后端原始 status `idle|working|thinking|tool_use|completed|error` 经 `teamMapper.toStatus()` 映射到这 5 态）。
+- **Team MCP Server**（协作枢纽，**内置 stdio MCP server**）：任务分发（Leader→Teammate）+ 结果回收（mailbox）+ 共享任务板（持久化看板）。✅源码：electron-builder 打包 `out/main/team-mcp-stdio.js` + `team-guide-mcp-stdio.js`；DB 表 `mailbox(team_id,to_agent_id,read)` + `team_tasks(team_id,status)`（`process/services/database/schema.ts`）。
+- **MCP 注入管线状态机**（✅源码 `teamTypes.ts:105`，`TeamMcpPhase`）：`tcp_ready → session_injecting → session_ready → mcp_tools_waiting → mcp_tools_ready`（失败 → `session_error / degraded / load_failed`）。
 - **隔离**：每 Teammate 独立 session + 独立权限；workspace `shared`（Leader 协调文件冲突）或 `isolated`。
-- **IPC 事件**：`agentStatusChanged / agentSpawned / agentRemoved / agentRenamed / teamTeammateMessage / teamMcpStatus`。
-- **持久化**：Team Manager 用 **SQLite**（跨重启）。
+- **IPC 事件**（✅源码 `teamTypes.ts`）：`agentStatusChanged / agentSpawned / agentRemoved / agentRenamed / teamTeammateMessage / teamMcpStatus`。
+- **持久化**：Team Manager 用 **SQLite**（表 `teams`/`mailbox`/`team_tasks`，✅`schema.ts`，跨重启）。
 - **UI**：并行面板（每 agent ≥400px、可横滚、可全屏）、Leader 蓝色边框区分、运行时 per-agent 换模型、per-agent 独立权限弹窗 + 侧栏待处理 badge、运行时动态增减 Teammate。
 
 ## 5. 与 Ultrawork 决策的映射
@@ -56,7 +56,7 @@
 | 我们的决策 | AionUi 对应 | 结论 |
 |-----------|------------|------|
 | ADR-027 D-2 档1：一会话一 agent、**否决对等换手** | 一会话绑一 agent、不能会话内切换 | ✅ 验证 |
-| **ADR-030 D-8**：ACP 标准 vs product-native 两族 | `NON_ACP_BACKENDS={aionrs,openclaw-gateway,nanobot,remote}` else `acp` | ✅✅✅ **一字不差** |
+| **ADR-030 D-8**：ACP 标准 vs product-native 两族 | `NON_ACP_BACKENDS={aionrs,openclaw-gateway,nanobot,remote}` else `acp`（✅源码 `teamMapper.ts:51`） | ✅✅✅ **一字不差（源码核验）** |
 | [015](./015-backend-taxonomy-non-acp.md)：openclaw 走 gateway(WebSocket) 非 ACP | `openclaw-gateway` ∈ NON_ACP_BACKENDS | ✅ 独立佐证 |
 | ADR-031 D-1：orchestrator 拥主对话 + 经**宿主 MCP bridge** delegate | Team Mode：Leader + **内置 Team MCP Server** 分派 | ✅✅ 同构 |
 | ADR-031 D-2：子任务 + 交付物回卷（非 transcript 注入） | 子任务分派 + **异步 mailbox 回传** | ✅ 验证 |
@@ -93,8 +93,9 @@
 | **013 / 015** | 可加 forward-pointer 指向 016 |
 
 ## 9. 信息缺口 / 置信度
-- **未直读 AionUi 源码**：代码级断言（`NON_ACP_BACKENDS`、状态机、数据模型）来自**用户调研 doc**（其从仓库提取），本人未在 GitHub 上逐文件核验；落地照搬前应直读对应源码。
-- **Team Mode 细节**（mailbox 实现、共享任务板冲突协调、失败恢复）按调研 doc 采信，未运行实测。
+- ✅ **核心代码级断言已源码核验**（2026-06-10，`gh` × `iOfficeAI/AionUi`）：`NON_ACP_BACKENDS`/`resolveConversationType`（`packages/desktop/src/common/adapter/teamMapper.ts:51`）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`common/types/team/teamTypes.ts`）、Team MCP Server（内置 stdio MCP `team-mcp-stdio.js`，electron-builder + e2e）、SQLite `teams`/`mailbox`/`team_tasks` 表（`process/services/database/schema.ts`）——均与本文一致。
+- **仍未运行实测**：Team MCP Server 的 mailbox 实际行为、共享任务板冲突协调、失败恢复按代码结构推断，未跑起来观察。
+- **Team MCP Server 实现体未逐行读**：确认其为内置 stdio MCP（打包产物 + DB 表 + 类型），但 `team-mcp-stdio` 的 tool 列表/分发逻辑源文件未逐行核（落地参考前可补）。
 - **SDK 版本差异**：AionUi 用 `@agentclientprotocol/sdk` v0.18.2，我们 [B3](../agent-os-target-architecture.md) 倾向 ≥0.21.x——生态版本区间的数据点，落地前复核。
 - **是否有 IM/RAG 演进**：当前判断 AionUi 无 IM 渠道/知识库；其 roadmap 未深查，护城河判断按现状。
 

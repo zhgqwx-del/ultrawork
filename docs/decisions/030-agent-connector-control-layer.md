@@ -70,7 +70,7 @@ connector **只做控制 + 事件统一**。**不含**：
   - `product-native`：产品自有协议，**线缆 = HTTP+SSE 或 WebSocket**。**每产品一个 bespoke adapter**，归一化成本高。`opencode`（HTTP+SSE）属此族且为 **default + reference**；`openclaw` 的 native 面是 **WebSocket Gateway**。
   - `acp-remote`（WIP）：ACP over HTTP/WS，补远程 agent 短板，待上游 GA。
   - > WebSocket / HTTP+SSE 都归 `product-native` 内的线缆，**不单列成对等族**——两者都「每产品一个 adapter」，经济性相同。
-  - > **现网佐证**（AionUi，[discussions/016](../discussions/016-aionui-multi-agent-competitor.md)）：其协议路由 `NON_ACP_BACKENDS = {aionrs, openclaw-gateway, nanobot, remote}` else `acp`——与本 D-8「ACP vs product-native」一字不差，且独立证实 openclaw 走 gateway(WebSocket) 非 ACP（[015](../discussions/015-backend-taxonomy-non-acp.md)）。
+  - > **现网佐证（源码核验）**（AionUi，[discussions/016](../discussions/016-aionui-multi-agent-competitor.md)）：其协议路由 `NON_ACP_BACKENDS = {aionrs, openclaw-gateway, nanobot, remote}` else `acp`（直读源码 `packages/desktop/src/common/adapter/teamMapper.ts:51`）——与本 D-8「ACP vs product-native」一字不差，且独立证实 openclaw 走 gateway(WebSocket) 非 ACP（[015](../discussions/015-backend-taxonomy-non-acp.md)）。
 - **选型决策树**（按 agent **原生/干净路径 + 保真 + 性能**选，不看它「号称支持什么」——「支持 ACP 非二元」，见 015）：
   - **A** 原生 stdio ACP 且富保真 → `acp-stdio` 通用 adapter（claude/gemini/**hermes**/**qoder**）。
   - **B** 产品自有协议是其主路径且深度够 → `product-native` bespoke（HTTP+SSE / WebSocket；**opencode**=HTTP+SSE，且 default）。
