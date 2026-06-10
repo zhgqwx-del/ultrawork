@@ -43,7 +43,7 @@
 **架构**：Leader Agent 接收用户任务 → 拆解 → 经**内置 Team MCP Server** 分派子任务 → Teammate（Claude/Codex/Gemini/Snow/aionrs）并行执行 → **异步 mailbox 回传** → Leader 汇总输出。
 
 - **Team 数据模型**（✅源码 `common/types/team/teamTypes.ts:16-44`）：`TTeam{ workspace, workspace_mode:'shared'|'isolated', leader_agent_id, agents[] }`；`TeamAgent{ slot_id, conversation_id（每 agent 独立会话）, role:'leader'|'teammate', agent_type, conversation_type, status:'pending'|'idle'|'active'|'completed'|'failed', model?, cli_path? }`（后端原始 status `idle|working|thinking|tool_use|completed|error` 经 `teamMapper.toStatus()` 映射到这 5 态）。
-- **Team MCP Server**（协作枢纽，**内置 stdio MCP server**）：任务分发（Leader→Teammate）+ 结果回收（mailbox）+ 共享任务板（持久化看板）。✅源码：electron-builder 打包 `out/main/team-mcp-stdio.js` + `team-guide-mcp-stdio.js`；DB 表 `mailbox(team_id,to_agent_id,read)` + `team_tasks(team_id,status)`（`process/services/database/schema.ts`）。
+- **Team MCP Server**（协作枢纽，stdio MCP server）：任务分发（Leader→Teammate）+ 结果回收（mailbox）+ 共享任务板。⚠️**源码核验修正（2026-06-10）**：**其 handler 实现体不在公开源码树**——全 4 package 完整检出后，`mailbox`/`team_tasks` 仅在 `schema.ts`/`migrations.ts`（建表），**无任何源文件读写**；唯一 stdio MCP server 源是 `imageGenServer.ts`；`team-mcp-stdio.js`/`team-guide-mcp-stdio.js` 只在 `electron-builder.yml` 作**预构建产物 glob**（`build-mcp-servers.js` 只编 image-gen、vite input 也无）。→ **DB 表结构 + 类型 + e2e + 打包件证实它运行期真实存在，但分发/mailbox 的 tool handler 逻辑是外置预构建件、源不公开，无法从源码坐实。**
 - **MCP 注入管线状态机**（✅源码 `teamTypes.ts:105`，`TeamMcpPhase`）：`tcp_ready → session_injecting → session_ready → mcp_tools_waiting → mcp_tools_ready`（失败 → `session_error / degraded / load_failed`）。
 - **隔离**：每 Teammate 独立 session + 独立权限；workspace `shared`（Leader 协调文件冲突）或 `isolated`。
 - **IPC 事件**（✅源码 `teamTypes.ts`）：`agentStatusChanged / agentSpawned / agentRemoved / agentRenamed / teamTeammateMessage / teamMcpStatus`。
@@ -93,9 +93,9 @@
 | **013 / 015** | 可加 forward-pointer 指向 016 |
 
 ## 9. 信息缺口 / 置信度
-- ✅ **核心代码级断言已源码核验**（2026-06-10，`gh` × `iOfficeAI/AionUi`）：`NON_ACP_BACKENDS`/`resolveConversationType`（`packages/desktop/src/common/adapter/teamMapper.ts:51`）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`common/types/team/teamTypes.ts`）、Team MCP Server（内置 stdio MCP `team-mcp-stdio.js`，electron-builder + e2e）、SQLite `teams`/`mailbox`/`team_tasks` 表（`process/services/database/schema.ts`）——均与本文一致。
-- **仍未运行实测**：Team MCP Server 的 mailbox 实际行为、共享任务板冲突协调、失败恢复按代码结构推断，未跑起来观察。
-- **Team MCP Server 实现体未逐行读**：确认其为内置 stdio MCP（打包产物 + DB 表 + 类型），但 `team-mcp-stdio` 的 tool 列表/分发逻辑源文件未逐行核（落地参考前可补）。
+- ✅ **核心代码级断言已源码核验**（2026-06-10，`gh` + 完整稀疏检出 × `iOfficeAI/AionUi`）：`NON_ACP_BACKENDS`/`resolveConversationType`（`teamMapper.ts:51`）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`teamTypes.ts`）、SQLite `teams`/`mailbox`/`team_tasks` 表结构（`schema.ts`）——均与本文一致。Team MCP Server **运行期真实存在**（打包件 glob + e2e 套件驱动 Leader 增删成员），但其 **handler 源不在公开 repo**（见下条）。
+- ⚠️ **Team MCP Server handler 源不在公开 repo（2026-06-10 完整稀疏检出确认）**：分发/mailbox/任务板的 tool handler 实现体是**预构建件 `team-mcp-stdio.js`**，公开源码树（`packages/*/src`）里无任何文件读写 `mailbox`/`team_tasks`、无第二个 stdio MCP server。→ **「分发/mailbox 逻辑」只能从 DB schema + 类型 + e2e + 打包件推断其存在与数据流，无法从源码逐行坐实**；要看实现需反编译预构建件或等其开源。
+- **仍未运行实测**：mailbox 实际行为、共享任务板冲突协调、失败恢复未跑起来观察。
 - **SDK 版本差异**：AionUi 用 `@agentclientprotocol/sdk` v0.18.2，我们 [B3](../agent-os-target-architecture.md) 倾向 ≥0.21.x——生态版本区间的数据点，落地前复核。
 - **是否有 IM/RAG 演进**：当前判断 AionUi 无 IM 渠道/知识库；其 roadmap 未深查，护城河判断按现状。
 

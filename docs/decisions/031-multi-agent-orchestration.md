@@ -68,7 +68,7 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 ## 实现章节
 
 > 依赖：ADR-027 阶段1（ACP 事件归一化）+ ADR-030 阶段2（connector 原语）先落地。
-> **现网实现参考（AionUi Team Mode，[016](../discussions/016-aionui-multi-agent-competitor.md)；数据模型/状态机/路由已源码核验）**：① **Team MCP Server** = 本 ADR「delegate 经宿主 MCP bridge」的范式（任务分发 + mailbox 回收 + 共享任务板；内置 stdio MCP `team-mcp-stdio.js` + DB 表 `mailbox`/`team_tasks`）；② **MCP 注入状态机** `tcp_ready→session_injecting→session_ready→mcp_tools_waiting→mcp_tools_ready`（+ degraded/error，`teamTypes.ts`）可参考 ADR-027 W4 宿主 MCP 透传落地；③ **Team/TeamAgent 数据模型**（slot_id/conversation_id/role/agent_type/conversation_type/status/model）+ SQLite 持久化 + IPC 事件集，作 orchestrator 数据模型与编排 UI 参考。
+> **现网设计参考（AionUi Team Mode，[016](../discussions/016-aionui-multi-agent-competitor.md)）**：① **Team MCP Server** 印证本 ADR「delegate 经宿主 MCP bridge」的范式（任务分发 + mailbox 回收 + 共享任务板）——**注**：其 handler 实现体是预构建件、**源不在公开 repo**（016 §9 完整检出确认），只能借鉴**数据流设计**、不能照抄分发实现；② **MCP 注入状态机** `tcp_ready→…→mcp_tools_ready`（+ degraded/error，`teamTypes.ts` ✅源码）可参考 ADR-027 W4；③ **Team/TeamAgent 数据模型**（✅`teamTypes.ts`）+ SQLite 表 `teams`/`mailbox`/`team_tasks`（✅`schema.ts`，为 dispatch board + addressed mailbox 量身设计）+ IPC 事件集，作 orchestrator 数据模型与编排 UI 参考。
 
 ### 组件
 - **Orchestrator**（新，`packages/core/orchestrator` 或并入 connector 上层）：实现 delegate 语义、治理护栏、后台任务跟踪、进度回流/回卷。
