@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-06 -->
+<!-- last-synced: 2026-06-10 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -90,6 +90,23 @@
 - **系统 Node.js v14 太旧**：不支持 `??=` 等现代语法。所有脚本必须用 `bun run --bun` 执行，不要直接 `npx` / `node`。
 - **Universal DMG 构建**：`bun run release [-- --unsigned]`，跨编译双架构 sidecar + Tauri `universal-apple-darwin` lipo 合并。Apple Silicon 主机需先 `rustup target add x86_64-apple-darwin`。
 - **Vendor patch apply 后必须重编译 sidecar**（`bun run build:opencode`）。详见 [`CLAUDE.md`](../CLAUDE.md) §Vendor Patch 管理。
+- **新 workspace 包别声明与 root hoisted 不同版本的依赖**：bun 会重解析 root 提升版本（实测 acp-client 声明 `vitest ^3.1.4` 把 root 的 4.0.18 降到 3.2.4，砸了 desktop 的 jest-dom matcher 注册）。新包不要自带测试框架版本，或与 root 对齐。
+- **Tauri `prepare_port` 会复用端口上健康的旧 sidecar 进程**（不重启）。`build-acp.ts` 在真正重编时会自动 kill :4099 旧进程，保证下次 app 启动跑新二进制；其它 sidecar（gateway 等）改完仍需手动重启 app（见 §4 第一条）。
+
+## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
+
+> 阶段1（ADR-027）实测坑点。SDK pin `@agentclientprotocol/sdk` 0.25.0。
+
+- **turn 整形契约（最核心）**：`buildTurnModel` 把「最后一条不含 tool part 的 message」当答案（`assistant-turn.tsx:53`），`isTerminal` 要求 `info.finish && !== "tool-calls"`（`message-list.tsx:110`）。sidecar 必须：工具步骤发过程 message（封板 `finish:"tool-calls"`）、最终文本发独立纯 text message（`finish:"stop"`）、**每个 part 先 `message.part.updated` 建好类型再发 delta**（前端 delta 对未知 part 直接丢弃且新建硬编码 text）。
+- **claude adapter 对同一 toolCallId 重复发 `tool_call`**（rawInput 渐进变富）——整形必须按 toolCallId upsert，否则出现卡 pending 的重复 part。acpx 的「tool_call/tool_call_update 同一 upsert」正是为此。
+- **SDK 0.25 与早期调研（014 表）的出入**：`usage_update` = `{size, used, cost}`（无 token 明细）；token 明细在 `PromptResponse.usage`（inputTokens/outputTokens/thoughtTokens/cached*）；另有 plan_update/plan_removed/session_info_update 等新变体；`SessionInfoUpdate` 仅 title/updatedAt（无 model）。
+- **claude-code-acp（0.16.2）不发 usage**（PromptResponse 仅 stopReason，源码确认）→ token 页脚为空属上游缺口；thought chunk 仅在 thinking 开启时出现；其 `plan` 事件来自 TodoWrite 工具。
+- **`CLAUDECODE` env 嵌套检测**：该变量会从 dev shell（如 Claude Code 终端跑 `setup.sh`）一路继承到 claude-code-acp，触发其嵌套会话检测拒绝 `session/new`。sidecar 已在 spawn agent 时清洗 `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`（agent config.env 显式设置除外）。
+- **bunx 首启下载 adapter 包可超 15s** → initialize 超时须 ≥30s（现 30s）；claude `session/new` 已知 stall → 60s 超时（acpx 怪癖常量）。
+- **会话 ID 直通**：`POST /acp/session` 传 `clientSessionId` 后所有整形事件直接戳客户端会话 ID——前端零改写（旧分支的 sessionID rewrite hack 已不存在）；SSE 端点允许「先订阅、后建会话」。
+- **权限回环安全默认**：`request_permission` 挂起后，超时（`ACP_PERMISSION_TIMEOUT_MS`，默认 5min）/ session cancel / agent 断开 / 进程退出均默认 deny/cancelled 并广播 `permission.replied`。claude 的 `toolCall.kind` 可能缺省 → 权限标签回退 "bash"（显示可能与实际操作不符，待精修）。
+- **ACP 会话无 `session.status:idle` 事件**：侧栏活动标记靠前端在终态 finish 时补 `markSessionIdle`（use-session-messages）。
+- **ACP 会话历史不持久化**：sidecar 重启/app 重启后会话映射丢失、历史空白（agent 自身历史还在）。待 W4b `session/load` + replay 抑制（acpx：idle 80ms / timeout 5s）。
 
 ---
 

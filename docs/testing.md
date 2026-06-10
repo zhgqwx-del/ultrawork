@@ -18,8 +18,9 @@
 | Pages | `desktop/src/pages/` | 集成测试 | ⚠️ 部分 |
 | Channel Gateway | `packages/channel/gateway/src` | 单元测试 | ✅ 完全（120+ cases：bridge / channel-manager / adapters） |
 | Knowledge Sidecar | `packages/knowledge/sidecar/src` | 单元测试 | ⚠️ 覆盖薄（当前仅 `doc-parser.test.ts`，见下方缺口提示） |
+| ACP Client Sidecar | `packages/agent/acp-client/src` | stdio e2e（`bun test src`，非 vitest） | ✅ 核心链路（mock ACP agent 确定性回放：turn 整形 / 权限 allow/reject/超时 deny，3 用例 56 断言）；另有真实 claude spike 脚本落盘 fixture → desktop `acp-turn-shaping.test.ts` 喂真实 `buildTurnModel` 断言（4 用例） |
 | Tauri 集成 | 原生功能 | E2E | ❌ 手动 |
-| OpenCode 联调 | 端到端流程 | E2E | ❌ 手动 |
+| OpenCode 联调 | 端到端流程 | E2E | ⚠️ 半自动（浏览器驱动法见 [conventions §11](./conventions.md)：Chrome 驱动 Vite :1420 + localStorage 预埋凭证/workspace，可自动化建会话/发消息/断言渲染/截图） |
 
 > ⚠️ **覆盖缺口（Knowledge Sidecar）**：`:4098` 是 Phase 1 已上线模块，但单测目前仅覆盖 `doc-parser`。`store`（SQLite/FTS5/迁移）、`chunker`（Parent-Child 分块）、`retriever`（BM25+TF-IDF+RRF）、`indexer`（增量索引）、`mcp-bridge`（跨源搜索）、各 `adapters`（IMA/local-folder）均缺测试。新增知识库功能时应补齐对应单测。
 

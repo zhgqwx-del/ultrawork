@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-06 -->
+<!-- last-synced: 2026-06-10 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -220,3 +220,26 @@ setTimeout(() => fetchSources(), 500)
 ```
 
 **适用场景**：所有返回 202 并以 fire-and-forget 启动后台任务、依赖 SSE 推送进度的端点（如 `/kb/sources` POST、`/kb/sources/:id/reindex`）。
+
+## 11. ACP 外部 Agent 接入（@agent/acp-client，ADR-027 档1）
+
+新接一个 ACP agent / 修改整形逻辑时遵循以下模式（反向坑点见 [gotchas §8](./gotchas.md)）：
+
+**整形契约（sidecar 输出必须「长得和 opencode 一模一样」）：**
+
+```
+一个 prompt 回合 →
+  user 回显 message（text part.updated + role:"user" 的 message.updated）
+  N 个过程 message（reasoning/tool part；封板时 message.updated finish:"tool-calls"）
+  1 个答案 message（仅 text part；endTurn 时 finish:"stop" + tokens/cost + time.completed）
+```
+
+- **先 `message.part.updated` 建 part（带正确 type），再 `message.part.delta` 追加**——永远不要让 delta 先到。
+- tool_call / tool_call_update **按 toolCallId upsert** 到同一 part（核心逻辑集中在 `turn-shaper.ts`，纯函数可测）。
+- 事件 sessionID 用客户端传入的 `clientSessionId` 直通，前端零改写。
+
+**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；per-agent 怪癖（超时、stdout 过滤、Windows shell）集中在 `acp-connection.ts` 常量区，参考 acpx `agent-command.ts`。
+
+**测试模式（三层）**：① mock ACP agent（`packages/agent/acp-client/scripts/mock-acp-agent.ts`，stdin JSON-RPC 确定性回放，`bun test src` 离线跑）→ ② 真实 agent spike 脚本落盘 fixture（`packages/agent/acp-client/scripts/spike-claude.ts`）→ ③ desktop vitest 用 fixture 喂真实 `buildTurnModel`/`groupIntoTurns` 断言渲染契约。
+
+**真机 UI 验证（不依赖 Tauri 壳）**：Chrome（playwright-core `channel:"chrome"`）驱动 Vite :1420，`addInitScript` 预埋 localStorage——`ultrawork-config`（凭证取自 `~/.config/ultrawork/sidecar-auth.json`）+ `workspace_path`；WorkspaceSelector 的「继续」按钮纯 JS 可点，之后整个 app 流程可自动化（建会话/选 agent/发消息/断言渲染/截图）。

@@ -1,6 +1,6 @@
 # Ultrawork as Agent OS — 目标架构
 
-> **状态**：设计基线（决策已拍板，作为开发起点）· 全档蓝图，首期启动档1
+> **状态**：设计基线（决策已拍板）· 全档蓝图 · **阶段0-1 已落地**（2026-06-10，`@agent/acp-client` :4099，claude 达标；历史持久化/gemini/qoder 为阶段1 收尾项，见 §7）
 > **日期**：2026-06-08 · 2026-06-09 修订（新增 C4/C5 backend 分类法；§3.1/§3.3/TL;DR/§9 对齐 ADR-030 D-8 + discussion 015）
 > **定位**：本文是**独立完备**的目标架构说明——把 Ultrawork 从「绑定 opencode 的桌面客户端」升级为「经 ACP 统一调度多个异构 agent 后端的 Agent OS」。读本文即可理解目标形态并启动开发，无需先读探索文档。
 > **决策依据**：[ADR-027](./decisions/027-acp-multi-agent-backend.md)（ACP 多后端 + 三档模型）· [ADR-030](./decisions/030-agent-connector-control-layer.md)（@agent/connector 控制统一）· [ADR-031](./decisions/031-multi-agent-orchestration.md)（档2 delegate 编排）。探索过程见 [discussions/011-014](./discussions/)。
@@ -275,8 +275,8 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 
 | 阶段 | 内容 | 依赖 | 验收 |
 |------|------|------|------|
-| **0 · 重写基线** | **参考 feat/acp-support 设计，在当前 main 上重建**（B2）：ACP Sidecar :4099 / UnifiedAgent / agent-selector / agents.json / auto-connect。**保留 ADR-029 渲染器**，不回退 chat 重构。 | — | 协议管道在 main 上重新跑通（opencode + claude 可连） |
-| **1 · 档1 异构归一化** | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。**首批 claude + opencode**（B1）。 | 阶段0 | **以非 opencode agent 为准**：claude 流式/推理/计划/工具/diff/答案/token 页脚/权限弹窗/进程恢复**全过**；只验 opencode 不算完成 |
+| **0 · 重写基线** ✅ (2026-06-10) | **参考 feat/acp-support 设计，在当前 main 上重建**（B2）：ACP Sidecar :4099 / UnifiedAgent / agent-selector / agents.json / auto-connect。**保留 ADR-029 渲染器**，不回退 chat 重构。 | — | ✅ 协议管道在 main 上跑通（opencode + claude，`feat/agent-os-phase0` 分支） |
+| **1 · 档1 异构归一化** 🚧 claude 达标 | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。**首批 claude + opencode**（B1）。 | 阶段0 | claude：流式/工具/答案/权限弹窗/进程恢复 ✅（真机验证）；**收尾项**：历史持久化（session/load）、token 页脚（上游 adapter 不发 usage）、能力条件 UI、gemini/qoder 二期。坑点固化 [gotchas §8](./gotchas.md) |
 | **2 · @agent/connector** | 建包 + OpenCodeBackend 等价层 → Desktop 收敛(16 个 useApi) → Gateway 收敛 → ACPBackend 收编（C1）。三套 SSE→一处。宿主 MCP 透传（知识库，opt-in）。 | 阶段1 | 全部后端调用经 connector；切 backend 对上层透明；Gateway 复用 connector；暴露 spawn/prompt/cancel/subscribe 原语 |
 | **3 · 档2 编排** | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。 | 阶段2 | 主 agent 能 delegate 给外部 backend，交付物回卷、UI 可见嵌套、护栏生效；一个 Pipeline recipe 端到端；Fan-out worktree 隔离 |
 | **4 · 档3 自动调度** | router（规则/LLM）自动派单，用户可覆盖。 | 阶段3 | 远期研究 |

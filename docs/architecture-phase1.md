@@ -1,8 +1,8 @@
 # Desktop Agent - Phase 1 Architecture Design
 
-> **Implementation Status Note (更新于 2026-06-04)**
+> **Implementation Status Note (更新于 2026-06-10)**
 >
-> 本文档是 Phase 1 的完整架构设计。当前 **Desktop Client**、**Channel Gateway (DingTalk + WeChat)** 与 **Knowledge Sidecar** 已实现，其余抽象层模块仍为规划状态。
+> 本文档是 Phase 1 的完整架构设计。当前 **Desktop Client**、**Channel Gateway (DingTalk + WeChat)**、**Knowledge Sidecar** 与 **ACP Client Sidecar（Agent OS 阶段1）** 已实现，其余抽象层模块仍为规划状态。
 >
 > **已实现 vs 规划对照：**
 >
@@ -13,7 +13,8 @@
 > | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
 > | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode + WeChat ilink, Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json` |
 > | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
-> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client |
+> | @agent/acp-client | 🚧 阶段1（claude 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（首批 claude 经 claude-code-acp）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`。历史持久化（session/load）未做；gemini/qoder 二期。详见 ADR-027 + `agent-os-target-architecture.md` |
+> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client（Agent OS 阶段2，ADR-030） |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
 > | @agent/notifier | 🔲 规划中 | |
@@ -40,8 +41,8 @@
 
 本文分两部分：
 
-- **Part I = 已实现的现状架构**——可信赖为当前事实。已落地五大件：
-  **Desktop Client**（Tauri + React 19）、**Channel Gateway**（独立 sidecar :4097，DingTalk Stream Mode + WeChat ilink）、**Knowledge Sidecar**（独立 sidecar :4098，本地 RAG + IMA + MCP）、**@agent/api-client**（REST/SSE SDK）、**@agent/server-manager**（sidecar 生命周期）。
+- **Part I = 已实现的现状架构**——可信赖为当前事实。已落地六大件：
+  **Desktop Client**（Tauri + React 19）、**Channel Gateway**（独立 sidecar :4097，DingTalk Stream Mode + WeChat ilink）、**Knowledge Sidecar**（独立 sidecar :4098，本地 RAG + IMA + MCP）、**ACP Client Sidecar**（独立 sidecar :4099，ACP 多 agent 后端，Agent OS 阶段1）、**@agent/api-client**（REST/SSE SDK）、**@agent/server-manager**（sidecar 生命周期）。
 - **Part II = 规划中的设计草案（🔲 未实现）**——connector 抽象、Agent Workspace 身份/记忆持久化、Proactive Services、Process Lifecycle 进程注册表。**阅读现状时可跳过 Part II。**
 
 > 更宏观的远期愿景（多端 Web/Mobile、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
@@ -148,6 +149,7 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 | **Client** | `@agent/client-desktop` | ✅ Desktop Application - Full-featured Tauri app with local sidecar, React 19 + Vite 7 + Tailwind 4. |
 | **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket) + WeChat ilink (HTTP 长轮询), Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json`. Feishu/Slack 待实现. |
 | **Knowledge** | `@agent/knowledge-sidecar` | ✅ 已实现 — Knowledge Base Service. 独立 sidecar :4098 (Tauri 托管), 本地文件夹 RAG (Parent-Child 分块 + TF-IDF + FTS5 BM25 + RRF) + 第三方平台 IMA adapter (Wiki/Notes) + MCP stdio bridge, DB `~/.ultrawork/knowledge/kb.db` (SQLite WAL). 详见 ADR-026. |
+| **Agent** | `@agent/acp-client` | 🚧 阶段1（claude 达标） — ACP Client Sidecar. 独立 sidecar :4099 (Tauri 托管), spawn 外部 agent 子进程（ACP stdio JSON-RPC, SDK 0.25）, `TurnShaper` 整形成 opencode SSE 形状复用 ADR-029 渲染器, 权限挂起回环→permission-dock, 知识库 MCP opt-in, 三阶段优雅关闭. 配置 `~/.config/ultrawork/agents.json`. 详见 ADR-027 + agent-os-target-architecture.md. |
 | **Proactive** | `@agent/proactive-heartbeat` | 🔲 Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
 | | `@agent/proactive-cron` | 🔲 Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
 

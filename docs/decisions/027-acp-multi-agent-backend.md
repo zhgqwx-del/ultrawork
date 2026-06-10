@@ -1,10 +1,10 @@
 # ADR-027: ACP 多 Agent 后端支持 — 经 Agent Client Protocol 统一调度多 agent
 
-**状态**: Accepted（架构决策）· 实现规划中（阶段1 待 re-baseline 落地）
-**日期**: 2026-05-25（编号预留）· 2026-06-08（正式化 + 实现规划）
+**状态**: Accepted · **阶段0-1 已实现**（2026-06-10，`feat/agent-os-phase0` 分支：`@agent/acp-client` :4099，claude 全链路达标——turn 整形/权限回环/知识库 MCP opt-in/进程稳定性 + 真机验证；历史持久化（session/load）与 gemini/qoder 二期）
+**日期**: 2026-05-25（编号预留）· 2026-06-08（正式化 + 实现规划）· 2026-06-10（阶段0-1 落地）
 **关联**: ADR-002 (OpenCode Headless Sidecar), ADR-005 (Permission & Question Dock), ADR-026 (知识库架构), ADR-028 (sidecar 副本/进程清理), ADR-029 (执行流程回合分组)
 **探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性 + 三档模型）· [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）
-**分支**: `feat/acp-support`（28 commit MVP，未合并 main，需 re-baseline）
+**实现**: 按 B2「参考重写」在 main 基础上重建（旧 `feat/acp-support` MVP 弃用）；实测坑点见 [gotchas §8](../gotchas.md)、正向模式见 [conventions §11](../conventions.md)
 
 ---
 

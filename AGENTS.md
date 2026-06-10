@@ -6,6 +6,7 @@ Ultrawork is a desktop-grade AI agent built on OpenCode's server capabilities.
 Desktop App connects to OpenCode Server (sidecar), sends messages, and displays AI responses.
 Channel Gateway bridges IM platforms (DingTalk, WeChat) to the same Agent backend.
 Knowledge Sidecar provides local RAG + third-party (IMA) knowledge sources exposed to the Agent via MCP.
+ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and normalizes their output to the opencode SSE shape (ADR-027 档1, sessions bind one agent each).
 
 ## Architecture
 
@@ -25,6 +26,7 @@ Knowledge Sidecar provides local RAG + third-party (IMA) knowledge sources expos
 | `@agent/client-desktop` | ✅ Done | Tauri desktop app (React 19 + Vite 7 + Tailwind 4) |
 | `@agent/channel-gateway` | ✅ Done | IM channel gateway (DingTalk Stream SDK + WeChat ilink + Hono on Bun.serve, sidecar :4097) |
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
+| `@agent/acp-client` | 🚧 阶段1（claude 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环, sidecar :4099 |
 
 ## Project Structure
 
@@ -40,6 +42,8 @@ ultrawork/
 │   ├── core/
 │   │   ├── api-client/src/      # REST client for OpenCode API
 │   │   └── server-manager/src/  # Process manager for OpenCode
+│   ├── agent/
+│   │   └── acp-client/src/      # ACP Client Sidecar (spawn external agents + turn shaping + permissions)
 │   ├── channel/
 │   │   └── gateway/src/         # Channel Gateway (bridge, DingTalk + WeChat adapters)
 │   └── knowledge/
@@ -59,10 +63,11 @@ ultrawork/
 
 ```bash
 bun install              # Install dependencies
-bun run typecheck        # Type check all packages (5)
+bun run typecheck        # Type check all packages (6)
 bun run build:opencode   # Compile OpenCode sidecar binary
 bun run build:gateway    # Compile Gateway sidecar binary
 bun run build:knowledge  # Compile Knowledge sidecar binary
+bun run build:acp        # Compile ACP Client sidecar binary (kills stale :4099 on rebuild)
 bun run tauri:dev        # Start desktop app in dev mode
 bun run tauri:build      # Build production desktop app
 bun run release          # Build Universal macOS DMG (dual-arch sidecars + lipo)
@@ -88,7 +93,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 ## Key Files (关键文件地图)
 
-> main 分支文件。`feat/acp-support` 分支独有文件见该分支 / auto-memory `acp-branch.md`。
+> main 分支文件。（旧 `feat/acp-support` 分支已被 `feat/agent-os-phase0` 的参考重写取代，ADR-027 B2。）
 
 **Desktop — chat / session 组件**
 - `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
@@ -100,8 +105,10 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Desktop — hooks / lib**
 - `src/lib/sse-context.tsx` — SSEProvider + useSSESubscribe（全局单连接）
-- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止
-- `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback
+- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（按会话绑定分流 opencode/ACP）
+- `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（ACP 走 sidecar 回复端点）
+- `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 会话级绑定（localStorage）
+- `src/lib/agent-types.ts` / `agent-router.ts` / `use-acp-sse.ts` — UnifiedAgent 类型 / :4099 HTTP client / 共享 EventSource 订阅
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts` / `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/path-utils.ts`（shortenPath/pathBasename）、`src/lib/platform.ts`（isMacOS）
@@ -112,6 +119,12 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **Gateway（`packages/channel/gateway/src/`）**
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
 - `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, types.ts（ilink 协议类型）
+
+**ACP Client Sidecar（`packages/agent/acp-client/src/`）**
+- `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）
+- `acp-connection.ts` — 子进程 + SDK stdio + 权限挂起回环 + 三阶段关闭 + per-agent 怪癖
+- `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（`~/.config/ultrawork/agents.json`）
+- `packages/agent/acp-client/scripts/mock-acp-agent.ts`（确定性测试 agent）, `packages/agent/acp-client/scripts/spike-claude.ts`（真实 claude → desktop fixture）
 
 **Knowledge Sidecar（`packages/knowledge/sidecar/src/`）**
 - `store.ts`（SQLite + FTS5 + 迁移）, `chunker.ts`（Parent-Child 分块）, `indexer.ts`（增量索引）, `retriever.ts`（BM25 + TF-IDF + RRF）

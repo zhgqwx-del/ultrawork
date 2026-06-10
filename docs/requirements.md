@@ -167,6 +167,24 @@ Monorepo 结构：
 - [ ] 检索 top-K 提高到 8-10（无 reranker，需更多候选保证召回率）
 - [ ] IMA 笔记写入 — AI 可通过 `import_doc`/`append_doc` 将分析结果保存回 IMA
 
+### 多 Agent 后端 / Agent OS（ADR-027 + agent-os-target-architecture.md）
+
+**阶段0-1 档1：会话级多 agent** ✅ (2026-06-10，首批 claude + opencode)
+- [x] ACP Client Sidecar (:4099) — spawn 外部 agent 子进程（ACP stdio JSON-RPC，SDK 0.25）+ agents.json 注册表
+- [x] Turn 整形 — ACP `session/update` → opencode SSE 形状（复用 ADR-029 渲染器，前端零渲染改动）
+- [x] 会话级 agent 绑定 — 输入区 AgentSelector + localStorage 持久化（一会话一 agent）
+- [x] 权限回环 — `request_permission` → permission-dock（once/always/reject），超时/取消/退出默认 deny
+- [x] 知识库 MCP opt-in 透传（per-agent 开关，默认关）
+- [x] 进程稳定性 — 三阶段优雅关闭 + claude 怪癖超时 + 进程退出恢复
+- [x] Settings「外部 Agent」管理（连接/断开/增删改）
+- [x] 构建/打包链路 — `build:acp` hash 增量 + 防陈旧 + setup.sh + Universal DMG
+
+**阶段1 收尾项（规划中）**
+- [ ] ACP 会话历史持久化 — `session/load` + replay 抑制（重启后恢复对话）
+- [ ] token/cost 页脚 — 等上游 claude-code-acp 发 usage
+- [ ] 能力条件 UI（loadSession/image gating）+ gemini/qoder 二期接入
+- [ ] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）
+
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
 - [x] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）✅ 2026-05-20

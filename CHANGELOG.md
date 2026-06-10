@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Agent OS 阶段0→1 落地（ADR-027 档1，首批 claude + opencode）**：新包 `@agent/acp-client`（ACP Client Sidecar :4099，SDK 0.25.0，参考 `feat/acp-support` 设计在 main 上重写）——`TurnShaper` 把 ACP `session/update` 整形成 opencode SSE 形状（工具步骤→过程 message `finish:"tool-calls"`、答案→独立纯 text message `finish:"stop"`、先 part.updated 再 delta、toolCallId upsert、plan/TodoWrite→reasoning part、user 回显），复用 ADR-029 渲染器零前端渲染改动；`clientSessionId` 直通消掉旧分支的 sessionID 改写 hack。**W3 权限回环**（去 auto-approve：挂起 promise + `permission.asked` SSE + `POST /acp/session/:id/permission`，复用 permission-dock；超时/cancel/断开/进程退出默认 deny）。**W4** per-agent `knowledgeMcp` opt-in 透传知识库 MCP（默认关，B4）。**W5** 三阶段优雅关闭（acpx 常量）+ claude `session/new` 60s 超时 + `/acp/health` 带 agent 连接态
+- Agent OS 桌面端接入（零侵入增量，opencode 流不动）：输入区 **AgentSelector**（会话级 agent 绑定，localStorage 持久化；ACP 绑定时隐藏 ModelSelector）+ Settings **「外部 Agent」**section（连接/断开/增删改/知识库开关，i18n zh/en）；`use-session-messages` 发送/停止按绑定分流；`use-acp-sse` 引用计数共享 EventSource（消息+权限复用一条连接）；ACP 终态 finish 补 `markSessionIdle`
+- Agent OS 构建/运行链路：`scripts/build-acp.ts`（hash 增量 + **重编时自动清理 :4099 旧进程防陈旧**——Tauri `prepare_port` 会复用健康旧进程）；`setup.sh --dev` 一键全栈；tauri `externalBin` + `lib.rs` 后台启动（rich_path）；`build-release.ts` per-target/lipo 接入 Universal DMG
+- Agent OS 测试三层：mock ACP agent 离线 stdio e2e（3 用例 56 断言：allow 全链路/reject 不执行工具/超时默认 deny）+ 真实 claude spike 脚本落盘 fixture + desktop vitest 用 fixture 喂真实 `buildTurnModel` 断言切分/终态/流式不闪烁（4 用例）；真机浏览器驱动验证（工具调用渲染 + 权限 dock 全交互 + 文件真实落盘）
+- `docs/gotchas.md` 新增 §8 ACP/外部 Agent（turn 整形契约、claude adapter 怪癖、CLAUDECODE 继承、权限安全默认等 10 条）+ §7 两条构建坑；`docs/conventions.md` 新增 §11 ACP 接入模式（整形契约/测试三层/真机验证法）
+
+### Fixed
+- ACP 真机验证修复：`CLAUDECODE` env 从 dev shell 继承到 claude-code-acp 触发嵌套检测拒绝建会话（spawn 时清洗）；ACP 会话侧栏活动 spinner 不熄（终态补 markSessionIdle）；claude adapter 对同一 toolCallId 重复发 `tool_call` 导致重复 part 卡 pending（按 toolCallId upsert）
+
 ### Changed
 - 共存/UX 影响分析（参考 AionUi 源码核实）：新增 `agent-os-target-architecture.md` §3.6「对现有交互/UI 的影响与共存策略」——档1 原地增量零侵入（D-3 复用 ADR-029 渲染器）、档2 独立 opt-in 面（镜像 AionUi `pages/team` 与 `pages/conversation` 分离的现网范式）、唯二回归风险区（W1 turn 整形质量 / connector 迁移），结论「不需要 UI/UE 大改」。ADR-031 D-7 加「档2 走独立 orchestration 路由、主聊天零侵入」；016 §6 加 UI 共存范式 + Apache-2.0 许可证说明（可借鉴/copy，多为模式参考）
 - AionUi 调研源码核验（016 升级置信度 + 一处反向修正）：直读 `iOfficeAI/AionUi`（含完整稀疏检出）核实——✅`NON_ACP_BACKENDS`/`resolveConversationType`（`teamMapper.ts:51`，逐字一致，源码级坐实 ADR-030 D-8）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`teamTypes.ts`）、SQLite `teams`/`mailbox`/`team_tasks` 表（`schema.ts`）。⚠️**反向发现并修正**：Team MCP Server 的**分发/mailbox handler 源不在公开 repo**（src 里无文件读写那两张表、唯一 stdio MCP 源是 imageGenServer、`team-mcp-stdio.js` 是预构建产物 glob）——Team Mode 运行期真实（e2e + 打包件）但 handler 不可读。016/ADR-031 据此把「Team MCP Server 源码核验」降为「数据层/schema 源码核验 + 运行期真实、handler 源不公开（只借鉴数据流、不照抄实现）」；ADR-030 D-8 佐证不受影响（teamMapper 是真实源码）
