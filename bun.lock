@@ -17,6 +17,18 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/agent/acp-client": {
+      "name": "@agent/acp-client",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agentclientprotocol/sdk": "^0.25.0",
+        "hono": "^4.12.23",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.3.9",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/channel/gateway": {
       "name": "@agent/channel-gateway",
       "version": "0.1.0",
@@ -140,6 +152,8 @@
 
     "@adobe/css-tools": ["@adobe/css-tools@4.4.4", "", {}, "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg=="],
 
+    "@agent/acp-client": ["@agent/acp-client@workspace:packages/agent/acp-client"],
+
     "@agent/api-client": ["@agent/api-client@workspace:packages/core/api-client"],
 
     "@agent/channel-gateway": ["@agent/channel-gateway@workspace:packages/channel/gateway"],
@@ -149,6 +163,8 @@
     "@agent/knowledge-sidecar": ["@agent/knowledge-sidecar@workspace:packages/knowledge/sidecar"],
 
     "@agent/server-manager": ["@agent/server-manager@workspace:packages/core/server-manager"],
+
+    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@0.25.0", "", { "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-wU1VgXNtMvdVotX49txc3WJUDV+/QbLpsgjMvFhlRmp37osdLbI7L7y+iwAlQATwfjLxcv1r1p3ZxZBcXlGhcQ=="],
 
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@5.0.1", "", { "dependencies": { "@csstools/css-calc": "^3.1.1", "@csstools/css-color-parser": "^4.0.2", "@csstools/css-parser-algorithms": "^4.0.0", "@csstools/css-tokenizer": "^4.0.0", "lru-cache": "^11.2.6" } }, "sha512-2SZFvqMyvboVV1d15lMf7XiI3m7SDqXUuKaTymJYLN6dSGadqp+fVojqJlVoMlbZnlTmu3S0TLwLTJpvBMO1Aw=="],
 

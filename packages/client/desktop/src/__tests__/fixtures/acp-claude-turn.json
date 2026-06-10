@@ -1,0 +1,144 @@
+[
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "type": "tool",
+        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "tool": "execute",
+        "state": {
+          "status": "pending",
+          "input": {}
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "type": "tool",
+        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "tool": "execute",
+        "state": {
+          "status": "pending",
+          "input": {
+            "command": "ls",
+            "description": "List files in current directory"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "type": "tool",
+        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "tool": "execute",
+        "state": {
+          "status": "pending",
+          "input": {
+            "command": "ls",
+            "description": "List files in current directory"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "type": "tool",
+        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "tool": "execute",
+        "state": {
+          "status": "completed",
+          "input": {
+            "command": "ls",
+            "description": "List files in current directory"
+          },
+          "output": "alpha.txt\nbeta.md",
+          "title": "`ls`",
+          "metadata": {},
+          "time": {
+            "start": 1781075372126,
+            "end": 1781075372446
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "role": "assistant",
+        "time": {
+          "created": 1781075372126,
+          "completed": 1781075374763
+        },
+        "modelID": "claude",
+        "providerID": "acp",
+        "agent": "claude",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+        "type": "text",
+        "text": "The"
+      }
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+      "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+      "partID": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+      "field": "text",
+      "delta": " current directory contains two files: `alpha.txt` and `beta.md`."
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "role": "assistant",
+        "time": {
+          "created": 1781075374763,
+          "completed": 1781075374844
+        },
+        "modelID": "claude",
+        "providerID": "acp",
+        "agent": "claude",
+        "finish": "stop"
+      }
+    }
+  }
+]
