@@ -60,11 +60,18 @@ export class ACPConnection {
     this.closing = false
 
     try {
+      const env: Record<string, string | undefined> = { ...process.env, ...this.config.env }
+      // Scrub Claude Code session markers inherited from a dev shell (e.g.
+      // setup.sh run inside a Claude Code terminal): claude-code-acp refuses
+      // to start when CLAUDECODE is set (nested-session check), but agents we
+      // spawn are independent processes, not nested sessions.
+      if (!this.config.env?.CLAUDECODE) delete env.CLAUDECODE
+      if (!this.config.env?.CLAUDE_CODE_ENTRYPOINT) delete env.CLAUDE_CODE_ENTRYPOINT
       const proc = Bun.spawn([this.config.command, ...this.config.args], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, ...this.config.env },
+        env,
       })
       this.proc = proc
       this.watchProcessExit(proc)

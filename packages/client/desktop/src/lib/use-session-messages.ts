@@ -357,6 +357,12 @@ export function useSessionMessages(
           )
           if (info.role === "assistant" && info.finish) {
             setSending(false)
+            // ACP sessions have no session.status idle event — clear the
+            // sidebar activity marker on the terminal finish.
+            if (isACP && info.finish !== "tool-calls") {
+              sendingRef.current = false
+              if (sessionId) markSessionIdle(sessionId)
+            }
           }
           break
         }
@@ -464,7 +470,7 @@ export function useSessionMessages(
         }
       }
     },
-    [sessionId, updateSession, markSessionIdle, getEventSessionID]
+    [sessionId, updateSession, markSessionIdle, getEventSessionID, isACP]
   )
 
   useSSESubscribe(handleSSEEvent)

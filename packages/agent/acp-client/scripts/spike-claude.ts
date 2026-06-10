@@ -15,11 +15,6 @@ const FIXTURE_PATH = join(
   "../../../client/desktop/src/__tests__/fixtures/acp-claude-turn.json",
 )
 
-// When the spike itself runs inside a Claude Code session (e.g. driven by
-// Claude Code), the inherited CLAUDECODE env var makes the adapter refuse to
-// start a "nested" session. Not a concern for the packaged app.
-delete process.env.CLAUDECODE
-
 const PROMPT =
   "List the files in the current directory using a tool (e.g. ls), then answer with one short sentence summarizing what you see."
 
