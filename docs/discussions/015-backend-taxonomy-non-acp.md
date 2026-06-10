@@ -6,6 +6,7 @@
 > **缘起**：[ADR-027](../decisions/027-acp-multi-agent-backend.md)/[030](../decisions/030-agent-connector-control-layer.md)/[031](../decisions/031-multi-agent-orchestration.md) + [agent-os-target-architecture.md](../agent-os-target-architecture.md) 已把多后端架构定型为「opencode(REST) + ACP(多 agent)」双 backend。现要把「opencode / claude code 这类」推广到**也想接 openclaw / hermes 这类**——但它们对 ACP 的支持程度存疑（可能只擅长暴露 HTTP）。本文调研两者，回答「能否被 ACP 客户端调用、调用得好不好」，并据此完善 backend 接入抽象。
 > **承接**：[013](./013-agent-os-acp-multi-backend.md)（Agent OS 可行性）· [011](./011-architecture-comparison.md)（横向对标 openclaw/hermes/opencode desktop）。
 > **置信度**：本文是 desk research。hermes 侧主要据官方 ACP Internals 文档（描述 `acp_adapter/` 源码结构，较权威）；openclaw 侧据官方 CLI/Gateway 文档 + 一篇第三方博客（个别**代码级**断言仅第三方单一来源，已就地标注）。**真·实测（spawn agent、观察 `session/update`）是落地前待做项**，见 §11 信息缺口。
+> **现网佐证（2026-06-10）**：竞品 AionUi 代码 `NON_ACP_BACKENDS = {aionrs, openclaw-gateway, nanobot, remote}` else `acp`——**独立印证本文的「ACP vs product-native 两族」分类法 + openclaw 走 gateway(WebSocket) 非 ACP**。详见 [016](./016-aionui-multi-agent-competitor.md)。
 
 ---
 

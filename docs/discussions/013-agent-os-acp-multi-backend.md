@@ -243,7 +243,7 @@ ACP 是「编码 agent + 编辑器」形状的。它**不覆盖**：IM 多渠道
 
 ## 8. 风险与取舍
 
-1. **战略竞合**：Zed/JetBrains/VS Code 都在做「ACP host」；更直接的是 **Jockey（Tauri 桌面 + ACP 多 agent 协调）**、**OpenClaw + acpx**（聊天/CLI 形态的编排平台，已支持飞书/钉钉/企业微信 Channel）。Ultrawork 做通用 ACP host 会进入红海。**差异化必须靠 ACP 之外的层**（国内 IM 深度集成 + 本地知识库 RAG + 桌面体验 + 中文场景），而非「又一个能接 claude code 的壳」。注意 OpenClaw 已覆盖国内 IM Channel，「IM 接入」的护城河需更具体（钉钉/微信深度 + IMA 知识库 + 本地 RAG 组合）。
+1. **战略竞合**：Zed/JetBrains/VS Code 都在做「ACP host」；更直接的是 **[AionUi](./016-aionui-multi-agent-competitor.md)（开源 Electron 多-agent 桌面，已 ship 档1+档2 Team Mode，最贴本愿景）**、**Jockey（Tauri 桌面 + ACP 多 agent 协调）**、**OpenClaw + acpx**（聊天/CLI 形态的编排平台，已支持飞书/钉钉/企业微信 Channel）。Ultrawork 做通用 ACP host 会进入红海（档1/档2 已是追平项，非护城河）。**差异化必须靠 ACP 之外的层**（国内 IM 深度集成 + 本地知识库 RAG + 桌面体验 + 中文场景），而非「又一个能接 claude code 的壳」。注意 OpenClaw 已覆盖国内 IM Channel，「IM 接入」的护城河需更具体（钉钉/微信深度 + IMA 知识库 + 本地 RAG 组合）。
 2. **per-agent 进程怪癖**：Claude stall / Gemini OAuth / Copilot 预检 / Windows shell / 各家关闭信号不同——统一 spawn 路径会被边角击穿。**直接移植 acpx 的处理**，否则稳定性堪忧。
 3. **保真度预期管理**（档2 delegate）：跨厂商委派时父 orchestrator 只看到子 agent 的**最终交付物**，看不到其推理/diff——损失虽在干净接口上但仍真实。需在 UI 明确「子 agent 交回的是成果、不是全过程」，别让用户以为是「无缝接管」。
 4. **维护面爆炸**：每接一个 agent 多一套版本/认证/怪癖。建议**靠 ACP Registry 生态**（`agent name → 命令 + env` 配置表）而非为每个 agent 写专用 connector，降低边际成本。

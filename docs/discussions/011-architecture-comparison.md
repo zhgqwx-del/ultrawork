@@ -82,6 +82,14 @@
 - **provider**：Vercel AI SDK + Models.dev，75+ provider，本地 Ollama/LM Studio/llama.cpp，任意 OpenAI 兼容 baseURL。
 - **持久化 / 流式**：server 端 SQLite（Drizzle + Effect），桌面本地配置 `electron-store`；流式 **SSE**（`/event` + `/global/event`），与 Ultrawork 同源。
 
+### 2.4 AionUi — 开源多-agent 桌面 Cowork（TS / Electron）｜**形态最贴「Agent OS」愿景的竞品**
+> 详见 [discussions/016](./016-aionui-multi-agent-competitor.md)（源级调研 + 实现参考 + 对我们决策的验证）。本节只提炼对比骨架。
+
+- **定位**：开源跨平台桌面（**Electron + React19 + Bun**），「把 20+ CLI agent 统一到一界面协作」。经 **ACP**（`@agentclientprotocol/sdk` 0.18.2）接 Claude/Codex/Qwen/Goose/OpenClaw/Hermes/OpenCode/Gemini/Qoder… + 自带内置 agent（Aion CLI/aionrs）。
+- **后端模型**：PATH 自动检测；`NON_ACP_BACKENDS={aionrs,openclaw-gateway,nanobot,remote}` 走原生协议、其余走 ACP——**与我们 ADR-030 D-8 的「ACP vs product-native」一字不差**。
+- **多 agent**：一会话绑一 agent（不支持会话内切换）+ Parallel Sessions（档1）；**Team Mode = Leader-Teammate 编排**（经内置 Team MCP Server 分派 + 异步 mailbox 回卷 + shared/isolated 工作区）——**已 ship 的档2**，与我们 ADR-031 同构。
+- **空白**：**无国内 IM 渠道、无知识库/RAG**——纯编码 cowork。→ 它印证「档1/档2 是追平项」，**护城河仍在 ACP 之外**（与本文 §5 P0 一致）。
+
 ---
 
 ## 3. 多维横向对比

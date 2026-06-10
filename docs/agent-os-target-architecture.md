@@ -299,7 +299,7 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 - **维护面**：每接一 agent 多一套版本/认证/怪癖——靠 `agent name→命令` registry 而非专用 connector，降边际成本。
 
 ### 竞合
-Jockey（Tauri+ACP 多 agent）、openclaw+acpx（已覆盖飞书/钉钉/企业微信 Channel）、Zed/JetBrains 都在做通用 ACP host。**差异化必须靠 ACP 之外**：钉钉/微信深度 + IMA 知识库 + 本地 RAG + 中文场景。「又一个能接 claude code 的壳」无护城河。
+**AionUi**（开源 Electron 多-agent 桌面，[discussions/016](./discussions/016-aionui-multi-agent-competitor.md)）是**形态最贴的竞品**——已 ship 档1（并行多后端）+ 档2（Team Mode 编排），且其 `NON_ACP_BACKENDS` 路由与本架构 D-8 一字不差。此外 Jockey（Tauri+ACP）、openclaw+acpx（已覆盖飞书/钉钉/企业微信 Channel）、Zed/JetBrains 都在做通用 ACP host。**含义：档1/档2「调度多 agent + 跨厂商编排」本身已是追平项、非护城河**（可大胆借鉴其已验证范式提速）；**差异化必须靠 ACP 之外**：钉钉/微信深度 + IMA 知识库 + 本地 RAG + 中文场景（AionUi 等竞品均空白）。「又一个能接 claude code 的壳」无护城河。
 
 ### 信息缺口（落地前实测）
 > openclaw/hermes/qoder 三家接入调研见 [discussions/015 §11](./discussions/015-backend-taxonomy-non-acp.md)（均 desk research，真·实测待落地前做）。

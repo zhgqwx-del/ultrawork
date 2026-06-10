@@ -16,7 +16,7 @@
 2. **建在 connector 原语之上**：ADR-030 的 backend adapter 暴露 `createSession/prompt/cancel/subscribe`，正是 spawn/await/steer 的底座；编排层只消费原语，不碰协议/进程。
 3. **五种模式不是一等公民**：经源码核实，openclaw **没有** `/acp fanout`、`/acp debate` 命令或 `dispatch.rules`——Fan-out/Pipeline/Supervisor/Debate 是用细粒度原语（spawn/steer/cancel/streamTo）+ LLM 编排者 emergent 的。**Ultrawork 应先做对原语，模式作为其上的组合。**
 
-三个 delegate 范式参考（均「父→子委派 + 交付物回卷」，无透明换手）：opencode `task`（child session + `<task_result>`）、hermes `delegate_tool`（ThreadPool 子 AIAgent，默认 3 并发、`max_spawn_depth=1`）、openclaw `sessions_spawn`（`runtime:acp` 后台任务，`streamTo:parent` 回流 + announce 回卷）。
+四个 delegate 范式参考（均「父→子委派 + 交付物回卷」，无透明换手）：opencode `task`（child session + `<task_result>`）、hermes `delegate_tool`（ThreadPool 子 AIAgent，默认 3 并发、`max_spawn_depth=1`）、openclaw `sessions_spawn`（`runtime:acp` 后台任务，`streamTo:parent` 回流 + announce 回卷）、**AionUi Team Mode**（**现网已 ship**：Leader 经内置 **Team MCP Server** 分派子任务 → Teammate 并行 → **异步 mailbox 回卷** → Leader 汇总；详见 [discussions/016](../discussions/016-aionui-multi-agent-competitor.md)）。→ **本 ADR 的 host-MCP delegate（D-1）已有现网产品（AionUi）佐证可行，降低实现风险。**
 
 ---
 
@@ -68,6 +68,7 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 ## 实现章节
 
 > 依赖：ADR-027 阶段1（ACP 事件归一化）+ ADR-030 阶段2（connector 原语）先落地。
+> **现网实现参考（AionUi Team Mode，[016](../discussions/016-aionui-multi-agent-competitor.md)）**：① **Team MCP Server** = 本 ADR「delegate 经宿主 MCP bridge」的范式（任务分发 + mailbox 回收 + 共享任务板）；② **MCP 注入状态机** `tcp_ready→session_injecting→session_ready→mcp_tools_waiting→mcp_tools_ready`（+ degraded/error）可参考 ADR-027 W4 宿主 MCP 透传落地；③ **Team/TeamAgent 数据模型**（slot_id/conversation_id/role/agent_type/conversation_type/status/model）+ SQLite 持久化 + IPC 事件集，作 orchestrator 数据模型与编排 UI 参考。
 
 ### 组件
 - **Orchestrator**（新，`packages/core/orchestrator` 或并入 connector 上层）：实现 delegate 语义、治理护栏、后台任务跟踪、进度回流/回卷。
