@@ -35,6 +35,13 @@ new AgentSideConnection(
 
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "I should list " } })
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the directory first." } })
+      await send({
+        sessionUpdate: "plan",
+        entries: [
+          { content: "List directory", priority: "high", status: "in_progress" },
+          { content: "Summarize", priority: "medium", status: "pending" },
+        ],
+      })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Let me check the files." } })
       await send({
         sessionUpdate: "tool_call",
@@ -59,6 +66,13 @@ new AgentSideConnection(
         toolCallId: "call_1",
         status: "completed",
         content: [{ type: "content", content: { type: "text", text: "a.txt\nb.txt" } }],
+      })
+      await send({
+        sessionUpdate: "plan",
+        entries: [
+          { content: "List directory", priority: "high", status: "completed" },
+          { content: "Summarize", priority: "medium", status: "in_progress" },
+        ],
       })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "There are " } })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two files." } })

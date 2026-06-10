@@ -59,11 +59,6 @@ function replay(events: ShapedEvent[]): SendMessageResponse[] {
   return messages
 }
 
-const user = (id: string, text: string): SendMessageResponse => ({
-  info: { id, sessionID: "ses", role: "user", time: { created: 0 } },
-  parts: [{ type: "text", id: `${id}-p`, sessionID: "ses", messageID: id, text } as MessagePart],
-})
-
 describe("ACP turn shaping → buildTurnModel (real claude fixture)", () => {
   it("emits every delta after a part.updated created its part", () => {
     const seen = new Set<string>()
@@ -76,10 +71,14 @@ describe("ACP turn shaping → buildTurnModel (real claude fixture)", () => {
   })
 
   it("splits the turn into process (tool steps) and a text-only answer", () => {
-    const assistant = replay(fixture)
+    // The fixture opens with the sidecar's user echo (role corrected by the
+    // follow-up message.updated), then the assistant messages.
+    const messages = replay(fixture)
+    const assistant = messages.filter((m) => m.info.role === "assistant")
+    expect(messages[0].info.role).toBe("user")
     expect(assistant.length).toBeGreaterThanOrEqual(2)
 
-    const groups = groupIntoTurns([user("u1", "list the files"), ...assistant])
+    const groups = groupIntoTurns(messages)
     expect(groups.map((g) => g.kind)).toEqual(["user", "assistant"])
     const turnMessages = groups[1].kind === "assistant" ? groups[1].messages : []
     expect(turnMessages).toHaveLength(assistant.length)
@@ -105,7 +104,7 @@ describe("ACP turn shaping → buildTurnModel (real claude fixture)", () => {
   })
 
   it("ends the turn with a terminal finish (spinner stops)", () => {
-    const assistant = replay(fixture)
+    const assistant = replay(fixture).filter((m) => m.info.role === "assistant")
     const lastInfo = assistant[assistant.length - 1].info
     // message-list.tsx isTerminal: finish set && !== "tool-calls"
     expect(lastInfo.finish).toBeTruthy()
@@ -118,12 +117,16 @@ describe("ACP turn shaping → buildTurnModel (real claude fixture)", () => {
   })
 
   it("keeps the answer empty while a tool step is still streaming", () => {
-    // Truncate the stream right before the answer message's first text part.
+    // Truncate right before the answer message's first text part (skip the
+    // user echo, whose message ids are prefixed acp_usr_).
     const cut = fixture.findIndex(
-      (e) => e.type === "message.part.updated" && e.properties.part.type === "text",
+      (e) =>
+        e.type === "message.part.updated" &&
+        e.properties.part.type === "text" &&
+        !String(e.properties.part.messageID).startsWith("acp_usr_"),
     )
     expect(cut).toBeGreaterThan(0)
-    const assistant = replay(fixture.slice(0, cut))
+    const assistant = replay(fixture.slice(0, cut)).filter((m) => m.info.role === "assistant")
     expect(assistant.length).toBeGreaterThan(0)
 
     const model = buildTurnModel(assistant, true)

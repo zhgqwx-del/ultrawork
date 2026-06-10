@@ -57,11 +57,19 @@ describe("W1 turn shaping (mock agent, stdio e2e)", () => {
     )
     try {
       await conn.connect()
-      const sessionId = await conn.newSession("/tmp")
+      // The client session id is stamped on every shaped event (no frontend
+      // id rewriting); the returned ACP id stays internal.
+      const sessionId = await conn.newSession("/tmp", "ses_pub")
       const stopReason = await conn.prompt(sessionId, "list the files")
       expect(stopReason).toBe("end_turn")
     } finally {
       conn.disconnect()
+    }
+
+    for (const event of events) {
+      const props = event.properties as Record<string, any>
+      const sid = props.sessionID ?? props.part?.sessionID ?? props.info?.sessionID
+      expect(sid).toBe("ses_pub")
     }
 
     // Contract 1: every delta is preceded by a part.updated creating its part
@@ -75,17 +83,26 @@ describe("W1 turn shaping (mock agent, stdio e2e)", () => {
     }
 
     const messages = replay(events)
-    expect(messages.length).toBe(3)
-    const [narration, toolStep, answer] = messages as Array<{
+    expect(messages.length).toBe(4)
+    const [echo, narration, toolStep, answer] = messages as Array<{
       info: UwMessageInfo
       parts: UwPart[]
     }>
 
+    // Contract 0: the prompt is echoed back as a user message.
+    expect(echo.info.role).toBe("user")
+    expect(echo.parts).toHaveLength(1)
+    expect((echo.parts[0] as { text: string }).text).toBe("list the files")
+
     // Contract 2: intermediate messages sealed with finish:"tool-calls".
     expect(narration.info.finish).toBe("tool-calls")
-    expect(narration.parts.map((p) => p.type).sort()).toEqual(["reasoning", "text"])
-    const reasoningPart = narration.parts.find((p) => p.type === "reasoning")!
-    expect((reasoningPart as { text: string }).text).toBe("I should list the directory first.")
+    expect(narration.parts.map((p) => p.type).sort()).toEqual(["reasoning", "reasoning", "text"])
+    const reasoningParts = narration.parts.filter((p) => p.type === "reasoning")
+    expect((reasoningParts[0] as { text: string }).text).toBe("I should list the directory first.")
+    // Plan part is upserted wholesale — the final state wins.
+    expect((reasoningParts[1] as { text: string }).text).toBe(
+      "Plan\n✓ List directory\n→ Summarize",
+    )
 
     // Contract 3: tool step lives in its own message, never in the answer;
     // a re-sent tool_call for the same id must upsert, not duplicate.

@@ -2,13 +2,19 @@
 
 import type { StopReason } from "@agentclientprotocol/sdk"
 import { ACPConnection } from "./acp-connection.js"
+import { deleteAgentConfig, saveAgentConfig } from "./agents-config.js"
 import type { ACPAgentConfig, ACPAgentInfo, ACPSessionInfo, UwSSEEvent } from "./types.js"
 
 type Subscriber = (event: UwSSEEvent) => void
 
+interface SessionEntry extends ACPSessionInfo {
+  /** The agent-side session id (sessionId is the public/client-facing one). */
+  acpSessionId: string
+}
+
 export class ACPManager {
   private connections = new Map<string, ACPConnection>()
-  private sessions = new Map<string, ACPSessionInfo>()
+  private sessions = new Map<string, SessionEntry>()
   private subscribers = new Map<string, Set<Subscriber>>()
 
   constructor(configs: ACPAgentConfig[]) {
@@ -52,20 +58,53 @@ export class ACPManager {
     }
   }
 
-  async createSession(agentId: string, cwd: string): Promise<string> {
+  /**
+   * Create a session. With `clientSessionId` (the desktop's own session id),
+   * all shaped events carry that id and the caller addresses the session by
+   * it — the frontend needs no id translation at all.
+   */
+  async createSession(agentId: string, cwd: string, clientSessionId?: string): Promise<string> {
     const conn = this.requireAgent(agentId)
     if (conn.status !== "connected") await conn.connect()
-    const sessionId = await conn.newSession(cwd)
-    this.sessions.set(sessionId, { sessionId, agentId, cwd, createdAt: Date.now() })
+    const acpSessionId = await conn.newSession(cwd, clientSessionId)
+    const sessionId = clientSessionId ?? acpSessionId
+    this.sessions.set(sessionId, { sessionId, acpSessionId, agentId, cwd, createdAt: Date.now() })
     return sessionId
   }
 
   async prompt(sessionId: string, text: string): Promise<StopReason> {
-    return this.requireSessionAgent(sessionId).prompt(sessionId, text)
+    const entry = this.requireSession(sessionId)
+    return this.requireAgent(entry.agentId).prompt(entry.acpSessionId, text)
   }
 
   async cancel(sessionId: string): Promise<void> {
-    await this.requireSessionAgent(sessionId).cancel(sessionId)
+    const entry = this.requireSession(sessionId)
+    await this.requireAgent(entry.agentId).cancel(entry.acpSessionId)
+  }
+
+  getSession(sessionId: string): ACPSessionInfo | undefined {
+    return this.sessions.get(sessionId)
+  }
+
+  getAgentConfig(agentId: string): ACPAgentConfig | undefined {
+    return this.connections.get(agentId)?.config
+  }
+
+  /** Persist + (re)register an agent; an existing connection is replaced. */
+  saveAgent(config: ACPAgentConfig): void {
+    saveAgentConfig(config)
+    this.connections.get(config.id)?.disconnect()
+    this.register(config)
+  }
+
+  deleteAgent(agentId: string): void {
+    const conn = this.requireAgent(agentId)
+    conn.disconnect()
+    this.connections.delete(agentId)
+    deleteAgentConfig(agentId)
+    for (const [sessionId, info] of this.sessions) {
+      if (info.agentId === agentId) this.sessions.delete(sessionId)
+    }
   }
 
   hasSession(sessionId: string): boolean {
@@ -101,9 +140,9 @@ export class ACPManager {
     return conn
   }
 
-  private requireSessionAgent(sessionId: string): ACPConnection {
-    const info = this.sessions.get(sessionId)
-    if (!info) throw new Error(`Unknown session: ${sessionId}`)
-    return this.requireAgent(info.agentId)
+  private requireSession(sessionId: string): SessionEntry {
+    const entry = this.sessions.get(sessionId)
+    if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+    return entry
   }
 }

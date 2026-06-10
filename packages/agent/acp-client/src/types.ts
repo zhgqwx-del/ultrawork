@@ -105,7 +105,7 @@ export type UwPart = UwTextPart | UwReasoningPart | UwToolPart
 export interface UwMessageInfo {
   id: string
   sessionID: string
-  role: "assistant"
+  role: "user" | "assistant"
   time: { created: number; completed?: number }
   modelID?: string
   providerID?: string

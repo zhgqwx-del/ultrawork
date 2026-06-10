@@ -3,11 +3,37 @@
     "type": "message.part.updated",
     "properties": {
       "part": {
-        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_usr_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
+        "type": "text",
+        "text": "List the files in the current directory using a tool (e.g. ls), then answer with one short sentence summarizing what you see."
+      }
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_usr_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "role": "user",
+        "time": {
+          "created": 1781076704248,
+          "completed": 1781076704248
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
         "type": "tool",
-        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "callID": "toolu_01WSBHjLHzM4nWdhgs6f61yB",
         "tool": "execute",
         "state": {
           "status": "pending",
@@ -20,11 +46,11 @@
     "type": "message.part.updated",
     "properties": {
       "part": {
-        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
         "type": "tool",
-        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "callID": "toolu_01WSBHjLHzM4nWdhgs6f61yB",
         "tool": "execute",
         "state": {
           "status": "pending",
@@ -40,11 +66,11 @@
     "type": "message.part.updated",
     "properties": {
       "part": {
-        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
         "type": "tool",
-        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "callID": "toolu_01WSBHjLHzM4nWdhgs6f61yB",
         "tool": "execute",
         "state": {
           "status": "pending",
@@ -60,11 +86,11 @@
     "type": "message.part.updated",
     "properties": {
       "part": {
-        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
         "type": "tool",
-        "callID": "toolu_014EKnwAyVLrNiuuxZ5X356g",
+        "callID": "toolu_01WSBHjLHzM4nWdhgs6f61yB",
         "tool": "execute",
         "state": {
           "status": "completed",
@@ -76,8 +102,8 @@
           "title": "`ls`",
           "metadata": {},
           "time": {
-            "start": 1781075372126,
-            "end": 1781075372446
+            "start": 1781076707164,
+            "end": 1781076707463
           }
         }
       }
@@ -87,12 +113,12 @@
     "type": "message.updated",
     "properties": {
       "info": {
-        "id": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_0",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "id": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_0",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
         "role": "assistant",
         "time": {
-          "created": 1781075372126,
-          "completed": 1781075374763
+          "created": 1781076707164,
+          "completed": 1781076710928
         },
         "modelID": "claude",
         "providerID": "acp",
@@ -105,9 +131,9 @@
     "type": "message.part.updated",
     "properties": {
       "part": {
-        "id": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-        "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+        "id": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_2",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+        "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
         "type": "text",
         "text": "The"
       }
@@ -116,9 +142,9 @@
   {
     "type": "message.part.delta",
     "properties": {
-      "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
-      "messageID": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
-      "partID": "acp_prt_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
+      "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
+      "messageID": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+      "partID": "acp_prt_920b8e91-a91a-4089-94bc-bfe46cd02e93_2",
       "field": "text",
       "delta": " current directory contains two files: `alpha.txt` and `beta.md`."
     }
@@ -127,12 +153,12 @@
     "type": "message.updated",
     "properties": {
       "info": {
-        "id": "acp_msg_6a6ff3e9-fd80-41fc-8255-77c56a2da171_1",
-        "sessionID": "6a6ff3e9-fd80-41fc-8255-77c56a2da171",
+        "id": "acp_msg_920b8e91-a91a-4089-94bc-bfe46cd02e93_1",
+        "sessionID": "920b8e91-a91a-4089-94bc-bfe46cd02e93",
         "role": "assistant",
         "time": {
-          "created": 1781075374763,
-          "completed": 1781075374844
+          "created": 1781076710928,
+          "completed": 1781076711076
         },
         "modelID": "claude",
         "providerID": "acp",

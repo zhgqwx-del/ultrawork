@@ -8,7 +8,9 @@ import { useModel } from "@/lib/model-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
-import { ChatInput, MessageList, ModelSelector } from "@/components/chat"
+import { ChatInput, MessageList, ModelSelector, AgentSelector } from "@/components/chat"
+import { useAgents } from "@/lib/agent-context"
+import { isACPAgentId } from "@/lib/agent-types"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
@@ -33,6 +35,10 @@ export function SessionPage() {
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
 
   const session = sessions.find(s => s.id === id)
+
+  // Per-session agent binding; model selection only applies to opencode.
+  const { getSessionAgentId } = useAgents()
+  const isACPSession = isACPAgentId(getSessionAgentId(id))
 
   // Read navigation state once per session change
   const navState = location.state as { sending?: boolean; messageText?: string } | null
@@ -180,11 +186,16 @@ export function SessionPage() {
                 loading={sending}
                 variant="reply"
                 leftSlot={
-                  <ModelSelector
-                    currentModel={currentModel}
-                    onModelChange={setModel}
-                    onOpenModelDialog={openModelDialog}
-                  />
+                  <div className="flex items-center gap-1">
+                    {id && <AgentSelector sessionId={id} />}
+                    {!isACPSession && (
+                      <ModelSelector
+                        currentModel={currentModel}
+                        onModelChange={setModel}
+                        onOpenModelDialog={openModelDialog}
+                      />
+                    )}
+                  </div>
                 }
               />
             </div>

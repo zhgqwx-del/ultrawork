@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot} from "lucide-react"
+import { AgentsSection } from "@/components/settings/agents-section"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
@@ -26,12 +27,13 @@ import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChanne
 import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "services" | "channels" | "knowledge" | "skills" | "about"
+type SettingsSection = "general" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
+  { key: "agents", icon: Bot, labelKey: "settingsPage.agents" },
   { key: "services", icon: Server, labelKey: "settingsPage.services" },
   { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
   { key: "knowledge", icon: BookOpen, labelKey: "settingsPage.knowledge" },
@@ -83,6 +85,7 @@ export function SettingsPage() {
             {activeSection === "general" && <GeneralSection />}
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
+            {activeSection === "agents" && <AgentsSection />}
             {activeSection === "services" && <ServicesSection />}
             {activeSection === "channels" && <ChannelsSection />}
             {activeSection === "knowledge" && <KnowledgeSection />}

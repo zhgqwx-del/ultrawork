@@ -14,6 +14,7 @@
 
 import type {
   ContentBlock,
+  PlanEntry,
   SessionUpdate,
   StopReason,
   ToolCallContent,
@@ -56,6 +57,8 @@ export class TurnShaper {
   private tools = new Map<string, ToolEntry>()
   private turnCost: number | undefined
   private modelID: string | undefined
+  private plan: { messageID: string; partID: string } | null = null
+  private userSeq = 0
 
   constructor(
     private readonly sessionId: string,
@@ -64,11 +67,41 @@ export class TurnShaper {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** Reset per-turn state. Call before each prompt. */
-  startTurn(): void {
+  /**
+   * Reset per-turn state. Call before each prompt. When the user's text is
+   * given, echo it as a user message (opencode does this server-side; without
+   * it the optimistic temp message never reconciles and other clients of the
+   * same session never see the prompt).
+   */
+  startTurn(userText?: string): void {
     this.current = null
     this.tools.clear()
+    this.plan = null
     this.turnCost = undefined
+    if (userText) {
+      const messageID = `acp_usr_${this.sessionId}_${this.userSeq++}`
+      const createdAt = this.now()
+      this.emitPart({
+        id: this.newPartId(),
+        sessionID: this.sessionId,
+        messageID,
+        type: "text",
+        text: userText,
+      })
+      // Corrects the inferred role: the reducer creates unknown messages as
+      // assistant unless an optimistic temp message is pending.
+      this.emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: messageID,
+            sessionID: this.sessionId,
+            role: "user",
+            time: { created: createdAt, completed: createdAt },
+          },
+        },
+      })
+    }
   }
 
   handleUpdate(update: SessionUpdate): void {
@@ -88,16 +121,22 @@ export class TurnShaper {
       case "usage_update":
         if (update.cost) this.turnCost = update.cost.amount
         break
-      case "session_info_update":
       case "plan":
+        this.onPlan(update.entries)
+        break
       case "plan_update":
+        // Only the full-items variant is renderable here; file/markdown plans
+        // are agent-specific surfaces we don't shape yet.
+        if (update.plan.type === "items" && Array.isArray((update.plan as { entries?: PlanEntry[] }).entries)) {
+          this.onPlan((update.plan as unknown as { entries: PlanEntry[] }).entries)
+        }
+        break
+      case "session_info_update": // title/updatedAt only — nothing to render
       case "plan_removed":
       case "available_commands_update":
       case "current_mode_update":
       case "config_option_update":
-      case "user_message_chunk":
-        // TODO(W1b): plan → ExecutionFlow narration; user_message_chunk matters
-        // only for session/load replay. Ignored in the spike.
+      case "user_message_chunk": // matters only for session/load replay (W4)
         break
     }
   }
@@ -229,6 +268,27 @@ export class TurnShaper {
     this.emitPart(part)
   }
 
+  /**
+   * Plan (e.g. claude's TodoWrite) → one reasoning part per turn, replaced
+   * wholesale on every update. Reasoning parts always render inside the
+   * ExecutionFlow and can never leak into the answer (not an output type).
+   */
+  private onPlan(entries: PlanEntry[]): void {
+    const text = formatPlan(entries)
+    if (!this.plan) {
+      const msg = this.ensureMessage()
+      this.plan = { messageID: msg.id, partID: this.newPartId() }
+    }
+    // part.updated upserts by id even after its message was sealed.
+    this.emitPart({
+      id: this.plan.partID,
+      sessionID: this.sessionId,
+      messageID: this.plan.messageID,
+      type: "reasoning",
+      text,
+    })
+  }
+
   // --- helpers ---
 
   /** Map ACP tool call fields onto opencode's nested ToolState union. */
@@ -314,6 +374,17 @@ export class TurnShaper {
       properties: { sessionID: this.sessionId, messageID: msg.id, partID, field: "text", delta },
     })
   }
+}
+
+const PLAN_STATUS_ICON: Record<PlanEntry["status"], string> = {
+  pending: "○",
+  in_progress: "→",
+  completed: "✓",
+}
+
+function formatPlan(entries: PlanEntry[]): string {
+  const lines = entries.map((e) => `${PLAN_STATUS_ICON[e.status] ?? "○"} ${e.content}`)
+  return `Plan\n${lines.join("\n")}`
 }
 
 function contentBlockText(content: ContentBlock): string {

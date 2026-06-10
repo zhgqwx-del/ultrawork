@@ -4,6 +4,10 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useApi } from "@/lib/use-api"
 import { useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
+import { useAgents } from "@/lib/agent-context"
+import { isACPAgentId, parseAgentId } from "@/lib/agent-types"
+import { ensureACPSession, promptACPSession, cancelACPSession } from "@/lib/agent-router"
+import { useACPSSE } from "@/lib/use-acp-sse"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
 
@@ -26,9 +30,14 @@ export function useSessionMessages(
   sessionId: string | undefined,
   options?: UseSessionMessagesOptions,
 ) {
-  const { updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
+  const { sessions, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
   const api = useApi()
   const { t } = useI18n()
+
+  // --- Per-session agent binding (ADR-027 档1) ---
+  const { getSessionAgentId } = useAgents()
+  const boundAgentId = getSessionAgentId(sessionId)
+  const isACP = isACPAgentId(boundAgentId)
 
   // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
@@ -459,6 +468,9 @@ export function useSessionMessages(
   )
 
   useSSESubscribe(handleSSEEvent)
+  // ACP-bound sessions stream from the sidecar; events arrive already shaped
+  // like opencode's and stamped with this session's id (no translation).
+  useACPSSE(isACP ? sessionId : undefined, handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
   useEffect(() => {
@@ -505,6 +517,14 @@ export function useSessionMessages(
     setStoppedAtMessageId(stoppedId)
 
     if (sessionId) {
+      if (isACP) {
+        // ACP: session/cancel ends the turn (the agent keeps its own history;
+        // there is no revert semantics).
+        cancelACPSession(sessionId).catch(() => {
+          setSending(false)
+        })
+        return
+      }
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
@@ -518,7 +538,7 @@ export function useSessionMessages(
           setSending(false)
         })
     }
-  }, [sessionId, api, markSessionIdle])
+  }, [sessionId, api, markSessionIdle, isACP])
 
   const sendMessage = useCallback((
     text: string,
@@ -551,7 +571,7 @@ export function useSessionMessages(
     }
     setMessages((prev) => [...prev, tempUserMessage])
 
-    api.promptAsync(sessionId, userMessage, { model: model || undefined }).catch((err) => {
+    const handleSendError = (err: unknown) => {
       console.error("Failed to send message:", err)
       if (idRef.current !== sessionId) return
       sendingRef.current = false
@@ -564,8 +584,25 @@ export function useSessionMessages(
       }
       setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
       toast.error(t("error.sendMessage"))
-    })
-  }, [sessionId, sending, api, markSessionActive, markSessionIdle, t])
+    }
+
+    if (isACP) {
+      // ACP route: lazily create the agent-side session bound to this desktop
+      // session (cwd = session workspace), then prompt. Turn completion is
+      // signaled by the shaped message.updated finish event over SSE.
+      const directory = sessions.find((s) => s.id === sessionId)?.directory
+      const { rawId: acpAgentId } = parseAgentId(boundAgentId)
+      if (!directory) {
+        handleSendError(new Error("Session has no workspace directory"))
+        return
+      }
+      ensureACPSession(acpAgentId, directory, sessionId)
+        .then(() => promptACPSession(sessionId, userMessage))
+        .catch(handleSendError)
+    } else {
+      api.promptAsync(sessionId, userMessage, { model: model || undefined }).catch(handleSendError)
+    }
+  }, [sessionId, sending, api, markSessionActive, markSessionIdle, t, isACP, boundAgentId, sessions])
 
   return {
     messages: displayMessages,

@@ -55,3 +55,37 @@ export function loadAgentConfigs(): ACPAgentConfig[] {
 export function agentsConfigPath(): string {
   return CONFIG_PATH
 }
+
+function readFile(): AgentsFile {
+  if (!existsSync(CONFIG_PATH)) return { agents: {} }
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as AgentsFile
+  } catch {
+    return { agents: {} }
+  }
+}
+
+function writeFile(file: AgentsFile): void {
+  mkdirSync(CONFIG_DIR, { recursive: true })
+  writeFileSync(CONFIG_PATH, JSON.stringify(file, null, 2) + "\n")
+}
+
+export function saveAgentConfig(config: ACPAgentConfig): void {
+  const file = readFile()
+  file.agents = file.agents ?? {}
+  file.agents[config.id] = {
+    label: config.label,
+    description: config.description,
+    command: config.command,
+    args: config.args,
+    env: config.env,
+  }
+  writeFile(file)
+}
+
+export function deleteAgentConfig(id: string): void {
+  const file = readFile()
+  if (file.agents) delete file.agents[id]
+  if (file.default === id) delete file.default
+  writeFile(file)
+}

@@ -42,6 +42,7 @@ export class ACPConnection {
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined
   private connection: ClientSideConnection | undefined
   private shapers = new Map<string, TurnShaper>()
+  private emitIds = new Map<string, string>()
   private activePrompts = new Set<string>()
   private pendingRequests = new Set<PendingRequest>()
   private updateChain: Promise<void> = Promise.resolve()
@@ -104,7 +105,12 @@ export class ACPConnection {
     }
   }
 
-  async newSession(cwd: string): Promise<string> {
+  /**
+   * Create an ACP session. `emitSessionId` is the session id stamped on every
+   * shaped event (the desktop passes its own session id here, so the frontend
+   * consumes the stream with zero id rewriting); defaults to the ACP id.
+   */
+  async newSession(cwd: string, emitSessionId?: string): Promise<string> {
     const conn = this.requireConnection()
     const res = await this.runRequest(
       () => conn.newSession({ cwd, mcpServers: [] }),
@@ -112,9 +118,11 @@ export class ACPConnection {
       "session/new",
     )
     const sessionId = res.sessionId
+    const emitAs = emitSessionId ?? sessionId
+    this.emitIds.set(sessionId, emitAs)
     this.shapers.set(
       sessionId,
-      new TurnShaper(sessionId, this.config.id, (event) => this.onEvent(sessionId, event)),
+      new TurnShaper(emitAs, this.config.id, (event) => this.onEvent(emitAs, event)),
     )
     return sessionId
   }
@@ -128,7 +136,7 @@ export class ACPConnection {
     const shaper = this.shapers.get(sessionId)
     if (!shaper) throw new Error(`Unknown session: ${sessionId}`)
 
-    shaper.startTurn()
+    shaper.startTurn(text)
     this.activePrompts.add(sessionId)
     try {
       const res = await this.runRequest(() =>
@@ -158,6 +166,7 @@ export class ACPConnection {
     this.rejectPending(new Error("Agent disconnected"))
     this.killProcess()
     this.shapers.clear()
+    this.emitIds.clear()
     this.status = "disconnected"
   }
 
@@ -208,9 +217,10 @@ export class ACPConnection {
         this.error = `Agent process exited with code ${code}`
         this.rejectPending(new Error(this.error))
         for (const sessionId of this.activePrompts) {
-          this.onEvent(sessionId, {
+          const emitAs = this.emitIds.get(sessionId) ?? sessionId
+          this.onEvent(emitAs, {
             type: "session.error",
-            properties: { sessionID: sessionId, error: this.error },
+            properties: { sessionID: emitAs, error: this.error },
           })
         }
       }
