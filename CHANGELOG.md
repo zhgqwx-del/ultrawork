@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- `agent-os-target-architecture.md` 全文对齐 review：修正 §3.1 协议层（外部后端补 product-native 非-ACP 一支，不再写成「外部必走 ACP」）、§9 信息缺口（qoder flag 已调研 + openclaw 三面，指向 015 §11）、TL;DR（补 backend 分类法 #4 + 协议层措辞）、§2 图注（backend 类开放）、§6 护栏标 ADR-031 D-5、头部加修订标记
 - ADR-030 修订（D-8 backend 分类法泛化，来源 discussion 015）：`BackendKind` 从封闭 union 开放化；引入「协议族（acp-stdio / product-native〔HTTP+SSE 或 WebSocket〕 / acp-remote）× adapter」两轴——**真正的轴是协议族（ACP 标准 vs 产品自有）而非线缆，两族对等并列，WebSocket 归 product-native 内的线缆不单列**；选型决策树按「native + 保真 + 性能」选；opencode 显式标 default + reference；`BackendCapabilities` 扩展黑盒降级字段（permissions/fileDiffs/plan/reasoning/historyReplay）。同步更新 `agent-os-target-architecture.md` §0（C4/C5）+ §3.3（两族对等、传输族、未来扩展）
 - openclaw 调研修正（核实其 Gateway WebSocket Protocol）：openclaw 对外有**三条面**——ACP-stdio 桥（最差，丢权限/MCP/diff）< OpenAI HTTP（中）< **WebSocket Gateway（native + 最富**：streamed agent events + tool results + approvals + sessions，所有第一方客户端走它）。修正先前「openclaw native 可能是 HTTP / WS 仅内部」的说法——WebSocket 是其证实的对外客户端协议、真正 native 面；接 openclaw 仍是 branch C 私有协议 bespoke（015 §3.4/§5/§6 + ADR-030 D-8 + 目标架构 C5 同步）
 - ADR-027/030/031 末尾「待决策」项标记为已拍板，统一指向 `docs/agent-os-target-architecture.md` §0 决策基线表（防止「ADR 仍写待决策、目标架构已定」的漂移）

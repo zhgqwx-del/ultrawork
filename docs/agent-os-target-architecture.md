@@ -1,7 +1,7 @@
 # Ultrawork as Agent OS — 目标架构
 
 > **状态**：设计基线（决策已拍板，作为开发起点）· 全档蓝图，首期启动档1
-> **日期**：2026-06-08
+> **日期**：2026-06-08 · 2026-06-09 修订（新增 C4/C5 backend 分类法；§3.1/§3.3/TL;DR/§9 对齐 ADR-030 D-8 + discussion 015）
 > **定位**：本文是**独立完备**的目标架构说明——把 Ultrawork 从「绑定 opencode 的桌面客户端」升级为「经 ACP 统一调度多个异构 agent 后端的 Agent OS」。读本文即可理解目标形态并启动开发，无需先读探索文档。
 > **决策依据**：[ADR-027](./decisions/027-acp-multi-agent-backend.md)（ACP 多后端 + 三档模型）· [ADR-030](./decisions/030-agent-connector-control-layer.md)（@agent/connector 控制统一）· [ADR-031](./decisions/031-multi-agent-orchestration.md)（档2 delegate 编排）。探索过程见 [discussions/011-014](./discussions/)。
 > **本文不替代 ADR**：ADR 记录「为什么这样决策」；本文记录「目标系统长什么样、怎么分阶段建」。冲突以最新 ADR 为准。
@@ -12,9 +12,10 @@
 
 1. **愿景**：一个客户端（Ultrawork）统一调度 opencode / claude code / qoder / gemini 等异构 agent 作后端，复用 ACP（Zed Agent Client Protocol，「编码 agent 界的 LSP」）生态。
 2. **三档能力模型**：**档1 会话级**（一会话绑一 agent）→ **档2 delegate 编排**（orchestrator 拥有主对话、把子任务委派给其它 agent、交付物回卷）→ **档3 自动调度**（router 自动派单，远期）。**明确否决「对等换手」**（同对话对等 agent 逐轮透明换手——伪命题）。
-3. **分层**：协议层（ACP SDK + opencode REST）→ **①渲染统一**（sidecar 把 ACP 事件翻译成公共事件模型）→ **②控制统一**（`@agent/connector` 后端无关控制面）→ **③编排层**（自建 orchestrator，消费 connector 原语）。
-4. **首期启动档1**，但本文给出全档目标，确保分层「渲染统一→connector→编排」连贯递进、不返工。
-5. **护城河仍在 ACP 之外**：国内 IM 深度（钉钉/微信）+ 本地 RAG（IMA 知识库）+ 中文桌面体验。ACP 多后端是能力扩展，不是差异化本身。
+3. **分层**：协议层（两传输族：`acp-stdio` + `product-native`〔opencode REST 等〕）→ **①渲染统一**（sidecar 把 ACP 事件翻译成公共事件模型）→ **②控制统一**（`@agent/connector` 后端无关控制面）→ **③编排层**（自建 orchestrator，消费 connector 原语）。
+4. **backend 分类法**（C4/C5 · ADR-030 D-8 / 015）：`BackendKind` 开放，按「**协议族（ACP 标准 / 产品自有）× adapter**」建模，**两族对等**（轴是协议非线缆，WebSocket/HTTP 归 product-native 内）；选型按 **native + 保真 + 性能**（「支持 ACP 非二元」——hermes/qoder 原生富 ACP→零增量；openclaw 薄桥→黑盒低优先）。opencode = default + reference。
+5. **首期启动档1**，但本文给出全档目标，确保分层「渲染统一→connector→编排」连贯递进、不返工。
+6. **护城河仍在 ACP 之外**：国内 IM 深度（钉钉/微信）+ 本地 RAG（IMA 知识库）+ 中文桌面体验。ACP 多后端是能力扩展，不是差异化本身。
 
 ---
 
@@ -106,6 +107,8 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+> 图示首发两个 backend；**backend 类是开放的**（ADR-030 D-8 / §0 C4）——再接 agent = 注册新 adapter（原生 ACP 走 `acp-stdio` 复用整族；openclaw 等 `product-native` 走 WebSocket/HTTP bespoke），ACP Sidecar 框内的 claude/gemini/qoder 只是 acp-stdio 族示例。主架构不变。
+
 **三个统一点，分阶段建，互不返工：**
 
 | 统一点 | 内容 | 谁需要 | 落点 / 阶段 |
@@ -121,8 +124,10 @@
 ## 3. 分层详解
 
 ### 3.1 协议层
-- **opencode 后端**：继续走 **REST/SSE :4096**（已深度集成 permission/question/file，见 ADR-002/008）。**不改走 ACP。**
-- **外部 agent 后端**：**ACP（JSON-RPC 2.0 over stdio）**，host 端用 TypeScript SDK（pin ≥0.21.x，protocolVersion 稳定=1）。每个 agent = 一个 stdio 子进程，配置形如 `agent name → 命令 + args + env`（`~/.config/ultrawork/agents.json`）。
+后端按**两传输族**接入（ADR-030 D-8 / §0 C4），详见 §3.3：
+- **opencode**（`product-native`，HTTP+SSE，**default + reference**）：继续走 **REST/SSE :4096**（已深度集成 permission/question/file，见 ADR-002/008）。**不改走 ACP。**
+- **原生 ACP agent**（`acp-stdio`）：claude/qoder/gemini/hermes 等，**ACP（JSON-RPC 2.0 over stdio）**，host 端 TypeScript SDK（pin ≥0.21.x，protocolVersion 稳定=1）；每 agent = 一个 stdio 子进程，配置 `agent name → 命令 + args + env`（`~/.config/ultrawork/agents.json`）。**一个通用 adapter 复用整族。**
+- **其它 `product-native`（非 ACP）**：产品自有协议，线缆 HTTP+SSE 或 WebSocket（如 openclaw 的 **WebSocket Gateway**、hermes-HTTP），每产品一个 bespoke adapter，按需接入（C5）。**外部 agent ≠ 必走 ACP。**
 - **ACP 核心模型**：`initialize`（能力协商）→ `session/new`（传 cwd + MCP servers）/ `session/load`（重放该 agent 自己的历史）→ `session/prompt` → 流式 `session/update`（`agent_message_chunk`/`agent_thought_chunk`/`plan`/`tool_call`+`tool_call_update`/`usage_update`）→ `StopReason` 结束 → `session/request_permission`（同步 RPC，host 弹给用户）。
 
 ### 3.2 ① 渲染统一 — sidecar 事件桥（ADR-027 D-3）
@@ -248,7 +253,7 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 - **权限**：去掉自动批准；ACP `request_permission` → 挂起 promise + SSE → permission-dock → 回复端点；option kind（allow_once/always/reject）映射 dock 按钮；**超时/取消默认 deny**。
 - **路径沙箱**：readTextFile/writeTextFile CWD 沙箱（`validatePath`）。
 - **宿主工具暴露**：默认关、显式 opt-in；首期仅知识库 :4098（B4）。外部 agent 是任意第三方进程，最小暴露面。
-- **编排护栏（D-5，必须先行）**：`maxConcurrent`（默认 ~8）、`maxDepth`（默认 **1**，禁递归 delegate）、子 agent 模型可配更便宜、子 toolset 默认收紧、每 delegate 带 token 预算 + 超时。
+- **编排护栏（ADR-031 D-5，必须先行）**：`maxConcurrent`（默认 ~8）、`maxDepth`（默认 **1**，禁递归 delegate）、子 agent 模型可配更便宜、子 toolset 默认收紧、每 delegate 带 token 预算 + 超时。
 - **进程稳定性**：三阶段关闭（`stdin.end()` grace → SIGTERM 1500ms → SIGKILL 1000ms → detach+unref）；退出四分类 + `unexpectedDuringPrompt`；per-agent 怪癖（Claude `session/new` 60s 超时；Gemini OAuth 挂起；Windows `.cmd/.bat`→`shell:true`）。
 
 ---
@@ -297,7 +302,9 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 Jockey（Tauri+ACP 多 agent）、openclaw+acpx（已覆盖飞书/钉钉/企业微信 Channel）、Zed/JetBrains 都在做通用 ACP host。**差异化必须靠 ACP 之外**：钉钉/微信深度 + IMA 知识库 + 本地 RAG + 中文场景。「又一个能接 claude code 的壳」无护城河。
 
 ### 信息缺口（落地前实测）
-- Qoder ACP 启动 flag（`qoder acp` vs `--acp`）来源有歧义。
+> openclaw/hermes/qoder 三家接入调研见 [discussions/015 §11](./discussions/015-backend-taxonomy-non-acp.md)（均 desk research，真·实测待落地前做）。
+- **qoder 启动命令两源不一**（Zed `qoder acp` vs Qoder 文档/acpx `qodercli --acp`，含二进制名 `qoder`/`qodercli`）+ slash 透传，须实机 `--version`/`--help` 锁定（015 §4.4 已定性 branch A 原生富 ACP）。
+- **openclaw 接哪面待实测**：对外三面（ACP 桥 / OpenAI HTTP / WebSocket Gateway native），各面 agent-event 粒度（diff/plan）未运行验证（015 §3.4/§11）。
 - ACP 远程（HTTP/WS）传输 WIP——目前多后端只能本地 stdio 子进程（桌面 OK，远程/移动需另想）。
 - ACP host SDK ≥0.21.x 的 `session/update` 变体须落地前复核。
 
