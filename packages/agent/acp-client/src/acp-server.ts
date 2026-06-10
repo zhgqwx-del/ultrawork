@@ -17,7 +17,12 @@ export function createServer(manager: ACPManager): Hono {
     }),
   )
 
-  app.get("/acp/health", (c) => c.json({ status: "ok" }))
+  app.get("/acp/health", (c) =>
+    c.json({
+      status: "ok",
+      agents: manager.listAgents().map((a) => ({ id: a.id, status: a.status })),
+    }),
+  )
 
   app.get("/acp/agents", (c) => c.json(manager.listAgents()))
 
@@ -30,9 +35,9 @@ export function createServer(manager: ACPManager): Hono {
     }
   })
 
-  app.post("/acp/agents/:id/disconnect", (c) => {
+  app.post("/acp/agents/:id/disconnect", async (c) => {
     try {
-      manager.disconnect(c.req.param("id"))
+      await manager.disconnect(c.req.param("id"))
       return c.json({ ok: true })
     } catch (err) {
       return c.json({ error: errMsg(err) }, 404)
@@ -47,7 +52,14 @@ export function createServer(manager: ACPManager): Hono {
   app.put("/acp/agents/:id", async (c) => {
     const id = c.req.param("id")
     const body = await c.req
-      .json<{ label?: string; description?: string; command?: string; args?: string[]; env?: Record<string, string> }>()
+      .json<{
+        label?: string
+        description?: string
+        command?: string
+        args?: string[]
+        env?: Record<string, string>
+        knowledgeMcp?: boolean
+      }>()
       .catch(() => null)
     if (!body?.label || !body?.command) {
       return c.json({ error: "label and command are required" }, 400)
@@ -59,13 +71,14 @@ export function createServer(manager: ACPManager): Hono {
       command: body.command,
       args: body.args ?? [],
       env: body.env,
+      knowledgeMcp: body.knowledgeMcp ?? false,
     })
     return c.json({ ok: true })
   })
 
-  app.delete("/acp/agents/:id", (c) => {
+  app.delete("/acp/agents/:id", async (c) => {
     try {
-      manager.deleteAgent(c.req.param("id"))
+      await manager.deleteAgent(c.req.param("id"))
       return c.json({ ok: true })
     } catch (err) {
       return c.json({ error: errMsg(err) }, 404)
@@ -103,6 +116,19 @@ export function createServer(manager: ACPManager): Hono {
     } catch (err) {
       return c.json({ error: errMsg(err) }, 502)
     }
+  })
+
+  // Permission-dock reply for a suspended ACP request_permission RPC.
+  app.post("/acp/session/:id/permission", async (c) => {
+    const sessionId = c.req.param("id")
+    const body = await c.req
+      .json<{ permissionId?: string; reply?: "once" | "always" | "reject" }>()
+      .catch(() => null)
+    if (!body?.permissionId || !body?.reply || !["once", "always", "reject"].includes(body.reply)) {
+      return c.json({ error: "permissionId and reply (once|always|reject) are required" }, 400)
+    }
+    const ok = manager.replyPermission(sessionId, body.permissionId, body.reply)
+    return ok ? c.json({ ok: true }) : c.json({ error: "unknown or already-resolved permission" }, 404)
   })
 
   app.post("/acp/session/:id/cancel", async (c) => {

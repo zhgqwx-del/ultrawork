@@ -27,6 +27,8 @@ export interface ACPAgentConfig {
   command: string
   args: string[]
   env?: Record<string, string>
+  /** Expose the host knowledge base MCP (:4098) to this agent (opt-in). */
+  knowledgeMcp?: boolean
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -102,6 +104,18 @@ export function promptACPSession(sessionId: string, text: string): Promise<{ sto
   return request(`/acp/session/${encodeURIComponent(sessionId)}/prompt`, {
     method: "POST",
     body: JSON.stringify({ text }),
+  })
+}
+
+/** Reply to a suspended ACP permission request (permission-dock). */
+export function replyACPPermission(
+  sessionId: string,
+  permissionId: string,
+  reply: "once" | "always" | "reject",
+): Promise<void> {
+  return request(`/acp/session/${encodeURIComponent(sessionId)}/permission`, {
+    method: "POST",
+    body: JSON.stringify({ permissionId, reply }),
   })
 }
 

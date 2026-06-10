@@ -14,6 +14,19 @@ export interface ACPAgentConfig {
   command: string
   args: string[]
   env?: Record<string, string>
+  /** Expose the host knowledge base MCP (:4098) to this agent (B4: opt-in, default off). */
+  knowledgeMcp?: boolean
+}
+
+// Mirrors the desktop PermissionRequest shape (api-client types.ts) — the
+// `permission.asked` SSE carries this object directly (not nested).
+export interface UwPermissionRequest {
+  id: string
+  sessionID: string
+  permission: string
+  patterns: string[]
+  metadata: Record<string, unknown>
+  always: string[]
 }
 
 export interface AgentsFile {
@@ -129,6 +142,8 @@ export type UwSSEEvent =
       properties: { sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
     }
   | { type: "message.updated"; properties: { info: UwMessageInfo } }
+  | { type: "permission.asked"; properties: UwPermissionRequest }
+  | { type: "permission.replied"; properties: { id: string; sessionID: string } }
   | { type: "session.error"; properties: { sessionID: string; error: string } }
   | { type: "acp.connected"; properties: { sessionId: string } }
   | { type: "heartbeat"; properties: Record<string, never> }

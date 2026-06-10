@@ -7,15 +7,21 @@
 //   so shaping sees them in arrival order.
 // - Fix 3: every outbound request is tracked and batch-rejected on exit.
 
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import type {
   AgentCapabilities,
+  McpServer,
+  PermissionOption,
   ReadTextFileRequest,
   ReadTextFileResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionNotification,
   StopReason,
+  ToolKind,
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk"
@@ -26,10 +32,38 @@ import { TurnShaper } from "./turn-shaper.js"
 const INITIALIZE_TIMEOUT_MS = 30_000
 // Claude is known to stall on session/new (acpx quirk constant, W5).
 const SESSION_NEW_TIMEOUT_MS = 60_000
+// Unanswered permission requests deny by default (safety default, W3).
+// Read lazily so tests can shrink it via env after module load.
+const permissionTimeoutMs = () => Number(process.env.ACP_PERMISSION_TIMEOUT_MS ?? 300_000)
+// Three-phase shutdown grace periods (acpx constants, W5).
+const STDIN_GRACE_MS = 100
+const SIGTERM_GRACE_MS = 1500
+const SIGKILL_GRACE_MS = 1000
+
+// ACP ToolKind → opencode permission label shown by the permission-dock.
+const PERMISSION_BY_KIND: Partial<Record<ToolKind, string>> = {
+  execute: "bash",
+  edit: "edit",
+  delete: "edit",
+  move: "edit",
+  read: "read",
+  search: "read",
+  fetch: "external_directory",
+}
 
 interface PendingRequest {
   reject: (err: Error) => void
 }
+
+interface PendingPermission {
+  id: string
+  emitSessionId: string
+  options: PermissionOption[]
+  resolve: (response: RequestPermissionResponse) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+export type PermissionReply = "once" | "always" | "reject"
 
 export type SessionEventCallback = (sessionId: string, event: UwSSEEvent) => void
 
@@ -43,6 +77,8 @@ export class ACPConnection {
   private connection: ClientSideConnection | undefined
   private shapers = new Map<string, TurnShaper>()
   private emitIds = new Map<string, string>()
+  private pendingPermissions = new Map<string, PendingPermission>()
+  private permSeq = 0
   private activePrompts = new Set<string>()
   private pendingRequests = new Set<PendingRequest>()
   private updateChain: Promise<void> = Promise.resolve()
@@ -120,7 +156,7 @@ export class ACPConnection {
   async newSession(cwd: string, emitSessionId?: string): Promise<string> {
     const conn = this.requireConnection()
     const res = await this.runRequest(
-      () => conn.newSession({ cwd, mcpServers: [] }),
+      () => conn.newSession({ cwd, mcpServers: this.hostMcpServers() }),
       SESSION_NEW_TIMEOUT_MS,
       "session/new",
     )
@@ -165,19 +201,109 @@ export class ACPConnection {
 
   async cancel(sessionId: string): Promise<void> {
     const conn = this.requireConnection()
+    // A cancelled turn must answer outstanding permission RPCs with
+    // "cancelled" (ACP contract) before the agent reports its stop reason.
+    this.cancelPermissionsFor(sessionId)
     await conn.cancel({ sessionId })
   }
 
-  disconnect(): void {
+  /** Resolve a suspended permission request. Returns false if unknown. */
+  replyPermission(permissionId: string, reply: PermissionReply): boolean {
+    return this.resolvePermission(permissionId, reply)
+  }
+
+  hasPendingPermission(permissionId: string): boolean {
+    return this.pendingPermissions.has(permissionId)
+  }
+
+  async disconnect(): Promise<void> {
     this.closing = true
+    this.cancelAllPermissions()
     this.rejectPending(new Error("Agent disconnected"))
-    this.killProcess()
+    const proc = this.proc
+    this.proc = undefined
+    this.connection = undefined
     this.shapers.clear()
     this.emitIds.clear()
     this.status = "disconnected"
+    if (proc) await terminateProcess(proc)
   }
 
   // --- internals ---
+
+  /**
+   * Host MCP servers forwarded into session/new. B4: knowledge base only,
+   * default off, explicit per-agent opt-in. The binary path is the stable
+   * user-data copy maintained by the desktop app (ADR-026).
+   */
+  private hostMcpServers(): McpServer[] {
+    if (!this.config.knowledgeMcp) return []
+    const sidecar = join(homedir(), ".ultrawork", "sidecars", "knowledge-sidecar")
+    if (!existsSync(sidecar)) {
+      console.error(`[acp:${this.config.id}] knowledgeMcp enabled but ${sidecar} not found — skipping`)
+      return []
+    }
+    return [{ name: "knowledge-base", command: sidecar, args: ["mcp-stdio"], env: [] }]
+  }
+
+  private resolvePermission(permissionId: string, reply: PermissionReply): boolean {
+    const pending = this.pendingPermissions.get(permissionId)
+    if (!pending) return false
+    this.pendingPermissions.delete(permissionId)
+    clearTimeout(pending.timer)
+
+    const pick = (...kinds: PermissionOption["kind"][]): PermissionOption | undefined => {
+      for (const kind of kinds) {
+        const opt = pending.options.find((o) => o.kind === kind)
+        if (opt) return opt
+      }
+      return undefined
+    }
+    const option =
+      reply === "once"
+        ? pick("allow_once", "allow_always")
+        : reply === "always"
+          ? pick("allow_always", "allow_once")
+          : pick("reject_once", "reject_always")
+
+    pending.resolve(
+      option
+        ? { outcome: { outcome: "selected", optionId: option.optionId } }
+        : { outcome: { outcome: "cancelled" } },
+    )
+    this.onEvent(pending.emitSessionId, {
+      type: "permission.replied",
+      properties: { id: permissionId, sessionID: pending.emitSessionId },
+    })
+    return true
+  }
+
+  /** Answer outstanding permission RPCs of one session with "cancelled". */
+  private cancelPermissionsFor(acpSessionId: string): void {
+    const emitSessionId = this.emitIds.get(acpSessionId) ?? acpSessionId
+    for (const pending of [...this.pendingPermissions.values()]) {
+      if (pending.emitSessionId !== emitSessionId) continue
+      this.pendingPermissions.delete(pending.id)
+      clearTimeout(pending.timer)
+      pending.resolve({ outcome: { outcome: "cancelled" } })
+      this.onEvent(pending.emitSessionId, {
+        type: "permission.replied",
+        properties: { id: pending.id, sessionID: pending.emitSessionId },
+      })
+    }
+  }
+
+  private cancelAllPermissions(): void {
+    for (const pending of [...this.pendingPermissions.values()]) {
+      this.pendingPermissions.delete(pending.id)
+      clearTimeout(pending.timer)
+      pending.resolve({ outcome: { outcome: "cancelled" } })
+      this.onEvent(pending.emitSessionId, {
+        type: "permission.replied",
+        properties: { id: pending.id, sessionID: pending.emitSessionId },
+      })
+    }
+  }
 
   private createClient() {
     return {
@@ -189,20 +315,37 @@ export class ACPConnection {
         })
         return this.updateChain
       },
-      requestPermission: async (
-        params: RequestPermissionRequest,
-      ): Promise<RequestPermissionResponse> => {
-        // TODO(W3): suspend + permission.asked SSE + reply endpoint (deny by
-        // default on timeout). Spike: auto-approve so the turn can complete.
-        const allow =
-          params.options.find((o) => o.kind === "allow_once") ??
-          params.options.find((o) => o.kind === "allow_always") ??
-          params.options[0]
-        console.error(
-          `[acp:${this.config.id}] auto-approving permission (spike): ${params.toolCall.title ?? params.toolCall.toolCallId}`,
-        )
-        if (!allow) return { outcome: { outcome: "cancelled" } }
-        return { outcome: { outcome: "selected", optionId: allow.optionId } }
+      // W3 permission loop: suspend the RPC, surface an opencode-shaped
+      // permission.asked SSE, resolve via the reply endpoint. Unanswered
+      // requests deny after PERMISSION_TIMEOUT_MS; cancel/exit deny too.
+      requestPermission: (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+        const emitSessionId = this.emitIds.get(params.sessionId) ?? params.sessionId
+        const id = `acp_perm_${emitSessionId}_${this.permSeq++}`
+        const kind = params.toolCall.kind ?? undefined
+        const permission = (kind && PERMISSION_BY_KIND[kind]) || kind || "bash"
+        const pattern = params.toolCall.title ?? params.toolCall.toolCallId
+
+        return new Promise<RequestPermissionResponse>((resolve) => {
+          const timer = setTimeout(() => this.resolvePermission(id, "reject"), permissionTimeoutMs())
+          this.pendingPermissions.set(id, {
+            id,
+            emitSessionId,
+            options: params.options,
+            resolve,
+            timer,
+          })
+          this.onEvent(emitSessionId, {
+            type: "permission.asked",
+            properties: {
+              id,
+              sessionID: emitSessionId,
+              permission,
+              patterns: pattern ? [pattern] : [],
+              metadata: {},
+              always: [],
+            },
+          })
+        })
       },
       // fs capabilities are not advertised; reject defensively if called anyway.
       readTextFile: async (_params: ReadTextFileRequest): Promise<ReadTextFileResponse> => {
@@ -222,6 +365,7 @@ export class ACPConnection {
       if (unexpected) {
         this.status = "error"
         this.error = `Agent process exited with code ${code}`
+        this.cancelAllPermissions()
         this.rejectPending(new Error(this.error))
         for (const sessionId of this.activePrompts) {
           const emitAs = this.emitIds.get(sessionId) ?? sessionId
@@ -287,9 +431,8 @@ export class ACPConnection {
     return this.connection
   }
 
+  /** Immediate kill for the connect-failure path (process likely broken). */
   private killProcess(): void {
-    // TODO(W5): three-phase graceful shutdown (stdin.end grace → SIGTERM →
-    // SIGKILL → detach) ported from acpx. Spike: plain SIGTERM.
     try {
       this.proc?.kill()
     } catch {
@@ -298,4 +441,36 @@ export class ACPConnection {
     this.proc = undefined
     this.connection = undefined
   }
+}
+
+/**
+ * Three-phase graceful shutdown (acpx constants, W5):
+ * stdin.end() grace → SIGTERM → SIGKILL → detach (unref) so a wedged child
+ * can never hang the sidecar.
+ */
+async function terminateProcess(proc: Bun.Subprocess<"pipe", "pipe", "pipe">): Promise<void> {
+  const exited = (ms: number) =>
+    Promise.race([proc.exited.then(() => true), Bun.sleep(ms).then(() => false)])
+
+  try {
+    proc.stdin.end()
+  } catch {
+    // stdin already closed
+  }
+  if (await exited(STDIN_GRACE_MS)) return
+
+  try {
+    proc.kill("SIGTERM")
+  } catch {
+    return
+  }
+  if (await exited(SIGTERM_GRACE_MS)) return
+
+  try {
+    proc.kill("SIGKILL")
+  } catch {
+    return
+  }
+  if (await exited(SIGKILL_GRACE_MS)) return
+  proc.unref()
 }

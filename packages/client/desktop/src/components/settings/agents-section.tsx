@@ -26,9 +26,18 @@ interface FormState {
   command: string
   args: string
   env: string
+  knowledgeMcp: boolean
 }
 
-const EMPTY_FORM: FormState = { id: "", label: "", description: "", command: "", args: "", env: "" }
+const EMPTY_FORM: FormState = {
+  id: "",
+  label: "",
+  description: "",
+  command: "",
+  args: "",
+  env: "",
+  knowledgeMcp: false,
+}
 
 function toForm(config: ACPAgentConfig): FormState {
   return {
@@ -40,6 +49,7 @@ function toForm(config: ACPAgentConfig): FormState {
     env: Object.entries(config.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
+    knowledgeMcp: config.knowledgeMcp ?? false,
   }
 }
 
@@ -58,6 +68,7 @@ function fromForm(form: FormState): ACPAgentConfig {
     command: form.command.trim(),
     args: form.args.trim() ? form.args.trim().split(/\s+/) : [],
     env: Object.keys(env).length > 0 ? env : undefined,
+    knowledgeMcp: form.knowledgeMcp,
   }
 }
 
@@ -281,6 +292,15 @@ export function AgentsSection() {
             multiline
             onChange={(env) => setForm({ ...form, env })}
           />
+          <label className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              checked={form.knowledgeMcp}
+              onChange={(e) => setForm({ ...form, knowledgeMcp: e.target.checked })}
+              className="size-3.5 accent-[var(--color-brand)]"
+            />
+            <span className="text-xs text-[var(--color-fg)]">{t("agents.form.knowledgeMcp")}</span>
+          </label>
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"

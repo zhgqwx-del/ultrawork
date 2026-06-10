@@ -21,8 +21,7 @@ console.log(`[acp] sidecar listening on http://127.0.0.1:${server.port}`)
 console.log(`[acp] agents config: ${agentsConfigPath()} (${configs.map((c) => c.id).join(", ") || "none"})`)
 
 function shutdown() {
-  manager.shutdown()
-  process.exit(0)
+  void manager.shutdown().finally(() => process.exit(0))
 }
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)

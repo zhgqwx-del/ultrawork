@@ -48,23 +48,33 @@ function replay(events: UwSSEEvent[]): ReplayMessage[] {
   return messages
 }
 
+/** Run one mock-agent turn, answering permission.asked with `reply`. */
+async function runMockTurn(reply: "once" | "always" | "reject" | "ignore") {
+  const events: UwSSEEvent[] = []
+  const conn = new ACPConnection(
+    { id: "mock", label: "Mock Agent", command: process.execPath, args: ["run", MOCK_AGENT] },
+    (_sessionId, event) => {
+      events.push(event)
+      if (event.type === "permission.asked" && reply !== "ignore") {
+        // Reply asynchronously, like the dock would.
+        setTimeout(() => conn.replyPermission(event.properties.id, reply), 10)
+      }
+    },
+  )
+  try {
+    await conn.connect()
+    const sessionId = await conn.newSession("/tmp", "ses_pub")
+    const stopReason = await conn.prompt(sessionId, "list the files")
+    return { events, stopReason }
+  } finally {
+    await conn.disconnect()
+  }
+}
+
 describe("W1 turn shaping (mock agent, stdio e2e)", () => {
   it("shapes reasoning + tool + answer into opencode N-message form", async () => {
-    const events: UwSSEEvent[] = []
-    const conn = new ACPConnection(
-      { id: "mock", label: "Mock Agent", command: process.execPath, args: ["run", MOCK_AGENT] },
-      (_sessionId, event) => events.push(event),
-    )
-    try {
-      await conn.connect()
-      // The client session id is stamped on every shaped event (no frontend
-      // id rewriting); the returned ACP id stays internal.
-      const sessionId = await conn.newSession("/tmp", "ses_pub")
-      const stopReason = await conn.prompt(sessionId, "list the files")
-      expect(stopReason).toBe("end_turn")
-    } finally {
-      conn.disconnect()
-    }
+    const { events, stopReason } = await runMockTurn("once")
+    expect(stopReason).toBe("end_turn")
 
     for (const event of events) {
       const props = event.properties as Record<string, any>
@@ -130,5 +140,42 @@ describe("W1 turn shaping (mock agent, stdio e2e)", () => {
     const last = events[events.length - 1]
     expect(last.type).toBe("message.updated")
     if (last.type === "message.updated") expect(last.properties.info.finish).toBe("stop")
+
+    // W3: the permission round-trip is visible on the wire.
+    const asked = events.find((e) => e.type === "permission.asked")
+    expect(asked).toBeDefined()
+    if (asked?.type === "permission.asked") {
+      expect(asked.properties.permission).toBe("bash")
+      expect(asked.properties.patterns).toEqual(["List directory"])
+    }
+    expect(events.some((e) => e.type === "permission.replied")).toBe(true)
+  }, 20_000)
+
+  it("W3: reject ends the turn without running the tool", async () => {
+    const { events, stopReason } = await runMockTurn("reject")
+    expect(stopReason).toBe("end_turn")
+    const messages = replay(events)
+    const all = messages.flatMap((m) => m.parts)
+    expect(all.some((p) => p.type === "tool")).toBe(false)
+    const answer = messages[messages.length - 1]
+    const answerText = answer.parts.find((p) => p.type === "text") as { text: string }
+    expect(answerText.text).toContain("Permission denied")
+    expect((answer.info as UwMessageInfo).finish).toBe("stop")
+  }, 20_000)
+
+  it("W3: unanswered permission denies by default after the timeout", async () => {
+    process.env.ACP_PERMISSION_TIMEOUT_MS = "400"
+    try {
+      const { events, stopReason } = await runMockTurn("ignore")
+      expect(stopReason).toBe("end_turn")
+      expect(events.some((e) => e.type === "permission.replied")).toBe(true)
+      const messages = replay(events)
+      expect(messages.flatMap((m) => m.parts).some((p) => p.type === "tool")).toBe(false)
+      const answer = messages[messages.length - 1]
+      const answerText = answer.parts.find((p) => p.type === "text") as { text: string }
+      expect(answerText.text).toContain("Permission denied")
+    } finally {
+      delete process.env.ACP_PERMISSION_TIMEOUT_MS
+    }
   }, 20_000)
 })

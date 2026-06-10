@@ -35,6 +35,25 @@ new AgentSideConnection(
 
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "I should list " } })
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the directory first." } })
+
+      // Ask permission before running the tool (W3 loop). A denied/cancelled
+      // outcome ends the turn without the tool, mirroring real agents.
+      const perm = await conn.requestPermission({
+        sessionId: params.sessionId,
+        toolCall: { toolCallId: "call_1", title: "List directory", kind: "execute" },
+        options: [
+          { optionId: "allow", name: "Allow once", kind: "allow_once" },
+          { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
+          { optionId: "deny", name: "Deny", kind: "reject_once" },
+        ],
+      })
+      if (perm.outcome.outcome !== "selected" || perm.outcome.optionId === "deny") {
+        await send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Permission denied — skipping the listing." },
+        })
+        return { stopReason: "end_turn" }
+      }
       await send({
         sessionUpdate: "plan",
         entries: [

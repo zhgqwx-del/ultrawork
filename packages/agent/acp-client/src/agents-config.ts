@@ -49,6 +49,7 @@ export function loadAgentConfigs(): ACPAgentConfig[] {
     command: cfg.command,
     args: cfg.args ?? [],
     env: cfg.env,
+    knowledgeMcp: cfg.knowledgeMcp ?? false,
   }))
 }
 
@@ -79,6 +80,7 @@ export function saveAgentConfig(config: ACPAgentConfig): void {
     command: config.command,
     args: config.args,
     env: config.env,
+    knowledgeMcp: config.knowledgeMcp || undefined,
   }
   writeFile(file)
 }

@@ -1,7 +1,7 @@
 // Manager: agent connections registry + session routing + SSE fan-out.
 
 import type { StopReason } from "@agentclientprotocol/sdk"
-import { ACPConnection } from "./acp-connection.js"
+import { ACPConnection, type PermissionReply } from "./acp-connection.js"
 import { deleteAgentConfig, saveAgentConfig } from "./agents-config.js"
 import type { ACPAgentConfig, ACPAgentInfo, ACPSessionInfo, UwSSEEvent } from "./types.js"
 
@@ -51,8 +51,8 @@ export class ACPManager {
     await this.requireAgent(agentId).connect()
   }
 
-  disconnect(agentId: string): void {
-    this.requireAgent(agentId).disconnect()
+  async disconnect(agentId: string): Promise<void> {
+    await this.requireAgent(agentId).disconnect()
     for (const [sessionId, info] of this.sessions) {
       if (info.agentId === agentId) this.sessions.delete(sessionId)
     }
@@ -93,18 +93,31 @@ export class ACPManager {
   /** Persist + (re)register an agent; an existing connection is replaced. */
   saveAgent(config: ACPAgentConfig): void {
     saveAgentConfig(config)
-    this.connections.get(config.id)?.disconnect()
+    void this.connections.get(config.id)?.disconnect()
     this.register(config)
   }
 
-  deleteAgent(agentId: string): void {
+  async deleteAgent(agentId: string): Promise<void> {
     const conn = this.requireAgent(agentId)
-    conn.disconnect()
     this.connections.delete(agentId)
     deleteAgentConfig(agentId)
     for (const [sessionId, info] of this.sessions) {
       if (info.agentId === agentId) this.sessions.delete(sessionId)
     }
+    await conn.disconnect()
+  }
+
+  /** Route a permission-dock reply to the connection holding the request. */
+  replyPermission(sessionId: string, permissionId: string, reply: PermissionReply): boolean {
+    const entry = this.sessions.get(sessionId)
+    if (entry) {
+      const conn = this.connections.get(entry.agentId)
+      if (conn?.replyPermission(permissionId, reply)) return true
+    }
+    for (const conn of this.connections.values()) {
+      if (conn.hasPendingPermission(permissionId)) return conn.replyPermission(permissionId, reply)
+    }
+    return false
   }
 
   hasSession(sessionId: string): boolean {
@@ -124,8 +137,8 @@ export class ACPManager {
     }
   }
 
-  shutdown(): void {
-    for (const conn of this.connections.values()) conn.disconnect()
+  async shutdown(): Promise<void> {
+    await Promise.all([...this.connections.values()].map((conn) => conn.disconnect()))
   }
 
   private dispatch(sessionId: string, event: UwSSEEvent): void {
