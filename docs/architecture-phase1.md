@@ -141,7 +141,7 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 |-------|---------|----------------------|
 | **Core** | `@agent/api-client` | OpenCode Server SDK - Type-safe REST API calls and SSE event streaming. Foundation for all OpenCode communication. |
 | | `@agent/server-manager` | Process Lifecycle Manager - Spawns OpenCode sidecar, monitors health, handles crash recovery with auto-restart. |
-| | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. 🔲 规划中，Desktop 当前直连 api-client |
+| | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. 🔲 规划中，Desktop 当前直连 api-client。⚠️ **本 Part II 草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（补 SSE、纳入 ACP backend、D-8 开放可插拔 backend 类「acp-stdio / product-native / acp-remote」）；以 ADR-030 + [agent-os-target-architecture.md](./agent-os-target-architecture.md) 为准 |
 | | `@agent/ui` | UI Component Library - Shared React components (chat, diff, markdown, dialogs) ensuring consistent UX. 🔲 规划中，当前组件在 desktop/src/components 内 |
 | | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
 | | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
@@ -1083,7 +1083,7 @@ The following features are planned for Phase 2:
 
 > 🔲 未实现。Desktop / Channel Gateway 当前**直连 `@agent/api-client`**，未经 connector 抽象。
 >
-> ⚠️ **本草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（2026-06-08）。ADR-030 修正了本草案两处缺陷——① 漏了 SSE 统一（本草案误以为 `api-client.events.subscribe()` 存在）、② 未含 ACP backend（本草案早于 ACP/ADR-027）——并把 connector 重定义为「后端无关的控制 + 事件统一层 + 可插拔 backend（OpenCode REST + ACP）」。**以 ADR-030 为准**；下方草案保留作历史参考。
+> ⚠️ **本草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（2026-06-08；06-09 D-8 再泛化）。ADR-030 修正了本草案两处缺陷——① 漏了 SSE 统一（本草案误以为 `api-client.events.subscribe()` 存在）、② 未含 ACP backend（本草案早于 ACP/ADR-027）——并把 connector 重定义为「后端无关的控制 + 事件统一层 + **开放可插拔 backend 类**」：D-8 按「协议族（`acp-stdio` / `product-native`〔HTTP+SSE 或 WebSocket〕 / `acp-remote`）× adapter」建模，**非「local/remote OpenCode」两连接**。**以 ADR-030 + [agent-os-target-architecture.md](./agent-os-target-architecture.md) 为准**；下方草案保留作历史参考。
 
 ### Connection Establishment (via @agent/connector)
 

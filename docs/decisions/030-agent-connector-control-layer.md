@@ -49,7 +49,7 @@ backend 向上吐出**统一事件**（`SendMessageResponse[]` / SSE 事件联�
 - **opencode 是 `defaultBackend`**（对齐 Ultrawork 现状 + ADR-027 D-1 的 REST 深度集成）：新会话不显式选 backend 时默认绑 opencode。泛化（D-8）是「加宽 backend 类」，**不降级 opencode 的默认/基准地位**。
 
 ### D-5 · 核心公共面 + 能力声明（不强求最小公约数）
-两 backend 能力不对称（opencode 有 config/provider/mcp/file/diff；ACP 有 agent CRUD/connect）。connector 设：
+两 backend 能力不对称（opencode 有 config/provider/mcp/file/diff；ACP 有 agent CRUD/connect）（**「两 backend」指首发两个；D-8 后为开放可插拔 backend 类，capabilities 机制同样覆盖新增 backend 的能力差异**）。connector 设：
 - **核心公共面**（两者都实现）：`createSession / prompt / cancel / revert / subscribe / listAgents / connectionStatus`。
 - **能力声明** `capabilities`（由 `initialize`/backend 类型决定，对齐 ADR-027 W4）：消费方按 `capabilities` 条件调用 backend-specific 方法（如 `getProviders` 仅 opencode、`agentConfigCRUD` 仅 ACP）。不做 lowest-common-denominator 阉割。
 - **黑盒后端降级**（D-8 branch C）：聚合型/二次组装后端（如 openclaw，[015](../discussions/015-backend-taxonomy-non-acp.md)）可能缺权限/MCP/diff/plan——用 `capabilities` 把对应项声明 `false`（`permissions/mcpInjection/fileDiffs/plan/reasoning/historyReplay`），UI 条件渲染 + 诚实标注「只回成果」。同一 `capabilities` 机制覆盖「能力更强」与「能力更弱」两侧。

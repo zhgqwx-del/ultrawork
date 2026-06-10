@@ -27,7 +27,7 @@ Ultrawork 当前 = opencode 作 agent loop + Tauri 客户端，**绑定单一后
 ## 决策
 
 ### D-1 · 采用 ACP 作为多后端协议，opencode 保留 REST
-采用 ACP 接入外部 agent；**opencode 继续走 REST/SSE**（已深度集成 permission/question/file），**不**为「统一」改走 ACP（会丢集成深度）。`UnifiedAgent` 抽象同时容纳「opencode-REST」与「ACP」两类后端。
+采用 ACP 接入外部 agent；**opencode 继续走 REST/SSE**（已深度集成 permission/question/file），**不**为「统一」改走 ACP（会丢集成深度）。`UnifiedAgent` 抽象同时容纳「opencode-REST」与「ACP」两类后端（**首发两类；[ADR-030](./030-agent-connector-control-layer.md) D-8 后泛化为开放可插拔 backend 类——协议族 × adapter**）。
 
 ### D-2 · 三档能力模型，放弃「对等换手」
 ```
