@@ -6,6 +6,7 @@
 > **缘起**：当前 Ultrawork = opencode 作 agent loop + Tauri 客户端。设想升级为「**统一交互层**」：既可用 opencode 作后端，也可用 claude code / qoder / gemini 等支持 **ACP** 的 agent 作后端，让客户端像「操作系统」一样，把每一轮会话**动态或指定**地分配给不同 agent——类似 openclaw `acpx` 的方式，也类似 opencode 内置 agent 的选择体验。
 > **关键前提**：Ultrawork **已经有 `feat/acp-support` 分支**（28 commit，未合并 main）实现了这个愿景的**基座**。本文不是从零设计，而是评估「现有 MVP → 完整 Agent OS」的可行性、难点与路径。
 > **对标**：[011](./011-architecture-comparison.md) 已横向对比 openclaw / hermes / opencode desktop。
+> **后续细化（2026-06-09，forward-pointer）**：本文 §3/§4 的「backend 接入」与 openclaw/hermes 定性已由 [015](./015-backend-taxonomy-non-acp.md) 源级调研细化/部分修正——**「支持 ACP 非二元」**（openclaw `openclaw acp` 是 Gateway 薄桥、最差面；hermes/qoder 原生富 ACP）、**传输族 × adapter 分类法**、openclaw 对外**三面**（ACP 桥 / OpenAI HTTP / **WebSocket Gateway native**）。§11 的 qoder flag 歧义亦在 015 §4.4 调研（缩小未消除）。**backend 分类与三家定性以 [015](./015-backend-taxonomy-non-acp.md) + [ADR-030](../decisions/030-agent-connector-control-layer.md) D-8 为准。**
 
 ---
 
