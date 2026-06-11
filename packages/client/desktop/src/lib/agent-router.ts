@@ -31,6 +31,8 @@ export interface ACPAgentConfig {
   env?: Record<string, string>
   /** Expose the host knowledge base MCP (:4098) to this agent (opt-in). */
   knowledgeMcp?: boolean
+  /** Thinking-effort level, applied per session when the agent supports it. */
+  thoughtLevel?: string
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

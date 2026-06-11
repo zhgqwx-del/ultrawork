@@ -7,14 +7,15 @@
 //   so shaping sees them in arrival order.
 // - Fix 3: every outbound request is tracked and batch-rejected on exit.
 
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { delimiter, dirname, join } from "node:path"
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import type {
   AgentCapabilities,
   McpServer,
   PermissionOption,
+  SessionConfigOption,
   ReadTextFileRequest,
   ReadTextFileResponse,
   RequestPermissionRequest,
@@ -46,6 +47,61 @@ const permissionTimeoutMs = () => Number(process.env.ACP_PERMISSION_TIMEOUT_MS ?
 const STDIN_GRACE_MS = 100
 const SIGTERM_GRACE_MS = 1500
 const SIGKILL_GRACE_MS = 1000
+
+// GUI-launched processes (the packaged Tauri app) inherit a minimal PATH that
+// misses the user bin dirs where agent CLIs live (e.g. qodercli in
+// ~/.local/bin). Appended only — explicit PATH entries keep priority.
+const EXTRA_PATH_DIRS = [
+  join(homedir(), ".local", "bin"),
+  join(homedir(), ".bun", "bin"),
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+]
+
+function augmentPath(path: string | undefined): string {
+  const parts = path ? path.split(delimiter) : []
+  for (const dir of EXTRA_PATH_DIRS) {
+    if (!parts.includes(dir)) parts.push(dir)
+  }
+  return parts.join(delimiter)
+}
+
+// --- gemini quirks (live-tested 2026-06-11, @google/gemini-cli via bunx) ---
+// 1. ACP mode + interactive shell (node-pty, default on) hangs every shell
+//    tool call forever — no error, no timeout, regardless of runtime or
+//    folder trust. Disable it via a managed settings file delivered through
+//    GEMINI_CLI_SYSTEM_SETTINGS_PATH (no env/flag exists for the setting).
+// 2. Untrusted folders abort headless tool execution; Ultrawork's own
+//    permission loop is the actual gate, so trust the workspace.
+// 3. The npm wrapper relaunches itself via process.execPath (lands on bun
+//    under bunx, adds a process layer that the three-phase shutdown can't
+//    see) — keep it single-process.
+// Defaults only: an explicit value in the agent's env always wins.
+const GEMINI_MANAGED_SETTINGS_PATH = join(homedir(), ".config", "ultrawork", "gemini-acp-settings.json")
+const GEMINI_MANAGED_SETTINGS = { tools: { shell: { enableInteractiveShell: false } } }
+
+export function applyGeminiQuirks(
+  config: Pick<ACPAgentConfig, "command" | "args" | "env">,
+  env: Record<string, string | undefined>,
+  settingsPath = GEMINI_MANAGED_SETTINGS_PATH,
+): void {
+  const tokens = [config.command, ...config.args]
+  const isGemini = tokens.some((t) => t.includes("gemini-cli") || t === "gemini")
+  if (!isGemini) return
+  if (!config.env?.GEMINI_CLI_TRUST_WORKSPACE) env.GEMINI_CLI_TRUST_WORKSPACE = "true"
+  if (!config.env?.GEMINI_CLI_NO_RELAUNCH) env.GEMINI_CLI_NO_RELAUNCH = "true"
+  if (!config.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH) {
+    try {
+      if (!existsSync(settingsPath)) {
+        mkdirSync(dirname(settingsPath), { recursive: true })
+        writeFileSync(settingsPath, JSON.stringify(GEMINI_MANAGED_SETTINGS, null, 2) + "\n")
+      }
+      env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = settingsPath
+    } catch (err) {
+      console.error(`[acp] failed to provision gemini settings at ${settingsPath}:`, err)
+    }
+  }
+}
 
 interface PendingRequest {
   reject: (err: Error) => void
@@ -87,7 +143,13 @@ export class ACPConnection {
     private readonly onEvent: SessionEventCallback,
   ) {}
 
-  async connect(): Promise<void> {
+  /**
+   * Spawn + initialize the agent. `cwd` becomes the child's working
+   * directory (first caller wins for a shared connection): some agents
+   * (qoder, live-tested) run their shell tool in the process cwd instead of
+   * the session cwd, and the sidecar's own cwd is meaningless to users.
+   */
+  async connect(cwd?: string): Promise<void> {
     if (this.status === "connected" || this.status === "connecting") return
     this.status = "connecting"
     this.error = undefined
@@ -95,6 +157,8 @@ export class ACPConnection {
 
     try {
       const env: Record<string, string | undefined> = { ...process.env, ...this.config.env }
+      env.PATH = augmentPath(env.PATH)
+      applyGeminiQuirks(this.config, env)
       // Scrub Claude Code session markers inherited from a dev shell (e.g.
       // setup.sh run inside a Claude Code terminal): claude-code-acp refused
       // to start when CLAUDECODE is set (nested-session check; gone from
@@ -107,6 +171,7 @@ export class ACPConnection {
         stdout: "pipe",
         stderr: "pipe",
         env,
+        cwd: cwd && existsSync(cwd) ? cwd : undefined,
       })
       this.proc = proc
       this.watchProcessExit(proc)
@@ -166,6 +231,7 @@ export class ACPConnection {
       sessionId,
       new TurnShaper(emitAs, this.config.id, (event) => this.onEvent(emitAs, event)),
     )
+    await this.applyThoughtLevel(sessionId, res.configOptions)
     return sessionId
   }
 
@@ -183,12 +249,14 @@ export class ACPConnection {
     this.emitIds.set(acpSessionId, emitAs)
     const replay = { lastUpdateAt: 0 }
     this.replaying.set(acpSessionId, replay)
+    let configOptions: SessionConfigOption[] | null | undefined
     try {
-      await this.runRequest(
+      const res = await this.runRequest(
         () => conn.loadSession({ sessionId: acpSessionId, cwd, mcpServers: this.hostMcpServers() }),
         SESSION_LOAD_TIMEOUT_MS,
         "session/load",
       )
+      configOptions = res.configOptions
       // The idle window starts at RPC completion: agents may keep streaming
       // replay notifications after responding, so always wait out at least
       // one quiet REPLAY_IDLE_MS before trusting the stream.
@@ -206,6 +274,7 @@ export class ACPConnection {
       acpSessionId,
       new TurnShaper(emitAs, this.config.id, (event) => this.onEvent(emitAs, event)),
     )
+    await this.applyThoughtLevel(acpSessionId, configOptions)
   }
 
   hasSession(sessionId: string): boolean {
@@ -283,6 +352,40 @@ export class ACPConnection {
       return []
     }
     return [{ name: "knowledge-base", command: sidecar, args: ["mcp-stdio"], env: [] }]
+  }
+
+  /**
+   * Apply the configured thinking-effort level via session/set_config_option
+   * when the agent advertises a thought_level select option (claude-agent-acp
+   * ≥0.44, id "effort"; values depend on the current model). Best-effort:
+   * missing option / unknown value / RPC failure logs and continues — effort
+   * is a tuning knob, never a session blocker.
+   */
+  private async applyThoughtLevel(
+    sessionId: string,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): Promise<void> {
+    const desired = this.config.thoughtLevel
+    if (!desired || desired === "default" || !this.connection) return
+    const option = (configOptions ?? []).find(
+      (o) => o.type === "select" && (o.category === "thought_level" || o.id === "effort"),
+    )
+    if (!option || option.type !== "select") return
+    const values = option.options.flatMap((entry) =>
+      "group" in entry ? entry.options.map((o) => o.value) : [entry.value],
+    )
+    if (!values.includes(desired)) {
+      console.error(
+        `[acp:${this.config.id}] thoughtLevel "${desired}" not offered by ${option.id} (${values.join(", ")}) — skipping`,
+      )
+      return
+    }
+    try {
+      await this.connection.setSessionConfigOption({ sessionId, configId: option.id, value: desired })
+      console.error(`[acp:${this.config.id}] session config applied: ${option.id}=${desired}`)
+    } catch (err) {
+      console.error(`[acp:${this.config.id}] failed to set ${option.id}=${desired}:`, err)
+    }
   }
 
   private resolvePermission(permissionId: string, reply: PermissionReply): boolean {

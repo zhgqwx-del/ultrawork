@@ -16,6 +16,13 @@ export interface ACPAgentConfig {
   env?: Record<string, string>
   /** Expose the host knowledge base MCP (:4098) to this agent (B4: opt-in, default off). */
   knowledgeMcp?: boolean
+  /**
+   * Desired thinking-effort level, applied per session via ACP
+   * `session/set_config_option` when the agent advertises a `thought_level`
+   * config option (claude-agent-acp ≥0.44). Unset or "default" = leave the
+   * agent's default; agents without the option silently skip it.
+   */
+  thoughtLevel?: string
 }
 
 // Mirrors the desktop PermissionRequest shape (api-client types.ts) — the

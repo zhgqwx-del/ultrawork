@@ -244,7 +244,7 @@ setTimeout(() => fetchSources(), 500)
 - tool_call / tool_call_update **按 toolCallId upsert** 到同一 part（核心逻辑集中在 `turn-shaper.ts`，纯函数可测）。
 - 事件 sessionID 用客户端传入的 `clientSessionId` 直通，前端零改写。
 
-**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；per-agent 怪癖（超时、stdout 过滤、Windows shell）集中在 `acp-connection.ts` 常量区，参考 acpx `agent-command.ts`。per-agent 行为开关走 env（如 claude thinking = `MAX_THINKING_TOKENS`，DEFAULT_AGENTS 默认 8192），`PUT /acp/agents/:id` 保存即热生效（断开重连）。
+**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；Settings「添加 Agent」表单顶部有**预置模板 chips**（claude/gemini/qoder，`agent-templates.ts`，一键填充 command/args/env，已存在同 id 置灰）。per-agent 怪癖集中在 `acp-connection.ts`：常量区（超时等）+ **spawn 期 env 注入函数**（如 `applyGeminiQuirks`——检测 command/args 识别 agent，注入缺省 env + 托管 settings 文件，**显式 agent env 永远优先**，纯函数可离线测）。per-agent 行为开关走 env（如 claude thinking = `MAX_THINKING_TOKENS`，DEFAULT_AGENTS 默认 8192）或 agents.json 字段（如 `thoughtLevel` → 会话级 `session/set_config_option`，best-effort），`PUT /acp/agents/:id` 保存即热生效（断开重连）。
 
 **会话历史持久化（W4b）**：sidecar 端 `session-store.ts` 维护与前端同构的 event-fold reducer（part.updated 按 id upsert / delta 追加 / message.updated merge info），在 user echo 落定与 assistant 终态封板时整体落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（**数据进 xdgData**，与 opencode 存量同级）。前端打开 ACP 会话从 `GET /acp/session/:id/messages` 取历史（`use-session-messages` 按 isACP 分流，hasMore=false）；agent 上下文在下次 prompt 时经 `session/load` 懒恢复 + replay 全抑制——**历史渲染永远不依赖 agent 存活**。会话删除时前端 fire-and-forget `DELETE /acp/session/:id` 防孤儿文件。
 

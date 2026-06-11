@@ -59,6 +59,7 @@ export function createServer(manager: ACPManager): Hono {
         args?: string[]
         env?: Record<string, string>
         knowledgeMcp?: boolean
+        thoughtLevel?: string
       }>()
       .catch(() => null)
     if (!body?.label || !body?.command) {
@@ -72,6 +73,7 @@ export function createServer(manager: ACPManager): Hono {
       args: body.args ?? [],
       env: body.env,
       knowledgeMcp: body.knowledgeMcp ?? false,
+      thoughtLevel: body.thoughtLevel || undefined,
     })
     return c.json({ ok: true })
   })

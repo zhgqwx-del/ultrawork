@@ -92,7 +92,7 @@ export class ACPManager {
    */
   async createSession(agentId: string, cwd: string, clientSessionId?: string): Promise<string> {
     const conn = this.requireAgent(agentId)
-    if (conn.status !== "connected") await conn.connect()
+    if (conn.status !== "connected") await conn.connect(cwd)
     const acpSessionId = await conn.newSession(cwd, clientSessionId)
     const sessionId = clientSessionId ?? acpSessionId
     const entry: SessionEntry = {
@@ -125,7 +125,7 @@ export class ACPManager {
    * (capability off, or the agent itself lost the session).
    */
   private async restoreAgentSession(conn: ACPConnection, entry: SessionEntry): Promise<void> {
-    if (conn.status !== "connected") await conn.connect()
+    if (conn.status !== "connected") await conn.connect(entry.cwd)
     if (conn.hasSession(entry.acpSessionId)) return
 
     if (conn.agentCapabilities?.loadSession) {

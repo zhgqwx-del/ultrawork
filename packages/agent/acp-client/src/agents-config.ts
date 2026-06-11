@@ -96,6 +96,7 @@ export function loadAgentConfigs(): ACPAgentConfig[] {
     args: cfg.args ?? [],
     env: cfg.env,
     knowledgeMcp: cfg.knowledgeMcp ?? false,
+    thoughtLevel: cfg.thoughtLevel,
   }))
 }
 
@@ -127,6 +128,7 @@ export function saveAgentConfig(config: ACPAgentConfig): void {
     args: config.args,
     env: config.env,
     knowledgeMcp: config.knowledgeMcp || undefined,
+    thoughtLevel: config.thoughtLevel || undefined,
   }
   writeFile(file)
 }

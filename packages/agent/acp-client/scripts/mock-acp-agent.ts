@@ -6,7 +6,7 @@
 // "reasoning + tool + answer" sequence W1 must shape correctly.
 
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
-import type { SessionUpdate } from "@agentclientprotocol/sdk"
+import type { SessionConfigOption, SessionUpdate } from "@agentclientprotocol/sdk"
 
 const stdout = new WritableStream<Uint8Array>({
   write: (chunk) =>
@@ -14,6 +14,36 @@ const stdout = new WritableStream<Uint8Array>({
       process.stdout.write(chunk, (err) => (err ? reject(err) : resolve())),
     ),
 })
+
+// Session config options mirroring claude-agent-acp ≥0.44's thought_level
+// (id "effort"). Disable with MOCK_ACP_NO_CONFIG_OPTIONS=1 to play an agent
+// without the option (the sidecar must skip silently). A set effort level is
+// echoed into the next answer as " [effort=<level>]" so tests can observe it
+// end-to-end without a side channel.
+const ADVERTISE_CONFIG_OPTIONS = process.env.MOCK_ACP_NO_CONFIG_OPTIONS !== "1"
+const sessionEffort = new Map<string, string>()
+
+function effortOptions(current: string): SessionConfigOption[] {
+  return [
+    {
+      id: "effort",
+      name: "Effort",
+      category: "thought_level",
+      type: "select",
+      currentValue: current,
+      options: [
+        { value: "default", name: "Default" },
+        { value: "low", name: "Low" },
+        { value: "medium", name: "Medium" },
+        { value: "high", name: "High" },
+      ],
+    },
+  ]
+}
+
+function configOptionsFor(sessionId: string): SessionConfigOption[] | undefined {
+  return ADVERTISE_CONFIG_OPTIONS ? effortOptions(sessionEffort.get(sessionId) ?? "default") : undefined
+}
 
 new AgentSideConnection(
   (conn) => ({
@@ -27,7 +57,14 @@ new AgentSideConnection(
       return {}
     },
     async newSession() {
-      return { sessionId: "mock-session-1" }
+      return { sessionId: "mock-session-1", configOptions: configOptionsFor("mock-session-1") }
+    },
+    async setSessionConfigOption(params) {
+      if (params.configId !== "effort" || typeof params.value !== "string") {
+        throw new Error(`Unknown config option: ${params.configId}`)
+      }
+      sessionEffort.set(params.sessionId, params.value)
+      return { configOptions: effortOptions(params.value) }
     },
     // W4b: replay a fixed prior turn as session/update notifications, the way
     // real agents stream history during session/load. The sidecar must
@@ -46,7 +83,7 @@ new AgentSideConnection(
         content: [{ type: "content", content: { type: "text", text: "a.txt\nb.txt" } }],
       })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "There are two files." } })
-      return {}
+      return { configOptions: configOptionsFor(params.sessionId) }
     },
     async prompt(params) {
       const send = (update: SessionUpdate) =>
@@ -116,6 +153,10 @@ new AgentSideConnection(
       })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "There are " } })
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two files." } })
+      const effort = sessionEffort.get(params.sessionId)
+      if (effort && effort !== "default") {
+        await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: ` [effort=${effort}]` } })
+      }
 
       return {
         stopReason: "end_turn",

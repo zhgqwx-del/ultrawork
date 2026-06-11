@@ -288,7 +288,7 @@ curl -N http://localhost:4096/event \
 |------|------|------|------|
 | GET | `/acp/health` | 健康检查 | 含各 agent 连接态 |
 | GET | `/acp/agents` | 列出 agent | 含 status / capabilities（loadSession 等） |
-| GET/PUT/DELETE | `/acp/agents/:id(/config)` | agent 配置 CRUD | PUT 保存即热生效（断开重连） |
+| GET/PUT/DELETE | `/acp/agents/:id(/config)` | agent 配置 CRUD | PUT 保存即热生效（断开重连）；body 含 `label/command/args/env/knowledgeMcp/thoughtLevel` |
 | POST | `/acp/agents/:id/connect` / `disconnect` | 手动连接/断开 | 平时无需手动——prompt 时懒连接 |
 | POST | `/acp/session` | 建会话 | body `{agentId, cwd, clientSessionId}` |
 | GET | `/acp/session/:id` | 会话信息 | 持久化映射（重启后仍在） |

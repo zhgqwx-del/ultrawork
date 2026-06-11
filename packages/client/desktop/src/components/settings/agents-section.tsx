@@ -18,6 +18,7 @@ import {
   saveACPAgent,
 } from "@/lib/agent-router"
 import { useAgents } from "@/lib/agent-context"
+import { AGENT_TEMPLATES, type AgentTemplate } from "./agent-templates"
 
 interface FormState {
   id: string
@@ -27,6 +28,7 @@ interface FormState {
   args: string
   env: string
   knowledgeMcp: boolean
+  thoughtLevel: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -37,7 +39,10 @@ const EMPTY_FORM: FormState = {
   args: "",
   env: "",
   knowledgeMcp: false,
+  thoughtLevel: "default",
 }
+
+const THOUGHT_LEVELS = ["default", "low", "medium", "high"] as const
 
 function toForm(config: ACPAgentConfig): FormState {
   return {
@@ -50,6 +55,7 @@ function toForm(config: ACPAgentConfig): FormState {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
     knowledgeMcp: config.knowledgeMcp ?? false,
+    thoughtLevel: config.thoughtLevel ?? "default",
   }
 }
 
@@ -69,6 +75,7 @@ function fromForm(form: FormState): ACPAgentConfig {
     args: form.args.trim() ? form.args.trim().split(/\s+/) : [],
     env: Object.keys(env).length > 0 ? env : undefined,
     knowledgeMcp: form.knowledgeMcp,
+    thoughtLevel: form.thoughtLevel !== "default" ? form.thoughtLevel : undefined,
   }
 }
 
@@ -88,6 +95,7 @@ export function AgentsSection() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [templateKey, setTemplateKey] = useState<AgentTemplate["key"] | null>(null)
   const [saving, setSaving] = useState(false)
 
   const refresh = async () => {
@@ -125,10 +133,31 @@ export function AgentsSection() {
     try {
       const config = await getACPAgentConfig(id)
       setEditingId(id)
+      setTemplateKey(null)
       setForm(toForm(config))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const applyTemplate = (template: AgentTemplate | null) => {
+    setTemplateKey(template?.key ?? null)
+    if (!template) {
+      setForm(EMPTY_FORM)
+      return
+    }
+    setForm({
+      id: template.id,
+      label: template.label,
+      description: template.description,
+      command: template.command,
+      args: template.args.join(" "),
+      env: Object.entries(template.env ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n"),
+      knowledgeMcp: false,
+      thoughtLevel: "default",
+    })
   }
 
   const handleSave = async () => {
@@ -144,6 +173,7 @@ export function AgentsSection() {
       toast.success(t("agents.saved"))
       setForm(null)
       setEditingId(null)
+      setTemplateKey(null)
       await refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -172,6 +202,7 @@ export function AgentsSection() {
             type="button"
             onClick={() => {
               setEditingId(null)
+              setTemplateKey(null)
               setForm(EMPTY_FORM)
             }}
             disabled={!available}
@@ -261,6 +292,47 @@ export function AgentsSection() {
           <h3 className="text-sm font-semibold text-[var(--color-fg)]">
             {editingId ? t("agents.edit") : t("agents.add")}
           </h3>
+          {!editingId && (
+            <div className="space-y-1.5">
+              <span className="block text-xs font-medium text-[var(--color-fg-muted)]">
+                {t("agents.template.title")}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {AGENT_TEMPLATES.map((template) => {
+                  const exists = agents.some((a) => a.id === template.id)
+                  return (
+                    <button
+                      key={template.key}
+                      type="button"
+                      disabled={exists}
+                      title={exists ? t("agents.template.exists") : template.description}
+                      onClick={() => applyTemplate(template)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-40",
+                        templateKey === template.key
+                          ? "border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)]"
+                          : "border-[var(--color-border)] text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+                      )}
+                    >
+                      {template.label}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={() => applyTemplate(null)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs transition-colors",
+                    templateKey === null
+                      ? "border-[var(--color-brand)] bg-[var(--color-brand)]/10 text-[var(--color-brand)]"
+                      : "border-[var(--color-border)] text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+                  )}
+                >
+                  {t("agents.template.custom")}
+                </button>
+              </div>
+            </div>
+          )}
           <FormField
             label="ID"
             value={form.id}
@@ -289,10 +361,29 @@ export function AgentsSection() {
           <FormField
             label={t("agents.form.env")}
             value={form.env}
-            placeholder="API_KEY=..."
+            placeholder={AGENT_TEMPLATES.find((tpl) => tpl.key === templateKey)?.envHint ?? "API_KEY=..."}
             multiline
             onChange={(env) => setForm({ ...form, env })}
           />
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
+              {t("agents.form.thoughtLevel")}
+            </span>
+            <select
+              value={form.thoughtLevel}
+              onChange={(e) => setForm({ ...form, thoughtLevel: e.target.value })}
+              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 py-1.5 text-xs text-[var(--color-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+            >
+              {THOUGHT_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {t(`agents.form.thoughtLevel.${level}`)}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[11px] text-[var(--color-fg-muted)]">
+              {t("agents.form.thoughtLevel.hint")}
+            </span>
+          </label>
           <label className="flex items-center gap-2 pt-1">
             <input
               type="checkbox"
@@ -308,6 +399,7 @@ export function AgentsSection() {
               onClick={() => {
                 setForm(null)
                 setEditingId(null)
+                setTemplateKey(null)
               }}
               className="rounded-lg px-3 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)]"
             >
