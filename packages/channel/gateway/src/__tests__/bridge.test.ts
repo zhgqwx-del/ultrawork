@@ -477,7 +477,7 @@ describe("Bridge", () => {
       await bridge.handleMessage(createMessage({ workspaceDir: "/ws1", chatId: "user-2" }))
 
       // Only one SSE connection should be initiated for /ws1
-      const sseControllers = (bridge as any).sseControllers
+      const sseControllers = (bridge as any).sseSubscriptions
       expect(sseControllers.size).toBe(1)
       expect(sseControllers.has("/ws1")).toBe(true)
       await bridge.shutdown()
@@ -492,7 +492,7 @@ describe("Bridge", () => {
       await bridge.handleMessage(createMessage({ workspaceDir: "/ws1" }))
       await bridge.handleMessage(createMessage({ workspaceDir: "/ws2", chatId: "user-2" }))
 
-      const sseControllers = (bridge as any).sseControllers
+      const sseControllers = (bridge as any).sseSubscriptions
       expect(sseControllers.size).toBe(2)
       await bridge.shutdown()
     })
@@ -560,7 +560,7 @@ describe("Bridge", () => {
       await bridge.handleMessage(createMessage({ workspaceDir: "/ws1" }))
       await bridge.handleMessage(createMessage({ workspaceDir: "/ws1", chatId: "u2" }))
 
-      const clients = (bridge as any).clients
+      const clients = (bridge as any).backends
       expect(clients.size).toBe(1)
       await bridge.shutdown()
     })
@@ -573,11 +573,11 @@ describe("Bridge", () => {
 
       await bridge.shutdown()
 
-      expect((bridge as any).sseControllers.size).toBe(0)
+      expect((bridge as any).sseSubscriptions.size).toBe(0)
       expect((bridge as any).pollTimers.size).toBe(0)
       expect((bridge as any).activeContexts.size).toBe(0)
       expect((bridge as any).sessionMap.size).toBe(0)
-      expect((bridge as any).clients.size).toBe(0)
+      expect((bridge as any).backends.size).toBe(0)
       expect((bridge as any).queues.size).toBe(0)
     })
   })
