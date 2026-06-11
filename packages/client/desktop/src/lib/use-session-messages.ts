@@ -1,15 +1,14 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { useApi } from "@/lib/use-api"
-import { useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useAgents } from "@/lib/agent-context"
 import { isACPAgentId, parseAgentId } from "@/lib/agent-types"
 import { ensureACPSession, promptACPSession, cancelACPSession, fetchACPSessionMessages } from "@/lib/agent-router"
 import { useACPSSE } from "@/lib/use-acp-sse"
 import type { SendMessageResponse } from "@agent/api-client"
-import type { SSEEvent } from "@/lib/sse-client"
+import type { SSEEvent } from "@agent/connector"
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -31,7 +30,7 @@ export function useSessionMessages(
   options?: UseSessionMessagesOptions,
 ) {
   const { sessions, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
-  const api = useApi()
+  const connector = useConnector()
   const { t } = useI18n()
 
   // --- Per-session agent binding (ADR-027 档1) ---
@@ -151,7 +150,7 @@ export function useSessionMessages(
           cursor: undefined,
           hasMore: false,
         }))
-      : api.getMessagesPaginated(sessionId, { limit: INITIAL_PAGE_SIZE })
+      : connector.fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
     load
       .then((result) => {
         if (!cancelled) {
@@ -190,14 +189,14 @@ export function useSessionMessages(
         }
       })
     return () => { cancelled = true }
-  }, [sessionId, api, isACP]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, connector, isACP]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- History loading: fetch older messages ---
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !hasMore || historyLoading || !cursor) return
     setHistoryLoading(true)
     try {
-      const result = await api.getMessagesPaginated(sessionId, {
+      const result = await connector.fetchHistory(sessionId, {
         limit: HISTORY_PAGE_SIZE,
         before: cursor,
       })
@@ -213,7 +212,7 @@ export function useSessionMessages(
     } finally {
       setHistoryLoading(false)
     }
-  }, [sessionId, hasMore, historyLoading, cursor, api])
+  }, [sessionId, hasMore, historyLoading, cursor, connector])
 
   // --- Backfill: reveal cached messages above the window ---
   const backfillTurns = useCallback(() => {
@@ -542,17 +541,17 @@ export function useSessionMessages(
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
-      api.abortSession(sessionId)
+      connector.cancel(sessionId)
         .then(() => {
           if (lastUserMsg) {
-            return api.revertSession(sessionId, lastUserMsg.info.id).catch(() => {})
+            return connector.revert(sessionId, lastUserMsg.info.id).catch(() => {})
           }
         })
         .catch(() => {
           setSending(false)
         })
     }
-  }, [sessionId, api, markSessionIdle, isACP])
+  }, [sessionId, connector, markSessionIdle, isACP])
 
   const sendMessage = useCallback((
     text: string,
@@ -614,9 +613,9 @@ export function useSessionMessages(
         .then(() => promptACPSession(sessionId, userMessage))
         .catch(handleSendError)
     } else {
-      api.promptAsync(sessionId, userMessage, { model: model || undefined }).catch(handleSendError)
+      connector.prompt(sessionId, userMessage, { model: model || undefined }).catch(handleSendError)
     }
-  }, [sessionId, sending, api, markSessionActive, markSessionIdle, t, isACP, boundAgentId, sessions])
+  }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, isACP, boundAgentId, sessions])
 
   return {
     messages: displayMessages,

@@ -173,8 +173,12 @@ export class Connector {
     return () => unsubs.forEach((u) => u())
   }
 
+  /**
+   * Dispose backend connections. The registry is intentionally kept: React
+   * StrictMode re-runs effects after cleanup, and a re-setup must still find
+   * its backends (backends reconnect lazily via connectGlobal/subscribe).
+   */
   dispose(): void {
     for (const backend of this.backends.values()) backend.dispose()
-    this.backends.clear()
   }
 }

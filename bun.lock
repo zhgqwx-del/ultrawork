@@ -48,6 +48,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@agent/api-client": "workspace:*",
+        "@agent/connector": "workspace:*",
         "@agent/server-manager": "workspace:*",
         "@codemirror/lang-cpp": "^6.0.3",
         "@codemirror/lang-css": "^6.3.1",

@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback } from "react"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
-import { useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useAgents } from "@/lib/agent-context"
 import { isACPAgentId } from "@/lib/agent-types"
 import { replyACPPermission } from "@/lib/agent-router"
 import { useACPSSE } from "@/lib/use-acp-sse"
 import type { PermissionRequest, QuestionRequest } from "@agent/api-client"
-import type { SSEEvent } from "@/lib/sse-client"
+import type { SSEEvent } from "@agent/connector"
 
 export function useSessionPermission(
   sessionId: string | undefined,
@@ -16,6 +16,7 @@ export function useSessionPermission(
   isAgentActive: boolean,
 ) {
   const api = useApi()
+  const connector = useConnector()
   const { t } = useI18n()
   const { getSessionAgentId } = useAgents()
   const isACP = isACPAgentId(getSessionAgentId(sessionId))
@@ -99,14 +100,14 @@ export function useSessionPermission(
       setPendingPermission(null)
       const send = isACP
         ? replyACPPermission(sessionId, perm.id, reply)
-        : api.replyPermission(perm.id, reply)
+        : connector.replyPermission(sessionId, perm.id, reply)
       send.catch((err: Error) => {
         console.error("Failed to reply permission:", err)
         setPendingPermission(perm)
         toast.error(t("error.replyPermission"))
       })
     },
-    [pendingPermission, sessionId, isACP, api, t]
+    [pendingPermission, sessionId, isACP, connector, t]
   )
 
   const replyQuestion = useCallback(

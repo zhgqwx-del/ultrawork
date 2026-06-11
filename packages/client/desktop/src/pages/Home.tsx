@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { useApi } from "@/lib/use-api"
+import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAgents } from "@/lib/agent-context"
 import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId, parseAgentId } from "@/lib/agent-types"
@@ -42,7 +42,7 @@ export function HomePage() {
   const navigate = useNavigate()
   const { createSession } = useSessionsContext()
   const { bindSessionAgent } = useAgents()
-  const api = useApi()
+  const connector = useConnector()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
   const isACP = isACPAgentId(agentId)
@@ -63,7 +63,7 @@ export function HomePage() {
         ? ensureACPSession(parseAgentId(agentId).rawId, session.directory, session.id).then(() =>
             promptACPSession(session.id, text),
           )
-        : api.promptAsync(session.id, text, { model: currentModel || undefined })
+        : connector.prompt(session.id, text, { model: currentModel || undefined })
       prompt.catch((err) => {
         console.error("Failed to send message:", err)
         toast.error(t("error.sendMessage"))

@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from "react"
 import { acpEventsURL } from "./agent-router"
-import type { SSEEvent } from "./sse-client"
+import type { SSEEvent } from "@agent/connector"
 
 const MAX_RECONNECTS = 5
 const RECONNECT_BASE_DELAY = 1000
