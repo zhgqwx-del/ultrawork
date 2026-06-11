@@ -148,4 +148,24 @@ describe("W4b manager persistence + restore", () => {
       await second.shutdown()
     })
   }, 20_000)
+
+  it("listSessions exposes agent bindings, surviving a restart (ADR-030 hydration)", async () => {
+    await withTmpDataDir(async () => {
+      const SID = "ses_bindings"
+      const first = new ACPManager([MOCK_CONFIG])
+      await first.createSession("mock", "/tmp", SID)
+      const live = first.listSessions()
+      expect(live.length).toBe(1)
+      expect(live[0]).toMatchObject({ sessionId: SID, agentId: "mock", cwd: "/tmp" })
+      await first.shutdown()
+
+      // A fresh manager (sidecar restart) still lists the binding from disk.
+      const second = new ACPManager([MOCK_CONFIG])
+      const restored = second.listSessions()
+      expect(restored.length).toBe(1)
+      expect(restored[0].sessionId).toBe(SID)
+      expect(restored[0].agentId).toBe("mock")
+      await second.shutdown()
+    })
+  }, 20_000)
 })

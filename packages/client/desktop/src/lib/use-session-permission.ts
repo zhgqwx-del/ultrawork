@@ -1,12 +1,8 @@
 import { useEffect, useState, useCallback } from "react"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
-import { useConnector, useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
-import { useAgents } from "@/lib/agent-context"
-import { isACPAgentId } from "@/lib/agent-types"
-import { replyACPPermission } from "@/lib/agent-router"
-import { useACPSSE } from "@/lib/use-acp-sse"
 import type { PermissionRequest, QuestionRequest } from "@agent/api-client"
 import type { SSEEvent } from "@agent/connector"
 
@@ -18,8 +14,6 @@ export function useSessionPermission(
   const api = useApi()
   const connector = useConnector()
   const { t } = useI18n()
-  const { getSessionAgentId } = useAgents()
-  const isACP = isACPAgentId(getSessionAgentId(sessionId))
 
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
   const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null)
@@ -64,16 +58,17 @@ export function useSessionPermission(
     [sessionId]
   )
 
-  useSSESubscribe(handleSSEEvent)
-  // ACP-bound sessions: permission.asked/replied arrive on the sidecar stream
-  // (shared EventSource with the message hook).
-  useACPSSE(isACP ? sessionId : undefined, handleSSEEvent)
+  // Dispatched by binding; ACP permission events arrive on the sidecar's
+  // shared per-session stream (multiplexed with the message hook).
+  useSessionSubscribe(sessionId, handleSSEEvent)
 
   // --- Polling fallback: catch permission/question events missed by SSE ---
-  // ACP sessions skip it: the sidecar is local-only SSE and the opencode
-  // /permission list knows nothing about ACP requests.
+  // Only backends with REST-listable interactions (capabilities.questions =
+  // opencode) have /permission//question lists to poll; the ACP sidecar's
+  // permission flow is SSE + suspended-RPC only.
+  const pollable = connector.capabilitiesOf(sessionId).questions
   useEffect(() => {
-    if (!sessionId || isACP || !isAgentActive || pendingPermission || pendingQuestion) return
+    if (!sessionId || !pollable || !isAgentActive || pendingPermission || pendingQuestion) return
 
     const poll = () => {
       api.listPermissions().then((perms) => {
@@ -90,7 +85,7 @@ export function useSessionPermission(
     poll()
     const timer = setInterval(poll, 3000)
     return () => clearInterval(timer)
-  }, [sessionId, isACP, isAgentActive, pendingPermission, pendingQuestion, api])
+  }, [sessionId, pollable, isAgentActive, pendingPermission, pendingQuestion, api])
 
   // --- Actions ---
   const replyPermission = useCallback(
@@ -98,16 +93,13 @@ export function useSessionPermission(
       if (!pendingPermission || !sessionId) return
       const perm = pendingPermission
       setPendingPermission(null)
-      const send = isACP
-        ? replyACPPermission(sessionId, perm.id, reply)
-        : connector.replyPermission(sessionId, perm.id, reply)
-      send.catch((err: Error) => {
+      connector.replyPermission(sessionId, perm.id, reply).catch((err: Error) => {
         console.error("Failed to reply permission:", err)
         setPendingPermission(perm)
         toast.error(t("error.replyPermission"))
       })
     },
-    [pendingPermission, sessionId, isACP, connector, t]
+    [pendingPermission, sessionId, connector, t]
   )
 
   const replyQuestion = useCallback(

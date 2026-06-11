@@ -102,6 +102,9 @@ export function createServer(manager: ACPManager): Hono {
     }
   })
 
+  // All sessions with their agent bindings — desktop binding hydration (ADR-030).
+  app.get("/acp/sessions", (c) => c.json(manager.listSessions()))
+
   app.get("/acp/session/:id", (c) => {
     const info = manager.getSession(c.req.param("id"))
     return info ? c.json(info) : c.json({ error: "unknown session" }, 404)

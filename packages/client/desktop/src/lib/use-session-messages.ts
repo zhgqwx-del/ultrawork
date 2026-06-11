@@ -1,12 +1,8 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { useConnector, useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
-import { useAgents } from "@/lib/agent-context"
-import { isACPAgentId, parseAgentId } from "@/lib/agent-types"
-import { ensureACPSession, promptACPSession, cancelACPSession, fetchACPSessionMessages } from "@/lib/agent-router"
-import { useACPSSE } from "@/lib/use-acp-sse"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@agent/connector"
 
@@ -33,10 +29,9 @@ export function useSessionMessages(
   const connector = useConnector()
   const { t } = useI18n()
 
-  // --- Per-session agent binding (ADR-027 档1) ---
-  const { getSessionAgentId } = useAgents()
-  const boundAgentId = getSessionAgentId(sessionId)
-  const isACP = isACPAgentId(boundAgentId)
+  // Backend behavior differences are capability-declared (ADR-030 D-5);
+  // the connector dispatches every call by the session's agent binding.
+  const capabilities = connector.capabilitiesOf(sessionId)
 
   // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
@@ -142,16 +137,9 @@ export function useSessionMessages(
       return
     }
     setLoading(true)
-    // ACP-bound sessions: history lives in the ACP sidecar's store (shaped,
-    // returned whole — the turn window below still limits what renders).
-    const load = isACP
-      ? fetchACPSessionMessages(sessionId).then((messages) => ({
-          messages,
-          cursor: undefined,
-          hasMore: false,
-        }))
-      : connector.fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
-    load
+    // Dispatched by binding: opencode pages by cursor; the ACP sidecar serves
+    // the whole shaped history (the turn window below limits what renders).
+    connector.fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
       .then((result) => {
         if (!cancelled) {
           const msgs = result.messages
@@ -189,7 +177,7 @@ export function useSessionMessages(
         }
       })
     return () => { cancelled = true }
-  }, [sessionId, connector, isACP]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, connector]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- History loading: fetch older messages ---
   const loadOlderMessages = useCallback(async () => {
@@ -364,9 +352,9 @@ export function useSessionMessages(
           )
           if (info.role === "assistant" && info.finish) {
             setSending(false)
-            // ACP sessions have no session.status idle event — clear the
-            // sidebar activity marker on the terminal finish.
-            if (isACP && info.finish !== "tool-calls") {
+            // Backends without session.status events (ACP) signal idle via
+            // the terminal finish — clear the sidebar activity marker here.
+            if (!capabilities.sessionStatus && info.finish !== "tool-calls") {
               sendingRef.current = false
               if (sessionId) markSessionIdle(sessionId)
             }
@@ -477,13 +465,12 @@ export function useSessionMessages(
         }
       }
     },
-    [sessionId, updateSession, markSessionIdle, getEventSessionID, isACP]
+    [sessionId, updateSession, markSessionIdle, getEventSessionID, capabilities.sessionStatus]
   )
 
-  useSSESubscribe(handleSSEEvent)
-  // ACP-bound sessions stream from the sidecar; events arrive already shaped
-  // like opencode's and stamped with this session's id (no translation).
-  useACPSSE(isACP ? sessionId : undefined, handleSSEEvent)
+  // Dispatched by binding: opencode filters the global stream; ACP merges the
+  // sidecar's shaped per-session stream with the global stream (titles).
+  useSessionSubscribe(sessionId, handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
   useEffect(() => {
@@ -530,20 +517,14 @@ export function useSessionMessages(
     setStoppedAtMessageId(stoppedId)
 
     if (sessionId) {
-      if (isACP) {
-        // ACP: session/cancel ends the turn (the agent keeps its own history;
-        // there is no revert semantics).
-        cancelACPSession(sessionId).catch(() => {
-          setSending(false)
-        })
-        return
-      }
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
       connector.cancel(sessionId)
         .then(() => {
-          if (lastUserMsg) {
+          // Backends without revert (ACP) just end the turn — the agent
+          // keeps its own history.
+          if (lastUserMsg && connector.capabilitiesOf(sessionId).revert) {
             return connector.revert(sessionId, lastUserMsg.info.id).catch(() => {})
           }
         })
@@ -551,7 +532,7 @@ export function useSessionMessages(
           setSending(false)
         })
     }
-  }, [sessionId, connector, markSessionIdle, isACP])
+  }, [sessionId, connector, markSessionIdle])
 
   const sendMessage = useCallback((
     text: string,
@@ -599,23 +580,14 @@ export function useSessionMessages(
       toast.error(t("error.sendMessage"))
     }
 
-    if (isACP) {
-      // ACP route: lazily create the agent-side session bound to this desktop
-      // session (cwd = session workspace), then prompt. Turn completion is
-      // signaled by the shaped message.updated finish event over SSE.
-      const directory = sessions.find((s) => s.id === sessionId)?.directory
-      const { rawId: acpAgentId } = parseAgentId(boundAgentId)
-      if (!directory) {
-        handleSendError(new Error("Session has no workspace directory"))
-        return
-      }
-      ensureACPSession(acpAgentId, directory, sessionId)
-        .then(() => promptACPSession(sessionId, userMessage))
-        .catch(handleSendError)
-    } else {
-      connector.prompt(sessionId, userMessage, { model: model || undefined }).catch(handleSendError)
-    }
-  }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, isACP, boundAgentId, sessions])
+    // Dispatched by binding. ACP backends lazily ensure the agent-side
+    // session (cwd = session workspace) before prompting; turn completion is
+    // signaled by the shaped message.updated finish event over SSE.
+    const directory = sessions.find((s) => s.id === sessionId)?.directory
+    connector
+      .prompt(sessionId, userMessage, { model: model || undefined, directory })
+      .catch(handleSendError)
+  }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])
 
   return {
     messages: displayMessages,

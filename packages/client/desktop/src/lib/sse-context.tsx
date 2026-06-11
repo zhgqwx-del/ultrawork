@@ -1,15 +1,27 @@
-import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react"
 import { toast } from "sonner"
 import {
   Connector,
   OpenCodeBackend,
   OPENCODE_BACKEND_KIND,
+  ACPBackend,
+  BindingStore,
   FINITE_SSE_RETRY,
+  type BindingCache,
   type SSEEvent,
   type SSEEventHandler,
 } from "@agent/connector"
 import { useConfig } from "./config-context"
 import { useWorkspace } from "./workspace-context"
+
+const BINDINGS_STORAGE_KEY = "uw.acp.sessionAgents"
+
+// localStorage is a warm cache; the sidecar's persisted sessions are the
+// source of truth after hydration (AgentProvider, ADR-030).
+const localStorageBindingCache: BindingCache = {
+  load: () => JSON.parse(localStorage.getItem(BINDINGS_STORAGE_KEY) ?? "{}") as Record<string, string>,
+  save: (bindings) => localStorage.setItem(BINDINGS_STORAGE_KEY, JSON.stringify(bindings)),
+}
 
 interface ConnectorContextValue {
   /** Backend-agnostic control plane (ADR-030). */
@@ -39,7 +51,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   // Same dependency set as the legacy useApi()/SSEClient pair: a new connector
   // (and thus a new ApiClient reference) appears exactly when those did.
   const connector = useMemo(() => {
-    const c = new Connector()
+    const c = new Connector({ bindings: new BindingStore({ cache: localStorageBindingCache }) })
     c.registerBackend(
       new OpenCodeBackend({
         baseUrl: import.meta.env.DEV ? "" : config.apiBaseUrl,
@@ -53,6 +65,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         },
       }),
     )
+    c.registerBackend(new ACPBackend())
     return c
   }, [config.apiBaseUrl, config.apiUsername, config.apiPassword, workspacePath])
 
@@ -139,4 +152,26 @@ export function useSSEConnected(): boolean {
   const ctx = useContext(ConnectorContext)
   if (!ctx) throw new Error("useSSEConnected must be used within SSEProvider")
   return ctx.connected
+}
+
+/**
+ * Per-session events, dispatched by the session's backend binding: opencode
+ * sessions filter the global stream; ACP sessions merge the sidecar stream
+ * with the global stream (canonical title/delete events live there).
+ * Re-subscribes when the binding changes.
+ */
+export function useSessionSubscribe(sessionId: string | undefined, handler: SSEEventHandler) {
+  const connector = useConnector()
+  const handlerRef = useRef(handler)
+  handlerRef.current = handler
+
+  const binding = useSyncExternalStore(
+    useCallback((cb) => connector.bindings.onChange(cb), [connector]),
+    () => (sessionId ? connector.bindings.get(sessionId) : ""),
+  )
+
+  useEffect(() => {
+    if (!sessionId) return
+    return connector.subscribeSession(sessionId, (event) => handlerRef.current(event))
+  }, [connector, sessionId, binding])
 }

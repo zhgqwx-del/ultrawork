@@ -41,6 +41,8 @@ export interface BackendCapabilities {
   paginatedHistory: boolean
   /** prompt() accepts a model override. */
   model: boolean
+  /** Emits session.status events (idle detection); otherwise infer from finish. */
+  sessionStatus: boolean
 }
 
 // --- Unified agent model (ADR-027 档1, moved here from desktop agent-types.ts) ---
@@ -100,6 +102,8 @@ export interface PromptOptions {
   model?: string
   /** Raw agent id this session is bound to (filled in by Connector). */
   boundAgentId?: string
+  /** Session workspace directory — ACP agents spawn/cwd there (opencode ignores it). */
+  directory?: string
 }
 
 export interface FetchHistoryOptions {

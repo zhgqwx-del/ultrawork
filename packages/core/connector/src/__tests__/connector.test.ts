@@ -20,6 +20,7 @@ const baseCapabilities: BackendCapabilities = {
   globalEvents: false,
   paginatedHistory: false,
   model: false,
+  sessionStatus: false,
 }
 
 interface FakeBackend extends AgentBackend {

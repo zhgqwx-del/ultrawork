@@ -2,9 +2,8 @@ import { useState, useEffect, useCallback } from "react"
 import type { Session } from "@agent/api-client"
 import { ApiError } from "@agent/api-client"
 import { useApi } from "./use-api"
-import { deleteACPSession } from "./agent-router"
 import { useWorkspace } from "./workspace-context"
-import { useSSESubscribe } from "./sse-context"
+import { useConnector, useSSESubscribe } from "./sse-context"
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -14,6 +13,7 @@ function filterByWorkspace(list: Session[], workspacePath: string | null): Sessi
 
 export function useSessions() {
   const api = useApi()
+  const connector = useConnector()
   const { workspacePath } = useWorkspace()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,22 +90,14 @@ export function useSessions() {
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
-      try {
-        await api.deleteSession(sessionId)
-      } catch (err) {
-        // If server returns 404, the session is already gone — still remove locally
-        if (err instanceof ApiError && err.status === 404) {
-          // fall through to local cleanup
-        } else {
-          throw err
-        }
-      }
-      // Drop any ACP sidecar state bound to this session (404 for non-ACP
-      // sessions, and a dead sidecar must not block deletion).
-      deleteACPSession(sessionId).catch(() => {})
+      // Deletes everywhere by binding: the canonical opencode session (404
+      // tolerated — already gone still cleans up locally), any ACP sidecar
+      // state (failures swallowed — a dead sidecar must not block deletion),
+      // and the session's agent binding.
+      await connector.deleteSession(sessionId)
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
     },
-    [api]
+    [connector]
   )
 
   const updateSession = useCallback((id: string, updates: Partial<Session>) => {

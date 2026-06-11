@@ -4,7 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAgents } from "@/lib/agent-context"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
-import type { UnifiedAgentStatus } from "@/lib/agent-types"
+import type { UnifiedAgentStatus } from "@agent/connector"
 
 interface AgentSelectorProps {
   /** Session-bound mode: read/write the binding in AgentContext. */

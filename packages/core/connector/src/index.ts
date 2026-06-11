@@ -54,4 +54,14 @@ export {
   type OpenCodeBackendOptions,
 } from "./backends/opencode"
 
+export {
+  ACPHttpClient,
+  ACP_DEFAULT_BASE_URL,
+  type ACPAgentConfig,
+  type ACPAgentInfo,
+  type ACPSidecarSession,
+} from "./backends/acp-http"
+
+export { ACPBackend, ACP_BACKEND_KIND, toBindingEntries } from "./backends/acp"
+
 export { Connector, type ConnectorOptions } from "./connector"

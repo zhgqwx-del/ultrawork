@@ -26,6 +26,8 @@ export class BindingStore {
   /** Keys mutated locally after construction — hydrate() must not overwrite them. */
   private dirty = new Set<string>()
   private listeners = new Set<() => void>()
+  /** Monotonic change counter — a cheap stable snapshot for useSyncExternalStore. */
+  private changeVersion = 0
 
   constructor(private opts: BindingStoreOptions = {}) {
     this.bindings = {}
@@ -104,6 +106,10 @@ export class BindingStore {
     return { ...this.bindings }
   }
 
+  get version(): number {
+    return this.changeVersion
+  }
+
   onChange(cb: () => void): Unsubscribe {
     this.listeners.add(cb)
     return () => this.listeners.delete(cb)
@@ -119,6 +125,7 @@ export class BindingStore {
   }
 
   private notify(): void {
+    this.changeVersion++
     this.listeners.forEach((cb) => cb())
   }
 }

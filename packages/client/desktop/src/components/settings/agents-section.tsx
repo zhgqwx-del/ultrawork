@@ -6,17 +6,8 @@ import { toast } from "sonner"
 import { Bot, Loader2, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
-import {
-  type ACPAgentConfig,
-  type ACPAgentInfo,
-  checkACPHealth,
-  connectACPAgent,
-  deleteACPAgent,
-  disconnectACPAgent,
-  fetchACPAgents,
-  getACPAgentConfig,
-  saveACPAgent,
-} from "@/lib/agent-router"
+import { ACP_BACKEND_KIND, type ACPAgentConfig, type ACPAgentInfo, type ACPBackend } from "@agent/connector"
+import { useConnector } from "@/lib/sse-context"
 import { useAgents } from "@/lib/agent-context"
 import { AGENT_TEMPLATES, type AgentTemplate } from "./agent-templates"
 
@@ -89,6 +80,8 @@ const STATUS_STYLE: Record<ACPAgentInfo["status"], string> = {
 export function AgentsSection() {
   const { t } = useI18n()
   const { refreshAgents } = useAgents()
+  const connector = useConnector()
+  const acpHttp = connector.getBackend<ACPBackend>(ACP_BACKEND_KIND)!.http
   const [available, setAvailable] = useState(false)
   const [agents, setAgents] = useState<ACPAgentInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -101,9 +94,9 @@ export function AgentsSection() {
   const refresh = async () => {
     setLoading(true)
     try {
-      const healthy = await checkACPHealth()
+      const healthy = await acpHttp.health()
       setAvailable(healthy)
-      setAgents(healthy ? await fetchACPAgents() : [])
+      setAgents(healthy ? await acpHttp.listAgents() : [])
     } catch {
       setAgents([])
     } finally {
@@ -131,7 +124,7 @@ export function AgentsSection() {
 
   const handleEdit = async (id: string) => {
     try {
-      const config = await getACPAgentConfig(id)
+      const config = await acpHttp.getAgentConfig(id)
       setEditingId(id)
       setTemplateKey(null)
       setForm(toForm(config))
@@ -169,7 +162,7 @@ export function AgentsSection() {
     }
     setSaving(true)
     try {
-      await saveACPAgent(config)
+      await acpHttp.saveAgent(config)
       toast.success(t("agents.saved"))
       setForm(null)
       setEditingId(null)
@@ -253,14 +246,14 @@ export function AgentsSection() {
                     {agent.status === "connected" ? (
                       <IconButton
                         label={t("agents.disconnect")}
-                        onClick={() => void withBusy(agent.id, () => disconnectACPAgent(agent.id))}
+                        onClick={() => void withBusy(agent.id, () => acpHttp.disconnectAgent(agent.id))}
                       >
                         <PlugZap className="size-4" />
                       </IconButton>
                     ) : (
                       <IconButton
                         label={t("agents.connect")}
-                        onClick={() => void withBusy(agent.id, () => connectACPAgent(agent.id))}
+                        onClick={() => void withBusy(agent.id, () => acpHttp.connectAgent(agent.id))}
                       >
                         <Plug className="size-4" />
                       </IconButton>
@@ -270,7 +263,7 @@ export function AgentsSection() {
                     </IconButton>
                     <IconButton
                       label={t("agents.delete")}
-                      onClick={() => void withBusy(agent.id, () => deleteACPAgent(agent.id))}
+                      onClick={() => void withBusy(agent.id, () => acpHttp.deleteAgent(agent.id))}
                     >
                       <Trash2 className="size-4" />
                     </IconButton>

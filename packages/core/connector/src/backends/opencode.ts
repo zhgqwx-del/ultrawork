@@ -1,4 +1,4 @@
-import { createApiClient, type ApiClient } from "@agent/api-client"
+import { createApiClient, ApiError, type ApiClient } from "@agent/api-client"
 import { sessionIdOf, type ConnectorEvent } from "../events"
 import {
   createSseTransport,
@@ -59,6 +59,7 @@ const CAPABILITIES: BackendCapabilities = {
   globalEvents: true,
   paginatedHistory: true,
   model: true,
+  sessionStatus: true,
 }
 
 const DEFAULT_HISTORY_LIMIT = 50
@@ -216,7 +217,13 @@ export class OpenCodeBackend implements AgentBackend {
   }
 
   async deleteSessionState(sessionId: string): Promise<void> {
-    await this.api.deleteSession(sessionId)
+    try {
+      await this.api.deleteSession(sessionId)
+    } catch (err) {
+      // Already gone server-side counts as deleted (legacy use-sessions semantics)
+      if (err instanceof ApiError && err.status === 404) return
+      throw err
+    }
   }
 
   async replyPermission(_sessionId: string, permissionId: string, reply: PermissionReply): Promise<void> {

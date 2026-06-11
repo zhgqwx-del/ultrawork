@@ -6,8 +6,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAgents } from "@/lib/agent-context"
-import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId, parseAgentId } from "@/lib/agent-types"
-import { ensureACPSession, promptACPSession } from "@/lib/agent-router"
+import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId } from "@agent/connector"
 import { ChatInput, ModelSelector, AgentSelector } from "@/components/chat"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
@@ -59,15 +58,14 @@ export function HomePage() {
       // Navigate immediately for instant UX; the prompt call is fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
-      const prompt = isACP
-        ? ensureACPSession(parseAgentId(agentId).rawId, session.directory, session.id).then(() =>
-            promptACPSession(session.id, text),
-          )
-        : connector.prompt(session.id, text, { model: currentModel || undefined })
-      prompt.catch((err) => {
-        console.error("Failed to send message:", err)
-        toast.error(t("error.sendMessage"))
-      })
+      // Dispatched by the binding frozen above (ACP backends lazily create the
+      // agent-side session in the workspace directory before prompting).
+      connector
+        .prompt(session.id, text, { model: currentModel || undefined, directory: session.directory })
+        .catch((err) => {
+          console.error("Failed to send message:", err)
+          toast.error(t("error.sendMessage"))
+        })
     } catch (err) {
       console.error("Failed to create session:", err)
       toast.error(t("error.createSession"))

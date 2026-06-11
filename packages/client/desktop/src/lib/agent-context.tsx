@@ -1,11 +1,20 @@
 // Agent registry + per-session agent binding (ADR-027 档1: one session, one
 // agent). The opencode default binding leaves the existing flow untouched.
+//
+// Bindings live in the Connector's BindingStore (ADR-030): localStorage is a
+// warm cache, hydrated from the ACP sidecar's persisted sessions at launch so
+// cleared WebView data / another device no longer orphans ACP sessions.
 
-import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { fetchACPAgents, checkACPHealth } from "./agent-router"
-import { OPENCODE_DEFAULT_AGENT_ID, makeAgentId, type UnifiedAgent } from "./agent-types"
-
-const BINDINGS_STORAGE_KEY = "uw.acp.sessionAgents"
+import { createContext, useContext, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import {
+  ACPBackend,
+  ACP_BACKEND_KIND,
+  OPENCODE_DEFAULT_AGENT_ID,
+  makeAgentId,
+  toBindingEntries,
+  type UnifiedAgent,
+} from "@agent/connector"
+import { useConnector } from "./sse-context"
 
 const OPENCODE_AGENT: UnifiedAgent = {
   id: OPENCODE_DEFAULT_AGENT_ID,
@@ -27,31 +36,24 @@ interface AgentContextValue {
 
 const AgentContext = createContext<AgentContextValue | null>(null)
 
-function loadBindings(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(BINDINGS_STORAGE_KEY) ?? "{}") as Record<string, string>
-  } catch {
-    return {}
-  }
-}
-
 export function AgentProvider({ children }: { children: ReactNode }) {
+  const connector = useConnector()
   const [agents, setAgents] = useState<UnifiedAgent[]>([OPENCODE_AGENT])
   const [acpAvailable, setAcpAvailable] = useState(false)
-  const [bindings, setBindings] = useState<Record<string, string>>(loadBindings)
   const refreshing = useRef(false)
 
   const refreshAgents = useCallback(async () => {
     if (refreshing.current) return
     refreshing.current = true
     try {
-      const healthy = await checkACPHealth()
+      const acp = connector.getBackend<ACPBackend>(ACP_BACKEND_KIND)
+      const healthy = acp ? await acp.http.health() : false
       setAcpAvailable(healthy)
-      if (!healthy) {
+      if (!healthy || !acp) {
         setAgents([OPENCODE_AGENT])
         return
       }
-      const acpAgents = await fetchACPAgents()
+      const acpAgents = await acp.http.listAgents()
       setAgents([
         OPENCODE_AGENT,
         ...acpAgents.map(
@@ -65,36 +67,40 @@ export function AgentProvider({ children }: { children: ReactNode }) {
           }),
         ),
       ])
+      // Hydrate session↔agent bindings from the sidecar's persisted sessions
+      // (sidecar wins over the localStorage cache; best-effort).
+      try {
+        connector.bindings.hydrate(toBindingEntries(await acp.http.listSessions()))
+      } catch (err) {
+        console.debug("ACP binding hydration failed:", err)
+      }
     } catch {
       setAgents([OPENCODE_AGENT])
     } finally {
       refreshing.current = false
     }
-  }, [])
+  }, [connector])
 
   useEffect(() => {
     void refreshAgents()
   }, [refreshAgents])
 
-  const getSessionAgentId = useCallback(
-    (sessionId: string | undefined) =>
-      (sessionId && bindings[sessionId]) || OPENCODE_DEFAULT_AGENT_ID,
-    [bindings],
+  // Mirror binding changes into React (stable snapshot via version counter)
+  const bindingsVersion = useSyncExternalStore(
+    useCallback((cb) => connector.bindings.onChange(cb), [connector]),
+    () => connector.bindings.version,
   )
 
-  const bindSessionAgent = useCallback((sessionId: string, agentId: string) => {
-    setBindings((prev) => {
-      const next = { ...prev }
-      if (agentId === OPENCODE_DEFAULT_AGENT_ID) delete next[sessionId]
-      else next[sessionId] = agentId
-      try {
-        localStorage.setItem(BINDINGS_STORAGE_KEY, JSON.stringify(next))
-      } catch {
-        // storage full/unavailable — binding stays in-memory
-      }
-      return next
-    })
-  }, [])
+  const getSessionAgentId = useCallback(
+    (sessionId: string | undefined) => connector.bindings.get(sessionId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connector, bindingsVersion],
+  )
+
+  const bindSessionAgent = useCallback(
+    (sessionId: string, agentId: string) => connector.bindings.bind(sessionId, agentId),
+    [connector],
+  )
 
   return (
     <AgentContext.Provider

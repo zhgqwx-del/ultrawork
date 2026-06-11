@@ -156,6 +156,20 @@ export class ACPManager {
     return this.sessions.get(sessionId)
   }
 
+  /**
+   * All known sessions (memory map, restored from disk at startup). The
+   * desktop hydrates its session↔agent bindings from this at launch, so a
+   * cleared WebView localStorage no longer orphans ACP sessions (ADR-030).
+   */
+  listSessions(): ACPSessionInfo[] {
+    return [...this.sessions.values()].map((entry) => ({
+      sessionId: entry.sessionId,
+      agentId: entry.agentId,
+      cwd: entry.cwd,
+      createdAt: entry.createdAt,
+    }))
+  }
+
   getAgentConfig(agentId: string): ACPAgentConfig | undefined {
     return this.connections.get(agentId)?.config
   }
