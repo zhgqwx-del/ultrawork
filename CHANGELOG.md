@@ -19,10 +19,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `docs/gotchas.md` 新增 §8 ACP/外部 Agent（turn 整形契约、claude adapter 怪癖、CLAUDECODE 继承、权限安全默认等 10 条）+ §7 两条构建坑；`docs/conventions.md` 新增 §11 ACP 接入模式（整形契约/测试三层/真机验证法）
 
 ### Fixed
+- **ACP 权限弹窗标签精修（阶段1 剩余项①）**：claude-code-acp 的 `requestPermission` 只传 `{toolCallId, rawInput, title}`——内部算出的 kind 在调用点被丢弃（0.16.2 源码核实），旧逻辑一律回退 "bash" 造成标签与实际操作不符。新增 `permission-label.ts` 分层推断（显式 kind → TurnShaper 查同 toolCallId 的 tool_call 帧 kind〔先 await updateChain 消时序竞争〕→ rawInput 形状 → 反引号 title → 中性 "tool"）；`fetch` 映射 external_directory→webfetch；pattern 剥反引号；dock 标签表补 Web Fetch / Tool Action。离线 +9 用例（mock agent 还原 claude 真实形状：无 kind 带 rawInput）；真机（无头 + GUI）三类验证 write→edit / bash→bash / read→read 全过
 - **TurnShaper id 代际碰撞**（W4b 测试发现）：sidecar 重启后 shaper seq 从 0 重计，新轮次 message/part id 与持久化历史相同导致覆盖而非追加——id 加入 epoch（`acp_msg_<sid>_<epoch>_<seq>`）
 - ACP 真机验证修复：`CLAUDECODE` env 从 dev shell 继承到 claude-code-acp 触发嵌套检测拒绝建会话（spawn 时清洗）；ACP 会话侧栏活动 spinner 不熄（终态补 markSessionIdle）；claude adapter 对同一 toolCallId 重复发 `tool_call` 导致重复 part 卡 pending（按 toolCallId upsert）
 
 ### Changed
+- **ExecutionFlow 交互优化**：折叠箭头从最右侧移到紧跟内容之后（头部与思考/工具/旁白行统一「内容 · 耗时 · 箭头」左对齐布局）；耗时实时计算——新增 `useNow` hook（100ms tick，仅激活进行中的行），流式中「深度思考」/运行中工具/头部总耗时实时走秒，结束定格为最终值；`live=isStreaming` 防恢复的历史回合残留 running 态永久走秒
 - 共存/UX 影响分析（参考 AionUi 源码核实）：新增 `agent-os-target-architecture.md` §3.6「对现有交互/UI 的影响与共存策略」——档1 原地增量零侵入（D-3 复用 ADR-029 渲染器）、档2 独立 opt-in 面（镜像 AionUi `pages/team` 与 `pages/conversation` 分离的现网范式）、唯二回归风险区（W1 turn 整形质量 / connector 迁移），结论「不需要 UI/UE 大改」。ADR-031 D-7 加「档2 走独立 orchestration 路由、主聊天零侵入」；016 §6 加 UI 共存范式 + Apache-2.0 许可证说明（可借鉴/copy，多为模式参考）
 - AionUi 调研源码核验（016 升级置信度 + 一处反向修正）：直读 `iOfficeAI/AionUi`（含完整稀疏检出）核实——✅`NON_ACP_BACKENDS`/`resolveConversationType`（`teamMapper.ts:51`，逐字一致，源码级坐实 ADR-030 D-8）、Team/TeamAgent 数据模型 + `TeamMcpPhase` 状态机 + IPC 事件（`teamTypes.ts`）、SQLite `teams`/`mailbox`/`team_tasks` 表（`schema.ts`）。⚠️**反向发现并修正**：Team MCP Server 的**分发/mailbox handler 源不在公开 repo**（src 里无文件读写那两张表、唯一 stdio MCP 源是 imageGenServer、`team-mcp-stdio.js` 是预构建产物 glob）——Team Mode 运行期真实（e2e + 打包件）但 handler 不可读。016/ADR-031 据此把「Team MCP Server 源码核验」降为「数据层/schema 源码核验 + 运行期真实、handler 源不公开（只借鉴数据流、不照抄实现）」；ADR-030 D-8 佐证不受影响（teamMapper 是真实源码）
 - 跨文档对齐 review（清同类残留）：`decisions/README.md` ADR-030 索引标题改「可插拔 backend：OpenCode REST / ACP / 其它」（原「双 backend」与已改 ADR 标题打架）；`architecture-phase1.md` Part II connector 草案（表行 + §规划章节 banner）补「已被 ADR-030 取代/细化 + D-8 开放 backend 类」指针；ADR-027 D-1 + ADR-030 D-5 的「两/双 backend」加「首发两类，D-8 后泛化为开放可插拔 backend 类」指针

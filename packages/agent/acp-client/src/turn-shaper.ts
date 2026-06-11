@@ -110,6 +110,11 @@ export class TurnShaper {
     }
   }
 
+  /** ACP kind of a seen tool call ("other" if its frame had none). */
+  toolKind(callId: string): string | undefined {
+    return this.tools.get(callId)?.part.tool
+  }
+
   handleUpdate(update: SessionUpdate): void {
     switch (update.sessionUpdate) {
       case "agent_message_chunk":

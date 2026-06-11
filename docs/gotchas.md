@@ -105,7 +105,8 @@
 - **`CLAUDECODE` env 嵌套检测**：该变量会从 dev shell（如 Claude Code 终端跑 `setup.sh`）一路继承到 claude-code-acp，触发其嵌套会话检测拒绝 `session/new`。sidecar 已在 spawn agent 时清洗 `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`（agent config.env 显式设置除外）。
 - **bunx 首启下载 adapter 包可超 15s** → initialize 超时须 ≥30s（现 30s）；claude `session/new` 已知 stall → 60s 超时（acpx 怪癖常量）。
 - **会话 ID 直通**：`POST /acp/session` 传 `clientSessionId` 后所有整形事件直接戳客户端会话 ID——前端零改写（旧分支的 sessionID rewrite hack 已不存在）；SSE 端点允许「先订阅、后建会话」。
-- **权限回环安全默认**：`request_permission` 挂起后，超时（`ACP_PERMISSION_TIMEOUT_MS`，默认 5min）/ session cancel / agent 断开 / 进程退出均默认 deny/cancelled 并广播 `permission.replied`。claude 的 `toolCall.kind` 可能缺省 → 权限标签回退 "bash"（显示可能与实际操作不符，待精修）。
+- **权限回环安全默认**：`request_permission` 挂起后，超时（`ACP_PERMISSION_TIMEOUT_MS`，默认 5min）/ session cancel / agent 断开 / 进程退出均默认 deny/cancelled 并广播 `permission.replied`。
+- **claude 的权限请求必缺省 `toolCall.kind`**（已修 2026-06-11）：claude-code-acp 内部 `toolInfoFromToolUse()` 算出了 kind，但 `requestPermission` 调用点只传 `{toolCallId, rawInput, title}` 把 kind 丢弃（0.16.2 `dist/acp-agent.js:585,641`）。补救在 `permission-label.ts` 分层推断：显式 kind → TurnShaper 查同 toolCallId 的 `tool_call` 帧 kind（查表前先 `await updateChain` 排空队列）→ rawInput 形状（command/file_path+写字段/url…）→ 反引号 title → 中性 `"tool"`（**不再瞎猜 bash**）；`fetch` 映射改 `webfetch`。真机验收 bash 权限须用**不在本机 Claude Code 全局 allowlist 的命令**——`ls` 之类会被上游放行根本不弹窗。
 - **ACP 会话无 `session.status:idle` 事件**：侧栏活动标记靠前端在终态 finish 时补 `markSessionIdle`（use-session-messages）。
 - **ACP 会话历史持久化（W4b 已实现）**：sidecar 把整形后的 `{info, parts}` 落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（数据进 xdgData 与 opencode 存量同级，**不是** `~/.config`；env `ACP_DATA_DIR` 可覆盖）。重启后历史从 store 服务（`GET /acp/session/:id/messages`）；agent 上下文在下次 prompt 时经 `session/load` 懒恢复，**replay 事件全部抑制**（不用于渲染）——claude-code-acp 实测 `loadSession: true`。
 - **session/load replay 抑制的 idle 窗口必须从 RPC resolve 起算**（无条件重置 lastUpdateAt）：agent 可能在响应 RPC 之后才继续流 replay 通知，否则漏入 shaper 造成重复渲染。常量 `REPLAY_IDLE_MS=80` / `REPLAY_MAX_MS=5000`（acpx）。

@@ -21,11 +21,11 @@ import type {
   RequestPermissionResponse,
   SessionNotification,
   StopReason,
-  ToolKind,
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk"
 import type { ACPAgentConfig, ACPAgentStatus, UwSSEEvent } from "./types.js"
+import { permissionPattern, resolvePermission } from "./permission-label.js"
 import { TurnShaper } from "./turn-shaper.js"
 
 // Generous: a bunx-launched adapter may download its package on first run.
@@ -46,17 +46,6 @@ const permissionTimeoutMs = () => Number(process.env.ACP_PERMISSION_TIMEOUT_MS ?
 const STDIN_GRACE_MS = 100
 const SIGTERM_GRACE_MS = 1500
 const SIGKILL_GRACE_MS = 1000
-
-// ACP ToolKind → opencode permission label shown by the permission-dock.
-const PERMISSION_BY_KIND: Partial<Record<ToolKind, string>> = {
-  execute: "bash",
-  edit: "edit",
-  delete: "edit",
-  move: "edit",
-  read: "read",
-  search: "read",
-  fetch: "external_directory",
-}
 
 interface PendingRequest {
   reject: (err: Error) => void
@@ -373,12 +362,15 @@ export class ACPConnection {
       // W3 permission loop: suspend the RPC, surface an opencode-shaped
       // permission.asked SSE, resolve via the reply endpoint. Unanswered
       // requests deny after PERMISSION_TIMEOUT_MS; cancel/exit deny too.
-      requestPermission: (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         const emitSessionId = this.emitIds.get(params.sessionId) ?? params.sessionId
         const id = `acp_perm_${emitSessionId}_${this.permSeq++}`
-        const kind = params.toolCall.kind ?? undefined
-        const permission = (kind && PERMISSION_BY_KIND[kind]) || kind || "bash"
-        const pattern = params.toolCall.title ?? params.toolCall.toolCallId
+        // Drain queued tool_call frames first: the claude adapter omits kind
+        // here, and the shaper lookup below needs the frame that carried it.
+        await this.updateChain.catch(() => {})
+        const shaperKind = this.shapers.get(params.sessionId)?.toolKind(params.toolCall.toolCallId)
+        const permission = resolvePermission(params.toolCall, shaperKind)
+        const pattern = permissionPattern(params.toolCall)
 
         return new Promise<RequestPermissionResponse>((resolve) => {
           const timer = setTimeout(() => this.resolvePermission(id, "reject"), permissionTimeoutMs())

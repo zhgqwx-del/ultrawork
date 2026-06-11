@@ -57,9 +57,10 @@ new AgentSideConnection(
 
       // Ask permission before running the tool (W3 loop). A denied/cancelled
       // outcome ends the turn without the tool, mirroring real agents.
+      // Like claude-code-acp, the toolCall carries no kind — only rawInput/title.
       const perm = await conn.requestPermission({
         sessionId: params.sessionId,
-        toolCall: { toolCallId: "call_1", title: "List directory", kind: "execute" },
+        toolCall: { toolCallId: "call_1", title: "List directory", rawInput: { command: "ls" } },
         options: [
           { optionId: "allow", name: "Allow once", kind: "allow_once" },
           { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
