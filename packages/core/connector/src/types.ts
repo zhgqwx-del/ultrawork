@@ -120,6 +120,27 @@ export interface FetchHistoryResult {
 export type PermissionReply = "once" | "always" | "reject"
 
 /**
+ * Stage-3 boundary (ADR-031 / ADR-030 C2): connection reuse + per-agent
+ * request serialization for the orchestrator. Interface reserved in stage 2;
+ * implementation lands with the orchestrator (acpx queue-owner model).
+ */
+export interface QueueOwner {
+  /** Serialize tasks per session, reusing one agent connection. */
+  enqueue(sessionId: string, task: () => Promise<void>): Promise<void>
+  /** Await an in-flight fire-and-forget turn (orchestrator "await" primitive). */
+  waitForCompletion(sessionId: string): Promise<void>
+}
+
+/**
+ * Session-lifecycle mount points (ADR-030 D-7): the connector OWNS no memory/
+ * workspace-injection logic — it only offers the hook where such concerns
+ * (P1-2 memory project) attach.
+ */
+export interface ConnectorHooks {
+  onSessionCreate?: (ref: SessionRef) => void | Promise<void>
+}
+
+/**
  * Pluggable backend boundary (ADR-030 D-1/D-6, acpx model). The core common
  * surface below doubles as the stage-3 orchestrator primitives
  * (spawn/steer/await/cancel). Backend-specific surfaces (opencode ApiClient,

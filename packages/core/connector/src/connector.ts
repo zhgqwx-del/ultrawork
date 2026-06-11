@@ -7,6 +7,7 @@ import {
   type BackendCapabilities,
   type BackendKind,
   type ConnectionStatus,
+  type ConnectorHooks,
   type CreateSessionOptions,
   type FetchHistoryOptions,
   type FetchHistoryResult,
@@ -21,6 +22,8 @@ export interface ConnectorOptions {
   /** Default backend for unbound sessions (ADR-030 D-4). Default: "opencode". */
   defaultBackend?: BackendKind
   bindings?: BindingStore
+  /** Lifecycle mount points (D-7) — e.g. memory injection attaches here. */
+  hooks?: ConnectorHooks
 }
 
 /**
@@ -34,9 +37,12 @@ export class Connector {
   private backends = new Map<BackendKind, AgentBackend>()
   private readonly defaultKind: BackendKind
 
+  private hooks: ConnectorHooks
+
   constructor(opts: ConnectorOptions = {}) {
     this.defaultKind = opts.defaultBackend ?? OPENCODE_BACKEND_KIND
     this.bindings = opts.bindings ?? new BindingStore()
+    this.hooks = opts.hooks ?? {}
   }
 
   // --- backend registry (open, D-8) ---
@@ -73,6 +79,7 @@ export class Connector {
     if (opts.agentId && opts.agentId !== this.bindings.defaultAgentId) {
       this.bindings.bind(ref.id, opts.agentId)
     }
+    await this.hooks.onSessionCreate?.(ref)
     return ref
   }
 

@@ -14,7 +14,7 @@
 > | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode + WeChat ilink, Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json` |
 > | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
 > | @agent/acp-client | ✅ 阶段1（claude/gemini/qoder 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（claude 经 `@agentclientprotocol/claude-agent-acp` 0.44〔token/cost 页脚 + thoughtLevel 思考力度〕；gemini 经 `--experimental-acp`、qoder 经 `qodercli --acp`，per-agent 怪癖修复见 gotchas §8）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`（Settings 预置模板一键填充）。会话历史持久化（W4b：整形消息落盘 `~/.local/share/ultrawork/acp-sessions/` + session/load 懒恢复 + replay 抑制）已实现。详见 ADR-027 + `agent-os-target-architecture.md` |
-> | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client（Agent OS 阶段2，ADR-030） |
+> | @agent/connector | ✅ 已实现（阶段2，2026-06-11） | 控制+事件统一层：Desktop/Gateway 全部后端调用经 connector（OpenCodeBackend 包装 api-client + 统一 SSE transport；ACPBackend 收编 :4099 客户端）；会话↔agent 绑定 sidecar 持久化 + hydration；capabilities 声明门控（ADR-030） |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
 > | @agent/notifier | 🔲 规划中 | |
@@ -43,7 +43,7 @@
 
 - **Part I = 已实现的现状架构**——可信赖为当前事实。已落地六大件：
   **Desktop Client**（Tauri + React 19）、**Channel Gateway**（独立 sidecar :4097，DingTalk Stream Mode + WeChat ilink）、**Knowledge Sidecar**（独立 sidecar :4098，本地 RAG + IMA + MCP）、**ACP Client Sidecar**（独立 sidecar :4099，ACP 多 agent 后端，Agent OS 阶段1）、**@agent/api-client**（REST/SSE SDK）、**@agent/server-manager**（sidecar 生命周期）。
-- **Part II = 规划中的设计草案（🔲 未实现）**——connector 抽象、Agent Workspace 身份/记忆持久化、Proactive Services、Process Lifecycle 进程注册表。**阅读现状时可跳过 Part II。**
+- **Part II = 规划中的设计草案**——Agent Workspace 身份/记忆持久化、Proactive Services、Process Lifecycle 进程注册表（🔲 未实现）。原「连接抽象 @agent/connector」草案已被 ADR-030 取代并于阶段2 落地（✅ 见 Part I 状态表）。**阅读现状时可跳过 Part II。**
 
 > 更宏观的远期愿景（多端 Web/Mobile、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
 
@@ -58,7 +58,7 @@
 - [Technology Stack](#technology-stack) · [Feature Summary (Phase 1)](#feature-summary-phase-1) · [Development Priority](#development-priority) · [Design Decisions](#design-decisions)
 
 **Part II · 规划中（🔲 未实现 · 设计草案）**
-- 连接抽象 @agent/connector · Agent Workspace 持久化（IDENTITY/SOUL/MEMORY/HISTORY）· Proactive Services Layer · Process Lifecycle Model
+- ~~连接抽象 @agent/connector~~（✅ 已按 ADR-030 落地，见 Part I）· Agent Workspace 持久化（IDENTITY/SOUL/MEMORY/HISTORY）· Proactive Services Layer · Process Lifecycle Model
 
 ## Overview
 
@@ -142,7 +142,7 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 |-------|---------|----------------------|
 | **Core** | `@agent/api-client` | OpenCode Server SDK - Type-safe REST API calls and SSE event streaming. Foundation for all OpenCode communication. |
 | | `@agent/server-manager` | Process Lifecycle Manager - Spawns OpenCode sidecar, monitors health, handles crash recovery with auto-restart. |
-| | `@agent/connector` | Connection Abstraction - Unified interface for local/remote OpenCode connections. Handles mode selection, health checking, reconnection. 🔲 规划中，Desktop 当前直连 api-client。⚠️ **本 Part II 草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（补 SSE、纳入 ACP backend、D-8 开放可插拔 backend 类「acp-stdio / product-native / acp-remote」）；以 ADR-030 + [agent-os-target-architecture.md](./agent-os-target-architecture.md) 为准 |
+| | `@agent/connector` | Control + event unification layer. ✅ **已按 [ADR-030](./decisions/030-agent-connector-control-layer.md) 落地（阶段2，2026-06-11）**——本 Part II 草案被其取代/细化（补 SSE、纳入 ACP backend、D-8 开放可插拔 backend 类「acp-stdio / product-native / acp-remote」）；实现状态见 Part I 状态表 |
 | | `@agent/ui` | UI Component Library - Shared React components (chat, diff, markdown, dialogs) ensuring consistent UX. 🔲 规划中，当前组件在 desktop/src/components 内 |
 | | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
 | | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
@@ -523,12 +523,12 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 |---------|------|-------------------|----------------------|
 | `@agent/api-client` | `core/api-client` | ✅ OpenCode REST/SSE SDK, type-safe API calls | none |
 | `@agent/server-manager` | `core/server-manager` | ✅ Sidecar lifecycle: spawn, health check, auto-restart (local only) | `@agent/api-client` |
-| `@agent/connector` | `core/connector` | 🔲 Unified local/remote connection abstraction + workspace context injection + session lifecycle hooks | `@agent/api-client`, `@agent/server-manager`, `@agent/workspace` |
+| `@agent/connector` | `core/connector` | ✅ 控制+事件统一层（ADR-030）：OpenCodeBackend/ACPBackend 可插拔 adapter + 统一 SSE transport + BindingStore（sidecar 持久化 hydration）+ capabilities 门控 + `onSessionCreate` hook 挂载点（记忆注入留位） | `@agent/api-client` |
 | `@agent/ui` | `core/ui` | 🔲 React component library: chat, diff, markdown, dialogs (当前在 desktop/src/components) | `@agent/api-client` |
 | `@agent/workspace` | `core/workspace` | 🔲 Runtime ~/.ultrawork/ manager: identity, soul, memory, history, context assembly | none |
 | `@agent/notifier` | `core/notifier` | 🔲 Outbound notification dispatcher: desktop, IM webhooks, file | none (standalone) |
 | `@agent/client-desktop` | `client/desktop` | ✅ Tauri + React 19 app: full-featured, local sidecar | `@agent/api-client`, `@agent/server-manager` |
-| `@agent/channel-gateway` | `channel/gateway` | ✅ DingTalk Stream Mode + Bridge + Hono API + config 持久化。Feishu/Slack 待实现 | `@agent/api-client` (直接复用，不依赖 connector) |
+| `@agent/channel-gateway` | `channel/gateway` | ✅ DingTalk Stream Mode + Bridge + Hono API + config 持久化。Feishu/Slack 待实现 | `@agent/connector`（OpenCodeBackend，阶段2 起；REST 面仍是同一 ApiClient） |
 | `@agent/proactive-heartbeat` | `proactive/heartbeat` | 🔲 Background service: periodic LLM-powered progress summary + server watchdog | `@agent/connector`, `@agent/notifier`, `@agent/workspace` |
 | `@agent/proactive-cron` | `proactive/cron` | 🔲 Background service with HTTP API: scheduled LLM tasks, MCP tools | `@agent/connector`, `@agent/notifier` |
 
@@ -552,7 +552,7 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
 
 ![Phase 1 Data Flow](images/architecture-phase1-dataflow.png)
 
-> Desktop 当前**直连 `@agent/api-client`**（REST + SSE）发起会话，未经 connector 抽象；其连接建立与 connector API 设计草案见 [Part II · 连接抽象 @agent/connector](#规划连接抽象-agentconnector)。下面是**已实现的 IM 渠道数据流**。
+> Desktop 自阶段2 起经 **`@agent/connector`** 发起会话流（prompt/cancel/history/subscribe 按会话绑定派发；backend-specific REST 仍经 `useApi()` 取 connector 持有的 ApiClient）。下面是**已实现的 IM 渠道数据流**。
 
 ### IM Channels Flow (DingTalk) ✅ 已实现
 
@@ -572,7 +572,7 @@ User sends message in DingTalk (IM)
       -> Route: single chat → senderId / group → "group:{conversationId}"
     -> Bridge.handleMessage(msg)
       -> enqueue(chatId, ...) — sequential queue per chat
-      -> getClient(workspaceDir) — per-workspace ApiClient (直连 api-client，不经 connector)
+      -> getBackend(workspaceDir) — per-workspace OpenCodeBackend（经 @agent/connector；REST 仍是 ApiClient）
       -> sessionMap: find/create OpenCode session for chatId
       -> ensureSSE(workspaceDir) — per-workspace SSE connection (exponential backoff reconnect)
       -> ensurePolling() — permission/question poll backup (3s interval)
@@ -1083,7 +1083,7 @@ The following features are planned for Phase 2:
 
 ## 规划：连接抽象 @agent/connector
 
-> 🔲 未实现。Desktop / Channel Gateway 当前**直连 `@agent/api-client`**，未经 connector 抽象。
+> ✅ 已按 [ADR-030](./decisions/030-agent-connector-control-layer.md) 落地（阶段2，2026-06-11），实现与本草案有出入（补 SSE/ACP backend/capabilities，去掉记忆注入耦合）——以 ADR-030 与代码为准；下文仅作历史设计留档。
 >
 > ⚠️ **本草案已被 [ADR-030](./decisions/030-agent-connector-control-layer.md) 取代/细化**（2026-06-08；06-09 D-8 再泛化）。ADR-030 修正了本草案两处缺陷——① 漏了 SSE 统一（本草案误以为 `api-client.events.subscribe()` 存在）、② 未含 ACP backend（本草案早于 ACP/ADR-027）——并把 connector 重定义为「后端无关的控制 + 事件统一层 + **开放可插拔 backend 类**」：D-8 按「协议族（`acp-stdio` / `product-native`〔HTTP+SSE 或 WebSocket〕 / `acp-remote`）× adapter」建模，**非「local/remote OpenCode」两连接**。**以 ADR-030 + [agent-os-target-architecture.md](./agent-os-target-architecture.md) 为准**；下方草案保留作历史参考。
 

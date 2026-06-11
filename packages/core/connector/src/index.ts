@@ -29,6 +29,8 @@ export {
   type FetchHistoryResult,
   type PermissionReply,
   type PromptOptions,
+  type ConnectorHooks,
+  type QueueOwner,
   type SessionRef,
   type TransportFamily,
   type UnifiedAgent,

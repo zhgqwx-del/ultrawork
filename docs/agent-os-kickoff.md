@@ -2,7 +2,7 @@
 
 > **用途**：换窗口 / 换电脑 / 换项目时，直接取用的启动方式与首条 prompt，免回翻对话。
 > **配套**：架构以 [agent-os-target-architecture.md](./agent-os-target-architecture.md) 为唯一事实源；决策见 [ADR-027](./decisions/027-acp-multi-agent-backend.md)/[030](./decisions/030-agent-connector-control-layer.md)/[031](./decisions/031-multi-agent-orchestration.md)；调研见 [discussions/013](./discussions/013-agent-os-acp-multi-backend.md)（可行性）/[015](./discussions/015-backend-taxonomy-non-acp.md)（backend 分类法）/[016](./discussions/016-aionui-multi-agent-competitor.md)（AionUi 竞品+参考）。
-> **状态**：阶段0-1 已落地（claude 全链路 + W4b 会话历史持久化 + 档1 入口收紧，见 ADR-027 状态行与 CHANGELOG）。**剩余**：权限 kind 映射精修 → gemini/qoder 二期（含预置模板库 UX）→ 阶段2 connector（ADR-030）。新窗口的首条 prompt 按 MEMORY「Current Status → 下一步」出题即可；下方 §1 的原始 prompt 是阶段0 起步用的，**已完成、仅留档**。
+> **状态**：阶段0-1-2 已全部落地（三 agent 真机 + W4b 历史持久化 + @agent/connector 控制统一 + 绑定 sidecar 持久化，见 ADR-027/030 状态行与 CHANGELOG）。**剩余**：阶段3 编排（ADR-031）。新窗口的首条 prompt 按 MEMORY「Current Status → 下一步」出题即可；下方 §1 的原始 prompt 是阶段0 起步用的，**已完成、仅留档**。
 
 ---
 

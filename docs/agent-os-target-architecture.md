@@ -137,7 +137,7 @@
 - **映射修全**：`agent_thought_chunk`→显式 `type:"reasoning"` part；`tool_call` 补 `callID/input/kind/title`；`tool_call_update` 按 `toolCallId` upsert（`failed`→`error`）；`usage_update` 填 token/cost；`ToolCallStatus` 全集 `pending/in_progress/completed/failed`。
 - **参考**：acpx 仓库 `acpx/src/session/conversation-model.ts`（`SESSION_UPDATE_HANDLERS`）已把这套做完，可照搬归一化逻辑（**注意 B2：参考重写，不复制分支旧代码**）。
 
-### 3.3 ② 控制统一 — @agent/connector（ADR-030）
+### 3.3 ② 控制统一 — @agent/connector（ADR-030）✅ 已落地（2026-06-11）
 新增包 `packages/core/connector`，定义后端无关控制面，下挂可插拔 backend adapter。**包装而非取代** api-client。**backend 类是开放的**（`BackendKind` 非封闭 union，见 §0 C4 / ADR-030 D-8 的「传输族 × adapter」分类法）；首发两个 backend：
 
 - **OpenCodeBackend**（传输族 `product-native`，线缆 HTTP+SSE，**default + reference**）= 包装现有 `ApiClient`（REST）+ `SSEClient`（事件），REST 路径不变。公共事件模型即其 SSE 形状（C3）。
@@ -276,8 +276,8 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 | 阶段 | 内容 | 依赖 | 验收 |
 |------|------|------|------|
 | **0 · 重写基线** ✅ (2026-06-10) | **参考 feat/acp-support 设计，在当前 main 上重建**（B2）：ACP Sidecar :4099 / UnifiedAgent / agent-selector / agents.json / auto-connect。**保留 ADR-029 渲染器**，不回退 chat 重构。 | — | ✅ 协议管道在 main 上跑通（opencode + claude，`feat/agent-os-phase0` 分支） |
-| **1 · 档1 异构归一化** 🚧 claude 达标 | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。**首批 claude + opencode**（B1）。 | 阶段0 | claude：流式/工具/答案/权限弹窗/进程恢复 ✅（真机验证）；**收尾项**：历史持久化（session/load）、token 页脚（上游 adapter 不发 usage）、能力条件 UI、gemini/qoder 二期。坑点固化 [gotchas §8](./gotchas.md) |
-| **2 · @agent/connector** | 建包 + OpenCodeBackend 等价层 → Desktop 收敛(16 个 useApi) → Gateway 收敛 → ACPBackend 收编（C1）。三套 SSE→一处。宿主 MCP 透传（知识库，opt-in）。 | 阶段1 | 全部后端调用经 connector；切 backend 对上层透明；Gateway 复用 connector；暴露 spawn/prompt/cancel/subscribe 原语 |
+| **1 · 档1 异构归一化** ✅ (2026-06-11) | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。claude/gemini/qoder 三 agent 真机达标（含历史持久化 W4b、token 页脚、thoughtLevel）。坑点固化 [gotchas §8](./gotchas.md) | 阶段0 | ✅ 全清单真机通过 |
+| **2 · @agent/connector** ✅ (2026-06-11) | 建包 + OpenCodeBackend 等价层 → Desktop 收敛 → Gateway 收敛 → ACPBackend 收编（C1）。三套 SSE→一处；会话绑定 sidecar 持久化 + hydration；capabilities 门控；QueueOwner/onSessionCreate 边界预留（C2/D-7）。 | 阶段1 | ✅ 全部后端调用经 connector；切 backend 对上层透明（isACP 分流全删）；Gateway 复用 connector（bridge.test 35 用例语义零删除）；原语就绪 |
 | **3 · 档2 编排** | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。 | 阶段2 | 主 agent 能 delegate 给外部 backend，交付物回卷、UI 可见嵌套、护栏生效；一个 Pipeline recipe 端到端；Fan-out worktree 隔离 |
 | **4 · 档3 自动调度** | router（规则/LLM）自动派单，用户可覆盖。 | 阶段3 | 远期研究 |
 

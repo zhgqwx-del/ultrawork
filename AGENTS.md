@@ -26,7 +26,8 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/client-desktop` | ✅ Done | Tauri desktop app (React 19 + Vite 7 + Tailwind 4) |
 | `@agent/channel-gateway` | ✅ Done | IM channel gateway (DingTalk Stream SDK + WeChat ilink + Hono on Bun.serve, sidecar :4097) |
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
-| `@agent/acp-client` | 🚧 阶段1（claude 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环, sidecar :4099 |
+| `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
+| `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
 
 ## Project Structure
 
@@ -41,6 +42,7 @@ ultrawork/
 │   │       └── binaries/        # Sidecar binaries (platform-specific)
 │   ├── core/
 │   │   ├── api-client/src/      # REST client for OpenCode API
+│   │   ├── connector/src/       # Control+event unification layer (backends/, sse-transport, binding-store)
 │   │   └── server-manager/src/  # Process manager for OpenCode
 │   ├── agent/
 │   │   └── acp-client/src/      # ACP Client Sidecar (spawn external agents + turn shaping + permissions)
@@ -105,11 +107,11 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
 
 **Desktop — hooks / lib**
-- `src/lib/sse-context.tsx` — SSEProvider + useSSESubscribe（全局单连接）
-- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（按会话绑定分流 opencode/ACP）
-- `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（ACP 走 sidecar 回复端点）
-- `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 会话级绑定（localStorage）
-- `src/lib/agent-types.ts` / `agent-router.ts` / `use-acp-sse.ts` — UnifiedAgent 类型 / :4099 HTTP client / 共享 EventSource 订阅
+- `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
+- `src/lib/use-api.ts` — backend-specific REST 面：返回 connector 持有的 ApiClient（签名不变）
+- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）
+- `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
+- `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts` / `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/path-utils.ts`（shortenPath/pathBasename）、`src/lib/platform.ts`（isMacOS）
@@ -120,6 +122,13 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **Gateway（`packages/channel/gateway/src/`）**
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
 - `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, types.ts（ilink 协议类型）
+
+**Connector（`packages/core/connector/src/`，ADR-030）**
+- `connector.ts` — 注册表 + 按会话绑定派发 + 双形态 subscribe（global / per-session 双流合并）+ deleteSession 三清
+- `sse-transport.ts` — 参数化 fetch-reader（退避三策略 / 心跳看门狗 / gave-up 状态）——三套 SSE 收敛于此
+- `binding-store.ts` — 会话↔agent 绑定：BindingCache 注入（desktop=localStorage）+ hydrate 合并（sidecar 优先 + dirty set 防竞态）
+- `backends/opencode.ts` — 包装 createApiClient（⚠️ 必须工厂，bridge.test mock 依赖）+ 全局 /event 流；`.api` 暴露 backend-specific 面
+- `backends/acp.ts` + `acp-http.ts` — acp-stdio 族通用 adapter：per-session SSE 引用计数池 + :4099 REST（原 desktop agent-router）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）

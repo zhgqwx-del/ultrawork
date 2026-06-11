@@ -53,11 +53,14 @@ useEffect(() => () => clearTimeout(timerRef.current), []);
 
 ## 3. SSE 事件处理
 
-### 全局单连接
-`SSEProvider` 在 app 级维护单一 SSE 连接，跨页面不丢事件。
+### 后端调用一律经 @agent/connector（阶段2 起，ADR-030）
+会话流（prompt/cancel/fetchHistory/replyPermission/deleteSession/订阅）调 `useConnector()` 的统一面——connector 按会话绑定派发到 OpenCodeBackend/ACPBackend，**新代码不要直连 api-client 或裸 fetch :4099**。backend-specific 面（providers/mcp/skills/file/config）仍经 `useApi()`（= connector 持有的同一 ApiClient，签名未变）。后端行为差异用 `connector.capabilitiesOf(sessionId)` 门控（revert/model/questions/sessionStatus…），不要写 `isACP` 之类的 kind 判断。
 
-### useSSESubscribe
-使用 ref 模式，依赖 `[subscribe]` 避免 heartbeat 重订阅。
+### 全局单连接
+`SSEProvider`（实为 ConnectorProvider）在 app 级维护单一全局 SSE 连接，跨页面不丢事件；SSE 实现（fetch-reader/退避/心跳看门狗）统一在 `@agent/connector` 的 `sse-transport.ts`。
+
+### useSSESubscribe / useSessionSubscribe
+`useSSESubscribe` 订阅全局流（ref 模式，依赖 `[subscribe]` 避免 heartbeat 重订阅）；`useSessionSubscribe(sessionId, handler)` 按绑定订阅单会话——opencode 过滤全局流，ACP 自动**双流合并**（sidecar per-session 流 + 全局流的标题/删除事件），绑定变化自动重订阅。
 
 ### 核心事件
 | 事件 | 作用 |

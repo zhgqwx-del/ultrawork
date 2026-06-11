@@ -291,8 +291,9 @@ curl -N http://localhost:4096/event \
 | GET/PUT/DELETE | `/acp/agents/:id(/config)` | agent 配置 CRUD | PUT 保存即热生效（断开重连）；body 含 `label/command/args/env/knowledgeMcp/thoughtLevel` |
 | POST | `/acp/agents/:id/connect` / `disconnect` | 手动连接/断开 | 平时无需手动——prompt 时懒连接 |
 | POST | `/acp/session` | 建会话 | body `{agentId, cwd, clientSessionId}` |
+| GET | `/acp/sessions` | **全部会话+绑定**（阶段2） | `[{sessionId, agentId, cwd, createdAt}]`——desktop 启动时绑定 hydration 数据源（ADR-030） |
 | GET | `/acp/session/:id` | 会话信息 | 持久化映射（重启后仍在） |
-| GET | `/acp/session/:id/messages` | **整形历史**（W4b） | 一次性全量 `{messages}`，前端 isACP 分流用 |
+| GET | `/acp/session/:id/messages` | **整形历史**（W4b） | 一次性全量 `{messages}`，connector `ACPBackend.fetchHistory` 消费 |
 | DELETE | `/acp/session/:id` | 删会话 + 持久化文件 | 前端删会话时 fire-and-forget 调用 |
 | POST | `/acp/session/:id/prompt` | 发消息 | **阻塞到 turn 完成**，返回 `{stopReason}` |
 | POST | `/acp/session/:id/permission` | 权限回复 | body `{permissionId, reply: once\|always\|reject}` |

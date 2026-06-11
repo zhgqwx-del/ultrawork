@@ -9,8 +9,7 @@ import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
 import { ChatInput, MessageList, ModelSelector, AgentSelector } from "@/components/chat"
-import { useAgents } from "@/lib/agent-context"
-import { isACPAgentId } from "@agent/connector"
+import { useConnector } from "@/lib/sse-context"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
@@ -36,9 +35,9 @@ export function SessionPage() {
 
   const session = sessions.find(s => s.id === id)
 
-  // Per-session agent binding; model selection only applies to opencode.
-  const { getSessionAgentId } = useAgents()
-  const isACPSession = isACPAgentId(getSessionAgentId(id))
+  // Capability-gated UI (ADR-030 D-5): model override only where supported.
+  const connector = useConnector()
+  const supportsModel = connector.capabilitiesOf(id).model
 
   // Read navigation state once per session change
   const navState = location.state as { sending?: boolean; messageText?: string } | null
@@ -194,7 +193,7 @@ export function SessionPage() {
                         locked={loading || sending || allMessages.length > 0}
                       />
                     )}
-                    {!isACPSession && (
+                    {supportsModel && (
                       <ModelSelector
                         currentModel={currentModel}
                         onModelChange={setModel}

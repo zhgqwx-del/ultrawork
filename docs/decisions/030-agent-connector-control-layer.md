@@ -1,6 +1,7 @@
 # ADR-030: @agent/connector — 后端无关的控制 + 事件统一层（可插拔 backend：OpenCode REST / ACP / 其它）
 
-**状态**: Accepted（架构决策）· 实现规划中（阶段2，依赖阶段1/ADR-027 落地）
+**状态**: Accepted · ✅ 已实现（2026-06-11，分支 `feat/agent-os-phase0`，M1-M5 五里程碑落地）
+> 实现与本文字面的三处有意偏差：① `handleSSEEvent` reducer 未在 Desktop/Gateway 间共享代码（D-3 共享的是**事件模型**；gateway 的 IM 文本累积器与 React reducer 形态不同）；② Gateway 权限/问题轮询兜底留在 bridge 侧（自动应答是 gateway 策略，connector 只统一数据面）；③ 未引入 `@agent/server-manager` 依赖（阶段2 不管 spawn，留阶段3 按需加）。另：绑定持久化（sidecar `GET /acp/sessions` + 前端 hydrate）一并落地。
 **日期**: 2026-06-08 · 2026-06-09 修订（D-8 backend 分类法泛化：传输族 × adapter + 选型决策树 + 黑盒降级）
 **关联**: ADR-002 (OpenCode Headless Sidecar), ADR-008 (SSE 全局化 + 轮询兜底), ADR-013 (Channel Gateway Sidecar), ADR-027 (ACP 多 Agent 后端支持)
 **取代/细化**: `docs/architecture-phase1.md` Part II「连接抽象 @agent/connector」草案（修正其两处缺陷，见下）
