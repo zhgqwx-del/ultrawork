@@ -118,6 +118,17 @@
         "vitest": "^4.0.18",
       },
     },
+    "packages/core/connector": {
+      "name": "@agent/connector",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent/api-client": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.2",
+        "vitest": "^4.0.18",
+      },
+    },
     "packages/core/server-manager": {
       "name": "@agent/server-manager",
       "version": "0.1.0",
@@ -159,6 +170,8 @@
     "@agent/channel-gateway": ["@agent/channel-gateway@workspace:packages/channel/gateway"],
 
     "@agent/client-desktop": ["@agent/client-desktop@workspace:packages/client/desktop"],
+
+    "@agent/connector": ["@agent/connector@workspace:packages/core/connector"],
 
     "@agent/knowledge-sidecar": ["@agent/knowledge-sidecar@workspace:packages/knowledge/sidecar"],
 
