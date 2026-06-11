@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
 import { useI18n } from "@/lib/i18n-context"
-import { Loader2, Plus } from "lucide-react"
+import { Loader2, Plus, Square } from "lucide-react"
 import { CommandSelector } from "./command-selector"
 import type { Command } from "@agent/api-client"
 
@@ -9,6 +9,11 @@ interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onSend: () => void
+  /** Turns the send button into a stop button while loading. Lives here (and
+   *  not only in ExecutionStatus) because the input never moves: the in-flow
+   *  stop button shifts on every streaming reflow, so fast streams can swallow
+   *  the click between pointerdown and pointerup. */
+  onStop?: () => void
   placeholder?: string
   disabled?: boolean
   loading?: boolean
@@ -22,6 +27,7 @@ export function ChatInput({
   value,
   onChange,
   onSend,
+  onStop,
   placeholder = "Ask anything...",
   disabled = false,
   loading = false,
@@ -168,26 +174,37 @@ export function ChatInput({
             {leftSlot}
           </div>
         )}
-        <button
-          type="button"
-          onClick={handleSendClick}
-          disabled={!canSend}
-          aria-label={t("aria.sendMessage")}
-          className={cn(
-            "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
-            canSend
-              ? "bg-[var(--color-fg)] text-[var(--color-bg)] hover:opacity-90"
-              : "bg-[var(--color-fg-muted)] text-[var(--color-bg)] opacity-30"
-          )}
-        >
-          {loading ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-            </svg>
-          )}
-        </button>
+        {loading && onStop ? (
+          <button
+            type="button"
+            onPointerDown={onStop}
+            aria-label={t("message.stopExecution")}
+            className="absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full bg-[var(--color-fg)] text-[var(--color-bg)] transition-all hover:opacity-90"
+          >
+            <Square className="size-3" fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSendClick}
+            disabled={!canSend}
+            aria-label={t("aria.sendMessage")}
+            className={cn(
+              "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
+              canSend
+                ? "bg-[var(--color-fg)] text-[var(--color-bg)] hover:opacity-90"
+                : "bg-[var(--color-fg-muted)] text-[var(--color-bg)] opacity-30"
+            )}
+          >
+            {loading ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            )}
+          </button>
+        )}
         </>
       )}
     </div>

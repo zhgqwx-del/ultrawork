@@ -181,6 +181,7 @@ export function SessionPage() {
                 value={input}
                 onChange={setInput}
                 onSend={handleSend}
+                onStop={stopGeneration}
                 placeholder={t("placeholder.reply")}
                 disabled={sending}
                 loading={sending}

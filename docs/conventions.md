@@ -116,6 +116,11 @@ Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permi
 - `session.status:idle` 不清除 `stopped`（在 `handleSend` 中清除）
 - `handleSend` 清除 stopped 时同时清空 `frozenMessageIdsRef`
 
+### 流式区域内的操作按钮用 `onPointerDown`（2026-06-11 实测事故）
+浏览器只在 pointerdown/up 落在**同一元素**时才派发 click。高速流式（如逐行输出）下消息区每秒回流多次 + 自动滚动，跟随内容流的按钮在按下与抬起之间位移 → click 被吞，用户表现为「点击停止无效」。规则：
+- 随内容流动的操作按钮（ExecutionStatus 的停止键）→ `onPointerDown` 触发，不用 `onClick`
+- 关键操作同时给一个**位置固定**的入口：ChatInput 发送键在 `loading && onStop` 时变为停止键（`chat-input.tsx`），输入框不回流、永远可点
+
 ### React key
 优先使用 `part.id`：`('id' in part && part.id) ? part.id : \`part-${i}\``
 

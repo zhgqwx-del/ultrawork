@@ -174,4 +174,20 @@ describe("ChatInput", () => {
     const sendBtn = screen.getByLabelText("Send message")
     expect(sendBtn).toBeDisabled()
   })
+
+  it("shows a stop button instead of send while loading with onStop", () => {
+    const onStop = vi.fn()
+    render(<ChatInput {...defaultProps} variant="reply" loading onStop={onStop} />)
+    expect(screen.queryByLabelText("Send message")).not.toBeInTheDocument()
+    const stopBtn = screen.getByLabelText("message.stopExecution")
+    // pointerdown so the press always lands even if surrounding content reflows.
+    fireEvent.pointerDown(stopBtn)
+    expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the plain loading send button when onStop is absent", () => {
+    render(<ChatInput {...defaultProps} variant="reply" loading />)
+    const sendBtn = screen.getByLabelText("Send message")
+    expect(sendBtn).toBeDisabled()
+  })
 })
