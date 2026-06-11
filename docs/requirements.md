@@ -182,8 +182,8 @@ Monorepo 结构：
 - [x] 档1 入口收紧 — Home 唯一入口（出生即绑定）+ AgentSelector 会话开始后锁定 + claude thinking 默认开 ✅ 2026-06-11
 
 **阶段1 收尾项（规划中）**
-- [ ] 权限 kind 映射精修（claude `toolCall.kind` 缺省时标签回退 "bash"）
-- [ ] token/cost 页脚 — 等上游 claude-code-acp 发 usage
+- [x] 权限 kind 映射精修 — `permission-label.ts` 分层推断（0.44 起上游已带 kind，推断层留作兜底）✅ 2026-06-11
+- [x] token/cost 页脚 — claude adapter 升级 `@agentclientprotocol/claude-agent-acp` 0.44（发 per-turn usage+cost）+ agents.json 自动迁移 ✅ 2026-06-11
 - [ ] 能力条件 UI（image gating）+ gemini/qoder 二期接入（含预置模板库 UX）
 - [ ] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）
 

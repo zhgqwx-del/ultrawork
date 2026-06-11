@@ -1,9 +1,11 @@
 // Permission label inference for the permission-dock (W3 refinement).
 //
-// claude-code-acp computes a ToolKind internally but drops it when calling
-// session/request_permission (only toolCallId/rawInput/title survive), so
-// `toolCall.kind` is always absent on the claude path. Recover the label from
-// the layered signals below instead of defaulting to "bash".
+// The old claude adapter (claude-code-acp ≤0.16.2) computed a ToolKind
+// internally but dropped it when calling session/request_permission (only
+// toolCallId/rawInput/title survived). Its successor claude-agent-acp ≥0.44
+// does send kind, so the explicit-kind tier now hits on the claude path; the
+// remaining layers stay as the fallback for other agents and old configs.
+// Recover the label from the layered signals instead of defaulting to "bash".
 
 import type { ToolCallUpdate, ToolKind } from "@agentclientprotocol/sdk"
 

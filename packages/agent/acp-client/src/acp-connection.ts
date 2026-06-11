@@ -96,9 +96,10 @@ export class ACPConnection {
     try {
       const env: Record<string, string | undefined> = { ...process.env, ...this.config.env }
       // Scrub Claude Code session markers inherited from a dev shell (e.g.
-      // setup.sh run inside a Claude Code terminal): claude-code-acp refuses
-      // to start when CLAUDECODE is set (nested-session check), but agents we
-      // spawn are independent processes, not nested sessions.
+      // setup.sh run inside a Claude Code terminal): claude-code-acp refused
+      // to start when CLAUDECODE is set (nested-session check; gone from
+      // claude-agent-acp 0.44, kept as defense against the underlying SDK),
+      // but agents we spawn are independent processes, not nested sessions.
       if (!this.config.env?.CLAUDECODE) delete env.CLAUDECODE
       if (!this.config.env?.CLAUDE_CODE_ENTRYPOINT) delete env.CLAUDE_CODE_ENTRYPOINT
       const proc = Bun.spawn([this.config.command, ...this.config.args], {

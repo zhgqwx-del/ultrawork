@@ -283,7 +283,7 @@ export function AgentsSection() {
           <FormField
             label={t("agents.form.args")}
             value={form.args}
-            placeholder="--bun @zed-industries/claude-code-acp"
+            placeholder="--bun @agentclientprotocol/claude-agent-acp"
             onChange={(args) => setForm({ ...form, args })}
           />
           <FormField

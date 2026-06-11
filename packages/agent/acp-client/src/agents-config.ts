@@ -10,17 +10,26 @@ const CONFIG_DIR = join(homedir(), ".config", "ultrawork")
 const CONFIG_PATH = join(CONFIG_DIR, "agents.json")
 
 // First-batch default (target architecture §0 B1): claude via the official
-// Zed adapter, reusing the local Claude Code login. bunx --bun, never npx —
+// adapter, reusing the local Claude Code login. bunx --bun, never npx —
 // npx spawns extra layers that break the stdio pipe (gotchas §3).
+//
+// The adapter moved from @zed-industries/claude-code-acp (frozen at 0.16.2,
+// no usage reporting) to @agentclientprotocol/claude-agent-acp; configs
+// written with the old name are migrated on load (see
+// migrateLegacyClaudeAdapter).
+const LEGACY_CLAUDE_ADAPTER = "@zed-industries/claude-code-acp"
+const CLAUDE_ADAPTER = "@agentclientprotocol/claude-agent-acp"
+const LEGACY_CLAUDE_DESCRIPTION = `Claude Code via ${LEGACY_CLAUDE_ADAPTER}`
+
 const DEFAULT_AGENTS: AgentsFile = {
   agents: {
     claude: {
       label: "Claude Code",
-      description: "Claude Code via @zed-industries/claude-code-acp",
+      description: `Claude Code via ${CLAUDE_ADAPTER}`,
       command: "bunx",
-      args: ["--bun", "@zed-industries/claude-code-acp"],
+      args: ["--bun", CLAUDE_ADAPTER],
       // Thinking on by default so the execution flow shows reasoning steps
-      // (claude-code-acp only emits thought chunks when this is set). Remove
+      // (the adapter only emits thought chunks when this is set). Remove
       // or tune the env in Settings to trade depth for speed/tokens.
       env: { MAX_THINKING_TOKENS: "8192" },
     },
@@ -28,11 +37,44 @@ const DEFAULT_AGENTS: AgentsFile = {
   default: "claude",
 }
 
+/**
+ * Rewrite args still pointing at the renamed claude adapter package. Exact
+ * token match only: an explicit version pin (`…@0.16.2`) is a deliberate
+ * choice and is left alone. Returns whether anything changed so the caller
+ * knows to persist.
+ */
+export function migrateLegacyClaudeAdapter(file: AgentsFile): boolean {
+  let changed = false
+  for (const cfg of Object.values(file.agents ?? {})) {
+    if (!cfg.args) continue
+    let agentChanged = false
+    for (let i = 0; i < cfg.args.length; i++) {
+      if (cfg.args[i] === LEGACY_CLAUDE_ADAPTER) {
+        cfg.args[i] = CLAUDE_ADAPTER
+        agentChanged = true
+      }
+    }
+    if (agentChanged && cfg.description === LEGACY_CLAUDE_DESCRIPTION) {
+      cfg.description = `Claude Code via ${CLAUDE_ADAPTER}`
+    }
+    changed ||= agentChanged
+  }
+  return changed
+}
+
 export function loadAgentConfigs(): ACPAgentConfig[] {
   let file: AgentsFile
   if (existsSync(CONFIG_PATH)) {
     try {
       file = JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as AgentsFile
+      if (migrateLegacyClaudeAdapter(file)) {
+        console.error(`[acp] Migrated ${CONFIG_PATH}: ${LEGACY_CLAUDE_ADAPTER} → ${CLAUDE_ADAPTER}`)
+        try {
+          writeFile(file)
+        } catch (err) {
+          console.error(`[acp] Failed to persist migrated ${CONFIG_PATH}:`, err)
+        }
+      }
     } catch (err) {
       console.error(`[acp] Failed to parse ${CONFIG_PATH}, using defaults:`, err)
       file = DEFAULT_AGENTS

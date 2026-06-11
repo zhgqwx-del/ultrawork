@@ -1,4 +1,4 @@
-// W1 spike: drive a REAL claude (via @zed-industries/claude-code-acp, reusing
+// W1 spike: drive a REAL claude (via @agentclientprotocol/claude-agent-acp, reusing
 // the local Claude Code login) through the sidecar shaping pipeline and dump
 // the shaped SSE stream as a fixture for the desktop buildTurnModel test.
 //
@@ -30,7 +30,7 @@ const conn = new ACPConnection(
     id: "claude",
     label: "Claude Code",
     command: "bunx",
-    args: ["--bun", "@zed-industries/claude-code-acp"],
+    args: ["--bun", "@agentclientprotocol/claude-agent-acp"],
   },
   (_sessionId, event) => {
     events.push(event)
