@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-10 -->
+<!-- last-synced: 2026-06-11 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -238,7 +238,11 @@ setTimeout(() => fetchSources(), 500)
 - tool_call / tool_call_update **按 toolCallId upsert** 到同一 part（核心逻辑集中在 `turn-shaper.ts`，纯函数可测）。
 - 事件 sessionID 用客户端传入的 `clientSessionId` 直通，前端零改写。
 
-**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；per-agent 怪癖（超时、stdout 过滤、Windows shell）集中在 `acp-connection.ts` 常量区，参考 acpx `agent-command.ts`。
+**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；per-agent 怪癖（超时、stdout 过滤、Windows shell）集中在 `acp-connection.ts` 常量区，参考 acpx `agent-command.ts`。per-agent 行为开关走 env（如 claude thinking = `MAX_THINKING_TOKENS`，DEFAULT_AGENTS 默认 8192），`PUT /acp/agents/:id` 保存即热生效（断开重连）。
+
+**会话历史持久化（W4b）**：sidecar 端 `session-store.ts` 维护与前端同构的 event-fold reducer（part.updated 按 id upsert / delta 追加 / message.updated merge info），在 user echo 落定与 assistant 终态封板时整体落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（**数据进 xdgData**，与 opencode 存量同级）。前端打开 ACP 会话从 `GET /acp/session/:id/messages` 取历史（`use-session-messages` 按 isACP 分流，hasMore=false）；agent 上下文在下次 prompt 时经 `session/load` 懒恢复 + replay 全抑制——**历史渲染永远不依赖 agent 存活**。会话删除时前端 fire-and-forget `DELETE /acp/session/:id` 防孤儿文件。
+
+**档1 入口约束（one session, one agent）**：Home 是新会话唯一入口——侧栏「+」只 `navigate("/")`；Home 输入框带 AgentSelector（受控模式，会话尚不存在），发送时 `createSession → bindSessionAgent → 按 agent 分流 prompt`，**出生即绑定**；Session 页的 AgentSelector 在 `loading || sending || allMessages.length > 0` 时锁定（仅空会话可换）——中途切 agent 会让历史显示在 opencode/ACP 两个 store 间二选一。
 
 **测试模式（三层）**：① mock ACP agent（`packages/agent/acp-client/scripts/mock-acp-agent.ts`，stdin JSON-RPC 确定性回放，`bun test src` 离线跑）→ ② 真实 agent spike 脚本落盘 fixture（`packages/agent/acp-client/scripts/spike-claude.ts`）→ ③ desktop vitest 用 fixture 喂真实 `buildTurnModel`/`groupIntoTurns` 断言渲染契约。
 

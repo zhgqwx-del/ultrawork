@@ -123,7 +123,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）
 - `acp-connection.ts` — 子进程 + SDK stdio + 权限挂起回环 + 三阶段关闭 + per-agent 怪癖
-- `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（`~/.config/ultrawork/agents.json`）
+- `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发 + session/load 懒恢复）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（`~/.config/ultrawork/agents.json`）
+- `session-store.ts` — W4b 会话历史持久化：event-fold reducer（与前端同构）+ 落盘 `~/.local/share/ultrawork/acp-sessions/`
 - `packages/agent/acp-client/scripts/mock-acp-agent.ts`（确定性测试 agent）, `packages/agent/acp-client/scripts/spike-claude.ts`（真实 claude → desktop fixture）
 
 **Knowledge Sidecar（`packages/knowledge/sidecar/src/`）**

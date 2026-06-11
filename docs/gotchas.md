@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-10 -->
+<!-- last-synced: 2026-06-11 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -32,9 +32,10 @@
 - **`POST /session/:id/prompt_async` 是唯一发送方式**，返回 204（无 body，调 `.json()` 前先判空）。
 - **File API 路径必须相对** + 带 `x-opencode-directory` header。绝对路径会被 join 成错误路径。
 - **工具参数统一 camelCase**：`filePath`（不是 `file_path`）。
-- **Session 列表不按目录过滤**：客户端需自行按工作区过滤。
+- **Session 列表不按目录过滤**（事故实测，2026-06-10）：`x-opencode-directory` header 只设请求的工作目录上下文，**不过滤 `GET /session`**；按目录过滤必须用 `?directory=` query。前端侧栏的工作区过滤是客户端 `filterByWorkspace`。误以为 header 过滤曾导致全量误删会话——**任何批量删除前先打印清单核对数量**。
 - **Permission 规则**：`general` agent 默认 `"*": "allow"`；要拦截需在 `opencode.json` 设 `"permission": { "edit": "ask" }`。
 - **SQLite WAL disk I/O**：偶发 500；恢复手段 `PRAGMA wal_checkpoint(TRUNCATE)` + 重启。
+- **会话 db 的 WAL 极脆弱（数据恢复实操教训，2026-06-10）**：`opencode-.db` 主文件可能长期不 checkpoint（实测停在两周前），近期数据全部只活在 `-wal` 里；**任何 sqlite3 直接打开（含只读查询和 `.recover`）都会触发 checkpoint 并清空 WAL 历史帧**，毁掉「截断 WAL 回滚到误操作前」的恢复路径。正确顺序：先 `cp -a` 整个目录（db+wal+shm 三件套），再在副本上一次性做 `.recover`；被删行可从 free pages 的 `lost_and_found` 按列前缀（ses_/msg_/prt_）重建。
 - **Config.update 文件名 bug**：vendor 已 patch 修复（`config.json` → `opencode.json`），详见 auto-memory `vendor-patches.md`。
 
 ## 3. MCP
@@ -100,13 +101,15 @@
 - **turn 整形契约（最核心）**：`buildTurnModel` 把「最后一条不含 tool part 的 message」当答案（`assistant-turn.tsx:53`），`isTerminal` 要求 `info.finish && !== "tool-calls"`（`message-list.tsx:110`）。sidecar 必须：工具步骤发过程 message（封板 `finish:"tool-calls"`）、最终文本发独立纯 text message（`finish:"stop"`）、**每个 part 先 `message.part.updated` 建好类型再发 delta**（前端 delta 对未知 part 直接丢弃且新建硬编码 text）。
 - **claude adapter 对同一 toolCallId 重复发 `tool_call`**（rawInput 渐进变富）——整形必须按 toolCallId upsert，否则出现卡 pending 的重复 part。acpx 的「tool_call/tool_call_update 同一 upsert」正是为此。
 - **SDK 0.25 与早期调研（014 表）的出入**：`usage_update` = `{size, used, cost}`（无 token 明细）；token 明细在 `PromptResponse.usage`（inputTokens/outputTokens/thoughtTokens/cached*）；另有 plan_update/plan_removed/session_info_update 等新变体；`SessionInfoUpdate` 仅 title/updatedAt（无 model）。
-- **claude-code-acp（0.16.2）不发 usage**（PromptResponse 仅 stopReason，源码确认）→ token 页脚为空属上游缺口；thought chunk 仅在 thinking 开启时出现；其 `plan` 事件来自 TodoWrite 工具。
+- **claude-code-acp（0.16.2）不发 usage**（PromptResponse 仅 stopReason，源码确认）→ token 页脚为空属上游缺口；thought chunk 仅在 thinking 开启时出现，**开启方式 = per-agent env `MAX_THINKING_TOKENS`**（`acp-agent.js:771` 读取→SDK maxThinkingTokens；DEFAULT_AGENTS 已默认 8192，Settings 编辑 env 可关/调，热生效）；其 `plan` 事件来自 TodoWrite 工具。
 - **`CLAUDECODE` env 嵌套检测**：该变量会从 dev shell（如 Claude Code 终端跑 `setup.sh`）一路继承到 claude-code-acp，触发其嵌套会话检测拒绝 `session/new`。sidecar 已在 spawn agent 时清洗 `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`（agent config.env 显式设置除外）。
 - **bunx 首启下载 adapter 包可超 15s** → initialize 超时须 ≥30s（现 30s）；claude `session/new` 已知 stall → 60s 超时（acpx 怪癖常量）。
 - **会话 ID 直通**：`POST /acp/session` 传 `clientSessionId` 后所有整形事件直接戳客户端会话 ID——前端零改写（旧分支的 sessionID rewrite hack 已不存在）；SSE 端点允许「先订阅、后建会话」。
 - **权限回环安全默认**：`request_permission` 挂起后，超时（`ACP_PERMISSION_TIMEOUT_MS`，默认 5min）/ session cancel / agent 断开 / 进程退出均默认 deny/cancelled 并广播 `permission.replied`。claude 的 `toolCall.kind` 可能缺省 → 权限标签回退 "bash"（显示可能与实际操作不符，待精修）。
 - **ACP 会话无 `session.status:idle` 事件**：侧栏活动标记靠前端在终态 finish 时补 `markSessionIdle`（use-session-messages）。
-- **ACP 会话历史不持久化**：sidecar 重启/app 重启后会话映射丢失、历史空白（agent 自身历史还在）。待 W4b `session/load` + replay 抑制（acpx：idle 80ms / timeout 5s）。
+- **ACP 会话历史持久化（W4b 已实现）**：sidecar 把整形后的 `{info, parts}` 落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（数据进 xdgData 与 opencode 存量同级，**不是** `~/.config`；env `ACP_DATA_DIR` 可覆盖）。重启后历史从 store 服务（`GET /acp/session/:id/messages`）；agent 上下文在下次 prompt 时经 `session/load` 懒恢复，**replay 事件全部抑制**（不用于渲染）——claude-code-acp 实测 `loadSession: true`。
+- **session/load replay 抑制的 idle 窗口必须从 RPC resolve 起算**（无条件重置 lastUpdateAt）：agent 可能在响应 RPC 之后才继续流 replay 通知，否则漏入 shaper 造成重复渲染。常量 `REPLAY_IDLE_MS=80` / `REPLAY_MAX_MS=5000`（acpx）。
+- **TurnShaper 的 id 必须带 epoch**（W4b 实测 bug）：shaper 重建（重启/重连）后 seq 从 0 重计，新轮次 message/part id 与持久化历史**完全相同**→新轮覆盖旧历史而非追加（前端渲染同样被覆盖）。id 格式 `acp_msg_<sid>_<epoch>_<seq>`，epoch = Date.now 36 进制 + 实例计数。
 
 ---
 

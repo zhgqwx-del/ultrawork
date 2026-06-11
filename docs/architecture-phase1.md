@@ -13,7 +13,7 @@
 > | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
 > | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode + WeChat ilink, Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json` |
 > | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
-> | @agent/acp-client | 🚧 阶段1（claude 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（首批 claude 经 claude-code-acp）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`。历史持久化（session/load）未做；gemini/qoder 二期。详见 ADR-027 + `agent-os-target-architecture.md` |
+> | @agent/acp-client | 🚧 阶段1（claude 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（首批 claude 经 claude-code-acp）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`。会话历史持久化（W4b：整形消息落盘 `~/.local/share/ultrawork/acp-sessions/` + session/load 懒恢复 + replay 抑制）已实现；gemini/qoder 二期。详见 ADR-027 + `agent-os-target-architecture.md` |
 > | @agent/connector | 🔲 规划中 | Desktop 当前直连 api-client，未经 connector 抽象；Gateway 也直连 api-client（Agent OS 阶段2，ADR-030） |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |

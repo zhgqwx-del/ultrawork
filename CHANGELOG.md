@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **W4b ACP 会话历史持久化（ADR-027 阶段1 收尾项①）**：sidecar 新增 `session-store.ts`——与前端同构的 event-fold reducer 把整形消息落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（数据进 xdgData 与 opencode 存量同级；`ACP_DATA_DIR` 可覆盖），user echo 落定与 assistant 终态封板时写盘；新端点 `GET /acp/session/:id/messages`（整形历史）+ `DELETE /acp/session/:id`；重启后 `clientSessionId↔acpSessionId` 映射恢复，下次 prompt 经 `session/load` 懒恢复 agent 上下文（**replay 全抑制**：idle 80ms / 上限 5s，acpx 常量；idle 窗口从 RPC resolve 起算），无 loadSession 能力的 agent 降级新建会话；前端 `use-session-messages` 按 isACP 分流历史加载、删除会话联动清理。离线测试 +6（store reducer/roundtrip、replay 抑制零外泄、manager 重启恢复、deleteSession），mock agent 支持 `session/load` 回放。真机验收：重启 app 后历史可见不重复、claude 经 session/load 答出此前记住的内容（上下文连续）
+- **档1 入口收紧（one session, one agent）**：Home 输入框加 AgentSelector（受控模式，选 ACP 时隐藏 ModelSelector），发送时 createSession→绑定→按 agent 分流 prompt——**会话出生即绑定**；侧栏「+」改为回 Home（不再直接建空会话）；Session 页 AgentSelector 在会话有消息后锁定（tooltip 说明）——杜绝中途切 agent 导致历史在 opencode/ACP 两个 store 间「消失」的假象
+- **claude thinking 默认开启**：DEFAULT_AGENTS 的 claude 条目带 `env MAX_THINKING_TOKENS=8192`（claude-code-acp 据此发 thought chunk→ExecutionFlow「深度思考」步骤）；Settings 编辑 env 可关/调，PUT 热生效。Settings agent「未连接」状态加 tooltip（发消息时自动连接）
+
 - **Agent OS 阶段0→1 落地（ADR-027 档1，首批 claude + opencode）**：新包 `@agent/acp-client`（ACP Client Sidecar :4099，SDK 0.25.0，参考 `feat/acp-support` 设计在 main 上重写）——`TurnShaper` 把 ACP `session/update` 整形成 opencode SSE 形状（工具步骤→过程 message `finish:"tool-calls"`、答案→独立纯 text message `finish:"stop"`、先 part.updated 再 delta、toolCallId upsert、plan/TodoWrite→reasoning part、user 回显），复用 ADR-029 渲染器零前端渲染改动；`clientSessionId` 直通消掉旧分支的 sessionID 改写 hack。**W3 权限回环**（去 auto-approve：挂起 promise + `permission.asked` SSE + `POST /acp/session/:id/permission`，复用 permission-dock；超时/cancel/断开/进程退出默认 deny）。**W4** per-agent `knowledgeMcp` opt-in 透传知识库 MCP（默认关，B4）。**W5** 三阶段优雅关闭（acpx 常量）+ claude `session/new` 60s 超时 + `/acp/health` 带 agent 连接态
 - Agent OS 桌面端接入（零侵入增量，opencode 流不动）：输入区 **AgentSelector**（会话级 agent 绑定，localStorage 持久化；ACP 绑定时隐藏 ModelSelector）+ Settings **「外部 Agent」**section（连接/断开/增删改/知识库开关，i18n zh/en）；`use-session-messages` 发送/停止按绑定分流；`use-acp-sse` 引用计数共享 EventSource（消息+权限复用一条连接）；ACP 终态 finish 补 `markSessionIdle`
 - Agent OS 构建/运行链路：`scripts/build-acp.ts`（hash 增量 + **重编时自动清理 :4099 旧进程防陈旧**——Tauri `prepare_port` 会复用健康旧进程）；`setup.sh --dev` 一键全栈；tauri `externalBin` + `lib.rs` 后台启动（rich_path）；`build-release.ts` per-target/lipo 接入 Universal DMG
@@ -15,6 +19,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `docs/gotchas.md` 新增 §8 ACP/外部 Agent（turn 整形契约、claude adapter 怪癖、CLAUDECODE 继承、权限安全默认等 10 条）+ §7 两条构建坑；`docs/conventions.md` 新增 §11 ACP 接入模式（整形契约/测试三层/真机验证法）
 
 ### Fixed
+- **TurnShaper id 代际碰撞**（W4b 测试发现）：sidecar 重启后 shaper seq 从 0 重计，新轮次 message/part id 与持久化历史相同导致覆盖而非追加——id 加入 epoch（`acp_msg_<sid>_<epoch>_<seq>`）
 - ACP 真机验证修复：`CLAUDECODE` env 从 dev shell 继承到 claude-code-acp 触发嵌套检测拒绝建会话（spawn 时清洗）；ACP 会话侧栏活动 spinner 不熄（终态补 markSessionIdle）；claude adapter 对同一 toolCallId 重复发 `tool_call` 导致重复 part 卡 pending（按 toolCallId upsert）
 
 ### Changed

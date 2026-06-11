@@ -178,11 +178,13 @@ Monorepo 结构：
 - [x] 进程稳定性 — 三阶段优雅关闭 + claude 怪癖超时 + 进程退出恢复
 - [x] Settings「外部 Agent」管理（连接/断开/增删改）
 - [x] 构建/打包链路 — `build:acp` hash 增量 + 防陈旧 + setup.sh + Universal DMG
+- [x] ACP 会话历史持久化（W4b）— sidecar 落盘整形消息 + `session/load` 懒恢复 + replay 抑制（重启后历史可见、上下文连续）✅ 2026-06-11
+- [x] 档1 入口收紧 — Home 唯一入口（出生即绑定）+ AgentSelector 会话开始后锁定 + claude thinking 默认开 ✅ 2026-06-11
 
 **阶段1 收尾项（规划中）**
-- [ ] ACP 会话历史持久化 — `session/load` + replay 抑制（重启后恢复对话）
+- [ ] 权限 kind 映射精修（claude `toolCall.kind` 缺省时标签回退 "bash"）
 - [ ] token/cost 页脚 — 等上游 claude-code-acp 发 usage
-- [ ] 能力条件 UI（loadSession/image gating）+ gemini/qoder 二期接入
+- [ ] 能力条件 UI（image gating）+ gemini/qoder 二期接入（含预置模板库 UX）
 - [ ] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）
 
 **后续规划**

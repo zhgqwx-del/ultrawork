@@ -96,26 +96,15 @@ export function LeftSidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { leftOpen, toggleLeft } = useSidebar()
-  const { sessions, loading, activeSessionIds, createSession, deleteSession, renameSession } = useSessionsContext()
-  const [creating, setCreating] = useState(false)
+  const { sessions, loading, activeSessionIds, deleteSession, renameSession } = useSessionsContext()
   const [searchQuery, setSearchQuery] = useState("")
   const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
   const { t } = useI18n()
 
-  const handleNewChat = async () => {
-    if (creating) return
-    setCreating(true)
-    try {
-      const session = await createSession()
-      navigate(`/session/${session.id}`)
-    } catch (err) {
-      console.error("Failed to create session:", err)
-      toast.error("Failed to create session")
-    } finally {
-      setCreating(false)
-    }
-  }
+  // "+" goes Home instead of creating a session: the session is born on the
+  // first Home send, after the agent is chosen (档1: one session, one agent).
+  const handleNewChat = () => navigate("/")
 
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
@@ -185,10 +174,9 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    disabled={creating}
                     className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
-                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    <Plus className="size-4" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("sidebar.newTask")}</TooltipContent>
@@ -330,11 +318,10 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    disabled={creating}
                     aria-label={t("sidebar.newTask")}
                     className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
-                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    <Plus className="size-4" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">{t("sidebar.newTask")}</TooltipContent>

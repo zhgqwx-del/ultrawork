@@ -7,7 +7,17 @@ import { cn } from "@/lib/utils"
 import type { UnifiedAgentStatus } from "@/lib/agent-types"
 
 interface AgentSelectorProps {
-  sessionId: string
+  /** Session-bound mode: read/write the binding in AgentContext. */
+  sessionId?: string
+  /** Controlled mode (Home: the session doesn't exist yet). */
+  agentId?: string
+  onAgentChange?: (agentId: string) => void
+  /**
+   * 档1: one session, one agent — once the conversation has messages the
+   * binding is frozen (switching mid-session would split the visible history
+   * between the opencode and ACP stores).
+   */
+  locked?: boolean
   className?: string
 }
 
@@ -20,32 +30,44 @@ const STATUS_DOT: Record<UnifiedAgentStatus, string> = {
 }
 
 /** Per-session agent picker (ADR-027 档1: one session, one agent). */
-export function AgentSelector({ sessionId, className }: AgentSelectorProps) {
+export function AgentSelector({
+  sessionId,
+  agentId,
+  onAgentChange,
+  locked = false,
+  className,
+}: AgentSelectorProps) {
   const [open, setOpen] = useState(false)
   const { agents, acpAvailable, refreshAgents, getSessionAgentId, bindSessionAgent } = useAgents()
   const { t } = useI18n()
 
-  const currentId = getSessionAgentId(sessionId)
+  const currentId = agentId ?? getSessionAgentId(sessionId)
   const current = agents.find((a) => a.id === currentId) ?? agents[0]
 
   const handleOpenChange = (next: boolean) => {
+    if (locked) return
     setOpen(next)
     if (next) void refreshAgents()
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open && !locked} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
+          disabled={locked}
+          title={locked ? t("agent.locked") : undefined}
           className={cn(
-            "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]",
+            "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)] transition-colors",
+            locked
+              ? "cursor-default opacity-70"
+              : "hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]",
             className
           )}
         >
           <Bot className="size-3" />
           <span className="max-w-[120px] truncate">{current?.name ?? "OpenCode"}</span>
-          <ChevronDown className="size-3" />
+          {!locked && <ChevronDown className="size-3" />}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" side="top" className="w-64 p-0">
@@ -55,7 +77,8 @@ export function AgentSelector({ sessionId, className }: AgentSelectorProps) {
               key={agent.id}
               type="button"
               onClick={() => {
-                bindSessionAgent(sessionId, agent.id)
+                if (onAgentChange) onAgentChange(agent.id)
+                else if (sessionId) bindSessionAgent(sessionId, agent.id)
                 setOpen(false)
               }}
               className={cn(

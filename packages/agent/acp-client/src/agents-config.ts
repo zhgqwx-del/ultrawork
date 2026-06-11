@@ -19,6 +19,10 @@ const DEFAULT_AGENTS: AgentsFile = {
       description: "Claude Code via @zed-industries/claude-code-acp",
       command: "bunx",
       args: ["--bun", "@zed-industries/claude-code-acp"],
+      // Thinking on by default so the execution flow shows reasoning steps
+      // (claude-code-acp only emits thought chunks when this is set). Remove
+      // or tune the env in Settings to trade depth for speed/tokens.
+      env: { MAX_THINKING_TOKENS: "8192" },
     },
   },
   default: "claude",

@@ -187,7 +187,12 @@ export function SessionPage() {
                 variant="reply"
                 leftSlot={
                   <div className="flex items-center gap-1">
-                    {id && <AgentSelector sessionId={id} />}
+                    {id && (
+                      <AgentSelector
+                        sessionId={id}
+                        locked={loading || sending || allMessages.length > 0}
+                      />
+                    )}
                     {!isACPSession && (
                       <ModelSelector
                         currentModel={currentModel}

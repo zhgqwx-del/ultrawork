@@ -201,6 +201,7 @@ export function AgentsSection() {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-[var(--color-fg)]">{agent.label}</span>
                   <span
+                    title={agent.status === "disconnected" ? t("agents.status.disconnectedHint") : undefined}
                     className={cn(
                       "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
                       STATUS_STYLE[agent.status]
