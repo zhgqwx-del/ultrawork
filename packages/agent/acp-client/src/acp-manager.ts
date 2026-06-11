@@ -3,13 +3,28 @@
 import type { StopReason } from "@agentclientprotocol/sdk"
 import { ACPConnection, type PermissionReply } from "./acp-connection.js"
 import { deleteAgentConfig, saveAgentConfig } from "./agents-config.js"
-import type { ACPAgentConfig, ACPAgentInfo, ACPSessionInfo, UwSSEEvent } from "./types.js"
+import {
+  applyEvent,
+  deleteSessionFile,
+  isPersistencePoint,
+  loadAllSessions,
+  saveSession,
+} from "./session-store.js"
+import type {
+  ACPAgentConfig,
+  ACPAgentInfo,
+  ACPSessionInfo,
+  UwSSEEvent,
+  UwStoredMessage,
+} from "./types.js"
 
 type Subscriber = (event: UwSSEEvent) => void
 
 interface SessionEntry extends ACPSessionInfo {
   /** The agent-side session id (sessionId is the public/client-facing one). */
   acpSessionId: string
+  /** Shaped history, folded from the event stream and persisted at turn ends. */
+  messages: UwStoredMessage[]
 }
 
 export class ACPManager {
@@ -19,6 +34,18 @@ export class ACPManager {
 
   constructor(configs: ACPAgentConfig[]) {
     for (const config of configs) this.register(config)
+    // W4b: restore persisted sessions so history survives sidecar restarts.
+    // Agent-side context is restored lazily at the next prompt (session/load).
+    for (const persisted of loadAllSessions()) {
+      this.sessions.set(persisted.sessionId, {
+        sessionId: persisted.sessionId,
+        acpSessionId: persisted.acpSessionId,
+        agentId: persisted.agentId,
+        cwd: persisted.cwd,
+        createdAt: persisted.createdAt,
+        messages: persisted.messages,
+      })
+    }
   }
 
   register(config: ACPAgentConfig): void {
@@ -52,10 +79,10 @@ export class ACPManager {
   }
 
   async disconnect(agentId: string): Promise<void> {
+    // Session entries survive a disconnect: they are persisted and the next
+    // prompt restores the agent-side context via session/load (or a fresh
+    // session as fallback).
     await this.requireAgent(agentId).disconnect()
-    for (const [sessionId, info] of this.sessions) {
-      if (info.agentId === agentId) this.sessions.delete(sessionId)
-    }
   }
 
   /**
@@ -68,13 +95,56 @@ export class ACPManager {
     if (conn.status !== "connected") await conn.connect()
     const acpSessionId = await conn.newSession(cwd, clientSessionId)
     const sessionId = clientSessionId ?? acpSessionId
-    this.sessions.set(sessionId, { sessionId, acpSessionId, agentId, cwd, createdAt: Date.now() })
+    const entry: SessionEntry = {
+      sessionId,
+      acpSessionId,
+      agentId,
+      cwd,
+      createdAt: Date.now(),
+      messages: [],
+    }
+    this.sessions.set(sessionId, entry)
+    // Persist the mapping right away so a crash mid-conversation still leaves
+    // the session restorable.
+    this.persist(entry)
     return sessionId
   }
 
   async prompt(sessionId: string, text: string): Promise<StopReason> {
     const entry = this.requireSession(sessionId)
-    return this.requireAgent(entry.agentId).prompt(entry.acpSessionId, text)
+    const conn = this.requireAgent(entry.agentId)
+    await this.restoreAgentSession(conn, entry)
+    return conn.prompt(entry.acpSessionId, text)
+  }
+
+  /**
+   * Ensure the agent-side session behind `entry` is live (W4b). After a
+   * sidecar/agent restart the persisted mapping survives but the connection
+   * has no shaper for it: restore the agent context via session/load (replay
+   * suppressed), falling back to a fresh session when the agent can't load
+   * (capability off, or the agent itself lost the session).
+   */
+  private async restoreAgentSession(conn: ACPConnection, entry: SessionEntry): Promise<void> {
+    if (conn.status !== "connected") await conn.connect()
+    if (conn.hasSession(entry.acpSessionId)) return
+
+    if (conn.agentCapabilities?.loadSession) {
+      try {
+        await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId)
+        return
+      } catch (err) {
+        console.error(
+          `[acp:${entry.agentId}] session/load failed for ${entry.acpSessionId}, starting fresh:`,
+          err,
+        )
+      }
+    } else {
+      console.error(
+        `[acp:${entry.agentId}] agent has no loadSession capability — continuing ${entry.sessionId} without prior context`,
+      )
+    }
+    entry.acpSessionId = await conn.newSession(entry.cwd, entry.sessionId)
+    this.persist(entry)
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -102,7 +172,10 @@ export class ACPManager {
     this.connections.delete(agentId)
     deleteAgentConfig(agentId)
     for (const [sessionId, info] of this.sessions) {
-      if (info.agentId === agentId) this.sessions.delete(sessionId)
+      if (info.agentId === agentId) {
+        this.sessions.delete(sessionId)
+        deleteSessionFile(sessionId)
+      }
     }
     await conn.disconnect()
   }
@@ -124,6 +197,18 @@ export class ACPManager {
     return this.sessions.has(sessionId)
   }
 
+  /** Shaped history for a session (W4b), in the desktop's render shape. */
+  getMessages(sessionId: string): UwStoredMessage[] | undefined {
+    return this.sessions.get(sessionId)?.messages
+  }
+
+  /** Drop a session and its persisted history. Returns false if unknown. */
+  deleteSession(sessionId: string): boolean {
+    const existed = this.sessions.delete(sessionId)
+    deleteSessionFile(sessionId)
+    return existed
+  }
+
   subscribe(sessionId: string, subscriber: Subscriber): () => void {
     let set = this.subscribers.get(sessionId)
     if (!set) {
@@ -142,9 +227,33 @@ export class ACPManager {
   }
 
   private dispatch(sessionId: string, event: UwSSEEvent): void {
+    // Fold into the stored history before fan-out (runs even with no
+    // subscriber — persistence must not depend on an open SSE stream).
+    const entry = this.sessions.get(sessionId)
+    if (entry) {
+      applyEvent(entry.messages, event)
+      if (isPersistencePoint(event)) this.persist(entry)
+    }
     const set = this.subscribers.get(sessionId)
     if (!set) return
     for (const subscriber of set) subscriber(event)
+  }
+
+  private persist(entry: SessionEntry): void {
+    try {
+      saveSession({
+        version: 1,
+        sessionId: entry.sessionId,
+        acpSessionId: entry.acpSessionId,
+        agentId: entry.agentId,
+        cwd: entry.cwd,
+        createdAt: entry.createdAt,
+        updatedAt: Date.now(),
+        messages: entry.messages,
+      })
+    } catch (err) {
+      console.error(`[acp] failed to persist session ${entry.sessionId}:`, err)
+    }
   }
 
   private requireAgent(agentId: string): ACPConnection {

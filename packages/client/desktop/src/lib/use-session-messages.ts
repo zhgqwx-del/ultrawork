@@ -6,7 +6,7 @@ import { useSSESubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useAgents } from "@/lib/agent-context"
 import { isACPAgentId, parseAgentId } from "@/lib/agent-types"
-import { ensureACPSession, promptACPSession, cancelACPSession } from "@/lib/agent-router"
+import { ensureACPSession, promptACPSession, cancelACPSession, fetchACPSessionMessages } from "@/lib/agent-router"
 import { useACPSSE } from "@/lib/use-acp-sse"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@/lib/sse-client"
@@ -143,8 +143,16 @@ export function useSessionMessages(
       return
     }
     setLoading(true)
-    api
-      .getMessagesPaginated(sessionId, { limit: INITIAL_PAGE_SIZE })
+    // ACP-bound sessions: history lives in the ACP sidecar's store (shaped,
+    // returned whole — the turn window below still limits what renders).
+    const load = isACP
+      ? fetchACPSessionMessages(sessionId).then((messages) => ({
+          messages,
+          cursor: undefined,
+          hasMore: false,
+        }))
+      : api.getMessagesPaginated(sessionId, { limit: INITIAL_PAGE_SIZE })
+    load
       .then((result) => {
         if (!cancelled) {
           const msgs = result.messages
@@ -182,7 +190,7 @@ export function useSessionMessages(
         }
       })
     return () => { cancelled = true }
-  }, [sessionId, api]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, api, isACP]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- History loading: fetch older messages ---
   const loadOlderMessages = useCallback(async () => {

@@ -50,7 +50,13 @@ interface ToolEntry {
   title?: string
 }
 
+let shaperInstanceSeq = 0
+
 export class TurnShaper {
+  // Generation marker baked into every id: after a sidecar restart a fresh
+  // shaper re-counts from 0 for the same session, and without an epoch the
+  // new turn's ids would collide with (and overwrite) the persisted history.
+  private readonly epoch = `${Date.now().toString(36)}${(shaperInstanceSeq++).toString(36)}`
   private msgSeq = 0
   private partSeq = 0
   private current: OpenMessage | null = null
@@ -79,7 +85,7 @@ export class TurnShaper {
     this.plan = null
     this.turnCost = undefined
     if (userText) {
-      const messageID = `acp_usr_${this.sessionId}_${this.userSeq++}`
+      const messageID = `acp_usr_${this.sessionId}_${this.epoch}_${this.userSeq++}`
       const createdAt = this.now()
       this.emitPart({
         id: this.newPartId(),
@@ -330,7 +336,7 @@ export class TurnShaper {
   private ensureMessage(): OpenMessage {
     if (this.current) return this.current
     this.current = {
-      id: `acp_msg_${this.sessionId}_${this.msgSeq++}`,
+      id: `acp_msg_${this.sessionId}_${this.epoch}_${this.msgSeq++}`,
       createdAt: this.now(),
       hasTool: false,
       hasText: false,
@@ -361,7 +367,7 @@ export class TurnShaper {
   }
 
   private newPartId(): string {
-    return `acp_prt_${this.sessionId}_${this.partSeq++}`
+    return `acp_prt_${this.sessionId}_${this.epoch}_${this.partSeq++}`
   }
 
   private emitPart(part: UwPart): void {

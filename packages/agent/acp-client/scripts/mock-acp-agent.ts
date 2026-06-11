@@ -20,7 +20,7 @@ new AgentSideConnection(
     async initialize() {
       return {
         protocolVersion: PROTOCOL_VERSION,
-        agentCapabilities: { loadSession: false },
+        agentCapabilities: { loadSession: true },
       }
     },
     async authenticate() {
@@ -28,6 +28,25 @@ new AgentSideConnection(
     },
     async newSession() {
       return { sessionId: "mock-session-1" }
+    },
+    // W4b: replay a fixed prior turn as session/update notifications, the way
+    // real agents stream history during session/load. The sidecar must
+    // suppress all of it (history renders from its own store).
+    async loadSession(params) {
+      const send = (update: SessionUpdate) =>
+        conn.sessionUpdate({ sessionId: params.sessionId, update })
+      await send({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "list the files" } })
+      await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Replayed thought." } })
+      await send({
+        sessionUpdate: "tool_call",
+        toolCallId: "replayed_call_1",
+        title: "List directory",
+        kind: "execute",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "a.txt\nb.txt" } }],
+      })
+      await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "There are two files." } })
+      return {}
     },
     async prompt(params) {
       const send = (update: SessionUpdate) =>

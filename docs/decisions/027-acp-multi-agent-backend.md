@@ -1,6 +1,6 @@
 # ADR-027: ACP 多 Agent 后端支持 — 经 Agent Client Protocol 统一调度多 agent
 
-**状态**: Accepted · **阶段0-1 已实现**（2026-06-10，`feat/agent-os-phase0` 分支：`@agent/acp-client` :4099，claude 全链路达标——turn 整形/权限回环/知识库 MCP opt-in/进程稳定性 + 真机验证；历史持久化（session/load）与 gemini/qoder 二期）
+**状态**: Accepted · **阶段0-1 已实现**（2026-06-10，`feat/agent-os-phase0` 分支：`@agent/acp-client` :4099，claude 全链路达标——turn 整形/权限回环/知识库 MCP opt-in/进程稳定性 + 真机验证；**W4b 会话历史持久化已实现 2026-06-11**——sidecar 落盘整形消息 + session/load 懒恢复 + replay 抑制；gemini/qoder 二期）
 **日期**: 2026-05-25（编号预留）· 2026-06-08（正式化 + 实现规划）· 2026-06-10（阶段0-1 落地）
 **关联**: ADR-002 (OpenCode Headless Sidecar), ADR-005 (Permission & Question Dock), ADR-026 (知识库架构), ADR-028 (sidecar 副本/进程清理), ADR-029 (执行流程回合分组)
 **探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性 + 三档模型）· [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）
@@ -73,6 +73,8 @@ W1 发「opencode 形状」后前端基本无需改；仅补 `use-session-messag
 
 ### W4 · 能力协商 + 宿主 MCP 转发
 读 `initialize` 的 `agentCapabilities`（loadSession/promptCapabilities）→ 条件启用 UI；`newSession` 透传宿主 MCP（最小：知识库 :4098），让外部 agent 可 `knowledge_search`；loadSession 须加 replay 抑制（acpx：idle 80ms / timeout 5s）避免历史重渲染。
+
+**W4b · 会话历史持久化（已实现 2026-06-11）**——方案拍板：**sidecar 持久化整形消息**（而非 load 时重放整形）。理由：turn 边界靠 prompt RPC 生命周期驱动、replay 无法可靠切分；id 稳定性（重放会重新生成 id 破坏前端去重）；历史秒开不依赖 agent 存活/loadSession 能力；保留 tokens/finish 元数据。实现：`session-store.ts` event-fold reducer（与前端同构）+ `~/.local/share/ultrawork/acp-sessions/<sid>.json`（xdgData）；`session/load` 仅在下次 prompt 时懒恢复 agent 上下文，**replay 全抑制**（idle 窗口从 RPC resolve 起算）；无 loadSession 能力降级新建会话；TurnShaper id 带 epoch 防重启后代际碰撞（详见 gotchas §8）。
 
 ### W5 · 进程稳定性（移植 acpx 常量）
 - **三阶段关闭**：`stdin.end()`（grace 100ms，qoder 750ms）→ SIGTERM（1500ms）→ SIGKILL（1000ms）→ detach+unref。

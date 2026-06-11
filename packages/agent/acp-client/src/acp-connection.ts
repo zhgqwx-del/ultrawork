@@ -32,6 +32,13 @@ import { TurnShaper } from "./turn-shaper.js"
 const INITIALIZE_TIMEOUT_MS = 30_000
 // Claude is known to stall on session/new (acpx quirk constant, W5).
 const SESSION_NEW_TIMEOUT_MS = 60_000
+// session/load gets the same stall defense as session/new.
+const SESSION_LOAD_TIMEOUT_MS = 60_000
+// Replay suppression after session/load (acpx constants, ADR-027 W4): replayed
+// session/update notifications are dropped until the stream stays quiet for
+// REPLAY_IDLE_MS, bounded by REPLAY_MAX_MS after the RPC resolves.
+const REPLAY_IDLE_MS = 80
+const REPLAY_MAX_MS = 5_000
 // Unanswered permission requests deny by default (safety default, W3).
 // Read lazily so tests can shrink it via env after module load.
 const permissionTimeoutMs = () => Number(process.env.ACP_PERMISSION_TIMEOUT_MS ?? 300_000)
@@ -77,6 +84,8 @@ export class ACPConnection {
   private connection: ClientSideConnection | undefined
   private shapers = new Map<string, TurnShaper>()
   private emitIds = new Map<string, string>()
+  /** Sessions whose session/load replay is being suppressed (W4b). */
+  private replaying = new Map<string, { lastUpdateAt: number }>()
   private pendingPermissions = new Map<string, PendingPermission>()
   private permSeq = 0
   private activePrompts = new Set<string>()
@@ -170,6 +179,45 @@ export class ACPConnection {
     return sessionId
   }
 
+  /**
+   * Restore an existing agent-side session (W4b). The replayed history
+   * (session/update notifications streamed during/around the RPC) is
+   * suppressed — the sidecar already holds the shaped history on disk, so
+   * re-emitting it would double-render on the client. Suppression ends when
+   * the update stream stays quiet for REPLAY_IDLE_MS (bounded by
+   * REPLAY_MAX_MS after the RPC resolves); only then is the shaper installed.
+   */
+  async loadSession(acpSessionId: string, cwd: string, emitSessionId?: string): Promise<void> {
+    const conn = this.requireConnection()
+    const emitAs = emitSessionId ?? acpSessionId
+    this.emitIds.set(acpSessionId, emitAs)
+    const replay = { lastUpdateAt: 0 }
+    this.replaying.set(acpSessionId, replay)
+    try {
+      await this.runRequest(
+        () => conn.loadSession({ sessionId: acpSessionId, cwd, mcpServers: this.hostMcpServers() }),
+        SESSION_LOAD_TIMEOUT_MS,
+        "session/load",
+      )
+      // The idle window starts at RPC completion: agents may keep streaming
+      // replay notifications after responding, so always wait out at least
+      // one quiet REPLAY_IDLE_MS before trusting the stream.
+      replay.lastUpdateAt = Date.now()
+      const deadline = Date.now() + REPLAY_MAX_MS
+      while (Date.now() < deadline) {
+        const sinceLast = Date.now() - replay.lastUpdateAt
+        if (sinceLast >= REPLAY_IDLE_MS) break
+        await Bun.sleep(REPLAY_IDLE_MS - sinceLast)
+      }
+    } finally {
+      this.replaying.delete(acpSessionId)
+    }
+    this.shapers.set(
+      acpSessionId,
+      new TurnShaper(emitAs, this.config.id, (event) => this.onEvent(emitAs, event)),
+    )
+  }
+
   hasSession(sessionId: string): boolean {
     return this.shapers.has(sessionId)
   }
@@ -225,6 +273,7 @@ export class ACPConnection {
     this.connection = undefined
     this.shapers.clear()
     this.emitIds.clear()
+    this.replaying.clear()
     this.status = "disconnected"
     if (proc) await terminateProcess(proc)
   }
@@ -308,6 +357,12 @@ export class ACPConnection {
   private createClient() {
     return {
       sessionUpdate: (params: SessionNotification): Promise<void> => {
+        // W4b: drop session/load replay (history is served from the store).
+        const replay = this.replaying.get(params.sessionId)
+        if (replay) {
+          replay.lastUpdateAt = Date.now()
+          return Promise.resolve()
+        }
         // Fix 2: keep arrival order.
         this.updateChain = this.updateChain.then(() => {
           const shaper = this.shapers.get(params.sessionId)

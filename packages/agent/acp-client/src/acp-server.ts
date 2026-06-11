@@ -105,6 +105,17 @@ export function createServer(manager: ACPManager): Hono {
     return info ? c.json(info) : c.json({ error: "unknown session" }, 404)
   })
 
+  // Persisted shaped history (W4b) in the desktop's render shape.
+  app.get("/acp/session/:id/messages", (c) => {
+    const messages = manager.getMessages(c.req.param("id"))
+    return messages ? c.json({ messages }) : c.json({ error: "unknown session" }, 404)
+  })
+
+  app.delete("/acp/session/:id", (c) => {
+    const ok = manager.deleteSession(c.req.param("id"))
+    return ok ? c.json({ ok: true }) : c.json({ error: "unknown session" }, 404)
+  })
+
   app.post("/acp/session/:id/prompt", async (c) => {
     const sessionId = c.req.param("id")
     const body = await c.req.json<{ text?: string }>().catch(() => null)

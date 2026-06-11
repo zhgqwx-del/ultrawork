@@ -58,6 +58,24 @@ export interface ACPSessionInfo {
   createdAt: number
 }
 
+/** One shaped message as the desktop renders it (info + accumulated parts). */
+export interface UwStoredMessage {
+  info: UwMessageInfo
+  parts: UwPart[]
+}
+
+/** On-disk session record: id mapping + shaped history (W4b). */
+export interface PersistedACPSession {
+  version: 1
+  sessionId: string
+  acpSessionId: string
+  agentId: string
+  cwd: string
+  createdAt: number
+  updatedAt: number
+  messages: UwStoredMessage[]
+}
+
 // --- OpenCode-shaped wire types (subset the sidecar emits) ---
 
 export interface UwPartBase {

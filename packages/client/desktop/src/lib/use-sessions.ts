@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { Session } from "@agent/api-client"
 import { ApiError } from "@agent/api-client"
 import { useApi } from "./use-api"
+import { deleteACPSession } from "./agent-router"
 import { useWorkspace } from "./workspace-context"
 import { useSSESubscribe } from "./sse-context"
 
@@ -99,6 +100,9 @@ export function useSessions() {
           throw err
         }
       }
+      // Drop any ACP sidecar state bound to this session (404 for non-ACP
+      // sessions, and a dead sidecar must not block deletion).
+      deleteACPSession(sessionId).catch(() => {})
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
     },
     [api]

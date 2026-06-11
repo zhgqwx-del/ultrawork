@@ -3,6 +3,8 @@
 // Always absolute (no Vite proxy entry for :4099): the sidecar allows the
 // dev/Tauri origins via CORS, so this works in both dev and production.
 
+import type { SendMessageResponse } from "@agent/api-client"
+
 export const ACP_BASE_URL = "http://localhost:4099"
 
 export interface ACPAgentInfo {
@@ -97,6 +99,23 @@ export async function ensureACPSession(
     method: "POST",
     body: JSON.stringify({ agentId, cwd, clientSessionId }),
   })
+}
+
+/**
+ * Persisted shaped history for an ACP-bound session (W4b). Unknown sessions
+ * (never prompted, or persistence lost) resolve to an empty list.
+ */
+export async function fetchACPSessionMessages(sessionId: string): Promise<SendMessageResponse[]> {
+  const res = await fetch(`${ACP_BASE_URL}/acp/session/${encodeURIComponent(sessionId)}/messages`)
+  if (res.status === 404) return []
+  if (!res.ok) throw new Error(`ACP request failed: ${res.status}`)
+  const body = (await res.json()) as { messages: SendMessageResponse[] }
+  return body.messages ?? []
+}
+
+/** Drop the sidecar's persisted state for a deleted session (fire-and-forget). */
+export function deleteACPSession(sessionId: string): Promise<void> {
+  return request(`/acp/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" })
 }
 
 /** Resolves when the turn completes (the sidecar blocks until StopReason). */
