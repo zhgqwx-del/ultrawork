@@ -106,7 +106,7 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 > - **阻塞超时三件套**：shim 每 10s 发 MCP progress notification（vendor `resetTimeoutOnProgress:true`）+ opencode mcp entry `timeout:600000`（兼任 connect 超时，勿过大）+ claude spawn env `MCP_TOOL_TIMEOUT` 兜底。
 > - **深度护栏残余风险（接受）**：delegate 端点恒 depth 0→1；真正的防递归闸门在注入侧（ACP 子会话不注入 + opencode 子会话 tools deny，均真机验证）。delegate 记录不持久化（重启 = shim 工具错误，与 run interrupted 同级）。
 > - **opencode「编排模式」开关限制**：vendor 无 DELETE /mcp——关闭须重启生效；运行时 POST /mcp 仅对当前 workspace instance 生效（gotchas §3）。
-> - **真机（备用端口栈 2026-06-12）**：opencode 主 agent 全闭环（qwen-plus 调 `orchestrator_delegate` → 契约回卷）、子会话 deny/隐藏父/侧栏零污染、shim progress keepalive 3 帧、Fan-out 3 步（含 worktree worker）并行+聚合+worktree 回收全过。**遗留校准**：claude（ACP 注入）shim 进程被正确拉起但工具未达模型工具列表——疑本机 Claude Code 深度定制环境（deferred-tools harness）干扰，GUI 走查时校准（见 MEMORY Pending Issues）。
+> - **真机（2026-06-12 两轮）**：opencode 主 agent 全闭环（qwen-plus 调 `orchestrator_delegate` → 契约回卷）、**claude 主对话全闭环**（per-session 注入 → mcp__orchestrator__delegate 可见 → 权限应答 → 委派 opencode 子任务契约回卷；首轮"工具不可见"的根因是测试栈跑了 M4 之前的旧二进制，重编即愈，注入链路无缺陷）、子会话 deny/隐藏父/侧栏零污染、shim progress keepalive 3 帧、Fan-out 3 步（含 worktree worker）并行+聚合+worktree 回收全过；GUI（Chrome+Vite+Playwright）①③④⑤ 12 项断言全过（delegate 卡片/DelegateDock 权限内联+文件落盘/Fan-out 分层渲染/步骤级 model 下拉）。ACP 卡片识别谓词真机校准：claude 的 tool part `tool='other'`（kind）、input `{agentId,task,cwd,model}` —— rawInput 形状谓词命中。
 > - **D-8 真机佐证**：opencode 主对话内置 `task` 与 `orchestrator_delegate` 并存，提示词不点名时模型可能选内置 task——跨厂商委派须点名工具。
 
 ### 验收
