@@ -31,6 +31,7 @@ export {
 } from "./artifacts"
 
 export { RunStore } from "./run-store"
+export { createWorktree, collectArtifact, isGitRepo, removeWorktree, stageInputs, worktreesRoot, WorktreeError } from "./worktree"
 export { SessionQueue } from "./session-queue"
 export { Semaphore, TaskRegistry, type TaskRecord } from "./task-registry"
 export { runTurn, TurnCancelledError, TurnFailedError, TurnTimeoutError, type RunTurnOptions } from "./turn"

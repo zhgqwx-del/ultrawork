@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { parseAgentId, type Unsubscribe } from "@agent/connector"
+import { artifactNameOf } from "./artifacts"
 import { executePipeline, type PipelineHost } from "./pipeline"
+import { isGitRepo } from "./worktree"
 import { SessionQueue } from "./session-queue"
 import { Semaphore, TaskRegistry } from "./task-registry"
 import { runTurn, TurnCancelledError, TurnTimeoutError } from "./turn"
@@ -67,7 +69,8 @@ function childToolsFor(agentId: string): Record<string, boolean> | undefined {
 export class Orchestrator {
   private runs = new Map<string, OrchestrationRun>()
   private cancelledRuns = new Set<string>()
-  private activeTasks = new Map<string, TaskHandle>()
+  /** In-flight tasks per run — Fan-out runs several at once (cancelRun aborts ALL). */
+  private activeTasks = new Map<string, Map<string, TaskHandle>>()
   private registry = new TaskRegistry()
   private queue = new SessionQueue()
   private semaphore: Semaphore
@@ -86,13 +89,23 @@ export class Orchestrator {
     this.host = {
       spawn: (opts) => this.spawn(opts),
       connectorFor: (workspace) => this.deps.connectorFor(workspace),
+      releaseConnector: deps.releaseConnector?.bind(deps),
       saveAndEmitRun: (run) => this.saveAndEmitRun(run),
       saveAndEmitStep: (run, step) => this.saveAndEmitStep(run, step),
       emit: (event) => this.emit(event),
       isRunCancelled: (runId) => this.cancelledRuns.has(runId),
-      setActiveTask: (runId, handle) => {
-        if (handle) this.activeTasks.set(runId, handle)
-        else this.activeTasks.delete(runId)
+      addActiveTask: (runId, handle) => {
+        let tasks = this.activeTasks.get(runId)
+        if (!tasks) {
+          tasks = new Map()
+          this.activeTasks.set(runId, tasks)
+        }
+        tasks.set(handle.taskId, handle)
+      },
+      removeActiveTask: (runId, taskId) => {
+        const tasks = this.activeTasks.get(runId)
+        tasks?.delete(taskId)
+        if (tasks?.size === 0) this.activeTasks.delete(runId)
       },
       now: () => this.now(),
       defaultTimeoutMs: this.defaultTimeoutMs,
@@ -218,6 +231,7 @@ export class Orchestrator {
       throw new RecipeValidationError("recipe.steps must be a non-empty array")
     }
     const seen = new Set<string>()
+    const artifactNames = new Set<string>()
     const steps = recipe.steps.map((step, index) => {
       if (!step.id?.trim() || !STEP_ID_PATTERN.test(step.id)) {
         throw new RecipeValidationError(`step ${index}: id must match ${STEP_ID_PATTERN}`)
@@ -225,6 +239,13 @@ export class Orchestrator {
       if (seen.has(step.id)) throw new RecipeValidationError(`duplicate step id "${step.id}"`)
       if (!step.agentId?.trim()) throw new RecipeValidationError(`step "${step.id}": agentId is required`)
       if (!step.taskPrompt?.trim()) throw new RecipeValidationError(`step "${step.id}": taskPrompt is required`)
+      // Parallel steps share the main run dir — a clashing artifact name
+      // would silently clobber a sibling's deliverable.
+      const artifactName = artifactNameOf(step)
+      if (artifactNames.has(artifactName)) {
+        throw new RecipeValidationError(`step "${step.id}": duplicate artifact name "${artifactName}"`)
+      }
+      artifactNames.add(artifactName)
       // Default input: the previous step's artifact. Normalized to explicit
       // ids at creation so the stored recipe is self-describing.
       const inputs = step.inputs ?? (index > 0 ? [recipe.steps[index - 1].id] : [])
@@ -236,6 +257,9 @@ export class Orchestrator {
       seen.add(step.id)
       return { ...step, inputs }
     })
+    if (steps.some((step) => step.isolation === "worktree") && !isGitRepo(workspace)) {
+      throw new RecipeValidationError("worktree isolation requires the workspace to be a git repository")
+    }
     return { name: recipe.name.trim(), workspace, steps }
   }
 
@@ -254,8 +278,9 @@ export class Orchestrator {
       throw new RunNotCancellableError(run.status)
     }
     this.cancelledRuns.add(runId)
-    const active = this.activeTasks.get(runId)
-    if (active) this.registry.get(active.taskId)?.abort.abort()
+    for (const handle of this.activeTasks.get(runId)?.values() ?? []) {
+      this.registry.get(handle.taskId)?.abort.abort()
+    }
   }
 
   // --- events / recovery ---

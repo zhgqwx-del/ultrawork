@@ -25,6 +25,13 @@ export interface RecipeStep {
   timeoutMs?: number
   /** Model override "providerID/modelID" (capabilities.model backends only). */
   model?: string
+  /**
+   * "worktree": run this step in a detached git worktree of the workspace
+   * (Fan-out isolation, D-4). Requires the workspace to be a git repo with at
+   * least one commit. Input artifacts are staged INTO the worktree and the
+   * deliverable is collected back to the main run dir on success.
+   */
+  isolation?: "worktree"
 }
 
 export interface PipelineRecipe {
@@ -42,6 +49,11 @@ export interface RunStep {
   sessionId?: string
   /** Absolute path of the produced artifact (set when the step starts). */
   artifactPath?: string
+  /**
+   * Worktree the step ran in (isolation: "worktree"). Removed on success;
+   * kept on failure for debugging — the UI shows the path.
+   */
+  worktreePath?: string
   error?: string
   startedAt?: number
   endedAt?: number
@@ -157,6 +169,12 @@ export interface OrchestratorDeps {
    * The host (ACP sidecar) caches instances per workspace.
    */
   connectorFor(workspace: string): Connector
+  /**
+   * Release a connector created for a TEMPORARY workspace (worktree dirs) —
+   * per-workspace connectors hold an SSE stream each and would leak across
+   * fan-out runs otherwise. Never called for real user workspaces.
+   */
+  releaseConnector?(workspace: string): void
   store: RunStoreLike
   governance?: GovernanceOptions
   /** Injectable clock for tests. */

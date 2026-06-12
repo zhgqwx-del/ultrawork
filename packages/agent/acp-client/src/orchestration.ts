@@ -56,11 +56,22 @@ export function createOrchestrator(manager: ACPManager): OrchestrationHost {
     return connector
   }
 
+  // Worktree dirs get their own per-workspace connector (opencode SSE is
+  // directory-scoped); release them after the step or every fan-out run
+  // would leak an SSE stream per worker.
+  const releaseConnector = (workspace: string): void => {
+    const connector = connectors.get(workspace)
+    if (!connector) return
+    connectors.delete(workspace)
+    connector.dispose()
+  }
+
   const hidden = hiddenParentDir()
   mkdirSync(hidden, { recursive: true })
 
   const orchestrator = new Orchestrator({
     connectorFor,
+    releaseConnector,
     store: new RunStore(),
     hiddenParentWorkspace: hidden,
   })
