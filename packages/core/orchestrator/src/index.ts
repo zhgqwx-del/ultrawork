@@ -41,3 +41,14 @@ export {
   RunNotCancellableError,
   RunNotFoundError,
 } from "./orchestrator"
+export {
+  DelegateManager,
+  DelegateRequestError,
+  type DelegateEvent,
+  type DelegateEventHandler,
+  type DelegateManagerDeps,
+  type DelegateRecord,
+  type DelegateRequest,
+  type DelegateResult,
+  type DelegateStatus,
+} from "./delegate"

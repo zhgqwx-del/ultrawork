@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Connector, OpenCodeBackend, UNLIMITED_SSE_RETRY } from "@agent/connector"
-import { Orchestrator, RunStore } from "@agent/orchestrator"
+import { DelegateManager, Orchestrator, RunStore } from "@agent/orchestrator"
 import type { ACPManager } from "./acp-manager.js"
 import { InProcACPBackend } from "./inproc-acp-backend.js"
 import { getOpencodePassword } from "./opencode-credentials.js"
@@ -24,7 +24,12 @@ function hiddenParentDir(): string {
   return join(xdgData, "ultrawork", "orchestrator-hidden")
 }
 
-export function createOrchestrator(manager: ACPManager): Orchestrator {
+export interface OrchestrationHost {
+  orchestrator: Orchestrator
+  delegates: DelegateManager
+}
+
+export function createOrchestrator(manager: ACPManager): OrchestrationHost {
   // One ACP backend for every workspace (cwd is per session); one
   // OpenCodeBackend per workspace (its REST + /event stream are
   // directory-scoped — same per-workspace map as the gateway bridge).
@@ -54,9 +59,15 @@ export function createOrchestrator(manager: ACPManager): Orchestrator {
   const hidden = hiddenParentDir()
   mkdirSync(hidden, { recursive: true })
 
-  return new Orchestrator({
+  const orchestrator = new Orchestrator({
     connectorFor,
     store: new RunStore(),
     hiddenParentWorkspace: hidden,
   })
+  const delegates = new DelegateManager({
+    orchestrator,
+    connectorFor,
+    hiddenParentWorkspace: hidden,
+  })
+  return { orchestrator, delegates }
 }

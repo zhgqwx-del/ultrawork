@@ -14,9 +14,24 @@ const app = createServer(manager)
 
 // Orchestration layer (ADR-031): hosted here so runs survive WebView reloads.
 // Interrupted runs are marked, never auto-resumed.
-const orchestrator = createOrchestrator(manager)
+const { orchestrator, delegates } = createOrchestrator(manager)
 orchestrator.loadPersisted()
-app.route("/", orchestrationRoutes(orchestrator))
+app.route(
+  "/",
+  orchestrationRoutes(orchestrator, delegates, {
+    // Delegate targets offered to the shim's list_agents tool: every
+    // configured ACP agent (namespaced) plus the default opencode backend.
+    listAgents: () => [
+      { id: "opencode:default", name: "OpenCode", status: "available" },
+      ...manager.listAgents().map((agent) => ({
+        id: `acp:${agent.id}`,
+        name: agent.label,
+        status: agent.status,
+        description: agent.description,
+      })),
+    ],
+  }),
+)
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
