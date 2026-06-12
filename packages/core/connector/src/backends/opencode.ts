@@ -201,6 +201,7 @@ export class OpenCodeBackend implements AgentBackend {
     await this.api.promptAsync(sessionId, text, {
       agent: opts?.agent,
       model: opts?.model,
+      tools: opts?.tools,
     })
   }
 

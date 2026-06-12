@@ -210,9 +210,9 @@ describe("ApiClient", () => {
 
     it("deleteSession", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse(true))
-      const result = await client.deleteSession("s1")
+      await client.deleteSession("s1")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/session/s1")
       expect(mockFetch.mock.calls[0][1].method).toBe("DELETE")
-      expect(result).toBe(true)
     })
 
     it("updateSession", async () => {
@@ -257,6 +257,28 @@ describe("ApiClient", () => {
       await client.promptAsync("s1", "Hello", { agent: "plan" })
       const body = JSON.parse(mockFetch.mock.calls[0][1].body)
       expect(body.agent).toBe("plan")
+    })
+
+    it("promptAsync - with tools deny map", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      })
+      await client.promptAsync("s1", "Hello", { tools: { "orchestrator_*": false } })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.tools).toEqual({ "orchestrator_*": false })
+    })
+
+    it("promptAsync - omits empty tools map", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      })
+      await client.promptAsync("s1", "Hello", { tools: {} })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.tools).toBeUndefined()
     })
 
     it("promptAsync - throws on error", async () => {

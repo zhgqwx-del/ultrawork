@@ -108,6 +108,13 @@ export interface PromptOptions {
   boundAgentId?: string
   /** Session workspace directory — ACP agents spawn/cwd there (opencode ignores it). */
   directory?: string
+  /**
+   * Per-tool enable/disable (opencode only — other backends ignore it).
+   * Applied server-side as a sticky session permission ruleset; wildcard keys
+   * like "orchestrator_*" are honored. The orchestrator uses this to deny the
+   * delegate MCP tools on child sessions (recursion guard).
+   */
+  tools?: Record<string, boolean>
 }
 
 export interface FetchHistoryOptions {

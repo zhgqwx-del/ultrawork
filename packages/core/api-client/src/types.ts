@@ -306,6 +306,11 @@ export interface PromptAsyncRequest {
   parts: Array<{ type: string; text?: string; [key: string]: any }>
   agent?: string
   model?: ModelOverride
+  /**
+   * Per-tool enable/disable, applied by the server as a session-level
+   * permission ruleset (wildcard keys like "orchestrator_*" supported).
+   */
+  tools?: Record<string, boolean>
 }
 
 // --- MCP types ---

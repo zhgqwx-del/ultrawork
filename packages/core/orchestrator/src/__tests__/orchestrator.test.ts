@@ -338,6 +338,40 @@ describe("Orchestrator", () => {
       await orchestrator.cancelTask(handle.taskId)
       await expect(handle.done).resolves.toMatchObject({ status: "cancelled" })
     })
+
+    it("denies the delegate MCP tools on opencode children (and steer), not on ACP", async () => {
+      const { opencode, acp, orchestrator } = build({
+        opencode: {
+          onPrompt: (sid, _text, emit) => {
+            emit(finishEvent(sid))
+            emit(idleEvent(sid))
+          },
+        },
+      })
+
+      const ocHandle = await orchestrator.spawn({ agentId: "opencode:default", task: "child", workspace })
+      await expect(ocHandle.done).resolves.toMatchObject({ status: "completed" })
+      expect(opencode.prompt).toHaveBeenCalledWith(
+        ocHandle.sessionId,
+        "child",
+        expect.objectContaining({ tools: { "orchestrator_*": false } }),
+      )
+
+      await orchestrator.steer(ocHandle.taskId, "follow-up")
+      expect(opencode.prompt).toHaveBeenLastCalledWith(
+        ocHandle.sessionId,
+        "follow-up",
+        expect.objectContaining({ tools: { "orchestrator_*": false } }),
+      )
+
+      const acpHandle = await orchestrator.spawn({ agentId: "acp:claude", task: "child", workspace })
+      await expect(acpHandle.done).resolves.toMatchObject({ status: "completed" })
+      expect(acp.prompt).toHaveBeenCalledWith(
+        acpHandle.sessionId,
+        "child",
+        expect.objectContaining({ tools: undefined }),
+      )
+    })
   })
 
   describe("recipe validation", () => {

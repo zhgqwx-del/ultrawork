@@ -27,6 +27,8 @@ export interface RunTurnOptions {
   model?: string
   /** Session workspace, forwarded to prompt (ACP agents spawn/cwd there). */
   directory?: string
+  /** Per-tool deny map, forwarded to prompt (opencode only — recursion guard). */
+  tools?: Record<string, boolean>
 }
 
 /**
@@ -123,6 +125,7 @@ export async function runTurn(
     const prompted = connector.prompt(sessionId, text, {
       model: opts.model,
       directory: opts.directory,
+      tools: opts.tools,
     })
     if (waitsForIdle) {
       // Submission errors (4xx/5xx) are the only signal this promise carries.

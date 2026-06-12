@@ -89,6 +89,16 @@ describe("OpenCodeBackend", () => {
       expect(mockApi.promptAsync).toHaveBeenCalledWith("s1", "hello", { agent: "build", model: "anthropic/claude" })
     })
 
+    it("prompt -> promptAsync forwards the tools deny map", async () => {
+      const backend = track(makeBackend())
+      await backend.prompt("s1", "hello", { tools: { "orchestrator_*": false } })
+      expect(mockApi.promptAsync).toHaveBeenCalledWith(
+        "s1",
+        "hello",
+        expect.objectContaining({ tools: { "orchestrator_*": false } }),
+      )
+    })
+
     it("cancel -> abortSession", async () => {
       const backend = track(makeBackend())
       await backend.cancel("s1")

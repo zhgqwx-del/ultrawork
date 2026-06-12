@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
-import type { Unsubscribe } from "@agent/connector"
+import { parseAgentId, type Unsubscribe } from "@agent/connector"
 import { executePipeline, type PipelineHost } from "./pipeline"
 import { SessionQueue } from "./session-queue"
 import { Semaphore, TaskRegistry } from "./task-registry"
@@ -43,6 +43,20 @@ const DEFAULT_MAX_CONCURRENT = 8
 const DEFAULT_MAX_DEPTH = 1
 const DEFAULT_TIMEOUT_MS = 600_000
 const STEP_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+
+/**
+ * Tool-deny map sent with every opencode child turn: the delegate MCP tools
+ * must never be callable from a child session (recursion guard, ADR-031 D-5).
+ * opencode applies it as a sticky session permission with wildcard matching;
+ * harmless when the orchestrator MCP isn't registered. ACP children are
+ * guarded at the injection side instead (no mcpServers entry — see
+ * InProcACPBackend), and their backends ignore `tools`.
+ */
+const CHILD_TOOL_DENY: Record<string, boolean> = { "orchestrator_*": false }
+
+function childToolsFor(agentId: string): Record<string, boolean> | undefined {
+  return parseAgentId(agentId).source === "opencode" ? CHILD_TOOL_DENY : undefined
+}
 
 /**
  * ADR-031 stage-3 orchestrator (first batch): delegate primitives
@@ -130,6 +144,7 @@ export class Orchestrator {
           signal: abort.signal,
           model: opts.model,
           directory: opts.workspace,
+          tools: childToolsFor(opts.agentId),
         }),
       )
       return { status: "completed", sessionId }
@@ -155,6 +170,7 @@ export class Orchestrator {
         signal: record.abort.signal,
         model: record.model,
         directory: record.workspace,
+        tools: childToolsFor(record.handle.agentId),
       }),
     )
   }
