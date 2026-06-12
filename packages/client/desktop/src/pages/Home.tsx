@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText } from "lucide-react"
@@ -6,10 +6,17 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAgents } from "@/lib/agent-context"
+import { useApi } from "@/lib/use-api"
+import { useWorkspace } from "@/lib/workspace-context"
+import { useTeamSessions } from "@/lib/team-sessions-context"
+import { buildLeaderSystemPrompt, type TeamMember } from "@/lib/team-leader-prompt"
+import { ensureOrchestratorMcp } from "@/lib/orchestrator-mcp"
+import { createTeamSession } from "@/lib/orchestration-client"
 import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId } from "@agent/connector"
-import { ChatInput, ModelSelector, AgentSelector } from "@/components/chat"
+import { ChatInput, ModelSelector, AgentSelector, TeamMemberSelect } from "@/components/chat"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
+import { cn } from "@/lib/utils"
 
 const ABILITY_CARDS = [
   {
@@ -32,24 +39,53 @@ const ABILITY_CARDS = [
   },
 ]
 
+/** 018 A-2: collaboration mode is a birth property of the task. */
+type TaskMode = "single" | "team"
+
 export function HomePage() {
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
   // The agent for the conversation about to start (档1: chosen before the
   // session is born; the binding freezes once the first message is sent).
+  // In team mode the same control picks the LEADER.
   const [agentId, setAgentId] = useState(OPENCODE_DEFAULT_AGENT_ID)
+  const [mode, setMode] = useState<TaskMode>("single")
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set())
+  const membersTouched = useRef(false)
   const navigate = useNavigate()
+  const api = useApi()
+  const { workspacePath } = useWorkspace()
   const { createSession } = useSessionsContext()
-  const { bindSessionAgent } = useAgents()
+  const { addEntry } = useTeamSessions()
+  const { agents, acpAvailable, bindSessionAgent } = useAgents()
   const connector = useConnector()
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
   const isACP = isACPAgentId(agentId)
 
-  const handleSend = async () => {
-    const text = input.trim()
-    if (!text || sending) return
+  // Default member selection: everyone, until the user edits the picker.
+  useEffect(() => {
+    if (membersTouched.current) return
+    setMemberIds(new Set(agents.map((a) => a.id)))
+  }, [agents])
 
+  const toggleMember = (id: string) => {
+    membersTouched.current = true
+    setMemberIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const memberRoster = (ids: string[]): TeamMember[] =>
+    ids.map((id) => {
+      const agent = agents.find((a) => a.id === id)
+      return { id, name: agent?.name ?? id, description: agent?.description }
+    })
+
+  const handleSingleSend = async (text: string) => {
     setSending(true)
     try {
       const session = await createSession()
@@ -72,6 +108,75 @@ export function HomePage() {
     } finally {
       setSending(false)
     }
+  }
+
+  // Team mode (018): the first send creates the Leader session through the
+  // sidecar registry, then chats with it like any session. opencode leaders
+  // carry the orchestration system prompt + task deny on EVERY turn (here the
+  // first one; Session.tsx repeats it); ACP leaders got the prompt baked in
+  // at creation, so their prompt call is plain.
+  const handleTeamSend = async (text: string) => {
+    if (!workspacePath) {
+      toast.error(t("orchestration.noWorkspace"))
+      return
+    }
+    const members = [...memberIds]
+    if (members.length === 0) {
+      toast.error(t("team.noMembers"))
+      return
+    }
+    setSending(true)
+    try {
+      const systemPrompt = buildLeaderSystemPrompt({
+        workspace: workspacePath,
+        members: memberRoster(members),
+      })
+      const isOpencodeLeader = !isACPAgentId(agentId)
+      // opencode leaders reach the delegate tools through the global MCP
+      // entry — ensure it silently (017 拍板 #5).
+      if (isOpencodeLeader) await ensureOrchestratorMcp(api)
+      const entry = await createTeamSession({
+        workspace: workspacePath,
+        leaderAgentId: agentId,
+        members,
+        systemPrompt,
+      })
+      // Registry context first: the Session page's team lookup must hit
+      // before the navigation below renders it.
+      addEntry(entry)
+      if (!isOpencodeLeader) bindSessionAgent(entry.id, agentId)
+      setInput("")
+      navigate(`/session/${entry.id}`, { state: { sending: true, messageText: text } })
+      connector
+        .prompt(
+          entry.id,
+          text,
+          isOpencodeLeader
+            ? {
+                model: currentModel || undefined,
+                directory: workspacePath,
+                system: systemPrompt,
+                tools: { task: false },
+              }
+            : { directory: workspacePath },
+        )
+        .catch((err) => {
+          console.error("Failed to send message:", err)
+          toast.error(t("error.sendMessage"))
+        })
+    } catch (err) {
+      console.error("Failed to create team session:", err)
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleSend = async () => {
+    const text = input.trim()
+    if (!text || sending) return
+    if (mode === "team") await handleTeamSend(text)
+    else await handleSingleSend(text)
   }
 
   const handleCardClick = (promptKey: string) => {
@@ -118,7 +223,7 @@ export function HomePage() {
             value={input}
             onChange={setInput}
             onSend={handleSend}
-            placeholder={t("placeholder.askAnything")}
+            placeholder={mode === "team" ? t("team.inputPlaceholder") : t("placeholder.askAnything")}
             disabled={sending}
             loading={sending}
             variant="home"
@@ -126,7 +231,11 @@ export function HomePage() {
             ctaLabel={t("home.startNow")}
             leftSlot={
               <div className="flex items-center gap-1">
+                <ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />
                 <AgentSelector agentId={agentId} onAgentChange={setAgentId} />
+                {mode === "team" && (
+                  <TeamMemberSelect selected={memberIds} onToggle={toggleMember} />
+                )}
                 {!isACP && (
                   <ModelSelector
                     currentModel={currentModel}
@@ -140,6 +249,43 @@ export function HomePage() {
         </div>
       </div>
 
+    </div>
+  )
+}
+
+/** Segmented「单 agent | Team」switch — the task's birth mode (018 A-2). */
+function ModeSwitch({
+  mode,
+  onModeChange,
+  teamDisabled,
+}: {
+  mode: TaskMode
+  onModeChange: (mode: TaskMode) => void
+  teamDisabled: boolean
+}) {
+  const { t } = useI18n()
+  const segment = (value: TaskMode, label: string, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      title={disabled ? t("agent.sidecarUnavailable") : undefined}
+      onClick={() => onModeChange(value)}
+      className={cn(
+        "rounded px-2 py-0.5 text-xs transition-colors",
+        mode === value
+          ? "bg-[var(--color-bg)] font-medium text-[var(--color-fg)] shadow-sm"
+          : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+        disabled && "cursor-not-allowed opacity-50 hover:text-[var(--color-fg-muted)]",
+      )}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="flex items-center gap-0.5 rounded-md bg-[var(--color-accent)]/60 p-0.5">
+      {segment("single", t("home.mode.single"))}
+      {segment("team", t("home.mode.team"), teamDisabled)}
     </div>
   )
 }
