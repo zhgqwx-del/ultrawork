@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-11 -->
+<!-- last-synced: 2026-06-12 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -93,6 +93,7 @@
 - **Vendor patch apply 后必须重编译 sidecar**（`bun run build:opencode`）。详见 [`CLAUDE.md`](../CLAUDE.md) §Vendor Patch 管理。
 - **新 workspace 包别声明与 root hoisted 不同版本的依赖**：bun 会重解析 root 提升版本（实测 acp-client 声明 `vitest ^3.1.4` 把 root 的 4.0.18 降到 3.2.4，砸了 desktop 的 jest-dom matcher 注册）。新包不要自带测试框架版本，或与 root 对齐。
 - **Tauri `prepare_port` 会复用端口上健康的旧 sidecar 进程**（不重启）。`build-acp.ts` 在真正重编时会自动 kill :4099 旧进程，保证下次 app 启动跑新二进制；其它 sidecar（gateway 等）改完仍需手动重启 app（见 §4 第一条）。
+- **直接 `bun build --compile` 的产物在 macOS arm64 会被 SIGKILL（exit 137）**：bun 产出的二进制完全无签名（`codesign -dv` 报 not signed），且 `codesign -s -` 直接签会报 "invalid or unsupported format"——必须先 `codesign --remove-signature` 再 ad-hoc 签。**官方构建脚本（`scripts/build-acp.ts` 等）已包含这两步**，本地验证编译产物请走 `bun run --bun scripts/build-*.ts`，不要直接跑包内 `bun run build` 的 dist 产物。
 
 ## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
 
@@ -118,6 +119,17 @@
 - **agent 进程 spawn 细节（PATH + cwd）**：spawn 前 PATH 追加 `~/.local/bin`、`~/.bun/bin`、`/usr/local/bin`、`/opt/homebrew/bin`（打包 Tauri app 的 GUI PATH 找不到 qodercli 之类用户级 CLI；显式 PATH 优先）；`connect(cwd)` 把**首个 session 的 cwd**作为子进程工作目录——qoder 的 execute 工具实测**忽略 session cwd 用进程 cwd**（read 工具却正常），不传 cwd 时命令会跑在 sidecar 自己的目录里。
 - **gemini（`bunx @google/gemini-cli --experimental-acp`，2026-06-11 真机）**：① **ACP 模式 + interactive shell（node-pty，默认开）→ shell 工具调用永久挂起**——无错误无超时，与运行时（bun/node）和 folder trust 均无关；唯一解 `tools.shell.enableInteractiveShell: false`，且该设置**无 env/flag 形式**，只能经 `GEMINI_CLI_SYSTEM_SETTINGS_PATH` 指向 settings 文件。② 未信任目录 headless 直接拒绝执行（`GEMINI_CLI_TRUST_WORKSPACE=true` 解；Ultrawork 自己的权限回环仍是真正闸门）。③ npm wrapper 会用 process.execPath relaunch 自己——bunx 下落到 **bun 运行时**且多一层进程（三阶段关闭看不见）；`GEMINI_CLI_NO_RELAUNCH=true` 保持单进程。→ 三件套 + 托管 settings 文件（`~/.config/ultrawork/gemini-acp-settings.json`，存在则不覆盖）由 `applyGeminiQuirks`（acp-connection.ts）**自动注入**，显式 agent env 永远优先。④ **不发 usage**（tokens/cost 恒空，页脚自然隐藏）。⑤ **shell 工具默认拦截命令替换**——含 `$(…)` 的命令直接 `Blocked: command substitution detected`（tool 帧报 completed、output 是拦截文案，turn 正常继续解释），写验收用例时命令避开 `$()`。⑥ thought/loadSession/权限 kind 全正常；凭证 `~/.gemini/`（Google 登录，**免费档日配额低**——密集真机回归一天可耗尽 `TerminalQuotaError`）；bunx 首启下载 ~17s（30s initialize 超时内）。
 - **qoder（`qodercli --acp`，1.0.4 真机）**：① **权限请求有自身内部超时**——不等回复几十秒内自动放弃（tool→error + 答案「permission timed out, try again?」并正常 end_turn），用户须尽快批复；迟到的回复无害（RPC 仍被 resolve，agent 忽略）。② execute 工具忽略 session cwd（见上方 spawn cwd 条目，已修）。③ **发 usage**（input/output tokens 有、无 cost、reasoning 0）→ token 页脚有数据。④ 连接极快（~0.5s，本机已装无 bunx 下载）；loadSession 恢复上下文正常；stdout 无噪音问题（SDK ndJsonStream 对非 JSON 行本就 log+skip 容错）。⑤ 登录态走本机 qodercli 已有凭证，env `QODER_PERSONAL_ACCESS_TOKEN` 可选。
+
+## 9. Orchestrator（编排，:4099 `/orchestration/*`，`@agent/orchestrator`）
+
+> 阶段3 第一批（ADR-031）实测坑点。
+
+- **两类 backend 的 prompt 语义不同，await「turn 完成」必须分支**：`OpenCodeBackend.prompt` 走 `POST /session/:id/prompt_async`（**204 即 resolve，≠ turn 完成**），终态只能等事件；`ACPBackend`/InProc 的 prompt **阻塞至 StopReason**（resolve 即终态）。编排层统一封装在 `runTurn`（orchestrator/src/turn.ts）——新代码不要直接 `await connector.prompt()` 当完成。
+- **opencode 终态用双信号 + 残留 idle 防误判**：`session.status` idle 事件偶发丢失（gateway 曾为此加 3min 兜底），`runTurn` 同时认 assistant `message.updated` 的 `finish && finish !== "tool-calls"`；且 **idle 只在本 turn 已见 busy/message 活动后才算数**——订阅先于 prompt，prompt 落地前可能收到上一轮的残留 idle。每步另有硬超时必杀（超时/abort 先 `connector.cancel` 再抛）。
+- **编排子会话防侧栏污染（双机制）**：ACP 子会话**不传 `clientSessionId`** → 无 opencode twin 天然不可见（sidecar 里 id 是 UUID 形态）；opencode 子会话带 `parentID` 挂到**跨目录隐藏父会话**（`~/.local/share/ultrawork/orchestrator-hidden` 下，每 run 懒建一个）——`roots:true` 列表过滤 + desktop SSE 插入分支的 `parentID` guard 双保险。**vendor `POST /session` 接受跨目录 parentID**（真机验证，不校验父会话同 directory）。
+- **headless run 的子会话权限必须有人应答**：子 agent（如 claude 写文件）发 `permission.asked` 时没有打开的会话页，orchestrator 把它 relay 成 run 事件流的 `step.permission`，run 详情页内联应答（ACP 走 `/acp/session/:id/permission`，opencode 走 api.replyPermission）；不答会挂到 sidecar 的 5min 默认 deny（`ACP_PERMISSION_TIMEOUT_MS`）+ 步骤超时兜底。对已 resolve 的权限重复应答返回 404，无害。
+- **run 重启不续跑**：步骤是带副作用的 LLM turn 无幂等保障，sidecar 重启时 running/pending run 一律标 `interrupted`（in-flight step → failed "sidecar restarted"），UI「再跑一次」= 同 recipe 新 run。
+- **产物契约靠 prompt 文本约定**（`artifacts.ts buildStepPrompt`）：交付物路径以「（覆盖写）：<path>」行注入，步骤结束 `existsSync` 校验，缺失即 step failed——改契约文案时注意 orchestrator 测试里按此正则解析。
 
 ---
 

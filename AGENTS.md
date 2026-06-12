@@ -28,6 +28,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
 | `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
 | `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
+| `@agent/orchestrator` | ✅ 阶段3 第一批（ADR-031） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + Pipeline recipe（产物文件串接）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*`）；Fan-out/delegate MCP 工具留下一批 |
 
 ## Project Structure
 
@@ -43,6 +44,7 @@ ultrawork/
 │   ├── core/
 │   │   ├── api-client/src/      # REST client for OpenCode API
 │   │   ├── connector/src/       # Control+event unification layer (backends/, sse-transport, binding-store)
+│   │   ├── orchestrator/src/    # Orchestration layer (primitives, pipeline, run-store; hosted by acp-client)
 │   │   └── server-manager/src/  # Process manager for OpenCode
 │   ├── agent/
 │   │   └── acp-client/src/      # ACP Client Sidecar (spawn external agents + turn shaping + permissions)
@@ -129,6 +131,14 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `binding-store.ts` — 会话↔agent 绑定：BindingCache 注入（desktop=localStorage）+ hydrate 合并（sidecar 优先 + dirty set 防竞态）
 - `backends/opencode.ts` — 包装 createApiClient（⚠️ 必须工厂，bridge.test mock 依赖）+ 全局 /event 流；`.api` 暴露 backend-specific 面
 - `backends/acp.ts` + `acp-http.ts` — acp-stdio 族通用 adapter：per-session SSE 引用计数池 + :4099 REST（原 desktop agent-router）
+
+**Orchestrator（`packages/core/orchestrator/src/`，ADR-031 阶段3 第一批）**
+- `orchestrator.ts` — 原语（spawn/awaitTask/steer/cancelTask）+ recipe 层（createRun/cancelRun）+ 治理 + loadPersisted（重启标 interrupted）
+- `turn.ts` — `runTurn` 双语义终态检测（opencode fire-and-forget 等 idle+finish 双信号；ACP 阻塞 prompt 即终态；超时/abort 先 cancel）⚠️ 编排新代码勿直接 await prompt 当完成
+- `pipeline.ts` — Pipeline 执行器（产物串接 + 失败传播 skipped + step.permission relay + 跨目录隐藏父会话）；`artifacts.ts` — 产物路径约定 + prompt 契约
+- `session-queue.ts`（QueueOwner 实现）, `task-registry.ts`（Semaphore 排队语义 + 任务跟踪）, `run-store.ts`（JSON 落盘 `~/.local/share/ultrawork/orchestrator-runs/`）
+- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector）, `orchestration-routes.ts`（5 端点）, `inproc-acp-backend.ts`（直连 ACPManager）, `opencode-credentials.ts`
+- Desktop：`pages/Orchestration.tsx` + `pages/OrchestrationRun.tsx` + `lib/orchestration-client.ts`（fetch + EventSource）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）

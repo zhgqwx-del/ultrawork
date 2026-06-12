@@ -15,6 +15,7 @@
 > | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
 > | @agent/acp-client | ✅ 阶段1（claude/gemini/qoder 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（claude 经 `@agentclientprotocol/claude-agent-acp` 0.44〔token/cost 页脚 + thoughtLevel 思考力度〕；gemini 经 `--experimental-acp`、qoder 经 `qodercli --acp`，per-agent 怪癖修复见 gotchas §8）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`（Settings 预置模板一键填充）。会话历史持久化（W4b：整形消息落盘 `~/.local/share/ultrawork/acp-sessions/` + session/load 懒恢复 + replay 抑制）已实现。详见 ADR-027 + `agent-os-target-architecture.md` |
 > | @agent/connector | ✅ 已实现（阶段2，2026-06-11） | 控制+事件统一层：Desktop/Gateway 全部后端调用经 connector（OpenCodeBackend 包装 api-client + 统一 SSE transport；ACPBackend 收编 :4099 客户端）；会话↔agent 绑定 sidecar 持久化 + hydration；capabilities 声明门控（ADR-030） |
+> | @agent/orchestrator | ✅ 第一批已实现（阶段3，2026-06-12） | 编排层（ADR-031）：spawn/await/steer/cancel 原语 + 治理护栏（maxConcurrent/maxDepth=1/超时）+ 代码驱动 Pipeline recipe（产物文件串接）+ QueueOwner 实现；宿主在 ACP sidecar :4099（`/orchestration/*` HTTP+SSE），Desktop 独立路由 `/orchestration`（不侵入主聊天）。Fan-out 与 agent 驱动 delegate（宿主 MCP 工具）留下一批 |
 > | @agent/ui | 🔲 规划中 | 组件直接在 desktop/src/components 中，未抽为独立包 |
 > | @agent/workspace | 🔲 规划中 | 工作区切换已用 `x-opencode-directory` header 实现，但 ~/.ultrawork/ 目录管理未实现 |
 > | @agent/notifier | 🔲 规划中 | |

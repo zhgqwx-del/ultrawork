@@ -1,6 +1,6 @@
 # ADR-031: 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式
 
-**状态**: Accepted（架构决策）· 实现规划中（阶段3，依赖 ADR-027 阶段1 + ADR-030 阶段2 落地）
+**状态**: Accepted（架构决策）· **阶段3 第一批已落地（2026-06-12）**——实现章节的 ①原语层 + ④代码驱动 Pipeline + 编排 UI（独立路由）已实现于 `packages/core/orchestrator`（宿主 = ACP sidecar :4099，`/orchestration/*`）；②agent 驱动 delegate（宿主 MCP 工具）与 ⑤Fan-out 留下一批。落地偏差备注见下方「实现章节」。
 **日期**: 2026-06-08
 **关联**: ADR-005 (Permission & Question Dock), ADR-026 (知识库 MCP), ADR-027 (ACP 多后端，D-2 档2/阶段3), ADR-029 (执行流程回合分组，嵌套渲染), ADR-030 (@agent/connector 控制原语)
 **探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md) §6（delegate 优于对等换手、五种模式、治理）· [discussions/012](../discussions/012-p1-execution-plan.md) P1-3（嵌套委派 UI）
@@ -88,11 +88,18 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 - **UI**：delegate 卡片渲染器（接 ADR-029 ExecutionFlow / tool-call-block）+ 子会话懒加载。
 
 ### 阶段拆解
-1. **原语层**：在 connector 之上实现 `spawn(child)/await(deliverable)/steer/cancel` + 后台任务跟踪 + 治理护栏（maxConcurrent/maxDepth/budget）。
-2. **agent 驱动 delegate**：经宿主 MCP 暴露 `delegate` 工具；先支持「主 agent 委派单个子任务」（深度 1）。
-3. **UI 嵌套**：delegate 卡片 + 子会话懒加载展示。
-4. **代码驱动 Pipeline**：recipe API + 产物文件串接（首个模板：跨厂商 code review pipeline）。
-5. **Fan-out**：并行多 delegate + worktree 隔离 + 聚合。
+1. **原语层** ✅（2026-06-12）：在 connector 之上实现 `spawn(child)/await(deliverable)/steer/cancel` + 后台任务跟踪 + 治理护栏（maxConcurrent/maxDepth/budget）。
+2. **agent 驱动 delegate**（留下一批）：经宿主 MCP 暴露 `delegate` 工具；先支持「主 agent 委派单个子任务」（深度 1）。
+3. **UI 嵌套** ✅（部分，2026-06-12）：编排独立路由 `/orchestration`（run 列表/详情 + step 时间线 + 权限内联应答 + 子会话懒加载）；主对话内的 delegate 卡片随 ② 落地。
+4. **代码驱动 Pipeline** ✅（2026-06-12）：recipe API + 产物文件串接；真机模板 = 跨厂商两步（opencode 分析 → claude 报告）。
+5. **Fan-out**（留下一批）：并行多 delegate + worktree 隔离 + 聚合（Semaphore 已按排队语义实现为其留路）。
+
+> **第一批落地备注（2026-06-12）**：
+> - **宿主**：orchestrator 实例化在 **ACP sidecar :4099**（非 desktop renderer）——编排跨 WebView reload 存活，② 的 MCP stdio shim 将来可经 HTTP 回连；UI 经 `/orchestration/*` HTTP + per-run SSE（首帧全量快照）消费。
+> - **prompt 语义差异**（调研修正）：OpenCodeBackend.prompt 是 fire-and-forget（prompt_async 204），ACP prompt 阻塞至 StopReason——`runTurn` 统一封装双语义终态检测（见 gotchas §9）。
+> - **D-6 的「非阻塞 + 回卷」在第一批中体现为**：spawn 即后台任务（TaskHandle.done 永不 reject）+ steer/cancel 可中途干预；MCP 工具形态的交付物回卷随 ② 落地。
+> - **D-5 治理**：maxConcurrent 信号量为**排队**语义（非拒绝，为 Fan-out 留路）；tokenBudget 字段预留未执行。
+> - 子会话防侧栏污染：ACP 子会话无 opencode twin；opencode 子会话 parentID 挂跨目录隐藏父会话（vendor 接受跨目录 parentID，真机验证）。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。

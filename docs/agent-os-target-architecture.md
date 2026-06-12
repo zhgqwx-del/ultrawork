@@ -278,7 +278,7 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 | **0 · 重写基线** ✅ (2026-06-10) | **参考 feat/acp-support 设计，在当前 main 上重建**（B2）：ACP Sidecar :4099 / UnifiedAgent / agent-selector / agents.json / auto-connect。**保留 ADR-029 渲染器**，不回退 chat 重构。 | — | ✅ 协议管道在 main 上跑通（opencode + claude，`feat/agent-os-phase0` 分支） |
 | **1 · 档1 异构归一化** ✅ (2026-06-11) | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。claude/gemini/qoder 三 agent 真机达标（含历史持久化 W4b、token 页脚、thoughtLevel）。坑点固化 [gotchas §8](./gotchas.md) | 阶段0 | ✅ 全清单真机通过 |
 | **2 · @agent/connector** ✅ (2026-06-11) | 建包 + OpenCodeBackend 等价层 → Desktop 收敛 → Gateway 收敛 → ACPBackend 收编（C1）。三套 SSE→一处；会话绑定 sidecar 持久化 + hydration；capabilities 门控；QueueOwner/onSessionCreate 边界预留（C2/D-7）。 | 阶段1 | ✅ 全部后端调用经 connector；切 backend 对上层透明（isACP 分流全删）；Gateway 复用 connector（bridge.test 35 用例语义零删除）；原语就绪 |
-| **3 · 档2 编排** | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。 | 阶段2 | 主 agent 能 delegate 给外部 backend，交付物回卷、UI 可见嵌套、护栏生效；一个 Pipeline recipe 端到端；Fan-out worktree 隔离 |
+| **3 · 档2 编排** 🟡 第一批 ✅ (2026-06-12) | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。**第一批已落地**：原语层 + Pipeline recipe + 编排独立路由 UI（宿主 = ACP sidecar :4099，`/orchestration/*`，ADR-031 落地备注）；**下一批**：delegate 宿主 MCP 工具 + Fan-out。 | 阶段2 | ✅ Pipeline recipe 端到端（真机：opencode 分析 → claude 报告，产物串接 + 权限 relay 应答 + cancel/超时/重启 interrupted）；🔲 delegate 回卷 + Fan-out worktree 隔离（下一批） |
 | **4 · 档3 自动调度** | router（规则/LLM）自动派单，用户可覆盖。 | 阶段3 | 远期研究 |
 
 ---
