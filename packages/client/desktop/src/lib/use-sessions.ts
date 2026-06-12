@@ -145,6 +145,9 @@ export function useSessions() {
           next[idx] = updated
           return next
         }
+        // Child sessions (orchestrator children, opencode task subagents)
+        // never enter the sidebar — the list endpoint filters roots only.
+        if (info.parentID) return prev
         // New session from another source (e.g. channel gateway)
         // Only add if it belongs to current workspace
         if (workspacePath && info.directory && info.directory !== workspacePath) return prev

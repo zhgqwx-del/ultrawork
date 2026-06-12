@@ -1,6 +1,13 @@
 import { createBrowserRouter, useRouteError } from "react-router-dom"
 import { RootLayout } from "@/components/layout"
-import { HomePage, SessionPage, SettingsPage, WorkspaceSelectorPage } from "@/pages"
+import {
+  HomePage,
+  OrchestrationPage,
+  OrchestrationRunPage,
+  SessionPage,
+  SettingsPage,
+  WorkspaceSelectorPage,
+} from "@/pages"
 import { AlertTriangle, RefreshCw } from "lucide-react"
 
 function RouteErrorFallback() {
@@ -47,6 +54,14 @@ export const router = createBrowserRouter([
       {
         path: "/settings",
         element: <SettingsPage />,
+      },
+      {
+        path: "/orchestration",
+        element: <OrchestrationPage />,
+      },
+      {
+        path: "/orchestration/run/:id",
+        element: <OrchestrationRunPage />,
       },
     ],
   },

@@ -16,6 +16,7 @@ import {
   Search,
   Star,
   Radio,
+  Workflow,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -278,8 +279,20 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Footer: Channels + Connection + User avatar + Settings */}
+            {/* Footer: Orchestration + Channels + Connection + User avatar + Settings */}
             <div className="mt-auto shrink-0 space-y-2 p-3">
+              <button
+                onClick={() => navigate("/orchestration")}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg p-2 text-sm transition-colors hover:bg-[var(--sidebar-accent)]",
+                  location.pathname.startsWith("/orchestration")
+                    ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
+                    : "text-[var(--sidebar-fg-muted)]"
+                )}
+              >
+                <Workflow className="size-4" />
+                {t("orchestration.title")}
+              </button>
               <ChannelStatusBar />
               <ConnectionStatus />
               <SettingsPopover>
@@ -343,6 +356,24 @@ export function LeftSidebar() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label={t("orchestration.title")}
+                    onClick={() => navigate("/orchestration")}
+                    className={cn(
+                      "flex size-9 items-center justify-center rounded-lg transition-colors",
+                      location.pathname.startsWith("/orchestration")
+                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
+                        : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                    )}
+                  >
+                    <Workflow className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{t("orchestration.title")}</TooltipContent>
               </Tooltip>
             </div>
 
