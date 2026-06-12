@@ -59,6 +59,7 @@ export function createServer(manager: ACPManager): Hono {
         args?: string[]
         env?: Record<string, string>
         knowledgeMcp?: boolean
+        orchestratorMcp?: boolean
         thoughtLevel?: string
       }>()
       .catch(() => null)
@@ -73,6 +74,7 @@ export function createServer(manager: ACPManager): Hono {
       args: body.args ?? [],
       env: body.env,
       knowledgeMcp: body.knowledgeMcp ?? false,
+      orchestratorMcp: body.orchestratorMcp ?? false,
       thoughtLevel: body.thoughtLevel || undefined,
     })
     return c.json({ ok: true })
@@ -89,13 +91,15 @@ export function createServer(manager: ACPManager): Hono {
 
   app.post("/acp/session", async (c) => {
     const body = await c.req
-      .json<{ agentId?: string; cwd?: string; clientSessionId?: string }>()
+      .json<{ agentId?: string; cwd?: string; clientSessionId?: string; orchestrate?: boolean }>()
       .catch(() => null)
     if (!body?.agentId || !body?.cwd) {
       return c.json({ error: "agentId and cwd are required" }, 400)
     }
     try {
-      const sessionId = await manager.createSession(body.agentId, body.cwd, body.clientSessionId)
+      const sessionId = await manager.createSession(body.agentId, body.cwd, body.clientSessionId, {
+        orchestrate: body.orchestrate,
+      })
       return c.json({ sessionId }, 201)
     } catch (err) {
       return c.json({ error: errMsg(err) }, 502)

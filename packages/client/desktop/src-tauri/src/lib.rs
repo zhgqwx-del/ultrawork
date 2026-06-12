@@ -938,7 +938,7 @@ fn sidecar_binary_name(name: &str) -> String {
 // registers as MCPs in opencode.json. Anchoring the MCP command path in the
 // user data dir (instead of the .app or dev tree) keeps it stable across .app
 // moves, dev→DMG migration, and cross-machine config copies.
-const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
+const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar", "acp-client"];
 
 fn user_sidecars_dir() -> PathBuf {
     ultrawork_dir().join("sidecars")

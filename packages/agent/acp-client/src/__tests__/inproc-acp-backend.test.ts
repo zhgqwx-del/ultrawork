@@ -6,7 +6,7 @@ import type { UwSSEEvent } from "../types.js"
 import { InProcACPBackend } from "../inproc-acp-backend.js"
 
 interface FakeManagerLog {
-  createSession: Array<{ agentId: string; cwd: string; clientSessionId?: string }>
+  createSession: Array<{ agentId: string; cwd: string; clientSessionId?: string; orchestrate?: boolean }>
   prompts: Array<{ sessionId: string; text: string }>
   cancelled: string[]
   deleted: string[]
@@ -18,8 +18,13 @@ function fakeManager(overrides: Partial<Record<string, unknown>> = {}) {
   const manager = {
     log,
     subscribers,
-    createSession: async (agentId: string, cwd: string, clientSessionId?: string) => {
-      log.createSession.push({ agentId, cwd, clientSessionId })
+    createSession: async (
+      agentId: string,
+      cwd: string,
+      clientSessionId?: string,
+      opts?: { orchestrate?: boolean },
+    ) => {
+      log.createSession.push({ agentId, cwd, clientSessionId, orchestrate: opts?.orchestrate })
       return clientSessionId ?? "acp-session-1"
     },
     prompt: async (sessionId: string, text: string) => {
@@ -48,11 +53,15 @@ function fakeManager(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("InProcACPBackend", () => {
-  it("createSession parses the namespaced agent id and omits the opencode twin", async () => {
+  it("createSession parses the namespaced agent id, omits the opencode twin, and hard-disables orchestrate", async () => {
     const { manager, log } = fakeManager()
     const backend = new InProcACPBackend(manager)
     const ref = await backend.createSession({ agentId: "acp:claude", directory: "/ws" })
-    expect(log.createSession).toEqual([{ agentId: "claude", cwd: "/ws", clientSessionId: undefined }])
+    // orchestrate: false is the ACP-side recursion guard — children never get
+    // the delegate MCP even when the agent-level default is on.
+    expect(log.createSession).toEqual([
+      { agentId: "claude", cwd: "/ws", clientSessionId: undefined, orchestrate: false },
+    ])
     expect(ref).toEqual({ id: "acp-session-1", backend: "acp", directory: "/ws" })
   })
 

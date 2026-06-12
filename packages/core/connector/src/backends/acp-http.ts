@@ -30,6 +30,8 @@ export interface ACPAgentConfig {
   env?: Record<string, string>
   /** Expose the host knowledge base MCP (:4098) to this agent (opt-in). */
   knowledgeMcp?: boolean
+  /** Expose the orchestrator delegate MCP to this agent's main sessions (opt-in, ADR-031). */
+  orchestratorMcp?: boolean
   /** Thinking-effort level, applied per session when the agent supports it. */
   thoughtLevel?: string
 }

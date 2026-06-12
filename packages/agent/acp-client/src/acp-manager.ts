@@ -43,6 +43,9 @@ export class ACPManager {
         agentId: persisted.agentId,
         cwd: persisted.cwd,
         createdAt: persisted.createdAt,
+        // Pre-flag files (undefined) fall back to the agent-level default at
+        // restore time, so enabling orchestratorMcp also covers old sessions.
+        orchestrate: persisted.orchestrate,
         messages: persisted.messages,
       })
     }
@@ -90,10 +93,19 @@ export class ACPManager {
    * all shaped events carry that id and the caller addresses the session by
    * it — the frontend needs no id translation at all.
    */
-  async createSession(agentId: string, cwd: string, clientSessionId?: string): Promise<string> {
+  async createSession(
+    agentId: string,
+    cwd: string,
+    clientSessionId?: string,
+    opts?: { orchestrate?: boolean },
+  ): Promise<string> {
     const conn = this.requireAgent(agentId)
     if (conn.status !== "connected") await conn.connect(cwd)
-    const acpSessionId = await conn.newSession(cwd, clientSessionId)
+    // Per-session delegate MCP injection (ADR-031 D-3): explicit override
+    // wins, else the agent-level default. Orchestrator children pass an
+    // explicit false (InProcACPBackend) — the recursion guard.
+    const orchestrate = opts?.orchestrate ?? conn.config.orchestratorMcp ?? false
+    const acpSessionId = await conn.newSession(cwd, clientSessionId, { orchestrate })
     const sessionId = clientSessionId ?? acpSessionId
     const entry: SessionEntry = {
       sessionId,
@@ -101,6 +113,7 @@ export class ACPManager {
       agentId,
       cwd,
       createdAt: Date.now(),
+      orchestrate,
       messages: [],
     }
     this.sessions.set(sessionId, entry)
@@ -128,9 +141,12 @@ export class ACPManager {
     if (conn.status !== "connected") await conn.connect(entry.cwd)
     if (conn.hasSession(entry.acpSessionId)) return
 
+    // Re-inject the delegate MCP across restarts; sessions persisted before
+    // the flag existed inherit the agent-level default.
+    const orchestrate = entry.orchestrate ?? conn.config.orchestratorMcp ?? false
     if (conn.agentCapabilities?.loadSession) {
       try {
-        await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId)
+        await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId, { orchestrate })
         return
       } catch (err) {
         console.error(
@@ -143,7 +159,7 @@ export class ACPManager {
         `[acp:${entry.agentId}] agent has no loadSession capability — continuing ${entry.sessionId} without prior context`,
       )
     }
-    entry.acpSessionId = await conn.newSession(entry.cwd, entry.sessionId)
+    entry.acpSessionId = await conn.newSession(entry.cwd, entry.sessionId, { orchestrate })
     this.persist(entry)
   }
 
@@ -167,6 +183,7 @@ export class ACPManager {
       agentId: entry.agentId,
       cwd: entry.cwd,
       createdAt: entry.createdAt,
+      orchestrate: entry.orchestrate,
     }))
   }
 
@@ -263,6 +280,7 @@ export class ACPManager {
         cwd: entry.cwd,
         createdAt: entry.createdAt,
         updatedAt: Date.now(),
+        orchestrate: entry.orchestrate,
         messages: entry.messages,
       })
     } catch (err) {

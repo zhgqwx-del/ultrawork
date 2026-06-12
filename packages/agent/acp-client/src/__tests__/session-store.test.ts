@@ -185,4 +185,47 @@ describe("session store persistence", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it("roundtrips the orchestrate flag and tolerates pre-flag files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "acp-store-"))
+    const prev = process.env.ACP_DATA_DIR
+    process.env.ACP_DATA_DIR = dir
+    try {
+      saveSession({
+        version: 1,
+        sessionId: "ses_orch",
+        acpSessionId: "acp-orch",
+        agentId: "mock",
+        cwd: "/tmp",
+        createdAt: 1,
+        updatedAt: 2,
+        orchestrate: true,
+        messages: [],
+      })
+      // A file written before the orchestrate flag existed (no field at all).
+      writeFileSync(
+        join(dir, "ses_legacy.json"),
+        JSON.stringify({
+          version: 1,
+          sessionId: "ses_legacy",
+          acpSessionId: "acp-legacy",
+          agentId: "mock",
+          cwd: "/tmp",
+          createdAt: 1,
+          updatedAt: 2,
+          messages: [],
+        }),
+      )
+
+      const loaded = loadAllSessions()
+      const orch = loaded.find((s) => s.sessionId === "ses_orch")
+      const legacy = loaded.find((s) => s.sessionId === "ses_legacy")
+      expect(orch?.orchestrate).toBe(true)
+      expect(legacy?.orchestrate).toBeUndefined()
+    } finally {
+      if (prev === undefined) delete process.env.ACP_DATA_DIR
+      else process.env.ACP_DATA_DIR = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

@@ -58,8 +58,12 @@ export class InProcACPBackend implements AgentBackend {
     if (!opts.directory) throw new Error("directory is required for ACP sessions")
     const { rawId } = parseAgentId(opts.agentId)
     // Orchestrator children pass no clientSessionId → no opencode twin → the
-    // sidebar never sees them.
-    const sessionId = await this.manager.createSession(rawId, opts.directory, opts.clientSessionId)
+    // sidebar never sees them. orchestrate: false is the HARD recursion guard
+    // (ADR-031 D-5): children never get the delegate MCP, whatever the
+    // agent-level default says.
+    const sessionId = await this.manager.createSession(rawId, opts.directory, opts.clientSessionId, {
+      orchestrate: false,
+    })
     return { id: sessionId, backend: this.kind, directory: opts.directory }
   }
 

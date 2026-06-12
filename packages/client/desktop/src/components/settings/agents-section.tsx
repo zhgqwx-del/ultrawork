@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { ACP_BACKEND_KIND, type ACPAgentConfig, type ACPAgentInfo, type ACPBackend } from "@agent/connector"
 import { useConnector } from "@/lib/sse-context"
 import { useAgents } from "@/lib/agent-context"
+import { useOrchestrateMode } from "@/lib/use-orchestrate-mode"
 import { AGENT_TEMPLATES, type AgentTemplate } from "./agent-templates"
 
 interface FormState {
@@ -19,6 +20,7 @@ interface FormState {
   args: string
   env: string
   knowledgeMcp: boolean
+  orchestratorMcp: boolean
   thoughtLevel: string
 }
 
@@ -30,6 +32,7 @@ const EMPTY_FORM: FormState = {
   args: "",
   env: "",
   knowledgeMcp: false,
+  orchestratorMcp: false,
   thoughtLevel: "default",
 }
 
@@ -46,6 +49,7 @@ function toForm(config: ACPAgentConfig): FormState {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
     knowledgeMcp: config.knowledgeMcp ?? false,
+    orchestratorMcp: config.orchestratorMcp ?? false,
     thoughtLevel: config.thoughtLevel ?? "default",
   }
 }
@@ -66,6 +70,7 @@ function fromForm(form: FormState): ACPAgentConfig {
     args: form.args.trim() ? form.args.trim().split(/\s+/) : [],
     env: Object.keys(env).length > 0 ? env : undefined,
     knowledgeMcp: form.knowledgeMcp,
+    orchestratorMcp: form.orchestratorMcp,
     thoughtLevel: form.thoughtLevel !== "default" ? form.thoughtLevel : undefined,
   }
 }
@@ -149,6 +154,7 @@ export function AgentsSection() {
         .map(([k, v]) => `${k}=${v}`)
         .join("\n"),
       knowledgeMcp: false,
+      orchestratorMcp: false,
       thoughtLevel: "default",
     })
   }
@@ -206,6 +212,8 @@ export function AgentsSection() {
           </button>
         </div>
       </div>
+
+      <OrchestrateModeToggle />
 
       {!available && !loading && (
         <div className="rounded-lg border border-[var(--color-border)] px-4 py-6 text-center text-sm text-[var(--color-fg-muted)]">
@@ -386,6 +394,15 @@ export function AgentsSection() {
             />
             <span className="text-xs text-[var(--color-fg)]">{t("agents.form.knowledgeMcp")}</span>
           </label>
+          <label className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              checked={form.orchestratorMcp}
+              onChange={(e) => setForm({ ...form, orchestratorMcp: e.target.checked })}
+              className="size-3.5 accent-[var(--color-brand)]"
+            />
+            <span className="text-xs text-[var(--color-fg)]">{t("agents.form.orchestratorMcp")}</span>
+          </label>
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
@@ -409,6 +426,49 @@ export function AgentsSection() {
             </button>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Global "编排模式" switch for opencode main chats: registers/removes the
+ * delegate MCP shim in the global opencode.json (ADR-031 D-3 opt-in). ACP
+ * agents opt in per agent via the orchestratorMcp checkbox instead.
+ */
+function OrchestrateModeToggle() {
+  const { t } = useI18n()
+  const { enabled, loading, setOrchestrateMode } = useOrchestrateMode()
+  const [busy, setBusy] = useState(false)
+
+  const toggle = async (next: boolean) => {
+    setBusy(true)
+    try {
+      const needsRestart = await setOrchestrateMode(next)
+      if (needsRestart) toast.info(t("settings.orchestrate.restartNote"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-[var(--color-fg)]">{t("settings.orchestrate.title")}</div>
+        <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("settings.orchestrate.desc")}</p>
+      </div>
+      {busy || loading ? (
+        <Loader2 className="size-4 shrink-0 animate-spin text-[var(--color-fg-muted)]" />
+      ) : (
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => void toggle(e.target.checked)}
+          className="size-4 shrink-0 accent-[var(--color-brand)]"
+          aria-label={t("settings.orchestrate.title")}
+        />
       )}
     </div>
   )

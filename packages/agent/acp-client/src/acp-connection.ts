@@ -47,6 +47,9 @@ const permissionTimeoutMs = () => Number(process.env.ACP_PERMISSION_TIMEOUT_MS ?
 const STDIN_GRACE_MS = 100
 const SIGTERM_GRACE_MS = 1500
 const SIGKILL_GRACE_MS = 1000
+// Blocking delegate MCP calls run a whole child turn — keep the agent's MCP
+// tool timeout above the orchestrator's default per-turn timeout (10 min).
+const DELEGATE_MCP_TOOL_TIMEOUT_MS = 1_800_000
 
 // GUI-launched processes (the packaged Tauri app) inherit a minimal PATH that
 // misses the user bin dirs where agent CLIs live (e.g. qodercli in
@@ -64,6 +67,19 @@ function augmentPath(path: string | undefined): string {
     if (!parts.includes(dir)) parts.push(dir)
   }
   return parts.join(delimiter)
+}
+
+/**
+ * Command for the delegate MCP shim: this sidecar always runs as a compiled
+ * binary in real deployments (Tauri spawns it even in dev), so
+ * `process.execPath` IS the shim. When someone runs `bun src/index.ts`
+ * manually, execPath is bun itself — fall back to the stable user-data copy.
+ */
+export function delegateShimCommand(execPath = process.execPath): string | undefined {
+  const base = execPath.split("/").pop() ?? ""
+  if (!base.startsWith("bun")) return execPath
+  const copy = join(homedir(), ".ultrawork", "sidecars", "acp-client")
+  return existsSync(copy) ? copy : undefined
 }
 
 // --- gemini quirks (live-tested 2026-06-11, @google/gemini-cli via bunx) ---
@@ -159,6 +175,11 @@ export class ACPConnection {
       const env: Record<string, string | undefined> = { ...process.env, ...this.config.env }
       env.PATH = augmentPath(env.PATH)
       applyGeminiQuirks(this.config, env)
+      // Delegate MCP calls block for the whole child turn; Claude Code's MCP
+      // tool timeout would kill them otherwise. The shim's progress
+      // notifications are the primary keepalive — this is belt-and-suspenders
+      // (explicit agent env always wins).
+      if (!this.config.env?.MCP_TOOL_TIMEOUT) env.MCP_TOOL_TIMEOUT = String(DELEGATE_MCP_TOOL_TIMEOUT_MS)
       // Scrub Claude Code session markers inherited from a dev shell (e.g.
       // setup.sh run inside a Claude Code terminal): claude-code-acp refused
       // to start when CLAUDECODE is set (nested-session check; gone from
@@ -216,11 +237,13 @@ export class ACPConnection {
    * Create an ACP session. `emitSessionId` is the session id stamped on every
    * shaped event (the desktop passes its own session id here, so the frontend
    * consumes the stream with zero id rewriting); defaults to the ACP id.
+   * `opts.orchestrate` injects the delegate MCP for THIS session only —
+   * orchestrator children never set it (recursion guard, ADR-031 D-3).
    */
-  async newSession(cwd: string, emitSessionId?: string): Promise<string> {
+  async newSession(cwd: string, emitSessionId?: string, opts?: { orchestrate?: boolean }): Promise<string> {
     const conn = this.requireConnection()
     const res = await this.runRequest(
-      () => conn.newSession({ cwd, mcpServers: this.hostMcpServers() }),
+      () => conn.newSession({ cwd, mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false) }),
       SESSION_NEW_TIMEOUT_MS,
       "session/new",
     )
@@ -243,7 +266,12 @@ export class ACPConnection {
    * the update stream stays quiet for REPLAY_IDLE_MS (bounded by
    * REPLAY_MAX_MS after the RPC resolves); only then is the shaper installed.
    */
-  async loadSession(acpSessionId: string, cwd: string, emitSessionId?: string): Promise<void> {
+  async loadSession(
+    acpSessionId: string,
+    cwd: string,
+    emitSessionId?: string,
+    opts?: { orchestrate?: boolean },
+  ): Promise<void> {
     const conn = this.requireConnection()
     const emitAs = emitSessionId ?? acpSessionId
     this.emitIds.set(acpSessionId, emitAs)
@@ -252,7 +280,12 @@ export class ACPConnection {
     let configOptions: SessionConfigOption[] | null | undefined
     try {
       const res = await this.runRequest(
-        () => conn.loadSession({ sessionId: acpSessionId, cwd, mcpServers: this.hostMcpServers() }),
+        () =>
+          conn.loadSession({
+            sessionId: acpSessionId,
+            cwd,
+            mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false),
+          }),
         SESSION_LOAD_TIMEOUT_MS,
         "session/load",
       )
@@ -340,18 +373,41 @@ export class ACPConnection {
   // --- internals ---
 
   /**
-   * Host MCP servers forwarded into session/new. B4: knowledge base only,
-   * default off, explicit per-agent opt-in. The binary path is the stable
-   * user-data copy maintained by the desktop app (ADR-026).
+   * Host MCP servers forwarded into session/new and session/load.
+   * - knowledge base (B4): per-agent opt-in, stable user-data binary (ADR-026).
+   * - orchestrator delegate (ADR-031 ②): PER-SESSION opt-in — children spawned
+   *   by the orchestrator never pass orchestrate, so they physically lack the
+   *   tool (recursion guard). Command = this very sidecar binary with the
+   *   delegate-mcp subcommand.
    */
-  private hostMcpServers(): McpServer[] {
-    if (!this.config.knowledgeMcp) return []
-    const sidecar = join(homedir(), ".ultrawork", "sidecars", "knowledge-sidecar")
-    if (!existsSync(sidecar)) {
-      console.error(`[acp:${this.config.id}] knowledgeMcp enabled but ${sidecar} not found — skipping`)
-      return []
+  private hostMcpServers(cwd: string, orchestrate: boolean): McpServer[] {
+    const servers: McpServer[] = []
+    if (this.config.knowledgeMcp) {
+      const sidecar = join(homedir(), ".ultrawork", "sidecars", "knowledge-sidecar")
+      if (existsSync(sidecar)) {
+        servers.push({ name: "knowledge-base", command: sidecar, args: ["mcp-stdio"], env: [] })
+      } else {
+        console.error(`[acp:${this.config.id}] knowledgeMcp enabled but ${sidecar} not found — skipping`)
+      }
     }
-    return [{ name: "knowledge-base", command: sidecar, args: ["mcp-stdio"], env: [] }]
+    if (orchestrate) {
+      const command = delegateShimCommand()
+      if (command) {
+        servers.push({
+          name: "orchestrator",
+          command,
+          args: ["delegate-mcp"],
+          env: [
+            { name: "ACP_CLIENT_PORT", value: String(process.env.ACP_CLIENT_PORT ?? 4099) },
+            // cwd fallback so the agent may omit `cwd` in delegate calls.
+            { name: "ULTRAWORK_DELEGATE_CWD", value: cwd },
+          ],
+        })
+      } else {
+        console.error(`[acp:${this.config.id}] orchestrate requested but no shim binary found — skipping`)
+      }
+    }
+    return servers
   }
 
   /**

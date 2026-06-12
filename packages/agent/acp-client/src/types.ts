@@ -17,6 +17,13 @@ export interface ACPAgentConfig {
   /** Expose the host knowledge base MCP (:4098) to this agent (B4: opt-in, default off). */
   knowledgeMcp?: boolean
   /**
+   * Expose the orchestrator delegate MCP (delegate/list_agents → :4099) to
+   * this agent's MAIN sessions (ADR-031 D-3: opt-in, default off). Children
+   * spawned by the orchestrator never get it regardless of this flag
+   * (recursion guard — see InProcACPBackend).
+   */
+  orchestratorMcp?: boolean
+  /**
    * Desired thinking-effort level, applied per session via ACP
    * `session/set_config_option` when the agent advertises a `thought_level`
    * config option (claude-agent-acp ≥0.44). Unset or "default" = leave the
@@ -63,6 +70,8 @@ export interface ACPSessionInfo {
   agentId: string
   cwd: string
   createdAt: number
+  /** Whether the orchestrator delegate MCP is injected into this session (sticky across session/load). */
+  orchestrate?: boolean
 }
 
 /** One shaped message as the desktop renders it (info + accumulated parts). */
@@ -80,6 +89,8 @@ export interface PersistedACPSession {
   cwd: string
   createdAt: number
   updatedAt: number
+  /** Delegate MCP injection flag — restored so session/load re-injects (older files: undefined → off). */
+  orchestrate?: boolean
   messages: UwStoredMessage[]
 }
 

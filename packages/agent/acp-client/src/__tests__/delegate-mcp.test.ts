@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from "bun:test"
 import { callDelegate, callListAgents, shimDepsFromEnv, type FetchLike, type ShimDeps } from "../delegate-mcp.js"
+import { delegateShimCommand } from "../acp-connection.js"
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
@@ -120,5 +121,19 @@ describe("delegate-mcp shim", () => {
       throw new Error("ECONNREFUSED")
     }) as unknown as FetchLike
     expect((await callListAgents(deps(down))).isError).toBe(true)
+  })
+})
+
+describe("delegateShimCommand", () => {
+  it("uses the compiled binary's own path", () => {
+    expect(delegateShimCommand("/Applications/Ultrawork.app/Contents/MacOS/acp-client")).toBe(
+      "/Applications/Ultrawork.app/Contents/MacOS/acp-client",
+    )
+  })
+
+  it("rejects a bun runtime path (manual `bun src/index.ts`) when resolving the shim", () => {
+    // The fallback checks ~/.ultrawork/sidecars/acp-client; on dev machines it
+    // may exist, so only assert the bun path itself is never returned.
+    expect(delegateShimCommand("/Users/x/.bun/bin/bun")).not.toBe("/Users/x/.bun/bin/bun")
   })
 })
