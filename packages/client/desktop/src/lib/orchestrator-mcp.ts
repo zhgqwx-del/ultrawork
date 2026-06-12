@@ -39,10 +39,17 @@ export async function ensureOrchestratorMcp(api: ApiClient): Promise<void> {
       timeout: TOOL_TIMEOUT_MS,
     }
     await invoke("write_mcp_config", { name: MCP_NAME, config: mcpConfig })
-    try {
-      await api.createMCP(MCP_NAME, mcpConfig as never)
-    } catch {
-      // Will connect on next restart.
+    // POST /mcp answers 200 with status:"failed" when the connect handshake
+    // misses the vendor's 5s window — seen live on the shim's cold start
+    // (60MB binary). One retry covers it; after that the entry connects on
+    // the next restart from the global config.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const statuses = await api.createMCP(MCP_NAME, mcpConfig as never)
+        if (statuses[MCP_NAME]?.status === "connected") return
+      } catch {
+        // Network-level failure — same retry/restart fallback.
+      }
     }
   } catch (err) {
     console.error("Failed to ensure orchestrator MCP:", err)
