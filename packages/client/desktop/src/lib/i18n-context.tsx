@@ -97,6 +97,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Team tab (017)
     "team.tab": "Team",
+    "team.badge": "Team",
     "orchestration.tab": "Pipelines",
     "team.desc": "Describe the task — the Leader splits it, delegates to members, and summarizes the deliverables",
     "team.leader": "Leader",
@@ -665,6 +666,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Team tab (017)
     "team.tab": "Team 协作",
+    "team.badge": "Team",
     "orchestration.tab": "流水线",
     "team.desc": "只需描述任务——Leader 负责拆分、委派给成员并汇总交付物",
     "team.leader": "Leader",

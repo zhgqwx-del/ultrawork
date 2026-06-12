@@ -4,7 +4,7 @@
 // unreachable degrades to an empty registry — every consumer must keep
 // working badge-less.
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { useAgents } from "./agent-context"
 import { useWorkspace } from "./workspace-context"
 import { listTeamSessions, type TeamSessionEntry } from "./orchestration-client"

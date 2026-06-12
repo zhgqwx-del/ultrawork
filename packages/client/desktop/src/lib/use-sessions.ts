@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import type { Session } from "@agent/api-client"
 import { ApiError } from "@agent/api-client"
 import { useApi } from "./use-api"
 import { useWorkspace } from "./workspace-context"
 import { useConnector, useSSESubscribe } from "./sse-context"
+import { useTeamSessions, type TeamSessionEntry } from "./team-sessions-context"
+import { deleteTeamSession } from "./orchestration-client"
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -11,14 +13,42 @@ function filterByWorkspace(list: Session[], workspacePath: string | null): Sessi
   return list.filter((s) => s.directory === workspacePath)
 }
 
+/**
+ * Registry entries that need 补显: legacy (pre-018) team sessions hang off the
+ * hidden "[team]" parent, so the roots-only list misses them. vendor PATCH
+ * can't change parentID, so they are fetched by id and merged instead.
+ */
+export function pickLegacyTeamEntries(
+  entries: TeamSessionEntry[],
+  presentIds: ReadonlySet<string>,
+  attemptedIds: ReadonlySet<string>,
+): TeamSessionEntry[] {
+  return entries.filter((e) => !presentIds.has(e.id) && !attemptedIds.has(e.id))
+}
+
+/** Merge fetched legacy sessions, dedup by id (SSE may have raced us), newest-updated first. */
+export function mergeLegacySessions(current: Session[], fetched: Session[]): Session[] {
+  const have = new Set(current.map((s) => s.id))
+  const add = fetched.filter((s) => !have.has(s.id))
+  if (add.length === 0) return current
+  return [...current, ...add].sort((a, b) => b.time.updated - a.time.updated)
+}
+
 export function useSessions() {
   const api = useApi()
   const connector = useConnector()
   const { workspacePath } = useWorkspace()
+  const { entries: teamEntries, isTeamSession, removeEntry: removeTeamEntry } = useTeamSessions()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeSessionIds, setActiveSessionIds] = useState<Set<string>>(new Set())
+
+  // Team ids as a ref: the SSE handler reads them without resubscribing.
+  const teamIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    teamIdsRef.current = new Set(teamEntries.map((e) => e.id))
+  }, [teamEntries])
 
   const markSessionActive = useCallback((id: string) => {
     setActiveSessionIds(prev => {
@@ -79,6 +109,40 @@ export function useSessions() {
     return () => { cancelled = true }
   }, [api, workspacePath])
 
+  // Legacy team-session 补显 (018 A-4 fallback). attempted-set keyed per
+  // workspace prevents refetch loops; orphaned registry entries (the opencode
+  // session was deleted out-of-band) self-prune best-effort.
+  const legacyAttemptedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    legacyAttemptedRef.current = new Set()
+  }, [workspacePath])
+
+  useEffect(() => {
+    if (loading) return
+    const missing = pickLegacyTeamEntries(
+      teamEntries,
+      new Set(sessions.map((s) => s.id)),
+      legacyAttemptedRef.current,
+    )
+    if (missing.length === 0) return
+    for (const entry of missing) legacyAttemptedRef.current.add(entry.id)
+    let cancelled = false
+    void Promise.allSettled(missing.map((entry) => api.getSession(entry.id))).then((results) => {
+      if (cancelled) return
+      const fetched: Session[] = []
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          fetched.push(result.value as Session)
+        } else if (result.reason instanceof ApiError && result.reason.status === 404) {
+          removeTeamEntry(missing[i].id)
+          void deleteTeamSession(missing[i].id).catch(() => {})
+        }
+      })
+      if (fetched.length > 0) setSessions((prev) => mergeLegacySessions(prev, fetched))
+    })
+    return () => { cancelled = true }
+  }, [teamEntries, sessions, loading, api, removeTeamEntry])
+
   const createSession = useCallback(async () => {
     const session = await api.createSession()
     // Guard: SSE session.updated may have already inserted this session
@@ -90,14 +154,21 @@ export function useSessions() {
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
-      // Deletes everywhere by binding: the canonical opencode session (404
-      // tolerated — already gone still cleans up locally), any ACP sidecar
-      // state (failures swallowed — a dead sidecar must not block deletion),
-      // and the session's agent binding.
-      await connector.deleteSession(sessionId)
+      if (isTeamSession(sessionId)) {
+        // Team sessions delete through the sidecar registry endpoint, which
+        // cleans all three: registry entry + ACP session + opencode session.
+        await deleteTeamSession(sessionId)
+        removeTeamEntry(sessionId)
+      } else {
+        // Deletes everywhere by binding: the canonical opencode session (404
+        // tolerated — already gone still cleans up locally), any ACP sidecar
+        // state (failures swallowed — a dead sidecar must not block deletion),
+        // and the session's agent binding.
+        await connector.deleteSession(sessionId)
+      }
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
     },
-    [connector]
+    [connector, isTeamSession, removeTeamEntry]
   )
 
   const updateSession = useCallback((id: string, updates: Partial<Session>) => {
@@ -147,7 +218,9 @@ export function useSessions() {
         }
         // Child sessions (orchestrator children, opencode task subagents)
         // never enter the sidebar — the list endpoint filters roots only.
-        if (info.parentID) return prev
+        // Exception: legacy (pre-018) team sessions still hang off the hidden
+        // parent but ARE sidebar citizens via 补显.
+        if (info.parentID && !teamIdsRef.current.has(sid)) return prev
         // New session from another source (e.g. channel gateway)
         // Only add if it belongs to current workspace
         if (workspacePath && info.directory && info.directory !== workspacePath) return prev

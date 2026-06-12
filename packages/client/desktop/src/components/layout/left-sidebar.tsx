@@ -17,6 +17,7 @@ import {
   Star,
   Radio,
   Workflow,
+  Crown,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -41,6 +42,7 @@ import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
 import { useChannels } from "@/lib/use-channels"
+import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
@@ -101,6 +103,7 @@ export function LeftSidebar() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
+  const { entryOf } = useTeamSessions()
   const { t } = useI18n()
 
   // "+" goes Home instead of creating a session: the session is born on the
@@ -247,6 +250,7 @@ export function LeftSidebar() {
                             <SessionItem
                               key={session.id}
                               session={session}
+                              teamEntry={entryOf(session.id)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={true}
@@ -261,6 +265,7 @@ export function LeftSidebar() {
                             <SessionItem
                               key={session.id}
                               session={session}
+                              teamEntry={entryOf(session.id)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={false}
@@ -399,6 +404,7 @@ export function LeftSidebar() {
 
 function SessionItem({
   session,
+  teamEntry,
   isActive,
   isRunning,
   isPinned,
@@ -409,6 +415,8 @@ function SessionItem({
   t,
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
+  /** Present when this session is a Team leader (018 A-1 混排+徽标). */
+  teamEntry?: TeamSessionEntry
   isActive: boolean
   isRunning: boolean
   isPinned: boolean
@@ -421,7 +429,9 @@ function SessionItem({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
-  const title = session.title || `Session ${session.id.slice(0, 8)}`
+  // Registry title is the legacy fallback — new team leaders are roots and
+  // get the opencode auto-title in session.title like any chat.
+  const title = session.title || teamEntry?.title || `Session ${session.id.slice(0, 8)}`
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -546,7 +556,18 @@ function SessionItem({
 
       <StatusIcon />
       <div className="min-w-0 flex-1">
-        <p className="truncate">{title}</p>
+        <p className="flex items-center gap-1.5">
+          {teamEntry && (
+            <span
+              title={`${teamEntry.members.length} ${t("team.membersCount")}`}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--color-brand)]/15 px-1.5 py-px text-[10px] font-medium text-[var(--color-brand)]"
+            >
+              <Crown className="size-2.5" />
+              {t("team.badge")}
+            </span>
+          )}
+          <span className="truncate">{title}</span>
+        </p>
         <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>
 
