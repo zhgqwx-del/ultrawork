@@ -2,26 +2,28 @@
 // relayed child-session permissions, lazy-loaded child session history
 // (ADR-031 D-4: MVP lazy load — no live inlining).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
-import { ChevronDown, ChevronRight, FileText, Loader2, RotateCcw, ShieldQuestion, Square } from "lucide-react"
+import { ChevronDown, ChevronRight, FileText, FolderGit2, Loader2, RotateCcw, ShieldQuestion, Square } from "lucide-react"
 import type { OrchestrationRun, RunStep } from "@agent/orchestrator"
-import type { SendMessageResponse, PermissionRequest } from "@agent/api-client"
-import {
-  ACP_BACKEND_KIND,
-  OPENCODE_BACKEND_KIND,
-  isACPAgentId,
-  type AgentBackend,
-} from "@agent/connector"
+import type { PermissionRequest } from "@agent/api-client"
+import { isACPAgentId } from "@agent/connector"
 import { TopBar } from "@/components/layout/top-bar"
 import { Button } from "@/components/ui/button"
 import { MessageList } from "@/components/chat"
 import { RunStatusBadge } from "@/components/orchestration/run-status-badge"
 import { useApi } from "@/lib/use-api"
-import { useConnector } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
-import { cancelRun, createRun, getRun, replyAcpPermission, subscribeRunEvents } from "@/lib/orchestration-client"
+import { useChildSessionHistory } from "@/lib/use-child-session-history"
+import {
+  cancelRun,
+  computeStepLevels,
+  createRun,
+  getRun,
+  replyAcpPermission,
+  subscribeRunEvents,
+} from "@/lib/orchestration-client"
 
 interface PendingPermission {
   stepId: string
@@ -34,7 +36,6 @@ export function OrchestrationRunPage() {
   const navigate = useNavigate()
   const { t } = useI18n()
   const api = useApi()
-  const connector = useConnector()
 
   const [run, setRun] = useState<OrchestrationRun | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -182,12 +183,9 @@ export function OrchestrationRunPage() {
                 </div>
               ))}
 
-              {/* Step timeline */}
-              <div className="flex flex-col gap-2">
-                {run.steps.map((step, index) => (
-                  <StepCard key={step.id} run={run} step={step} index={index} connector={connector} />
-                ))}
-              </div>
+              {/* Step timeline, grouped by dependency depth — steps in the
+                  same level run in parallel (Fan-out). */}
+              <StepTimeline run={run} />
             </>
           )}
         </div>
@@ -196,28 +194,46 @@ export function OrchestrationRunPage() {
   )
 }
 
+function StepTimeline({ run }: { run: OrchestrationRun }) {
+  const { t } = useI18n()
+  const levels = useMemo(() => computeStepLevels(run.recipe.steps), [run.recipe.steps])
+  const groups = useMemo(() => {
+    const byLevel = new Map<number, number[]>()
+    levels.forEach((level, index) => {
+      const group = byLevel.get(level) ?? []
+      group.push(index)
+      byLevel.set(level, group)
+    })
+    return [...byLevel.entries()].sort(([a], [b]) => a - b)
+  }, [levels])
+
+  return (
+    <div className="flex flex-col gap-2">
+      {groups.map(([level, indices]) => (
+        <div key={level} className="flex flex-col gap-2">
+          {indices.length > 1 && (
+            <div className="flex items-center gap-2 text-[10px] text-[var(--color-fg-muted)]">
+              <span className="h-px flex-1 bg-[var(--color-border)]" />
+              {t("orchestration.parallelGroup", { count: indices.length })}
+              <span className="h-px flex-1 bg-[var(--color-border)]" />
+            </div>
+          )}
+          {indices.map((index) => (
+            <StepCard key={run.steps[index].id} run={run} step={run.steps[index]} index={index} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function findStepAgent(run: OrchestrationRun | null, stepId: string): string {
   return run?.steps.find((s) => s.id === stepId)?.agentId ?? ""
 }
 
-function StepCard({
-  run,
-  step,
-  index,
-  connector,
-}: {
-  run: OrchestrationRun
-  step: RunStep
-  index: number
-  connector: ReturnType<typeof useConnector>
-}) {
+function StepCard({ run, step, index }: { run: OrchestrationRun; step: RunStep; index: number }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
-  const [messages, setMessages] = useState<SendMessageResponse[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  // Refetch generation — a terminal-transition refetch must beat an in-flight
-  // mid-run fetch, so the LAST call wins instead of skipping while loading.
-  const loadGenRef = useRef(0)
 
   const recipeStep = run.recipe.steps[index]
   const duration = useMemo(() => {
@@ -226,42 +242,17 @@ function StepCard({
     return `${Math.max(0, Math.round((end - step.startedAt) / 1000))}s`
   }, [step.startedAt, step.endedAt])
 
-  // Lazy history load (D-4): dispatch by the step's agentId explicitly —
-  // child sessions are not in the desktop BindingStore, and backendFor's
-  // default-backend fallback would mis-route ACP children to opencode.
-  const loadHistory = useCallback(async () => {
-    if (!step.sessionId) return
-    const gen = ++loadGenRef.current
-    try {
-      const backend = connector.getBackend<AgentBackend>(
-        isACPAgentId(step.agentId) ? ACP_BACKEND_KIND : OPENCODE_BACKEND_KIND,
-      )
-      if (!backend) throw new Error("backend unavailable")
-      const result = await backend.fetchHistory(step.sessionId)
-      if (loadGenRef.current !== gen) return
-      setMessages(result.messages)
-      setLoadError(null)
-    } catch (err) {
-      if (loadGenRef.current !== gen) return
-      setLoadError(err instanceof Error ? err.message : String(err))
-    }
-  }, [connector, step.sessionId, step.agentId])
-
-  const toggle = () => {
-    const next = !expanded
-    setExpanded(next)
-    // Always refetch on expand — the lazy snapshot may be a mid-run capture.
-    if (next) void loadHistory()
-  }
-
-  // A snapshot loaded while the step was running freezes at "streaming"
-  // (last message still sealed finish:"tool-calls") — refetch on terminal
-  // transition so an expanded card settles itself.
+  // Lazy history (D-4): expand-always-refetch + terminal refetch + generation
+  // counter live in the shared hook (delegate cards reuse the same logic).
   const terminalStep = !["pending", "running"].includes(step.status)
-  useEffect(() => {
-    if (terminalStep && expanded && messages !== null) void loadHistory()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminalStep])
+  const { messages, loadError } = useChildSessionHistory({
+    agentId: step.agentId,
+    sessionId: step.sessionId,
+    terminal: terminalStep,
+    expanded,
+  })
+
+  const toggle = () => setExpanded((prev) => !prev)
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -288,6 +279,12 @@ function StepCard({
             <p className="mb-2 flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
               <FileText className="size-3" />
               {step.artifactPath}
+            </p>
+          )}
+          {step.worktreePath && (
+            <p className="mb-2 flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
+              <FolderGit2 className="size-3" />
+              {t("orchestration.worktreeKept")}: {step.worktreePath}
             </p>
           )}
           {!step.sessionId ? (

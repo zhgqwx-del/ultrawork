@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { createRun, listRuns, cancelRun, getRun } from "@/lib/orchestration-client"
+import { computeStepLevels, createRun, listDelegates, listRuns, cancelRun, getRun } from "@/lib/orchestration-client"
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
@@ -40,5 +40,46 @@ describe("orchestration-client", () => {
   it("cancelRun maps 409 to an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ error: "Run is already terminal" }, 409))
     await expect(cancelRun("run_1")).rejects.toThrow("already terminal")
+  })
+
+  it("listDelegates unwraps the payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ delegates: [{ id: "dlg_1", status: "running" }] }),
+    )
+    const delegates = await listDelegates()
+    expect(delegates[0].id).toBe("dlg_1")
+  })
+})
+
+describe("computeStepLevels", () => {
+  it("chained pipeline = strictly increasing levels", () => {
+    expect(
+      computeStepLevels([
+        { id: "a", inputs: [] },
+        { id: "b", inputs: ["a"] },
+        { id: "c", inputs: ["b"] },
+      ]),
+    ).toEqual([0, 1, 2])
+  })
+
+  it("fan-out: workers share a level, aggregator one deeper", () => {
+    expect(
+      computeStepLevels([
+        { id: "plan", inputs: [] },
+        { id: "w1", inputs: ["plan"] },
+        { id: "w2", inputs: ["plan"] },
+        { id: "agg", inputs: ["w1", "w2"] },
+      ]),
+    ).toEqual([0, 1, 1, 2])
+  })
+
+  it("independent roots all sit at level 0", () => {
+    expect(
+      computeStepLevels([
+        { id: "a", inputs: [] },
+        { id: "b" },
+        { id: "c", inputs: ["a"] },
+      ]),
+    ).toEqual([0, 0, 1])
   })
 })

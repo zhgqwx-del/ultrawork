@@ -17,6 +17,7 @@ import {
 import { useI18n } from "@/lib/i18n-context"
 import type { MessagePart, ToolPart, ToolState, ReasoningPart, TextPart, FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
+import { DelegateRow, isDelegatePart } from "./delegate-row"
 
 interface ExecutionFlowProps {
   /** Process parts of the whole turn, concatenated in order (reasoning/tool/narration text/step-*). */
@@ -333,8 +334,13 @@ export const ExecutionFlow = memo(function ExecutionFlow({
             switch (part.type) {
               case "reasoning":
                 return <ReasoningRow key={key} part={part as ReasoningPart} live={isStreaming} />
-              case "tool":
-                return <ToolRow key={key} part={part as ToolPart} live={isStreaming} />
+              case "tool": {
+                const tp = part as ToolPart
+                // Delegate calls get a dedicated card with the child session
+                // expandable inside (ADR-031 D-7).
+                if (isDelegatePart(tp)) return <DelegateRow key={key} part={tp} live={isStreaming} />
+                return <ToolRow key={key} part={tp} live={isStreaming} />
+              }
               case "text":
                 return <NarrationRow key={key} part={part as TextPart} />
               case "file": {

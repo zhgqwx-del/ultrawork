@@ -13,6 +13,8 @@ import { useConnector } from "@/lib/sse-context"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
+import { DelegateDock } from "@/components/chat/delegate-dock"
+import { useWorkspace } from "@/lib/workspace-context"
 import { cn } from "@/lib/utils"
 import { PanelRight, ChevronDown, ChevronRight } from "lucide-react"
 import { ProgressPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview } from "@/components/session"
@@ -26,6 +28,7 @@ export function SessionPage() {
   const { t } = useI18n()
   const { currentModel, setModel, openModelDialog } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
+  const { workspacePath } = useWorkspace()
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -159,6 +162,11 @@ export function SessionPage() {
             )}
             {/* Scroll anchor removed — useSessionScroll uses ResizeObserver */}
           </div>
+        </div>
+
+        {/* Active delegates + relayed child permissions (ADR-031 ②) */}
+        <div className="flex shrink-0 justify-center">
+          <DelegateDock workspacePath={workspacePath} />
         </div>
 
         {/* Reply Input / Permission Dock / Question Dock */}

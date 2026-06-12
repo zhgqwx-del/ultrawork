@@ -3,7 +3,16 @@
 // so the sse-transport machinery would be dead weight here.
 
 import { ACP_DEFAULT_BASE_URL } from "@agent/connector"
-import type { OrchestrationRun, OrchestratorEvent, PipelineRecipe } from "@agent/orchestrator"
+import type {
+  DelegateEvent,
+  DelegateRecord,
+  OrchestrationRun,
+  OrchestratorEvent,
+  PipelineRecipe,
+  RecipeStep,
+} from "@agent/orchestrator"
+
+export type { DelegateEvent, DelegateRecord }
 
 const BASE = ACP_DEFAULT_BASE_URL
 
@@ -55,6 +64,43 @@ export function subscribeRunEvents(runId: string, handler: (event: OrchestratorE
     }
   }
   return () => source.close()
+}
+
+// --- agent-driven delegates (ADR-031 ②, DelegateDock) ---
+
+export async function listDelegates(): Promise<DelegateRecord[]> {
+  const res = await fetch(`${BASE}/orchestration/delegates`)
+  return (await expectOk<{ delegates: DelegateRecord[] }>(res)).delegates
+}
+
+/** Global delegate SSE. First frame is a delegate.snapshot — no initial fetch needed. */
+export function subscribeDelegateEvents(handler: (event: DelegateEvent) => void): () => void {
+  const source = new EventSource(`${BASE}/orchestration/delegates/events`)
+  source.onmessage = (message) => {
+    try {
+      const event = JSON.parse(message.data) as { type: string; properties: unknown }
+      if (event.type === "heartbeat") return
+      handler(event as DelegateEvent)
+    } catch {
+      // malformed frame — skip
+    }
+  }
+  return () => source.close()
+}
+
+/**
+ * Dependency depth per step (0 = roots), for grouping parallel steps in the
+ * run timeline. Inputs are validated to reference earlier steps, so a single
+ * forward pass resolves every level.
+ */
+export function computeStepLevels(steps: Pick<RecipeStep, "id" | "inputs">[]): number[] {
+  const levelById = new Map<string, number>()
+  return steps.map((step) => {
+    const inputs = step.inputs ?? []
+    const level = inputs.length === 0 ? 0 : 1 + Math.max(...inputs.map((id) => levelById.get(id) ?? 0))
+    levelById.set(step.id, level)
+    return level
+  })
 }
 
 /** Reply to a relayed ACP child-session permission (existing sidecar endpoint). */
