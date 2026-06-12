@@ -215,7 +215,9 @@ function StepCard({
   const [expanded, setExpanded] = useState(false)
   const [messages, setMessages] = useState<SendMessageResponse[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const loadingRef = useRef(false)
+  // Refetch generation — a terminal-transition refetch must beat an in-flight
+  // mid-run fetch, so the LAST call wins instead of skipping while loading.
+  const loadGenRef = useRef(0)
 
   const recipeStep = run.recipe.steps[index]
   const duration = useMemo(() => {
@@ -228,28 +230,38 @@ function StepCard({
   // child sessions are not in the desktop BindingStore, and backendFor's
   // default-backend fallback would mis-route ACP children to opencode.
   const loadHistory = useCallback(async () => {
-    if (!step.sessionId || loadingRef.current) return
-    loadingRef.current = true
+    if (!step.sessionId) return
+    const gen = ++loadGenRef.current
     try {
       const backend = connector.getBackend<AgentBackend>(
         isACPAgentId(step.agentId) ? ACP_BACKEND_KIND : OPENCODE_BACKEND_KIND,
       )
       if (!backend) throw new Error("backend unavailable")
       const result = await backend.fetchHistory(step.sessionId)
+      if (loadGenRef.current !== gen) return
       setMessages(result.messages)
       setLoadError(null)
     } catch (err) {
+      if (loadGenRef.current !== gen) return
       setLoadError(err instanceof Error ? err.message : String(err))
-    } finally {
-      loadingRef.current = false
     }
   }, [connector, step.sessionId, step.agentId])
 
   const toggle = () => {
     const next = !expanded
     setExpanded(next)
-    if (next && messages === null) void loadHistory()
+    // Always refetch on expand — the lazy snapshot may be a mid-run capture.
+    if (next) void loadHistory()
   }
+
+  // A snapshot loaded while the step was running freezes at "streaming"
+  // (last message still sealed finish:"tool-calls") — refetch on terminal
+  // transition so an expanded card settles itself.
+  const terminalStep = !["pending", "running"].includes(step.status)
+  useEffect(() => {
+    if (terminalStep && expanded && messages !== null) void loadHistory()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalStep])
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
