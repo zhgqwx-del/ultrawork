@@ -61,7 +61,7 @@
 | Leader backend | delegate 工具注入 | system 提示注入 | 普通会话隔离 |
 |---|---|---|---|
 | **ACP（claude/gemini/qoder）** | per-session `orchestrate: true`（第二批已实现，`POST /acp/session`） | adapter 0.44 `_meta.systemPrompt`（preset append）；不支持的 agent 退化为首条 prompt 前置 | 普通 ACP 会话不传 orchestrate（现状即如此），物理无工具 |
-| **opencode** | 全局注册 orchestrator MCP（Team 功能启用时一次性写入，不再做用户开关） | `promptAsync` 的 `system` 参数（每轮携带） | **反向用 M1 机制**：desktop 普通 opencode 会话每次 prompt 恒传 `tools:{"orchestrator_*":false}` → sticky session permission deny，普通会话物理无工具。per-session 语义从 config 级原语中构造出来 |
+| **opencode** | 全局注册 orchestrator MCP（Team 功能启用时一次性写入，不再做用户开关） | `promptAsync` 的 `system` 参数（每轮携带）；**Leader 每轮另传 `tools:{"task":false}`** deny 内置 task——工具混淆从机制上消除，委派只剩 `orchestrator_delegate` 一条路 | **反向用 M1 机制**：desktop 普通 opencode 会话每次 prompt 恒传 `tools:{"orchestrator_*":false}` → sticky session permission deny，普通会话物理无工具。per-session 语义从 config 级原语中构造出来 |
 
 - 子会话防递归不变（第二批双保险照旧）；Leader 的并发委派仍受 orchestrator `maxConcurrent` 治理。
 - **「编排模式」Settings 开关移除**：全局 MCP 注册降级为 Team 功能的内部实现细节（首次进入 Team tab 时静默 ensure，knowledge-base MCP 同模式）。
@@ -107,8 +107,8 @@
 
 ## 5. 待拍板
 
-1. **路由形态**：`/orchestration` 两 tab（推荐：一个编排心智、侧栏一个入口）vs 独立 `/team` 路由（更贴 AionUi，但与 recipe 页割裂）。
-2. **Leader 默认 agent**：推荐默认 claude（拆分质量与并行工具调用能力实测最好），下拉可换 opencode/其它；还是跟随全局默认 agent？
+1. **路由形态** → ✅ **已拍板（2026-06-12）：`/orchestration` 两 tab**。注：AionUi 是独立 `pages/team`，但它没有代码驱动 recipe 面、无合并选项可言；我们两面同源（一个 orchestrator），先收一个入口，Team tab 将来长重（成员/并行面板）再升格独立路由（低成本拆分）。
+2. **Leader 默认 agent** → ✅ **已拍板（2026-06-12）：默认 opencode**——随 app 打包零外部依赖，无 claude 的电脑开箱可用（AionUi 默认自带 aionrs 同取舍）；质量短板由 system 提示 + Leader 每轮 deny 内置 task（§2.3）治本，拆分质量随工作区模型配置；claude 留在下拉供选。
 3. **成员约束强度**：MVP 仅提示约束（推荐，零增量）vs 服务端强制（delegate 端点校验成员白名单——需要把成员集传给 :4099，增量中等）。
 4. **普通会话 deny 的范围**：仅 opencode（推荐，ACP 本来就不注入）；是否也给 gateway/IM 渠道的会话加（IM 场景暂无编排诉求，建议一并 deny 防意外）。
 5. **「编排模式」开关**：直接移除（推荐）vs 降级为高级选项保留。
