@@ -35,7 +35,11 @@ async function startServer(): Promise<void> {
         ...manager.listAgents().map((agent) => ({
           id: `acp:${agent.id}`,
           name: agent.label,
-          status: agent.status,
+          // Transport state must not leak to the LLM: "disconnected" only
+          // means lazy — delegate auto-connects. A leader shown
+          // "disconnected" refuses to delegate (live-observed, 2026-06-12);
+          // only a real spawn error makes the target unavailable.
+          status: agent.status === "error" ? "error" : "available",
           description: agent.description,
         })),
       ],
