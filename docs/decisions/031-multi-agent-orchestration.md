@@ -1,6 +1,6 @@
 # ADR-031: 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式
 
-**状态**: Accepted（架构决策）· **阶段3 第一批已落地（2026-06-12）**——实现章节的 ①原语层 + ④代码驱动 Pipeline + 编排 UI（独立路由）已实现于 `packages/core/orchestrator`（宿主 = ACP sidecar :4099，`/orchestration/*`）；②agent 驱动 delegate（宿主 MCP 工具）与 ⑤Fan-out 留下一批。落地偏差备注见下方「实现章节」。
+**状态**: Accepted（架构决策）· **阶段3 第一批 + 第二批已落地（2026-06-12）**——实现章节五项全实现：①原语层 + ④代码驱动 Pipeline + ②agent 驱动 delegate（`delegate-mcp` stdio shim + 双注入路径）+ ⑤Fan-out（DAG 执行器 + worktree 隔离）+ ③UI（独立路由 + 主对话 delegate 卡片/dock）。宿主 = ACP sidecar :4099，`/orchestration/*`。落地偏差备注见下方「实现章节」。
 **日期**: 2026-06-08
 **关联**: ADR-005 (Permission & Question Dock), ADR-026 (知识库 MCP), ADR-027 (ACP 多后端，D-2 档2/阶段3), ADR-029 (执行流程回合分组，嵌套渲染), ADR-030 (@agent/connector 控制原语)
 **探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md) §6（delegate 优于对等换手、五种模式、治理）· [discussions/012](../discussions/012-p1-execution-plan.md) P1-3（嵌套委派 UI）
@@ -89,10 +89,10 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 
 ### 阶段拆解
 1. **原语层** ✅（2026-06-12）：在 connector 之上实现 `spawn(child)/await(deliverable)/steer/cancel` + 后台任务跟踪 + 治理护栏（maxConcurrent/maxDepth/budget）。
-2. **agent 驱动 delegate**（留下一批）：经宿主 MCP 暴露 `delegate` 工具；先支持「主 agent 委派单个子任务」（深度 1）。
-3. **UI 嵌套** ✅（部分，2026-06-12）：编排独立路由 `/orchestration`（run 列表/详情 + step 时间线 + 权限内联应答 + 子会话懒加载）；主对话内的 delegate 卡片随 ② 落地。
+2. **agent 驱动 delegate** ✅（2026-06-12 第二批）：`acp-client delegate-mcp` stdio shim（`delegate`/`list_agents` 工具）→ HTTP 回连 `POST /orchestration/delegate`（**阻塞**返回 D-2 契约，拍板 2026-06-12：opencode task 同构，非阻塞 mailbox 留后续）。双注入路径：ACP per-session（`orchestrate` 旗标，子会话不注入=硬护栏）/ opencode 全局配置（「编排模式」开关；子会话 `tools:{"orchestrator_*":false}` → sticky session permission deny）。
+3. **UI 嵌套** ✅（2026-06-12 两批合计）：编排独立路由 `/orchestration`（run 列表/详情 + step 时间线按依赖深度分层 + 权限内联应答 + 子会话懒加载）+ 主对话 delegate 卡片（ExecutionFlow 识别 + 子会话懒加载）+ DelegateDock（阻塞期权限内联应答）。
 4. **代码驱动 Pipeline** ✅（2026-06-12）：recipe API + 产物文件串接；真机模板 = 跨厂商两步（opencode 分析 → claude 报告）。
-5. **Fan-out**（留下一批）：并行多 delegate + worktree 隔离 + 聚合（Semaphore 已按排队语义实现为其留路）。
+5. **Fan-out** ✅（2026-06-12 第二批）：pipeline 执行器泛化为 **DAG 调度**（inputs 全 completed 即并行启动，失败跳传递性下游、独立分支跑完）+ 按步 `isolation:"worktree"`（git worktree --detach，输入产物复制进 worktree、交付物拷回主 run 目录、成功删失败留）+ 聚合（inputs=全部 workers）。
 
 > **第一批落地备注（2026-06-12）**：
 > - **宿主**：orchestrator 实例化在 **ACP sidecar :4099**（非 desktop renderer）——编排跨 WebView reload 存活，② 的 MCP stdio shim 将来可经 HTTP 回连；UI 经 `/orchestration/*` HTTP + per-run SSE（首帧全量快照）消费。
@@ -100,6 +100,14 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 > - **D-6 的「非阻塞 + 回卷」在第一批中体现为**：spawn 即后台任务（TaskHandle.done 永不 reject）+ steer/cancel 可中途干预；MCP 工具形态的交付物回卷随 ② 落地。
 > - **D-5 治理**：maxConcurrent 信号量为**排队**语义（非拒绝，为 Fan-out 留路）；tokenBudget 字段预留未执行。
 > - 子会话防侧栏污染：ACP 子会话无 opencode twin；opencode 子会话 parentID 挂跨目录隐藏父会话（vendor 接受跨目录 parentID，真机验证）。
+>
+> **第二批落地备注（2026-06-12）**：
+> - **D-2 契约最终形态**：`{status, sessionId, deliverable?, tokens?, cost?, error?}`——deliverable = 子会话最后一条含文本的 assistant 消息（fetchHistory），tokens/cost best-effort 汇总（ACP 无 cost 自然省略）。
+> - **阻塞超时三件套**：shim 每 10s 发 MCP progress notification（vendor `resetTimeoutOnProgress:true`）+ opencode mcp entry `timeout:600000`（兼任 connect 超时，勿过大）+ claude spawn env `MCP_TOOL_TIMEOUT` 兜底。
+> - **深度护栏残余风险（接受）**：delegate 端点恒 depth 0→1；真正的防递归闸门在注入侧（ACP 子会话不注入 + opencode 子会话 tools deny，均真机验证）。delegate 记录不持久化（重启 = shim 工具错误，与 run interrupted 同级）。
+> - **opencode「编排模式」开关限制**：vendor 无 DELETE /mcp——关闭须重启生效；运行时 POST /mcp 仅对当前 workspace instance 生效（gotchas §3）。
+> - **真机（备用端口栈 2026-06-12）**：opencode 主 agent 全闭环（qwen-plus 调 `orchestrator_delegate` → 契约回卷）、子会话 deny/隐藏父/侧栏零污染、shim progress keepalive 3 帧、Fan-out 3 步（含 worktree worker）并行+聚合+worktree 回收全过。**遗留校准**：claude（ACP 注入）shim 进程被正确拉起但工具未达模型工具列表——疑本机 Claude Code 深度定制环境（deferred-tools harness）干扰，GUI 走查时校准（见 MEMORY Pending Issues）。
+> - **D-8 真机佐证**：opencode 主对话内置 `task` 与 `orchestrator_delegate` 并存，提示词不点名时模型可能选内置 task——跨厂商委派须点名工具。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。

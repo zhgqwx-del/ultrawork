@@ -47,6 +47,8 @@
 - **Playwright MCP 工具名前缀叠加**：注册名 `browser` + 工具名 `browser_take_screenshot` → 实际调用名是 `browser_browser_take_screenshot`。
 - **Playwright 截图产物**：返回 base64 attachment；是否落盘取决于 AI 是否传 `path` 参数；temp 路径在 `/var/folders/.../playwright-mcp-output/`。
 - **MCP 持久化**：服务配置存 `opencode.json`（已从 localStorage 迁移，Issue#18）；Browser MCP 全局配置存 `~/.config/ultrawork/opencode.json`，跨工作区自动恢复。
+- **运行时 `POST /mcp` 是 per-directory instance 的**（2026-06-12 真机实测）：注册只对请求所带 `x-opencode-directory` 对应的 instance 生效——不带 header 注册到默认 instance，工作区会话**看不到**该工具。desktop ApiClient 自动带当前 workspace header → createMCP 即时生效仅限当前工作区，其它工作区靠全局 opencode.json 重启加载。
+- **`GET /mcp` 只列配置文件里的 entry**：`MCP.status()` 遍历 `cfg.mcp`，运行时 `POST /mcp` 加的 server 即使 connected 也**不出现在 GET /mcp**（工具实际可用，`MCP.tools()` 走 instance state）。别用 GET /mcp 验证运行时注册是否成功——直接让会话调用工具验证。
 
 ## 4. Gateway / Channel（:4097）
 
@@ -130,6 +132,12 @@
 - **headless run 的子会话权限必须有人应答**：子 agent（如 claude 写文件）发 `permission.asked` 时没有打开的会话页，orchestrator 把它 relay 成 run 事件流的 `step.permission`，run 详情页内联应答（ACP 走 `/acp/session/:id/permission`，opencode 走 api.replyPermission）；不答会挂到 sidecar 的 5min 默认 deny（`ACP_PERMISSION_TIMEOUT_MS`）+ 步骤超时兜底。对已 resolve 的权限重复应答返回 404，无害。
 - **run 重启不续跑**：步骤是带副作用的 LLM turn 无幂等保障，sidecar 重启时 running/pending run 一律标 `interrupted`（in-flight step → failed "sidecar restarted"），UI「再跑一次」= 同 recipe 新 run。
 - **产物契约靠 prompt 文本约定**（`artifacts.ts buildStepPrompt`）：交付物路径以「（覆盖写）：<path>」行注入，步骤结束 `existsSync` 校验，缺失即 step failed——改契约文案时注意 orchestrator 测试里按此正则解析。
+- **delegate 工具防递归是注入侧双保险，不靠深度参数**（第二批 ②）：ACP 子会话 = InProcACPBackend 恒传 `orchestrate:false`（mcpServers 不含 shim，物理无工具）；opencode 子会话 = 每个子 turn 的 prompt 带 `tools:{"orchestrator_*":false}`——vendor 把它落成 **sticky session permission deny**（`session.permission` 持久在会话上，steer 后续轮也安全；GET /session/:id 可见该 ruleset，真机验证）。`POST /orchestration/delegate` 的 depth 恒 0→1，若注入护栏被绕过深度护栏不防递归（接受的残余风险，闸门在注入侧）。
+- **阻塞式 delegate 的 MCP 超时三件套**：shim 等待期间每 10s 发 `notifications/progress`（须有 progressToken；vendor `callTool` 带 `resetTimeoutOnProgress:true`，真机 3 帧验证）+ opencode mcp 配置 `timeout:600000`（注意该字段**同时是 connect 超时**，别设过大）+ claude adapter spawn env 兜底 `MCP_TOOL_TIMEOUT=1800000`。
+- **opencode 主对话有两个「委派」工具并存**（D-8 预言，真机证实）：内置 `task`（只能派自家 subagent）与我们的 `orchestrator_delegate`（跨厂商）。提示词只说「用 delegate 工具」时 qwen 会选内置 task——需要跨厂商委派时主 agent 的指令要点名 `orchestrator_delegate`（工具 description 已写明差异，但模型不保证选对）。
+- **delegate-mcp shim 的 stdout 归 MCP 协议**：`acp-client delegate-mcp` 子命令分发在任何 server/manager 初始化之前，日志只走 stderr；新加启动期代码不要在分发前 console.log。
+- **opencode 编排模式开关没有运行时反注册**：vendor 无 `DELETE /mcp`——开=write_mcp_config+POST /mcp 即时生效，关=remove_mcp_config 后**须重启**才从运行中 server 消失。
+- **worktree 隔离的输入产物要复制进 worktree**（`worktree.ts stageInputs`）：子 agent cwd 沙箱在 worktree 里，引用主 workspace 绝对路径会触发跨目录读权限弹窗（claude）；产物完成后拷回主 run 目录、worktree 成功即删失败保留（`step.worktreePath` 暴露）。
 
 ---
 

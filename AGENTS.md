@@ -28,7 +28,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
 | `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
 | `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
-| `@agent/orchestrator` | ✅ 阶段3 第一批（ADR-031） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + Pipeline recipe（产物文件串接）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*`）；Fan-out/delegate MCP 工具留下一批 |
+| `@agent/orchestrator` | ✅ 阶段3 全量（ADR-031） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + DAG 调度（Pipeline/Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（阻塞 D-2 契约）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*` + delegate-mcp stdio shim） |
 
 ## Project Structure
 
@@ -132,13 +132,15 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `backends/opencode.ts` — 包装 createApiClient（⚠️ 必须工厂，bridge.test mock 依赖）+ 全局 /event 流；`.api` 暴露 backend-specific 面
 - `backends/acp.ts` + `acp-http.ts` — acp-stdio 族通用 adapter：per-session SSE 引用计数池 + :4099 REST（原 desktop agent-router）
 
-**Orchestrator（`packages/core/orchestrator/src/`，ADR-031 阶段3 第一批）**
-- `orchestrator.ts` — 原语（spawn/awaitTask/steer/cancelTask）+ recipe 层（createRun/cancelRun）+ 治理 + loadPersisted（重启标 interrupted）
+**Orchestrator（`packages/core/orchestrator/src/`，ADR-031 阶段3 全量）**
+- `orchestrator.ts` — 原语（spawn/awaitTask/steer/cancelTask）+ recipe 层（createRun/cancelRun 中止全部在途）+ 治理（含 opencode 子会话 `orchestrator_*` tools deny）+ loadPersisted（重启标 interrupted）
 - `turn.ts` — `runTurn` 双语义终态检测（opencode fire-and-forget 等 idle+finish 双信号；ACP 阻塞 prompt 即终态；超时/abort 先 cancel）⚠️ 编排新代码勿直接 await prompt 当完成
-- `pipeline.ts` — Pipeline 执行器（产物串接 + 失败传播 skipped + step.permission relay + 跨目录隐藏父会话）；`artifacts.ts` — 产物路径约定 + prompt 契约
+- `pipeline.ts` — DAG 执行器（inputs 满足即并行 = Pipeline/Fan-out 同一实现；失败跳传递性下游 + step.permission relay + 隐藏父会话 run 启动时建）；`artifacts.ts` — 产物路径约定 + prompt 契约
+- `delegate.ts` — DelegateManager（阻塞 delegate → D-2 契约 `{deliverable,sessionId,tokens,cost}`；长驻隐藏父 `[delegates]`；ring buffer 50）
+- `worktree.ts` — Fan-out worktree 隔离（create/remove/stageInputs/collectArtifact；`<xdgData>/ultrawork/worktrees/`）
 - `session-queue.ts`（QueueOwner 实现）, `task-registry.ts`（Semaphore 排队语义 + 任务跟踪）, `run-store.ts`（JSON 落盘 `~/.local/share/ultrawork/orchestrator-runs/`）
-- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector）, `orchestration-routes.ts`（5 端点）, `inproc-acp-backend.ts`（直连 ACPManager）, `opencode-credentials.ts`
-- Desktop：`pages/Orchestration.tsx` + `pages/OrchestrationRun.tsx` + `lib/orchestration-client.ts`（fetch + EventSource）
+- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
+- Desktop：`pages/Orchestration.tsx`（Pipeline|Fan-out 模板 + 步骤级 model）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts` + `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（主对话卡片）+ `delegate-dock.tsx`（阻塞期权限）+ `lib/use-orchestrate-mode.ts`（opencode 编排模式开关）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）

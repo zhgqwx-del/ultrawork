@@ -302,33 +302,22 @@ curl -N http://localhost:4096/event \
 
 持久化：`~/.local/share/ultrawork/acp-sessions/<sid>.json`（env `ACP_DATA_DIR` 可覆盖）。详见 `conventions.md` §11 / `gotchas.md` §8。
 
-## Orchestration 端点（:4099，ADR-031 阶段3 第一批）
+## Orchestration 端点（:4099，ADR-031 阶段3）
 
 ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。无认证（仅 127.0.0.1），CORS 同上。
 
 | 方法 | 路径 | 功能 | 说明 |
 |------|------|------|------|
-| POST | `/orchestration/runs` | 创建并启动 Pipeline run | body `{recipe: {name, workspace, steps[]}}`；step `{id, agentId, taskPrompt, inputs?, artifactName?, timeoutMs?, model?}`；workspace 服务端 realpath 归一；校验失败 400（`RecipeValidationError` 文案） |
+| POST | `/orchestration/runs` | 创建并启动 run（DAG 调度） | body `{recipe: {name, workspace, steps[]}}`；step `{id, agentId, taskPrompt, inputs?, artifactName?, timeoutMs?, model?, isolation?}`；`inputs` 全 completed 即并行启动（Fan-out）；`isolation:"worktree"` 须 git repo；workspace 服务端 realpath 归一；校验失败 400 |
 | GET | `/orchestration/runs` | run 列表 | `{runs}` updatedAt 倒序 |
 | GET | `/orchestration/runs/:id` | run 详情 | `{run}` / 404 |
-| POST | `/orchestration/runs/:id/cancel` | 取消 run | 中止当前 step + 后续 skipped；404 未知 / 409 已终态 |
+| POST | `/orchestration/runs/:id/cancel` | 取消 run | 中止**全部在途** step + 未达 skipped；404 未知 / 409 已终态 |
 | GET | `/orchestration/runs/:id/events` | per-run SSE | **首帧 = run.updated 全量快照**（订阅前事件零丢失）+ `step.updated` / `step.permission`（子会话权限 relay，UI 内联应答走上方 `/acp/session/:id/permission`）+ 心跳 |
+| POST | `/orchestration/delegate` | **阻塞式 delegate**（第二批 ②） | body `{agentId, task, workspace, model?, timeoutMs?}`；阻塞至子 turn 终态，返回 D-2 契约 `{result: {status, sessionId, deliverable?, tokens?, cost?, error?}}`；400 请求错 / 429 治理（深度）/ 500 其它。消费者 = `acp-client delegate-mcp` stdio shim |
+| GET | `/orchestration/delegates` | delegate 记录列表 | 活动 + 最近 50 条终态（内存，不持久化） |
+| GET | `/orchestration/delegates/events` | 全局 delegate SSE | 首帧 `delegate.snapshot` + `delegate.updated` / `delegate.permission`（DelegateDock 按 workspace 过滤内联应答）+ 心跳 |
+| GET | `/orchestration/agents` | delegate 目标列表 | `opencode:default` + 全部 ACP agents（shim `list_agents` 工具消费） |
 
-run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env `ORCHESTRATOR_DATA_DIR` 可覆盖）；sidecar 重启 running run → `interrupted`（不自动续跑）。产物文件：`<workspace>/.ultrawork/runs/<runId>/`。详见 ADR-031 / `gotchas.md` §9。
+run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env `ORCHESTRATOR_DATA_DIR` 可覆盖）；sidecar 重启 running run → `interrupted`（不自动续跑）；delegate 记录不持久化（重启 = shim 工具错误）。产物文件：`<workspace>/.ultrawork/runs/<runId>/`；worktree：`<xdgData>/ultrawork/worktrees/<runId>/<stepId>`（env `ULTRAWORK_WORKTREES_DIR` 可覆盖，成功即删失败保留）。详见 ADR-031 / `gotchas.md` §9。
 
-## ✅ Milestone 1 总结
-
-**完成内容**:
-- ✅ 调研 OpenCode 项目结构
-- ✅ 理解 API 端点和认证方式
-- ✅ 识别当前实现的问题
-- ✅ 提供详细的修复建议
-
-**关键发现**:
-- OpenCode 使用 Hono 框架和 Basic Auth
-- API 路径不包含 `/api` 前缀
-- 事件订阅是全局的，不是 per-session
-- 需要修复 4 个主要问题
-
-**下一步**: 修复 @agent/api-client 实现，然后进行手动测试验证。
 
