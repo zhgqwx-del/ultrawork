@@ -27,6 +27,10 @@ function hiddenParentDir(): string {
 export interface OrchestrationHost {
   orchestrator: Orchestrator
   delegates: DelegateManager
+  /** Per-workspace connector map — shared with the team routes (017). */
+  connectorFor(workspace: string): Connector
+  /** Non-workspace dir for hidden parent sessions (orchestrator children + team leaders). */
+  hiddenParentWorkspace: string
 }
 
 export function createOrchestrator(manager: ACPManager): OrchestrationHost {
@@ -80,5 +84,5 @@ export function createOrchestrator(manager: ACPManager): OrchestrationHost {
     connectorFor,
     hiddenParentWorkspace: hidden,
   })
-  return { orchestrator, delegates }
+  return { orchestrator, delegates, connectorFor, hiddenParentWorkspace: hidden }
 }

@@ -11,6 +11,7 @@ async function startServer(): Promise<void> {
   const { loadAgentConfigs, agentsConfigPath } = await import("./agents-config.js")
   const { createOrchestrator } = await import("./orchestration.js")
   const { orchestrationRoutes } = await import("./orchestration-routes.js")
+  const { teamRoutes } = await import("./team-routes.js")
 
   const ACP_PORT = Number(process.env.ACP_CLIENT_PORT ?? 4099)
 
@@ -20,8 +21,10 @@ async function startServer(): Promise<void> {
 
   // Orchestration layer (ADR-031): hosted here so runs survive WebView reloads.
   // Interrupted runs are marked, never auto-resumed.
-  const { orchestrator, delegates } = createOrchestrator(manager)
+  const { orchestrator, delegates, connectorFor, hiddenParentWorkspace } = createOrchestrator(manager)
   orchestrator.loadPersisted()
+  // Team-session registry + leader creation (017 Team 页).
+  app.route("/", teamRoutes({ connectorFor, manager, hiddenParentWorkspace }))
   app.route(
     "/",
     orchestrationRoutes(orchestrator, delegates, {
