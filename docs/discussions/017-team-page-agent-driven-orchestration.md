@@ -1,6 +1,6 @@
 # 017 · Team 页 — agent 驱动编排的独立 surface（阶段3 第三批形态提案）
 
-> **状态**：讨论中（形态提案，待拍板后作为阶段3 第三批 scope，落地时回写 ADR-031）
+> **状态**：✅ 已落地（2026-06-12，阶段3 第三批；五项拍板全实现，落地备注见 [ADR-031](../decisions/031-multi-agent-orchestration.md) 第三批落地备注）
 > **日期**：2026-06-12
 > **缘起**：阶段3 第二批收口后用户真机体验发现：经「编排模式」开关 + 普通会话提示词驱动 delegate 的 UX 不可用于普通用户（须点名 `orchestrator_delegate` 工具、模型与内置 task 混淆、开关是全局 config 注入且关闭须重启）。用户拍板倾向 **AionUi Team 页范式**：普通对话保持纯单 agent 不动，委派在独立 Team 页是**默认行为**。
 > **承接**：[ADR-031](../decisions/031-multi-agent-orchestration.md) D-7 原旨（「建议承载在独立 orchestration/team 路由，单会话聊天保持纯净」）· [016](./016-aionui-multi-agent-competitor.md) §6 UI 共存范式（AionUi `pages/team` 独立 / `pages/conversation` 零改动，源码核实）· [agent-os-target-architecture.md](../agent-os-target-architecture.md) §3.6（不破坏现有 UX）。

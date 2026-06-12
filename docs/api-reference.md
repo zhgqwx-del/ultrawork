@@ -35,7 +35,7 @@
 | DELETE | `/:sessionID` | 删除 session | 永久删除 |
 | PATCH | `/:sessionID` | 更新 session | 更新 title 等元数据 |
 | POST | `/:sessionID/message` | ~~发送消息~~ | ⚠️ 已弃用，改用 `/:sessionID/prompt_async`（204） |
-| POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 字段可覆盖运行时模型 |
+| POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 可覆盖运行时模型；`tools` per-tool 开关（落成 **sticky session permission**，支持通配 key）；`system` 附加 system prompt（**per-message append**，不 sticky）——Team Leader 每轮携带编排指令用 |
 | GET | `/:sessionID/message` | 获取消息列表 | 返回所有消息 |
 | POST | `/:sessionID/abort` | 中止 session | 停止 AI 处理 |
 
@@ -290,7 +290,7 @@ curl -N http://localhost:4096/event \
 | GET | `/acp/agents` | 列出 agent | 含 status / capabilities（loadSession 等） |
 | GET/PUT/DELETE | `/acp/agents/:id(/config)` | agent 配置 CRUD | PUT 保存即热生效（断开重连）；body 含 `label/command/args/env/knowledgeMcp/thoughtLevel` |
 | POST | `/acp/agents/:id/connect` / `disconnect` | 手动连接/断开 | 平时无需手动——prompt 时懒连接 |
-| POST | `/acp/session` | 建会话 | body `{agentId, cwd, clientSessionId}` |
+| POST | `/acp/session` | 建会话 | body `{agentId, cwd, clientSessionId?, orchestrate?, systemPrompt?}`——`orchestrate` 注入 delegate MCP（per-session）；`systemPrompt` 经 `_meta.systemPrompt` append（claude ≥0.44）或首条 prompt 前置（其它 adapter），持久化 + 重启重注入 |
 | GET | `/acp/sessions` | **全部会话+绑定**（阶段2） | `[{sessionId, agentId, cwd, createdAt}]`——desktop 启动时绑定 hydration 数据源（ADR-030） |
 | GET | `/acp/session/:id` | 会话信息 | 持久化映射（重启后仍在） |
 | GET | `/acp/session/:id/messages` | **整形历史**（W4b） | 一次性全量 `{messages}`，connector `ACPBackend.fetchHistory` 消费 |
@@ -317,6 +317,9 @@ ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。
 | GET | `/orchestration/delegates` | delegate 记录列表 | 活动 + 最近 50 条终态（内存，不持久化） |
 | GET | `/orchestration/delegates/events` | 全局 delegate SSE | 首帧 `delegate.snapshot` + `delegate.updated` / `delegate.permission`（DelegateDock 按 workspace 过滤内联应答）+ 心跳 |
 | GET | `/orchestration/agents` | delegate 目标列表 | `opencode:default` + 全部 ACP agents（shim `list_agents` 工具消费） |
+| POST | `/orchestration/team/sessions` | **创建 Team Leader 会话**（第三批 017） | body `{workspace, leaderAgentId, members[], systemPrompt?, title?}`；服务端懒建跨目录隐藏 `[team]` 父 → leader/twin 挂 parentID（防侧栏污染）→ ACP leader 额外建绑 twin 的 ACP 会话（orchestrate+systemPrompt，失败回滚 twin）；返回 `{session}` |
+| GET | `/orchestration/team/sessions` | Team 会话注册表 | `?workspace=` 过滤，createdAt 倒序；持久化 `team-sessions.json`（重启恢复） |
+| DELETE | `/orchestration/team/sessions/:id` | 删除 Team 会话 | 注册表移除 + best-effort 清理 opencode/ACP 双侧会话 |
 
 run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env `ORCHESTRATOR_DATA_DIR` 可覆盖）；sidecar 重启 running run → `interrupted`（不自动续跑）；delegate 记录不持久化（重启 = shim 工具错误）。产物文件：`<workspace>/.ultrawork/runs/<runId>/`；worktree：`<xdgData>/ultrawork/worktrees/<runId>/<stepId>`（env `ULTRAWORK_WORKTREES_DIR` 可覆盖，成功即删失败保留）。详见 ADR-031 / `gotchas.md` §9。
 
