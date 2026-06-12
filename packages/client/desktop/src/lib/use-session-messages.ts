@@ -19,6 +19,19 @@ interface UseSessionMessagesOptions {
   initialSending?: boolean
   /** Pre-fill user message text for optimistic UI */
   initialMessageText?: string
+  /**
+   * Workspace directory for sessions that are NOT in SessionsContext (Team
+   * Leader sessions hang off a hidden parent and never enter the sidebar
+   * list). Falls back to the context lookup when unset.
+   */
+  directory?: string
+  /**
+   * Per-turn prompt extras. The Team page sends the Leader's orchestration
+   * instructions + the built-in-task deny here ({ system, tools }); normal
+   * sessions leave it unset and get the connector's default orchestrator_*
+   * deny (017 拍板 #4).
+   */
+  promptOptions?: { system?: string; tools?: Record<string, boolean> }
 }
 
 export function useSessionMessages(
@@ -583,9 +596,15 @@ export function useSessionMessages(
     // Dispatched by binding. ACP backends lazily ensure the agent-side
     // session (cwd = session workspace) before prompting; turn completion is
     // signaled by the shaped message.updated finish event over SSE.
-    const directory = sessions.find((s) => s.id === sessionId)?.directory
+    const opts = optionsRef.current
+    const directory = opts?.directory ?? sessions.find((s) => s.id === sessionId)?.directory
     connector
-      .prompt(sessionId, userMessage, { model: model || undefined, directory })
+      .prompt(sessionId, userMessage, {
+        model: model || undefined,
+        directory,
+        system: opts?.promptOptions?.system,
+        tools: opts?.promptOptions?.tools,
+      })
       .catch(handleSendError)
   }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])
 

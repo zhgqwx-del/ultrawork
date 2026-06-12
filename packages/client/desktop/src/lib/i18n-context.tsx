@@ -95,6 +95,22 @@ const translations: Record<Language, Record<string, string>> = {
     "delegate.running": "Sub-agent working — answer any permission prompts above the input box.",
     "delegate.dock.running": "Delegating",
 
+    // Team tab (017)
+    "team.tab": "Team",
+    "orchestration.tab": "Pipelines",
+    "team.desc": "Describe the task — the Leader splits it, delegates to members, and summarizes the deliverables",
+    "team.leader": "Leader",
+    "team.members": "Members",
+    "team.start": "New Team Session",
+    "team.history": "Team Sessions",
+    "team.noSessions": "No team sessions yet",
+    "team.noMembers": "Pick at least one member",
+    "team.sessionTitle": "Team Session",
+    "team.membersCount": "members",
+    "team.back": "Back to list",
+    "team.emptyHint": "Describe your task — the Leader decides what to delegate.",
+    "team.inputPlaceholder": "Describe the task…",
+
     // Settings page
     "settingsPage.title": "Settings",
     "settingsPage.general": "General",
@@ -649,6 +665,22 @@ const translations: Record<Language, Record<string, string>> = {
     "delegate.childSession": "子会话过程",
     "delegate.running": "子 agent 执行中——如有权限请求请在输入框上方应答。",
     "delegate.dock.running": "委派中",
+
+    // Team tab (017)
+    "team.tab": "Team 协作",
+    "orchestration.tab": "流水线",
+    "team.desc": "只需描述任务——Leader 负责拆分、委派给成员并汇总交付物",
+    "team.leader": "Leader",
+    "team.members": "成员",
+    "team.start": "新建 Team 会话",
+    "team.history": "历史 Team 会话",
+    "team.noSessions": "还没有 Team 会话",
+    "team.noMembers": "至少勾选一个成员",
+    "team.sessionTitle": "Team 会话",
+    "team.membersCount": "个成员",
+    "team.back": "返回列表",
+    "team.emptyHint": "描述你的任务——是否委派、派给谁由 Leader 决定。",
+    "team.inputPlaceholder": "描述任务…",
 
     // Settings page
     "settingsPage.title": "设置",

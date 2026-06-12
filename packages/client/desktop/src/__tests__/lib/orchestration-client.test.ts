@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { computeStepLevels, createRun, listDelegates, listRuns, cancelRun, getRun } from "@/lib/orchestration-client"
+import {
+  computeStepLevels,
+  createRun,
+  createTeamSession,
+  deleteTeamSession,
+  listDelegates,
+  listRuns,
+  listTeamSessions,
+  cancelRun,
+  getRun,
+} from "@/lib/orchestration-client"
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
@@ -81,5 +91,41 @@ describe("computeStepLevels", () => {
         { id: "c", inputs: ["a"] },
       ]),
     ).toEqual([0, 0, 1])
+  })
+})
+
+describe("team sessions client (017)", () => {
+  const ENTRY = {
+    id: "ses_team_1",
+    workspace: "/ws",
+    leaderAgentId: "opencode:default",
+    members: ["opencode:default", "acp:claude"],
+    createdAt: 1,
+  }
+
+  it("createTeamSession posts the payload and unwraps session", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ session: ENTRY }, 201))
+    const entry = await createTeamSession({
+      workspace: "/ws",
+      leaderAgentId: "opencode:default",
+      members: ["opencode:default", "acp:claude"],
+      systemPrompt: "LEADER RULES",
+    })
+    expect(entry.id).toBe("ses_team_1")
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toContain("/orchestration/team/sessions")
+    expect(JSON.parse(String(init?.body)).systemPrompt).toBe("LEADER RULES")
+  })
+
+  it("listTeamSessions passes the workspace filter", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ sessions: [ENTRY] }))
+    const sessions = await listTeamSessions("/ws")
+    expect(sessions).toHaveLength(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain("?workspace=%2Fws")
+  })
+
+  it("deleteTeamSession surfaces server errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ error: "unknown team session" }, 404))
+    await expect(deleteTeamSession("nope")).rejects.toThrow("unknown team session")
   })
 })

@@ -103,6 +103,46 @@ export function computeStepLevels(steps: Pick<RecipeStep, "id" | "inputs">[]): n
   })
 }
 
+// --- Team sessions (017 Team 页) ---
+
+export interface TeamSessionEntry {
+  /** The Leader's opencode session id (or its twin for ACP leaders) — the chat key. */
+  id: string
+  workspace: string
+  leaderAgentId: string
+  members: string[]
+  title?: string
+  createdAt: number
+}
+
+export async function createTeamSession(opts: {
+  workspace: string
+  leaderAgentId: string
+  members: string[]
+  systemPrompt?: string
+  title?: string
+}): Promise<TeamSessionEntry> {
+  const res = await fetch(`${BASE}/orchestration/team/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  })
+  return (await expectOk<{ session: TeamSessionEntry }>(res)).session
+}
+
+export async function listTeamSessions(workspace?: string): Promise<TeamSessionEntry[]> {
+  const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
+  const res = await fetch(`${BASE}/orchestration/team/sessions${query}`)
+  return (await expectOk<{ sessions: TeamSessionEntry[] }>(res)).sessions
+}
+
+export async function deleteTeamSession(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+  await expectOk<{ ok: boolean }>(res)
+}
+
 /** Reply to a relayed ACP child-session permission (existing sidecar endpoint). */
 export async function replyAcpPermission(
   sessionId: string,
