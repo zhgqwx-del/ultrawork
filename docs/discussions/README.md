@@ -28,3 +28,4 @@
 | [014-stage1-acp-normalization-plan.md](./014-stage1-acp-normalization-plan.md) | 阶段1 可执行方案 — ACP 单 agent 异构归一化（事件桥/权限/能力/进程，含 re-baseline 与映射对照表） | 2026-06-08 | 已正式化为 ADR-027 实现章节 |
 | [015-backend-taxonomy-non-acp.md](./015-backend-taxonomy-non-acp.md) | Backend 接入分类法 —「支持 ACP 非二元」与非-ACP/HTTP 后端（openclaw 薄桥 vs hermes 原生，源级实测 + 传输族×adapter 两轴 + 选型决策树） | 2026-06-09 | 调研记录 + 讨论中 |
 | [016-aionui-multi-agent-competitor.md](./016-aionui-multi-agent-competitor.md) | AionUi 多 agent 调研 — 直接竞品（Electron 多-agent 桌面，20+ agent + Team Mode 编排）+ 档1/档2 实现参考 + D-8/ADR-031 现网验证（NON_ACP_BACKENDS 佐证） | 2026-06-10 | 调研记录 + 讨论中 |
+| [017-team-page-agent-driven-orchestration.md](./017-team-page-agent-driven-orchestration.md) | Team 页 — agent 驱动编排的独立 surface（Leader 会话 + 委派默认化 + 普通会话物理隔离；阶段3 第三批形态提案，替代「编排模式」开关） | 2026-06-12 | 讨论中 |

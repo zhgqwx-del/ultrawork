@@ -108,6 +108,7 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 > - **opencode「编排模式」开关限制**：vendor 无 DELETE /mcp——关闭须重启生效；运行时 POST /mcp 仅对当前 workspace instance 生效（gotchas §3）。
 > - **真机（2026-06-12 两轮）**：opencode 主 agent 全闭环（qwen-plus 调 `orchestrator_delegate` → 契约回卷）、**claude 主对话全闭环**（per-session 注入 → mcp__orchestrator__delegate 可见 → 权限应答 → 委派 opencode 子任务契约回卷；首轮"工具不可见"的根因是测试栈跑了 M4 之前的旧二进制，重编即愈，注入链路无缺陷）、子会话 deny/隐藏父/侧栏零污染、shim progress keepalive 3 帧、Fan-out 3 步（含 worktree worker）并行+聚合+worktree 回收全过；GUI（Chrome+Vite+Playwright）①③④⑤ 12 项断言全过（delegate 卡片/DelegateDock 权限内联+文件落盘/Fan-out 分层渲染/步骤级 model 下拉）。ACP 卡片识别谓词真机校准：claude 的 tool part `tool='other'`（kind）、input `{agentId,task,cwd,model}` —— rawInput 形状谓词命中。
 > - **D-8 真机佐证**：opencode 主对话内置 `task` 与 `orchestrator_delegate` 并存，提示词不点名时模型可能选内置 task——跨厂商委派须点名工具。
+> - **第三批形态已立项讨论**：普通会话驱动 delegate 的 UX 不适合普通用户（提示词技巧 + 全局开关三脏）→ 回归 D-7 原旨的 **Team 页**方案（Leader 会话 + 委派默认化 + 普通会话物理隔离，「编排模式」开关拟移除），见 [discussions/017](../discussions/017-team-page-agent-driven-orchestration.md)。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。
