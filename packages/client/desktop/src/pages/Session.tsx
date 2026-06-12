@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react"
+import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { useParams, useLocation } from "react-router-dom"
 import { TopBar } from "@/components/layout/top-bar"
 import { handleDrag } from "@/components/layout/drag-region"
@@ -8,16 +8,20 @@ import { useModel } from "@/lib/model-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
-import { ChatInput, MessageList, ModelSelector, AgentSelector } from "@/components/chat"
+import { ChatInput, MessageList, ModelSelector, AgentSelector, AgentAvatar } from "@/components/chat"
 import { useConnector } from "@/lib/sse-context"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
 import { DelegateDock } from "@/components/chat/delegate-dock"
 import { useWorkspace } from "@/lib/workspace-context"
+import { useAgents } from "@/lib/agent-context"
+import { useTeamSessions } from "@/lib/team-sessions-context"
+import { buildLeaderSystemPrompt } from "@/lib/team-leader-prompt"
+import { isACPAgentId } from "@agent/connector"
 import { cn } from "@/lib/utils"
-import { PanelRight, ChevronDown, ChevronRight } from "lucide-react"
-import { ProgressPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview } from "@/components/session"
+import { PanelRight, ChevronDown, ChevronRight, Crown } from "lucide-react"
+import { ProgressPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview, TeamHeader } from "@/components/session"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -38,12 +42,32 @@ export function SessionPage() {
 
   const session = sessions.find(s => s.id === id)
 
+  // Team session (018 统一交互): identity comes from the sidecar registry.
+  const { entryOf } = useTeamSessions()
+  const { agents } = useAgents()
+  const teamEntry = entryOf(id)
+
   // Capability-gated UI (ADR-030 D-5): model override only where supported.
   const connector = useConnector()
   const supportsModel = connector.capabilitiesOf(id).model
 
   // Read navigation state once per session change
   const navState = location.state as { sending?: boolean; messageText?: string } | null
+
+  // opencode leaders carry the orchestration instructions on EVERY turn
+  // (promptAsync system append) plus the built-in task deny (017 拍板 #2).
+  // ACP leaders received the prompt once at session creation — nothing extra.
+  const promptOptions = useMemo(() => {
+    if (!teamEntry || isACPAgentId(teamEntry.leaderAgentId)) return undefined
+    const members = teamEntry.members.map((memberId) => {
+      const agent = agents.find((a) => a.id === memberId)
+      return { id: memberId, name: agent?.name ?? memberId, description: agent?.description }
+    })
+    return {
+      system: buildLeaderSystemPrompt({ workspace: teamEntry.workspace, members }),
+      tools: { task: false },
+    }
+  }, [teamEntry, agents])
 
   // --- Message management hook ---
   const {
@@ -65,6 +89,10 @@ export function SessionPage() {
   } = useSessionMessages(id, {
     initialSending: !!navState?.sending,
     initialMessageText: navState?.messageText,
+    // Legacy team sessions may be missing from SessionsContext — the
+    // registry knows their directory.
+    directory: teamEntry?.workspace,
+    promptOptions,
   })
 
   // --- Permission/Question management hook ---
@@ -123,7 +151,7 @@ export function SessionPage() {
       {/* Chat Panel (full width or 50% when preview active) */}
       <div className={cn("flex min-w-0 flex-col overflow-hidden", selectedArtifact ? "w-1/2" : "flex-1")}>
         {/* Header */}
-        <TopBar title={session?.title || t("session.newChat")}>
+        <TopBar title={session?.title || teamEntry?.title || t("session.newChat")}>
           <button
             onClick={toggleRight}
             aria-label={t("aria.toggleSidebar")}
@@ -137,6 +165,9 @@ export function SessionPage() {
             <PanelRight className="size-4" />
           </button>
         </TopBar>
+
+        {/* Team members bar (018 议题 B) */}
+        {teamEntry && <TeamHeader entry={teamEntry} />}
 
         {/* Messages Area */}
         <div
@@ -154,6 +185,9 @@ export function SessionPage() {
               historyLoading={historyLoading}
               onLoadEarlier={loadEarlierMessages}
             />
+            {teamEntry && messages.length === 0 && !loading && (
+              <p className="py-10 text-center text-sm text-[var(--color-fg-muted)]">{t("team.emptyHint")}</p>
+            )}
             {sending && !stopped && (
               <ExecutionStatus
                 state="working"
@@ -195,11 +229,29 @@ export function SessionPage() {
                 variant="reply"
                 leftSlot={
                   <div className="flex items-center gap-1">
-                    {id && (
-                      <AgentSelector
-                        sessionId={id}
-                        locked={loading || sending || allMessages.length > 0}
-                      />
+                    {teamEntry ? (
+                      // Birth-locked leader chip (018 A-2): no selector affordance.
+                      <span
+                        title={t("agent.locked")}
+                        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)] opacity-70"
+                      >
+                        <AgentAvatar
+                          agentId={teamEntry.leaderAgentId}
+                          name={leaderName(agents, teamEntry.leaderAgentId)}
+                          className="size-4 text-[8px]"
+                        />
+                        <Crown className="size-3 text-amber-500" />
+                        <span className="max-w-[120px] truncate">
+                          {leaderName(agents, teamEntry.leaderAgentId)}
+                        </span>
+                      </span>
+                    ) : (
+                      id && (
+                        <AgentSelector
+                          sessionId={id}
+                          locked={loading || sending || allMessages.length > 0}
+                        />
+                      )
                     )}
                     {supportsModel && (
                       <ModelSelector
@@ -254,6 +306,10 @@ export function SessionPage() {
 
     </div>
   )
+}
+
+function leaderName(agents: Array<{ id: string; name: string }>, id: string): string {
+  return agents.find((a) => a.id === id)?.name ?? id
 }
 
 function RightSidebarSection({ title, placeholder, children }: { title: string; placeholder?: string; children?: React.ReactNode }) {

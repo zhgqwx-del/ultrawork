@@ -55,7 +55,7 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.docs.prompt": "Help me analyze and summarize a document",
 
     // Orchestration
-    "orchestration.title": "Orchestration",
+    "orchestration.title": "Pipelines",
     "orchestration.newPipeline": "New Pipeline",
     "orchestration.newPipeline.desc": "Steps run in order; each step's deliverable file feeds the next step",
     "orchestration.namePlaceholder": "Pipeline name",
@@ -97,20 +97,12 @@ const translations: Record<Language, Record<string, string>> = {
     "delegate.running": "Sub-agent working — answer any permission prompts above the input box.",
     "delegate.dock.running": "Delegating",
 
-    // Team tab (017)
-    "team.tab": "Team",
+    // Team sessions (017/018: Home entry + sidebar badge + Session header)
     "team.badge": "Team",
-    "orchestration.tab": "Pipelines",
-    "team.desc": "Describe the task — the Leader splits it, delegates to members, and summarizes the deliverables",
     "team.leader": "Leader",
     "team.members": "Members",
-    "team.start": "New Team Session",
-    "team.history": "Team Sessions",
-    "team.noSessions": "No team sessions yet",
     "team.noMembers": "Pick at least one member",
-    "team.sessionTitle": "Team Session",
     "team.membersCount": "members",
-    "team.back": "Back to list",
     "team.emptyHint": "Describe your task — the Leader decides what to delegate.",
     "team.inputPlaceholder": "Describe the task…",
 
@@ -626,7 +618,7 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.docs.prompt": "帮我分析和总结一份文档",
 
     // Orchestration
-    "orchestration.title": "编排",
+    "orchestration.title": "流水线",
     "orchestration.newPipeline": "新建流水线",
     "orchestration.newPipeline.desc": "步骤按顺序执行；上一步的交付物文件作为下一步的输入",
     "orchestration.namePlaceholder": "流水线名称",
@@ -668,20 +660,12 @@ const translations: Record<Language, Record<string, string>> = {
     "delegate.running": "子 agent 执行中——如有权限请求请在输入框上方应答。",
     "delegate.dock.running": "委派中",
 
-    // Team tab (017)
-    "team.tab": "Team 协作",
+    // Team sessions (017/018: Home entry + sidebar badge + Session header)
     "team.badge": "Team",
-    "orchestration.tab": "流水线",
-    "team.desc": "只需描述任务——Leader 负责拆分、委派给成员并汇总交付物",
     "team.leader": "Leader",
     "team.members": "成员",
-    "team.start": "新建 Team 会话",
-    "team.history": "历史 Team 会话",
-    "team.noSessions": "还没有 Team 会话",
     "team.noMembers": "至少勾选一个成员",
-    "team.sessionTitle": "Team 会话",
     "team.membersCount": "个成员",
-    "team.back": "返回列表",
     "team.emptyHint": "描述你的任务——是否委派、派给谁由 Leader 决定。",
     "team.inputPlaceholder": "描述任务…",
 
