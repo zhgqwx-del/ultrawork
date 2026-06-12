@@ -29,16 +29,14 @@ interface StubCalls {
 
 function makeDeps(behavior?: {
   failAcp?: boolean
-  failHiddenParent?: boolean
 }): { deps: Parameters<typeof teamRoutes>[0]; calls: StubCalls } {
   const calls: StubCalls = { created: [], deleted: [], acpCreated: [], acpDeleted: [] }
   let seq = 0
   const connectorFor = (workspace: string) =>
     ({
       createSession: async (opts: Record<string, unknown>) => {
-        if (workspace === "/hidden" && behavior?.failHiddenParent) throw new Error("hidden boom")
         calls.created.push({ workspace, opts })
-        return { id: workspace === "/hidden" ? "hidden_parent" : `ses_${seq++}`, backend: "opencode", directory: workspace }
+        return { id: `ses_${seq++}`, backend: "opencode", directory: workspace }
       },
       deleteSession: async (id: string) => {
         calls.deleted.push(id)
@@ -55,11 +53,11 @@ function makeDeps(behavior?: {
       return true
     },
   }
-  return { deps: { connectorFor, manager, hiddenParentWorkspace: "/hidden" }, calls }
+  return { deps: { connectorFor, manager }, calls }
 }
 
 describe("POST /orchestration/team/sessions", () => {
-  it("creates an opencode leader under the hidden [team] parent and persists the entry", async () => {
+  it("creates the opencode leader as a ROOT session (018 A-4) and persists the entry", async () => {
     const { deps, calls } = makeDeps()
     const app = teamRoutes(deps)
     const res = await app.request("/orchestration/team/sessions", {
@@ -74,12 +72,12 @@ describe("POST /orchestration/team/sessions", () => {
     const { session } = (await res.json()) as { session: { id: string; members: string[] } }
     expect(session.members).toEqual(["opencode:default", "acp:claude"])
 
-    // Hidden parent first, then the leader bound to it.
-    expect(calls.created[0]).toMatchObject({ workspace: "/hidden", opts: { title: "[team]" } })
-    expect(calls.created[1]).toMatchObject({
-      workspace: "/ws",
-      opts: { parentSessionId: "hidden_parent", directory: "/ws" },
-    })
+    // Exactly one creation — the leader itself, rootless and untitled so the
+    // sidebar shows it and opencode auto-titles it.
+    expect(calls.created).toHaveLength(1)
+    expect(calls.created[0]).toMatchObject({ workspace: "/ws", opts: { directory: "/ws" } })
+    expect(calls.created[0].opts.parentSessionId).toBeUndefined()
+    expect(calls.created[0].opts.title).toBeUndefined()
     // No ACP session for an opencode leader.
     expect(calls.acpCreated).toHaveLength(0)
     // Registry persisted server-side.
@@ -120,17 +118,6 @@ describe("POST /orchestration/team/sessions", () => {
     expect(res.status).toBe(502)
     expect(calls.deleted).toHaveLength(1)
     expect(loadTeamSessions()).toHaveLength(0)
-  })
-
-  it("hidden-parent failure degrades to a parentless leader (and does not poison later calls)", async () => {
-    const { deps, calls } = makeDeps({ failHiddenParent: true })
-    const app = teamRoutes(deps)
-    const res = await app.request("/orchestration/team/sessions", {
-      method: "POST",
-      body: JSON.stringify({ workspace: "/ws", leaderAgentId: "opencode:default" }),
-    })
-    expect(res.status).toBe(201)
-    expect(calls.created[0].opts.parentSessionId).toBeUndefined()
   })
 
   it("validates required fields", async () => {

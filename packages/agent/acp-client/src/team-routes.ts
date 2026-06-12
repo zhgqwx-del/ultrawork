@@ -1,11 +1,13 @@
-// Team-session endpoints (017 Team 页). Creation lives in the sidecar because
-// only it can reach the hidden-parent workspace (a non-workspace directory the
-// desktop's workspace-scoped ApiClient can't address):
+// Team-session endpoints (017 Team 页 / 018 统一交互). Creation lives in the
+// sidecar because it owns the team registry and the ACP twin binding:
 //
-//   POST: hidden "[team]" parent (lazy, once) → Leader/twin opencode session
-//   under the user workspace with parentID = that parent (sidebar exclusion,
-//   same mechanism as orchestrator children) → for ACP leaders additionally
-//   the ACP session bound to the twin id with orchestrate + systemPrompt.
+//   POST: Leader/twin opencode session created as a ROOT in the user
+//   workspace (018 A-4) — it enters the sidebar like any chat and gets the
+//   opencode auto-title; Team identity comes from the registry, not from a
+//   hidden parent. (Delegate CHILD sessions keep their hidden-parent
+//   exclusion — that mechanism lives in orchestration.ts, untouched.)
+//   For ACP leaders additionally the ACP session bound to the twin id with
+//   orchestrate + systemPrompt.
 //
 // opencode leaders get their delegate tools from the global orchestrator MCP
 // entry, which the DESKTOP silently ensures (write_mcp_config needs Tauri).
@@ -28,31 +30,11 @@ export interface TeamACPManager {
 export interface TeamRouteDeps {
   connectorFor(workspace: string): Connector
   manager: TeamACPManager
-  /** Non-workspace dir for the hidden "[team]" parent; unset disables hiding (tests). */
-  hiddenParentWorkspace?: string
 }
 
 export function teamRoutes(deps: TeamRouteDeps): Hono {
   const app = new Hono()
   const sessions: TeamSessionEntry[] = loadTeamSessions()
-
-  /** One long-lived hidden opencode parent shared by ALL team leaders (sidebar guard). */
-  let hiddenParentId: Promise<string> | undefined
-  const ensureHiddenParent = (): Promise<string> | undefined => {
-    const dir = deps.hiddenParentWorkspace
-    if (!dir) return undefined
-    if (!hiddenParentId) {
-      hiddenParentId = deps
-        .connectorFor(dir)
-        .createSession({ backend: "opencode", title: "[team]" })
-        .then((ref) => ref.id)
-      // A failed creation must not poison every later team session.
-      hiddenParentId.catch(() => {
-        hiddenParentId = undefined
-      })
-    }
-    return hiddenParentId
-  }
 
   app.post("/orchestration/team/sessions", async (c) => {
     const body = await c.req
@@ -69,13 +51,12 @@ export function teamRoutes(deps: TeamRouteDeps): Hono {
     }
 
     try {
-      const parentSessionId = await ensureHiddenParent()?.catch(() => undefined)
       const connector = deps.connectorFor(body.workspace)
+      // Root session, no title: opencode auto-titles it from the first prompt
+      // (018 A-4 — the registry title is only a legacy-display fallback).
       const ref = await connector.createSession({
         backend: "opencode",
         directory: body.workspace,
-        parentSessionId,
-        title: body.title,
       })
 
       if (body.leaderAgentId.startsWith("acp:")) {

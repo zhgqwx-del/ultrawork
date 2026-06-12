@@ -21,10 +21,10 @@ async function startServer(): Promise<void> {
 
   // Orchestration layer (ADR-031): hosted here so runs survive WebView reloads.
   // Interrupted runs are marked, never auto-resumed.
-  const { orchestrator, delegates, connectorFor, hiddenParentWorkspace } = createOrchestrator(manager)
+  const { orchestrator, delegates, connectorFor } = createOrchestrator(manager)
   orchestrator.loadPersisted()
-  // Team-session registry + leader creation (017 Team 页).
-  app.route("/", teamRoutes({ connectorFor, manager, hiddenParentWorkspace }))
+  // Team-session registry + leader creation (017 Team 页 / 018 leader = root).
+  app.route("/", teamRoutes({ connectorFor, manager }))
   app.route(
     "/",
     orchestrationRoutes(orchestrator, delegates, {
