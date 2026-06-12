@@ -63,7 +63,7 @@ beforeEach(() => {
   mockRejectQuestion.mockResolvedValue(undefined)
   mockListPermissions.mockResolvedValue([])
   mockListQuestions.mockResolvedValue([])
-  mockGetConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-4-20250514" })
+  mockGetConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
   mockGetSession.mockResolvedValue({ id: "sess-1", title: "Auto generated title" })
   mockUpdateSession.mockResolvedValue({})
 
@@ -91,7 +91,7 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       expect(mockCreateSession).toHaveBeenCalledWith({})
-      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "hello", { model: "anthropic/claude-sonnet-4-20250514" })
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "hello", { model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
       await bridge.shutdown()
     })
 
@@ -105,7 +105,7 @@ describe("Bridge", () => {
 
       expect(mockCreateSession).toHaveBeenCalledTimes(1)
       expect(mockPromptAsync).toHaveBeenCalledTimes(2)
-      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "second", { model: "anthropic/claude-sonnet-4-20250514" })
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "second", { model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
       await bridge.shutdown()
     })
 
@@ -602,7 +602,7 @@ describe("Bridge", () => {
       // Should have tried getSession with stale ID, then created new session
       expect(mockGetSession).toHaveBeenCalledWith("stale-sess")
       expect(mockCreateSession).toHaveBeenCalledWith({})
-      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "hello", { model: "anthropic/claude-sonnet-4-20250514" })
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-1", "hello", { model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
       await bridge.shutdown()
     })
 
@@ -633,7 +633,7 @@ describe("Bridge", () => {
 
       // Should treat any getSession failure as stale and recreate
       expect(mockCreateSession).toHaveBeenCalledWith({})
-      expect(mockPromptAsync).toHaveBeenCalledWith("sess-new", "hello", { model: "anthropic/claude-sonnet-4-20250514" })
+      expect(mockPromptAsync).toHaveBeenCalledWith("sess-new", "hello", { model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
       await bridge.shutdown()
     })
 

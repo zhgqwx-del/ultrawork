@@ -113,8 +113,18 @@ export interface PromptOptions {
    * Applied server-side as a sticky session permission ruleset; wildcard keys
    * like "orchestrator_*" are honored. The orchestrator uses this to deny the
    * delegate MCP tools on child sessions (recursion guard).
+   *
+   * When unset, OpenCodeBackend denies "orchestrator_*" by default: only
+   * Team-page Leader turns (which pass an explicit map) may see the delegate
+   * tools — every other opencode prompt is physically isolated (017 拍板 #4).
    */
   tools?: Record<string, boolean>
+  /**
+   * Extra system prompt for THIS turn (opencode only — appended after the
+   * agent's base prompt, not sticky). Team-page Leader turns carry the
+   * orchestration instructions here.
+   */
+  system?: string
 }
 
 export interface FetchHistoryOptions {

@@ -270,6 +270,28 @@ describe("ApiClient", () => {
       expect(body.tools).toEqual({ "orchestrator_*": false })
     })
 
+    it("promptAsync - with system prompt", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      })
+      await client.promptAsync("s1", "Hello", { system: "你是一个任务编排者" })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.system).toBe("你是一个任务编排者")
+    })
+
+    it("promptAsync - omits system when unset", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      })
+      await client.promptAsync("s1", "Hello")
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.system).toBeUndefined()
+    })
+
     it("promptAsync - omits empty tools map", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

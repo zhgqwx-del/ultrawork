@@ -208,7 +208,12 @@ export class Bridge {
 
     // Send the prompt
     try {
-      await client.promptAsync(sessionId, msg.text, { model });
+      // IM sessions are never orchestration Leaders — deny the delegate MCP
+      // tools unconditionally (017 拍板 #4 isolation closure).
+      await client.promptAsync(sessionId, msg.text, {
+        model,
+        tools: { "orchestrator_*": false },
+      });
       console.log(
         `[Bridge] Sent prompt to session ${sessionId}: "${msg.text.slice(0, 50)}..."`,
       );

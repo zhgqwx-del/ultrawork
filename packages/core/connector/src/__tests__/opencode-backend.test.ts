@@ -86,16 +86,41 @@ describe("OpenCodeBackend", () => {
     it("prompt -> promptAsync with agent/model passthrough", async () => {
       const backend = track(makeBackend())
       await backend.prompt("s1", "hello", { agent: "build", model: "anthropic/claude", boundAgentId: "default" })
-      expect(mockApi.promptAsync).toHaveBeenCalledWith("s1", "hello", { agent: "build", model: "anthropic/claude" })
+      expect(mockApi.promptAsync).toHaveBeenCalledWith("s1", "hello", {
+        agent: "build",
+        model: "anthropic/claude",
+        tools: { "orchestrator_*": false },
+        system: undefined,
+      })
     })
 
-    it("prompt -> promptAsync forwards the tools deny map", async () => {
+    it("prompt -> promptAsync forwards an explicit tools map verbatim", async () => {
       const backend = track(makeBackend())
-      await backend.prompt("s1", "hello", { tools: { "orchestrator_*": false } })
+      await backend.prompt("s1", "hello", { tools: { task: false } })
+      expect(mockApi.promptAsync).toHaveBeenCalledWith(
+        "s1",
+        "hello",
+        expect.objectContaining({ tools: { task: false } }),
+      )
+    })
+
+    it("prompt -> denies orchestrator_* by default when no tools map given (017 #4)", async () => {
+      const backend = track(makeBackend())
+      await backend.prompt("s1", "hello")
       expect(mockApi.promptAsync).toHaveBeenCalledWith(
         "s1",
         "hello",
         expect.objectContaining({ tools: { "orchestrator_*": false } }),
+      )
+    })
+
+    it("prompt -> forwards the per-turn system prompt", async () => {
+      const backend = track(makeBackend())
+      await backend.prompt("s1", "hello", { system: "leader prompt", tools: { task: false } })
+      expect(mockApi.promptAsync).toHaveBeenCalledWith(
+        "s1",
+        "hello",
+        expect.objectContaining({ system: "leader prompt", tools: { task: false } }),
       )
     })
 

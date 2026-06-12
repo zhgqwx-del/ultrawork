@@ -311,6 +311,11 @@ export interface PromptAsyncRequest {
    * permission ruleset (wildcard keys like "orchestrator_*" supported).
    */
   tools?: Record<string, boolean>
+  /**
+   * Extra system prompt, appended after the agent's base prompt for THIS
+   * message only (not sticky on the session).
+   */
+  system?: string
 }
 
 // --- MCP types ---
