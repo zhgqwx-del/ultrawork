@@ -28,7 +28,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
 | `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
 | `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
-| `@agent/orchestrator` | ✅ 阶段3 全量（ADR-031 + 017 Team 页） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + DAG 调度（Pipeline/Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（阻塞 D-2 契约）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*` + team 注册表 + delegate-mcp stdio shim）；产品面 = `/orchestration` 两 tab（Team 协作 = Leader 会话委派默认化 / 流水线 recipe） |
+| `@agent/orchestrator` | ✅ 阶段3 全量（ADR-031 + 017 Team 页） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + DAG 调度（Pipeline/Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（阻塞 D-2 契约）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*` + team 注册表 + delegate-mcp stdio shim）；产品面 = 主聊天流统一入口（018：Home segmented + 侧栏混排徽标 + Session 页合流；Leader=ROOT 会话）+ `/orchestration` 纯流水线页 |
 
 ## Project Structure
 
@@ -139,8 +139,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `delegate.ts` — DelegateManager（阻塞 delegate → D-2 契约 `{deliverable,sessionId,tokens,cost}`；长驻隐藏父 `[delegates]`；ring buffer 50）
 - `worktree.ts` — Fan-out worktree 隔离（create/remove/stageInputs/collectArtifact；`<xdgData>/ultrawork/worktrees/`）
 - `session-queue.ts`（QueueOwner 实现）, `task-registry.ts`（Semaphore 排队语义 + 任务跟踪）, `run-store.ts`（JSON 落盘 `~/.local/share/ultrawork/orchestrator-runs/`）
-- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `team-routes.ts`+`team-store.ts`（017 Team 会话注册表：隐藏 `[team]` 父懒建 + leader/twin 创建 + ACP leader 注入回滚 + `team-sessions.json` 持久化）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
-- Desktop：`pages/Orchestration.tsx`（两 tab 宿主：Team 协作 / 流水线，017）+ `components/orchestration/team-tab.tsx`（Leader 会话聊天面 + 创建卡 + 历史列表）+ `pipeline-tab.tsx`（Pipeline|Fan-out 模板 + 步骤级 model，原页面平移）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts`（含 team sessions API）+ `lib/team-leader-prompt.ts`（Leader system 提示模板，017 §2.4）+ `lib/orchestrator-mcp.ts`（全局 MCP 静默 ensure，取代「编排模式」开关）+ `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（delegate 卡片）+ `delegate-dock.tsx`（阻塞期权限）
+- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `team-routes.ts`+`team-store.ts`（Team 会话注册表：leader/twin 以 ROOT 创建〔018 A-4〕+ ACP leader 注入回滚 + `team-sessions.json` 持久化）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
+- Desktop：`pages/Orchestration.tsx`（纯流水线页，018 A-3）+ `components/orchestration/pipeline-tab.tsx`（Pipeline|Fan-out 模板 + 步骤级 model）+ `lib/team-sessions-context.tsx`（018：per-workspace Team 注册表 context，徽标/补显/注入数据源 + ACP leader 加载即绑定）+ `components/session/team-header.tsx`（Team 成员条：头像组 + delegate SSE 实时活动环）+ `components/chat/team-member-select.tsx`/`agent-avatar.tsx`（成员卡片多选 / 首字母头像）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts`（含 team sessions API）+ `lib/team-leader-prompt.ts`（Leader system 提示模板，017 §2.4）+ `lib/orchestrator-mcp.ts`（全局 MCP 静默 ensure，取代「编排模式」开关）+ `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（delegate 卡片）+ `delegate-dock.tsx`（阻塞期权限）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）

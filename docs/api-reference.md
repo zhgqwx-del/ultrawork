@@ -317,7 +317,7 @@ ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。
 | GET | `/orchestration/delegates` | delegate 记录列表 | 活动 + 最近 50 条终态（内存，不持久化） |
 | GET | `/orchestration/delegates/events` | 全局 delegate SSE | 首帧 `delegate.snapshot` + `delegate.updated` / `delegate.permission`（DelegateDock 按 workspace 过滤内联应答）+ 心跳 |
 | GET | `/orchestration/agents` | delegate 目标列表 | `opencode:default` + 全部 ACP agents（shim `list_agents` 工具消费） |
-| POST | `/orchestration/team/sessions` | **创建 Team Leader 会话**（第三批 017） | body `{workspace, leaderAgentId, members[], systemPrompt?, title?}`；服务端懒建跨目录隐藏 `[team]` 父 → leader/twin 挂 parentID（防侧栏污染）→ ACP leader 额外建绑 twin 的 ACP 会话（orchestrate+systemPrompt，失败回滚 twin）；返回 `{session}` |
+| POST | `/orchestration/team/sessions` | **创建 Team Leader 会话**（017 立 / 018 改） | body `{workspace, leaderAgentId, members[], systemPrompt?, title?}`；**leader/twin 以 ROOT 创建**（018 A-4：不挂隐藏父、不传 title → 进侧栏混排 + opencode 自动标题）→ ACP leader 额外建绑 twin 的 ACP 会话（orchestrate+systemPrompt，失败回滚 twin）；返回 `{session}` |
 | GET | `/orchestration/team/sessions` | Team 会话注册表 | `?workspace=` 过滤，createdAt 倒序；持久化 `team-sessions.json`（重启恢复） |
 | DELETE | `/orchestration/team/sessions/:id` | 删除 Team 会话 | 注册表移除 + best-effort 清理 opencode/ACP 双侧会话 |
 

@@ -115,6 +115,8 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 > - **Leader 会话防侧栏污染**：挂跨目录隐藏 `[team]` 父（与 `[delegates]` 父同机制）；ACP leader 复用 twin+binding 范式。注册表 `team-sessions.json` 服务端持久化（`/orchestration/team/sessions` 3 端点）。
 > - **真机（2026-06-12，备用端口栈 14096/14099）**：qwen-plus leader **不点名工具**自发同轮并行 `orchestrator_delegate` ×2 跨厂商（opencode+claude 子会话）+ 汇总标注来源；leader `task` deny / 普通会话 `orchestrator_*` deny sticky ruleset 双验证（探针回复 DENIED）；claude leader `_meta.systemPrompt` 生效（完整复述职责/成员/点名工具）；sidecar 重启注册表恢复 + systemPrompt 重注入 + 上下文连续。
 > - **不做（017 §4 后置）**：mailbox 非阻塞回卷（D-6 完整形态）、per-agent 并行面板、常驻 Team 实体、成员服务端白名单（MVP 仅提示约束）。
+>
+> **018 编排 UX 统一备注（2026-06-12，[018](../discussions/018-unified-orchestration-ux.md) A-1~A-4 + 议题 B 落地）**：Team 从独立 tab 融入主聊天流——模式 = 任务出生属性（Home segmented，出生锁定）、Team 会话进侧栏混排+徽标（`TeamSessionsProvider` 注册表驱动）、Session 页合流（TeamHeader 成员条 + delegate 实时活动环 + 注入逻辑平移）、`/orchestration` 回归纯流水线。**Leader 改为 ROOT 会话**（不挂隐藏 `[team]` 父——该机制从 team-routes 移除；delegate 子会话隐藏父不变）→ opencode 自动标题生效；存量挂父会话经侧栏补显（vendor PATCH 不支持改 parentID）。机制零改动：registry/deny/注入/delegate 卡片全复用。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。
