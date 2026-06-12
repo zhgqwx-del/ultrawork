@@ -34,6 +34,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **「编排模式」Settings 开关（017 拍板 #5）**：删 `use-orchestrate-mode.ts` + `OrchestrateModeToggle` + `settings.orchestrate.*` i18n；全局 orchestrator MCP 注册降级为 Team 页内部静默 ensure；用户已有 config 条目无需迁移（ensure 幂等同名覆写）；Tauri `remove_mcp_config` 保留（MCP 服务管理仍用）
 
 ### Fixed
+- **list_agents 向 LLM 泄漏传输层连接态导致 Leader 拒绝委派**（017 Tauri 真机走查发现）：ACP agent 懒连接的 disconnected 被模型当「离线不可用」全派 opencode——`/orchestration/agents` 改为仅透出真实 error、其余一律 available（delegate 自动连接）+ Leader 提示补「状态离线也照常委派」双保险
+- **ensureOrchestratorMcp 冷启动 flake 被静默吞掉**（017 GUI 走查发现）：POST /mcp 以 200+status:"failed" 返回握手超时（60MB shim 冷启动可超 vendor 5s connect 窗口），原 catch 只兜网络错——加 status 检查 + 重试一次
 - **停止按钮高速流式下点击被吞**（GUI 回归发现）：停止按钮在消息流内容区里，高速流式回流 + 自动滚动使按钮在 pointerdown 与 pointerup 之间位移 → 浏览器不派发 click，表现为「点击停止无效」（后端 cancel 实测 14ms 生效，纯前端触达问题）。修复：ExecutionStatus 停止键改 `onPointerDown`；ChatInput 发送键在流式时变为**位置固定的停止键**（`loading && onStop`），+2 测试
 - **ACP 权限弹窗标签精修（阶段1 剩余项①）**：claude-code-acp 的 `requestPermission` 只传 `{toolCallId, rawInput, title}`——内部算出的 kind 在调用点被丢弃（0.16.2 源码核实），旧逻辑一律回退 "bash" 造成标签与实际操作不符。新增 `permission-label.ts` 分层推断（显式 kind → TurnShaper 查同 toolCallId 的 tool_call 帧 kind〔先 await updateChain 消时序竞争〕→ rawInput 形状 → 反引号 title → 中性 "tool"）；`fetch` 映射 external_directory→webfetch；pattern 剥反引号；dock 标签表补 Web Fetch / Tool Action。离线 +9 用例（mock agent 还原 claude 真实形状：无 kind 带 rawInput）；真机（无头 + GUI）三类验证 write→edit / bash→bash / read→read 全过
 - **TurnShaper id 代际碰撞**（W4b 测试发现）：sidecar 重启后 shaper seq 从 0 重计，新轮次 message/part id 与持久化历史相同导致覆盖而非追加——id 加入 epoch（`acp_msg_<sid>_<epoch>_<seq>`）
