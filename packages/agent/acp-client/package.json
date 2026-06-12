@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agent/api-client": "workspace:*",
+    "@agent/connector": "workspace:*",
+    "@agent/orchestrator": "workspace:*",
     "@agentclientprotocol/sdk": "^0.25.0",
     "hono": "^4.12.23"
   },

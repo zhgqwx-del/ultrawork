@@ -1434,6 +1434,7 @@ pub fn run() {
             // UI). It spawns external agent commands (bunx / claude), which are
             // not on the minimal Finder-launch PATH — pass the enriched one.
             let acp_handle = app.handle().clone();
+            let acp_password = creds.password.clone();
             std::thread::spawn(move || {
                 let acp_path = rich_path();
                 if let Err(e) = start_sidecar(
@@ -1443,7 +1444,12 @@ pub fn run() {
                     "/acp/health",
                     None,
                     &[],
-                    &[("PATH", acp_path.as_str())],
+                    &[
+                        ("PATH", acp_path.as_str()),
+                        // In-sidecar orchestrator calls the OpenCode REST API
+                        // (same credential channel as channel-gateway).
+                        ("OPENCODE_SERVER_PASSWORD", acp_password.as_str()),
+                    ],
                 ) {
                     eprintln!("ACP Client startup failed: {}", e);
                     use tauri::Emitter;

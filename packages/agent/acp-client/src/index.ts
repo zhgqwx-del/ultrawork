@@ -3,12 +3,20 @@
 import { createServer } from "./acp-server.js"
 import { ACPManager } from "./acp-manager.js"
 import { loadAgentConfigs, agentsConfigPath } from "./agents-config.js"
+import { createOrchestrator } from "./orchestration.js"
+import { orchestrationRoutes } from "./orchestration-routes.js"
 
 const ACP_PORT = Number(process.env.ACP_CLIENT_PORT ?? 4099)
 
 const configs = loadAgentConfigs()
 const manager = new ACPManager(configs)
 const app = createServer(manager)
+
+// Orchestration layer (ADR-031): hosted here so runs survive WebView reloads.
+// Interrupted runs are marked, never auto-resumed.
+const orchestrator = createOrchestrator(manager)
+orchestrator.loadPersisted()
+app.route("/", orchestrationRoutes(orchestrator))
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
