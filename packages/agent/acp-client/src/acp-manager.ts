@@ -1,7 +1,7 @@
 // Manager: agent connections registry + session routing + SSE fan-out.
 
 import type { StopReason } from "@agentclientprotocol/sdk"
-import { ACPConnection, type PermissionReply } from "./acp-connection.js"
+import { ACPConnection, supportsMetaSystemPrompt, type PermissionReply } from "./acp-connection.js"
 import { deleteAgentConfig, saveAgentConfig } from "./agents-config.js"
 import {
   applyEvent,
@@ -46,6 +46,7 @@ export class ACPManager {
         // Pre-flag files (undefined) fall back to the agent-level default at
         // restore time, so enabling orchestratorMcp also covers old sessions.
         orchestrate: persisted.orchestrate,
+        systemPrompt: persisted.systemPrompt,
         messages: persisted.messages,
       })
     }
@@ -97,7 +98,7 @@ export class ACPManager {
     agentId: string,
     cwd: string,
     clientSessionId?: string,
-    opts?: { orchestrate?: boolean },
+    opts?: { orchestrate?: boolean; systemPrompt?: string },
   ): Promise<string> {
     const conn = this.requireAgent(agentId)
     if (conn.status !== "connected") await conn.connect(cwd)
@@ -105,7 +106,8 @@ export class ACPManager {
     // wins, else the agent-level default. Orchestrator children pass an
     // explicit false (InProcACPBackend) — the recursion guard.
     const orchestrate = opts?.orchestrate ?? conn.config.orchestratorMcp ?? false
-    const acpSessionId = await conn.newSession(cwd, clientSessionId, { orchestrate })
+    const systemPrompt = opts?.systemPrompt
+    const acpSessionId = await conn.newSession(cwd, clientSessionId, { orchestrate, systemPrompt })
     const sessionId = clientSessionId ?? acpSessionId
     const entry: SessionEntry = {
       sessionId,
@@ -114,6 +116,7 @@ export class ACPManager {
       cwd,
       createdAt: Date.now(),
       orchestrate,
+      systemPrompt,
       messages: [],
     }
     this.sessions.set(sessionId, entry)
@@ -127,7 +130,17 @@ export class ACPManager {
     const entry = this.requireSession(sessionId)
     const conn = this.requireAgent(entry.agentId)
     await this.restoreAgentSession(conn, entry)
-    return conn.prompt(entry.acpSessionId, text)
+    // Fallback system-prompt delivery for agents without _meta.systemPrompt:
+    // prefix the FIRST prompt only (later turns already have it in context).
+    // Residual gap (accepted): a load-failure fresh session on such an agent
+    // restarts mid-history and never re-receives the prefix.
+    const needsPrefix =
+      entry.systemPrompt && !supportsMetaSystemPrompt(conn.config) && entry.messages.length === 0
+    return conn.prompt(
+      entry.acpSessionId,
+      text,
+      needsPrefix ? { systemPrefix: entry.systemPrompt } : undefined,
+    )
   }
 
   /**
@@ -144,9 +157,13 @@ export class ACPManager {
     // Re-inject the delegate MCP across restarts; sessions persisted before
     // the flag existed inherit the agent-level default.
     const orchestrate = entry.orchestrate ?? conn.config.orchestratorMcp ?? false
+    const systemPrompt = entry.systemPrompt
     if (conn.agentCapabilities?.loadSession) {
       try {
-        await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId, { orchestrate })
+        await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId, {
+          orchestrate,
+          systemPrompt,
+        })
         return
       } catch (err) {
         console.error(
@@ -159,7 +176,10 @@ export class ACPManager {
         `[acp:${entry.agentId}] agent has no loadSession capability — continuing ${entry.sessionId} without prior context`,
       )
     }
-    entry.acpSessionId = await conn.newSession(entry.cwd, entry.sessionId, { orchestrate })
+    entry.acpSessionId = await conn.newSession(entry.cwd, entry.sessionId, {
+      orchestrate,
+      systemPrompt,
+    })
     this.persist(entry)
   }
 
@@ -184,6 +204,7 @@ export class ACPManager {
       cwd: entry.cwd,
       createdAt: entry.createdAt,
       orchestrate: entry.orchestrate,
+      systemPrompt: entry.systemPrompt,
     }))
   }
 
@@ -281,6 +302,7 @@ export class ACPManager {
         createdAt: entry.createdAt,
         updatedAt: Date.now(),
         orchestrate: entry.orchestrate,
+        systemPrompt: entry.systemPrompt,
         messages: entry.messages,
       })
     } catch (err) {

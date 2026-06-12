@@ -30,6 +30,13 @@ export interface ACPAgentConfig {
    * agent's default; agents without the option silently skip it.
    */
   thoughtLevel?: string
+  /**
+   * Whether the adapter honors `_meta.systemPrompt` on session/new+load
+   * (claude-agent-acp ≥0.44; object form = preset append). Unset = detected
+   * from the spawn command. Sessions with a systemPrompt on agents without
+   * this fall back to prefixing it onto the first prompt.
+   */
+  metaSystemPrompt?: boolean
 }
 
 // Mirrors the desktop PermissionRequest shape (api-client types.ts) — the
@@ -72,6 +79,12 @@ export interface ACPSessionInfo {
   createdAt: number
   /** Whether the orchestrator delegate MCP is injected into this session (sticky across session/load). */
   orchestrate?: boolean
+  /**
+   * Extra system prompt for this session (Team-page Leader instructions).
+   * Delivered via `_meta.systemPrompt` append (claude-agent-acp ≥0.44) or, on
+   * agents without that, prefixed onto the first prompt.
+   */
+  systemPrompt?: string
 }
 
 /** One shaped message as the desktop renders it (info + accumulated parts). */
@@ -91,6 +104,8 @@ export interface PersistedACPSession {
   updatedAt: number
   /** Delegate MCP injection flag — restored so session/load re-injects (older files: undefined → off). */
   orchestrate?: boolean
+  /** Session system prompt — restored so session/load re-injects it via _meta. */
+  systemPrompt?: string
   messages: UwStoredMessage[]
 }
 

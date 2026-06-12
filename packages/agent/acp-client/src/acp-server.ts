@@ -91,7 +91,13 @@ export function createServer(manager: ACPManager): Hono {
 
   app.post("/acp/session", async (c) => {
     const body = await c.req
-      .json<{ agentId?: string; cwd?: string; clientSessionId?: string; orchestrate?: boolean }>()
+      .json<{
+        agentId?: string
+        cwd?: string
+        clientSessionId?: string
+        orchestrate?: boolean
+        systemPrompt?: string
+      }>()
       .catch(() => null)
     if (!body?.agentId || !body?.cwd) {
       return c.json({ error: "agentId and cwd are required" }, 400)
@@ -99,6 +105,7 @@ export function createServer(manager: ACPManager): Hono {
     try {
       const sessionId = await manager.createSession(body.agentId, body.cwd, body.clientSessionId, {
         orchestrate: body.orchestrate,
+        systemPrompt: body.systemPrompt,
       })
       return c.json({ sessionId }, 201)
     } catch (err) {

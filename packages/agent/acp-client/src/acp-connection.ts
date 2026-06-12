@@ -70,6 +70,20 @@ function augmentPath(path: string | undefined): string {
 }
 
 /**
+ * Whether the agent honors `_meta.systemPrompt` on session/new+load.
+ * claude-agent-acp ≥0.44 does (object form = preset append, acp-agent.js
+ * createSession); other adapters are assumed not to until the explicit
+ * config flag says otherwise — their sessions fall back to prefixing the
+ * system prompt onto the first prompt (ACPManager.prompt).
+ */
+export function supportsMetaSystemPrompt(
+  config: Pick<ACPAgentConfig, "command" | "args" | "metaSystemPrompt">,
+): boolean {
+  if (config.metaSystemPrompt !== undefined) return config.metaSystemPrompt
+  return [config.command, ...config.args].some((t) => t.includes("claude-agent-acp"))
+}
+
+/**
  * Command for the delegate MCP shim: this sidecar always runs as a compiled
  * binary in real deployments (Tauri spawns it even in dev), so
  * `process.execPath` IS the shim. When someone runs `bun src/index.ts`
@@ -239,11 +253,22 @@ export class ACPConnection {
    * consumes the stream with zero id rewriting); defaults to the ACP id.
    * `opts.orchestrate` injects the delegate MCP for THIS session only —
    * orchestrator children never set it (recursion guard, ADR-031 D-3).
+   * `opts.systemPrompt` rides `_meta.systemPrompt` when the adapter supports
+   * it (no-op otherwise — the manager prefixes the first prompt instead).
    */
-  async newSession(cwd: string, emitSessionId?: string, opts?: { orchestrate?: boolean }): Promise<string> {
+  async newSession(
+    cwd: string,
+    emitSessionId?: string,
+    opts?: { orchestrate?: boolean; systemPrompt?: string },
+  ): Promise<string> {
     const conn = this.requireConnection()
     const res = await this.runRequest(
-      () => conn.newSession({ cwd, mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false) }),
+      () =>
+        conn.newSession({
+          cwd,
+          mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false),
+          ...this.sessionMeta(opts?.systemPrompt),
+        }),
       SESSION_NEW_TIMEOUT_MS,
       "session/new",
     )
@@ -270,7 +295,7 @@ export class ACPConnection {
     acpSessionId: string,
     cwd: string,
     emitSessionId?: string,
-    opts?: { orchestrate?: boolean },
+    opts?: { orchestrate?: boolean; systemPrompt?: string },
   ): Promise<void> {
     const conn = this.requireConnection()
     const emitAs = emitSessionId ?? acpSessionId
@@ -285,6 +310,7 @@ export class ACPConnection {
             sessionId: acpSessionId,
             cwd,
             mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false),
+            ...this.sessionMeta(opts?.systemPrompt),
           }),
         SESSION_LOAD_TIMEOUT_MS,
         "session/load",
@@ -314,16 +340,22 @@ export class ACPConnection {
     return this.shapers.has(sessionId)
   }
 
-  async prompt(sessionId: string, text: string): Promise<StopReason> {
+  /**
+   * `opts.systemPrefix` (fallback system-prompt delivery for agents without
+   * _meta.systemPrompt) goes only onto the wire — the shaped user echo keeps
+   * the clean text so the UI never renders the instructions.
+   */
+  async prompt(sessionId: string, text: string, opts?: { systemPrefix?: string }): Promise<StopReason> {
     const conn = this.requireConnection()
     const shaper = this.shapers.get(sessionId)
     if (!shaper) throw new Error(`Unknown session: ${sessionId}`)
 
+    const wireText = opts?.systemPrefix ? `${opts.systemPrefix}\n\n${text}` : text
     shaper.startTurn(text)
     this.activePrompts.add(sessionId)
     try {
       const res = await this.runRequest(() =>
-        conn.prompt({ sessionId, prompt: [{ type: "text", text }] }),
+        conn.prompt({ sessionId, prompt: [{ type: "text", text: wireText }] }),
       )
       // Flush queued session/update notifications before sealing the turn so
       // the finish event is the last thing subscribers see.
@@ -371,6 +403,17 @@ export class ACPConnection {
   }
 
   // --- internals ---
+
+  /**
+   * `_meta.systemPrompt` for session/new+load. Object form keeps the agent's
+   * own preset prompt and appends ours (claude-agent-acp ≥0.44 locks
+   * type/preset, forwards `append`). Agents without support get nothing here —
+   * the manager falls back to prefixing the first prompt.
+   */
+  private sessionMeta(systemPrompt: string | undefined): { _meta: Record<string, unknown> } | undefined {
+    if (!systemPrompt || !supportsMetaSystemPrompt(this.config)) return undefined
+    return { _meta: { systemPrompt: { append: systemPrompt } } }
+  }
 
   /**
    * Host MCP servers forwarded into session/new and session/load.

@@ -23,6 +23,20 @@ const stdout = new WritableStream<Uint8Array>({
 const ADVERTISE_CONFIG_OPTIONS = process.env.MOCK_ACP_NO_CONFIG_OPTIONS !== "1"
 const sessionEffort = new Map<string, string>()
 
+// MOCK_ACP_ECHO_PROMPT=1: echo the received wire prompt and any
+// _meta.systemPrompt back as answer chunks, so tests can assert the
+// system-prompt delivery path (meta vs first-prompt prefix) end-to-end
+// without a side channel. Off by default — shaping tests assert exact chunks.
+const ECHO_PROMPT = process.env.MOCK_ACP_ECHO_PROMPT === "1"
+const sessionMetaSystem = new Map<string, string>()
+
+function recordMetaSystemPrompt(sessionId: string, _meta: unknown): void {
+  const meta = _meta as { systemPrompt?: { append?: unknown } | string } | undefined
+  const sp = meta?.systemPrompt
+  const append = typeof sp === "string" ? sp : typeof sp?.append === "string" ? sp.append : undefined
+  if (append) sessionMetaSystem.set(sessionId, append)
+}
+
 function effortOptions(current: string): SessionConfigOption[] {
   return [
     {
@@ -56,7 +70,8 @@ new AgentSideConnection(
     async authenticate() {
       return {}
     },
-    async newSession() {
+    async newSession(params) {
+      recordMetaSystemPrompt("mock-session-1", params._meta)
       return { sessionId: "mock-session-1", configOptions: configOptionsFor("mock-session-1") }
     },
     async setSessionConfigOption(params) {
@@ -70,6 +85,7 @@ new AgentSideConnection(
     // real agents stream history during session/load. The sidecar must
     // suppress all of it (history renders from its own store).
     async loadSession(params) {
+      recordMetaSystemPrompt(params.sessionId, params._meta)
       const send = (update: SessionUpdate) =>
         conn.sessionUpdate({ sessionId: params.sessionId, update })
       await send({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "list the files" } })
@@ -88,6 +104,19 @@ new AgentSideConnection(
     async prompt(params) {
       const send = (update: SessionUpdate) =>
         conn.sessionUpdate({ sessionId: params.sessionId, update })
+
+      if (ECHO_PROMPT) {
+        const first = params.prompt.find((p) => p.type === "text")
+        const wireText = first && "text" in first ? first.text : ""
+        await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `[prompt=${wireText}]` } })
+        const metaSystem = sessionMetaSystem.get(params.sessionId)
+        if (metaSystem) {
+          await send({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `[system-meta=${metaSystem}]` },
+          })
+        }
+      }
 
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "I should list " } })
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the directory first." } })
