@@ -131,6 +131,19 @@
         "vitest": "^4.0.18",
       },
     },
+    "packages/core/orchestrator": {
+      "name": "@agent/orchestrator",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent/api-client": "workspace:*",
+        "@agent/connector": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^22.13.10",
+        "typescript": "^5.8.2",
+        "vitest": "^4.0.18",
+      },
+    },
     "packages/core/server-manager": {
       "name": "@agent/server-manager",
       "version": "0.1.0",
@@ -176,6 +189,8 @@
     "@agent/connector": ["@agent/connector@workspace:packages/core/connector"],
 
     "@agent/knowledge-sidecar": ["@agent/knowledge-sidecar@workspace:packages/knowledge/sidecar"],
+
+    "@agent/orchestrator": ["@agent/orchestrator@workspace:packages/core/orchestrator"],
 
     "@agent/server-manager": ["@agent/server-manager@workspace:packages/core/server-manager"],
 

@@ -93,6 +93,10 @@ export interface CreateSessionOptions {
   agentId?: string
   /** ACP: reuse the caller's session id so events need no id rewriting. */
   clientSessionId?: string
+  /** opencode: parent session id — children are hidden from roots listings (orchestrator child sessions). */
+  parentSessionId?: string
+  /** opencode: initial session title. */
+  title?: string
 }
 
 export interface PromptOptions {

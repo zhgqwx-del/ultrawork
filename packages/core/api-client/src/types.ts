@@ -9,6 +9,9 @@ export interface ApiClientConfig {
 
 export interface SessionCreateRequest {
   agent?: string
+  /** Parent session id — child sessions are excluded from `roots:true` listings. */
+  parentID?: string
+  title?: string
 }
 
 // --- PartBase: identity fields present on every part ---

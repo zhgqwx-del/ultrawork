@@ -190,7 +190,10 @@ export class OpenCodeBackend implements AgentBackend {
   // --- control surface ---
 
   async createSession(opts: CreateSessionOptions = {}): Promise<SessionRef> {
-    const session = await this.api.createSession({})
+    const session = await this.api.createSession({
+      parentID: opts.parentSessionId,
+      title: opts.title,
+    })
     return { id: session.id, backend: this.kind, directory: opts.directory ?? this.options.workingDirectory }
   }
 
