@@ -143,7 +143,11 @@ ArtifactPreview 使用 `!e.defaultPrevented` 检查，避免与 CommandSelector 
 OpenCode 一个 user 回合会产出 **N 条 assistant message**（每个工具循环 step 一条，`finish="tool-calls"` 则继续；详见 [ADR-029](decisions/029-execution-flow-turn-grouping.md)）。主对话**不要按 message 平铺渲染**，而是：
 - `message-list.tsx` 的 `groupIntoTurns()` 把「一条 user + 其后连续 assistant」聚成一个回合，渲染 `AssistantTurn`。
 - `AssistantTurn` 的 `buildTurnModel()` 把整回合 parts 切成「过程」（收进无卡片包裹的 `ExecutionFlow` 折叠时间线）与「答案」（最后一条**无 tool** message 的输出 part，容器外渲染）；末尾渲染居中带横线的统计页脚。
-- **回合是否在生成**：用「末条 `finish` 终态(存在且≠`tool-calls`) + 是否末回合 + 未 stop」判定，**不要**用瞬时 `streamingMessageId`（step 间/工具执行期会置 null → 抖动）。
+- **回合是否在生成**（`message-list.ts` 的 `isTurnTerminal` / `isTurnStreaming`，纯函数可测）：
+  - **终态 = 末条 `finish` 终态（存在且≠`tool-calls`） 或 末条 `info.error` 有值**。出错回合 `finish` 留 `undefined`、错误落在 `info.error`（gotchas §1），**必须把 error 当终态**，否则被误判成「仍在流式」。
+  - **「从末条非终态推断流式」这个兜底必须门控 `sessionActive`**（本会话当前真有请求在飞 = `sending || streamingMessageId`）：`isStreaming = !isStopped && (containsStreaming || (isLastGroup && !isTerminal && sessionActive))`。否则**历史/重开会话**里末条非终态（出错/中断）的回合会**永久转圈**（`Session.tsx` 传 `sessionActive`；委派子卡片 `delegate-row` 传 `sessionActive=false`——懒加载历史永不 live）。
+  - **不要**用瞬时 `streamingMessageId` 单独判定（step 间/工具执行期会置 null → 抖动）；也**不要**用 `time.completed` 当终态（工具步也有，会误杀回合中段）。
+  - **错误态渲染**：`buildTurnModel.hasError` 同时覆盖工具级 error 与消息级 `info.error`，并暴露 `errorText`；出错回合 parts 常为空，`AssistantTurn` 用独立红色错误块显示 `errorText`（否则空白）。
 - **memo**：`groupIntoTurns` 每渲染重建数组，`AssistantTurn` 必须用自定义比较器（按 `messages` 元素引用比较）才能让历史回合在流式中跳过重渲染——历史 message 对象引用稳定（state 只换变化的那条）。
 - **实时耗时**：`ExecutionFlow` 的 `useNow(active)`（100ms tick）只在「回合流式中 && 该行进行中」时激活（`live=isStreaming` 下传）——恢复/被 stop 的历史回合里残留的 running/thinking 状态**不得走秒**；滴答重渲染被限制在进行中的行 + 头部，不穿透 memo 屏障。
 

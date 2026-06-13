@@ -25,6 +25,8 @@
 - **Permission API**：`POST /permission/{id}/reply` body 为 `{ reply: "once"|"always"|"reject" }`。
 - **Question API**：`POST /question/{id}/reply` body 为 `{ answers: string[][] }`；`POST /question/{id}/reject`。
 - **构建顺序**：改了 `api-client` 的类型后，必须先在 api-client 里 `tsc --build`，再 typecheck client（否则 client 读到旧 `.d.ts`）。
+- **出错回合的消息形状 = `finish` 留 `undefined` + `info.error` 有值 + `parts` 常为空（2026-06-13 真机实测）**：assistant 回合因 provider 报错终止（APIError / 内容审核 / 网络失败）时，opencode 不写 `finish`，而把错误落到 **`info.error`**（形状 `{name, data:{message}}`，也可能是字符串），并带 `time.completed`。**`error` 本身就是终态信号**——前端判「回合是否结束」**不能只看 `finish`**（`finish===undefined` ≠ 仍在流式），否则历史/重开会话里出错回合会**永久转圈**（`info.error` 经 REST `GET /session/:id/message` 与 SSE 均透传；`MessageInfo.error` 已补类型）。终态判定见 `message-list.ts isTurnTerminal`、渲染见 [conventions §5](./conventions.md)。**区分**：消息级 `info.error`=回合终止；工具级 `part.state.status==="error"`=单工具失败、agent 照常继续，**不**算回合终态。
+- **qwen/DashScope 内容审核会 400 终结回合（`data_inspection_failed`，2026-06-13 真机）**：qwen 系模型对敏感输入（实测「政治新闻调研」）直接返回 HTTP 400 `{code:"data_inspection_failed", message:"Input data may contain inappropriate content"}` 且 **`isRetryable:false`**——回合不可重试、即时终止，落成上一条所述的 `info.error` 消息。属上游 API 行为非本项目缺陷；前端需当终态渲染为错误态（已修）。
 
 ## 2. OpenCode Server 运行时限制
 

@@ -179,6 +179,7 @@ export function SessionPage() {
               messages={messages}
               isLoading={loading && !sending}
               streamingMessageId={streamingMessageId}
+              sessionActive={isAgentActive}
               stoppedAtMessageId={stoppedAtMessageId}
               onArtifactClick={handleArtifactClick}
               showLoadEarlier={turnStart > 0 || hasMore}
