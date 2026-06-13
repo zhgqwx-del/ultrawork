@@ -36,4 +36,11 @@ describe("buildLeaderSystemPrompt", () => {
     expect(prompt).toContain("自包含")
     expect(prompt).toContain("并行")
   })
+
+  it("makes delegation the default and forbids the Leader from executing tasks itself", () => {
+    // 018 走查回归：Leader 曾自己 webfetch/search 干活而不委派
+    expect(prompt).toContain("默认走委派")
+    expect(prompt).toContain("webfetch")
+    expect(prompt).toMatch(/不要.*代替成员|不要替成员执行/)
+  })
 })
