@@ -13,6 +13,7 @@ import { buildTurnModel } from "@/components/chat/assistant-turn"
 import { groupIntoTurns } from "@/components/chat/message-list"
 import type { MessagePart, SendMessageResponse, ToolPart } from "@agent/api-client"
 import rawFixture from "../../fixtures/acp-claude-turn.json"
+import rawHermesFixture from "../../fixtures/acp-hermes-turn.json"
 
 interface ShapedEvent {
   type: string
@@ -20,6 +21,7 @@ interface ShapedEvent {
 }
 
 const fixture = rawFixture as ShapedEvent[]
+const hermesFixture = rawHermesFixture as ShapedEvent[]
 
 function replay(events: ShapedEvent[]): SendMessageResponse[] {
   const messages: SendMessageResponse[] = []
@@ -133,5 +135,51 @@ describe("ACP turn shaping → buildTurnModel (real claude fixture)", () => {
     // Last message still has a tool part → not the answer step → no flicker.
     expect(model.answer).toHaveLength(0)
     expect(model.process.length).toBeGreaterThan(0)
+  })
+})
+
+// Branch A gate for hermes (feat/hermes-agent): a REAL hermes turn captured
+// through the same shaping pipeline (fixtures/acp-hermes-turn.json, generated
+// by spike-hermes.ts) must split process/answer identically to claude — proof
+// that hermes is a plain ACP agent needing no bespoke shaping.
+describe("ACP turn shaping → buildTurnModel (real hermes fixture)", () => {
+  it("emits every delta after a part.updated created its part", () => {
+    const seen = new Set<string>()
+    for (const event of hermesFixture) {
+      if (event.type === "message.part.updated") seen.add(event.properties.part.id)
+      if (event.type === "message.part.delta") {
+        expect(seen.has(event.properties.partID)).toBe(true)
+      }
+    }
+  })
+
+  it("splits the turn into process (tool steps) and a text-only answer", () => {
+    const messages = replay(hermesFixture)
+    expect(messages[0].info.role).toBe("user")
+    const assistant = messages.filter((m) => m.info.role === "assistant")
+    expect(assistant.length).toBeGreaterThanOrEqual(2)
+
+    const groups = groupIntoTurns(messages)
+    expect(groups.map((g) => g.kind)).toEqual(["user", "assistant"])
+    const turnMessages = groups[1].kind === "assistant" ? groups[1].messages : []
+
+    const model = buildTurnModel(turnMessages, false)
+    expect(model.answer.length).toBeGreaterThan(0)
+    expect(model.answer.every((p) => p.type === "text")).toBe(true)
+    const toolParts = model.process.filter((p): p is ToolPart => p.type === "tool")
+    expect(toolParts.length).toBeGreaterThan(0)
+    expect(toolParts.every((p) => p.state.status === "completed")).toBe(true)
+    expect(model.hasError).toBe(false)
+    expect(model.process.some((p) => model.answer.includes(p))).toBe(false)
+  })
+
+  it("ends the turn with a terminal finish (spinner stops)", () => {
+    const assistant = replay(hermesFixture).filter((m) => m.info.role === "assistant")
+    const lastInfo = assistant[assistant.length - 1].info
+    expect(lastInfo.finish).toBeTruthy()
+    expect(lastInfo.finish).not.toBe("tool-calls")
+    for (const msg of assistant.slice(0, -1)) {
+      expect(msg.info.finish).toBe("tool-calls")
+    }
   })
 })
