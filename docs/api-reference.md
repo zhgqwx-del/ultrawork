@@ -313,7 +313,7 @@ ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。
 | GET | `/orchestration/runs/:id` | run 详情 | `{run}` / 404 |
 | POST | `/orchestration/runs/:id/cancel` | 取消 run | 中止**全部在途** step + 未达 skipped；404 未知 / 409 已终态 |
 | GET | `/orchestration/runs/:id/events` | per-run SSE | **首帧 = run.updated 全量快照**（订阅前事件零丢失）+ `step.updated` / `step.permission`（子会话权限 relay，UI 内联应答走上方 `/acp/session/:id/permission`）+ 心跳 |
-| POST | `/orchestration/delegate` | **阻塞式 delegate**（第二批 ②） | body `{agentId, task, workspace, model?, timeoutMs?}`；阻塞至子 turn 终态，返回 D-2 契约 `{result: {status, sessionId, deliverable?, tokens?, cost?, error?}}`；400 请求错 / 429 治理（深度）/ 500 其它。消费者 = `acp-client delegate-mcp` stdio shim |
+| POST | `/orchestration/delegate` | **阻塞式 delegate**（第二批 ②） | body `{agentId, task, workspace, model?, timeoutMs?}`；阻塞至子 turn 终态，返回 D-2 契约 `{result: {status, sessionId, deliverable?, tokens?, cost?, error?, artifacts?}}`（`artifacts`=子会话 write/edit/create/patch 工具写的文件路径，018：供产物区识别委派成员产物）；非成员 agentId → 403（018 成员强制）/ 400 请求错 / 429 治理（深度）/ 500 其它。消费者 = `acp-client delegate-mcp` stdio shim |
 | GET | `/orchestration/delegates` | delegate 记录列表 | 活动 + 最近 50 条终态（内存，不持久化） |
 | GET | `/orchestration/delegates/events` | 全局 delegate SSE | 首帧 `delegate.snapshot` + `delegate.updated` / `delegate.permission`（DelegateDock 按 workspace 过滤内联应答）+ 心跳 |
 | GET | `/orchestration/agents` | delegate 目标列表 | `opencode:default` + 全部 ACP agents（shim `list_agents` 工具消费） |

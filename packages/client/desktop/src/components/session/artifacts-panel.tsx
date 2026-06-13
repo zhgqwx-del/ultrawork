@@ -80,7 +80,7 @@ function addIfNew(
   }
 }
 
-function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: string): Artifact[] {
+export function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: string): Artifact[] {
   const seen = new Set<string>()
   const artifacts: Artifact[] = []
 
@@ -108,6 +108,23 @@ function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?: strin
               addIfNew(rawPath, "file", seen, artifacts, workspaceRoot)
               break
             }
+          }
+        }
+
+        // Delegated members write files in their own (sidebar-hidden) child
+        // session, invisible to this Leader transcript. The orchestrator puts
+        // those paths into the D-2 contract's `artifacts` field, so parse the
+        // delegate tool's JSON output and surface them (018).
+        if (tp.state.status === "completed" && tp.tool.includes("delegate") && tp.state.output) {
+          try {
+            const parsed = JSON.parse(tp.state.output) as { artifacts?: unknown }
+            if (Array.isArray(parsed.artifacts)) {
+              for (const p of parsed.artifacts) {
+                if (typeof p === "string") addIfNew(p, "file", seen, artifacts, workspaceRoot)
+              }
+            }
+          } catch {
+            // Not JSON (or no artifacts) — the regex scan below still runs.
           }
         }
 

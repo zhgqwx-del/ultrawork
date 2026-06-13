@@ -50,6 +50,45 @@ export interface DelegateResult {
   tokens?: { input: number; output: number }
   cost?: number
   error?: string
+  /**
+   * Files the child wrote in its (sidebar-hidden) session, so the Team
+   * artifacts panel can surface them without depending on the deliverable
+   * text mentioning a path (018: a member's writes live in the child session,
+   * invisible to the Leader transcript otherwise).
+   */
+  artifacts?: string[]
+}
+
+// File-writing tool names (suffix match, MCP-prefix tolerant) + their path
+// params — mirrors the desktop artifacts-panel so child writes are detected
+// the same way the Leader's own writes are.
+const FILE_WRITE_SUFFIXES = ["write", "edit", "create", "patch"]
+const PATH_PARAMS = ["filePath", "file_path", "path", "outputPath", "filename"]
+
+function isFileWriteTool(tool: string): boolean {
+  const t = tool.toLowerCase()
+  return FILE_WRITE_SUFFIXES.some((s) => t === s || t.endsWith("_" + s))
+}
+
+/** Absolute/relative file paths the child session wrote (write/edit/create/patch). */
+function extractArtifactPaths(messages: SendMessageResponse[]): string[] {
+  const paths = new Set<string>()
+  for (const { info, parts } of messages) {
+    if (info?.role !== "assistant" || !parts) continue
+    for (const part of parts as any[]) {
+      if (part?.type !== "tool" || !isFileWriteTool(String(part.tool ?? ""))) continue
+      const input = part.state?.input as Record<string, unknown> | undefined
+      if (!input) continue
+      for (const param of PATH_PARAMS) {
+        const v = input[param]
+        if (typeof v === "string" && v.trim()) {
+          paths.add(v.trim())
+          break
+        }
+      }
+    }
+  }
+  return [...paths]
 }
 
 export type DelegateEvent =
@@ -154,8 +193,8 @@ export class DelegateManager {
       if (result.status !== "completed") {
         return { status: result.status, sessionId: handle.sessionId, error: result.error }
       }
-      const { deliverable, tokens, cost } = await this.collectDeliverable(workspace, handle.sessionId)
-      return { status: "completed", sessionId: handle.sessionId, deliverable, tokens, cost }
+      const { deliverable, tokens, cost, artifacts } = await this.collectDeliverable(workspace, handle.sessionId)
+      return { status: "completed", sessionId: handle.sessionId, deliverable, tokens, cost, artifacts }
     } catch (err) {
       // GovernanceError (depth) propagates for a 4xx; infrastructure errors
       // settle the record so the dock never shows a stuck "running".
@@ -190,7 +229,12 @@ export class DelegateManager {
   private async collectDeliverable(
     workspace: string,
     sessionId: string,
-  ): Promise<{ deliverable?: string; tokens?: { input: number; output: number }; cost?: number }> {
+  ): Promise<{
+    deliverable?: string
+    tokens?: { input: number; output: number }
+    cost?: number
+    artifacts?: string[]
+  }> {
     let messages: SendMessageResponse[]
     try {
       const result = await this.deps.connectorFor(workspace).fetchHistory(sessionId)
@@ -228,10 +272,12 @@ export class DelegateManager {
       }
       if (info.cost) cost += info.cost
     }
+    const artifacts = extractArtifactPaths(messages)
     return {
       deliverable,
       tokens: sawUsage ? { input, output } : undefined,
       cost: cost > 0 ? cost : undefined,
+      artifacts: artifacts.length > 0 ? artifacts : undefined,
     }
   }
 

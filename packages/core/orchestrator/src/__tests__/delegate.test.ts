@@ -26,6 +26,13 @@ function assistantMessage(
   } as SendMessageResponse
 }
 
+function toolMessage(tool: string, input: Record<string, unknown>): SendMessageResponse {
+  return {
+    info: { id: "m2", sessionID: "s1", role: "assistant", time: { created: 1 } },
+    parts: [{ type: "tool", tool, state: { status: "completed", input } } as any],
+  } as SendMessageResponse
+}
+
 describe("DelegateManager", () => {
   let workspace: string
   let hiddenDir: string
@@ -84,6 +91,22 @@ describe("DelegateManager", () => {
     expect(result.deliverable).toBe("done")
     expect(result.tokens).toBeUndefined()
     expect(result.cost).toBeUndefined()
+    expect(result.artifacts).toBeUndefined()
+  })
+
+  it("collects the child's written files into the D-2 artifacts field (018)", async () => {
+    const { acp, delegates } = build({})
+    acp.fetchHistory = vi.fn(async () => ({
+      hasMore: false,
+      messages: [
+        toolMessage("write", { filePath: "/ws/flappy-bird.html" }),
+        toolMessage("edit", { file_path: "/ws/flappy-bird.html" }), // same file → deduped
+        toolMessage("read", { path: "/ws/notes.txt" }), // read is not a write → ignored
+        assistantMessage("done — created flappy-bird.html"),
+      ],
+    }))
+    const result = await delegates.delegate({ agentId: "acp:claude", task: "build flappy bird", workspace })
+    expect(result.artifacts).toEqual(["/ws/flappy-bird.html"])
   })
 
   it("reuses ONE hidden parent across opencode delegates and titles children", async () => {
