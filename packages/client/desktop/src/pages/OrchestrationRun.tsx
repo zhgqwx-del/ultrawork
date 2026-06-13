@@ -13,6 +13,8 @@ import { TopBar } from "@/components/layout/top-bar"
 import { Button } from "@/components/ui/button"
 import { MessageList } from "@/components/chat"
 import { RunStatusBadge } from "@/components/orchestration/run-status-badge"
+import { AgentAvatar } from "@/components/chat/agent-avatar"
+import { useAgents } from "@/lib/agent-context"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { useChildSessionHistory } from "@/lib/use-child-session-history"
@@ -233,7 +235,9 @@ function findStepAgent(run: OrchestrationRun | null, stepId: string): string {
 
 function StepCard({ run, step, index }: { run: OrchestrationRun; step: RunStep; index: number }) {
   const { t } = useI18n()
+  const { agents } = useAgents()
   const [expanded, setExpanded] = useState(false)
+  const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId
 
   const recipeStep = run.recipe.steps[index]
   const duration = useMemo(() => {
@@ -264,7 +268,9 @@ function StepCard({ run, step, index }: { run: OrchestrationRun; step: RunStep; 
         )}
         <RunStatusBadge status={step.status} withLabel={false} />
         <span className="text-sm font-medium text-[var(--color-fg)]">{step.id}</span>
-        <span className="truncate text-xs text-[var(--color-fg-muted)]">{step.agentId}</span>
+        {/* 019 D3: agent identity = avatar + name (aligns with delegate cards). */}
+        <AgentAvatar agentId={step.agentId} name={agentName} className="size-5 text-[9px]" />
+        <span className="truncate text-xs text-[var(--color-fg-muted)]">{agentName}</span>
         <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-[var(--color-fg-muted)]">
           {duration}
         </span>

@@ -5,7 +5,7 @@
 // warm cache, hydrated from the ACP sidecar's persisted sessions at launch so
 // cleared WebView data / another device no longer orphans ACP sessions.
 
-import { createContext, useContext, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import {
   ACPBackend,
   ACP_BACKEND_KIND,
@@ -14,13 +14,15 @@ import {
   toBindingEntries,
   type UnifiedAgent,
 } from "@agent/connector"
-import { useConnector } from "./sse-context"
+import { useConnector, useSSEConnected } from "./sse-context"
 
 const OPENCODE_AGENT: UnifiedAgent = {
   id: OPENCODE_DEFAULT_AGENT_ID,
   name: "OpenCode",
   source: "opencode",
-  status: "available",
+  // Placeholder; the live status is derived from the global SSE heartbeat in
+  // the provider (the opencode backend has no per-agent health endpoint).
+  status: "disconnected",
 }
 
 interface AgentContextValue {
@@ -38,9 +40,24 @@ const AgentContext = createContext<AgentContextValue | null>(null)
 
 export function AgentProvider({ children }: { children: ReactNode }) {
   const connector = useConnector()
+  const sseConnected = useSSEConnected()
   const [agents, setAgents] = useState<UnifiedAgent[]>([OPENCODE_AGENT])
   const [acpAvailable, setAcpAvailable] = useState(false)
   const refreshing = useRef(false)
+
+  // 019 D5b: the opencode default agent's health = the global SSE heartbeat
+  // (useSSEConnected), not a hardcoded "available". ACP agents keep their own
+  // status from listAgents(). The connection signal surfaces on the
+  // AgentSelector trigger chip, replacing the footer WiFi banner.
+  const liveAgents = useMemo<UnifiedAgent[]>(
+    () =>
+      agents.map((a) =>
+        a.id === OPENCODE_DEFAULT_AGENT_ID
+          ? { ...a, status: sseConnected ? "connected" : "disconnected" }
+          : a,
+      ),
+    [agents, sseConnected],
+  )
 
   const refreshAgents = useCallback(async () => {
     if (refreshing.current) return
@@ -85,6 +102,43 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     void refreshAgents()
   }, [refreshAgents])
 
+  // 019 D5b follow-up: ACP per-agent status from listAgents() is only a
+  // snapshot (refreshed on mount + dropdown open). A lazily-connected agent
+  // that just came online via a prompt would otherwise stay gray on the
+  // AgentSelector trigger chip until the next dropdown open. Poll the sidecar's
+  // per-agent status while it's reachable so the chip dot is eventually
+  // consistent (connect / disconnect / error). opencode needs no poll — its
+  // dot is driven live by useSSEConnected.
+  useEffect(() => {
+    if (!acpAvailable) return
+    const acp = connector.getBackend<ACPBackend>(ACP_BACKEND_KIND)
+    if (!acp) return
+    let cancelled = false
+    const id = setInterval(async () => {
+      try {
+        const fresh = await acp.http.listAgents()
+        if (cancelled) return
+        const byId = new Map(fresh.map((a) => [makeAgentId("acp", a.id), a]))
+        setAgents((prev) => {
+          let changed = false
+          const next = prev.map((a) => {
+            const f = byId.get(a.id)
+            if (!f || (a.status === f.status && a.error === f.error)) return a
+            changed = true
+            return { ...a, status: f.status, error: f.error }
+          })
+          return changed ? next : prev
+        })
+      } catch {
+        // Transient (sidecar busy/restarting); the next tick retries.
+      }
+    }, 4000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [acpAvailable, connector])
+
   // Mirror binding changes into React (stable snapshot via version counter)
   const bindingsVersion = useSyncExternalStore(
     useCallback((cb) => connector.bindings.onChange(cb), [connector]),
@@ -104,7 +158,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   return (
     <AgentContext.Provider
-      value={{ agents, acpAvailable, refreshAgents, getSessionAgentId, bindSessionAgent }}
+      value={{ agents: liveAgents, acpAvailable, refreshAgents, getSessionAgentId, bindSessionAgent }}
     >
       {children}
     </AgentContext.Provider>

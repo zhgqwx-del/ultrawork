@@ -48,6 +48,9 @@ export function AgentSelector({
   const currentId = agentId ?? getSessionAgentId(sessionId)
   const current = agents.find((a) => a.id === currentId) ?? agents[0]
   const currentName = current?.name ?? "OpenCode"
+  // 019 D5b: connection health for the selected backend — opencode reflects the
+  // SSE heartbeat (wired in AgentContext), ACP agents reflect their status().
+  const currentDot = STATUS_DOT[current?.status ?? "disconnected"]
 
   const handleOpenChange = (next: boolean) => {
     if (locked) return
@@ -72,6 +75,7 @@ export function AgentSelector({
         >
           {leader ? <Crown className="size-3 text-amber-500" /> : <Bot className="size-3" />}
           <span className="max-w-[150px] truncate">{currentName}</span>
+          <span className={cn("size-1.5 shrink-0 rounded-full", currentDot)} />
           {!locked && <ChevronDown className="size-3" />}
         </button>
       </PopoverTrigger>

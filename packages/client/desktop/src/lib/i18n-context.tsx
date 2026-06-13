@@ -59,6 +59,10 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Orchestration
     "orchestration.title": "Pipelines",
+    "orchestration.entryTitle": "Automation",
+    "orchestration.intro": "Turn a multi-step task into a fixed recipe that runs automatically — in order (Pipeline) or in parallel (Fan-out), each step's deliverable feeding the next. Best for repetitive, deterministic workflows.",
+    "orchestration.introVsTeam": "Want to decide the approach by chatting with the AI? Use Team collaboration (pick it when starting a task).",
+    "orchestration.noRunsHint": "Configure steps above and hit Start — finished runs show up here.",
     "orchestration.newPipeline": "New Pipeline",
     "orchestration.newPipeline.desc": "Steps run in order; each step's deliverable file feeds the next step",
     "orchestration.namePlaceholder": "Pipeline name",
@@ -626,6 +630,10 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Orchestration
     "orchestration.title": "流水线",
+    "orchestration.entryTitle": "自动化",
+    "orchestration.intro": "把多步骤任务写成固定配方，按顺序（流水线）或并行（Fan-out）自动跑，每步产物喂下一步。适合重复、确定的工作流。",
+    "orchestration.introVsTeam": "想跟 AI 边聊边定怎么做？用「Team 协作」（新建任务时选）。",
+    "orchestration.noRunsHint": "在上方配置步骤并启动，跑完会显示在这里。",
     "orchestration.newPipeline": "新建流水线",
     "orchestration.newPipeline.desc": "步骤按顺序执行；上一步的交付物文件作为下一步的输入",
     "orchestration.namePlaceholder": "流水线名称",

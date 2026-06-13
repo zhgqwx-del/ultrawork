@@ -15,6 +15,7 @@ import { useI18n } from "@/lib/i18n-context"
 import { useWorkspace } from "@/lib/workspace-context"
 import { createRun, listRuns } from "@/lib/orchestration-client"
 import { RunStatusBadge } from "@/components/orchestration/run-status-badge"
+import { AgentAvatar } from "@/components/chat/agent-avatar"
 
 interface StepDraft {
   agentId: string
@@ -146,17 +147,26 @@ export function PipelineTab() {
     <div className="rounded-lg border border-[var(--color-border)] p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-[var(--color-fg-muted)]">{extras?.label}</span>
-        <select
-          value={draft.agentId}
-          onChange={(e) => onChange({ agentId: e.target.value })}
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)]"
-        >
-          {agents.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.name}
-            </option>
-          ))}
-        </select>
+        {/* 019 D3: agent chip — first-letter avatar + native select (zero
+            behavior change, shares the 018 TeamMemberSelect visual language). */}
+        <label className="flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] py-0.5 pl-1 pr-1.5 transition-colors hover:border-[var(--color-accent)]">
+          <AgentAvatar
+            agentId={draft.agentId}
+            name={agents.find((a) => a.id === draft.agentId)?.name ?? draft.agentId}
+            className="size-5 text-[9px]"
+          />
+          <select
+            value={draft.agentId}
+            onChange={(e) => onChange({ agentId: e.target.value })}
+            className="cursor-pointer bg-transparent text-xs text-[var(--color-fg)] outline-none"
+          >
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
         {/* Model override: opencode only (ADR-030 capabilities.model). */}
         {draft.agentId.startsWith("opencode:") && modelOptions.length > 0 && (
           <select
@@ -205,6 +215,12 @@ export function PipelineTab() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
+      {/* 019 D4: page-level self-description + when to use vs Team. */}
+      <header className="flex flex-col gap-1.5">
+        <p className="text-sm text-[var(--color-fg-muted)]">{t("orchestration.intro")}</p>
+        <p className="text-xs text-[var(--color-fg-muted)] opacity-80">{t("orchestration.introVsTeam")}</p>
+      </header>
+
       {/* Create form */}
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
         <div className="mb-3 flex items-center gap-1 rounded-lg bg-[var(--color-bg)] p-1 text-xs">
@@ -339,7 +355,10 @@ export function PipelineTab() {
             {t("orchestration.sidecarUnreachable")}
           </p>
         ) : runs.length === 0 ? (
-          <p className="py-8 text-center text-sm text-[var(--color-fg-muted)]">{t("orchestration.noRuns")}</p>
+          <div className="flex flex-col items-center gap-1 py-8 text-center">
+            <p className="text-sm font-medium text-[var(--color-fg)]">{t("orchestration.noRuns")}</p>
+            <p className="text-xs text-[var(--color-fg-muted)]">{t("orchestration.noRunsHint")}</p>
+          </div>
         ) : (
           <div className="flex flex-col gap-2">
             {runs.map((run) => (
@@ -355,6 +374,17 @@ export function PipelineTab() {
                     {run.steps.length} {t("orchestration.stepsCount")} ·{" "}
                     {new Date(run.createdAt).toLocaleString()}
                   </div>
+                </div>
+                {/* 019 D3: agent avatar cluster (unique agents in this run). */}
+                <div className="flex shrink-0 -space-x-1.5">
+                  {[...new Set(run.steps.map((s) => s.agentId))].slice(0, 3).map((id) => (
+                    <AgentAvatar
+                      key={id}
+                      agentId={id}
+                      name={agents.find((a) => a.id === id)?.name ?? id}
+                      className="size-5 text-[9px] ring-2 ring-[var(--color-bg-elevated)]"
+                    />
+                  ))}
                 </div>
               </button>
             ))}

@@ -1,6 +1,6 @@
 # 019 · 流水线 UI 收纳与形态（编排 surface 的「另一半」）
 
-> **状态**：✅ 已拍板待开工（2026-06-13。D1=伞名「自动化」+页内「流水线·Fan-out」/ D2=footer 精简（保留二级入口）/ D3=做视觉对齐 / D4=做自我说明 / **D5=footer 去渠道 + WiFi 连接状态迁到 AgentSelector chip 按所选后端着色（顺修 opencode 硬编码 available）**。承接 018 收尾 Q2「先拍形态再动手」+ 用户 footer 两点反馈）
+> **状态**：✅ 已落地（2026-06-13，分支 `feat/agent-os-phase0`。D1-D5 一次性全实现，全 surface 层、功能零改动；typecheck 8/8 + desktop 159 + 隔离栈 GUI 走查 7/7。详见 §6 落地备注）。原拍板：D1=伞名「自动化」+页内「流水线·Fan-out」/ D2=footer 精简（保留二级入口）/ D3=做视觉对齐 / D4=做自我说明 / **D5=footer 去渠道 + WiFi 连接状态迁到 AgentSelector chip 按所选后端着色（顺修 opencode 硬编码 available）**。承接 018 收尾 Q2「先拍形态再动手」+ 用户 footer 两点反馈
 > **日期**：2026-06-13
 > **缘起**：018 把 **Team 协作**（agent 驱动、对话式即兴委派）从 `/orchestration` 抽进主聊天流（Home segmented + 侧栏混排 + Session 页合流），`/orchestration` 回归为**纯流水线页**（代码驱动 recipe）。Team 拿到了一等公民的入口与视觉，**流水线却被留在原地**——侧栏底部一个 `Workflow` 按钮，step 行还是裸 `<select>`，与 Team 的 agent-avatar 卡片视觉割裂。018 收尾讨论时定性：删可惜（唯一代码驱动 recipe 入口）、不并进 Team（心智不同，016/017/018 刻意分开），**给它一个稳定二级入口 +复用 agent-avatar/chip 视觉对齐 +一句话说明**；先单开 discussion 拍形态。
 > **承接**：[018](./018-unified-orchestration-ux.md)（Team 进主流程）· [017](./017-team-page-agent-driven-orchestration.md)（Team 页独立 surface）· ADR-031 D-1（代码驱动面）/ D-7
@@ -119,6 +119,34 @@ footer 现有三类占位（`left-sidebar.tsx`）：①「自动化」入口（D
 4. 落地后 → 本分支 `feat/agent-os-phase0` 编排 surface「整体完成」，接 hermes（视场景）或整体合 main。
 
 > **节奏与分支**：019 在 `feat/agent-os-phase0` 分支继续，**整体完成后一次合入 main**（与 017/018 同策略，用户已定）。
+
+## 6. 落地备注（2026-06-13）
+
+D1-D5 一次性全实现，全 surface 层、功能逻辑零改动。改动文件：
+- **D1**：`i18n-context.tsx` 新增 `orchestration.entryTitle`（自动化/Automation）；`left-sidebar.tsx`（展开按钮+折叠 aria/tooltip）+ `pages/Orchestration.tsx`（TopBar title）改用之。页内模式名「流水线/Fan-out 并行」+ `orchestration.*` key 前缀均保留。
+- **D2/D5a**：`left-sidebar.tsx` footer 删 `ChannelStatusBar`/`ChannelStatusDot`（展开+折叠），只留「自动化」入口 + 用户/设置；删 `connection-status.tsx`（`ConnectionStatus` 组件 + barrel 导出）。`use-channels.ts` 保留（Settings 仍用）。
+- **D5b**：`agent-context.tsx` 修 opencode 默认 agent `status` 硬编码 `available`——改由 `useSSEConnected()` + `useMemo` 派生（connected/disconnected）；`agent-selector.tsx` trigger chip 加状态点（`STATUS_DOT[current.status]`），opencode→SSE 心跳、ACP→该 agent `status()`。
+- **D3**：`pipeline-tab.tsx` step/worker 行 `<select>` 包进 `AgentAvatar` chip（`<label>` 内嵌 select 零行为改动）+ run 列表行头像簇；`pages/OrchestrationRun.tsx` step 卡片裸 `agentId` 换 `AgentAvatar` + 显示名。
+- **D4**：`pipeline-tab.tsx` 顶部 `<header>` 加 `orchestration.intro` + `introVsTeam`；runs 空态加 `noRunsHint`。
+
+验收：typecheck 8/8、desktop vitest 159 全绿；隔离栈 GUI 走查（opencode :4096〔`XDG_DATA_HOME=/tmp` 隔离，真实库零碰〕+ acp :4099 + Chrome+Playwright，脚本 `/tmp/uw-gui-test/v019-gui.ts`）**7/7**：footer 精简 / chip 绿点（opencode SSE 连上，证修复硬编码）/ chip 灰点（切 ACP claude disconnected）/ 页头「自动化」+ intro + vs Team / step 行头像 / run 列表头像簇 / run 详情 step 头像。唯一未实时验证项=暖空态文案（隔离栈 acp orchestrator runs 全局持久化含用户真实 run、列表非空，不删真实数据则拿不到 0-run 态；2 行条件渲染 + 已定义 i18n key，code review 覆盖）。
+
+> **走查 harness 教训复用**：浏览器无 Tauri invoke → 导航走 SPA 内点击（整页 goto 落工作区确认页，点「继续使用」过门）；localStorage 预置 `ultrawork-config`（apiUsername/apiPassword 取自真实 `sidecar-auth.json`）+ `workspace_path`；opencode 用真实凭证但 `XDG_DATA_HOME=/tmp` 隔离 DB；起栈后 `lsof` 核 PID 归属、收尾按 PID kill + 清隔离数据。
+
+## 7. Pipeline surface 暂时下线（2026-06-13，落地后用户拍板）
+
+019 把流水线 surface 收拾干净后，用户在真机（桌面截图 16:00/16:01）复看，判定**当前 UI 仍偏「表单堆砌」、不够第一方质感**，决定**暂时下线「自动化」入口**，等有真正的 UI/UE 设计或确有需求再恢复。
+
+**具体 UI 问题（落地后实物核实）**：① 分段控件「流水线 | Fan-out 并行」被拉成满宽、选项浮在大片空白里、激活态对比弱（应为居中紧凑 pill）；② 原生 `<select>`（模型/agent 下拉）与自定义 avatar chip 风格割裂、显廉价；③ 整体多个带边框盒子竖叠、节奏乱，没有「被设计过」的层级感；④ 顶部说明两行灰字略飘。结论：要做对**不是改 CSS，是一次真设计**，而流水线属低频高级功能（Team 已覆盖日常多 agent 委派），现在投设计性价比低。
+
+**处置（最小、可逆、零后端改动）**：
+- **去掉** `left-sidebar.tsx` footer 的「自动化」入口（展开 + 折叠两处）+ 未用的 `Workflow` 图标 import。
+- **保留** `/orchestration` 与 `/orchestration/run/:id` 路由（`router.tsx`，可深链访问，便于调试/恢复）。
+- **代码全部原样保留**：`PipelineTab` / `OrchestrationRun` / `orchestration-client` / `@agent/orchestrator` 包一行不动；019 已落地的 footer 精简、D5b chip 连接状态（含 ACP 4s 轮询修复）与流水线页无关，**保留有效**；只有 D1 命名 / D3 step·run 头像 / D4 页顶说明随页雪藏（代码在册）。
+
+**关键安全垫**：隐藏入口**不会让 orchestrator 后端变死代码**——Team 协作的 delegate 与流水线**共用同一 orchestrator 后端**，Team 在主聊天里持续使用。砍的只是「代码驱动 recipe」这一个前端入口。
+
+**重启条件（满足其一即恢复 nav 入口，约 1 分钟）**：① 出现真实、重复、确定性的多步骤工作流需求；② 有更好的 UI/UE 设计方案。恢复方式：在 `left-sidebar.tsx` footer（+折叠态）加回指向 `/orchestration` 的入口即可。
 
 ### 来源
 - 018 收尾 Q2 拍板（MEMORY「下一步与待决」2026-06-13）；用户 footer 两点反馈（2026-06-13，桌面截图）；代码核实 `left-sidebar.tsx` / `pages/Orchestration.tsx` / `pipeline-tab.tsx` / `i18n-context.tsx` / `settings/connection-status.tsx` / `chat/agent-selector.tsx` / `lib/agent-context.tsx` / `core/connector`（2026-06-13）。

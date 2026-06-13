@@ -15,8 +15,6 @@ import {
   X,
   Search,
   Star,
-  Radio,
-  Workflow,
   Crown,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
@@ -38,10 +36,8 @@ import { useSidebar } from "./sidebar-context"
 import { isMacOS } from "@/lib/platform"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
-import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
-import { useChannels } from "@/lib/use-channels"
 import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
@@ -284,22 +280,12 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Footer: Orchestration + Channels + Connection + User avatar + Settings */}
+            {/* Footer: User avatar + Settings.
+                019 后续：「自动化」（流水线/Fan-out）入口暂时下线——surface 需一次真正
+                的 UI/UE 设计且属低频高级功能；orchestrator 后端由 Team delegate 共用、
+                未死。路由 /orchestration 保留可深链，PipelineTab/OrchestrationRun 代码
+                原样在册，恢复只需加回此入口。详见 docs/discussions/019 §7。 */}
             <div className="mt-auto shrink-0 space-y-2 p-3">
-              <button
-                onClick={() => navigate("/orchestration")}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg p-2 text-sm transition-colors hover:bg-[var(--sidebar-accent)]",
-                  location.pathname.startsWith("/orchestration")
-                    ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
-                    : "text-[var(--sidebar-fg-muted)]"
-                )}
-              >
-                <Workflow className="size-4" />
-                {t("orchestration.title")}
-              </button>
-              <ChannelStatusBar />
-              <ConnectionStatus />
               <SettingsPopover>
                 <button
                   aria-label="User settings"
@@ -362,30 +348,12 @@ export function LeftSidebar() {
                 </TooltipTrigger>
                 <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
               </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    aria-label={t("orchestration.title")}
-                    onClick={() => navigate("/orchestration")}
-                    className={cn(
-                      "flex size-9 items-center justify-center rounded-lg transition-colors",
-                      location.pathname.startsWith("/orchestration")
-                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
-                        : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
-                    )}
-                  >
-                    <Workflow className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">{t("orchestration.title")}</TooltipContent>
-              </Tooltip>
+              {/* 019 后续：折叠态「自动化」入口同步下线（见展开态注释 / 019 §7）。 */}
             </div>
 
             <div className="flex-1" />
 
             <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-3">
-              <ChannelStatusDot />
               <SettingsPopover>
                 <button
                   aria-label="Settings"
@@ -611,86 +579,5 @@ function SessionItem({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  )
-}
-
-/** Expanded sidebar: channel status bar with connected count */
-function ChannelStatusBar() {
-  const { t } = useI18n()
-  const { channels, loading, refresh } = useChannels()
-  const navigate = useNavigate()
-
-  // Auto-refresh every 15s to keep status in sync
-  useEffect(() => {
-    const timer = setInterval(refresh, 15_000)
-    return () => clearInterval(timer)
-  }, [refresh])
-
-  if (loading || channels.length === 0) return null
-
-  const connected = channels.filter((c) => c.state === "connected").length
-  const hasError = channels.some((c) => c.state === "error")
-
-  const dotColor = hasError
-    ? "bg-red-500"
-    : connected > 0
-    ? "bg-green-500"
-    : "bg-gray-400"
-
-  return (
-    <button
-      onClick={() => navigate("/settings", { state: { section: "channels" } })}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-[var(--sidebar-accent)]"
-    >
-      <Radio className="size-3.5 text-[var(--sidebar-fg-muted)]" />
-      <span className="flex-1 text-left text-[var(--sidebar-fg-muted)]">
-        {t("channel.title")}
-      </span>
-      <span className={cn("size-2 rounded-full", dotColor)} />
-      <span className="text-[var(--sidebar-fg-muted)]">
-        {connected}/{channels.length}
-      </span>
-    </button>
-  )
-}
-
-/** Collapsed sidebar: channel status dot */
-function ChannelStatusDot() {
-  const { channels, loading, refresh } = useChannels()
-  const navigate = useNavigate()
-
-  // Auto-refresh every 15s to keep status in sync
-  useEffect(() => {
-    const timer = setInterval(refresh, 15_000)
-    return () => clearInterval(timer)
-  }, [refresh])
-
-  if (loading || channels.length === 0) return null
-
-  const connected = channels.filter((c) => c.state === "connected").length
-  const hasError = channels.some((c) => c.state === "error")
-
-  const dotColor = hasError
-    ? "bg-red-500"
-    : connected > 0
-    ? "bg-green-500"
-    : "bg-gray-400"
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={() => navigate("/settings", { state: { section: "channels" } })}
-          aria-label="Channels"
-          className="relative flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
-        >
-          <Radio className="size-4" />
-          <span className={cn("absolute right-1 top-1 size-2 rounded-full", dotColor)} />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="right">
-        {connected}/{channels.length} connected
-      </TooltipContent>
-    </Tooltip>
   )
 }
