@@ -118,7 +118,10 @@ export const DelegateRow = memo(function DelegateRow({ part, live }: { part: Too
               ) : (
                 <div className="max-h-[360px] overflow-y-auto rounded border border-[var(--color-border)]">
                   <Suspense fallback={<Loader2 className="m-2 size-4 animate-spin" />}>
-                    <LazyMessageList messages={messages} />
+                    {/* Child history is lazy-loaded, never live-streamed here:
+                        an interrupted/errored child renders settled (its error
+                        state), not a perpetual spinner. */}
+                    <LazyMessageList messages={messages} sessionActive={false} />
                   </Suspense>
                 </div>
               )}

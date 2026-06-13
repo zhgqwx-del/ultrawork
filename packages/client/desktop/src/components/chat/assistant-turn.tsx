@@ -1,9 +1,18 @@
 import { memo, useMemo } from "react"
-import type { SendMessageResponse, MessagePart, ToolPart, FilePart, PatchPart } from "@agent/api-client"
+import { XCircle } from "lucide-react"
+import type { SendMessageResponse, MessageInfo, MessagePart, ToolPart, FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { MarkdownContent, FileBlock, PatchBlock } from "./message-parts"
 import { ExecutionFlow } from "./execution-flow"
 import { useI18n } from "@/lib/i18n-context"
+
+/** Human-readable text for a message-level error (provider APIError / moderation
+ * / etc.). opencode uses `{ name, data: { message } }`; others may use a string. */
+function messageErrorText(error: MessageInfo["error"]): string | undefined {
+  if (!error) return undefined
+  if (typeof error === "string") return error
+  return error.data?.message ?? error.message ?? error.name
+}
 
 interface AssistantTurnProps {
   /** All assistant messages produced by a single user turn, in order. */
@@ -41,6 +50,9 @@ interface TurnModel {
   /** Model id used for this turn (from message info). */
   modelID?: string
   hasError: boolean
+  /** Message-level error text (provider/turn failure), if any — distinct from a
+   * tool-part error. Drives the error notice (errored turns have empty parts). */
+  errorText?: string
   visibleProcessCount: number
 }
 
@@ -129,16 +141,23 @@ export function buildTurnModel(messages: SendMessageResponse[], isStreaming: boo
       ? lastCompleted - firstCreated
       : undefined
 
-  // Error if any tool ended in error.
+  // Error if any tool ended in error, OR the turn itself failed (message-level
+  // info.error: provider APIError / content moderation / …). The latter is a
+  // TERMINAL state even though `finish` stays undefined — capture its text so
+  // the turn shows why it stopped instead of an empty/blank turn.
   let hasError = false
+  let errorText: string | undefined
   for (const msg of messages) {
+    const msgErr = messageErrorText(msg.info.error)
+    if (msgErr) {
+      hasError = true
+      errorText = msgErr // last error wins (the turn-ending one)
+    }
     for (const part of msg.parts) {
       if (part.type === "tool" && (part as ToolPart).state?.status === "error") {
         hasError = true
-        break
       }
     }
-    if (hasError) break
   }
 
   const visibleProcessCount = process.filter((p) => VISIBLE_FLOW_TYPES.has(p.type)).length
@@ -155,6 +174,7 @@ export function buildTurnModel(messages: SendMessageResponse[], isStreaming: boo
     completedAt,
     modelID,
     hasError,
+    errorText,
     visibleProcessCount,
   }
 }
@@ -217,6 +237,16 @@ export const AssistantTurn = memo(function AssistantTurn({
           }
         })}
       </div>
+
+      {!isStreaming && model.errorText && (
+        <div className="mt-1 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-400">
+          <XCircle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0">
+            <span className="font-medium">{t("message.turnError")}</span>
+            <span className="ml-1 break-words whitespace-pre-wrap">{model.errorText}</span>
+          </div>
+        </div>
+      )}
 
       {isStreaming && !hasAnswerText && (
         <div className="flex items-center gap-2 py-2">

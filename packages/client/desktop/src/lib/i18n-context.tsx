@@ -280,6 +280,7 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noArtifacts": "No artifacts yet",
     "message.noSteps": "No steps yet",
     "message.aiTyping": "AI is typing...",
+    "message.turnError": "Turn failed:",
     "message.loadingMessages": "Loading messages...",
     "message.loadEarlier": "Load earlier messages",
 
@@ -851,6 +852,7 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noArtifacts": "暂无产物",
     "message.noSteps": "暂无步骤",
     "message.aiTyping": "AI 正在输入...",
+    "message.turnError": "回合出错：",
     "message.loadingMessages": "加载消息中...",
     "message.loadEarlier": "加载更早消息",
 

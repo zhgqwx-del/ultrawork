@@ -1,4 +1,4 @@
-import type { SendMessageResponse } from "@agent/api-client"
+import type { SendMessageResponse, MessageInfo } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { UserMessage } from "./user-message"
 import { AssistantTurn } from "./assistant-turn"
@@ -26,6 +26,35 @@ export function groupIntoTurns(messages: SendMessageResponse[]): RenderGroup[] {
   return groups
 }
 
+// A turn is finished when its last message reached a terminal state. That means
+// either a terminal `finish` (anything other than "tool-calls", which signals
+// the loop continues), OR a message-level `error` (provider APIError / content
+// moderation / …) — an errored turn ends with `finish` left undefined, so error
+// must count as terminal or it would be misread as "still streaming".
+export function isTurnTerminal(lastInfo: MessageInfo | undefined): boolean {
+  return !!lastInfo?.error || (!!lastInfo?.finish && lastInfo.finish !== "tool-calls")
+}
+
+// Whether a turn should render as actively streaming (spinner + live timer).
+// Between tool steps `streamingMessageId` briefly goes null while the turn
+// continues, so the last group falls back to "non-terminal last message".
+// That inference ONLY holds while the session is genuinely live (sessionActive):
+// a reopened/historical session whose last turn ended without a terminal finish
+// (errored or interrupted) must render settled, never spin forever.
+export function isTurnStreaming(opts: {
+  turnMessages: SendMessageResponse[]
+  isLastGroup: boolean
+  isStopped: boolean
+  sessionActive: boolean
+  streamingMessageId: string | null
+}): boolean {
+  const { turnMessages, isLastGroup, isStopped, sessionActive, streamingMessageId } = opts
+  if (isStopped) return false
+  const containsStreaming = turnMessages.some((m) => m.info.id === streamingMessageId)
+  const lastInfo = turnMessages[turnMessages.length - 1]?.info
+  return containsStreaming || (isLastGroup && !isTurnTerminal(lastInfo) && sessionActive)
+}
+
 // Stable style object — created once to avoid breaking React shallow comparison on every render.
 const CONTENT_VISIBILITY_STYLE: React.CSSProperties = {
   contentVisibility: 'auto',
@@ -37,6 +66,15 @@ interface MessageListProps {
   isLoading?: boolean
   streamingMessageId?: string | null
   stoppedAtMessageId?: string | null
+  /**
+   * Whether this session currently has a request in flight. The "infer
+   * streaming from a non-terminal last message" fallback (isLastGroup &&
+   * !isTerminal) only holds while the session is genuinely live — without this
+   * gate, a reopened/historical session whose last turn ended without a
+   * terminal `finish` (errored or interrupted) would spin forever. Children
+   * rendered from lazy history pass false. Defaults to false (historical).
+   */
+  sessionActive?: boolean
   onArtifactClick?: (artifact: Artifact) => void
   /** Whether there are older messages available (cached or server-side) */
   showLoadEarlier?: boolean
@@ -51,6 +89,7 @@ export function MessageList({
   isLoading = false,
   streamingMessageId = null,
   stoppedAtMessageId = null,
+  sessionActive = false,
   onArtifactClick,
   showLoadEarlier = false,
   historyLoading = false,
@@ -101,16 +140,14 @@ export function MessageList({
 
         const turnMessages = group.messages
         const isStopped = turnMessages.some((m) => m.info.id === stoppedAtMessageId)
-        // A turn is "streaming" for the whole multi-step run, not just while a part
-        // is arriving: between steps streamingMessageId briefly becomes null and tool
-        // execution can take seconds. Derive it from the last message's finish state
-        // instead, so the execution flow doesn't collapse/flicker mid-turn.
-        // Terminal finish (e.g. "stop") that isn't "tool-calls" means the turn is done.
-        const lastInfo = turnMessages[turnMessages.length - 1]?.info
-        const isTerminal = !!lastInfo?.finish && lastInfo.finish !== "tool-calls"
-        const containsStreaming = turnMessages.some((m) => m.info.id === streamingMessageId)
         const isLastGroup = index === groups.length - 1
-        const isStreaming = !isStopped && (containsStreaming || (isLastGroup && !isTerminal))
+        const isStreaming = isTurnStreaming({
+          turnMessages,
+          isLastGroup,
+          isStopped,
+          sessionActive,
+          streamingMessageId,
+        })
         const turnKey = turnMessages[0]?.info.id || `turn-${index}`
 
         // content-visibility: auto lets the browser skip layout/paint for off-screen turns.

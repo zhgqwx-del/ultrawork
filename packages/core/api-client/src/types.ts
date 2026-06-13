@@ -152,6 +152,13 @@ export interface MessageInfo {
     cache?: { read?: number; write?: number }
   }
   finish?: string
+  // Set when the assistant turn ends in an error (e.g. provider APIError,
+  // content moderation). The opencode wire carries this even though `finish`
+  // stays undefined for errored turns — so error IS a terminal state. Shape is
+  // loose: opencode uses `{ name, data: { message, ... } }`, others may use a
+  // plain string. (Data already passes through getMessages untouched; this just
+  // types it so the renderer can treat an errored turn as terminal.)
+  error?: { name?: string; data?: { message?: string }; message?: string } | string
   id: string
   sessionID: string
 }
