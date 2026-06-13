@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react"
 
 interface SettingsDialogProps {
@@ -239,14 +240,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <label className="text-sm font-medium text-[var(--color-fg)]">
                   {t("general.language")}
                 </label>
-                <select
-                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+                <Select
                   value={formData.language}
-                  onChange={(e) => setFormData({ ...formData, language: e.target.value as "en" | "zh" })}
+                  onValueChange={(value) => setFormData({ ...formData, language: value as "en" | "zh" })}
                 >
-                  <option value="en">English</option>
-                  <option value="zh">简体中文</option>
-                </select>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="zh">简体中文</SelectItem>
+                  </SelectContent>
+                </Select>
                 <p className="text-xs text-[var(--color-fg-muted)]">
                   {t("general.language.description")}
                 </p>

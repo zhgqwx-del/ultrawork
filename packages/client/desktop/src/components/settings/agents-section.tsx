@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { ACP_BACKEND_KIND, type ACPAgentConfig, type ACPAgentInfo, type ACPBackend } from "@agent/connector"
 import { useConnector } from "@/lib/sse-context"
 import { useAgents } from "@/lib/agent-context"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AGENT_TEMPLATES, type AgentTemplate } from "./agent-templates"
 
 interface FormState {
@@ -367,17 +368,21 @@ export function AgentsSection() {
             <span className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
               {t("agents.form.thoughtLevel")}
             </span>
-            <select
+            <Select
               value={form.thoughtLevel}
-              onChange={(e) => setForm({ ...form, thoughtLevel: e.target.value })}
-              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-2 py-1.5 text-xs text-[var(--color-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              onValueChange={(value) => setForm({ ...form, thoughtLevel: value })}
             >
-              {THOUGHT_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {t(`agents.form.thoughtLevel.${level}`)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {THOUGHT_LEVELS.map((level) => (
+                  <SelectItem key={level} value={level} className="text-xs">
+                    {t(`agents.form.thoughtLevel.${level}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className="mt-1 block text-[11px] text-[var(--color-fg-muted)]">
               {t("agents.form.thoughtLevel.hint")}
             </span>

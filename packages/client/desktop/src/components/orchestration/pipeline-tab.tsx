@@ -16,6 +16,7 @@ import { useWorkspace } from "@/lib/workspace-context"
 import { createRun, listRuns } from "@/lib/orchestration-client"
 import { RunStatusBadge } from "@/components/orchestration/run-status-badge"
 import { AgentAvatar } from "@/components/chat/agent-avatar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface StepDraft {
   agentId: string
@@ -147,40 +148,45 @@ export function PipelineTab() {
     <div className="rounded-lg border border-[var(--color-border)] p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-[var(--color-fg-muted)]">{extras?.label}</span>
-        {/* 019 D3: agent chip — first-letter avatar + native select (zero
+        {/* 019 D3: agent chip — first-letter avatar + styled Select (zero
             behavior change, shares the 018 TeamMemberSelect visual language). */}
-        <label className="flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] py-0.5 pl-1 pr-1.5 transition-colors hover:border-[var(--color-accent)]">
-          <AgentAvatar
-            agentId={draft.agentId}
-            name={agents.find((a) => a.id === draft.agentId)?.name ?? draft.agentId}
-            className="size-5 text-[9px]"
-          />
-          <select
-            value={draft.agentId}
-            onChange={(e) => onChange({ agentId: e.target.value })}
-            className="cursor-pointer bg-transparent text-xs text-[var(--color-fg)] outline-none"
-          >
+        <Select value={draft.agentId} onValueChange={(value) => onChange({ agentId: value })}>
+          <SelectTrigger className="h-auto w-auto gap-1.5 rounded-full border-[var(--color-border)] bg-[var(--color-bg)] py-0.5 pl-1 pr-1.5 text-xs hover:border-[var(--color-fg-muted)] [&>svg]:size-3">
+            <AgentAvatar
+              agentId={draft.agentId}
+              name={agents.find((a) => a.id === draft.agentId)?.name ?? draft.agentId}
+              className="size-5 text-[9px]"
+            />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
+              <SelectItem key={agent.id} value={agent.id} className="text-xs">
                 {agent.name}
-              </option>
+              </SelectItem>
             ))}
-          </select>
-        </label>
+          </SelectContent>
+        </Select>
         {/* Model override: opencode only (ADR-030 capabilities.model). */}
         {draft.agentId.startsWith("opencode:") && modelOptions.length > 0 && (
-          <select
-            value={draft.model ?? ""}
-            onChange={(e) => onChange({ model: e.target.value || undefined })}
-            className="max-w-[180px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-fg)]"
+          <Select
+            value={draft.model ?? "__default__"}
+            onValueChange={(value) => onChange({ model: value === "__default__" ? undefined : value })}
           >
-            <option value="">{t("orchestration.modelDefault")}</option>
-            {modelOptions.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-8 max-w-[180px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__default__" className="text-xs">
+                {t("orchestration.modelDefault")}
+              </SelectItem>
+              {modelOptions.map((model) => (
+                <SelectItem key={model} value={model} className="text-xs">
+                  {model}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         {extras?.showWorktree && (
           <label className="flex items-center gap-1 text-[10px] text-[var(--color-fg-muted)]">

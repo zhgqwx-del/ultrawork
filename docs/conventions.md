@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-11 -->
+<!-- last-synced: 2026-06-13 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -146,6 +146,23 @@ OpenCode 一个 user 回合会产出 **N 条 assistant message**（每个工具�
 - **回合是否在生成**：用「末条 `finish` 终态(存在且≠`tool-calls`) + 是否末回合 + 未 stop」判定，**不要**用瞬时 `streamingMessageId`（step 间/工具执行期会置 null → 抖动）。
 - **memo**：`groupIntoTurns` 每渲染重建数组，`AssistantTurn` 必须用自定义比较器（按 `messages` 元素引用比较）才能让历史回合在流式中跳过重渲染——历史 message 对象引用稳定（state 只换变化的那条）。
 - **实时耗时**：`ExecutionFlow` 的 `useNow(active)`（100ms tick）只在「回合流式中 && 该行进行中」时激活（`live=isStreaming` 下传）——恢复/被 stop 的历史回合里残留的 running/thinking 状态**不得走秒**；滴答重渲染被限制在进行中的行 + 头部，不穿透 memo 屏障。
+
+### 下拉选择一律用 `components/ui/select.tsx`（不要原生 `<select>`）
+原生 `<select>` 的**展开面板由 OS 渲染、CSS 改不动**（深浅色/圆角/勾选样式全失控）。统一用 shadcn 风格的 `Select`（基于 `@radix-ui/react-select`，与 `dropdown-menu` 同一套 token/勾选/品牌色）：
+```tsx
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+<Select value={v} onValueChange={setV}>
+  <SelectTrigger className="h-8 text-xs">  {/* 默认 h-9；窄场景可覆盖高度 */}
+    <SelectValue />
+  </SelectTrigger>
+  <SelectContent>
+    {opts.map((o) => <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>)}
+  </SelectContent>
+</Select>
+```
+- **坑：Radix Select 禁止空串 `value=""`**（会抛运行时错）。原生 select 用 `<option value="">默认</option>` 表「无覆盖」的，迁移时改用哨兵值（如 `"__default__"`），在 `onValueChange` 里翻译回 `undefined`。
+- 药丸/内联触发器：给 `SelectTrigger` 覆盖 `h-auto w-auto rounded-full ... [&>svg]:size-3` 即可保留原视觉（见 `pipeline-tab.tsx` agent 选择器）。
 
 ## 6. 构建与部署
 
