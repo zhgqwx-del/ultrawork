@@ -33,7 +33,9 @@ describe("ExecutionStatus", () => {
     const stopBtn = screen.getByText("Stop").closest("button")!
     expect(stopBtn).toBeInTheDocument()
 
-    fireEvent.click(stopBtn)
+    // pointerdown, not click: the button shifts on streaming reflows, which
+    // can swallow a full click (down+up on the same element) mid-stream.
+    fireEvent.pointerDown(stopBtn)
     expect(onStop).toHaveBeenCalledTimes(1)
   })
 

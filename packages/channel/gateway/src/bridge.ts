@@ -1,4 +1,4 @@
-import { createApiClient } from "@agent/api-client";
+import { OpenCodeBackend, UNLIMITED_SSE_RETRY, type Unsubscribe } from "@agent/connector";
 import type { ApiClient, MessagePart } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
 import { loadSessionMap, saveSessionMap } from "./session-store.js";
@@ -59,12 +59,10 @@ export class Bridge {
   private activeContexts = new Map<string, SessionContext>();
   /** chatId → sequential promise chain */
   private queues = new Map<string, Promise<void>>();
-  /** Per-workspace ApiClient cache */
-  private clients = new Map<string, ApiClient>();
-  /** SSE abort controllers per workspace */
-  private sseControllers = new Map<string, AbortController>();
-  /** SSE "connected" promise per workspace — resolves when first SSE read succeeds */
-  private sseReady = new Map<string, Promise<void>>();
+  /** Per-workspace OpenCode backend (ApiClient + global SSE, via @agent/connector) */
+  private backends = new Map<string, OpenCodeBackend>();
+  /** Global-stream subscriptions per workspace */
+  private sseSubscriptions = new Map<string, Unsubscribe>();
   /** Permission/question poll timers per workspace */
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -83,19 +81,26 @@ export class Bridge {
     });
   }
 
-  /** Get or create an ApiClient for a workspace directory */
-  private getClient(workspaceDir: string): ApiClient {
-    let client = this.clients.get(workspaceDir);
-    if (!client) {
-      client = createApiClient({
+  /** Get or create the OpenCode backend for a workspace directory */
+  private getBackend(workspaceDir: string): OpenCodeBackend {
+    let backend = this.backends.get(workspaceDir);
+    if (!backend) {
+      backend = new OpenCodeBackend({
         baseUrl: OPENCODE_BASE_URL,
         username: "opencode",
         password: getOpencodePassword(),
         workingDirectory: workspaceDir,
+        // IM gateways must never give up: retry forever, capped at 30s
+        sse: { retry: UNLIMITED_SSE_RETRY },
       });
-      this.clients.set(workspaceDir, client);
+      this.backends.set(workspaceDir, backend);
     }
-    return client;
+    return backend;
+  }
+
+  /** The opencode REST surface for a workspace (same ApiClient as ever) */
+  private getClient(workspaceDir: string): ApiClient {
+    return this.getBackend(workspaceDir).api;
   }
 
   /** Enqueue a task per chatId to prevent concurrent prompts */
@@ -203,7 +208,12 @@ export class Bridge {
 
     // Send the prompt
     try {
-      await client.promptAsync(sessionId, msg.text, { model });
+      // IM sessions are never orchestration Leaders — deny the delegate MCP
+      // tools unconditionally (017 拍板 #4 isolation closure).
+      await client.promptAsync(sessionId, msg.text, {
+        model,
+        tools: { "orchestrator_*": false },
+      });
       console.log(
         `[Bridge] Sent prompt to session ${sessionId}: "${msg.text.slice(0, 50)}..."`,
       );
@@ -292,102 +302,16 @@ export class Bridge {
 
   /** Ensure SSE connection is active for a workspace. Returns when connected. */
   private async ensureSSE(workspaceDir: string): Promise<void> {
-    const existing = this.sseReady.get(workspaceDir);
-    if (existing) return existing;
-
-    const controller = new AbortController();
-    this.sseControllers.set(workspaceDir, controller);
-
-    let resolveReady: () => void;
-    const readyPromise = new Promise<void>((resolve) => {
-      resolveReady = resolve;
-    });
-    this.sseReady.set(workspaceDir, readyPromise);
-
-    this.connectSSE(workspaceDir, controller.signal, () =>
-      resolveReady(),
-    ).catch((err) => {
-      console.error(`[Bridge] SSE connection error for ${workspaceDir}:`, err);
-      this.sseControllers.delete(workspaceDir);
-      this.sseReady.delete(workspaceDir);
-      // Resolve anyway so processMessage doesn't hang forever
-      resolveReady();
-    });
-
-    return readyPromise;
-  }
-
-  private async connectSSE(
-    workspaceDir: string,
-    signal: AbortSignal,
-    onConnected: () => void,
-  ): Promise<void> {
-    const params = new URLSearchParams({ directory: workspaceDir });
-    const url = `${OPENCODE_BASE_URL}/event?${params}`;
-    const credentials = btoa(`opencode:${getOpencodePassword()}`);
-    let backoff = 1000; // Start at 1s, max 30s
-    let firstConnect = true;
-
-    while (!signal.aborted) {
-      try {
-        const response = await fetch(url, {
-          headers: {
-            Accept: "text/event-stream",
-            Authorization: `Basic ${credentials}`,
-            "x-opencode-directory": encodeURIComponent(workspaceDir),
-          },
-          signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`SSE ${response.status} ${response.statusText}`);
-        }
-        if (!response.body) throw new Error("SSE response has no body");
-
-        console.log(`[Bridge] SSE connected for ${workspaceDir}`);
-        backoff = 1000; // Reset on successful connect
-
-        // Signal that SSE is ready (only matters on first connect)
-        if (firstConnect) {
-          firstConnect = false;
-          onConnected();
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const event = JSON.parse(line.slice(6));
-                this.handleSSEEvent(event);
-              } catch {
-                console.warn(`[Bridge] Unparseable SSE event: ${line.slice(0, 100)}`);
-              }
-            }
-          }
-        }
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === "AbortError") return;
-        console.error(`[Bridge] SSE error, reconnecting in ${backoff / 1000}s:`, err);
-        // Signal ready even on error so processMessage doesn't hang
-        if (firstConnect) {
-          firstConnect = false;
-          onConnected();
-        }
-        await new Promise((r) => setTimeout(r, backoff));
-        backoff = Math.min(backoff * 2, 30_000); // Exponential backoff, cap 30s
-      }
+    const backend = this.getBackend(workspaceDir);
+    if (!this.sseSubscriptions.has(workspaceDir)) {
+      this.sseSubscriptions.set(
+        workspaceDir,
+        backend.subscribeGlobal((event) => this.handleSSEEvent(event)),
+      );
+      backend.connectGlobal();
     }
+    // Resolves on first open OR first error — processMessage never hangs.
+    return backend.ready();
   }
 
   private handleSSEEvent(event: { type: string; properties: any }): void {
@@ -572,12 +496,14 @@ export class Bridge {
       this.flushAndReply(sessionId);
     }
 
-    // Abort all SSE connections
-    for (const controller of this.sseControllers.values()) {
-      controller.abort();
+    // Close all SSE connections and backend resources
+    for (const unsubscribe of this.sseSubscriptions.values()) {
+      unsubscribe();
     }
-    this.sseControllers.clear();
-    this.sseReady.clear();
+    this.sseSubscriptions.clear();
+    for (const backend of this.backends.values()) {
+      backend.dispose();
+    }
 
     // Clear all poll timers
     for (const timer of this.pollTimers.values()) {
@@ -590,7 +516,7 @@ export class Bridge {
 
     this.activeContexts.clear();
     this.sessionMap.clear();
-    this.clients.clear();
+    this.backends.clear();
     this.queues.clear();
   }
 }

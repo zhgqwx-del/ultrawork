@@ -9,6 +9,9 @@ export interface ApiClientConfig {
 
 export interface SessionCreateRequest {
   agent?: string
+  /** Parent session id — child sessions are excluded from `roots:true` listings. */
+  parentID?: string
+  title?: string
 }
 
 // --- PartBase: identity fields present on every part ---
@@ -303,6 +306,16 @@ export interface PromptAsyncRequest {
   parts: Array<{ type: string; text?: string; [key: string]: any }>
   agent?: string
   model?: ModelOverride
+  /**
+   * Per-tool enable/disable, applied by the server as a session-level
+   * permission ruleset (wildcard keys like "orchestrator_*" supported).
+   */
+  tools?: Record<string, boolean>
+  /**
+   * Extra system prompt, appended after the agent's base prompt for THIS
+   * message only (not sticky on the session).
+   */
+  system?: string
 }
 
 // --- MCP types ---

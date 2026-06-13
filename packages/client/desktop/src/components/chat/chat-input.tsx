@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
 import { useI18n } from "@/lib/i18n-context"
-import { Loader2, Plus } from "lucide-react"
+import { Loader2, Square } from "lucide-react"
 import { CommandSelector } from "./command-selector"
 import type { Command } from "@agent/api-client"
 
@@ -9,6 +9,11 @@ interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onSend: () => void
+  /** Turns the send button into a stop button while loading. Lives here (and
+   *  not only in ExecutionStatus) because the input never moves: the in-flow
+   *  stop button shifts on every streaming reflow, so fast streams can swallow
+   *  the click between pointerdown and pointerup. */
+  onStop?: () => void
   placeholder?: string
   disabled?: boolean
   loading?: boolean
@@ -16,12 +21,17 @@ interface ChatInputProps {
   className?: string
   ctaLabel?: string
   leftSlot?: React.ReactNode
+  /** Home variant: a control row rendered above the textarea (e.g. the mode
+   *  switch) — keeps the bottom toolbar uncrowded and the card height stable
+   *  across modes. */
+  topSlot?: React.ReactNode
 }
 
 export function ChatInput({
   value,
   onChange,
   onSend,
+  onStop,
   placeholder = "Ask anything...",
   disabled = false,
   loading = false,
@@ -29,6 +39,7 @@ export function ChatInput({
   className,
   ctaLabel = "Start Now",
   leftSlot,
+  topSlot,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const compositionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -107,6 +118,10 @@ export function ChatInput({
         visible={showCommandSelector}
       />
 
+      {variant === "home" && topSlot && (
+        <div className="mb-2.5 flex items-center">{topSlot}</div>
+      )}
+
       <textarea
         ref={textareaRef}
         value={value}
@@ -135,23 +150,17 @@ export function ChatInput({
 
       {variant === "home" ? (
         /* Home variant: toolbar below with send button flush bottom-right */
-        <div className="mt-3 flex items-center">
-          <button
-            type="button"
-            aria-label={t("aria.attachment")}
-            disabled={disabled}
-            className="flex size-7 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <Plus className="size-4" />
-          </button>
+        <div className="mt-3 flex items-center gap-2">
+          {/* Toolbar chips (leftSlot owns flex-1 + flex-wrap): they wrap to a
+              second line on very narrow windows instead of clipping or
+              scrolling — the CTA stays a fixed, single-line button. */}
           {leftSlot}
-          <div className="flex-1" />
           <button
             type="button"
             onClick={handleSendClick}
             disabled={!canSend}
             className={cn(
-              "rounded-lg px-5 py-2 text-sm font-medium transition-all",
+              "shrink-0 whitespace-nowrap rounded-lg px-5 py-2 text-sm font-medium transition-all",
               canSend
                 ? "bg-[var(--color-brand)] text-white hover:opacity-90"
                 : "bg-[var(--color-brand)]/60 text-white/80 cursor-default"
@@ -168,26 +177,37 @@ export function ChatInput({
             {leftSlot}
           </div>
         )}
-        <button
-          type="button"
-          onClick={handleSendClick}
-          disabled={!canSend}
-          aria-label={t("aria.sendMessage")}
-          className={cn(
-            "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
-            canSend
-              ? "bg-[var(--color-fg)] text-[var(--color-bg)] hover:opacity-90"
-              : "bg-[var(--color-fg-muted)] text-[var(--color-bg)] opacity-30"
-          )}
-        >
-          {loading ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-            </svg>
-          )}
-        </button>
+        {loading && onStop ? (
+          <button
+            type="button"
+            onPointerDown={onStop}
+            aria-label={t("message.stopExecution")}
+            className="absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full bg-[var(--color-fg)] text-[var(--color-bg)] transition-all hover:opacity-90"
+          >
+            <Square className="size-3" fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSendClick}
+            disabled={!canSend}
+            aria-label={t("aria.sendMessage")}
+            className={cn(
+              "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
+              canSend
+                ? "bg-[var(--color-fg)] text-[var(--color-bg)] hover:opacity-90"
+                : "bg-[var(--color-fg-muted)] text-[var(--color-bg)] opacity-30"
+            )}
+          >
+            {loading ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            )}
+          </button>
+        )}
         </>
       )}
     </div>

@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
-import { useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import type { PermissionRequest, QuestionRequest } from "@agent/api-client"
-import type { SSEEvent } from "@/lib/sse-client"
+import type { SSEEvent } from "@agent/connector"
 
 export function useSessionPermission(
   sessionId: string | undefined,
@@ -12,6 +12,7 @@ export function useSessionPermission(
   isAgentActive: boolean,
 ) {
   const api = useApi()
+  const connector = useConnector()
   const { t } = useI18n()
 
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
@@ -57,11 +58,17 @@ export function useSessionPermission(
     [sessionId]
   )
 
-  useSSESubscribe(handleSSEEvent)
+  // Dispatched by binding; ACP permission events arrive on the sidecar's
+  // shared per-session stream (multiplexed with the message hook).
+  useSessionSubscribe(sessionId, handleSSEEvent)
 
   // --- Polling fallback: catch permission/question events missed by SSE ---
+  // Only backends with REST-listable interactions (capabilities.questions =
+  // opencode) have /permission//question lists to poll; the ACP sidecar's
+  // permission flow is SSE + suspended-RPC only.
+  const pollable = connector.capabilitiesOf(sessionId).questions
   useEffect(() => {
-    if (!sessionId || !isAgentActive || pendingPermission || pendingQuestion) return
+    if (!sessionId || !pollable || !isAgentActive || pendingPermission || pendingQuestion) return
 
     const poll = () => {
       api.listPermissions().then((perms) => {
@@ -78,21 +85,21 @@ export function useSessionPermission(
     poll()
     const timer = setInterval(poll, 3000)
     return () => clearInterval(timer)
-  }, [sessionId, isAgentActive, pendingPermission, pendingQuestion, api])
+  }, [sessionId, pollable, isAgentActive, pendingPermission, pendingQuestion, api])
 
   // --- Actions ---
   const replyPermission = useCallback(
     (reply: "once" | "always" | "reject") => {
-      if (!pendingPermission) return
+      if (!pendingPermission || !sessionId) return
       const perm = pendingPermission
       setPendingPermission(null)
-      api.replyPermission(perm.id, reply).catch((err: Error) => {
+      connector.replyPermission(sessionId, perm.id, reply).catch((err: Error) => {
         console.error("Failed to reply permission:", err)
         setPendingPermission(perm)
         toast.error(t("error.replyPermission"))
       })
     },
-    [pendingPermission, api, t]
+    [pendingPermission, sessionId, connector, t]
   )
 
   const replyQuestion = useCallback(

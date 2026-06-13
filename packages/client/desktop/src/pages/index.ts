@@ -1,4 +1,6 @@
 export { HomePage } from "./Home"
+export { OrchestrationPage } from "./Orchestration"
+export { OrchestrationRunPage } from "./OrchestrationRun"
 export { SessionPage } from "./Session"
 export { SettingsPage } from "./Settings"
 export { WorkspaceSelectorPage } from "./WorkspaceSelector"

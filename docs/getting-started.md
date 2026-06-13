@@ -121,6 +121,7 @@ cd packages/knowledge/sidecar && bun run --bun vitest run
 | OpenCode Server | 4096 | AI Agent 后端 (sidecar) |
 | Channel Gateway | 4097 | 渠道网关 (sidecar) |
 | Knowledge Sidecar | 4098 | 知识库 RAG (sidecar) |
+| ACP Client | 4099 | 外部 Agent 调度（ACP，sidecar） |
 
 Vite 开发模式下自动将 API 请求代理到后端端口（配置见 `vite.config.ts`）。
 

@@ -34,6 +34,8 @@ interface TurnModel {
   cache: { read: number; write: number }
   cost: number
   durationMs?: number
+  /** Turn start (first message created, ms epoch) — drives the live timer. */
+  startedAt?: number
   /** Last message completion time (ms epoch), for the turn footer timestamp. */
   completedAt?: number
   /** Model id used for this turn (from message info). */
@@ -149,6 +151,7 @@ export function buildTurnModel(messages: SendMessageResponse[], isStreaming: boo
     cache: { read: cacheRead, write: cacheWrite },
     cost,
     durationMs,
+    startedAt: firstCreated,
     completedAt,
     modelID,
     hasError,
@@ -191,6 +194,7 @@ export const AssistantTurn = memo(function AssistantTurn({
           tokens={model.tokens}
           cost={model.cost}
           durationMs={model.durationMs}
+          startedAt={model.startedAt}
           isStreaming={isStreaming}
           hasError={model.hasError}
           isStopped={isStopped}

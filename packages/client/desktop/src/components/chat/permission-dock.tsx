@@ -13,6 +13,8 @@ const permissionLabels: Record<string, string> = {
   write: "File Write",
   read: "File Read",
   external_directory: "External Directory",
+  webfetch: "Web Fetch",
+  tool: "Tool Action",
 }
 
 export function PermissionDock({ request, onReply }: PermissionDockProps) {

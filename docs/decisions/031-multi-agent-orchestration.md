@@ -1,6 +1,6 @@
 # ADR-031: 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式
 
-**状态**: Accepted（架构决策）· 实现规划中（阶段3，依赖 ADR-027 阶段1 + ADR-030 阶段2 落地）
+**状态**: Accepted（架构决策）· **阶段3 第一批 + 第二批 + 第三批已落地（2026-06-12）**——实现章节五项全实现：①原语层 + ④代码驱动 Pipeline + ②agent 驱动 delegate（`delegate-mcp` stdio shim + 双注入路径）+ ⑤Fan-out（DAG 执行器 + worktree 隔离）+ ③UI（独立路由 + 主对话 delegate 卡片/dock）。宿主 = ACP sidecar :4099，`/orchestration/*`。**第三批（[017](../discussions/017-team-page-agent-driven-orchestration.md)）确立 D-3 opt-in 的最终产品形态 = Team 页**：`/orchestration` 两 tab（Team 协作 / 流水线），委派是 Leader 会话的默认行为（system 提示驱动），普通会话物理隔离（全部非 Leader opencode prompt 恒 deny `orchestrator_*`），「编排模式」Settings 开关移除。落地偏差备注见下方「实现章节」。
 **日期**: 2026-06-08
 **关联**: ADR-005 (Permission & Question Dock), ADR-026 (知识库 MCP), ADR-027 (ACP 多后端，D-2 档2/阶段3), ADR-029 (执行流程回合分组，嵌套渲染), ADR-030 (@agent/connector 控制原语)
 **探索来源**: [discussions/013](../discussions/013-agent-os-acp-multi-backend.md) §6（delegate 优于对等换手、五种模式、治理）· [discussions/012](../discussions/012-p1-execution-plan.md) P1-3（嵌套委派 UI）
@@ -88,11 +88,37 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 - **UI**：delegate 卡片渲染器（接 ADR-029 ExecutionFlow / tool-call-block）+ 子会话懒加载。
 
 ### 阶段拆解
-1. **原语层**：在 connector 之上实现 `spawn(child)/await(deliverable)/steer/cancel` + 后台任务跟踪 + 治理护栏（maxConcurrent/maxDepth/budget）。
-2. **agent 驱动 delegate**：经宿主 MCP 暴露 `delegate` 工具；先支持「主 agent 委派单个子任务」（深度 1）。
-3. **UI 嵌套**：delegate 卡片 + 子会话懒加载展示。
-4. **代码驱动 Pipeline**：recipe API + 产物文件串接（首个模板：跨厂商 code review pipeline）。
-5. **Fan-out**：并行多 delegate + worktree 隔离 + 聚合。
+1. **原语层** ✅（2026-06-12）：在 connector 之上实现 `spawn(child)/await(deliverable)/steer/cancel` + 后台任务跟踪 + 治理护栏（maxConcurrent/maxDepth/budget）。
+2. **agent 驱动 delegate** ✅（2026-06-12 第二批）：`acp-client delegate-mcp` stdio shim（`delegate`/`list_agents` 工具）→ HTTP 回连 `POST /orchestration/delegate`（**阻塞**返回 D-2 契约，拍板 2026-06-12：opencode task 同构，非阻塞 mailbox 留后续）。双注入路径：ACP per-session（`orchestrate` 旗标，子会话不注入=硬护栏）/ opencode 全局配置（「编排模式」开关；子会话 `tools:{"orchestrator_*":false}` → sticky session permission deny）。
+3. **UI 嵌套** ✅（2026-06-12 两批合计）：编排独立路由 `/orchestration`（run 列表/详情 + step 时间线按依赖深度分层 + 权限内联应答 + 子会话懒加载）+ 主对话 delegate 卡片（ExecutionFlow 识别 + 子会话懒加载）+ DelegateDock（阻塞期权限内联应答）。
+4. **代码驱动 Pipeline** ✅（2026-06-12）：recipe API + 产物文件串接；真机模板 = 跨厂商两步（opencode 分析 → claude 报告）。
+5. **Fan-out** ✅（2026-06-12 第二批）：pipeline 执行器泛化为 **DAG 调度**（inputs 全 completed 即并行启动，失败跳传递性下游、独立分支跑完）+ 按步 `isolation:"worktree"`（git worktree --detach，输入产物复制进 worktree、交付物拷回主 run 目录、成功删失败留）+ 聚合（inputs=全部 workers）。
+
+> **第一批落地备注（2026-06-12）**：
+> - **宿主**：orchestrator 实例化在 **ACP sidecar :4099**（非 desktop renderer）——编排跨 WebView reload 存活，② 的 MCP stdio shim 将来可经 HTTP 回连；UI 经 `/orchestration/*` HTTP + per-run SSE（首帧全量快照）消费。
+> - **prompt 语义差异**（调研修正）：OpenCodeBackend.prompt 是 fire-and-forget（prompt_async 204），ACP prompt 阻塞至 StopReason——`runTurn` 统一封装双语义终态检测（见 gotchas §9）。
+> - **D-6 的「非阻塞 + 回卷」在第一批中体现为**：spawn 即后台任务（TaskHandle.done 永不 reject）+ steer/cancel 可中途干预；MCP 工具形态的交付物回卷随 ② 落地。
+> - **D-5 治理**：maxConcurrent 信号量为**排队**语义（非拒绝，为 Fan-out 留路）；tokenBudget 字段预留未执行。
+> - 子会话防侧栏污染：ACP 子会话无 opencode twin；opencode 子会话 parentID 挂跨目录隐藏父会话（vendor 接受跨目录 parentID，真机验证）。
+>
+> **第二批落地备注（2026-06-12）**：
+> - **D-2 契约最终形态**：`{status, sessionId, deliverable?, tokens?, cost?, error?}`——deliverable = 子会话最后一条含文本的 assistant 消息（fetchHistory），tokens/cost best-effort 汇总（ACP 无 cost 自然省略）。
+> - **阻塞超时三件套**：shim 每 10s 发 MCP progress notification（vendor `resetTimeoutOnProgress:true`）+ opencode mcp entry `timeout:600000`（兼任 connect 超时，勿过大）+ claude spawn env `MCP_TOOL_TIMEOUT` 兜底。
+> - **深度护栏残余风险（接受）**：delegate 端点恒 depth 0→1；真正的防递归闸门在注入侧（ACP 子会话不注入 + opencode 子会话 tools deny，均真机验证）。delegate 记录不持久化（重启 = shim 工具错误，与 run interrupted 同级）。
+> - **opencode「编排模式」开关限制**：vendor 无 DELETE /mcp——关闭须重启生效；运行时 POST /mcp 仅对当前 workspace instance 生效（gotchas §3）。
+> - **真机（2026-06-12 两轮）**：opencode 主 agent 全闭环（qwen-plus 调 `orchestrator_delegate` → 契约回卷）、**claude 主对话全闭环**（per-session 注入 → mcp__orchestrator__delegate 可见 → 权限应答 → 委派 opencode 子任务契约回卷；首轮"工具不可见"的根因是测试栈跑了 M4 之前的旧二进制，重编即愈，注入链路无缺陷）、子会话 deny/隐藏父/侧栏零污染、shim progress keepalive 3 帧、Fan-out 3 步（含 worktree worker）并行+聚合+worktree 回收全过；GUI（Chrome+Vite+Playwright）①③④⑤ 12 项断言全过（delegate 卡片/DelegateDock 权限内联+文件落盘/Fan-out 分层渲染/步骤级 model 下拉）。ACP 卡片识别谓词真机校准：claude 的 tool part `tool='other'`（kind）、input `{agentId,task,cwd,model}` —— rawInput 形状谓词命中。
+> - **D-8 真机佐证**：opencode 主对话内置 `task` 与 `orchestrator_delegate` 并存，提示词不点名时模型可能选内置 task——跨厂商委派须点名工具。
+> **第三批落地备注（2026-06-12，[017](../discussions/017-team-page-agent-driven-orchestration.md) 五项拍板全实现）**：
+> - **D-3 opt-in 的最终产品形态 = Team 页**：`/orchestration` 两 tab；Team tab = Leader 会话聊天面（Leader 下拉默认 opencode + 成员勾选默认全选、创建后锁定 + 历史列表）。用户只描述任务，拆分/委派/汇总由 Leader system 提示（017 §2.4，`team-leader-prompt.ts`）驱动成默认行为。
+> - **per-backend 注入**：opencode leader = 全局 MCP 静默 ensure（`orchestrator-mcp.ts`，开关移除）+ **每轮** `promptAsync system`（vendor append 语义）+ 每轮 `tools:{"task":false}`（sticky deny 内置 task，治本工具混淆）；ACP leader = per-session `orchestrate:true` + **`_meta.systemPrompt` object append（claude-agent-acp ≥0.44 真机验证支持）**，非 claude adapter 退化首条 prompt wire 前置（用户回显保持干净）。重启经 session/load 重注入。
+> - **隔离闭环（拍板 #4）**：OpenCodeBackend.prompt 的 tools **缺省值** = `{"orchestrator_*":false}`（connector 层兜底）+ gateway IM 链路显式同 deny——普通会话物理无编排工具，全局 MCP 常驻不再有泄漏面。
+> - **Leader 会话防侧栏污染**：挂跨目录隐藏 `[team]` 父（与 `[delegates]` 父同机制）；ACP leader 复用 twin+binding 范式。注册表 `team-sessions.json` 服务端持久化（`/orchestration/team/sessions` 3 端点）。
+> - **真机（2026-06-12，备用端口栈 14096/14099）**：qwen-plus leader **不点名工具**自发同轮并行 `orchestrator_delegate` ×2 跨厂商（opencode+claude 子会话）+ 汇总标注来源；leader `task` deny / 普通会话 `orchestrator_*` deny sticky ruleset 双验证（探针回复 DENIED）；claude leader `_meta.systemPrompt` 生效（完整复述职责/成员/点名工具）；sidecar 重启注册表恢复 + systemPrompt 重注入 + 上下文连续。
+> - **不做（017 §4 后置）**：mailbox 非阻塞回卷（D-6 完整形态）、per-agent 并行面板、常驻 Team 实体、成员服务端白名单（MVP 仅提示约束）。
+>
+> **018 编排 UX 统一备注（2026-06-12，[018](../discussions/018-unified-orchestration-ux.md) A-1~A-4 + 议题 B 落地）**：Team 从独立 tab 融入主聊天流——模式 = 任务出生属性（Home segmented，出生锁定）、Team 会话进侧栏混排+徽标（`TeamSessionsProvider` 注册表驱动）、Session 页合流（TeamHeader 成员条 + delegate 实时活动环 + 注入逻辑平移）、`/orchestration` 回归纯流水线。**Leader 改为 ROOT 会话**（不挂隐藏 `[team]` 父——该机制从 team-routes 移除；delegate 子会话隐藏父不变）→ opencode 自动标题生效；存量挂父会话经侧栏补显（vendor PATCH 不支持改 parentID）。机制零改动：registry/deny/注入/delegate 卡片全复用。
+>
+> **018 成员强制（2026-06-13，走查发现 Leader 越界委派后补）**：原 Leader system prompt 让它「用 list_agents 核对成员」，但 list_agents 打的 `/orchestration/agents` 返回全局所有 agent → Leader 委派给了选区外的 gemini/qoder（违反 017「成员=prompt 软约束」的预期）。修复升级为**双层**：① prompt——roster 改为唯一权威、明令禁止委派清单外 agent 且无需调 list_agents；② **服务端硬兜底**——`team-store.teamMembersForWorkspace(workspace)` 给出该 workspace 下所有 Team 成员并集，`/orchestration/delegate` 拒绝非成员（403→模型可见 tool error 自纠）、`/orchestration/agents?workspace=` 按成员过滤。架构约束：全局 delegate shim 只携带 workspace 不携带 Team 会话 id，故按 workspace 并集 scope（多 Team 共享 workspace 时退化为并集，窄残留）。原「成员服务端白名单后置」一项至此**部分落地**（workspace 级硬强制；per-session 精确白名单仍后置）。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。

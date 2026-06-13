@@ -21,7 +21,10 @@ export const ExecutionStatus = memo(function ExecutionStatus({ state, errorMessa
           <span className="text-[var(--color-fg-muted)]">{t("message.executionWorking")}</span>
           {onStop && (
             <button
-              onClick={onStop}
+              // pointerdown, not click: this button sits in the streaming
+              // content flow and shifts on every reflow — a click (down+up on
+              // the same element) is easily swallowed mid-stream.
+              onPointerDown={onStop}
               className="ml-2 flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
             >
               <Square className="size-3" />

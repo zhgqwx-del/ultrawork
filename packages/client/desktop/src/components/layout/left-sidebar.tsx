@@ -15,7 +15,7 @@ import {
   X,
   Search,
   Star,
-  Radio,
+  Crown,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -36,10 +36,9 @@ import { useSidebar } from "./sidebar-context"
 import { isMacOS } from "@/lib/platform"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
-import { ConnectionStatus } from "@/components/settings"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
-import { useChannels } from "@/lib/use-channels"
+import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
@@ -96,26 +95,16 @@ export function LeftSidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { leftOpen, toggleLeft } = useSidebar()
-  const { sessions, loading, activeSessionIds, createSession, deleteSession, renameSession } = useSessionsContext()
-  const [creating, setCreating] = useState(false)
+  const { sessions, loading, activeSessionIds, deleteSession, renameSession } = useSessionsContext()
   const [searchQuery, setSearchQuery] = useState("")
   const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
+  const { entryOf } = useTeamSessions()
   const { t } = useI18n()
 
-  const handleNewChat = async () => {
-    if (creating) return
-    setCreating(true)
-    try {
-      const session = await createSession()
-      navigate(`/session/${session.id}`)
-    } catch (err) {
-      console.error("Failed to create session:", err)
-      toast.error("Failed to create session")
-    } finally {
-      setCreating(false)
-    }
-  }
+  // "+" goes Home instead of creating a session: the session is born on the
+  // first Home send, after the agent is chosen (档1: one session, one agent).
+  const handleNewChat = () => navigate("/")
 
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
@@ -185,10 +174,9 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    disabled={creating}
                     className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
-                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    <Plus className="size-4" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("sidebar.newTask")}</TooltipContent>
@@ -258,6 +246,7 @@ export function LeftSidebar() {
                             <SessionItem
                               key={session.id}
                               session={session}
+                              teamEntry={entryOf(session.id)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={true}
@@ -272,6 +261,7 @@ export function LeftSidebar() {
                             <SessionItem
                               key={session.id}
                               session={session}
+                              teamEntry={entryOf(session.id)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={false}
@@ -290,10 +280,12 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            {/* Footer: Channels + Connection + User avatar + Settings */}
+            {/* Footer: User avatar + Settings.
+                019 后续：「自动化」（流水线/Fan-out）入口暂时下线——surface 需一次真正
+                的 UI/UE 设计且属低频高级功能；orchestrator 后端由 Team delegate 共用、
+                未死。路由 /orchestration 保留可深链，PipelineTab/OrchestrationRun 代码
+                原样在册，恢复只需加回此入口。详见 docs/discussions/019 §7。 */}
             <div className="mt-auto shrink-0 space-y-2 p-3">
-              <ChannelStatusBar />
-              <ConnectionStatus />
               <SettingsPopover>
                 <button
                   aria-label="User settings"
@@ -330,11 +322,10 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    disabled={creating}
                     aria-label={t("sidebar.newTask")}
                     className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
-                    {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    <Plus className="size-4" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">{t("sidebar.newTask")}</TooltipContent>
@@ -357,12 +348,12 @@ export function LeftSidebar() {
                 </TooltipTrigger>
                 <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
               </Tooltip>
+              {/* 019 后续：折叠态「自动化」入口同步下线（见展开态注释 / 019 §7）。 */}
             </div>
 
             <div className="flex-1" />
 
             <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-3">
-              <ChannelStatusDot />
               <SettingsPopover>
                 <button
                   aria-label="Settings"
@@ -381,6 +372,7 @@ export function LeftSidebar() {
 
 function SessionItem({
   session,
+  teamEntry,
   isActive,
   isRunning,
   isPinned,
@@ -391,6 +383,8 @@ function SessionItem({
   t,
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
+  /** Present when this session is a Team leader (018 A-1 混排+徽标). */
+  teamEntry?: TeamSessionEntry
   isActive: boolean
   isRunning: boolean
   isPinned: boolean
@@ -403,7 +397,9 @@ function SessionItem({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
-  const title = session.title || `Session ${session.id.slice(0, 8)}`
+  // Registry title is the legacy fallback — new team leaders are roots and
+  // get the opencode auto-title in session.title like any chat.
+  const title = session.title || teamEntry?.title || `Session ${session.id.slice(0, 8)}`
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -528,7 +524,18 @@ function SessionItem({
 
       <StatusIcon />
       <div className="min-w-0 flex-1">
-        <p className="truncate">{title}</p>
+        <p className="flex items-center gap-1.5">
+          {teamEntry && (
+            <span
+              title={`${teamEntry.members.length} ${t("team.membersCount")}`}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--color-brand)]/15 px-1.5 py-px text-[10px] font-medium text-[var(--color-brand)]"
+            >
+              <Crown className="size-2.5" />
+              {t("team.badge")}
+            </span>
+          )}
+          <span className="truncate">{title}</span>
+        </p>
         <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>
 
@@ -572,86 +579,5 @@ function SessionItem({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  )
-}
-
-/** Expanded sidebar: channel status bar with connected count */
-function ChannelStatusBar() {
-  const { t } = useI18n()
-  const { channels, loading, refresh } = useChannels()
-  const navigate = useNavigate()
-
-  // Auto-refresh every 15s to keep status in sync
-  useEffect(() => {
-    const timer = setInterval(refresh, 15_000)
-    return () => clearInterval(timer)
-  }, [refresh])
-
-  if (loading || channels.length === 0) return null
-
-  const connected = channels.filter((c) => c.state === "connected").length
-  const hasError = channels.some((c) => c.state === "error")
-
-  const dotColor = hasError
-    ? "bg-red-500"
-    : connected > 0
-    ? "bg-green-500"
-    : "bg-gray-400"
-
-  return (
-    <button
-      onClick={() => navigate("/settings", { state: { section: "channels" } })}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-[var(--sidebar-accent)]"
-    >
-      <Radio className="size-3.5 text-[var(--sidebar-fg-muted)]" />
-      <span className="flex-1 text-left text-[var(--sidebar-fg-muted)]">
-        {t("channel.title")}
-      </span>
-      <span className={cn("size-2 rounded-full", dotColor)} />
-      <span className="text-[var(--sidebar-fg-muted)]">
-        {connected}/{channels.length}
-      </span>
-    </button>
-  )
-}
-
-/** Collapsed sidebar: channel status dot */
-function ChannelStatusDot() {
-  const { channels, loading, refresh } = useChannels()
-  const navigate = useNavigate()
-
-  // Auto-refresh every 15s to keep status in sync
-  useEffect(() => {
-    const timer = setInterval(refresh, 15_000)
-    return () => clearInterval(timer)
-  }, [refresh])
-
-  if (loading || channels.length === 0) return null
-
-  const connected = channels.filter((c) => c.state === "connected").length
-  const hasError = channels.some((c) => c.state === "error")
-
-  const dotColor = hasError
-    ? "bg-red-500"
-    : connected > 0
-    ? "bg-green-500"
-    : "bg-gray-400"
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={() => navigate("/settings", { state: { section: "channels" } })}
-          aria-label="Channels"
-          className="relative flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
-        >
-          <Radio className="size-4" />
-          <span className={cn("absolute right-1 top-1 size-2 rounded-full", dotColor)} />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="right">
-        {connected}/{channels.length} connected
-      </TooltipContent>
-    </Tooltip>
   )
 }

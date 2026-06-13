@@ -17,6 +17,7 @@ import {
 import { useI18n } from "@/lib/i18n-context"
 import type { MessagePart, ToolPart, ToolState, ReasoningPart, TextPart, FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
+import { DelegateRow, isDelegatePart } from "./delegate-row"
 
 interface ExecutionFlowProps {
   /** Process parts of the whole turn, concatenated in order (reasoning/tool/narration text/step-*). */
@@ -29,6 +30,8 @@ interface ExecutionFlowProps {
   cost?: number
   /** Wall-clock duration of the turn in ms (created → completed). */
   durationMs?: number
+  /** Turn start (first message created, ms epoch) — drives the live timer while streaming. */
+  startedAt?: number
   /** True while the turn is still being generated. */
   isStreaming?: boolean
   /** True if any step ended in an error. */
@@ -67,6 +70,22 @@ function toolDuration(state: ToolState): number | undefined {
 function partDuration(time?: { start: number; end?: number }): number | undefined {
   if (time?.start != null && time.end != null) return time.end - time.start
   return undefined
+}
+
+/**
+ * Re-render clock for live durations: ticks while `active`, freezes otherwise.
+ * Ticking is confined to the row/header that is actually in progress, so
+ * historical turns never re-render from it.
+ */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [active])
+  return now
 }
 
 function ToolStatusIcon({ status }: { status: string }) {
@@ -110,7 +129,9 @@ function FlowRow({ icon, label, duration, expandable = false, onClick, children 
         }`}
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {/* Mirrors the header layout: content · duration, chevron right after —
+            nothing pinned to the far right. */}
+        <span className="min-w-0 truncate">{label}</span>
         {duration != null && (
           <span className="shrink-0 text-[10px] tabular-nums text-[var(--color-fg-muted)]">
             {fmtStepDuration(duration)}
@@ -129,16 +150,21 @@ function FlowRow({ icon, label, duration, expandable = false, onClick, children 
 
 // --- per-part row renderers ---
 
-const ReasoningRow = memo(function ReasoningRow({ part }: { part: ReasoningPart }) {
+const ReasoningRow = memo(function ReasoningRow({ part, live }: { part: ReasoningPart; live: boolean }) {
   const { t } = useI18n()
   const text = part.text || ""
   // In-progress reasoning (started, not yet ended) gets a subtle pulse.
   const thinking = part.time?.start != null && part.time?.end == null
+  // Live only while the turn streams — a dangling start in a restored/stopped
+  // turn must not tick forever.
+  const ticking = live && thinking
+  const now = useNow(ticking)
+  const duration = ticking && part.time?.start != null ? Math.max(0, now - part.time.start) : partDuration(part.time)
   return (
     <FlowRow
       icon={<Brain className={`size-3.5 shrink-0 text-purple-500 ${thinking ? "animate-pulse" : ""}`} />}
       label={t("message.deepThinking")}
-      duration={partDuration(part.time)}
+      duration={duration}
       expandable={!!text.trim()}
     >
       <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-[var(--color-fg-muted)]">{text}</p>
@@ -146,7 +172,7 @@ const ReasoningRow = memo(function ReasoningRow({ part }: { part: ReasoningPart 
   )
 })
 
-const ToolRow = memo(function ToolRow({ part }: { part: ToolPart }) {
+const ToolRow = memo(function ToolRow({ part, live }: { part: ToolPart; live: boolean }) {
   const { t } = useI18n()
   const { state } = part
   const title =
@@ -157,6 +183,12 @@ const ToolRow = memo(function ToolRow({ part }: { part: ToolPart }) {
   const hasOutput = state.status === "completed" && !!state.output
   const hasError = state.status === "error" && !!state.error
   const expandable = hasInput || hasOutput || hasError
+  // Live only while the turn streams — a restored turn stuck at "running"
+  // must not tick forever.
+  const ticking = live && state.status === "running"
+  const now = useNow(ticking)
+  const duration =
+    ticking && state.status === "running" ? Math.max(0, now - state.time.start) : toolDuration(state)
   return (
     <FlowRow
       icon={<ToolStatusIcon status={state.status} />}
@@ -166,7 +198,7 @@ const ToolRow = memo(function ToolRow({ part }: { part: ToolPart }) {
           <span className="truncate font-medium">{title}</span>
         </span>
       }
-      duration={toolDuration(state)}
+      duration={duration}
       expandable={expandable}
     >
       <div className="space-y-2">
@@ -244,12 +276,19 @@ export const ExecutionFlow = memo(function ExecutionFlow({
   tokens,
   cost,
   durationMs,
+  startedAt,
   isStreaming = false,
   hasError = false,
   isStopped = false,
   onArtifactClick,
 }: ExecutionFlowProps) {
   const { t } = useI18n()
+
+  // Total duration ticks live while streaming; buildTurnModel supplies the
+  // final created→completed value once the turn ends.
+  const headerTicking = isStreaming && startedAt != null
+  const now = useNow(headerTicking)
+  const shownDurationMs = headerTicking ? Math.max(0, now - startedAt) : durationMs
 
   // Expanded while streaming; auto-collapse when the turn finishes.
   // A manual toggle is respected until the streaming state flips again.
@@ -277,11 +316,12 @@ export const ExecutionFlow = memo(function ExecutionFlow({
           <span>
             {stepCount}&nbsp;{t("message.steps")}
           </span>
-          {durationMs != null && durationMs > 0 && <span>· {fmtTotalDuration(durationMs)}</span>}
+          {shownDurationMs != null && shownDurationMs > 0 && <span>· {fmtTotalDuration(shownDurationMs)}</span>}
           {totalTokens > 0 && <span>· {fmtTokens(totalTokens)} tok</span>}
           {cost != null && cost > 0 && <span>· ${cost.toFixed(4)}</span>}
         </span>
-        <span className="ml-auto shrink-0 text-[var(--color-fg-muted)]">
+        {/* Chevron right after the content, mirroring the rows. */}
+        <span className="shrink-0 text-[var(--color-fg-muted)]">
           {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </span>
       </button>
@@ -293,9 +333,14 @@ export const ExecutionFlow = memo(function ExecutionFlow({
             const key = "id" in part && part.id ? (part.id as string) : `flow-${i}`
             switch (part.type) {
               case "reasoning":
-                return <ReasoningRow key={key} part={part as ReasoningPart} />
-              case "tool":
-                return <ToolRow key={key} part={part as ToolPart} />
+                return <ReasoningRow key={key} part={part as ReasoningPart} live={isStreaming} />
+              case "tool": {
+                const tp = part as ToolPart
+                // Delegate calls get a dedicated card with the child session
+                // expandable inside (ADR-031 D-7).
+                if (isDelegatePart(tp)) return <DelegateRow key={key} part={tp} live={isStreaming} />
+                return <ToolRow key={key} part={tp} live={isStreaming} />
+              }
               case "text":
                 return <NarrationRow key={key} part={part as TextPart} />
               case "file": {

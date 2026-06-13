@@ -35,7 +35,7 @@
 | DELETE | `/:sessionID` | 删除 session | 永久删除 |
 | PATCH | `/:sessionID` | 更新 session | 更新 title 等元数据 |
 | POST | `/:sessionID/message` | ~~发送消息~~ | ⚠️ 已弃用，改用 `/:sessionID/prompt_async`（204） |
-| POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 字段可覆盖运行时模型 |
+| POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 可覆盖运行时模型；`tools` per-tool 开关（落成 **sticky session permission**，支持通配 key）；`system` 附加 system prompt（**per-message append**，不 sticky）——Team Leader 每轮携带编排指令用 |
 | GET | `/:sessionID/message` | 获取消息列表 | 返回所有消息 |
 | POST | `/:sessionID/abort` | 中止 session | 停止 AI 处理 |
 
@@ -280,19 +280,47 @@ curl -N http://localhost:4096/event \
 - 配置 Tauri sidecar
 - 集成到 Desktop App
 
-## ✅ Milestone 1 总结
+## ACP Client Sidecar 端点（:4099，ADR-027）
 
-**完成内容**:
-- ✅ 调研 OpenCode 项目结构
-- ✅ 理解 API 端点和认证方式
-- ✅ 识别当前实现的问题
-- ✅ 提供详细的修复建议
+无认证（仅监听 127.0.0.1），CORS 白名单同 Gateway。会话 id 一律使用桌面端自己的 session id（`clientSessionId` 直通）。
 
-**关键发现**:
-- OpenCode 使用 Hono 框架和 Basic Auth
-- API 路径不包含 `/api` 前缀
-- 事件订阅是全局的，不是 per-session
-- 需要修复 4 个主要问题
+| 方法 | 路径 | 功能 | 说明 |
+|------|------|------|------|
+| GET | `/acp/health` | 健康检查 | 含各 agent 连接态 |
+| GET | `/acp/agents` | 列出 agent | 含 status / capabilities（loadSession 等） |
+| GET/PUT/DELETE | `/acp/agents/:id(/config)` | agent 配置 CRUD | PUT 保存即热生效（断开重连）；body 含 `label/command/args/env/knowledgeMcp/thoughtLevel` |
+| POST | `/acp/agents/:id/connect` / `disconnect` | 手动连接/断开 | 平时无需手动——prompt 时懒连接 |
+| POST | `/acp/session` | 建会话 | body `{agentId, cwd, clientSessionId?, orchestrate?, systemPrompt?}`——`orchestrate` 注入 delegate MCP（per-session）；`systemPrompt` 经 `_meta.systemPrompt` append（claude ≥0.44）或首条 prompt 前置（其它 adapter），持久化 + 重启重注入 |
+| GET | `/acp/sessions` | **全部会话+绑定**（阶段2） | `[{sessionId, agentId, cwd, createdAt}]`——desktop 启动时绑定 hydration 数据源（ADR-030） |
+| GET | `/acp/session/:id` | 会话信息 | 持久化映射（重启后仍在） |
+| GET | `/acp/session/:id/messages` | **整形历史**（W4b） | 一次性全量 `{messages}`，connector `ACPBackend.fetchHistory` 消费 |
+| DELETE | `/acp/session/:id` | 删会话 + 持久化文件 | 前端删会话时 fire-and-forget 调用 |
+| POST | `/acp/session/:id/prompt` | 发消息 | **阻塞到 turn 完成**，返回 `{stopReason}` |
+| POST | `/acp/session/:id/permission` | 权限回复 | body `{permissionId, reply: once\|always\|reject}` |
+| POST | `/acp/session/:id/cancel` | 取消当前 turn | 先以 cancelled 应答挂起权限 |
+| GET | `/acp/session/:id/events` | per-session SSE | opencode 形状事件 + 心跳；允许先订阅后建会话 |
 
-**下一步**: 修复 @agent/api-client 实现，然后进行手动测试验证。
+持久化：`~/.local/share/ultrawork/acp-sessions/<sid>.json`（env `ACP_DATA_DIR` 可覆盖）。详见 `conventions.md` §11 / `gotchas.md` §8。
+
+## Orchestration 端点（:4099，ADR-031 阶段3）
+
+ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。无认证（仅 127.0.0.1），CORS 同上。
+
+| 方法 | 路径 | 功能 | 说明 |
+|------|------|------|------|
+| POST | `/orchestration/runs` | 创建并启动 run（DAG 调度） | body `{recipe: {name, workspace, steps[]}}`；step `{id, agentId, taskPrompt, inputs?, artifactName?, timeoutMs?, model?, isolation?}`；`inputs` 全 completed 即并行启动（Fan-out）；`isolation:"worktree"` 须 git repo；workspace 服务端 realpath 归一；校验失败 400 |
+| GET | `/orchestration/runs` | run 列表 | `{runs}` updatedAt 倒序 |
+| GET | `/orchestration/runs/:id` | run 详情 | `{run}` / 404 |
+| POST | `/orchestration/runs/:id/cancel` | 取消 run | 中止**全部在途** step + 未达 skipped；404 未知 / 409 已终态 |
+| GET | `/orchestration/runs/:id/events` | per-run SSE | **首帧 = run.updated 全量快照**（订阅前事件零丢失）+ `step.updated` / `step.permission`（子会话权限 relay，UI 内联应答走上方 `/acp/session/:id/permission`）+ 心跳 |
+| POST | `/orchestration/delegate` | **阻塞式 delegate**（第二批 ②） | body `{agentId, task, workspace, model?, timeoutMs?}`；阻塞至子 turn 终态，返回 D-2 契约 `{result: {status, sessionId, deliverable?, tokens?, cost?, error?, artifacts?}}`（`artifacts`=子会话 write/edit/create/patch 工具写的文件路径，018：供产物区识别委派成员产物）；非成员 agentId → 403（018 成员强制）/ 400 请求错 / 429 治理（深度）/ 500 其它。消费者 = `acp-client delegate-mcp` stdio shim |
+| GET | `/orchestration/delegates` | delegate 记录列表 | 活动 + 最近 50 条终态（内存，不持久化） |
+| GET | `/orchestration/delegates/events` | 全局 delegate SSE | 首帧 `delegate.snapshot` + `delegate.updated` / `delegate.permission`（DelegateDock 按 workspace 过滤内联应答）+ 心跳 |
+| GET | `/orchestration/agents` | delegate 目标列表 | `opencode:default` + 全部 ACP agents（shim `list_agents` 工具消费） |
+| POST | `/orchestration/team/sessions` | **创建 Team Leader 会话**（017 立 / 018 改） | body `{workspace, leaderAgentId, members[], systemPrompt?, title?}`；**leader/twin 以 ROOT 创建**（018 A-4：不挂隐藏父、不传 title → 进侧栏混排 + opencode 自动标题）→ ACP leader 额外建绑 twin 的 ACP 会话（orchestrate+systemPrompt，失败回滚 twin）；返回 `{session}` |
+| GET | `/orchestration/team/sessions` | Team 会话注册表 | `?workspace=` 过滤，createdAt 倒序；持久化 `team-sessions.json`（重启恢复） |
+| DELETE | `/orchestration/team/sessions/:id` | 删除 Team 会话 | 注册表移除 + best-effort 清理 opencode/ACP 双侧会话 |
+
+run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env `ORCHESTRATOR_DATA_DIR` 可覆盖）；sidecar 重启 running run → `interrupted`（不自动续跑）；delegate 记录不持久化（重启 = shim 工具错误）。产物文件：`<workspace>/.ultrawork/runs/<runId>/`；worktree：`<xdgData>/ultrawork/worktrees/<runId>/<stepId>`（env `ULTRAWORK_WORKTREES_DIR` 可覆盖，成功即删失败保留）。详见 ADR-031 / `gotchas.md` §9。
+
 

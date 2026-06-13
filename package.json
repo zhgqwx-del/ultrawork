@@ -6,6 +6,7 @@
   "packageManager": "bun@1.3.12",
   "workspaces": [
     "packages/core/*",
+    "packages/agent/*",
     "packages/client/*",
     "packages/channel/*",
     "packages/knowledge/*",
@@ -20,6 +21,7 @@
     "build:opencode": "bun run scripts/build-opencode.ts",
     "build:gateway": "bun run scripts/build-gateway.ts",
     "build:knowledge": "bun run scripts/build-knowledge.ts",
+    "build:acp": "bun run scripts/build-acp.ts",
     "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
     "check:docs": "bun run scripts/check-docs.ts",
     "typecheck": "turbo run typecheck",

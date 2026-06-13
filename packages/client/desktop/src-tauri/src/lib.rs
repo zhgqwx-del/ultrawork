@@ -11,6 +11,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
 const KNOWLEDGE_PORT: u16 = 4098;
+const ACP_PORT: u16 = 4099;
 const OPENCODE_APP_NAME: &str = "ultrawork";
 
 // ── Sidecar process registry ─────────────────────────────────────────
@@ -937,7 +938,7 @@ fn sidecar_binary_name(name: &str) -> String {
 // registers as MCPs in opencode.json. Anchoring the MCP command path in the
 // user data dir (instead of the .app or dev tree) keeps it stable across .app
 // moves, dev→DMG migration, and cross-machine config copies.
-const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar"];
+const KNOWN_SIDECAR_NAMES: &[&str] = &["knowledge-sidecar", "acp-client"];
 
 fn user_sidecars_dir() -> PathBuf {
     ultrawork_dir().join("sidecars")
@@ -1425,6 +1426,36 @@ pub fn run() {
                     let _ = kb_handle.emit(
                         "sidecar-startup-failed",
                         serde_json::json!({ "name": "knowledge-sidecar", "error": e }),
+                    );
+                }
+            });
+
+            // Start ACP Client sidecar in background (non-critical, don't block
+            // UI). It spawns external agent commands (bunx / claude), which are
+            // not on the minimal Finder-launch PATH — pass the enriched one.
+            let acp_handle = app.handle().clone();
+            let acp_password = creds.password.clone();
+            std::thread::spawn(move || {
+                let acp_path = rich_path();
+                if let Err(e) = start_sidecar(
+                    &acp_handle,
+                    "acp-client",
+                    ACP_PORT,
+                    "/acp/health",
+                    None,
+                    &[],
+                    &[
+                        ("PATH", acp_path.as_str()),
+                        // In-sidecar orchestrator calls the OpenCode REST API
+                        // (same credential channel as channel-gateway).
+                        ("OPENCODE_SERVER_PASSWORD", acp_password.as_str()),
+                    ],
+                ) {
+                    eprintln!("ACP Client startup failed: {}", e);
+                    use tauri::Emitter;
+                    let _ = acp_handle.emit(
+                        "sidecar-startup-failed",
+                        serde_json::json!({ "name": "acp-client", "error": e }),
                     );
                 }
             });

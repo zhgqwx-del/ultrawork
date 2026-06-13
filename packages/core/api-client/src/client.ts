@@ -292,12 +292,23 @@ export class ApiClient {
 
   // --- Async message send ---
 
-  async promptAsync(sessionId: string, message: string, options?: { agent?: string; model?: string }): Promise<void> {
+  async promptAsync(
+    sessionId: string,
+    message: string,
+    options?: { agent?: string; model?: string; tools?: Record<string, boolean>; system?: string },
+  ): Promise<void> {
     const requestBody: PromptAsyncRequest = {
       parts: [{ type: "text", text: message }],
     }
     if (options?.agent) {
       requestBody.agent = options.agent
+    }
+    if (options?.tools && Object.keys(options.tools).length > 0) {
+      requestBody.tools = options.tools
+    }
+    // Appended after the agent's base system prompt, per message (vendor llm.ts).
+    if (options?.system) {
+      requestBody.system = options.system
     }
     // Parse "providerID/modelID" format into model override object
     if (options?.model && options.model.includes("/")) {

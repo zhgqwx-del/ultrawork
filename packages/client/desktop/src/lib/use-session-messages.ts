@@ -1,11 +1,10 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { useApi } from "@/lib/use-api"
-import { useSSESubscribe } from "@/lib/sse-context"
+import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import type { SendMessageResponse } from "@agent/api-client"
-import type { SSEEvent } from "@/lib/sse-client"
+import type { SSEEvent } from "@agent/connector"
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -20,15 +19,32 @@ interface UseSessionMessagesOptions {
   initialSending?: boolean
   /** Pre-fill user message text for optimistic UI */
   initialMessageText?: string
+  /**
+   * Workspace directory for sessions that are NOT in SessionsContext (Team
+   * Leader sessions hang off a hidden parent and never enter the sidebar
+   * list). Falls back to the context lookup when unset.
+   */
+  directory?: string
+  /**
+   * Per-turn prompt extras. The Team page sends the Leader's orchestration
+   * instructions + the built-in-task deny here ({ system, tools }); normal
+   * sessions leave it unset and get the connector's default orchestrator_*
+   * deny (017 拍板 #4).
+   */
+  promptOptions?: { system?: string; tools?: Record<string, boolean> }
 }
 
 export function useSessionMessages(
   sessionId: string | undefined,
   options?: UseSessionMessagesOptions,
 ) {
-  const { updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
-  const api = useApi()
+  const { sessions, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
+  const connector = useConnector()
   const { t } = useI18n()
+
+  // Backend behavior differences are capability-declared (ADR-030 D-5);
+  // the connector dispatches every call by the session's agent binding.
+  const capabilities = connector.capabilitiesOf(sessionId)
 
   // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
@@ -134,8 +150,9 @@ export function useSessionMessages(
       return
     }
     setLoading(true)
-    api
-      .getMessagesPaginated(sessionId, { limit: INITIAL_PAGE_SIZE })
+    // Dispatched by binding: opencode pages by cursor; the ACP sidecar serves
+    // the whole shaped history (the turn window below limits what renders).
+    connector.fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
       .then((result) => {
         if (!cancelled) {
           const msgs = result.messages
@@ -173,14 +190,14 @@ export function useSessionMessages(
         }
       })
     return () => { cancelled = true }
-  }, [sessionId, api]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, connector]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- History loading: fetch older messages ---
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !hasMore || historyLoading || !cursor) return
     setHistoryLoading(true)
     try {
-      const result = await api.getMessagesPaginated(sessionId, {
+      const result = await connector.fetchHistory(sessionId, {
         limit: HISTORY_PAGE_SIZE,
         before: cursor,
       })
@@ -196,7 +213,7 @@ export function useSessionMessages(
     } finally {
       setHistoryLoading(false)
     }
-  }, [sessionId, hasMore, historyLoading, cursor, api])
+  }, [sessionId, hasMore, historyLoading, cursor, connector])
 
   // --- Backfill: reveal cached messages above the window ---
   const backfillTurns = useCallback(() => {
@@ -348,6 +365,12 @@ export function useSessionMessages(
           )
           if (info.role === "assistant" && info.finish) {
             setSending(false)
+            // Backends without session.status events (ACP) signal idle via
+            // the terminal finish — clear the sidebar activity marker here.
+            if (!capabilities.sessionStatus && info.finish !== "tool-calls") {
+              sendingRef.current = false
+              if (sessionId) markSessionIdle(sessionId)
+            }
           }
           break
         }
@@ -455,10 +478,12 @@ export function useSessionMessages(
         }
       }
     },
-    [sessionId, updateSession, markSessionIdle, getEventSessionID]
+    [sessionId, updateSession, markSessionIdle, getEventSessionID, capabilities.sessionStatus]
   )
 
-  useSSESubscribe(handleSSEEvent)
+  // Dispatched by binding: opencode filters the global stream; ACP merges the
+  // sidecar's shaped per-session stream with the global stream (titles).
+  useSessionSubscribe(sessionId, handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
   useEffect(() => {
@@ -508,17 +533,19 @@ export function useSessionMessages(
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
-      api.abortSession(sessionId)
+      connector.cancel(sessionId)
         .then(() => {
-          if (lastUserMsg) {
-            return api.revertSession(sessionId, lastUserMsg.info.id).catch(() => {})
+          // Backends without revert (ACP) just end the turn — the agent
+          // keeps its own history.
+          if (lastUserMsg && connector.capabilitiesOf(sessionId).revert) {
+            return connector.revert(sessionId, lastUserMsg.info.id).catch(() => {})
           }
         })
         .catch(() => {
           setSending(false)
         })
     }
-  }, [sessionId, api, markSessionIdle])
+  }, [sessionId, connector, markSessionIdle])
 
   const sendMessage = useCallback((
     text: string,
@@ -551,7 +578,7 @@ export function useSessionMessages(
     }
     setMessages((prev) => [...prev, tempUserMessage])
 
-    api.promptAsync(sessionId, userMessage, { model: model || undefined }).catch((err) => {
+    const handleSendError = (err: unknown) => {
       console.error("Failed to send message:", err)
       if (idRef.current !== sessionId) return
       sendingRef.current = false
@@ -564,8 +591,22 @@ export function useSessionMessages(
       }
       setMessages((prev) => prev.filter((m) => m.info.id !== tempId))
       toast.error(t("error.sendMessage"))
-    })
-  }, [sessionId, sending, api, markSessionActive, markSessionIdle, t])
+    }
+
+    // Dispatched by binding. ACP backends lazily ensure the agent-side
+    // session (cwd = session workspace) before prompting; turn completion is
+    // signaled by the shaped message.updated finish event over SSE.
+    const opts = optionsRef.current
+    const directory = opts?.directory ?? sessions.find((s) => s.id === sessionId)?.directory
+    connector
+      .prompt(sessionId, userMessage, {
+        model: model || undefined,
+        directory,
+        system: opts?.promptOptions?.system,
+        tools: opts?.promptOptions?.tools,
+      })
+      .catch(handleSendError)
+  }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])
 
   return {
     messages: displayMessages,

@@ -95,7 +95,8 @@ xcrun notarytool store-credentials "ultrawork-notarize" \
     "externalBin": [
       "binaries/opencode-server",
       "binaries/channel-gateway",
-      "binaries/knowledge-sidecar"
+      "binaries/knowledge-sidecar",
+      "binaries/acp-client"
     ],
     "macOS": {
       "signingIdentity": null,
@@ -133,7 +134,7 @@ export APPLE_KEYCHAIN_PROFILE="ultrawork-notarize"
 `bun run release` 是发布构建的唯一入口（脚本：`scripts/build-release.ts`）。会自动跑以下流程：
 
 1. 检查环境变量（`APPLE_SIGNING_IDENTITY` / `APPLE_ID` 等，可选）
-2. 双架构编译三个 sidecar（OpenCode / Gateway / Knowledge）— `aarch64-apple-darwin` + `x86_64-apple-darwin`
+2. 双架构编译四个 sidecar（OpenCode / Gateway / Knowledge / ACP Client）— `aarch64-apple-darwin` + `x86_64-apple-darwin`
 3. `lipo -create` 合并每个 sidecar 成 universal binary（`<name>-universal-apple-darwin`），ad-hoc 重签
 4. `tauri build --target universal-apple-darwin` 编译 Rust 端 + 前端 + lipo 主二进制 + 打包 `.app` + 打包 DMG
 5. 验证签名 / 公证（如配置）/ stapler

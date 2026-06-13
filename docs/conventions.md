@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-06 -->
+<!-- last-synced: 2026-06-11 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -53,11 +53,14 @@ useEffect(() => () => clearTimeout(timerRef.current), []);
 
 ## 3. SSE 事件处理
 
-### 全局单连接
-`SSEProvider` 在 app 级维护单一 SSE 连接，跨页面不丢事件。
+### 后端调用一律经 @agent/connector（阶段2 起，ADR-030）
+会话流（prompt/cancel/fetchHistory/replyPermission/deleteSession/订阅）调 `useConnector()` 的统一面——connector 按会话绑定派发到 OpenCodeBackend/ACPBackend，**新代码不要直连 api-client 或裸 fetch :4099**。backend-specific 面（providers/mcp/skills/file/config）仍经 `useApi()`（= connector 持有的同一 ApiClient，签名未变）。后端行为差异用 `connector.capabilitiesOf(sessionId)` 门控（revert/model/questions/sessionStatus…），不要写 `isACP` 之类的 kind 判断。
 
-### useSSESubscribe
-使用 ref 模式，依赖 `[subscribe]` 避免 heartbeat 重订阅。
+### 全局单连接
+`SSEProvider`（实为 ConnectorProvider）在 app 级维护单一全局 SSE 连接，跨页面不丢事件；SSE 实现（fetch-reader/退避/心跳看门狗）统一在 `@agent/connector` 的 `sse-transport.ts`。
+
+### useSSESubscribe / useSessionSubscribe
+`useSSESubscribe` 订阅全局流（ref 模式，依赖 `[subscribe]` 避免 heartbeat 重订阅）；`useSessionSubscribe(sessionId, handler)` 按绑定订阅单会话——opencode 过滤全局流，ACP 自动**双流合并**（sidecar per-session 流 + 全局流的标题/删除事件），绑定变化自动重订阅。
 
 ### 核心事件
 | 事件 | 作用 |
@@ -116,6 +119,11 @@ Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permi
 - `session.status:idle` 不清除 `stopped`（在 `handleSend` 中清除）
 - `handleSend` 清除 stopped 时同时清空 `frozenMessageIdsRef`
 
+### 流式区域内的操作按钮用 `onPointerDown`（2026-06-11 实测事故）
+浏览器只在 pointerdown/up 落在**同一元素**时才派发 click。高速流式（如逐行输出）下消息区每秒回流多次 + 自动滚动，跟随内容流的按钮在按下与抬起之间位移 → click 被吞，用户表现为「点击停止无效」。规则：
+- 随内容流动的操作按钮（ExecutionStatus 的停止键）→ `onPointerDown` 触发，不用 `onClick`
+- 关键操作同时给一个**位置固定**的入口：ChatInput 发送键在 `loading && onStop` 时变为停止键（`chat-input.tsx`），输入框不回流、永远可点
+
 ### React key
 优先使用 `part.id`：`('id' in part && part.id) ? part.id : \`part-${i}\``
 
@@ -137,6 +145,7 @@ OpenCode 一个 user 回合会产出 **N 条 assistant message**（每个工具�
 - `AssistantTurn` 的 `buildTurnModel()` 把整回合 parts 切成「过程」（收进无卡片包裹的 `ExecutionFlow` 折叠时间线）与「答案」（最后一条**无 tool** message 的输出 part，容器外渲染）；末尾渲染居中带横线的统计页脚。
 - **回合是否在生成**：用「末条 `finish` 终态(存在且≠`tool-calls`) + 是否末回合 + 未 stop」判定，**不要**用瞬时 `streamingMessageId`（step 间/工具执行期会置 null → 抖动）。
 - **memo**：`groupIntoTurns` 每渲染重建数组，`AssistantTurn` 必须用自定义比较器（按 `messages` 元素引用比较）才能让历史回合在流式中跳过重渲染——历史 message 对象引用稳定（state 只换变化的那条）。
+- **实时耗时**：`ExecutionFlow` 的 `useNow(active)`（100ms tick）只在「回合流式中 && 该行进行中」时激活（`live=isStreaming` 下传）——恢复/被 stop 的历史回合里残留的 running/thinking 状态**不得走秒**；滴答重渲染被限制在进行中的行 + 头部，不穿透 memo 屏障。
 
 ## 6. 构建与部署
 
@@ -220,3 +229,30 @@ setTimeout(() => fetchSources(), 500)
 ```
 
 **适用场景**：所有返回 202 并以 fire-and-forget 启动后台任务、依赖 SSE 推送进度的端点（如 `/kb/sources` POST、`/kb/sources/:id/reindex`）。
+
+## 11. ACP 外部 Agent 接入（@agent/acp-client，ADR-027 档1）
+
+新接一个 ACP agent / 修改整形逻辑时遵循以下模式（反向坑点见 [gotchas §8](./gotchas.md)）：
+
+**整形契约（sidecar 输出必须「长得和 opencode 一模一样」）：**
+
+```
+一个 prompt 回合 →
+  user 回显 message（text part.updated + role:"user" 的 message.updated）
+  N 个过程 message（reasoning/tool part；封板时 message.updated finish:"tool-calls"）
+  1 个答案 message（仅 text part；endTurn 时 finish:"stop" + tokens/cost + time.completed）
+```
+
+- **先 `message.part.updated` 建 part（带正确 type），再 `message.part.delta` 追加**——永远不要让 delta 先到。
+- tool_call / tool_call_update **按 toolCallId upsert** 到同一 part（核心逻辑集中在 `turn-shaper.ts`，纯函数可测）。
+- 事件 sessionID 用客户端传入的 `clientSessionId` 直通，前端零改写。
+
+**接入新 agent**：在 `~/.config/ultrawork/agents.json`（或 Settings UI）注册 `agent name → command/args/env`，无需新代码；Settings「添加 Agent」表单顶部有**预置模板 chips**（claude/gemini/qoder，`agent-templates.ts`，一键填充 command/args/env，已存在同 id 置灰）。per-agent 怪癖集中在 `acp-connection.ts`：常量区（超时等）+ **spawn 期 env 注入函数**（如 `applyGeminiQuirks`——检测 command/args 识别 agent，注入缺省 env + 托管 settings 文件，**显式 agent env 永远优先**，纯函数可离线测）。per-agent 行为开关走 env（如 claude thinking = `MAX_THINKING_TOKENS`，DEFAULT_AGENTS 默认 8192）或 agents.json 字段（如 `thoughtLevel` → 会话级 `session/set_config_option`，best-effort），`PUT /acp/agents/:id` 保存即热生效（断开重连）。
+
+**会话历史持久化（W4b）**：sidecar 端 `session-store.ts` 维护与前端同构的 event-fold reducer（part.updated 按 id upsert / delta 追加 / message.updated merge info），在 user echo 落定与 assistant 终态封板时整体落盘 `~/.local/share/ultrawork/acp-sessions/<sid>.json`（**数据进 xdgData**，与 opencode 存量同级）。前端打开 ACP 会话从 `GET /acp/session/:id/messages` 取历史（`use-session-messages` 按 isACP 分流，hasMore=false）；agent 上下文在下次 prompt 时经 `session/load` 懒恢复 + replay 全抑制——**历史渲染永远不依赖 agent 存活**。会话删除时前端 fire-and-forget `DELETE /acp/session/:id` 防孤儿文件。
+
+**档1 入口约束（one session, one agent）**：Home 是新会话唯一入口——侧栏「+」只 `navigate("/")`；Home 输入框带 AgentSelector（受控模式，会话尚不存在），发送时 `createSession → bindSessionAgent → 按 agent 分流 prompt`，**出生即绑定**；Session 页的 AgentSelector 在 `loading || sending || allMessages.length > 0` 时锁定（仅空会话可换）——中途切 agent 会让历史显示在 opencode/ACP 两个 store 间二选一。
+
+**测试模式（三层）**：① mock ACP agent（`packages/agent/acp-client/scripts/mock-acp-agent.ts`，stdin JSON-RPC 确定性回放，`bun test src` 离线跑）→ ② 真实 agent spike 脚本落盘 fixture（`packages/agent/acp-client/scripts/spike-claude.ts`）→ ③ desktop vitest 用 fixture 喂真实 `buildTurnModel`/`groupIntoTurns` 断言渲染契约。
+
+**真机 UI 验证（不依赖 Tauri 壳）**：Chrome（playwright-core `channel:"chrome"`）驱动 Vite :1420，`addInitScript` 预埋 localStorage——`ultrawork-config`（凭证取自 `~/.config/ultrawork/sidecar-auth.json`）+ `workspace_path`；WorkspaceSelector 的「继续」按钮纯 JS 可点，之后整个 app 流程可自动化（建会话/选 agent/发消息/断言渲染/截图）。
