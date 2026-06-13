@@ -108,10 +108,15 @@ export async function callDelegate(
 }
 
 /** Core of the `list_agents` tool, exported for tests. */
-export async function callListAgents(deps: ShimDeps): Promise<ToolResultShape> {
+export async function callListAgents(deps: ShimDeps, cwd?: string): Promise<ToolResultShape> {
   const doFetch = deps.fetchImpl ?? fetch
+  // Pass the workspace so the sidecar scopes the list to this Team's members
+  // (018); omitting it returns the global list (general delegate case).
+  const url = cwd
+    ? `${deps.baseUrl}/orchestration/agents?workspace=${encodeURIComponent(cwd)}`
+    : `${deps.baseUrl}/orchestration/agents`
   try {
-    const response = await doFetch(`${deps.baseUrl}/orchestration/agents`)
+    const response = await doFetch(url)
     const body = (await response.json().catch(() => null)) as { agents?: unknown[] } | null
     if (!response.ok || !body?.agents) {
       return textResult(`list_agents failed (HTTP ${response.status})`, true)
@@ -165,9 +170,12 @@ export function createDelegateMcpServer(deps: ShimDeps): McpServer {
 
   server.tool(
     "list_agents",
-    "List the AI agents available as delegate targets, with their ids and connection status.",
-    {},
-    async () => callListAgents(shimRuntimeDeps),
+    "List the AI agents available as delegate targets, with their ids and connection status. " +
+      "Pass `cwd` (your workspace) to scope the list to your Team's members.",
+    {
+      cwd: z.string().optional().describe("Absolute workspace; scopes the list to this Team's members"),
+    },
+    async (input) => callListAgents(shimRuntimeDeps, input.cwd),
   )
 
   return server

@@ -76,9 +76,18 @@ function stubDelegates(behavior: DelegateStubBehavior = {}): DelegateManager {
   } as unknown as DelegateManager
 }
 
-function makeApp(behavior: StubBehavior = {}, delegateBehavior: DelegateStubBehavior = {}) {
+function makeApp(
+  behavior: StubBehavior = {},
+  delegateBehavior: DelegateStubBehavior = {},
+  teamMembersForWorkspace?: (ws: string) => Set<string> | null,
+) {
   return orchestrationRoutes(stubOrchestrator(behavior), stubDelegates(delegateBehavior), {
-    listAgents: () => [{ id: "opencode:default", name: "OpenCode", status: "available" }],
+    listAgents: () => [
+      { id: "opencode:default", name: "OpenCode", status: "available" },
+      { id: "acp:claude", name: "Claude", status: "available" },
+      { id: "acp:gemini", name: "Gemini", status: "available" },
+    ],
+    teamMembersForWorkspace,
   })
 }
 
@@ -287,5 +296,50 @@ describe("delegate routes", () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { agents: Array<{ id: string }> }
     expect(body.agents[0].id).toBe("opencode:default")
+  })
+
+  it("GET /orchestration/agents scopes to Team members when ?workspace= has a Team (018)", async () => {
+    const scope = (ws: string) => (ws === "/team-ws" ? new Set(["opencode:default", "acp:claude"]) : null)
+    const app = makeApp({}, {}, scope)
+    // No workspace → full global list (general delegate case).
+    const all = (await (await app.request("/orchestration/agents")).json()) as { agents: Array<{ id: string }> }
+    expect(all.agents.map((a) => a.id)).toEqual(["opencode:default", "acp:claude", "acp:gemini"])
+    // Team workspace → filtered to members (gemini excluded).
+    const scoped = (await (
+      await app.request("/orchestration/agents?workspace=%2Fteam-ws")
+    ).json()) as { agents: Array<{ id: string }> }
+    expect(scoped.agents.map((a) => a.id)).toEqual(["opencode:default", "acp:claude"])
+  })
+})
+
+describe("delegate member enforcement (018)", () => {
+  const scope = (ws: string) => (ws === "/team-ws" ? new Set(["opencode:default", "acp:claude"]) : null)
+
+  it("rejects delegation to a non-member with 403", async () => {
+    const app = makeApp({}, {}, scope)
+    const res = await app.request("/orchestration/delegate", {
+      method: "POST",
+      body: JSON.stringify({ agentId: "acp:gemini", task: "t", workspace: "/team-ws" }),
+    })
+    expect(res.status).toBe(403)
+    expect(((await res.json()) as { error: string }).error).toContain("acp:gemini")
+  })
+
+  it("allows delegation to a member", async () => {
+    const app = makeApp({}, {}, scope)
+    const res = await app.request("/orchestration/delegate", {
+      method: "POST",
+      body: JSON.stringify({ agentId: "acp:claude", task: "t", workspace: "/team-ws" }),
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it("does not restrict workspaces without a Team (general delegate case)", async () => {
+    const app = makeApp({}, {}, scope)
+    const res = await app.request("/orchestration/delegate", {
+      method: "POST",
+      body: JSON.stringify({ agentId: "acp:gemini", task: "t", workspace: "/other-ws" }),
+    })
+    expect(res.status).toBe(200)
   })
 })

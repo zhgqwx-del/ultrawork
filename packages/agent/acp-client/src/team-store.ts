@@ -4,7 +4,7 @@
 // The conversations themselves live in their native stores (opencode session /
 // ACP session-store); this registry only carries Team metadata.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -48,4 +48,30 @@ export function saveTeamSessions(sessions: TeamSessionEntry[]): void {
   const path = storePath()
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify({ version: 1, sessions } satisfies TeamSessionsFile, null, 2) + "\n")
+}
+
+function sameWorkspace(a: string, b: string): boolean {
+  if (a === b) return true
+  // /tmp → /private/tmp etc.: compare canonical paths when both resolve.
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The delegate-allowlist for a workspace: the union of every Team session's
+ * members in that workspace, or `null` when no Team session lives there
+ * (= the general agent-driven delegate case, unrestricted). The union is the
+ * pragmatic scope — the global delegate shim only carries the workspace, not
+ * the calling Team session id, so multiple Teams sharing one workspace widen
+ * the allowlist to their combined roster (a narrow, accepted residual).
+ */
+export function teamMembersForWorkspace(workspace: string): Set<string> | null {
+  const matching = loadTeamSessions().filter((s) => sameWorkspace(s.workspace, workspace))
+  if (matching.length === 0) return null
+  const members = new Set<string>()
+  for (const s of matching) for (const m of s.members) members.add(m)
+  return members
 }

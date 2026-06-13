@@ -117,6 +117,8 @@ delegate 是**非阻塞后台任务**（openclaw 模型）：父回合不被独�
 > - **不做（017 §4 后置）**：mailbox 非阻塞回卷（D-6 完整形态）、per-agent 并行面板、常驻 Team 实体、成员服务端白名单（MVP 仅提示约束）。
 >
 > **018 编排 UX 统一备注（2026-06-12，[018](../discussions/018-unified-orchestration-ux.md) A-1~A-4 + 议题 B 落地）**：Team 从独立 tab 融入主聊天流——模式 = 任务出生属性（Home segmented，出生锁定）、Team 会话进侧栏混排+徽标（`TeamSessionsProvider` 注册表驱动）、Session 页合流（TeamHeader 成员条 + delegate 实时活动环 + 注入逻辑平移）、`/orchestration` 回归纯流水线。**Leader 改为 ROOT 会话**（不挂隐藏 `[team]` 父——该机制从 team-routes 移除；delegate 子会话隐藏父不变）→ opencode 自动标题生效；存量挂父会话经侧栏补显（vendor PATCH 不支持改 parentID）。机制零改动：registry/deny/注入/delegate 卡片全复用。
+>
+> **018 成员强制（2026-06-13，走查发现 Leader 越界委派后补）**：原 Leader system prompt 让它「用 list_agents 核对成员」，但 list_agents 打的 `/orchestration/agents` 返回全局所有 agent → Leader 委派给了选区外的 gemini/qoder（违反 017「成员=prompt 软约束」的预期）。修复升级为**双层**：① prompt——roster 改为唯一权威、明令禁止委派清单外 agent 且无需调 list_agents；② **服务端硬兜底**——`team-store.teamMembersForWorkspace(workspace)` 给出该 workspace 下所有 Team 成员并集，`/orchestration/delegate` 拒绝非成员（403→模型可见 tool error 自纠）、`/orchestration/agents?workspace=` 按成员过滤。架构约束：全局 delegate shim 只携带 workspace 不携带 Team 会话 id，故按 workspace 并集 scope（多 Team 共享 workspace 时退化为并集，窄残留）。原「成员服务端白名单后置」一项至此**部分落地**（workspace 级硬强制；per-session 精确白名单仍后置）。
 
 ### 验收
 - 主 agent 能 `delegate` 给一个**外部** backend agent（如 opencode 主对话委派 claude 子任务），交付物正确回卷、UI 可见嵌套过程、治理护栏生效（并发/深度/超时）。

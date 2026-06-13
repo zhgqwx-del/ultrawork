@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Connector } from "@agent/connector"
 import { teamRoutes, type TeamACPManager } from "../team-routes.js"
-import { loadTeamSessions } from "../team-store.js"
+import { loadTeamSessions, teamMembersForWorkspace } from "../team-store.js"
 
 let tmpDir: string
 
@@ -185,5 +185,35 @@ describe("DELETE /orchestration/team/sessions/:id", () => {
     const app = teamRoutes(deps)
     const res = await app.request("/orchestration/team/sessions/nope", { method: "DELETE" })
     expect(res.status).toBe(404)
+  })
+})
+
+describe("teamMembersForWorkspace (018 member enforcement)", () => {
+  async function createTeam(workspace: string, leaderAgentId: string, members: string[]) {
+    const { deps } = makeDeps()
+    const app = teamRoutes(deps)
+    await app.request("/orchestration/team/sessions", {
+      method: "POST",
+      body: JSON.stringify({ workspace, leaderAgentId, members }),
+    })
+  }
+
+  it("returns null for a workspace with no Team (unrestricted general delegate case)", () => {
+    expect(teamMembersForWorkspace("/no-team")).toBeNull()
+  })
+
+  it("returns the member set for a Team workspace", async () => {
+    await createTeam("/ws-a", "opencode:default", ["opencode:default", "acp:claude"])
+    const members = teamMembersForWorkspace("/ws-a")
+    expect(members).not.toBeNull()
+    expect([...members!].sort()).toEqual(["acp:claude", "opencode:default"])
+    expect(members!.has("acp:gemini")).toBe(false)
+  })
+
+  it("unions members across multiple Teams sharing a workspace", async () => {
+    await createTeam("/ws-b", "opencode:default", ["opencode:default", "acp:claude"])
+    await createTeam("/ws-b", "opencode:default", ["opencode:default", "acp:gemini"])
+    const members = teamMembersForWorkspace("/ws-b")
+    expect([...members!].sort()).toEqual(["acp:claude", "acp:gemini", "opencode:default"])
   })
 })

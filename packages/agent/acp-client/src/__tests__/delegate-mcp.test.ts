@@ -122,6 +122,19 @@ describe("delegate-mcp shim", () => {
     }) as unknown as FetchLike
     expect((await callListAgents(deps(down))).isError).toBe(true)
   })
+
+  it("list_agents threads cwd as ?workspace= so the sidecar scopes to Team members (018)", async () => {
+    let calledUrl = ""
+    const capture = (async (url: string | URL) => {
+      calledUrl = String(url)
+      return jsonResponse({ agents: [] })
+    }) as unknown as FetchLike
+    await callListAgents(deps(capture), "/team ws")
+    expect(calledUrl).toContain("/orchestration/agents?workspace=%2Fteam%20ws")
+    // No cwd → unscoped global list.
+    await callListAgents(deps(capture))
+    expect(calledUrl.endsWith("/orchestration/agents")).toBe(true)
+  })
 })
 
 describe("delegateShimCommand", () => {

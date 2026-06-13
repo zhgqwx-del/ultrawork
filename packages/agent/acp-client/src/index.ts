@@ -12,6 +12,7 @@ async function startServer(): Promise<void> {
   const { createOrchestrator } = await import("./orchestration.js")
   const { orchestrationRoutes } = await import("./orchestration-routes.js")
   const { teamRoutes } = await import("./team-routes.js")
+  const { teamMembersForWorkspace } = await import("./team-store.js")
 
   const ACP_PORT = Number(process.env.ACP_CLIENT_PORT ?? 4099)
 
@@ -43,6 +44,8 @@ async function startServer(): Promise<void> {
           description: agent.description,
         })),
       ],
+      // 018: hard-enforce Team member selection on delegate + list_agents.
+      teamMembersForWorkspace,
     }),
   )
 

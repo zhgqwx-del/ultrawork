@@ -20,6 +20,14 @@ const HEARTBEAT_MS = 15_000
 export interface OrchestrationRouteOptions {
   /** Agents offered to the delegate shim's list_agents tool. */
   listAgents(): Array<{ id: string; name: string; status: string; description?: string }>
+  /**
+   * Team member allowlist for a workspace (018): the set of agent ids the
+   * Team(s) in that workspace may delegate to, or `null` when the workspace
+   * has no Team (general delegate case, unrestricted). Used to hard-enforce
+   * member selection on both list_agents and the delegate endpoint, so a
+   * Leader can never reach an agent the user didn't pick.
+   */
+  teamMembersForWorkspace?(workspace: string): Set<string> | null
 }
 
 export function orchestrationRoutes(
@@ -91,6 +99,17 @@ export function orchestrationRoutes(
   app.post("/orchestration/delegate", async (c) => {
     const body = await c.req.json<DelegateRequest>().catch(() => null)
     if (!body) return c.json({ error: "request body is required" }, 400)
+    // Hard member enforcement (018): a Team Leader must not delegate outside
+    // the roster the user picked, even if it discovered the agent via
+    // list_agents. The shim surfaces this 403 to the model as a tool error,
+    // so it can retry with a valid member.
+    const scope = body.workspace ? opts.teamMembersForWorkspace?.(body.workspace) : null
+    if (scope && body.agentId && !scope.has(body.agentId)) {
+      return c.json(
+        { error: `agent "${body.agentId}" 不在本 Team 成员清单内，不能委派。可委派成员：${[...scope].join(", ")}` },
+        403,
+      )
+    }
     try {
       const result = await delegates.delegate(body)
       return c.json({ result })
@@ -124,7 +143,15 @@ export function orchestrationRoutes(
     }),
   )
 
-  app.get("/orchestration/agents", (c) => c.json({ agents: opts.listAgents() }))
+  app.get("/orchestration/agents", (c) => {
+    const all = opts.listAgents()
+    // Scope to Team members when the caller passes its workspace (?workspace=)
+    // and a Team lives there — so a cooperative Leader's list_agents only sees
+    // its own members. Omitting workspace (or non-Team workspaces) returns all.
+    const workspace = c.req.query("workspace")
+    const scope = workspace ? opts.teamMembersForWorkspace?.(workspace) : null
+    return c.json({ agents: scope ? all.filter((a) => scope.has(a.id)) : all })
+  })
 
   return app
 }
