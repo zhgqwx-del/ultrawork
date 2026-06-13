@@ -71,9 +71,7 @@ export function AgentSelector({
           )}
         >
           {leader ? <Crown className="size-3 text-amber-500" /> : <Bot className="size-3" />}
-          <span className="max-w-[150px] truncate">
-            {leader ? `${t("team.leader")} · ${currentName}` : currentName}
-          </span>
+          <span className="max-w-[150px] truncate">{currentName}</span>
           {!locked && <ChevronDown className="size-3" />}
         </button>
       </PopoverTrigger>

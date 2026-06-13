@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
 import { useI18n } from "@/lib/i18n-context"
-import { Loader2, Plus, Square } from "lucide-react"
+import { Loader2, Square } from "lucide-react"
 import { CommandSelector } from "./command-selector"
 import type { Command } from "@agent/api-client"
 
@@ -21,6 +21,10 @@ interface ChatInputProps {
   className?: string
   ctaLabel?: string
   leftSlot?: React.ReactNode
+  /** Home variant: a control row rendered above the textarea (e.g. the mode
+   *  switch) — keeps the bottom toolbar uncrowded and the card height stable
+   *  across modes. */
+  topSlot?: React.ReactNode
 }
 
 export function ChatInput({
@@ -35,6 +39,7 @@ export function ChatInput({
   className,
   ctaLabel = "Start Now",
   leftSlot,
+  topSlot,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const compositionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -113,6 +118,10 @@ export function ChatInput({
         visible={showCommandSelector}
       />
 
+      {variant === "home" && topSlot && (
+        <div className="mb-2.5 flex items-center">{topSlot}</div>
+      )}
+
       <textarea
         ref={textareaRef}
         value={value}
@@ -142,19 +151,10 @@ export function ChatInput({
       {variant === "home" ? (
         /* Home variant: toolbar below with send button flush bottom-right */
         <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
-            aria-label={t("aria.attachment")}
-            disabled={disabled}
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <Plus className="size-4" />
-          </button>
-          {/* Toolbar chips take the remaining space and scroll if a narrow
-              window can't fit them — the CTA must never be squeezed. */}
-          <div className="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-soft">
-            {leftSlot}
-          </div>
+          {/* Toolbar chips (leftSlot owns flex-1 + flex-wrap): they wrap to a
+              second line on very narrow windows instead of clipping or
+              scrolling — the CTA stays a fixed, single-line button. */}
+          {leftSlot}
           <button
             type="button"
             onClick={handleSendClick}

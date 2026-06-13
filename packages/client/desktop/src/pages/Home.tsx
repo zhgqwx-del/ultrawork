@@ -229,9 +229,9 @@ export function HomePage() {
             variant="home"
             className="w-full"
             ctaLabel={t("home.startNow")}
+            topSlot={<ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />}
             leftSlot={
-              <div className="flex items-center gap-1">
-                <ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                 <AgentSelector agentId={agentId} onAgentChange={setAgentId} leader={mode === "team"} />
                 {mode === "team" && (
                   <TeamMemberSelect selected={memberIds} onToggle={toggleMember} />
