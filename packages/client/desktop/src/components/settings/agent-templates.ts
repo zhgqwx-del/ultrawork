@@ -4,7 +4,7 @@
 // claude-only; whether a binary exists varies per machine.
 
 export interface AgentTemplate {
-  key: "claude" | "gemini" | "qoder"
+  key: "claude" | "gemini" | "qoder" | "hermes"
   id: string
   label: string
   description: string
@@ -44,5 +44,20 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     command: "qodercli",
     args: ["--acp"],
     envHint: "QODER_PERSONAL_ACCESS_TOKEN=...",
+  },
+  {
+    key: "hermes",
+    id: "hermes",
+    label: "Hermes",
+    description: "NousResearch Hermes Agent via hermes acp",
+    // Python/uvx package (not a node binary): the `hermes` launcher lands on
+    // PATH at ~/.local/bin (already in acp-connection's EXTRA_PATH_DIRS), and
+    // `hermes acp` is the ACP-stdio entry. --accept-hooks auto-approves unseen
+    // shell hooks without a TTY (the headless gate, like gemini's interactive
+    // shell). Protocol v1, plain shape — verified branch A, no bespoke quirks.
+    // Auth comes from ~/.hermes (custom endpoint / `hermes model` / `hermes acp
+    // --setup`); no env needed by default.
+    command: "hermes",
+    args: ["acp", "--accept-hooks"],
   },
 ]

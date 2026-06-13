@@ -1,0 +1,358 @@
+[
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "messageID": "acp_usr_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "type": "text",
+        "text": "List the files in the current directory using a tool (e.g. ls), then answer with one short sentence summarizing what you see."
+      }
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_usr_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "role": "user",
+        "time": {
+          "created": 1781347641528,
+          "completed": 1781347641528
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "type": "reasoning",
+        "text": "The"
+      }
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " user wants me to"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " list files in the"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " current directory."
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " I should use search"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": "_files with target='"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": "files' instead of"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " ls in"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " terminal."
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_2",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "type": "tool",
+        "callID": "tc-a76bfdd2e0e2",
+        "tool": "search",
+        "state": {
+          "status": "pending",
+          "input": {}
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_2",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "type": "tool",
+        "callID": "tc-a76bfdd2e0e2",
+        "tool": "search",
+        "state": {
+          "status": "completed",
+          "input": {},
+          "output": "File search results\nFound 2 files; showing 2.\n\n- ./beta.md\n- ./alpha.txt",
+          "title": "search: *",
+          "metadata": {},
+          "time": {
+            "start": 1781347644296,
+            "end": 1781347644421
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": "The"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " user"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " asked"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " me to list files"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " and summarize. I"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " did that — two"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " files found"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": ". Let me give"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": " a one"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "field": "text",
+      "delta": "-sentence summary."
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_0",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "role": "assistant",
+        "time": {
+          "created": 1781347642924,
+          "completed": 1781347645748
+        },
+        "modelID": "hermes",
+        "providerID": "acp",
+        "agent": "hermes",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "type": "message.part.updated",
+    "properties": {
+      "part": {
+        "id": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_3",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+        "type": "text",
+        "text": "\n\nThe"
+      }
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_3",
+      "field": "text",
+      "delta": " current directory contains just"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_3",
+      "field": "text",
+      "delta": " two files: `"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_3",
+      "field": "text",
+      "delta": "alpha.txt` and"
+    }
+  },
+  {
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+      "messageID": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+      "partID": "acp_prt_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_3",
+      "field": "text",
+      "delta": " `beta.md`."
+    }
+  },
+  {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "acp_msg_f67d5014-c5cc-4efa-82ab-3c6387dace9f_mqc8e4zb0_1",
+        "sessionID": "f67d5014-c5cc-4efa-82ab-3c6387dace9f",
+        "role": "assistant",
+        "time": {
+          "created": 1781347645748,
+          "completed": 1781347646208
+        },
+        "modelID": "hermes",
+        "providerID": "acp",
+        "agent": "hermes",
+        "finish": "stop",
+        "tokens": {
+          "input": 29244,
+          "output": 118,
+          "reasoning": 0,
+          "cache": {
+            "read": 25088,
+            "write": 0
+          }
+        }
+      }
+    }
+  }
+]

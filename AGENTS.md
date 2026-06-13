@@ -26,7 +26,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/client-desktop` | ✅ Done | Tauri desktop app (React 19 + Vite 7 + Tailwind 4) |
 | `@agent/channel-gateway` | ✅ Done | IM channel gateway (DingTalk Stream SDK + WeChat ilink + Hono on Bun.serve, sidecar :4097) |
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
-| `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
+| `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder/hermes 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
 | `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
 | `@agent/orchestrator` | ✅ 阶段3 全量（ADR-031 + 017 Team 页） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + DAG 调度（Pipeline/Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（阻塞 D-2 契约）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*` + team 注册表 + delegate-mcp stdio shim）；产品面 = 主聊天流统一入口（018：Home segmented + 侧栏混排徽标 + Session 页合流；Leader=ROOT 会话）+ `/orchestration` 纯流水线页 |
 
@@ -105,7 +105,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
 - `src/components/settings/model-dialog.tsx` — ModelDialog + AddProviderDialog
-- `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips + thoughtLevel select）
+- `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes + thoughtLevel select）
 - `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
 
 **Desktop — hooks / lib**
