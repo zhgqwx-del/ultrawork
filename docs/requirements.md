@@ -186,7 +186,7 @@ Monorepo 结构：
 - [x] token/cost 页脚 — claude adapter 升级 `@agentclientprotocol/claude-agent-acp` 0.44（发 per-turn usage+cost）+ agents.json 自动迁移 ✅ 2026-06-11
 - [x] gemini/qoder 二期接入（branch A 零 bespoke）+ 预置模板库 UX + thoughtLevel 思考力度开关 — per-agent 怪癖固化 gotchas §8（gemini node-pty 挂死/folder trust/relaunch 自动注入修复；qoder 权限内部超时/execute cwd）✅ 2026-06-11
 - [ ] 能力条件 UI（image gating）
-- [ ] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）
+- [x] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）— connector 统一层 + orchestrator（spawn/delegate/Pipeline/Fan-out）+ Team UX 主聊天流（017/018）+ 019 流水线 surface 收纳。**已整体合 main**（2026-06-13，merge `232c8fa`）✅
 
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
