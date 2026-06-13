@@ -3,7 +3,6 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { handleDrag } from "./drag-region"
 import {
-  PanelLeft,
   Plus,
   Settings,
   MessageSquare,
@@ -148,8 +147,9 @@ export function LeftSidebar() {
       >
         {leftOpen ? (
           <>
-            {/* Expanded: Brand + Toggle */}
-            <div onMouseDown={handleDrag} className="flex shrink-0 items-center justify-between gap-3 p-4 pt-9">
+            {/* Expanded: Brand. Sidebar collapse lives in the main-area TopBar
+                (single toggle, avoids the duplicate that sat here). */}
+            <div onMouseDown={handleDrag} className="flex shrink-0 items-center gap-3 p-4 pt-9">
               <button
                 onClick={() => navigate("/")}
                 className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
@@ -158,13 +158,6 @@ export function LeftSidebar() {
                 <span className="text-sm font-semibold tracking-wide text-[var(--sidebar-fg)]">
                   {t("brand.name")}
                 </span>
-              </button>
-              <button
-                onClick={toggleLeft}
-                aria-label="Collapse sidebar"
-                className="flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
-              >
-                <PanelLeft className="size-4" />
               </button>
             </div>
 
