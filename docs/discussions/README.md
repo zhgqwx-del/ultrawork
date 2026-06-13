@@ -30,4 +30,4 @@
 | [016-aionui-multi-agent-competitor.md](./016-aionui-multi-agent-competitor.md) | AionUi 多 agent 调研 — 直接竞品（Electron 多-agent 桌面，20+ agent + Team Mode 编排）+ 档1/档2 实现参考 + D-8/ADR-031 现网验证（NON_ACP_BACKENDS 佐证） | 2026-06-10 | 调研记录 + 讨论中 |
 | [017-team-page-agent-driven-orchestration.md](./017-team-page-agent-driven-orchestration.md) | Team 页 — agent 驱动编排的独立 surface（Leader 会话 + 委派默认化 + 普通会话物理隔离；阶段3 第三批形态提案，替代「编排模式」开关） | 2026-06-12 | ✅ 已落地（阶段3 第三批） |
 | [018-unified-orchestration-ux.md](./018-unified-orchestration-ux.md) | 编排 UX 统一与视觉升级 — 模式=任务出生属性（Home 统一入口 + Team 会话进侧栏 + Session 页合流；视觉参考 AionUi，A 拍板后 B 跟进） | 2026-06-12 | ✅ 已实施（GUI 走查 10/10） |
-| [019-pipeline-surface-form.md](./019-pipeline-surface-form.md) | 流水线 UI 收纳与形态 — 编排 surface 的「另一半」（伞名「自动化」+页内「流水线·Fan-out」/ footer 二级入口微调 / agent-avatar 视觉对齐 / 页内自我说明；功能零改动，承接 018 Q2 拍板） | 2026-06-13 | ✅ 已拍板待开工 |
+| [019-pipeline-surface-form.md](./019-pipeline-surface-form.md) | 流水线 UI 收纳与形态 — 编排 surface 的「另一半」（伞名「自动化」+页内「流水线·Fan-out」/ footer 精简：去渠道+WiFi、连接状态迁 AgentSelector chip 按所选后端着色 / agent-avatar 视觉对齐 / 页内自我说明；功能零改动，承接 018 Q2 + 用户 footer 反馈） | 2026-06-13 | ✅ 已拍板待开工 |

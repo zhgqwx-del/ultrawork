@@ -1,6 +1,6 @@
 # 019 · 流水线 UI 收纳与形态（编排 surface 的「另一半」）
 
-> **状态**：✅ 已拍板待开工（2026-06-13。D1=伞名「自动化」+页内「流水线·Fan-out」/ D2=保留侧栏 footer 二级微调 / D3=做视觉对齐 / D4=做自我说明。承接 018 收尾时 Q2 三项反馈拍板：「值得单开一个 discussion 先拍形态再动手」）
+> **状态**：✅ 已拍板待开工（2026-06-13。D1=伞名「自动化」+页内「流水线·Fan-out」/ D2=footer 精简（保留二级入口）/ D3=做视觉对齐 / D4=做自我说明 / **D5=footer 去渠道 + WiFi 连接状态迁到 AgentSelector chip 按所选后端着色（顺修 opencode 硬编码 available）**。承接 018 收尾 Q2「先拍形态再动手」+ 用户 footer 两点反馈）
 > **日期**：2026-06-13
 > **缘起**：018 把 **Team 协作**（agent 驱动、对话式即兴委派）从 `/orchestration` 抽进主聊天流（Home segmented + 侧栏混排 + Session 页合流），`/orchestration` 回归为**纯流水线页**（代码驱动 recipe）。Team 拿到了一等公民的入口与视觉，**流水线却被留在原地**——侧栏底部一个 `Workflow` 按钮，step 行还是裸 `<select>`，与 Team 的 agent-avatar 卡片视觉割裂。018 收尾讨论时定性：删可惜（唯一代码驱动 recipe 入口）、不并进 Team（心智不同，016/017/018 刻意分开），**给它一个稳定二级入口 +复用 agent-avatar/chip 视觉对齐 +一句话说明**；先单开 discussion 拍形态。
 > **承接**：[018](./018-unified-orchestration-ux.md)（Team 进主流程）· [017](./017-team-page-agent-driven-orchestration.md)（Team 页独立 surface）· ADR-031 D-1（代码驱动面）/ D-7
@@ -74,12 +74,27 @@
 
 > **建议**：**做**。配合 D3，把「冷工具」变成「能自解释的功能」。
 
+### D5 · footer 区精简 + 连接状态迁移（2026-06-13 用户反馈追加）
+
+footer 现有三类占位（`left-sidebar.tsx`）：①「自动化」入口（D1/D2）② **渠道**（`ChannelStatusBar` + 折叠态 `ChannelStatusDot`：IM 渠道 connected/total + 彩点，点击跳 Settings>channels，**无渠道时自动隐藏**）③ **WiFi「已连接」**（`ConnectionStatus` = `useSSEConnected()` 全局 SSE 心跳 = opencode 默认后端 `/event` 流是否连上）。两点反馈：
+
+- **D5a · 去掉「渠道」**：Settings>channels 已有全部详情，footer 这条是重复。去掉展开 + 折叠两处。权衡：IM 用户失去「一眼看连接数」——但渠道是后台基础设施，真要紧的是**掉线告警**，可用「掉线 toast / Settings 入口小红点」替代常驻一行（可选、可后置）。
+- **D5b · WiFi 状态迁到模型选择器**：独立「已连接」常年绿=横幅失明、且 WiFi 图标语义含糊（像网络非「opencode sidecar」）。迁到 **AgentSelector 的 trigger chip**（当前显示的模型）做红绿点，把健康信号放到「你正在对话的对象」上。
+  - **⚠️ 顺带修一个失真 bug**：opencode 默认 agent 的 `status` 当前**硬编码 `"available"`**（`agent-context.tsx:23`），不反映 SSE 真连接——sidecar 挂了也显绿。
+  - **着色按「所选后端」**（拍板细化版，非死板 opencode）：选 opencode → SSE 心跳（`useSSEConnected`）；选 ACP agent → 该 agent `status()`（connected/disconnected/懒连接）。语义严格正确，信息量 > 单一 opencode WiFi。
+  - 基础设施已现成：`STATUS_DOT` 配色 + `connector.onStatusChange(kind,status)` + `ACPBackend.status()`；trigger chip 现**无**状态点（点只在展开下拉每行），需加。
+  - 权衡：Settings/自动化页无选择器 → 失去连接信号；但 sidecar 挂时用户基本在聊天页（chip 可见）+ 发送报错兜底，可接受。
+
+> **建议**：D5a **去**（可选保留掉线告警）；D5b **做**（按所选后端着色 + 修 opencode 硬编码）。两者都在 footer/selector 同一施工面，与 D2 一次性收拾。
+
 ### ✅ 拍板结果（2026-06-13）
 
 | 点 | 拍板 | 落地要点 |
 |----|------|---------|
 | **D1 命名** | **伞名「自动化」+ 页内「流水线·Fan-out」**（选项 d） | 入口文案改「自动化」；页内模式名「流水线 / Fan-out 并行」保留；i18n key 前缀 `orchestration.*` 不强求重命名（只改 displayed 文案，避免全引用改动） |
-| **D2 入口** | **保留侧栏 footer 二级，微调**（选项 a） | footer 与 Channels/状态拉开间距 + 分隔；图标/文案更自明（标签「自动化」）；不进 Home、不提升一等位 |
+| **D2 入口** | **保留侧栏 footer 二级**（选项 a）；随 D5 升级为「footer 精简」 | footer 去掉渠道 + WiFi 后只留「自动化」入口 + 用户/设置；图标/文案更自明（标签「自动化」）；不进 Home、不提升一等位 |
+| **D5a 渠道** | **去掉**（展开 `ChannelStatusBar` + 折叠 `ChannelStatusDot`） | Settings>channels 已有详情；掉线告警（toast / 小红点）可选后置 |
+| **D5b 连接状态** | **迁到 AgentSelector trigger chip，按所选后端着色** | 删 footer `ConnectionStatus`；opencode→`useSSEConnected`（**并修 `agent-context.tsx:23` 硬编码 `available`**），ACP→`status()`；trigger chip 加状态点（复用 `STATUS_DOT` + `connector.onStatusChange`） |
 | **D3 视觉** | **做** | step/worker 行裸 `<select>` → agent-avatar 首字母头像 + chip；run 列表/详情 agent 标识同步对齐主聊天 delegate 卡片 |
 | **D4 说明** | **做** | 页顶一句话说明 + 「流水线 vs Team 何时用」极简对照；暖化空态（当前冷表单） |
 
@@ -91,12 +106,14 @@
 | D2 入口 | left-sidebar footer 微调；可选 Home 工具行加一项 | 低 |
 | D3 视觉 | pipeline-tab step/worker 行换 agent-avatar + chip；run 列表对齐 | 低（复用现成件） |
 | D4 说明 | 页顶说明 + 空态文案 + 对照 | 低 |
+| D5a 渠道 | 删 left-sidebar `ChannelStatusBar` + `ChannelStatusDot` 两处 | 低 |
+| D5b 连接状态 | 删 footer `ConnectionStatus`；opencode agent.status 接 `useSSEConnected`（修硬编码）；AgentSelector trigger 加状态点（按 currentId 取 agent.status 着色） | 低-中（多一处 status 接线，但件已现成） |
 
-预计 1-2 个 commit，无新依赖，无后端改动，无新测试面（纯渲染；现有 orchestrator/desktop 测试不受影响）。
+预计 1-2 个 commit，无新依赖，无后端改动，无新测试面（纯渲染 + 一处 status 接线；现有 orchestrator/desktop 测试不受影响，selector 状态点可补一条渲染断言）。
 
 ## 5. 建议节奏
 
-1. **本讨论拍板 D1-D4**（命名 / 入口 / 视觉 / 说明）。
+1. **本讨论拍板 D1-D5**（命名 / 入口 / 视觉 / 说明 / footer 精简 + 连接状态迁移）。
 2. 一次性落地（surface + 文案 + 行内视觉），GUI 走查（隔离栈，参 018 harness 教训）。
 3. 收尾：CHANGELOG、本讨论状态转 ✅、README 索引、（命名若改）i18n。
 4. 落地后 → 本分支 `feat/agent-os-phase0` 编排 surface「整体完成」，接 hermes（视场景）或整体合 main。
@@ -104,4 +121,4 @@
 > **节奏与分支**：019 在 `feat/agent-os-phase0` 分支继续，**整体完成后一次合入 main**（与 017/018 同策略，用户已定）。
 
 ### 来源
-- 018 收尾 Q2 拍板（MEMORY「下一步与待决」2026-06-13）；代码核实 `left-sidebar.tsx` / `pages/Orchestration.tsx` / `pipeline-tab.tsx` / `i18n-context.tsx`（2026-06-13）。
+- 018 收尾 Q2 拍板（MEMORY「下一步与待决」2026-06-13）；用户 footer 两点反馈（2026-06-13，桌面截图）；代码核实 `left-sidebar.tsx` / `pages/Orchestration.tsx` / `pipeline-tab.tsx` / `i18n-context.tsx` / `settings/connection-status.tsx` / `chat/agent-selector.tsx` / `lib/agent-context.tsx` / `core/connector`（2026-06-13）。
