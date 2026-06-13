@@ -36,6 +36,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **`/orchestration` Team tab + `team-tab.tsx`（018 A-3）**：Team 创建/历史/聊天面全部迁入 Home 入口 + 侧栏 + Session 页；`team-leader-prompt.ts`/`orchestrator-mcp.ts`/orchestration-client team 函数保留（消费方迁移）；i18n 清死键（team.tab/desc/start/history/noSessions/sessionTitle/back、orchestration.tab）
 - **「编排模式」Settings 开关（017 拍板 #5）**：删 `use-orchestrate-mode.ts` + `OrchestrateModeToggle` + `settings.orchestrate.*` i18n；全局 orchestrator MCP 注册降级为 Team 页内部静默 ensure；用户已有 config 条目无需迁移（ensure 幂等同名覆写）；Tauri `remove_mcp_config` 保留（MCP 服务管理仍用）
 
+### Changed
+- **Home 工具行 UI 打磨（018 议题 B 续，2026-06-13）**：① 模式开关图标化（单 Agent=Bot / Team 协作=Users）+ 激活态品牌色 + `whitespace-nowrap` 防 chip 文字换行；② AgentSelector 下拉卡片化——首字母彩色头像（`agent-avatar.tsx` 复用）+ 角落状态点 + 灰显描述，与成员选择器统一视觉语言；team 模式作 Leader 选择器时触发器显示「Leader · X」+ 下拉「选择 Leader（主控）」标题（角色清晰）；③ 模型选择作用域澄清——opencode Leader 时 chip 带 tooltip「仅用于 OpenCode Leader；其他成员各自带模型」，ACP Leader 时改为灰显「自带模型」提示（不再凭空消失，解决「好像没联动」困惑）。纯渲染层，desktop 155 / typecheck 8/8；GUI 视觉验证 5/5（隔离栈）
+
 ### Fixed
 - **Team Leader 越界委派给非成员（018 走查发现，2026-06-13）**：选 opencode+claude 作成员，Leader 却委派给了 gemini+qoder——根因是 Leader system prompt 让它「用 list_agents 核对成员」，而 `/orchestration/agents`（list_agents 数据源）返回全局所有 agent。双层修复：① prompt——roster 设为唯一权威、禁止委派清单外 agent、无需调 list_agents；② 服务端硬兜底——`team-store.teamMembersForWorkspace(workspace)`（按 workspace 取所有 Team 成员并集），`/orchestration/delegate` 拒绝非成员（403→模型可见 tool error 自纠），`/orchestration/agents?workspace=` 按成员过滤，shim `list_agents` 透传 cwd。附带消除「结果已出还挂委派中」的卡死 dock（非成员 gemini 配额/挂死不再被派；delegate 本有 10min 硬超时兜底，无永久卡）。acp-client +8 测试（成员强制 3 + list_agents scope 1 + teamMembersForWorkspace 3 + cwd 透传 1）= 94 pass；headless API 验证 5/5（隔离栈）
 - **list_agents 向 LLM 泄漏传输层连接态导致 Leader 拒绝委派**（017 Tauri 真机走查发现）：ACP agent 懒连接的 disconnected 被模型当「离线不可用」全派 opencode——`/orchestration/agents` 改为仅透出真实 error、其余一律 available（delegate 自动连接）+ Leader 提示补「状态离线也照常委派」双保险

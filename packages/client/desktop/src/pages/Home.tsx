@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { FolderOpen, Pen, FileText } from "lucide-react"
+import { FolderOpen, Pen, FileText, Bot, Users, Cpu } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
@@ -232,15 +232,26 @@ export function HomePage() {
             leftSlot={
               <div className="flex items-center gap-1">
                 <ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />
-                <AgentSelector agentId={agentId} onAgentChange={setAgentId} />
+                <AgentSelector agentId={agentId} onAgentChange={setAgentId} leader={mode === "team"} />
                 {mode === "team" && (
                   <TeamMemberSelect selected={memberIds} onToggle={toggleMember} />
                 )}
-                {!isACP && (
+                {isACP ? (
+                  // ACP agents bring their own model — show why the picker is
+                  // absent instead of silently vanishing (018 reported "no linkage").
+                  <span
+                    title={t("home.model.agentManaged.hint")}
+                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)]"
+                  >
+                    <Cpu className="size-3" />
+                    {t("home.model.agentManaged")}
+                  </span>
+                ) : (
                   <ModelSelector
                     currentModel={currentModel}
                     onModelChange={setModel}
                     onOpenModelDialog={openModelDialog}
+                    title={mode === "team" ? t("home.model.leaderScope.hint") : undefined}
                   />
                 )}
               </div>
@@ -264,28 +275,29 @@ function ModeSwitch({
   teamDisabled: boolean
 }) {
   const { t } = useI18n()
-  const segment = (value: TaskMode, label: string, disabled = false) => (
+  const segment = (value: TaskMode, label: string, Icon: typeof Bot, disabled = false) => (
     <button
       type="button"
       disabled={disabled}
       title={disabled ? t("agent.sidecarUnavailable") : undefined}
       onClick={() => onModeChange(value)}
       className={cn(
-        "rounded px-2 py-0.5 text-xs transition-colors",
+        "flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs transition-colors",
         mode === value
-          ? "bg-[var(--color-bg)] font-medium text-[var(--color-fg)] shadow-sm"
+          ? "bg-[var(--color-bg)] font-medium text-[var(--color-brand)] shadow-sm"
           : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
         disabled && "cursor-not-allowed opacity-50 hover:text-[var(--color-fg-muted)]",
       )}
     >
+      <Icon className="size-3.5" />
       {label}
     </button>
   )
 
   return (
     <div className="flex items-center gap-0.5 rounded-md bg-[var(--color-accent)]/60 p-0.5">
-      {segment("single", t("home.mode.single"))}
-      {segment("team", t("home.mode.team"), teamDisabled)}
+      {segment("single", t("home.mode.single"), Bot)}
+      {segment("team", t("home.mode.team"), Users, teamDisabled)}
     </div>
   )
 }
