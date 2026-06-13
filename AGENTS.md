@@ -102,7 +102,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **Desktop — chat / session 组件**
 - `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
 - `src/components/session/` — progress-panel, artifacts-panel, workspace-panel, artifact-preview, mcp-panel, skills-panel
-- `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）
+- `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
 - `src/components/settings/model-dialog.tsx` — ModelDialog + AddProviderDialog
 - `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes + thoughtLevel select）

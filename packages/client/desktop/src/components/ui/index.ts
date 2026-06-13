@@ -32,3 +32,13 @@ export {
 } from "./tooltip"
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./tabs"
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from "./popover"
+export {
+  Select,
+  SelectGroup,
+  SelectValue,
+  SelectTrigger,
+  SelectContent,
+  SelectLabel,
+  SelectItem,
+  SelectSeparator,
+} from "./select"

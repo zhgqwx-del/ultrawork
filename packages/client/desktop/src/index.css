@@ -5,7 +5,7 @@
   /* Core colors */
   --color-bg: #ffffff;
   --color-fg: #0f172a;
-  --color-fg-muted: #94a3b8;
+  --color-fg-muted: #64748b;
   --color-border: #e2e8f0;
   --color-accent: #f1f5f9;
   --color-accent-fg: #0f172a;
@@ -23,12 +23,12 @@
   --color-bg-subtle: #f8fafc;
   --color-bg-secondary: #f1f5f9;
 
-  /* Sidebar */
-  --sidebar-bg: #ffffff;
+  /* Sidebar — subtle recessed gray so the main card floats above it */
+  --sidebar-bg: #f6f7f9;
   --sidebar-fg: #0f172a;
-  --sidebar-fg-muted: rgba(15, 23, 42, 0.5);
-  --sidebar-accent: rgba(15, 23, 42, 0.06);
-  --sidebar-accent-hover: rgba(15, 23, 42, 0.04);
+  --sidebar-fg-muted: rgba(15, 23, 42, 0.55);
+  --sidebar-accent: rgba(15, 23, 42, 0.07);
+  --sidebar-accent-hover: rgba(15, 23, 42, 0.045);
   --sidebar-border: #e2e8f0;
 
   /* Popover / Dropdown */
@@ -41,10 +41,10 @@
 
 /* Dark mode colors */
 .dark {
-  --color-bg: #000000;
+  --color-bg: #121214;
   --color-fg: #f1f5f9;
-  --color-fg-muted: #64748b;
-  --color-border: #1e293b;
+  --color-fg-muted: #94a3b8;
+  --color-border: #26272b;
   --color-accent: #1e293b;
   --color-accent-fg: #f1f5f9;
   --color-primary: #3b82f6;
@@ -62,12 +62,12 @@
 
   --sidebar-bg: #000000;
   --sidebar-fg: #f1f5f9;
-  --sidebar-fg-muted: rgba(241, 245, 249, 0.5);
-  --sidebar-accent: rgba(241, 245, 249, 0.06);
-  --sidebar-accent-hover: rgba(241, 245, 249, 0.04);
-  --sidebar-border: #1e293b;
+  --sidebar-fg-muted: rgba(241, 245, 249, 0.55);
+  --sidebar-accent: rgba(241, 245, 249, 0.09);
+  --sidebar-accent-hover: rgba(241, 245, 249, 0.06);
+  --sidebar-border: #26272b;
 
-  --color-popover: #1e293b;
+  --color-popover: #1c1c1f;
   --color-popover-fg: #f1f5f9;
 
   --color-ring: #3b82f6;
