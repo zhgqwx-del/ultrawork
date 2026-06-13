@@ -147,6 +147,18 @@ export class ACPBackend implements AgentBackend {
         if (event.type === "heartbeat" || event.type === "acp.connected") return
         for (const handler of handlers) handler(event)
       },
+      onStatusChange: (status) => {
+        // The per-session ACP stream has no global toast (unlike opencode's
+        // connectGlobal → gave-up → toast). When retries are exhausted, surface
+        // a session.error so the view doesn't silently freeze on the last frame.
+        if (status === "gave-up") {
+          const dead: ConnectorEvent = {
+            type: "session.error",
+            properties: { sessionID: sessionId, error: "Lost connection to the agent stream. Reopen the session to retry." },
+          }
+          for (const handler of handlers) handler(dead)
+        }
+      },
     })
     void transport.connect()
     return { transport, handlers }

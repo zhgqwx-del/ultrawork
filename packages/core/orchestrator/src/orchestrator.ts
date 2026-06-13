@@ -324,6 +324,11 @@ export class Orchestrator {
 
   private saveAndEmitRun(run: OrchestrationRun): void {
     run.updatedAt = this.now()
+    // Once a run is terminal, isRunCancelled is never consulted again — drop its
+    // cancelledRuns entry so the Set doesn't grow unbounded across cancels.
+    if (run.status !== "running" && run.status !== "pending") {
+      this.cancelledRuns.delete(run.id)
+    }
     this.deps.store.save(run)
     this.emit({ type: "run.updated", properties: { run } })
   }

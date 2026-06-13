@@ -254,10 +254,12 @@ describe("DAG executor (fan-out)", () => {
       expect(released).toEqual([expectedWorktree])
     })
 
-    it("keeps the worktree (and its path on the step) when the step fails", async () => {
+    it("keeps the worktree dir on failure but still releases its connector", async () => {
       gitInit(workspace)
+      const released: string[] = []
       const { orchestrator } = build({
         acp: { onPrompt: () => {} }, // never writes the deliverable
+        releaseConnector: (ws) => released.push(ws),
       })
 
       const created = await orchestrator.createRun({
@@ -270,8 +272,11 @@ describe("DAG executor (fan-out)", () => {
       const w1 = run.steps[0]
       expect(w1.status).toBe("failed")
       expect(w1.error).toContain("deliverable missing")
+      // Dir kept for debugging (path stays on the step)…
       expect(w1.worktreePath).toBe(join(worktreesDir, run.id, "w1"))
       expect(existsSync(w1.worktreePath!)).toBe(true)
+      // …but the per-worktree connector (live SSE) must NOT leak (review #1).
+      expect(released).toContain(join(worktreesDir, run.id, "w1"))
     })
 
     it("rejects worktree isolation outside a git repo and duplicate artifact names", async () => {

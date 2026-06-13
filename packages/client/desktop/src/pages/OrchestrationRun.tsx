@@ -72,8 +72,12 @@ export function OrchestrationRunPage() {
                   : [...prev, { stepId: event.properties.stepId, sessionId: event.properties.sessionId, request }],
               )
             } else if (inner.type === "permission.replied") {
-              const requestID = (inner.properties as { requestID?: string }).requestID
-              setPermissions((prev) => prev.filter((p) => p.request.id !== requestID))
+              // opencode sub-steps reply with { requestID }; ACP sub-steps with
+              // { id } (acp-connection self-cancel/out-of-band). Accept both or
+              // the bar never clears for ACP steps (matches DelegateDock).
+              const props = inner.properties as { requestID?: string; id?: string }
+              const replied = props.requestID ?? props.id
+              setPermissions((prev) => prev.filter((p) => p.request.id !== replied))
             }
           }
         })

@@ -105,6 +105,11 @@ export async function executePipeline(host: PipelineHost, run: OrchestrationRun)
         step.error = error
         firstError ??= runError ?? `step "${step.id}" ${error}`
         skipUnreachable()
+        // Release the per-worktree connector (a live opencode SSE stream) on
+        // every failure path — it is useless once the step has failed. The
+        // worktree DIR is deliberately kept for debugging (worktreePath stays
+        // set), but its SSE connection must not leak.
+        if (step.worktreePath) host.releaseConnector?.(step.worktreePath)
         host.saveAndEmitStep(run, step)
       }
 
@@ -115,6 +120,13 @@ export async function executePipeline(host: PipelineHost, run: OrchestrationRun)
       const result = outcome.result!
       if (result.status === "cancelled" || host.isRunCancelled(run.id)) {
         step.status = "cancelled"
+        // Cancel has no debugging value: tear down the worktree dir AND release
+        // its connector (unlike fail, which keeps the dir).
+        if (step.worktreePath) {
+          removeWorktree(run.recipe.workspace, step.worktreePath)
+          host.releaseConnector?.(step.worktreePath)
+          step.worktreePath = undefined
+        }
         host.saveAndEmitStep(run, step)
         return
       }

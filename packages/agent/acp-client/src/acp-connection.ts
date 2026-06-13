@@ -326,6 +326,12 @@ export class ACPConnection {
         if (sinceLast >= REPLAY_IDLE_MS) break
         await Bun.sleep(REPLAY_IDLE_MS - sinceLast)
       }
+    } catch (err) {
+      // Load failed → the manager falls back to a fresh session with a NEW
+      // acpSessionId, so drop the emitIds mapping set for this (now-dead) id;
+      // otherwise it leaks until disconnect.
+      this.emitIds.delete(acpSessionId)
+      throw err
     } finally {
       this.replaying.delete(acpSessionId)
     }
@@ -616,14 +622,10 @@ export class ACPConnection {
         this.status = "error"
         this.error = `Agent process exited with code ${code}`
         this.cancelAllPermissions()
+        // rejectPending rejects each in-flight prompt's RPC → prompt()'s catch
+        // calls shaper.failTurn, which emits session.error AND seals the turn.
+        // Don't also emit a raw session.error here or subscribers get it twice.
         this.rejectPending(new Error(this.error))
-        for (const sessionId of this.activePrompts) {
-          const emitAs = this.emitIds.get(sessionId) ?? sessionId
-          this.onEvent(emitAs, {
-            type: "session.error",
-            properties: { sessionID: emitAs, error: this.error },
-          })
-        }
       }
     })
   }
