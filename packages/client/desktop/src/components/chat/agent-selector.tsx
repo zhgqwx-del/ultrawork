@@ -95,7 +95,8 @@ export function AgentSelector({
                 setOpen(false)
               }}
               className={cn(
-                "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--color-accent)]",
+                // min-h keeps rows even whether or not the agent has a description.
+                "flex min-h-[2.75rem] w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-accent)]",
                 currentId === agent.id && "bg-[var(--color-accent)]/60"
               )}
             >

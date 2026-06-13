@@ -141,23 +141,26 @@ export function ChatInput({
 
       {variant === "home" ? (
         /* Home variant: toolbar below with send button flush bottom-right */
-        <div className="mt-3 flex items-center">
+        <div className="mt-3 flex items-center gap-2">
           <button
             type="button"
             aria-label={t("aria.attachment")}
             disabled={disabled}
-            className="flex size-7 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:hover:bg-transparent"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <Plus className="size-4" />
           </button>
-          {leftSlot}
-          <div className="flex-1" />
+          {/* Toolbar chips take the remaining space and scroll if a narrow
+              window can't fit them — the CTA must never be squeezed. */}
+          <div className="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-soft">
+            {leftSlot}
+          </div>
           <button
             type="button"
             onClick={handleSendClick}
             disabled={!canSend}
             className={cn(
-              "rounded-lg px-5 py-2 text-sm font-medium transition-all",
+              "shrink-0 whitespace-nowrap rounded-lg px-5 py-2 text-sm font-medium transition-all",
               canSend
                 ? "bg-[var(--color-brand)] text-white hover:opacity-90"
                 : "bg-[var(--color-brand)]/60 text-white/80 cursor-default"
