@@ -8,7 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Removed
-- **移除 opencode→ultrawork 一次性数据迁移逻辑**：删除 `lib.rs` 中的 `migrate_from_opencode()` 与 `copy_if_exists()` 函数及 `.setup()` 调用点（ADR-020 改动 7）。老 opencode 用户首启 ultrawork 不再自动复制 `opencode.json`/`auth.json`/`mcp-auth.json`/`opencode*.db*`，将得到全新空环境（不继承历史会话/凭证/数据库）。**配置隔离机制本身不变**——`OPENCODE_APP_NAME` 常量 + `global_config_dir()` + sidecar env 注入 + 4 处 vendor patch 全部保留，隔离效果不受影响。ADR-020「现有用户数据迁移」节已标注移除。`cargo check` 通过、无残留引用、无未使用符号警告
+- **移除 opencode→ultrawork 一次性数据迁移逻辑**：删除 `lib.rs` 中的 `migrate_from_opencode()` 与 `copy_if_exists()` 函数及 `.setup()` 调用点（ADR-020 改动 7）。老 opencode 用户首启 ultrawork 不再自动复制 `opencode.json`/`auth.json`/`mcp-auth.json`/`opencode*.db*`，将得到全新空环境（不继承历史会话/凭证/数据库）。**配置隔离机制本身不变**——`OPENCODE_APP_NAME` 常量 + `global_config_dir()` + sidecar env 注入 + 4 处 vendor patch 全部保留，隔离效果不受影响。ADR-020「现有用户数据迁移」节已标注移除，`docs/discussions/009-tauri-vs-electron.md` 中对该函数的提及加注「已移除，保留为当时快照」。`cargo check` 通过、无残留引用、无未使用符号警告
+
+### Changed
+- **停止跟踪 `*.tsbuildinfo` 增量编译缓存**：`packages/core/api-client/` 与 `packages/core/server-manager/` 下的 `tsconfig.tsbuildinfo` 早于 `.gitignore` 的 `*.tsbuildinfo` 规则提交，故一直被跟踪并在每次 build 后产生 hash 漂移噪音。`git rm --cached` 解除跟踪（保留磁盘文件、不影响增量编译），此后由现有 .gitignore 规则覆盖，不再纳入版本控制
 
 ### Added
 - **接入 NousResearch hermes-agent（branch A acp-stdio，零 bespoke）**：新增 Settings「外部 Agent」预置模板 chip **Hermes**（`agent-templates.ts`，一键填充 `command:"hermes" args:["acp","--accept-hooks"]`），与 claude/gemini/qoder 同类，按可用性门控（不主动检测安装，没装则连接时 `/acp/health` 报 error）。**无 sidecar/shaper/DEFAULT_AGENTS 改动**——hermes 的 ACP-stdio server 协议 v1 与我们 SDK 0.25.0 协商成功（实测），turn 整形开箱即对（`[reasoning,tool,tool]/tool-calls → [text]/stop`），发 input/output usage（无 cost）。`--accept-hooks` 为无 TTY 的 headless 闸（自动放行 shell hooks）。新增 spike `spike-hermes.ts` + 真实 fixture `acp-hermes-turn.json` + `acp-turn-shaping.test.ts` hermes 渲染契约 describe（desktop +3）。三轨验证全过：spike（库级真实 hermes）+ GUI（Chrome+Vite 隔离栈往返）+ headless API（REST 全链路 14 断言）；gotchas §8 新增 hermes 条 + 「agents.json 不随 XDG 隔离」走查铁律
