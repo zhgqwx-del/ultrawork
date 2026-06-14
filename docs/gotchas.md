@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-13 -->
+<!-- last-synced: 2026-06-14 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -151,6 +151,15 @@
 - **委派成员的产物来自子会话、不在 Leader 转录（018，2026-06-13）**：产物区（`artifacts-panel.tsx`）只扫描当前会话的消息提取文件；但 Team 委派出去的成员是在**各自子会话**里写文件的，那些 write/edit 工具调用不在 Leader 转录里——靠正则扫交付物文本抓路径极不可靠（成员交付物措辞带不带绝对路径全凭运气）。正解：orchestrator `collectDeliverable` 在拉子会话历史时提取 write/edit/create/patch 的文件路径 → 放进 D-2 契约 `artifacts` 字段 → 桌面 `artifacts-panel` 解析 delegate 工具输出 JSON 的 `artifacts` 并入产物区。改委派/产物逻辑时记得这条数据流（产物路径随交付物走，不靠文本正则）。
 - **opencode 会话的 model 是会话粘滞的**（018 走查实测）：首轮 prompt 未显式传 model 时按 server config 默认解析并**固化到该会话**，后续轮不传 model 也沿用首轮的——server config 改了默认 model 只影响新会话。无 git 的目录放 `opencode.json` 不会被当 project config 拾取（project root 探测依赖 git），workspace 级默认 model 对临时测试目录无效，须走 server 级 `PATCH /config`。
 - **worktree 隔离的输入产物要复制进 worktree**（`worktree.ts stageInputs`）：子 agent cwd 沙箱在 worktree 里，引用主 workspace 绝对路径会触发跨目录读权限弹窗（claude）；产物完成后拷回主 run 目录、worktree 成功即删失败保留（`step.worktreePath` 暴露）。
+
+## 10. 内置技能（built-in skills，`skills/builtin/` + Settings 技能页）
+
+- **Anthropic 官方 docx/pdf/pptx/xlsx 文档技能是专有许可、禁止再分发**（`anthropics/skills` 各目录 `LICENSE.txt`）——**不能打包进 ultrawork**。判定捷径：**LICENSE.txt 1467B ≈ 专有 / 11345B ≈ Apache-2.0**。故 PDF 用 OpenAI 的 Apache 版（`openai/skills/.curated/pdf`），Office 读改自写 `doc-edit`（python-docx/openpyxl/python-pptx），生成用 `markdown-exporter`（md_exporter）。新增内置技能前**先核对该目录 LICENSE 是 Apache-2.0/MIT 等可再分发许可**。
+- **skill 以 frontmatter `name` 索引、不是目录名**（vendor `skill/index.ts:86`，zod `Info.pick({name,description})`）——`zod .pick` **剥离未知 frontmatter 键**，故自定义键（如 `x-requires`）安全、不破坏发现；也意味着目录名与 `name` 可不一致（如 `markdown-exporter`）。同名 skill 后扫描者覆盖前者（有 `duplicate skill name` warn）。
+- **内置技能注入走方案 C（拷贝），不动 opencode.json**：`src-tauri ensure_builtin_skills` 首启把 bundle 资源拷到 `~/.config/ultrawork/skills/builtin/`，被 `{skill,skills}/**/SKILL.md` 自动扫描。**sentinel `.builtin-version`（内容 hash）控升级刷新，刷新只 `remove_dir_all(builtin/)`——绝不碰同级用户安装技能**（用户/skill-installer 装的技能落在 `skills/<name>`，是 `builtin/` 的兄弟，不在刷新范围）。
+- **Tauri `bundle.resources` 对 `..` 源路径的落地层级不确定**：array/glob 形式会把 `..` 改写成 `_up_` 段，map 形式按 value 直放——跨版本/平台有差异。**不要硬编码资源子路径**；`find_builtin_source` 用**有界递归查找 `.builtin-version` 锚点**兼容 map/glob/`_up_` 三种布局。`resource_dir()` 在 `tauri dev` 与打包态解析到不同目录（dev=target 下，打包=`.app/Contents/Resources`）。
+- **运行依赖检测靠 `rich_path()` 而非 `std::env PATH`**：Finder 启动的 app 只有最小 PATH，`check_skill_dependencies` 复用 `rich_path()` 探测 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter。**Python 库（python-docx 等）无法按 PATH 探测**——`doc-edit` 只检 `python3`，脚本自身缺库时 stderr+exit1 优雅报错。前端 `BUILTIN_DEP_MAP`（`use-skill-deps.ts`）是技能→依赖 SSOT，与 SKILL.md 的 `x-requires` 各一份（徽标 vs 人读），改一处记得对齐另一处。
+- **更新内置技能用 `scripts/fetch-builtin-skills.ts`**（上游 tarball + 打补丁 + 注入 `x-requires` + 写 NOTICE + 刷新 `.builtin-version`），结果**提交入库**。**不要手改 `skills/builtin/{skill-creator,skill-installer,pdf,markdown-exporter}/`**——重跑脚本会覆盖；`doc-edit` 是自写、可直接改。skill-installer 的安装目标已由脚本补丁从 `$CODEX_HOME/skills` 改指 `~/.config/ultrawork/skills`（装到 `builtin/` 同级，免被 sentinel 刷新清掉）。
 
 ---
 

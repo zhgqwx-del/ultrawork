@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText, Bot, Users, Cpu } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
@@ -53,6 +53,7 @@ export function HomePage() {
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set())
   const membersTouched = useRef(false)
   const navigate = useNavigate()
+  const location = useLocation()
   const api = useApi()
   const { workspacePath } = useWorkspace()
   const { createSession } = useSessionsContext()
@@ -68,6 +69,17 @@ export function HomePage() {
     if (membersTouched.current) return
     setMemberIds(new Set(agents.map((a) => a.id)))
   }, [agents])
+
+  // Prefill the composer when navigated here with an initial prompt (e.g. the
+  // Settings "install skill" action hands off to the built-in skill-installer).
+  useEffect(() => {
+    const initial = (location.state as { initialInput?: string } | null)?.initialInput
+    if (initial) {
+      setInput(initial)
+      navigate(".", { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state])
 
   const toggleMember = (id: string) => {
     membersTouched.current = true

@@ -1,0 +1,8 @@
+doc-edit is authored by the ultrawork project (not derived from Anthropic's proprietary
+document skills). It is licensed under the same terms as the ultrawork repository.
+
+It invokes the following third-party Python libraries at runtime (NOT bundled; installed by
+the user per the SKILL.md instructions):
+  - python-docx (MIT)
+  - openpyxl (MIT)
+  - python-pptx (MIT)

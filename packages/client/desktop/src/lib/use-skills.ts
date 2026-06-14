@@ -12,6 +12,13 @@ export interface SkillItem {
   source: SkillSource
   location?: string
   hints?: string[]
+  /** True when the skill is shipped with ultrawork (lives under skills/builtin/). */
+  builtin: boolean
+}
+
+/** A skill is built-in when its SKILL.md lives under the bundled builtin dir. */
+export function isBuiltinLocation(location?: string): boolean {
+  return !!location && location.includes("/skills/builtin/")
 }
 
 export interface SkillGroup {
@@ -83,12 +90,14 @@ export function useSkills() {
       if (seen.has(cmd.name)) continue
       if (HIDDEN_BUILTIN_COMMANDS.has(cmd.name) && (cmd.source === "command" || !cmd.source)) continue
       seen.add(cmd.name)
+      const location = skillLocationMap.get(cmd.name)
       items.push({
         name: cmd.name,
         description: cmd.description,
         source: (cmd.source as SkillSource) || "command",
         hints: cmd.hints,
-        location: skillLocationMap.get(cmd.name),
+        location,
+        builtin: isBuiltinLocation(location),
       })
     }
 
@@ -101,6 +110,7 @@ export function useSkills() {
         description: sk.description,
         source: "skill",
         location: sk.location,
+        builtin: isBuiltinLocation(sk.location),
       })
     }
 
