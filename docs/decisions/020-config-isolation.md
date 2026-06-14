@@ -470,6 +470,11 @@ const dep = iife(async () => {
 
 ## 现有用户数据迁移
 
+> **⚠️ 已移除（2026-06-14）**：本节描述的 `migrate_from_opencode()` / `copy_if_exists()` 一次性迁移逻辑已从 `lib.rs` 删除。
+> 决策变更：不再从老 `~/.config/opencode/`、`~/.local/share/opencode/` 自动复制数据。老 opencode 用户首启 ultrawork 将是全新空环境（不继承历史会话/凭证/数据库）。
+> **配置隔离机制本身（`OPENCODE_APP_NAME` 常量 + `global_config_dir()` + sidecar env 注入 + 4 处 vendor patch）保持不变**，隔离效果不受影响。
+> 本节及下方「实现位置 / 迁移流程图 / 迁移不执行的场景」等内容仅作历史记录保留。
+
 ### 问题
 
 已安装 Ultrawork 的老用户，数据全部存储在 `~/.config/opencode/`、`~/.local/share/opencode/` 等共享路径下。升级后 sidecar 改读 `~/.config/ultrawork/` 等新路径，如果不做迁移，用户会丢失：
