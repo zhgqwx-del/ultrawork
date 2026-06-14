@@ -288,7 +288,12 @@ export const ExecutionFlow = memo(function ExecutionFlow({
   // final created→completed value once the turn ends.
   const headerTicking = isStreaming && startedAt != null
   const now = useNow(headerTicking)
-  const shownDurationMs = headerTicking ? Math.max(0, now - startedAt) : durationMs
+  // Prefer the finalized duration once the turn has actually ended (durationMs is
+  // set by buildTurnModel on the RAW !isStreaming). isStreaming here is debounced
+  // (useStableStreaming), so without this the live timer keeps ticking through the
+  // ~600ms settle window and then snaps backward to durationMs. Showing durationMs
+  // as soon as it exists avoids that overshoot/snap.
+  const shownDurationMs = durationMs != null ? durationMs : headerTicking ? Math.max(0, now - startedAt) : undefined
 
   // Expanded while streaming; auto-collapse when the turn finishes.
   // A manual toggle is respected until the streaming state flips again.
