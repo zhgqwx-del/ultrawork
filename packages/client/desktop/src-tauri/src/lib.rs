@@ -1187,69 +1187,6 @@ fn remove_mcp_config(name: String) -> Result<(), String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// One-time migration: copy essential data from shared opencode paths to
-// isolated ultrawork paths. Runs before sidecar startup.
-// Trigger: ~/.config/ultrawork/opencode.json does NOT exist
-//      AND ~/.config/opencode/opencode.json DOES exist.
-// ---------------------------------------------------------------------------
-
-fn migrate_from_opencode() {
-    let new_config = global_config_dir(); // ~/.config/ultrawork/
-    let sentinel = new_config.join("opencode.json");
-    if sentinel.exists() {
-        return; // Already migrated or fresh config exists
-    }
-
-    let home = dirs::home_dir().unwrap();
-    let old_config = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(val) if !val.is_empty() => PathBuf::from(val).join("opencode"),
-        _ => home.join(".config").join("opencode"),
-    };
-    let old_sentinel = old_config.join("opencode.json");
-    if !old_sentinel.exists() {
-        return; // No old data to migrate (fresh install)
-    }
-
-    println!("[migration] Migrating data from opencode → ultrawork...");
-
-    let old_data = home.join(".local").join("share").join("opencode");
-    let new_data = home.join(".local").join("share").join(OPENCODE_APP_NAME);
-
-    // Ensure target directories exist
-    let _ = std::fs::create_dir_all(&new_config);
-    let _ = std::fs::create_dir_all(&new_data);
-
-    // Config: opencode.json only (skip node_modules, package.json, etc.)
-    copy_if_exists(&old_config.join("opencode.json"), &sentinel);
-
-    // Data: auth + mcp-auth + database files
-    copy_if_exists(
-        &old_data.join("auth.json"),
-        &new_data.join("auth.json"),
-    );
-    copy_if_exists(
-        &old_data.join("mcp-auth.json"),
-        &new_data.join("mcp-auth.json"),
-    );
-    // SQLite: copy all opencode*.db* files (main + shm + wal)
-    if let Ok(entries) = std::fs::read_dir(&old_data) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("opencode") && name_str.contains(".db") {
-                copy_if_exists(&entry.path(), &new_data.join(&name));
-            }
-        }
-    }
-
-    // NOTE: Cache (models.json etc.) is NOT migrated — sidecar's CACHE_VERSION
-    // mechanism clears the entire cache dir on first launch anyway.
-    // Models will be re-fetched automatically (~1-2s delay).
-
-    println!("[migration] Migration complete.");
-}
-
 /// Percent-encode a string for use in HTTP headers (matches the encoding
 /// the frontend's api-client uses for x-opencode-directory).
 fn url_encode(s: &str) -> String {
@@ -1313,15 +1250,6 @@ fn warm_opencode_mcp(port: u16, auth_header: String) {
     });
 }
 
-fn copy_if_exists(src: &std::path::Path, dst: &std::path::Path) {
-    if src.exists() {
-        match std::fs::copy(src, dst) {
-            Ok(_) => println!("[migration]   {} → {}", src.display(), dst.display()),
-            Err(e) => eprintln!("[migration]   WARN: failed to copy {}: {}", src.display(), e),
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1351,9 +1279,6 @@ pub fn run() {
             get_sidecar_credentials,
         ])
         .setup(|app| {
-            // One-time migration from shared opencode paths (must run before sidecar)
-            migrate_from_opencode();
-
             // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
             // and any external tooling can use a stable user-local path.
             ensure_sidecar_copies();
