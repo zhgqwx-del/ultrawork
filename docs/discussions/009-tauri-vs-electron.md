@@ -51,7 +51,7 @@ Tauri 壳并非"只是个窗口"。`lib.rs` 暴露了约 20 个 `#[tauri::comman
    - 含端口探测/占用清理（`prepare_port`/`kill_port_process`）、健康检查（`check_health`）、退出时统一 `shutdown_sidecars`。
 2. **OS 原生集成**：`open_file_with_system`（`open`）、`reveal_file_in_finder`（`open -R`）、Finder PATH 受限的 `rich_path()` 修复、`detect_chrome`。
 3. **运行时环境装配**：内嵌 Node 下载/解压/设权（`download_node`/`set_executable`）、Browser MCP（Playwright/DevTools）安装、`detect_browser_env`。
-4. **安全/凭证/配置管理**：`load_or_create_sidecar_credentials`（首启随机 32B hex + 0600）、全局 `~/.config/ultrawork/opencode.json` 的原子读写、MCP 配置增删、`migrate_from_opencode` 一次性迁移。
+4. **安全/凭证/配置管理**：`load_or_create_sidecar_credentials`（首启随机 32B hex + 0600）、全局 `~/.config/ultrawork/opencode.json` 的原子读写、MCP 配置增删、`migrate_from_opencode` 一次性迁移〔**注：该迁移逻辑已于 2026-06-14 移除，详见 ADR-020 + CHANGELOG；此处保留为当时快照**〕。
 5. **发布工程**：Universal 跨编译 + codesign + notarize（`build-release.ts`）、capability 权限模型（`capabilities/default.json`）。
 
 > **关键洞察**：Ultrawork 的"重活"全在 sidecar 里（都是独立可执行文件，与桌面壳框架无关）。桌面壳是一个**瘦渲染层 + 进程编排器 + OS 胶水层**。这个形态决定了 Tauri/Electron 的选择主要影响"壳"这一层，**不影响业务核心**——这也是迁移代价"有界"的根本原因。
