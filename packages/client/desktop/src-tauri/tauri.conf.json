@@ -41,6 +41,9 @@
       "binaries/knowledge-sidecar",
       "binaries/acp-client"
     ],
+    "resources": {
+      "../../../../skills/builtin": "skills/builtin"
+    },
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist"

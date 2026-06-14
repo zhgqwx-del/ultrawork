@@ -1035,6 +1035,141 @@ fn ensure_sidecar_copies() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Built-in skills — bundled under <resource_dir>/skills/builtin (Tauri
+// bundle.resources) and copied at startup into
+// ~/.config/ultrawork/skills/builtin so the OpenCode sidecar auto-discovers
+// them ({skill,skills}/**/SKILL.md over the config dir). vendor untouched, no
+// opencode.json mutation. See skills/builtin/README.md + ADR.
+// ---------------------------------------------------------------------------
+
+/// Target dir for built-in skills. Sits *inside* the config skills dir so it is
+/// scanned, but namespaced under `builtin/` so the sentinel refresh only ever
+/// wipes built-ins — never user-installed skills (which live at the skills root).
+fn builtin_skills_target() -> PathBuf {
+    global_config_dir().join("skills").join("builtin")
+}
+
+/// Bounded DFS for the bundled built-in skills dir, identified by its
+/// `.builtin-version` sentinel. Robust to Tauri's resource layout (map dest vs
+/// `_up_`-mangled `..` segments). Prefers a `skills/builtin` match when several
+/// exist. Returns the directory containing `.builtin-version`.
+fn find_builtin_source(root: &std::path::Path, max_depth: usize) -> Option<PathBuf> {
+    let mut best: Option<PathBuf> = None;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        if dir.join(".builtin-version").is_file() {
+            let prefers = dir.ends_with("skills/builtin") || dir.ends_with("builtin");
+            if prefers {
+                return Some(dir);
+            }
+            best.get_or_insert(dir);
+            continue;
+        }
+        if depth >= max_depth {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    stack.push((entry.path(), depth + 1));
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Idempotently copy bundled built-in skills into the config skills dir,
+/// gated by a content-hash sentinel (`.builtin-version`). On an app upgrade the
+/// version changes and we wipe-and-recopy `builtin/` only. Non-fatal: any error
+/// is logged and startup proceeds (skills simply won't appear).
+fn ensure_builtin_skills(app: &tauri::App) {
+    use tauri::Manager;
+    let Ok(resource_dir) = app.path().resource_dir() else {
+        eprintln!("[builtin-skills] no resource dir; skipping");
+        return;
+    };
+    // Tauri can place a `..`-sourced resource at different depths (map form puts
+    // it at the mapped destination; glob/array form mangles `..` into `_up_`
+    // segments). Rather than guess, search the resource dir for the directory
+    // holding our `.builtin-version` sentinel (bounded depth, cheap).
+    let Some(src) = find_builtin_source(&resource_dir, 8) else {
+        eprintln!(
+            "[builtin-skills] bundled source (.builtin-version) not found under {}",
+            resource_dir.display()
+        );
+        return;
+    };
+    let version = std::fs::read_to_string(src.join(".builtin-version"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let target = builtin_skills_target();
+    let sentinel = target.join(".builtin-version");
+    let stored = std::fs::read_to_string(&sentinel).ok().map(|s| s.trim().to_string());
+    if !builtin_needs_refresh(&version, stored.as_deref(), target.exists()) {
+        return; // up to date
+    }
+    // Refresh: remove ONLY builtin/ — siblings under skills/ are user-installed.
+    let _ = std::fs::remove_dir_all(&target);
+    if let Err(e) = copy_dir_recursive(&src, &target) {
+        eprintln!("[builtin-skills] copy failed ({} -> {}): {}", src.display(), target.display(), e);
+        return;
+    }
+    println!("[builtin-skills] installed -> {} (version {})", target.display(), version);
+}
+
+/// Pure refresh decision: copy is needed unless the target exists AND the source
+/// version is non-empty AND the stored sentinel already matches it.
+fn builtin_needs_refresh(src_version: &str, stored: Option<&str>, target_exists: bool) -> bool {
+    !(target_exists && !src_version.is_empty() && stored == Some(src_version))
+}
+
+/// One probed external tool required by a built-in skill.
+#[derive(Debug, Serialize)]
+struct DepStatus {
+    name: String,
+    available: bool,
+    path: Option<String>,
+}
+
+const SKILL_DEP_BINS: &[&str] = &[
+    "python3", "node", "pandoc", "soffice", "pdftoppm", "git", "markdown-exporter",
+];
+
+/// Probe a `:`-separated PATH for each bin (pure; testable).
+fn probe_bins(path: &str, bins: &[&str]) -> Vec<DepStatus> {
+    let dirs: Vec<&str> = path.split(':').filter(|s| !s.is_empty()).collect();
+    bins
+        .iter()
+        .map(|bin| {
+            let found = dirs.iter().map(|d| std::path::Path::new(d).join(bin)).find(|p| p.is_file());
+            DepStatus {
+                name: bin.to_string(),
+                available: found.is_some(),
+                path: found.map(|p| p.to_string_lossy().to_string()),
+            }
+        })
+        .collect()
+}
+
+/// PATH used to probe skill dependencies. rich_path() is node-centric (volta/nvm/
+/// brew) — extend it with the standard system bin dirs so plain system tools like
+/// python3/git (in /usr/bin) are found regardless of how the app was launched
+/// (Finder vs terminal give different inherited PATHs).
+fn skill_dep_path() -> String {
+    format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", rich_path())
+}
+
+/// Probe the PATH for the external tools built-in skills shell out to. The
+/// frontend maps each skill to its required tools (BUILTIN_DEP_MAP) and renders
+/// readiness badges.
+#[tauri::command]
+fn check_skill_dependencies() -> Vec<DepStatus> {
+    probe_bins(&skill_dep_path(), SKILL_DEP_BINS)
+}
+
 /// Resolve the canonical (user-local) path of a sidecar. After
 /// ensure_sidecar_copies has run, every known sidecar lives at
 /// ~/.ultrawork/sidecars/<name>. The bundled source is a fallback for the
@@ -1277,11 +1412,16 @@ pub fn run() {
             get_global_config_dir,
             get_sidecar_path,
             get_sidecar_credentials,
+            check_skill_dependencies,
         ])
         .setup(|app| {
             // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
             // and any external tooling can use a stable user-local path.
             ensure_sidecar_copies();
+
+            // Stage 1b: copy bundled built-in skills into the config skills dir
+            // (before OpenCode starts, so the first /skill scan sees them).
+            ensure_builtin_skills(app);
 
             // Stage 2: migrate any pre-existing MCP entries in opencode.json to
             // point at the canonical user-local path (handles dev → DMG and old
@@ -1425,4 +1565,120 @@ pub fn run() {
                 shutdown_sidecars();
             }
         });
+}
+
+#[cfg(test)]
+mod builtin_skills_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("uw-builtin-{}-{}", tag, n))
+    }
+
+    #[test]
+    fn needs_refresh_logic() {
+        // up to date -> no refresh
+        assert!(!builtin_needs_refresh("abc", Some("abc"), true));
+        // version bumped -> refresh
+        assert!(builtin_needs_refresh("def", Some("abc"), true));
+        // target missing -> refresh
+        assert!(builtin_needs_refresh("abc", Some("abc"), false));
+        // no sentinel yet -> refresh
+        assert!(builtin_needs_refresh("abc", None, true));
+        // empty source version -> always refresh (defensive)
+        assert!(builtin_needs_refresh("", Some(""), true));
+    }
+
+    #[test]
+    fn copy_dir_recursive_copies_tree() {
+        let src = unique_tmp("src");
+        let dst = unique_tmp("dst");
+        std::fs::create_dir_all(src.join("a/b")).unwrap();
+        std::fs::write(src.join("top.txt"), "1").unwrap();
+        std::fs::write(src.join("a/b/deep.txt"), "2").unwrap();
+
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dst.join("top.txt")).unwrap(), "1");
+        assert_eq!(std::fs::read_to_string(dst.join("a/b/deep.txt")).unwrap(), "2");
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dst);
+    }
+
+    #[test]
+    fn refresh_only_wipes_builtin_not_siblings() {
+        // Simulate the skills dir: builtin/ + a user-installed sibling. The
+        // refresh removes only builtin/.
+        let skills = unique_tmp("skills");
+        let builtin = skills.join("builtin");
+        let user = skills.join("my-skill");
+        std::fs::create_dir_all(builtin.join("old")).unwrap();
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("SKILL.md"), "keep me").unwrap();
+
+        let _ = std::fs::remove_dir_all(&builtin); // == the refresh step
+
+        assert!(!builtin.exists(), "builtin wiped");
+        assert!(user.join("SKILL.md").exists(), "user skill untouched");
+
+        let _ = std::fs::remove_dir_all(&skills);
+    }
+
+    #[test]
+    fn find_builtin_source_handles_layouts() {
+        // map form: <root>/skills/builtin/.builtin-version
+        let root = unique_tmp("res-map");
+        let m = root.join("skills/builtin");
+        std::fs::create_dir_all(&m).unwrap();
+        std::fs::write(m.join(".builtin-version"), "v1").unwrap();
+        assert_eq!(find_builtin_source(&root, 8).as_deref(), Some(m.as_path()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        // _up_ mangled form: <root>/_up_/_up_/skills/builtin/.builtin-version
+        let root2 = unique_tmp("res-up");
+        let u = root2.join("_up_/_up_/skills/builtin");
+        std::fs::create_dir_all(&u).unwrap();
+        std::fs::write(u.join(".builtin-version"), "v1").unwrap();
+        assert_eq!(find_builtin_source(&root2, 8).as_deref(), Some(u.as_path()));
+        let _ = std::fs::remove_dir_all(&root2);
+
+        // absent: returns None
+        let root3 = unique_tmp("res-none");
+        std::fs::create_dir_all(root3.join("a/b")).unwrap();
+        assert!(find_builtin_source(&root3, 8).is_none());
+        let _ = std::fs::remove_dir_all(&root3);
+    }
+
+    #[test]
+    fn skill_dep_path_includes_system_dirs() {
+        let p = skill_dep_path();
+        assert!(p.contains("/usr/bin"), "skill dep path must include /usr/bin: {p}");
+        // /bin/sh exists on every unix → probe must find it via the dep path.
+        let res = probe_bins(&p, &["sh"]);
+        assert!(res[0].available, "sh should be found via skill_dep_path");
+    }
+
+    #[test]
+    fn probe_bins_detects_present_and_missing() {
+        let dir = unique_tmp("bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let tool = dir.join("faketool");
+        std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+
+        let path = format!("{}:/no/such/dir", dir.display());
+        let res = probe_bins(&path, &["faketool", "definitely-missing-xyz"]);
+
+        assert_eq!(res.len(), 2);
+        let found = res.iter().find(|d| d.name == "faketool").unwrap();
+        assert!(found.available);
+        assert!(found.path.is_some());
+        let missing = res.iter().find(|d| d.name == "definitely-missing-xyz").unwrap();
+        assert!(!missing.available);
+        assert!(missing.path.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

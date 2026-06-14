@@ -1,7 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal} from "lucide-react"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
@@ -14,6 +16,7 @@ import { useBrowserMCP } from "@/lib/use-browser-mcp"
 import { useChannels } from "@/lib/use-channels"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
+import { useSkillDeps, BUILTIN_DEP_MAP, missingDeps, type DepMap } from "@/lib/use-skill-deps"
 import { useWorkspace } from "@/lib/workspace-context"
 import { Button } from "@/components/ui/button"
 import {
@@ -1858,49 +1861,66 @@ const SKILL_GROUP_ICONS: Record<SkillSource, typeof Terminal> = {
   skill: Sparkles,
 }
 
-const SKILL_GROUP_LABELS: Record<SkillSource, string> = {
-  command: "skills.group.command",
-  mcp: "skills.group.mcp",
-  skill: "skills.group.skill",
-}
-
 const SOURCE_BADGE_COLORS: Record<SkillSource, string> = {
   command: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
   mcp: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
   skill: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 }
 
+// Curated, permissively-licensed (Apache-2.0) community skills the user can
+// install on demand via the built-in skill-installer. Keep this list to
+// known-good, non-proprietary sources only.
+const INSTALLABLE_SKILLS: { name: string; descKey: string; repo: string; path: string }[] = [
+  { name: "mcp-builder", descKey: "skills.catalog.mcpBuilder", repo: "anthropics/skills", path: "skills/mcp-builder" },
+  { name: "webapp-testing", descKey: "skills.catalog.webappTesting", repo: "anthropics/skills", path: "skills/webapp-testing" },
+  { name: "frontend-design", descKey: "skills.catalog.frontendDesign", repo: "anthropics/skills", path: "skills/frontend-design" },
+  { name: "algorithmic-art", descKey: "skills.catalog.algorithmicArt", repo: "anthropics/skills", path: "skills/algorithmic-art" },
+]
+
+function matchesQuery(name: string, description: string, q: string) {
+  const s = q.toLowerCase()
+  return name.toLowerCase().includes(s) || description.toLowerCase().includes(s)
+}
+
 function SkillsSection() {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const {
-    groups, loading, error, totalCount,
+    allItems, loading, error, totalCount,
     skillsConfig, refresh, updateSkillsConfig,
   } = useSkills()
+  const { deps, loading: depsLoading } = useSkillDeps()
   const [searchQuery, setSearchQuery] = useState("")
   const [refreshing, setRefreshing] = useState(false)
   const [newPath, setNewPath] = useState("")
   const [newUrl, setNewUrl] = useState("")
+  const [tab, setTab] = useState<"builtin" | "installable" | "custom">("builtin")
+  const [sourcesOpen, setSourcesOpen] = useState(false)
 
   const onRefresh = async () => {
     setRefreshing(true)
     try { await refresh() } finally { setRefreshing(false) }
   }
 
-  // Filter items by search query
-  const filteredGroups = searchQuery.trim()
-    ? groups
-        .map((group) => ({
-          ...group,
-          items: group.items.filter(
-            (item) =>
-              item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              item.description.toLowerCase().includes(searchQuery.toLowerCase())
-          ),
-        }))
-        .filter((group) => group.items.length > 0)
-    : groups
+  const q = searchQuery.trim()
+  // Zone 1: built-in skills (shipped with ultrawork). Zone 3: everything else
+  // discovered from the user's own paths/urls/config.
+  const builtinItems = allItems
+    .filter((i) => i.builtin)
+    .filter((i) => !q || matchesQuery(i.name, i.description, q))
+  const customItems = allItems
+    .filter((i) => !i.builtin)
+    .filter((i) => !q || matchesQuery(i.name, i.description, q))
+  const installedNames = new Set(allItems.map((i) => i.name))
+  const catalogItems = INSTALLABLE_SKILLS
+    .filter((s) => !q || matchesQuery(s.name, t(s.descKey), q))
 
-  const filteredCount = filteredGroups.reduce((sum, g) => sum + g.items.length, 0)
+  // Install a curated skill by handing the request to the built-in skill-installer
+  // in a fresh chat (avoids reimplementing git/auth in the shell).
+  const handleInstall = (s: { name: string; repo: string; path: string }) => {
+    const prompt = t("skills.installPrompt", { name: s.name, repo: s.repo, path: s.path })
+    navigate("/", { state: { initialInput: prompt } })
+  }
 
   const handleAddPath = () => {
     const trimmed = newPath.trim()
@@ -1926,10 +1946,17 @@ function SkillsSection() {
     updateSkillsConfig({ urls: skillsConfig.urls.filter((u) => u !== url) })
   }
 
+  const tabEmptyHint = (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-10">
+      <Search className="size-7 text-[var(--color-fg-muted)]" />
+      <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{t("skills.noSearchResults")}</p>
+    </div>
+  )
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+    <div className="space-y-5">
+      {/* Header: title + count | 来源管理 + 刷新 */}
+      <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("skills.settingsTitle")}</h2>
@@ -1941,10 +1968,16 @@ function SkillsSection() {
           </div>
           <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("skills.settingsDescription")}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
-          <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
-          {t("workspace.refresh")}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
+            <SlidersHorizontal className="mr-1.5 size-3.5" />
+            {t("skills.manageSources")}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+            {t("workspace.refresh")}
+          </Button>
+        </div>
       </div>
 
       {/* Search */}
@@ -1983,45 +2016,110 @@ function SkillsSection() {
         </div>
       )}
 
-      {/* No search results */}
-      {!loading && !error && totalCount > 0 && searchQuery.trim() && filteredCount === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12">
-          <Search className="size-8 text-[var(--color-fg-muted)]" />
-          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("skills.noSearchResults")}</p>
-        </div>
-      )}
+      {/* Tabs: 内置 / 推荐安装 / 自定义 */}
+      {!loading && !error && totalCount > 0 && (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+          <TabsList className="w-full justify-start">
+            <TabsTrigger value="builtin" className="gap-1.5">
+              <Package className="size-3.5" />
+              {t("skills.zone.builtin")}
+              <span className="text-xs opacity-60">{builtinItems.length}</span>
+            </TabsTrigger>
+            <TabsTrigger value="installable" className="gap-1.5">
+              <Download className="size-3.5" />
+              {t("skills.zone.installable")}
+              <span className="text-xs opacity-60">{catalogItems.length}</span>
+            </TabsTrigger>
+            <TabsTrigger value="custom" className="gap-1.5">
+              <Wrench className="size-3.5" />
+              {t("skills.zone.custom")}
+              <span className="text-xs opacity-60">{customItems.length}</span>
+            </TabsTrigger>
+          </TabsList>
 
-      {/* Grouped skill list */}
-      {!loading && !error && filteredGroups.length > 0 && (
-        <div className="space-y-6">
-          {filteredGroups.map((group) => {
-            const Icon = SKILL_GROUP_ICONS[group.key]
-            return (
-              <div key={group.key} className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
-                  <Icon className="size-4" />
-                  <span>{t(SKILL_GROUP_LABELS[group.key])}</span>
-                  <span className="text-xs text-[var(--color-fg-muted)]">({group.items.length})</span>
-                </div>
-                <div className="space-y-2">
-                  {group.items.map((item) => (
-                    <SettingsSkillCard key={item.name} item={item} />
-                  ))}
-                </div>
+          {/* 内置 */}
+          <TabsContent value="builtin" className="space-y-2">
+            <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.zone.builtinNote")}</p>
+            {builtinItems.length > 0
+              ? builtinItems.map((item) => (
+                  <SettingsSkillCard
+                    key={item.name}
+                    item={item}
+                    depBadge={<DepBadge skillName={item.name} deps={deps} loading={depsLoading} />}
+                  />
+                ))
+              : tabEmptyHint}
+          </TabsContent>
+
+          {/* 推荐安装 */}
+          <TabsContent value="installable" className="space-y-2">
+            <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.zone.installableNote")}</p>
+            {catalogItems.length > 0
+              ? catalogItems.map((s) => {
+                  const installed = installedNames.has(s.name)
+                  return (
+                    <div key={s.name} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+                      <div className="flex items-start gap-3">
+                        <Sparkles className="mt-0.5 size-4 shrink-0 text-[var(--color-fg-muted)]" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-[var(--color-fg)]">{s.name}</span>
+                            <a
+                              href={`https://github.com/${s.repo}/tree/main/${s.path}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+                            >
+                              <ExternalLink className="size-3" />
+                            </a>
+                          </div>
+                          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t(s.descKey)}</p>
+                        </div>
+                        {installed ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+                            <CheckCircle2 className="size-3" />
+                            {t("skills.installed")}
+                          </span>
+                        ) : (
+                          <Button variant="outline" size="sm" className="shrink-0" onClick={() => handleInstall(s)}>
+                            <Download className="mr-1 size-3.5" />
+                            {t("skills.install")}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              : tabEmptyHint}
+          </TabsContent>
+
+          {/* 自定义 */}
+          <TabsContent value="custom" className="space-y-2">
+            {customItems.length > 0 ? (
+              customItems.map((item) => <SettingsSkillCard key={item.name} item={item} />)
+            ) : (
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-10">
+                <Wrench className="size-7 text-[var(--color-fg-muted)]" />
+                <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{t("skills.customEmpty")}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => setSourcesOpen(true)}>
+                  <SlidersHorizontal className="mr-1.5 size-3.5" />
+                  {t("skills.manageSources")}
+                </Button>
               </div>
-            )
-          })}
-        </div>
+            )}
+          </TabsContent>
+        </Tabs>
       )}
 
-      {/* Skills configuration */}
-      {!loading && !error && (
-        <>
-          <div className="border-t border-[var(--color-border)]" />
+      {/* 来源管理 dialog: paths/urls config (moved out of the bottom flow) */}
+      <Dialog open={sourcesOpen} onOpenChange={setSourcesOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("skills.configTitle")}</DialogTitle>
+            <DialogDescription>{t("skills.configNote")}</DialogDescription>
+          </DialogHeader>
 
           <div className="space-y-6">
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("skills.configTitle")}</h3>
-
             {/* Paths */}
             <div className="space-y-3">
               <div>
@@ -2093,17 +2191,65 @@ function SkillsSection() {
                 </Button>
               </div>
             </div>
-
-            {/* Note */}
-            <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.configNote")}</p>
           </div>
-        </>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function SettingsSkillCard({ item }: { item: SkillItem }) {
+// Install-guidance hints shown when a dependency is missing.
+const DEP_HINTS: Record<string, string> = {
+  python3: "python.org / brew install python",
+  node: "nodejs.org / brew install node",
+  pandoc: "brew install pandoc",
+  soffice: "LibreOffice",
+  pdftoppm: "brew install poppler",
+  git: "git-scm.com / brew install git",
+  "markdown-exporter": "pip install md-exporter",
+}
+
+function DepBadge({ skillName, deps, loading }: { skillName: string; deps: DepMap; loading: boolean }) {
+  const { t } = useI18n()
+  const required = BUILTIN_DEP_MAP[skillName]
+  if (!required) return null
+  if (required.length === 0) {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]">
+        {t("skills.depNone")}
+      </span>
+    )
+  }
+  if (loading) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]">
+        <Loader2 className="size-3 animate-spin" />
+        {t("skills.depChecking")}
+      </span>
+    )
+  }
+  const missing = missingDeps(skillName, deps)
+  if (missing.length === 0) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+        <CheckCircle2 className="size-3" />
+        {t("skills.depReady")}
+      </span>
+    )
+  }
+  const hint = missing.map((m) => DEP_HINTS[m] ?? m).join("; ")
+  return (
+    <span
+      title={`${t("skills.depMissingHint")}: ${hint}`}
+      className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+    >
+      <AlertTriangle className="size-3" />
+      {t("skills.depMissing")}: {missing.join(", ")}
+    </span>
+  )
+}
+
+function SettingsSkillCard({ item, depBadge }: { item: SkillItem; depBadge?: ReactNode }) {
   const { t } = useI18n()
   const Icon = SKILL_GROUP_ICONS[item.source]
 
@@ -2112,11 +2258,12 @@ function SettingsSkillCard({ item }: { item: SkillItem }) {
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-fg-muted)]" />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-[var(--color-fg)]">/{item.name}</span>
             <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", SOURCE_BADGE_COLORS[item.source])}>
               {t(`skills.source.${item.source}`)}
             </span>
+            {depBadge}
           </div>
           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{item.description}</p>
           {item.location && (

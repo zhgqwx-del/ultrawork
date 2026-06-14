@@ -1,0 +1,1 @@
+Derived from bowenliang123/md_exporter (Apache-2.0). Markdown -> DOCX/PPTX/XLSX/PDF/etc. Distributed as the PyPI package `md-exporter` (CLI `markdown-exporter`); only SKILL.md + LICENSE are bundled — the tool itself is installed on demand via `pip install md-exporter` (see SKILL.md / dependency badges).
