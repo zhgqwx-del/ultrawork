@@ -73,6 +73,12 @@ export function useSessionMessages(
   const optionsRef = useRef(options)
   optionsRef.current = options
   const prefetchUntilRef = useRef(0)
+  // Home→Session optimistic-send safety timer. Fires once if the navigated send
+  // never produces a turn; MUST be cancelled the moment real SSE activity proves
+  // the turn is live, otherwise it force-clears `sending` mid-turn at 8s and any
+  // turn longer than that flips to a false "completed" state (collapsed flow +
+  // footer) during model-thinking gaps.
+  const navSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // --- Windowed display messages ---
   const displayMessages = useMemo(() => {
@@ -128,7 +134,10 @@ export function useSessionMessages(
       }
     }
 
-    // 8-second safety timeout for Home→Session navigation
+    // 8-second safety timeout for Home→Session navigation. Only a fallback for
+    // "the optimistic send never produced a turn" — cancelled by the SSE handler
+    // on the first real activity (see navSafetyTimerRef). Without that cancel it
+    // would fire mid-turn and cause the false-complete described above.
     if (isSendingFromNav && sessionId) {
       const sid = sessionId
       const timer = setTimeout(() => {
@@ -138,7 +147,8 @@ export function useSessionMessages(
           markSessionIdle(sid)
         }
       }, 8000)
-      return () => clearTimeout(timer)
+      navSafetyTimerRef.current = timer
+      return () => { clearTimeout(timer); navSafetyTimerRef.current = null }
     }
   }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -270,6 +280,12 @@ export function useSessionMessages(
 
       // Block message events from stopped or frozen interactions
       if (event.type.startsWith("message.")) {
+        // Real turn activity → the optimistic send produced a turn; cancel the
+        // Home→Session safety timer so it can't force-clear `sending` mid-turn.
+        if (navSafetyTimerRef.current) {
+          clearTimeout(navSafetyTimerRef.current)
+          navSafetyTimerRef.current = null
+        }
         if (stoppedRef.current) return
         const p = event.properties as Record<string, any>
         const msgId: string | undefined = p.messageID || p.part?.messageID || p.info?.id
@@ -363,11 +379,17 @@ export function useSessionMessages(
               m.info.id === info.id ? { ...m, info: { ...m.info, ...info } } : m
             )
           )
-          if (info.role === "assistant" && info.finish) {
+          // A "tool-calls" finish ends only the current STEP, not the turn —
+          // opencode's tool-calling loop continues with another assistant
+          // message. Clearing `sending` here would drop sessionActive between
+          // steps, making the turn briefly render as done (green check +
+          // collapsed flow + footer) during the gap before the next step
+          // streams. Only a terminal finish (stop/length/…) ends the turn.
+          if (info.role === "assistant" && info.finish && info.finish !== "tool-calls") {
             setSending(false)
             // Backends without session.status events (ACP) signal idle via
             // the terminal finish — clear the sidebar activity marker here.
-            if (!capabilities.sessionStatus && info.finish !== "tool-calls") {
+            if (!capabilities.sessionStatus) {
               sendingRef.current = false
               if (sessionId) markSessionIdle(sessionId)
             }

@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react"
+import { memo, useMemo, useState, useEffect } from "react"
 import { XCircle } from "lucide-react"
 import type { SendMessageResponse, MessageInfo, MessagePart, ToolPart, FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
@@ -179,6 +179,30 @@ export function buildTurnModel(messages: SendMessageResponse[], isStreaming: boo
   }
 }
 
+// opencode emits trailing/duplicate SSE events around a turn's terminal
+// `finish` (a late message.part.updated can re-set streamingMessageId, a
+// duplicate finish re-fires) which makes `isStreaming` flicker false→true→false
+// for a few hundred ms at step/turn boundaries. Reacting to that flicker
+// directly flashes the "done" appearance (green check + collapsed flow + stats
+// footer) mid-turn — the "假完成/突变" report. Stabilize it: become "streaming"
+// immediately, but only drop to "settled" after streaming has stayed false for
+// SETTLE_MS continuously. A brief flip back to true clears the pending timer, so
+// transient dips never collapse the flow. The real end (streaming stays false)
+// settles after one short beat.
+export const SETTLE_MS = 600
+export function useStableStreaming(streaming: boolean): boolean {
+  const [stable, setStable] = useState(streaming)
+  useEffect(() => {
+    if (streaming) {
+      setStable(true)
+      return
+    }
+    const id = setTimeout(() => setStable(false), SETTLE_MS)
+    return () => clearTimeout(id)
+  }, [streaming])
+  return stable
+}
+
 export const AssistantTurn = memo(function AssistantTurn({
   messages,
   isStreaming = false,
@@ -186,6 +210,10 @@ export const AssistantTurn = memo(function AssistantTurn({
   onArtifactClick,
 }: AssistantTurnProps) {
   const { t } = useI18n()
+  // Debounced streaming flag drives the "done" visuals (footer / collapse /
+  // typing dots) so a sub-second SSE flicker can't flash a premature completed
+  // state. Duration/token math still uses the raw flag (values, not appearance).
+  const streaming = useStableStreaming(isStreaming)
   const model = useMemo(() => buildTurnModel(messages, isStreaming), [messages, isStreaming])
 
   const hasAnswerText = model.answer.some((p) => p.type === "text" && (p as { text?: string }).text?.trim())
@@ -194,7 +222,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   // has finished (mirrors the per-step stats line of the pre-execution-flow UI).
   const totalTokens = model.tokens.input + model.tokens.output + model.tokens.reasoning
   const footerItems: string[] = []
-  if (!isStreaming && (totalTokens > 0 || model.completedAt != null)) {
+  if (!streaming && (totalTokens > 0 || model.completedAt != null)) {
     if (model.completedAt != null) footerItems.push(new Date(model.completedAt).toLocaleString())
     footerItems.push(`${t("message.tokensInput")}: ${fmtTok(model.tokens.input)}`)
     footerItems.push(`${t("message.tokensOutput")}: ${fmtTok(model.tokens.output)}`)
@@ -215,7 +243,7 @@ export const AssistantTurn = memo(function AssistantTurn({
           cost={model.cost}
           durationMs={model.durationMs}
           startedAt={model.startedAt}
-          isStreaming={isStreaming}
+          isStreaming={streaming}
           hasError={model.hasError}
           isStopped={isStopped}
           onArtifactClick={onArtifactClick}
@@ -238,7 +266,7 @@ export const AssistantTurn = memo(function AssistantTurn({
         })}
       </div>
 
-      {!isStreaming && model.errorText && (
+      {!streaming && model.errorText && (
         <div className="mt-1 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-400">
           <XCircle className="mt-0.5 size-3.5 shrink-0" />
           <div className="min-w-0">
@@ -248,7 +276,7 @@ export const AssistantTurn = memo(function AssistantTurn({
         </div>
       )}
 
-      {isStreaming && !hasAnswerText && (
+      {streaming && !hasAnswerText && (
         <div className="flex items-center gap-2 py-2">
           <div className="flex items-center gap-1">
             <span className="inline-block size-2 animate-pulse rounded-full bg-[var(--color-primary)]" />
