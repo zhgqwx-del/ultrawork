@@ -142,7 +142,7 @@ export function ChatInput({
         )}
         rows={variant === "home" ? 2 : 1}
         style={{
-          minHeight: variant === "home" ? "48px" : "20px",
+          minHeight: variant === "home" ? "48px" : "44px",
           maxHeight: variant === "home" ? "200px" : "120px",
           overflow: "auto",
         }}
