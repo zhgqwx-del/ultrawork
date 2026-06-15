@@ -495,26 +495,11 @@ function SessionItem({
         isActive
           ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
           : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent-hover)] hover:text-[var(--sidebar-fg)]",
-        isPinned && "border-l-2 border-[var(--color-primary)]"
+        isPinned && "border-l-[3px] border-[var(--color-primary)]"
       )}
     >
-      {/* Pin/Star icon */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onTogglePin()
-        }}
-        className={cn(
-          "flex size-4 shrink-0 items-center justify-center transition-opacity",
-          isPinned
-            ? "text-[var(--color-primary)] opacity-100"
-            : "opacity-0 group-hover:opacity-60 hover:opacity-100"
-        )}
-        aria-label={isPinned ? t("session.unpin") : t("session.pin")}
-      >
-        <Star className={cn("size-3.5", isPinned && "fill-current")} />
-      </button>
-
+      {/* Pin status is shown via the left accent bar (border-l) + top sorting;
+          the pin/unpin action lives in the three-dot menu below. */}
       <StatusIcon />
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5">

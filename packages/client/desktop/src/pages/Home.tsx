@@ -219,10 +219,12 @@ export function HomePage() {
                 onClick={() => handleCardClick(card.promptKey)}
                 className="flex flex-col items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 text-left transition-all hover:border-[var(--color-brand)] hover:shadow-sm"
               >
-                <card.icon className="size-5 text-[var(--color-brand)]" />
-                <span className="text-sm font-medium text-[var(--color-fg)]">
-                  {t(card.titleKey)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <card.icon className="size-5 shrink-0 text-[var(--color-brand)]" />
+                  <span className="text-sm font-medium text-[var(--color-fg)]">
+                    {t(card.titleKey)}
+                  </span>
+                </div>
                 <span className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
                   {t(card.descKey)}
                 </span>
