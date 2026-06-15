@@ -512,7 +512,14 @@ function SessionItem({
               {t("team.badge")}
             </span>
           )}
-          <span className="truncate">{title}</span>
+          <span
+            className={cn(
+              "truncate",
+              !isActive && "text-[var(--sidebar-fg-soft)] group-hover:text-[var(--sidebar-fg)]"
+            )}
+          >
+            {title}
+          </span>
         </p>
         <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>

@@ -26,7 +26,11 @@
   /* Sidebar — subtle recessed gray so the main card floats above it */
   --sidebar-bg: #f6f7f9;
   --sidebar-fg: #0f172a;
-  --sidebar-fg-muted: rgba(15, 23, 42, 0.55);
+  /* Primary list text (session titles): readable by default, not washed out.
+     --sidebar-fg-muted stays reserved for genuinely secondary chrome
+     (group labels, timestamps, idle icons). */
+  --sidebar-fg-soft: rgba(15, 23, 42, 0.88);
+  --sidebar-fg-muted: rgba(15, 23, 42, 0.62);
   --sidebar-accent: rgba(15, 23, 42, 0.07);
   --sidebar-accent-hover: rgba(15, 23, 42, 0.045);
   --sidebar-border: #e2e8f0;
@@ -62,7 +66,8 @@
 
   --sidebar-bg: #000000;
   --sidebar-fg: #f1f5f9;
-  --sidebar-fg-muted: rgba(241, 245, 249, 0.55);
+  --sidebar-fg-soft: rgba(241, 245, 249, 0.82);
+  --sidebar-fg-muted: rgba(241, 245, 249, 0.60);
   --sidebar-accent: rgba(241, 245, 249, 0.09);
   --sidebar-accent-hover: rgba(241, 245, 249, 0.06);
   --sidebar-border: #26272b;
