@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -502,9 +502,91 @@ fn get_node_path() -> Result<NodeInfo, String> {
     detect_system_node().ok_or_else(|| "No Node.js available (embedded not set up, system not found)".to_string())
 }
 
-/// Build a rich PATH that includes common Node.js install locations.
-/// Fallback for when embedded Node.js is not available.
+/// Extract the PATH captured between our sentinel markers in shell output.
+/// The login shell may print rc-file banners/echoes; the sentinel isolates
+/// the real `$PATH` from that noise. Returns None if markers are absent.
+fn extract_sentinel(out: &str) -> Option<String> {
+    let start = out.find("___UWPATH[")? + "___UWPATH[".len();
+    let rest = &out[start..];
+    let end = rest.find("]UWPATH___")?;
+    let inner = rest[..end].trim();
+    if inner.is_empty() { None } else { Some(inner.to_string()) }
+}
+
+/// Merge two PATH strings (`:`-separated), preserving order and de-duplicating.
+/// Entries from `primary` win placement (login shell PATH first), then any new
+/// entries from `secondary`. Empty segments are skipped.
+fn merge_paths(primary: &str, secondary: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in primary.split(':').chain(secondary.split(':')) {
+        if seg.is_empty() {
+            continue;
+        }
+        if seen.insert(seg) {
+            parts.push(seg);
+        }
+    }
+    parts.join(":")
+}
+
+/// Capture the full PATH from the user's real login shell.
+///
+/// GUI-launched (Finder/launchd) apps inherit a minimal PATH that does not
+/// source shell rc files, so tools installed in custom bundle dirs
+/// (`~/.hermes-bundle/wrapper`, `~/.qoder/bin`, …) are invisible. We run the
+/// login+interactive shell, which sources `.zprofile`/`.zshrc` (where users
+/// export PATH), and read its `$PATH` back. Wrapped in a sentinel to survive
+/// rc-file noise; hard 5s timeout so a hanging/interactive rc can never block
+/// startup (on failure `rich_path` falls back to `rich_path_base`, never worse).
+#[cfg(unix)]
+fn login_shell_path() -> Option<String> {
+    if std::env::var("ULTRAWORK_SKIP_LOGIN_SHELL_PATH").is_ok() {
+        return None;
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // -l: login (source .zprofile), -i: interactive (source .zshrc), -c: run.
+    let mut child = Command::new(&shell)
+        .args(["-lic", "printf '___UWPATH[%s]UWPATH___' \"$PATH\""])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let out = rx.recv_timeout(Duration::from_secs(5)).ok();
+    // Best-effort: don't let a slow/hung shell linger.
+    let _ = child.kill();
+    let _ = child.wait();
+    extract_sentinel(&out?)
+}
+
+#[cfg(not(unix))]
+fn login_shell_path() -> Option<String> {
+    None
+}
+
+/// Build a rich PATH for spawning sidecars / external agents.
+///
+/// GUI-launched apps get a minimal PATH (see [`login_shell_path`]). We prefer
+/// the user's real login-shell PATH (covers arbitrary custom install dirs),
+/// then merge in hard-coded Node.js locations as a fallback for environments
+/// where the login shell is unavailable or doesn't export those. Memoized —
+/// the login shell is invoked at most once per process.
 fn rich_path() -> String {
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE.get_or_init(compute_rich_path).clone()
+}
+
+/// Hard-coded portion of [`rich_path`]: common Node.js install locations plus
+/// the inherited PATH. Used directly when the login shell is unavailable.
+fn rich_path_base() -> String {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     let home = home.to_string_lossy();
     let current = std::env::var("PATH").unwrap_or_default();
@@ -551,6 +633,14 @@ fn rich_path() -> String {
     parts.extend(extras);
     parts.push(current);
     parts.join(":")
+}
+
+fn compute_rich_path() -> String {
+    let base = rich_path_base();
+    match login_shell_path() {
+        Some(login) => merge_paths(&login, &base),
+        None => base,
+    }
 }
 
 /// Detect system Node.js ≥v18 (fallback when embedded is unavailable).
@@ -1659,6 +1749,44 @@ mod builtin_skills_tests {
         // /bin/sh exists on every unix → probe must find it via the dep path.
         let res = probe_bins(&p, &["sh"]);
         assert!(res[0].available, "sh should be found via skill_dep_path");
+    }
+
+    #[test]
+    fn extract_sentinel_handles_normal_noise_and_missing() {
+        // normal
+        assert_eq!(
+            extract_sentinel("___UWPATH[/a/bin:/b/bin]UWPATH___").as_deref(),
+            Some("/a/bin:/b/bin")
+        );
+        // surrounded by rc-file banner noise
+        assert_eq!(
+            extract_sentinel("Welcome!\nfoo\n___UWPATH[/x:/y]UWPATH___\ntrailing").as_deref(),
+            Some("/x:/y")
+        );
+        // whitespace inside is trimmed
+        assert_eq!(
+            extract_sentinel("___UWPATH[  /p:/q  ]UWPATH___").as_deref(),
+            Some("/p:/q")
+        );
+        // markers absent → None
+        assert!(extract_sentinel("no markers here").is_none());
+        // empty content → None
+        assert!(extract_sentinel("___UWPATH[]UWPATH___").is_none());
+        assert!(extract_sentinel("___UWPATH[   ]UWPATH___").is_none());
+    }
+
+    #[test]
+    fn merge_paths_dedups_preserves_order_and_prefers_primary() {
+        // primary entries come first, in order
+        assert_eq!(merge_paths("/a:/b", "/c:/d"), "/a:/b:/c:/d");
+        // duplicates from secondary are dropped, primary placement wins
+        assert_eq!(merge_paths("/a:/b", "/b:/c:/a"), "/a:/b:/c");
+        // empty segments skipped (trailing colon, double colon)
+        assert_eq!(merge_paths("/a::/b:", ":/c::"), "/a:/b:/c");
+        // empty primary falls through to secondary
+        assert_eq!(merge_paths("", "/c:/d"), "/c:/d");
+        // intra-primary dedup
+        assert_eq!(merge_paths("/a:/a:/b", ""), "/a:/b");
     }
 
     #[test]
