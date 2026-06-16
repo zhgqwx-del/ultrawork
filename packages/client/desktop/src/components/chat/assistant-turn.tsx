@@ -4,6 +4,7 @@ import type { SendMessageResponse, MessageInfo, MessagePart, ToolPart, FilePart,
 import type { Artifact } from "@/components/session/artifact-preview"
 import { MarkdownContent, FileBlock, PatchBlock } from "./message-parts"
 import { ExecutionFlow } from "./execution-flow"
+import { CopyButton } from "./copy-button"
 import { useI18n } from "@/lib/i18n-context"
 
 /** Human-readable text for a message-level error (provider APIError / moderation
@@ -217,6 +218,13 @@ export const AssistantTurn = memo(function AssistantTurn({
   const model = useMemo(() => buildTurnModel(messages, isStreaming), [messages, isStreaming])
 
   const hasAnswerText = model.answer.some((p) => p.type === "text" && (p as { text?: string }).text?.trim())
+  // Raw markdown of the final answer only (excludes the execution flow / tool
+  // narration) — what the copy affordance writes to the clipboard.
+  const answerText = model.answer
+    .filter((p) => p.type === "text")
+    .map((p) => (p as { text?: string }).text || "")
+    .join("\n\n")
+    .trim()
 
   // Turn footer: timestamp · tokens · cache · cost · model — shown once the turn
   // has finished (mirrors the per-step stats line of the pre-execution-flow UI).
@@ -234,7 +242,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   }
 
   return (
-    <div className="py-3">
+    <div className="group py-3">
       {model.visibleProcessCount > 0 && (
         <ExecutionFlow
           parts={model.process}
@@ -265,6 +273,17 @@ export const AssistantTurn = memo(function AssistantTurn({
           }
         })}
       </div>
+
+      {!streaming && answerText && (
+        <div className="mt-0.5 flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <CopyButton
+            text={answerText}
+            ariaLabel={t("message.copyAnswer")}
+            className="rounded p-1.5 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+            iconClassName="size-3.5"
+          />
+        </div>
+      )}
 
       {!streaming && model.errorText && (
         <div className="mt-1 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-400">

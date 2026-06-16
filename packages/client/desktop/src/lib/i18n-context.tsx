@@ -281,6 +281,8 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noSteps": "No steps yet",
     "message.aiTyping": "AI is typing...",
     "message.turnError": "Turn failed:",
+    "message.copyAnswer": "Copy answer",
+    "message.copyMessage": "Copy message",
     "message.loadingMessages": "Loading messages...",
     "message.loadEarlier": "Load earlier messages",
 
@@ -875,6 +877,8 @@ const translations: Record<Language, Record<string, string>> = {
     "message.noSteps": "暂无步骤",
     "message.aiTyping": "AI 正在输入...",
     "message.turnError": "回合出错：",
+    "message.copyAnswer": "复制回答",
+    "message.copyMessage": "复制消息",
     "message.loadingMessages": "加载消息中...",
     "message.loadEarlier": "加载更早消息",
 
