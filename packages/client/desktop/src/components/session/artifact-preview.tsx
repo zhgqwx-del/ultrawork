@@ -53,8 +53,8 @@ function DiffView({ content }: { content: string }) {
     <pre className="overflow-x-auto p-4 font-mono text-sm">
       {lines.map((line, i) => {
         let cls = "text-[var(--color-fg)]"
-        if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-green-600 bg-green-500/10"
-        else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-red-600 bg-red-500/10"
+        if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-green-600 bg-green-500/10 dark:text-green-400"
+        else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-red-600 bg-red-500/10 dark:text-red-400"
         else if (line.startsWith("@@")) cls = "text-blue-500 bg-blue-500/10"
         return (
           <div key={i} className={cn(cls, "flex")}>
