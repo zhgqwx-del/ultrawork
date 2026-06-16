@@ -19,7 +19,7 @@
   /* Brand */
   --color-brand: #ea580c;
   --color-brand-fg: #ffffff;
-  --color-brand-gradient: linear-gradient(135deg, #7c3aed, #2563eb);
+  --color-brand-gradient: linear-gradient(135deg, #fb923c, #ea580c);
   --color-bg-subtle: #f8fafc;
   --color-bg-secondary: #f1f5f9;
 
@@ -45,32 +45,35 @@
 
 /* Dark mode colors */
 .dark {
-  --color-bg: #121214;
+  /* Neutral (zinc) elevation ramp — no blue tint mixed in:
+     main well #0a0a0b < sidebar #151517 < popover/subtle #1c1c1f
+     < border #27272a < panels #232327. Sidebar floats above the well. */
+  --color-bg: #0a0a0b;
   --color-fg: #f1f5f9;
-  --color-fg-muted: #94a3b8;
-  --color-border: #26272b;
-  --color-accent: #1e293b;
+  --color-fg-muted: #a1a1aa;
+  --color-border: #27272a;
+  --color-accent: #232327;
   --color-accent-fg: #f1f5f9;
   --color-primary: #3b82f6;
   --color-primary-fg: #ffffff;
   --color-destructive: #ef4444;
   --color-destructive-fg: #ffffff;
-  --color-muted: #1e293b;
-  --color-muted-fg: #94a3b8;
+  --color-muted: #232327;
+  --color-muted-fg: #a1a1aa;
 
   --color-brand: #ea580c;
   --color-brand-fg: #ffffff;
-  --color-brand-gradient: linear-gradient(135deg, #7c3aed, #2563eb);
-  --color-bg-subtle: #1e293b;
-  --color-bg-secondary: #1e293b;
+  --color-brand-gradient: linear-gradient(135deg, #fb923c, #ea580c);
+  --color-bg-subtle: #1c1c1f;
+  --color-bg-secondary: #232327;
 
-  --sidebar-bg: #000000;
+  --sidebar-bg: #151517;
   --sidebar-fg: #f1f5f9;
   --sidebar-fg-soft: rgba(241, 245, 249, 0.82);
   --sidebar-fg-muted: rgba(241, 245, 249, 0.60);
   --sidebar-accent: rgba(241, 245, 249, 0.09);
   --sidebar-accent-hover: rgba(241, 245, 249, 0.06);
-  --sidebar-border: #26272b;
+  --sidebar-border: #27272a;
 
   --color-popover: #1c1c1f;
   --color-popover-fg: #f1f5f9;
