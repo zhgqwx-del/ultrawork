@@ -121,6 +121,10 @@ export function SessionPage() {
 
   // --- UI handlers ---
   const workspaceRefreshKey = toolCompletionCount
+  // Legacy Team Leader sessions may be absent from SessionsContext (so `session`
+  // is undefined); the team registry still knows the workspace. Fall back to it
+  // so the workspace tree, artifacts scan, and preview all resolve paths.
+  const workspaceDir = session?.directory ?? teamEntry?.workspace
 
   const handleSend = () => {
     if (!input.trim()) return
@@ -272,7 +276,7 @@ export function SessionPage() {
       {/* Artifact Preview (right, 50% when active) */}
       {selectedArtifact && (
         <div className="w-1/2 shrink-0 overflow-hidden border-l border-[var(--color-border)]">
-          <ArtifactPreview artifact={selectedArtifact} directory={session?.directory} onClose={handleClosePreview} />
+          <ArtifactPreview artifact={selectedArtifact} directory={workspaceDir} onClose={handleClosePreview} />
         </div>
       )}
 
@@ -285,12 +289,13 @@ export function SessionPage() {
               <ProgressPanel messages={allMessages} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.workspace")}>
-              <WorkspacePanel directory={session?.directory} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
+              <WorkspacePanel directory={workspaceDir} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
               <ArtifactsPanel
                 messages={allMessages}
-                directory={session?.directory}
+                directory={workspaceDir}
+                active={isAgentActive}
                 onArtifactClick={handleArtifactClick}
                 selectedPath={selectedArtifact?.path}
               />

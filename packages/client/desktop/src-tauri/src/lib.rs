@@ -236,6 +236,22 @@ fn open_file_with_system(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a file's raw bytes for in-app preview (e.g. pdf.js). Returns the bytes
+/// as an IPC binary response (efficient, no base64). Uses std::fs so it can read
+/// any workspace path the user opens — no plugin scope to configure, which is the
+/// whole reason for preferring this over tauri-plugin-fs for arbitrary roots.
+// async so Tauri runs it off the main/UI thread — a multi-MB PDF read must not
+// block the webview while `std::fs::read` slurps the whole file.
+#[tauri::command]
+async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err(format!("File not found: {}", path));
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Reveal a file in Finder (macOS). Uses `open -R` which highlights the file in its folder.
 #[tauri::command]
 fn reveal_file_in_finder(path: String) -> Result<(), String> {
@@ -487,6 +503,141 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         }
     }
     Ok(())
+}
+
+// ── Workspace artifact scanning (mtime-based) ──────────────────────
+// Surfaces files actually produced during a session — including bash/script
+// side-effects the tool-call transcript never names — by walking the session
+// directory for entries modified at/after a baseline timestamp. Pairs with the
+// desktop artifacts panel's tool-call detection (filesystem truth, not intent).
+
+/// Directory names skipped wholesale during artifact scanning (dotdirs are
+/// already excluded by the leading-dot check, listed here only when relevant).
+const SCAN_IGNORE_DIRS: &[&str] = &[
+    "node_modules",
+    "__pycache__",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    "target",
+];
+
+/// File extensions skipped (compiler/runtime scratch, never deliverables).
+const SCAN_IGNORE_EXTS: &[&str] = &["pyc", "pyo", "class", "o", "lock"];
+
+const SCAN_MAX_DEPTH: usize = 8;
+/// How many matches we keep/return (newest-first).
+const SCAN_MAX_FILES: usize = 500;
+/// Memory safety cap on matches collected during the walk, before sorting. Set
+/// well above SCAN_MAX_FILES so we still pick the newest 500 globally rather
+/// than stopping the walk at an arbitrary 500 (which could drop the real,
+/// most-recent deliverable). Only a pathological tree (>5000 changed files
+/// since the baseline) hits it.
+const SCAN_WALK_MAX: usize = 5000;
+/// Hard cap on directory entries examined, so a huge workspace (where few files
+/// match the baseline, forcing a full traversal) can't make the walk run
+/// unbounded. Each entry costs a `metadata()` stat; this bounds worst-case time.
+const SCAN_MAX_ENTRIES: usize = 50_000;
+
+/// Walk `root` collecting (absolute path, mtime_ms) for files modified at/after
+/// `since_ms`. Skips dotfiles/dotdirs, ignore dirs, ignore exts, symlinks.
+/// Bounded by depth, match count, and total entries examined so a huge tree can
+/// never hang the caller. Returns the newest SCAN_MAX_FILES, newest first.
+fn collect_changed_files(root: &std::path::Path, since_ms: u64) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    let mut visited: usize = 0;
+    let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = stack.pop() {
+        if out.len() >= SCAN_WALK_MAX || visited >= SCAN_MAX_ENTRIES {
+            break;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited >= SCAN_MAX_ENTRIES {
+                break;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // Hidden entries (dotfiles/dotdirs) are noise for artifacts.
+            if name.starts_with('.') {
+                continue;
+            }
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                if SCAN_IGNORE_DIRS.contains(&name.as_ref()) {
+                    continue;
+                }
+                if depth + 1 <= SCAN_MAX_DEPTH {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            // Skip symlinks and non-regular files.
+            if !file_type.is_file() {
+                continue;
+            }
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if SCAN_IGNORE_EXTS.contains(&ext.to_lowercase().as_str()) {
+                    continue;
+                }
+            }
+            let mtime_ms = match entry.metadata().ok().and_then(|m| m.modified().ok()) {
+                Some(t) => t
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                None => continue,
+            };
+            if mtime_ms >= since_ms {
+                out.push((path.to_string_lossy().to_string(), mtime_ms));
+                if out.len() >= SCAN_WALK_MAX {
+                    break;
+                }
+            }
+        }
+    }
+    // Newest first, then keep only the newest SCAN_MAX_FILES.
+    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.truncate(SCAN_MAX_FILES);
+    out
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScannedFile {
+    path: String,
+    mtime_ms: u64,
+}
+
+/// Scan a session workspace for files created/modified at/after `since_ms`
+/// (epoch millis). Returns absolute paths + mtime, newest first. Lets the
+/// artifacts panel catch outputs produced by bash/script side-effects, not just
+/// by write/edit tool calls. The caller filters by per-turn time windows so that
+/// sessions sharing a workspace don't show each other's files (mtime alone can't
+/// attribute a file to a session). An unset/invalid dir yields an empty list
+/// (not an error) so the panel degrades gracefully.
+/// async so Tauri runs the (potentially large) filesystem walk off the main/UI
+/// thread.
+#[tauri::command]
+async fn scan_workspace_changes(dir: String, since_ms: u64) -> Result<Vec<ScannedFile>, String> {
+    let root = std::path::Path::new(&dir);
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    Ok(collect_changed_files(root, since_ms)
+        .into_iter()
+        .map(|(path, mtime_ms)| ScannedFile { path, mtime_ms })
+        .collect())
 }
 
 // ── Node.js resolution (embedded first, system fallback) ───────────
@@ -1503,6 +1654,8 @@ pub fn run() {
             get_sidecar_path,
             get_sidecar_credentials,
             check_skill_dependencies,
+            scan_workspace_changes,
+            read_file_bytes,
         ])
         .setup(|app| {
             // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
@@ -1655,6 +1808,66 @@ pub fn run() {
                 shutdown_sidecars();
             }
         });
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("uw-scan-{}-{}", tag, n))
+    }
+
+    #[test]
+    fn collects_eligible_and_skips_noise() {
+        let root = unique_tmp("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::create_dir_all(root.join(".hidden")).unwrap();
+        std::fs::write(root.join("report.pdf"), "x").unwrap();
+        std::fs::write(root.join("script.py"), "x").unwrap();
+        std::fs::write(root.join("cache.pyc"), "x").unwrap();
+        std::fs::write(root.join(".secret"), "x").unwrap();
+        std::fs::write(root.join("sub/data.csv"), "x").unwrap();
+        std::fs::write(root.join("node_modules/dep.js"), "x").unwrap();
+        std::fs::write(root.join(".hidden/h.txt"), "x").unwrap();
+
+        let names: Vec<String> = collect_changed_files(&root, 0)
+            .into_iter()
+            .map(|(p, _)| p.rsplit('/').next().unwrap().to_string())
+            .collect();
+
+        assert!(names.contains(&"report.pdf".to_string()));
+        assert!(names.contains(&"script.py".to_string()));
+        assert!(names.contains(&"data.csv".to_string())); // nested dir walked
+        assert!(!names.contains(&"cache.pyc".to_string())); // ignored ext
+        assert!(!names.contains(&".secret".to_string())); // dotfile
+        assert!(!names.contains(&"dep.js".to_string())); // node_modules dir
+        assert!(!names.contains(&"h.txt".to_string())); // .hidden dir
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn since_filter_excludes_older() {
+        let root = unique_tmp("since");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "x").unwrap();
+        // Baseline far in the future → nothing qualifies.
+        let future =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 + 1_000_000;
+        assert!(collect_changed_files(&root, future).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn invalid_dir_yields_empty() {
+        // scan_workspace_changes is async (runs off the UI thread); its dir guard
+        // mirrors the helper's read_dir-failure path, tested here synchronously.
+        assert!(collect_changed_files(std::path::Path::new("/no/such/dir/xyz"), 0).is_empty());
+    }
 }
 
 #[cfg(test)]

@@ -272,6 +272,14 @@ export class DelegateManager {
       }
       if (info.cost) cost += info.cost
     }
+    // D-2 artifacts = the child's own tool-named writes (write/edit/create/patch),
+    // read from THIS child's transcript → accurate per-child. We deliberately do
+    // NOT fs-scan the workspace here: parallel members share one workspace (the
+    // documented default, see team-leader-prompt), and mtime can't attribute a
+    // file to a specific concurrent delegate, so a scan would cross-contaminate
+    // siblings' artifacts. Bash/script side-effects are surfaced instead by the
+    // desktop Leader panel's own turn-windowed scan (the member writes into the
+    // Leader's workspace during the Leader's turn).
     const artifacts = extractArtifactPaths(messages)
     return {
       deliverable,

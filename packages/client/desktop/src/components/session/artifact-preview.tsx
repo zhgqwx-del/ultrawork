@@ -11,6 +11,7 @@ import { useTheme } from "@/lib/theme-context"
 import { cn } from "@/lib/utils"
 import { extractExtension, getLanguageExtension } from "@/lib/codemirror-lang"
 import { FileIcon, isBinaryFile, getFileTypeLabel } from "@/components/ui/file-icon"
+import { PdfView } from "./pdf-view"
 
 export interface Artifact {
   type: "file" | "patch"
@@ -40,6 +41,10 @@ function isMarkdown(path: string): boolean {
 
 function isHtml(path: string): boolean {
   return /\.(html?|xhtml)$/i.test(path)
+}
+
+function isPdf(path: string): boolean {
+  return /\.pdf$/i.test(path)
 }
 
 function DiffView({ content }: { content: string }) {
@@ -141,6 +146,10 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
   const cmTheme = resolvedTheme === "dark" ? githubDark : githubLight
   const absPath = resolveAbsPath(artifact.path, directory)
   const binary = artifact.type === "file" && isBinaryFile(artifact.path)
+  // PDFs render in-app via pdf.js (PdfView reads bytes itself), so skip the text
+  // content fetch — the backend returns empty content for pdf, which would
+  // otherwise fall through to a blank "no content" state.
+  const pdf = artifact.type === "file" && isPdf(artifact.path)
 
   const cmExtensions = useMemo(() => {
     const ext = extractExtension(artifact.path)
@@ -153,17 +162,21 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
   }, [])
 
   useEffect(() => {
-    // Skip loading for binary files — we'll show the info card instead
-    if (binary) {
+    // Reset prior state up-front so a stale error/content from a previously
+    // selected artifact never bleeds into a binary/pdf view (both skip loading,
+    // and the render checks `error` before the pdf branch).
+    setError(null)
+    setContent(null)
+    setResolvedMime(artifact.mime)
+
+    // Skip loading for binary files (info card) and PDFs (pdf.js reads bytes).
+    if (binary || pdf) {
       setLoading(false)
       return
     }
 
     let cancelled = false
     setLoading(true)
-    setError(null)
-    setContent(null)
-    setResolvedMime(artifact.mime)
 
     async function load() {
       try {
@@ -191,7 +204,7 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
 
     load()
     return () => { cancelled = true }
-  }, [artifact.path, artifact.type, artifact.sessionId, artifact.mime, api, t, binary])
+  }, [artifact.path, artifact.type, artifact.sessionId, artifact.mime, api, t, binary, pdf])
 
   const handleCopy = async () => {
     if (!content) return
@@ -230,6 +243,17 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--color-fg)]" title={artifact.path}>
           {basename(artifact.path)}
         </span>
+
+        {/* Open with system app — for PDFs (Preview.app, etc.) */}
+        {pdf && (
+          <button
+            onClick={handleOpenWithApp}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+            title={t("artifact.openWithApp")}
+          >
+            <ExternalLink className="size-3" />
+          </button>
+        )}
 
         {/* Open in browser — for HTML files */}
         {artifact.type === "file" && isHtml(artifact.path) && (
@@ -290,6 +314,8 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
           <div className="flex items-center justify-center py-12 text-sm text-red-500">
             {error}
           </div>
+        ) : pdf ? (
+          <PdfView absPath={absPath} t={t} />
         ) : binary ? (
           <BinaryFileCard artifact={artifact} directory={directory} t={t} />
         ) : content === null || content === "" ? (

@@ -1,5 +1,6 @@
-import { useMemo } from "react"
-import { FileDiff } from "lucide-react"
+import { useMemo, useState, useEffect } from "react"
+import { FileDiff, ChevronRight } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
 import type { SendMessageResponse, FilePart, PatchPart, ToolPart } from "@agent/api-client"
 import type { Artifact } from "./artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
@@ -10,6 +11,8 @@ interface ArtifactsPanelProps {
   messages: SendMessageResponse[]
   /** Workspace root directory — used to convert absolute tool paths to relative */
   directory?: string
+  /** True while the agent is sending/streaming — defers the workspace scan to idle */
+  active?: boolean
   onArtifactClick?: (artifact: Artifact) => void
   selectedPath?: string
 }
@@ -161,6 +164,116 @@ export function extractArtifacts(messages: SendMessageResponse[], workspaceRoot?
   return artifacts
 }
 
+/**
+ * Merge filesystem-scanned paths (from `scan_workspace_changes`) into the
+ * tool-derived artifact list. The scan catches outputs produced by bash/script
+ * side-effects that no write/edit tool call ever named (the main reason real
+ * deliverables went missing). Reuses the same validation/dedupe/relative-path
+ * pipeline so scanned and tool-derived entries are indistinguishable downstream.
+ */
+export function mergeScannedPaths(base: Artifact[], paths: string[], workspaceRoot?: string): Artifact[] {
+  const seen = new Set(base.map((a) => a.path))
+  const merged = [...base]
+  for (const p of paths) {
+    if (!isValidArtifactPath(p, workspaceRoot)) continue
+    const rel = toRelative(p, workspaceRoot)
+    if (seen.has(rel)) continue
+    seen.add(rel)
+    merged.push({ type: "file", path: rel })
+  }
+  return merged
+}
+
+/** One file the workspace scan reported, with its mtime (epoch ms). */
+export interface ScanHit {
+  path: string
+  mtimeMs: number
+}
+
+/** Grace appended to a turn's end so a file flushed just after the turn's last
+ * message still counts as that turn's output (clock/fs-mtime skew). */
+const TURN_GRACE_MS = 5000
+
+/**
+ * Time windows (epoch ms) during which THIS session was actively running a turn.
+ * A turn opens at each user message and ends at its last assistant message's
+ * completion (+grace); the final turn stays open (Infinity) while the agent is
+ * active. Used to attribute scanned files to this session — a file written while
+ * a DIFFERENT session ran (same workspace) falls outside every window, so the
+ * panel no longer shows other sessions' files (the cross-session-leak fix). The
+ * mtime baseline alone can't do this: many sessions share one workspace.
+ */
+export function sessionTurnWindows(messages: SendMessageResponse[], active?: boolean): Array<[number, number]> {
+  const windows: Array<[number, number]> = []
+  let start: number | null = null
+  let end = 0
+  for (const m of messages) {
+    const t = m.info?.time
+    const created = t?.created
+    if (typeof created !== "number" || created <= 0) continue
+    if (m.info.role === "user") {
+      if (start !== null) windows.push([start, end + TURN_GRACE_MS])
+      start = created
+      end = created
+    } else {
+      if (start === null) start = created
+      const done = t?.completed ?? created
+      if (done > end) end = done
+    }
+  }
+  if (start !== null) windows.push([start, active ? Number.POSITIVE_INFINITY : end + TURN_GRACE_MS])
+  return windows
+}
+
+/** Keep only scanned files whose mtime falls inside one of this session's turn windows. */
+export function filterScanByWindows(hits: ScanHit[], windows: Array<[number, number]>): string[] {
+  if (windows.length === 0) return []
+  return hits.filter((h) => windows.some(([s, e]) => h.mtimeMs >= s && h.mtimeMs <= e)).map((h) => h.path)
+}
+
+/**
+ * Code/scripts/config extensions treated as "working files" (scaffolding) — kept
+ * visible but demoted below true deliverables so an intermediate script (the .py
+ * the agent wrote then ran) never masquerades as the product. Anything NOT here
+ * (pdf/docx/xlsx/pptx/html/csv/md/images/archives/…) is a deliverable, since the
+ * deliverable space is open-ended while working files are a bounded set.
+ */
+const WORKING_EXTS = new Set([
+  "py", "pyw", "pyi",
+  "ts", "tsx", "js", "jsx", "mjs", "cjs",
+  "sh", "bash", "zsh", "fish",
+  "rb", "go", "rs", "java", "kt", "c", "cc", "cpp", "h", "hpp", "cs", "php", "pl", "lua", "r", "scala", "swift",
+  "sql", "json", "yaml", "yml", "toml", "ini", "cfg", "conf", "env",
+])
+
+function extOf(path: string): string {
+  const base = path.split("/").pop() || path
+  const dot = base.lastIndexOf(".")
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ""
+}
+
+/** A file is "working" if it's a script/code/config artifact. Patches stay deliverables. */
+function isWorkingFile(a: Artifact): boolean {
+  return a.type === "file" && WORKING_EXTS.has(extOf(a.path))
+}
+
+/**
+ * Split artifacts into deliverables (front-and-centre) and working files
+ * (demoted, collapsible). If there are NO deliverables, working files are
+ * promoted into the deliverable slot so a pure-code task still shows its output
+ * rather than an empty panel.
+ */
+export function classifyArtifacts(artifacts: Artifact[]): { deliverables: Artifact[]; working: Artifact[] } {
+  const deliverables: Artifact[] = []
+  const working: Artifact[] = []
+  for (const a of artifacts) {
+    if (isWorkingFile(a)) working.push(a)
+    else deliverables.push(a)
+  }
+  if (deliverables.length === 0) return { deliverables: working, working: [] }
+  return { deliverables, working }
+}
+
 function ArtifactIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "patch") return <FileDiff className="size-3.5 shrink-0 text-blue-500" />
   return <FileIcon filename={artifact.path} mime={artifact.mime} size={14} />
@@ -170,35 +283,135 @@ function basename(path: string): string {
   return path.split("/").pop() || path
 }
 
-export function ArtifactsPanel({ messages, directory, onArtifactClick, selectedPath }: ArtifactsPanelProps) {
+function ArtifactRow({
+  artifact,
+  onArtifactClick,
+  selectedPath,
+  t,
+}: {
+  artifact: Artifact
+  onArtifactClick?: (a: Artifact) => void
+  selectedPath?: string
+  t: (key: string) => string
+}) {
+  return (
+    <div
+      onClick={() => onArtifactClick?.(artifact)}
+      className={cn(
+        "flex items-center gap-2 rounded px-1 py-1 text-xs transition-colors hover:bg-[var(--color-accent)]",
+        onArtifactClick && "cursor-pointer",
+        selectedPath === artifact.path && "bg-[var(--color-accent)]"
+      )}
+    >
+      <ArtifactIcon artifact={artifact} />
+      <span className="min-w-0 flex-1 truncate text-[var(--color-fg)]" title={artifact.path}>
+        {basename(artifact.path)}
+      </span>
+      {artifact.type === "patch" && (
+        <span className="shrink-0 text-[10px] text-blue-500">{t("artifact.diff")}</span>
+      )}
+    </div>
+  )
+}
+
+export function ArtifactsPanel({ messages, directory, active, onArtifactClick, selectedPath }: ArtifactsPanelProps) {
   const { t } = useI18n()
-  const artifacts = useMemo(() => extractArtifacts(messages, directory), [messages, directory])
+  const toolArtifacts = useMemo(() => extractArtifacts(messages, directory), [messages, directory])
+
+  // Baseline = the session's earliest message time. Files modified at/after it
+  // were produced during this session; scanning since 0 would surface every
+  // pre-existing file, so we skip the scan when no baseline is known.
+  const baseline = useMemo(() => {
+    let min = Infinity
+    for (const m of messages) {
+      const created = m.info?.time?.created
+      if (typeof created === "number" && created > 0 && created < min) min = created
+    }
+    return Number.isFinite(min) ? min : 0
+  }, [messages])
+
+  const [scanned, setScanned] = useState<ScanHit[]>([])
+  // Drop scanned hits when the session identity changes (directory or baseline).
+  // SessionPage isn't keyed, so without this a same-workspace session switch would
+  // briefly show the previous session's hits until the next idle re-scan.
+  useEffect(() => {
+    setScanned([])
+  }, [directory, baseline])
+  useEffect(() => {
+    // Only scan when the agent is idle (no churn mid-turn) and a baseline exists.
+    if (active || !directory || !baseline) return
+    let cancelled = false
+    invoke<ScanHit[]>("scan_workspace_changes", { dir: directory, sinceMs: baseline })
+      .then((hits) => {
+        if (!cancelled) setScanned(hits)
+      })
+      .catch(() => {
+        // Non-Tauri env (tests/web) or fs error — fall back to tool-derived only.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active, directory, baseline, messages.length])
+
+  // Attribute scanned files to THIS session by its turn windows, so sessions
+  // sharing a workspace don't show each other's outputs (mtime baseline alone
+  // can't tell them apart).
+  const windows = useMemo(() => sessionTurnWindows(messages, active), [messages, active])
+  const scannedPaths = useMemo(() => filterScanByWindows(scanned, windows), [scanned, windows])
+  const artifacts = useMemo(
+    () => mergeScannedPaths(toolArtifacts, scannedPaths, directory),
+    [toolArtifacts, scannedPaths, directory]
+  )
+  const { deliverables, working } = useMemo(() => classifyArtifacts(artifacts), [artifacts])
+  const [workingOpen, setWorkingOpen] = useState(false)
 
   if (artifacts.length === 0) {
     return <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("message.noArtifacts")}</p>
   }
 
+  // Only label the deliverables group when there's a separate working group to
+  // distinguish it from — otherwise it's just "the artifacts".
+  const showGroupLabel = working.length > 0
+
   return (
     <div className="space-y-1">
-      {artifacts.map((artifact) => (
-        <div
-          key={artifact.path}
-          onClick={() => onArtifactClick?.(artifact)}
-          className={cn(
-            "flex items-center gap-2 rounded px-1 py-1 text-xs transition-colors hover:bg-[var(--color-accent)]",
-            onArtifactClick && "cursor-pointer",
-            selectedPath === artifact.path && "bg-[var(--color-accent)]"
-          )}
-        >
-          <ArtifactIcon artifact={artifact} />
-          <span className="min-w-0 flex-1 truncate text-[var(--color-fg)]" title={artifact.path}>
-            {basename(artifact.path)}
-          </span>
-          {artifact.type === "patch" && (
-            <span className="shrink-0 text-[10px] text-blue-500">{t("artifact.diff")}</span>
-          )}
+      {showGroupLabel && (
+        <div className="px-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
+          {t("artifact.groupDeliverables")}
         </div>
+      )}
+      {deliverables.map((artifact) => (
+        <ArtifactRow
+          key={artifact.path}
+          artifact={artifact}
+          onArtifactClick={onArtifactClick}
+          selectedPath={selectedPath}
+          t={t}
+        />
       ))}
+
+      {working.length > 0 && (
+        <div className="pt-1">
+          <button
+            onClick={() => setWorkingOpen((v) => !v)}
+            className="flex w-full items-center gap-1 px-1 py-1 text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+          >
+            <ChevronRight className={cn("size-3 transition-transform", workingOpen && "rotate-90")} />
+            {t("artifact.groupWorking")}
+            <span className="ml-0.5 normal-case opacity-70">({working.length})</span>
+          </button>
+          {workingOpen &&
+            working.map((artifact) => (
+              <ArtifactRow
+                key={artifact.path}
+                artifact={artifact}
+                onArtifactClick={onArtifactClick}
+                selectedPath={selectedPath}
+                t={t}
+              />
+            ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -101,7 +101,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Desktop — chat / session 组件**
 - `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
-- `src/components/session/` — progress-panel, artifacts-panel, workspace-panel, artifact-preview, mcp-panel, skills-panel
+- `src/components/session/` — progress-panel, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
 - `src/components/settings/model-dialog.tsx` — ModelDialog + AddProviderDialog
@@ -120,6 +120,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
 - `open_file_with_system`（`open`）、`reveal_file_in_finder`（`open -R`）、`get_sidecar_credentials`、`rich_path()`（补 PATH）
+- `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
 - `check_skill_dependencies`（探测内置技能依赖，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`（首启拷贝 `skills/builtin/` → `~/.config/ultrawork/skills/builtin`，sentinel 控刷新，ADR-032）
 
 **内置技能（`skills/builtin/`，ADR-032）**
@@ -167,7 +168,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (32 ADRs, 001–032)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (33 ADRs, 001–033)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history
