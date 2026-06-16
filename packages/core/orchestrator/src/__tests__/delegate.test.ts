@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SendMessageResponse } from "@agent/api-client"
@@ -107,6 +107,24 @@ describe("DelegateManager", () => {
     }))
     const result = await delegates.delegate({ agentId: "acp:claude", task: "build flappy bird", workspace })
     expect(result.artifacts).toEqual(["/ws/flappy-bird.html"])
+  })
+
+  it("does NOT fs-scan the shared workspace (avoids cross-delegate leak); D-2 artifacts are the child's tool writes only", async () => {
+    const { acp, delegates } = build({})
+    acp.fetchHistory = vi.fn(async () => ({
+      hasMore: false,
+      messages: [
+        toolMessage("write", { filePath: "/ws/mine.html" }), // this child's own write → reported
+        assistantMessage("done"),
+      ],
+    }))
+    // A sibling delegate's file physically present in the shared workspace must
+    // NOT leak into this delegate's artifacts (no fs-scan here by design).
+    writeFileSync(join(workspace, "sibling-output.pdf"), "x")
+
+    const result = await delegates.delegate({ agentId: "acp:claude", task: "t", workspace })
+    expect(result.artifacts).toEqual(["/ws/mine.html"])
+    expect(result.artifacts).not.toContain(join(workspace, "sibling-output.pdf"))
   })
 
   it("reuses ONE hidden parent across opencode delegates and titles children", async () => {

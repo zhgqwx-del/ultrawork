@@ -62,6 +62,7 @@
 | [030](./030-agent-connector-control-layer.md) | @agent/connector — 后端无关的控制 + 事件统一层（可插拔 backend：OpenCode REST / ACP / 其它，D-8 分类法） | 2026-06-08 · 06-09 修订 | Accepted（架构决策）· 实现规划中（阶段2，依赖 ADR-027） |
 | [031](./031-multi-agent-orchestration.md) | 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式 | 2026-06-08 | Accepted（架构决策）· 实现规划中（阶段3，依赖 ADR-027/030） |
 | [032](./032-builtin-skills.md) | 内置技能打包与分发 — Apache-2.0/自写技能集 + 方案 C（拷贝到 configDir/builtin + sentinel）+ 依赖检测不打包 + 设置页三区 | 2026-06-14 | Accepted · 已实现（端到端为手动验证项） |
+| [033](./033-artifact-capture-and-pdf-preview.md) | 产物识别改用文件系统真相（mtime 扫描，捕获 bash 副作用）+ 产物/工作文件分类 + PDF 内嵌预览（pdf.js + scope-free `read_file_bytes`） | 2026-06-16 | Accepted (✅ 已实现) |
 
 > ADR-027 的探索过程见 [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性）与 [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）。阶段0-1 已按 B2「参考重写」在 `feat/agent-os-phase0` 分支落地（旧 `feat/acp-support` MVP 弃用）；实测坑点固化在 [gotchas §8](../gotchas.md)。
 
