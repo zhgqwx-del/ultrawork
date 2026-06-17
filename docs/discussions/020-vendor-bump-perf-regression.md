@@ -336,6 +336,54 @@ bun run scripts/perf/health-contention/probe-timeline.ts \
 
 ---
 
+## 11. 关闭 snapshot 的可行性与取舍（v1.15.13，针对 Ultrawork）
+
+> 承接 §10 结论"回合内 snapshot 高频扫描是 health >500ms 主驱动"，自然要问：**bump 到 v1.15.13 后能不能直接关掉 snapshot？对 Ultrawork 是否更好？** 源码核验如下。
+
+### 11.1 能关——v1.15.13 自带正规开关（零 patch）
+
+- 开关定义：`config/config.ts:158-161` `snapshot: Schema.optional(Schema.Boolean)`，注释原文："Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. **Defaults to true**."
+- 门控逻辑：`snapshot/index.ts:168-171` `enabled() = (yield* config.get()).snapshot !== false && state.vcs === "git"`。
+- 是**真性能门控**而非只挡 revert：`track()` 顶部 `if (!(yield* enabled())) return`（`snapshot/index.ts:282`）→ **3–9×/回合的 `add()` 全链路短路**（git diff-files/ls-files/check-ignore/stat×N/git add 全不跑）；`patch()`（`processor.ts:591/693`）因 `ctx.snapshot` 为 undefined 不触发；`cleanup()`（git gc）同样早返回（`:264`）。
+- Ultrawork 落点：写隔离全局 `~/.config/ultrawork/opencode.json` 的 `{ "snapshot": false }`（ADR-020 managed dir），全局生效，**不需要 vendor patch**。
+
+### 11.2 省了什么——精准砍掉"回合内"那半，但只省一半
+
+| 成本来源 | 受 snapshot flag 控制 | 关掉后 |
+|----------|----------------------|--------|
+| **回合内 snapshot 高频扫描**（`add()` ×6–9，大仓库每次 ~1–1.6s git + 153ms 同步解析，见 §10.2） | ✅ 是（`track()` 早返回） | **完全消除**——§10 实测的 health 累积争用**主驱动**被拆掉，对大目录远不止"~2%" |
+| bootstrap 期 `File.scan`（`file/index.ts:378-395` rg.files 全量收集 + 同步祖先循环）+ file-watcher 建树监听 | ❌ 否（独立 service，不归 snapshot flag 管） | **仍在**——startup-time 那半 health 抖动不受影响 |
+| 非 git 工作区 | — | 本来就不扫（`enabled()` 要求 `vcs === "git"`） |
+
+> **诚实结论**：关 snapshot 干掉的是更频繁、更致命的"回合内"那半；"首次 bootstrap 扫目录"那半仍需 §4 的 A（health fast path）/ C（预热移前）/ F（让步）另治。
+
+### 11.3 丢了什么——实测 Ultrawork 仅丢一个用户可感知点
+
+把本项目消费面查全（`grep revertSession/diff` desktop+connector+api-client）：
+
+| 消费点 | 位置 | 关掉后 |
+|--------|------|--------|
+| **停止回合 → 回滚文件**（唯一可感知损失） | `use-session-messages.ts:558-564` stop 后对 opencode 后端 `connector.revert` → `session/revert.ts:74-75` | **消息截断照常**（assistant 半截回复清掉），但**文件不再 roll back**（无 snapshot → restore/revert no-op） |
+| `/session/:id/diff` | api-client 有 `getSessionDiff`（`client.ts:392`），但**桌面无任何 UI 调用**（grep 空） | 实际不丢 |
+| session summary `+X/-Y` | `session/summary.ts:97` `diffFull` | 变 0，桌面无强依赖 |
+| revert 能力 | 仅 `connector/backends/opencode.ts:58` `revert:true`；ACP 后端本就 `revert:false`（`acp.ts:36`） | opencode 后端 revert 退化为"只清消息" |
+
+代价一句话：**"停止 agent"不再撤销它已写下的文件，只撤消息。**
+
+### 11.4 取舍与建议
+
+| 方案 | 评价 |
+|------|------|
+| **A. 全局默认关** | 最省事、可逆、零 patch。但 (a) 只解决一半（§11.2）；(b) 对会改文件的 agent app，"停止=不回滚"是真回归——用户停掉跑飞的 agent 后留一地半成品文件 |
+| **B. 保持开 + 上 §4 的 E/F**（`add()` 去重缓存 + 同步解析分块让步 + 节流频率） | 治本：保功能、削成本。但需改 vendor 打 patch、跟上游漂移，工作量大 |
+| **C. 折中（推荐）** | 默认**开**，但：① 设置项给用户一个"轻量模式"开关 → 写 `snapshot:false`；② 或对超大 / 非 git 友好目录自动降级关；③ 叠加 §10.5 探活侧止血（连续 N 次超时才判失败，避开回合内忙窗） |
+
+**倾向 C**：真正的瓶颈是 `add()` **无复用 + 无节流**（§2.3：`track()/patch()/diff()` 各自全量扫，stock 无 cold/skipAdd/dirty 缓存），治本在那里；而"停止-回滚"对 agent app 是有价值的安全网，不宜为性能默认牺牲。`snapshot:false` 作为**给重型仓库的逃生阀**（用户设置项 / 大目录自动降级）是低风险好牌，但不建议当全局默认硬关。
+
+> **bump 时序提醒**：`snapshot` 开关与 `enabled()` 门控是 **v1.15.13 起的契约**，本项目当前 vendor（`8e9e79d27`）未必有同名字段/同位置——真 bump 落地时务必按实际源码 grep 复核 `enabled()` 门控未被上游挪动（呼应 §9.5 漂移核查纪律）。
+
+---
+
 ## 关联
 
 - `vendor-opencode-bump-survey.md`（本地专题记忆）— bump 的 patch 搬家与兼容性调研
