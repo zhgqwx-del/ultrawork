@@ -277,6 +277,65 @@ N3（config wellknown 无 timeout 阻塞 bootstrap）**仅当用户 auth 配置�
 
 ---
 
+## 10. 实验复现与实测（本机实测，2026-06-17）
+
+> 在 §2.2/§2.3 的源码核验之上，补一轮**可复现的实测**——回答用户的具体问题：「文件特别多的目录下，一次 `/global/health` 是不是真会 >500ms（fork 据此判失败）？怎么实验？」
+> 环境：Apple Silicon mac（darwin 24.6.0）、`bun 1.3.12`；从 `v1.15.13` tag 的源码 worktree（`385cb6944`，**未打 patch**）直接 `bun run … serve --port 4791`（unsecured，loopback）。探活客户端是**独立进程**（与真实 server-manager 同构，关键——同进程探活会与 server 一起冻结、测不出延迟）。
+
+### 10.1 实验设计（两层）
+
+- **Tier-1 隔离（确定性，不依赖 opencode）**：自建最小 `Bun.serve`，`/global/health` 为 O(1)，`/load?n=` 跑一段**同步** File.scan 式祖先目录循环（对照 `file/index.ts:378-395`）。独立进程探活。目的：在剥离一切上游噪声的前提下，证明「O(1) handler 会排在同循环的同步 JS 工作之后」这一**纯机制**。
+- **Tier-2 真实 v1.15.13**：生成多文件目录（`git init`+commit，10w / 30w 文件），用 `GET /project/current?directory=<dir>` 冷触发该目录的实例 bootstrap（懒加载，见 §2.2），**同时**用独立进程对 `/global/health` 连续打点，记录延迟时间线，对齐 trigger 时刻看 spike。
+
+### 10.2 实测数据
+
+| 实验 | 结果 | 说明 |
+|------|------|------|
+| 空载 health | **~1–4ms** | 坐实 O(1) |
+| **Tier-1 隔离**：O(1) health + 1 次同步 300k 循环 | 7 个并发探针排在其后，最高 **108ms** | 纯机制证明：同步循环冻结循环多久，并发 health 就被推迟多久 |
+| **Tier-1 高频**：10× 同步 200k 块背靠背（@30ms gap） | health 随积压**单调爬升** → **434ms**（p99 429），0/188 >500 | 模拟 snapshot 一回合 6–9 次 `add()`：积压越深，排队越久 |
+| **Tier-1 重压**：14× 250k（@25ms gap） | **30/187 探针 >500ms = FAIL**，含 500ms 硬 TIMEOUT | 越过 fork 阈值——一个忙窗内 server 被误判"死亡"30 次 |
+| **真实 v1.15.13**：冷 bootstrap 10w 文件（fresh server 首次） | trigger **546ms**，health max **236ms**（两段冻结 236+175ms） | 首次 bootstrap 还叠加了**全局一次性懒初始化**（provider/config/wellknown） |
+| **真实 v1.15.13**：bootstrap 30w 文件 | trigger ~120–143ms，health max **~55ms** | 第二次起全局已热；单纯文件数影响反而更小 |
+| 30w 仓库 git 单次耗时（snapshot 每 `add()` 都做） | `diff-files` **1.03s**、`ls-files --others` **0.57s**（异步子进程）；`check-ignore --stdin` 全量 list **病态慢**（>15s 未返回）；同步 `split`+`Set` 30w 条 **153ms**（阻塞循环） | `add()` 6–9×/回合 → 每回合数秒级 git 负载 + 多次百毫秒级同步解析 |
+
+### 10.3 关键结论：是"累积"而非"单次扫描"（对主诉的精炼修正）
+
+实测得到一个**比报告更准的结论**，对两个项目的优化方向都重要：
+
+- **单次扫描 ≠ 500ms**：即便冷 bootstrap 30w 文件，本机 health 只抖到 ~55ms。原因——`git`/`ripgrep`/`stat` 都是**异步子进程，不阻塞 JS 事件循环**；Effect runtime 还会**协作式让步**。真正冻结循环的只有**裸同步 JS 段**（File.scan 祖先循环、snapshot 的 `\0`-list `split`/`Set`），30w 量级约 150ms。所以**单独一次扫描很难单独把 health 顶过 500ms**（除非仓库到 1M+ 文件量级，或机器更慢）。
+- **>500ms 来自累积**，对应用户主诉 2 反哺主诉 1：
+  1. **回合内 snapshot 高频扫描**是主驱动——`add()` 6–9×/回合，每次 ~150ms 同步解析 + ~1–1.6s git 子进程负载，把共享循环持续顶满；落在该忙窗的 health 探针排在积压之后 → Tier-1 高频/重压实测正是这样越过 500ms。
+  2. bootstrap 无界并发叠加多实例（`bootstrap.ts:50` `concurrency:"unbounded"`）。
+  3. 超大仓库（≥1M 文件）下同步 git-output 解析本身就 >500ms。
+  4. 比本测试机更慢的硬件。
+- **因此**：fork 的「health >500ms 即判失败」之所以触发，**根因在每回合 snapshot 路径把共享事件循环饿死**——不是 health 本身重，也不是单次 bootstrap 扫描。修复优先级与 §4 一致：**节流/缓存 snapshot 扫描（E/G）+ 把同步解析分块让步（F）+ 给 health 一条绕过中间件的 fast path（A）**，让探活不被实例工作饿死。
+
+### 10.4 复现步骤
+
+harness 已入库 `scripts/perf/health-contention/`（详见该目录 `README.md`）：
+
+```bash
+# Tier-1 隔离（秒级，确定性）
+bun run scripts/perf/health-contention/tier1-server.ts 4790 &
+bun run scripts/perf/health-contention/probe-timeline.ts \
+  http://127.0.0.1:4790/global/health "http://127.0.0.1:4790/load?n=300000" "isolation"
+# Tier-1 高频（越过 500ms）：FIRE_REPEAT=14 FIRE_GAP=25 … probe-timeline.ts … "http://…/load?n=250000"
+
+# Tier-2 真实 v1.15.13（需 v1.15.13 源码 worktree + bun install）
+bun run scripts/perf/health-contention/gen-tree.ts /tmp/huge 300000 200   # 生成多文件 git 仓库
+# 另起 v1.15.13 server（unsecured，:4791）后：
+bun run scripts/perf/health-contention/probe-timeline.ts \
+  http://127.0.0.1:4791/global/health \
+  "http://127.0.0.1:4791/project/current?directory=/tmp/huge" "cold-bootstrap"
+```
+
+### 10.5 一句话给 fork
+
+把 500ms 判失败当成"事件循环被实例工作饿死"的**信号**而非"server 死了"——治本是 §4 的 E+F+A（snapshot 节流/缓存、同步解析让步、health fast path），治标可在探活侧把单次超时与重试解耦（连续 N 次超时才判失败，避开回合内忙窗抖动）。
+
+---
+
 ## 关联
 
 - `vendor-opencode-bump-survey.md`（本地专题记忆）— bump 的 patch 搬家与兼容性调研
