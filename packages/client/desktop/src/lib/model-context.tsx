@@ -7,16 +7,12 @@ import type { OpenCodeConfig } from "@agent/api-client"
 interface ModelContextValue {
   currentModel: string
   setModel: (model: string) => Promise<void>
-  modelDialogOpen: boolean
-  openModelDialog: () => void
-  closeModelDialog: () => void
 }
 
 const ModelContext = createContext<ModelContextValue | undefined>(undefined)
 
 export function ModelProvider({ children }: { children: React.ReactNode }) {
   const [currentModel, setCurrentModel] = useState("")
-  const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const api = useApi()
   const { t } = useI18n()
 
@@ -41,12 +37,9 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [api, t])
 
-  const openModelDialog = useCallback(() => setModelDialogOpen(true), [])
-  const closeModelDialog = useCallback(() => setModelDialogOpen(false), [])
-
   const value = useMemo(() => ({
-    currentModel, setModel, modelDialogOpen, openModelDialog, closeModelDialog,
-  }), [currentModel, setModel, modelDialogOpen, openModelDialog, closeModelDialog])
+    currentModel, setModel,
+  }), [currentModel, setModel])
 
   return (
     <ModelContext.Provider value={value}>
