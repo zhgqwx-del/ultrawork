@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-16 -->
+<!-- last-synced: 2026-06-17 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -102,6 +102,10 @@
   - 文档清理用 **loadingTask（`getDocument()` 返回值）的 `.destroy()`**——`PDFDocumentProxy` 没有 `destroy()`（只有 `cleanup()`）。
   - **v4 的 `page.render({canvasContext, viewport})` 不接 `canvas` 参数**（`canvas` 是 v5/v6 才加的；v4 传了 tsc 会报）。
   - 字节读取走 scope-free 自定义命令 `read_file_bytes`（见上），不依赖 assetProtocol/plugin-fs scope。Word/Excel/PPT 无内嵌渲染器，维持 `open_file_with_system`。
+- **Sidecar 进程生命周期 / 退出清理（2026-06-17 真机实测，`lib.rs`）**：
+  - **进程数量**：Tauri 主进程 spawn **4 个顶层 sidecar**（opencode-server :4096 / channel-gateway :4097 / knowledge-sidecar :4098 / acp-client :4099，均为主进程直接子）。但 idle（刚启动未发 prompt）实测共 **9 个进程**——`knowledge-sidecar` 和 `acp-client` **各跑 2 份**（一份 HTTP 给 UI，一份被 OpenCode 当 MCP stdio 子进程拉起：`knowledge-sidecar mcp-stdio` / `acp-client delegate-mcp`，路径在 `~/.ultrawork/sidecars/`），且 `warm_opencode_mcp` 的 `GET /mcp` eager init 会**主动 spawn chrome-devtools-mcp + 一个独立 PGID 的 watchdog**（即便没用浏览器工具）。MCP 子进程挂在 opencode(:4096) 下。
+  - **关窗口 == 退出 app**：Tauri 2 默认「最后一个窗口关闭即退出」（macOS「无窗口仍驻留 Dock」需显式处理，本项目没有）。关窗口 / Cmd+Q / 可捕获信号（SIGINT/TERM/HUP）都会清理干净 → `RunEvent::Exit` 或信号处理器调 `shutdown_sidecars()`（按 pid kill 4 sidecar + 端口兜底 + `kill_browser_mcp_processes`；MCP 子进程随 opencode 死、watchdog 自杀）→ **零残留**。
+  - **唯一残留场景 = `kill -9` / 崩溃 / panic（非优雅退出）**：`RunEvent::Exit` 不触发、信号不可捕获 → sidecar 被 launchd 收养成孤儿（PPID→1）、端口 4096-4099 残留；二次危害是下次启动复用残留的（可能旧版本）二进制。**已修复**：`prepare_port` 检测孤儿（`port_listener_orphaned` 经 `lsof` + `process_ppid`==1）→ kill 重启而非 reuse（启动自愈，覆盖一切死法）；`install_signal_handlers`（signal-hook）补可捕获信号路径。`shutdown_sidecars` 幂等（drain registry），多路径重复调用无害。**SIGKILL 不可捕获 → 只能靠启动自愈，无法靠信号处理**。
 
 ## 7. 构建 / 运行时
 
