@@ -104,7 +104,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/session/` — progress-panel, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
-- `src/components/settings/model-dialog.tsx` — ModelDialog + AddProviderDialog
+- `src/components/settings/models-section.tsx` — 模型管理设置页 section（provider 卡片列表 + 配置流程；取代旧的全局 ModelDialog，由 Settings 页 `models` section 渲染，Home/Session「管理模型」深链至此）
 - `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes + thoughtLevel select）
 - `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
 

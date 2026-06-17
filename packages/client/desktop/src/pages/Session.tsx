@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
-import { useParams, useLocation } from "react-router-dom"
+import { useParams, useLocation, useNavigate } from "react-router-dom"
 import { TopBar } from "@/components/layout/top-bar"
 import { handleDrag } from "@/components/layout/drag-region"
 import { useSidebar } from "@/components/layout/sidebar-context"
@@ -28,9 +28,10 @@ import { useI18n } from "@/lib/i18n-context"
 export function SessionPage() {
   const { id } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const { sessions } = useSessionsContext()
   const { t } = useI18n()
-  const { currentModel, setModel, openModelDialog } = useModel()
+  const { currentModel, setModel } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
   const { workspacePath } = useWorkspace()
 
@@ -262,7 +263,7 @@ export function SessionPage() {
                       <ModelSelector
                         currentModel={currentModel}
                         onModelChange={setModel}
-                        onOpenModelDialog={openModelDialog}
+                        onOpenModelDialog={() => navigate("/settings", { state: { section: "models" } })}
                       />
                     )}
                   </div>

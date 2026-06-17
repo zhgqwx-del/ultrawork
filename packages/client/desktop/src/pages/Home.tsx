@@ -61,7 +61,7 @@ export function HomePage() {
   const { agents, acpAvailable, bindSessionAgent } = useAgents()
   const connector = useConnector()
   const { t } = useI18n()
-  const { currentModel, setModel, openModelDialog } = useModel()
+  const { currentModel, setModel } = useModel()
   const isACP = isACPAgentId(agentId)
 
   // Default member selection: everyone, until the user edits the picker.
@@ -264,7 +264,7 @@ export function HomePage() {
                   <ModelSelector
                     currentModel={currentModel}
                     onModelChange={setModel}
-                    onOpenModelDialog={openModelDialog}
+                    onOpenModelDialog={() => navigate("/settings", { state: { section: "models" } })}
                     title={mode === "team" ? t("home.model.leaderScope.hint") : undefined}
                   />
                 )}

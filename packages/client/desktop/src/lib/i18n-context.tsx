@@ -30,13 +30,9 @@ const translations: Record<Language, Record<string, string>> = {
     // Settings popover
     "settingsPopover.general": "General Settings",
     "settingsPopover.language": "Language",
-    "settingsPopover.models": "Model Management",
     "settingsPopover.workspace": "Workspace",
-    "settingsPopover.channels": "Channels",
-    "settingsPopover.remote": "MCP Services",
     "settingsPopover.help": "Help Docs",
     "settingsPopover.about": "About",
-    "settingsPopover.skills": "Skills",
 
     // Home
     "home.headline": "Chat & Work, Simple & Easy",
@@ -116,6 +112,8 @@ const translations: Record<Language, Record<string, string>> = {
     // Settings page
     "settingsPage.title": "Settings",
     "settingsPage.general": "General",
+    "settingsPage.models": "Models",
+    "settingsPage.models.desc": "Configure model providers, API keys, and the active model",
     "settingsPage.privacy": "Privacy",
     "settingsPage.capabilities": "Capabilities",
     "settingsPage.agents": "External Agents",
@@ -626,13 +624,9 @@ const translations: Record<Language, Record<string, string>> = {
     // Settings popover
     "settingsPopover.general": "通用设置",
     "settingsPopover.language": "语言",
-    "settingsPopover.models": "模型管理",
     "settingsPopover.workspace": "工作区",
-    "settingsPopover.channels": "渠道",
-    "settingsPopover.remote": "MCP 服务",
     "settingsPopover.help": "帮助文档",
     "settingsPopover.about": "关于",
-    "settingsPopover.skills": "技能管理",
 
     // Home
     "home.headline": "聊天办公，简单轻松",
@@ -712,6 +706,8 @@ const translations: Record<Language, Record<string, string>> = {
     // Settings page
     "settingsPage.title": "设置",
     "settingsPage.general": "通用",
+    "settingsPage.models": "模型",
+    "settingsPage.models.desc": "配置模型供应商、API 密钥与当前模型",
     "settingsPage.privacy": "隐私",
     "settingsPage.capabilities": "能力配置",
     "settingsPage.agents": "外部 Agent",

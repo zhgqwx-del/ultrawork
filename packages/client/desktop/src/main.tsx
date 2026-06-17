@@ -5,11 +5,10 @@ import { Toaster } from "sonner"
 import { ConfigProvider } from "./lib/config-context"
 import { ThemeProvider, useTheme } from "./lib/theme-context"
 import { I18nProvider } from "./lib/i18n-context"
-import { ModelProvider, useModel } from "./lib/model-context"
+import { ModelProvider } from "./lib/model-context"
 import { WorkspaceProvider } from "./lib/workspace-context"
 import { SSEProvider } from "./lib/sse-context"
 import { AgentProvider } from "./lib/agent-context"
-import { ModelDialog } from "./components/settings/model-dialog"
 import { router } from "./router"
 import "./index.css"
 
@@ -27,18 +26,6 @@ function ThemedToaster() {
   )
 }
 
-function ModelDialogSingleton() {
-  const { currentModel, setModel, modelDialogOpen, closeModelDialog } = useModel()
-  return (
-    <ModelDialog
-      open={modelDialogOpen}
-      onOpenChange={(open) => { if (!open) closeModelDialog() }}
-      currentModel={currentModel}
-      onModelChange={setModel}
-    />
-  )
-}
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ConfigProvider>
@@ -49,7 +36,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               <AgentProvider>
                 <ModelProvider>
                   <RouterProvider router={router} />
-                  <ModelDialogSingleton />
                 </ModelProvider>
               </AgentProvider>
             </SSEProvider>

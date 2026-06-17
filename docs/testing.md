@@ -34,6 +34,11 @@
 - **Mock**: vitest 内置 vi.mock / vi.fn / vi.spyOn
 - **覆盖率**: vitest 内置 c8/v8
 
+**jsdom 中测 Radix 浮层组件（2026-06-17 实测）**：
+- `vi.mock` 工厂被提升到文件顶部，**不能引用其后声明的顶层变量**（报 "Cannot access ... before initialization"）。共享 mock 状态放进 `const h = vi.hoisted(() => ({ ... }))`，工厂里引用 `h.xxx`。
+- **Radix `Popover` 在点击 trigger 时打开**（`fireEvent.click` 即可）；**`DropdownMenu` 走 `pointerdown`**——须 `fireEvent.pointerDown(trigger,{button:0})` + `pointerUp`，且 jsdom 缺 pointer-capture，要在 `beforeAll` 补桩 `Element.prototype.hasPointerCapture/setPointerCapture/releasePointerCapture`。
+- 浮层内容在 portal 中、仅打开后渲染，断言用 `await screen.findByText(...)`；首帧同步断言后记得 `await waitFor(...)` 让 mount 期 fetch 在 act() 内 flush，避免 act 警告污染后续用例。
+
 ---
 
 ## 3. 自动化测试详细规划

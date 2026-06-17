@@ -5,6 +5,7 @@ import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Cod
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
+import { ModelsSection } from "@/components/settings/models-section"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
@@ -30,10 +31,11 @@ import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChanne
 import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
-type SettingsSection = "general" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
+type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
   { key: "general", icon: Settings, labelKey: "settingsPage.general" },
+  { key: "models", icon: Cpu, labelKey: "settingsPage.models" },
   { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
   { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
   { key: "agents", icon: Bot, labelKey: "settingsPage.agents" },
@@ -86,6 +88,7 @@ export function SettingsPage() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-3xl">
             {activeSection === "general" && <GeneralSection />}
+            {activeSection === "models" && <ModelsSection />}
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "agents" && <AgentsSection />}
