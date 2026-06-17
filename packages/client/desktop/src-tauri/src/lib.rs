@@ -71,6 +71,40 @@ fn kill_port_process(port: u16) {
     std::thread::sleep(Duration::from_millis(200));
 }
 
+/// Read a process's parent PID via `ps`. None if the process is gone or the
+/// output can't be parsed.
+fn process_ppid(pid: u32) -> Option<u32> {
+    let output = Command::new("ps")
+        .args(["-o", "ppid=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout).trim().parse::<u32>().ok()
+}
+
+/// True if a process *listening* on `port` has been reparented to launchd
+/// (ppid == 1) — i.e. it is an orphan left behind by a previous Ultrawork
+/// instance that died without running `shutdown_sidecars` (crash / SIGKILL /
+/// force-quit). Such a process is healthy but stale: reusing it would silently
+/// bind us to a leftover (possibly old-version) sidecar. We detect it here so
+/// `prepare_port` can reclaim the port instead of reusing it.
+fn port_listener_orphaned(port: u16) -> bool {
+    let Ok(output) = Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .output()
+    else {
+        return false;
+    };
+    let pids = String::from_utf8_lossy(&output.stdout);
+    for line in pids.trim().lines() {
+        if let Ok(pid) = line.trim().parse::<u32>() {
+            if process_ppid(pid) == Some(1) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Kill all registered sidecar processes on app exit.
 /// Two-phase: (1) SIGTERM by PID, (2) port-based fallback for survivors.
 fn shutdown_sidecars() {
@@ -109,16 +143,58 @@ fn shutdown_sidecars() {
     println!("[shutdown] Sidecar cleanup complete.");
 }
 
+/// Catch SIGINT/SIGTERM/SIGHUP and clean up sidecars before exiting. These are
+/// exit paths Tauri's `RunEvent::Exit` does NOT cover (terminal Ctrl+C in dev,
+/// `kill <pid>` without -9, some force-quit flows). SIGKILL is uncatchable, so
+/// that crash path relies on `prepare_port`'s startup self-heal instead.
+///
+/// `signal-hook`'s `Signals` iterator delivers on a dedicated thread (not in an
+/// async-signal context), so calling `shutdown_sidecars` here — which locks a
+/// Mutex and spawns `kill` — is safe. `shutdown_sidecars` is idempotent (it
+/// drains the registry), so a later `RunEvent::Exit` is a harmless no-op.
+fn install_signal_handlers() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    use signal_hook::iterator::Signals;
+
+    std::thread::spawn(|| {
+        let mut signals = match Signals::new([SIGINT, SIGTERM, SIGHUP]) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[signal] failed to install handlers: {}", e);
+                return;
+            }
+        };
+        if let Some(sig) = signals.forever().next() {
+            println!("[signal] received signal {}, cleaning up sidecars", sig);
+            shutdown_sidecars();
+            std::process::exit(128 + sig);
+        }
+    });
+}
+
 /// Prepare a port: reuse healthy process, kill stale, or confirm free.
 /// Returns Ok(true) if a healthy process is already running (skip spawn),
 /// Ok(false) if port is free and ready for a new spawn.
 fn prepare_port(port: u16, health_path: &str, health_auth: Option<&str>) -> Result<bool, String> {
     if is_port_in_use(port) {
+        // Reuse only a healthy listener that is still owned by a live parent
+        // (a genuinely-running prior instance). A healthy *orphan* (ppid==1)
+        // is a leftover from a crashed/killed instance — reclaim it rather than
+        // bind to a possibly stale binary.
         if check_health(port, health_path, health_auth) {
-            return Ok(true); // reuse
+            if port_listener_orphaned(port) {
+                println!(
+                    "Port {} healthy but owned by an orphan (prior instance died unclean), killing",
+                    port
+                );
+                kill_port_process(port);
+            } else {
+                return Ok(true); // reuse
+            }
+        } else {
+            println!("Port {} occupied but unhealthy, killing stale process", port);
+            kill_port_process(port);
         }
-        println!("Port {} occupied but unhealthy, killing stale process", port);
-        kill_port_process(port);
         if is_port_in_use(port) {
             return Err(format!(
                 "Port {} is still in use after cleanup. Another application may be using it.",
@@ -1658,6 +1734,10 @@ pub fn run() {
             read_file_bytes,
         ])
         .setup(|app| {
+            // Stage 0: catch catchable termination signals so sidecars are
+            // cleaned up on exit paths RunEvent::Exit misses (Ctrl+C, plain kill).
+            install_signal_handlers();
+
             // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
             // and any external tooling can use a stable user-local path.
             ensure_sidecar_copies();
@@ -2021,5 +2101,27 @@ mod builtin_skills_tests {
         assert!(missing.path.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn process_ppid_resolves_self_and_misses_dead_pid() {
+        // The current test process always has a live parent.
+        let ppid = process_ppid(std::process::id());
+        assert!(ppid.is_some(), "current process must have a parent pid");
+
+        // A PID that cannot exist (max u32) has no ppid.
+        assert_eq!(process_ppid(u32::MAX), None);
+    }
+
+    #[test]
+    fn free_port_has_no_orphaned_listener() {
+        // Nothing listens on this port in the test environment, so there is no
+        // orphan to report. (We pick a high, unlikely-bound port.)
+        assert!(!port_listener_orphaned(59_237));
     }
 }
