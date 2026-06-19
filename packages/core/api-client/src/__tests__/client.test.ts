@@ -438,6 +438,111 @@ describe("ApiClient", () => {
       expect(mockFetch.mock.calls[0][1].method).toBe("PUT")
       expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ type: "api", key: "sk-xxx" })
     })
+
+    it("deleteProviderAuth", async () => {
+      mockFetch.mockResolvedValueOnce(emptyResponse(204))
+      await client.deleteProviderAuth("my-llm")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
+      expect(mockFetch.mock.calls[0][1].method).toBe("DELETE")
+    })
+  })
+
+  // --- Custom provider ---
+
+  describe("custom provider operations", () => {
+    // Sequence: (optional) PUT /auth → PATCH /config (provider def) →
+    // setProviderDisabled(false) which GETs /config (no-op when not disabled).
+    it("upsertCustomProvider (OpenAI) writes the key to auth then the provider config", async () => {
+      mockFetch.mockResolvedValueOnce(emptyResponse(204)) // PUT /auth
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable read → no-op)
+      await client.upsertCustomProvider({
+        id: "my-llm",
+        name: "My LLM",
+        protocol: "openai",
+        baseURL: "https://api.example.com/v1",
+        apiKey: "sk-123",
+        models: [{ id: "m1", name: "Model 1", context: 8192, output: 2048 }],
+      })
+      // 1st: PUT /auth/my-llm
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
+      expect(mockFetch.mock.calls[0][1].method).toBe("PUT")
+      // 2nd: PATCH /config with provider def
+      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/config")
+      expect(mockFetch.mock.calls[1][1].method).toBe("PATCH")
+      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-llm"]
+      expect(p.npm).toBe("@ai-sdk/openai-compatible")
+      expect(p.api).toBe("https://api.example.com/v1")
+      expect(p.options.baseURL).toBe("https://api.example.com/v1")
+      expect(p.models.m1).toMatchObject({ id: "m1", name: "Model 1", tool_call: true, limit: { context: 8192, output: 2048 } })
+      expect(p.whitelist).toEqual(["m1"]) // pins exposed models, hides delete→re-add orphans
+    })
+
+    it("upsertCustomProvider (Anthropic) maps npm + skips auth when no key", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable read → no-op)
+      await client.upsertCustomProvider({
+        id: "my-anth",
+        name: "My Anthropic",
+        protocol: "anthropic",
+        baseURL: "https://gw.example.com/v1",
+        models: [{ id: "c1", name: "Claude proxy" }],
+      })
+      // No PUT /auth (no apiKey): PATCH /config then GET /config (un-disable no-op)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/config")
+      expect(mockFetch.mock.calls[0][1].method).toBe("PATCH")
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).provider["my-anth"].npm).toBe("@ai-sdk/anthropic")
+    })
+
+    it("upsertCustomProvider un-disables a re-added provider (clears disabled_providers)", async () => {
+      // provider was previously deleted → still in disabled_providers
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({ disabled_providers: ["my-llm", "other"] })) // GET /config
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (disabled_providers)
+      await client.upsertCustomProvider({
+        id: "my-llm", name: "My LLM", protocol: "openai", baseURL: "https://x/v1",
+        models: [{ id: "m1", name: "M1" }],
+      })
+      // last PATCH writes disabled_providers without my-llm
+      const last = mockFetch.mock.calls[2]
+      expect(last[1].method).toBe("PATCH")
+      expect(JSON.parse(last[1].body).disabled_providers).toEqual(["other"])
+    })
+
+    it("upsertCustomProvider omits a partial limit (only context) to stay schema-valid", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable no-op)
+      await client.upsertCustomProvider({
+        id: "p", name: "P", protocol: "openai", baseURL: "https://x/v1",
+        models: [{ id: "m1", name: "M1", context: 8192 }], // output missing
+      })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      // opencode requires context+output together; a lone context → no limit emitted
+      expect(body.provider["p"].models.m1.limit).toBeUndefined()
+    })
+
+    it("setProviderDisabled appends to the existing disabled_providers array", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ disabled_providers: ["foo"] })) // GET /config
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config
+      await client.setProviderDisabled("my-llm", true)
+      const body = JSON.parse(mockFetch.mock.calls[1][1].body)
+      expect(body.disabled_providers).toEqual(["foo", "my-llm"])
+    })
+
+    it("setProviderDisabled(false) removes the id and is a no-op when absent", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ disabled_providers: ["foo", "my-llm"] }))
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      await client.setProviderDisabled("my-llm", false)
+      const body = JSON.parse(mockFetch.mock.calls[1][1].body)
+      expect(body.disabled_providers).toEqual(["foo"])
+
+      // No-op when the desired state already holds (disable=false & not present):
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValueOnce(jsonResponse({ disabled_providers: ["foo"] }))
+      await client.setProviderDisabled("my-llm", false) // already absent → nothing to do
+      expect(mockFetch).toHaveBeenCalledTimes(1) // only the GET ran, no PATCH
+    })
   })
 
   // --- MCP ---

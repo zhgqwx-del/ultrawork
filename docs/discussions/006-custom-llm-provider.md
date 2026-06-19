@@ -1,7 +1,7 @@
 # Discussion 006: 自定义 LLM Provider 机制调研 — 兼容 OpenAI / Anthropic 协议的「自带 Key + Base URL」接入
 
-- **日期**: 2026-06-04
-- **状态**: 调研记录（仅分析，无代码改动）
+- **日期**: 2026-06-04（初版调研）/ 2026-06-19（§11 实现规划 + spike + 实现落地）
+- **状态**: ✅ 已实现 + 真机验证（分支 `feat/custom-provider`）——§11 三项决策落地；api-client + `models-section.tsx` 自定义表单/删除。**真机确认 my-qwen(dashscope) 可选中并对话**。**真机保存/删除卡死根因坐实 = React StrictMode 的 `mountedRef` 守卫 bug（cleanup-only 未在 setup 复位 → dev 下挂载后恒 false → `setSaving(false)` 被跳过）**，修复为 effect setup 复位 ref；Chrome+Playwright StrictMode 下 before/after 截图实证（破损版转圈、修复版恢复）+ jsdom 回归测试。先前两次误判（v1.15.13 争用[实为 v1.3.13]、WKWebView 死连接[日志证伪]）对应的投机改动（请求超时/原子 PATCH 重排/乐观更新）已全部回退（详见 §11.10）。验证：typecheck 8/8 · api-client 58 · desktop 223 · headless API 走查 15/15。
 - **参与者**: 用户 + Claude
 - **范围**: 基于 `vendor/opencode` 源码（submodule，已 apply Ultrawork patch）+ Ultrawork main 分支前端 / api-client
 
@@ -398,6 +398,167 @@ i18n：复用并扩展 `model.addProvider.*` / `model.configureProvider.*` 现�
 4. **删除路径（原 §10.5）**：`PATCH {provider:{"<id>":null}}` 被 schema 拒绝（**HTTP 400**，Provider schema 不接受 null），且该 provider 仍在。→ 删除不能简单置 null。待确认正确方案：`/auth/{id}` 是否支持 DELETE？是否有移除 config 项的端点？或前端「改盘 + 重启 sidecar」兜底（结合 §9.7，改盘后需重启才生效）。
 5. **端到端发消息（未测）**：本次只验证 provider/config 的注册与即时可见性，**未**用真实可用的 baseURL+key 发 `prompt_async`（用的是 `api.example.com` 占位）。落地前仍需用一个真实 OpenAI 兼容端点验证注入链 §4 端到端连通。
 6. **`@ai-sdk/anthropic` + 自定义 baseURL（未测）**：是否被 SDK 正确采纳（部分 AI SDK 对 baseURL 的字段名/校验不同），仍需实测。
+
+---
+
+## 11. 实现规划（2026-06-19 拍板）
+
+> 用户重启此议题（截图反映「配置供应商只能选 opencode 内置清单，需支持自带模型服务」）。本节锁定范围、补齐初版未实测的删除/合并语义，给出可执行规划。**仍不写代码**——待 review 后开工。
+
+### 11.0 与初版的差异校正
+
+- **前端落地文件已变**：初版引用的 `model-dialog.tsx` 于 2026-06-17 重构进 **`packages/client/desktop/src/components/settings/models-section.tsx`**（设置页 section 化，全局 Modal 已拆）。后端分析（§1–§5）不受影响，仅落地文件名 + 插入点变了。现状仍是两步：① 从 `GET /provider` 已知清单**选**一个 → ② 填 API Key + 可选 Base URL；**无新建列表外 provider 的入口**。
+
+### 11.1 三项拍板决策
+
+| 维度 | 决策 | 理由 |
+|------|------|------|
+| 协议范围 | 前端下拉**仅** OpenAI 兼容 / Anthropic 两项 | 都 BUNDLED（§4.1），零动态安装失败面；任意 npm SDK 留给手改 opencode.json 旁路 |
+| 模型录入 | **用户手填**模型清单（≥1，id+名称+可选 context/output limit） | 自定义 provider 不在 models.dev，opencode 要求 config 显式列 `models`（§3.3）；自动拉 `/v1/models` 很多自建端点不实现，仍要手填兜底 |
+| 实现策略 | 方案 A：**纯前端 + api-client 扩展，不动 vendor** | §8 已论证，避免 patch 维护负担 |
+
+### 11.2 本轮新核实的后端事实（补 §7/§9 待测项）
+
+1. **`DELETE /auth/:providerID` 存在**（`vendor/.../server/server.ts:133`，调 `Auth.remove`）→ 删 Key 有官方端点，初版 §7「OAuth/删除未封装」的 api key 删除缺口可补。
+2. **`PATCH /config` 是 `mergeDeep` 深合并**（`vendor/.../config/config.ts:1531` `mergeDeep(writable(existing), input)` 后写盘）→ **只能增/改 key，无法删 key**。这坐实了初版 §10.4「`provider:{id:null}` 被拒 400」的根因：不是 schema 偶然，而是 update 语义本就不支持删除字段。
+3. ~~`disabled_providers` 数组对 config 来源的自定义 provider 不生效~~ **← 此初判被 §11.9 spike 推翻**：实测 `disabled_providers:[id]` **能可靠隐藏**自定义 provider（GET /provider `present=False`）。源码层面 `Provider.list()`（provider state 构建）的 env/apikey/config 各 loop 起手都 `if (disabled.has(providerID)) continue`（`provider.ts:1125/1138/1151/1167`），故被 disabled 的 provider 根本不进 state，自然不在 `connected` 里。这成为 §11.5 删除方案的基石。
+
+### 11.3 改动清单
+
+**api-client（`packages/core/api-client/src/`）**
+- `types.ts`：扩 `OpenCodeConfig.provider` 子类型 `{ options? }` → 对齐 upstream `ProviderConfig`（增 `name?/npm?/api?/env?/models?`，纯类型）。
+- `client.ts`：新增 `upsertCustomProvider(def)`（组装 config 片段调 `patchConfig` + `putProviderAuth`）；新增 `deleteProviderAuth(id)`（封装 `DELETE /auth/:id`）；新增 `setProviderDisabled(id, bool)`（读当前 `disabled_providers` → 追加/移除 id → `patchConfig` 写回完整数组，§11.9 删除方案）。**全部经现有 `request()`/`buildHeaders()` 走，自带 `x-opencode-directory`——前提是实例 `workingDirectory` 非空（见下）。**
+
+**desktop（`models-section.tsx`）**
+- 配置供应商第一步加「+ 添加自定义 Provider」入口 → 新表单子视图（复用 `saving`/`mountedRef`/toast 模式）。
+- 列表区给 `source==="config"` 的 provider 加「自定义」徽标 + 删除入口（删除 = `setProviderDisabled(id,true)` + `deleteProviderAuth(id)`）。
+- **无活动工作区守卫**（§11.9）：`workingDirectory` 为空时禁用「添加自定义 Provider」入口并提示「请先打开一个工作区」，避免命中漂移默认实例。
+
+**i18n（`i18n-context.tsx`）**：扩 `model.customProvider.*`（中英）。
+
+**测试**：表单校验单测（ID 冲突/必填/baseURL 形态/≥1 模型）+ 保存流程调用顺序断言（putAuth→patchConfig→clearModelCache→刷新）+ 删除流程。
+
+### 11.4 表单字段 → 写入目标
+
+| 字段 | 写入 | 校验 |
+|------|------|------|
+| Provider ID | `provider.<id>` key | 必填、kebab、**不与现有 id 冲突**（防覆盖 openai/anthropic）|
+| 显示名 | `provider.<id>.name` | 必填 |
+| 协议下拉 | `npm`: `@ai-sdk/openai-compatible` / `@ai-sdk/anthropic` | 二选一 |
+| Base URL | `provider.<id>.api` + `options.baseURL` | 必填、http(s) |
+| API Key | **`PUT /auth/<id>`**（不进 config 明文）| 可选 |
+| 模型清单（动态增删行）| `provider.<id>.models[id]={id,name,limit?}` | ≥1、每行 id+name 必填；建议引导填 `limit.context`（影响历史窗口估算 ADR-021）|
+
+### 11.5 删除路径（§11.9 spike 已定方案）
+
+PATCH 深合并删不掉 config key（`provider:{id:null}` 被 schema 拒 400）。但 spike 实测找到**干净的服务端方案**：
+
+- **删除 = PATCH `disabled_providers` 追加该 id（隐藏）+ `DELETE /auth/<id>`（清 Key）**。`disabled_providers:[id]` 让 provider 不进 state、从 `GET /provider` 消失（§11.9 H3 实测 `present=False`）。opencode.json 里 provider 条目仍残留但已隐藏、无害。**纯服务端、无需 disk-edit、无需重启**。
+  - ⚠️ `disabled_providers` 是数组，PATCH `mergeDeep` 对数组是**整体替换**，故前端需「读当前 disabled_providers → 追加/移除 id → 写回完整数组」。
+  - 「恢复/取消删除」= 从 `disabled_providers` 移除该 id（写回不含它的数组）。
+  - 注意：`DELETE /auth` 单独**不足以**让 provider 消失——openai-compatible + 显式 models + baseURL 即被视为 connected，删 key 后仍 `present=True`（§11.9 H1 实测）。必须配合 `disabled_providers`。
+- **彻底物理删除**（移除 config 条目本身）：仍需 scope-free Tauri 命令编辑工作区 `opencode.json` + sidecar reload，列为后续增强，v1 不做。
+
+→ **v1 采用 `disabled_providers` + DELETE auth**（取代初稿「前端隐藏列表」方案——opencode 原生 `disabled_providers` 更干净、跨重启持久）。
+
+### 11.6 落地前必验（补 §10.5/§10.6 遗留）
+
+- **端到端连通**：用真实 OpenAI 兼容端点（本地 vLLM/Ollama 或自建）发一次 `prompt_async`，验 baseURL+Key 注入链端到端通。
+- **`@ai-sdk/anthropic` + 自定义 baseURL**：单独验一次（部分 AI SDK 对 baseURL 字段名/校验不同）。
+- Key 务必走 auth.json，**不写 config 的 `options.apiKey`**（防明文落盘）。
+
+### 11.7 验收门禁 + 收尾
+
+- typecheck 8/8 · desktop vitest 全绿（+表单/删除用例）· check-docs 净。
+- 真机 Tauri：新建 OpenAI 兼容 provider → 模型进选择器 → 发消息成功；删除后从列表消失。
+- 收尾：本文状态「调研」→「已实现」；CHANGELOG Added；按需新增 ADR（若删除走方案 2 的 Tauri 命令/重启）。
+
+### 11.8 分步
+
+1. Spike（~15min）：真实端点验注入链 + 删除方案 1 体验确认。
+2. api-client 类型扩 + 两方法 + 单测。
+3. 表单视图 + 校验 + i18n。
+4. 列表徽标 + 删除入口。
+5. 真机走查 + 收尾文档。
+
+### 11.9 Spike 实测结果（2026-06-19，§11.8 第 1 步已完成）
+
+> 方法：XDG_* 全隔离启真实 sidecar 二进制（`opencode-server-aarch64-apple-darwin`，端口 14096，无 password 免鉴权，`OPENCODE_DISABLE_MODELS_FETCH=1` 走内置 snapshot）+ 自建 mock OpenAI/Anthropic 兼容端点（记录收到的 Authorization / x-api-key / model）。零碰真实数据。harness 在 `/tmp/uw-provider-spike/`（mock-llm.ts + 多个 diag-*.sh）。
+
+#### ✅ 注入链端到端坐实（两协议均通）
+
+| 协议 | mock 收到 | 证明 |
+|------|----------|------|
+| OpenAI 兼容 | `POST /v1/chat/completions`，`Authorization: Bearer sk-spike-OPENAI-123`，`model: mock-model-1`，assistant 正确返回文本，`error=null`，0 ProviderModelNotFound | baseURL + auth.json key + model 全部正确注入；走 chat completions |
+| Anthropic | `POST /v1/messages`，`x-api-key: sk-spike-ANTHROPIC-456`，`anthropic-version: 2023-06-01`，`model: mock-claude` | `@ai-sdk/anthropic` + 自定义 baseURL 生效，鉴权头形态正确（x-api-key 非 Bearer） |
+
+→ §11.6「端到端连通」「Anthropic baseURL」两项待验**已消除**。两协议都 BUNDLED、注入链可靠。
+
+#### 🔑 关键前提：所有请求必须带一致的 `x-opencode-directory`
+
+**这是初稿/§10 漏掉的致命细节，足以颠覆「直接可用」结论**：
+
+- spike 初期所有 curl **未带目录头** → 命中 opencode 漂移的「默认实例」：自定义 provider 时而不进 `GET /provider` 列表、`getModel` 抛 `ProviderModelNotFoundError`、`PATCH /config` 偶尔根本不落盘、baseline provider 数在 135/136 间跳。**doc 006 §10「立即生效」是只验了一次 listing、没验 prompt 的侥幸结论**。
+- 一旦**所有请求（PATCH /config、PUT /auth、GET /provider、创建会话、prompt）统一带 `x-opencode-directory: <同一 git 工作区>`** → 全部稳定：provider 立即且持续 `present=True models=['mock-model-1']`，prompt 端到端打通，0 错误。
+- **真实 app 已天然满足**：`api-client` 的 `buildHeaders()` 在 `workingDirectory` 非空时自动注入该头（`client.ts:69`），实例的 `workingDirectory = workspacePath`（`sse-context.tsx:60`），`models-section` 经 `useApi()` 拿的正是这个实例。**故真实 app 走的就是稳定路径。**
+- ⚠️ **唯一隐患**：若 `workspacePath` 为空（无活动工作区时进设置页），目录头缺失 → 踩漂移实例。现有 baseURL 覆盖功能已潜在受此影响。落地时前端应在无工作区上下文时禁用「添加自定义 Provider」或给出明确提示。
+
+#### 🔑 持久化是 per-workspace，不是 global
+
+- `PATCH /config`（route `Config.update`）写入 **`<工作区>/opencode.json`**（实例目录），**非** global `~/.config/ultrawork/opencode.json`。spike 实测 config 落在 `wsX/opencode.json`。
+- 即：**自定义 provider 作用域 = 添加时所在的工作区**；切到别的工作区不可见。与现有 baseURL 覆盖 + 模型选择（`config.model`）行为一致——它们也都 per-workspace。
+- 想做 global 需 Tauri 直接编辑 global `opencode.json` + sidecar reload（`updateGlobal` 未挂 HTTP route），成本高。
+- **附带坑**：非 git 工作区目录的 `opencode.json` 加载不可靠（spike 中 `git init` 后才稳定，呼应 gotchas §9「无 git 目录 opencode.json 不被当 project config」）。真实工作区通常是 git 仓库，但值得注意。
+- **→ §11 待拍板新增一项**：自定义 provider 作用域 = per-workspace（推荐，与现状一致、零额外成本）vs global（需 Tauri global-config 命令，列后续）。建议 **v1 per-workspace**，UI 文案点明「当前工作区」。
+
+#### ✅ 删除语义（带目录头重测，可信）
+
+| 操作 | 结果 |
+|------|------|
+| `DELETE /auth/<id>` | HTTP 200，key 清除，但 provider **仍 present=True connected=True**（openai-compatible+models+baseURL 无需 key 即 connected）→ 单独不足以删除 |
+| `PATCH {provider:{<id>:null}}` | HTTP 400（schema 拒 null，mergeDeep 删不掉 key） |
+| `PATCH {disabled_providers:["<id>"]}` | HTTP 200 → provider **present=False connected=False**（可靠隐藏）✅ |
+
+→ 删除方案定为 **disabled_providers + DELETE auth**（详见已更新的 §11.5），推翻 §11.2 初判 #3。
+
+#### 对 §11 规划的净影响
+
+1. 注入链无需再验，两协议可靠（§11.6 缩减为「真实 app 内冒烟一次」即可）。
+2. **新增硬前提**：前端调用链必须保证 `workingDirectory` 非空（即有活动工作区）；无工作区时禁用入口。
+3. **新增拍板项**：作用域 per-workspace（推荐）vs global。
+4. 删除方案明确化（disabled_providers），§11.3 改动清单的 `deleteProviderAuth` 需配套一个 `setProviderDisabled(id, bool)`（读改写 disabled_providers 数组）。
+
+### 11.10 真机保存/删除卡死——根因坐实（React StrictMode `mountedRef`）+ 修复（2026-06-19）
+
+> 症状：真机 `tauri dev` 下，添加自定义 provider 保存后/删除点「勾」后，**按钮一直转圈**。曾两次误判误修，最终靠真机日志 + Chrome 前后对照坐实。
+
+**根因（坐实）= 前端 React StrictMode 的 `mountedRef` 生命周期 bug，与网络/连接/vendor patch 无关。**
+
+- **决定性证据**：用户开 `uw.debug.api` 后的真机 console 显示**每条请求都有 `←` 返回、全部成功**（`PATCH /config ←11~29ms`、后续 `GET ←` 全回、无 `✗ TIMEOUT`）→ **不是网络/响应/连接挂起**。
+- **真因**：守卫 `const mountedRef = useRef(true); useEffect(() => () => { mountedRef.current = false }, [])` **只在 cleanup 置 false、setup 不复位**。`main.tsx` 包 `<React.StrictMode>`，dev 下 effect 跑 **setup→cleanup→setup**：cleanup 置 false、第二次 setup 不复位 → 挂载后 `mountedRef.current` **恒为 false** → `await` 完成后 `if(!mountedRef.current) return` 提前返回、`setSaving(false)`/`setDeletingId(null)` 被跳过 → **转圈永不停**（请求其实早成功）。「通用」因同时影响保存/删除/旧 baseURL 覆盖（共用该 ref）。**仅 dev（StrictMode）触发**，production 不双调用 effect 故无症；也是**所有自动化此前没抓到的原因**（testing-library/GUI probe 默认不包 StrictMode）。
+
+**解法（一处 effect）**：
+```ts
+useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+```
+
+**验证（这次有 before/after 实证，不再是推断）**：
+- **jsdom 回归测试**：`render(<StrictMode><ModelsSection/></StrictMode>)` 保存断言 `toast.success` 被调用——修复前 fail / 后 pass（入库防回归）。
+- **Chrome + Vite + Playwright（StrictMode 下，截图存证）**：同一 probe，**破损版**（cleanup-only）保存后 `onForm=1, shown=0`（停在表单、Save 键转圈 = 复现）；**修复版**保存→「Custom provider saved」+ 列表出现 provider、删除→消失（save/delete 均恢复、零 console 错误）。截图 `/tmp/uw-provider-spike/shots/{broken,fixed}-*.png`。
+- 全仓 sweep：此破损 ref 模式仅此一处（pdf-view/pipeline-tab 用 `let cancelled=false` 局部变量式守卫，StrictMode 安全）。
+
+**两次误判（诚实留痕）**：① 「v1.15.13 事件循环争用」——vendor 实为 **v1.3.13**，不适用；② 「PATCH→invalidate→WKWebView 复用死连接致响应挂」——被真机日志（请求全部 `←` 返回）直接推翻。`PATCH /config` 触发 opencode 实例 dispose / SSE 1s 重连是**上游 v1.3.13 原生且无害**行为，非 vendor patch 导致、与卡死无关。
+
+**对无效修复的清理（回应「是否有负作用、是否清理」）**：基于上述错误假设加的改动**已全部回退**，只保留真正的 `mountedRef` 修复 + §11.1–11.9 的合法修复：
+- 回退 api-client 请求层 30s 超时 / `requestTimeoutMs` / `uw.debug.api` 追踪（app 级 scope creep、且非本因）；
+- 回退 `upsertCustomProvider` 的「单条原子 PATCH 重排」→ 复原为 `PUT auth → PATCH provider → setProviderDisabled(false)`（re-add un-disable 保留）；
+- 回退保存/删除成功后的「乐观本地更新」→ 复原为 `fetchData` 重拉（服务端为准，避免乐观值缺 cost/limit 的短暂不一致）。
+- 净效果：分支 diff 收敛到「自定义 provider 功能 + 一行 mountedRef 修复 + 回归测试」，无投机残留。
+
+**收口独立 review（2026-06-19）发现并修复**：
+- **幽灵模型（Medium，已修）**：delete 仅靠 `disabled_providers` 隐藏、不物理删除 config 的 `provider.<id>`（PATCH 删不掉 key），故「删除→用同 id 重加且模型更少」时旧模型会因深合并残留。修复 = `upsertCustomProvider` 每次写入 `whitelist: 当前模型 id 列表`（数组合并即替换；vendor `provider.ts:1259` 据 whitelist 删除未列出的模型）→ 幽灵被过滤。**headless e2e 实证**：加 mA+mB → 删 → 重加仅 mA → 列表只剩 mA。
+- **a11y nit（已修）**：`HoverLabelButton` 的标签 `<span>` 加 `aria-hidden`（避免与 `aria-label` 在无障碍树重复）。
+- **已知低风险（未改，数据相关）**：`isCustomProvider` 用 `source==="config" && !env?.length` 区分；若某内置 provider 在 models.dev 无 `env` 又被设了 baseURL 覆盖，会被误判为可删自定义（主流 provider 均有 env，且重名被 idTaken 拦截，触发面极窄）。
 
 ---
 

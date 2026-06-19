@@ -10,6 +10,8 @@ import type {
   ProviderAuthInfo,
   ProviderAuthResponse,
   OpenCodeConfig,
+  ProviderConfigModel,
+  CustomProviderDef,
   Agent,
   PromptAsyncRequest,
   MCPConfig,
@@ -47,6 +49,15 @@ export class ApiClient {
 
   getBaseUrl(): string {
     return this.baseUrl
+  }
+
+  /**
+   * The workspace directory this client is scoped to (sent as
+   * `x-opencode-directory`). Custom-provider config persists per-workspace, so
+   * the UI must guard against an empty value (see discussion 006 §11.9).
+   */
+  getWorkingDirectory(): string | undefined {
+    return this.workingDirectory
   }
 
   getCredentials(): { username?: string; password?: string } {
@@ -282,6 +293,73 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify({ type: "api", key: apiKey }),
     })
+  }
+
+  /** Remove a provider's stored API key (auth.json). */
+  async deleteProviderAuth(authId: string): Promise<void> {
+    await this.request<void>(`/auth/${authId}`, { method: "DELETE" })
+  }
+
+  /**
+   * Create or update a user-defined custom provider (OpenAI-compatible or
+   * Anthropic protocol). Writes the provider definition to opencode.json via
+   * PATCH /config and the API key (if any) to auth.json via PUT /auth.
+   *
+   * Persists to the CURRENT workspace's opencode.json (per-workspace scope) —
+   * `getWorkingDirectory()` must be non-empty or the request hits a drifting
+   * default instance (discussion 006 §11.9).
+   */
+  async upsertCustomProvider(def: CustomProviderDef): Promise<void> {
+    const npm = def.protocol === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible"
+    const models: Record<string, ProviderConfigModel> = {}
+    for (const m of def.models) {
+      models[m.id] = {
+        id: m.id,
+        name: m.name || m.id,
+        tool_call: true,
+        // opencode's model schema requires BOTH context and output inside `limit`
+        // — a partial `{ context }` is rejected (400). Only emit when both present.
+        ...(m.context != null && m.output != null
+          ? { limit: { context: m.context, output: m.output } }
+          : {}),
+      }
+    }
+    // API key goes to auth.json (PUT /auth), never into opencode.json plaintext.
+    if (def.apiKey?.trim()) {
+      await this.putProviderAuth(def.id, def.apiKey.trim())
+    }
+    await this.patchConfig({
+      provider: {
+        [def.id]: {
+          name: def.name,
+          npm,
+          api: def.baseURL,
+          options: { baseURL: def.baseURL },
+          models,
+          // Pin the exposed set to exactly these models. A prior delete→re-add can
+          // leave stale models in the (un-removable) config `models` map; whitelist
+          // (array → replaced on merge) hides them. See discussion 006 §11.10.
+          whitelist: def.models.map((m) => m.id),
+        },
+      },
+    })
+    // A prior delete only hid the provider via `disabled_providers` (the config key
+    // persists); re-adding the same id must clear that flag or it stays invisible.
+    await this.setProviderDisabled(def.id, false)
+  }
+
+  /**
+   * Hide/unhide a provider via opencode's `disabled_providers` list. Used to
+   * "delete" a custom provider (PATCH can't remove a config key). Reads the
+   * current list and writes back the full array (mergeDeep replaces arrays).
+   */
+  async setProviderDisabled(providerId: string, disabled: boolean): Promise<void> {
+    const config = await this.getConfig()
+    const current = Array.isArray(config.disabled_providers) ? config.disabled_providers : []
+    const has = current.includes(providerId)
+    if (disabled === has) return
+    const next = disabled ? [...current, providerId] : current.filter((id) => id !== providerId)
+    await this.patchConfig({ disabled_providers: next })
   }
 
   // --- Agent ---

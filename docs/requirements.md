@@ -61,7 +61,8 @@ Monorepo 结构：
 
 ### 模型管理
 
-- [x] ModelDialog（Provider 添加/API Key 配置）
+- [x] 模型管理设置页 section（Provider 列表/添加/API Key 配置；取代旧 ModelDialog）
+- [x] 自定义 Provider（清单外，OpenAI 兼容 / Anthropic，自带 Base URL+Key+模型；per-workspace，见 discussions/006）
 - [x] ModelSelector（快速切换模型 Popover）
 - [x] ModelProvider（全局模型状态 Context）
 - [x] prompt_async model override（运行时模型切换）

@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-14 -->
+<!-- last-synced: 2026-06-19 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -50,6 +50,19 @@ idRef.current = id;
 const timerRef = useRef<ReturnType<typeof setTimeout>>();
 useEffect(() => () => clearTimeout(timerRef.current), []);
 ```
+
+### 挂载守卫 ref 必须在 effect **setup** 复位（StrictMode 坑，2026-06-19 实测）
+`isMounted`/`mountedRef` 守卫（`await` 后 `if (!mountedRef.current) return` / `if (mountedRef.current) setX(...)`，防卸载后 setState）**绝不能只在 cleanup 置 false**：
+```ts
+// ❌ 错：dev StrictMode 跑 effect = setup→cleanup→setup，cleanup 置 false 后 setup 不复位
+const mountedRef = useRef(true);
+useEffect(() => () => { mountedRef.current = false }, []);
+// → 挂载后 mountedRef.current 恒为 false → 所有 await 后的 setState（如 setSaving(false)）被跳过
+//   → 按钮 loading 永不停（请求其实早成功）。仅 dev 触发（main.tsx 包 <StrictMode>）。
+// ✅ 对：setup 复位 true
+useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, []);
+```
+**测试也要包 StrictMode 才测得出**（`render(<StrictMode><Comp/></StrictMode>)`，断言 await 后的成功路径执行）——testing-library 默认不包，是此类 bug 长期漏网的原因。**优先用局部变量式守卫**（`let cancelled=false; …; return () => { cancelled=true }`，每次 effect 重建新闭包、StrictMode 天然安全，见 `pdf-view.tsx`/`pipeline-tab.tsx`），仅在跨多个 handler 共享时才用 ref。
 
 ## 3. SSE 事件处理
 
