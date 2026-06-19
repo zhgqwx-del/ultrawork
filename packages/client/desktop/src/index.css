@@ -2,42 +2,45 @@
 
 /* Design tokens */
 :root {
-  /* Core colors */
-  --color-bg: #ffffff;
-  --color-fg: #0f172a;
-  --color-fg-muted: #64748b;
-  --color-border: #e2e8f0;
-  --color-accent: #f1f5f9;
-  --color-accent-fg: #0f172a;
+  /* Neutral (zinc) elevation ramp — main is a soft off-white canvas, never
+     clinical pure white; the sidebar is the recessed chrome below it, and
+     cards/popovers use pure white to float on top:
+     sidebar #f0f0f2 < main #fafafb < cards/popover #ffffff. */
+  --color-bg: #fafafb;
+  --color-fg: #18181b;
+  --color-fg-muted: #71717a;
+  --color-border: #e4e4e7;
+  --color-accent: #f4f4f5;
+  --color-accent-fg: #18181b;
   --color-primary: #2563eb;
   --color-primary-fg: #ffffff;
   --color-destructive: #ef4444;
   --color-destructive-fg: #ffffff;
-  --color-muted: #f1f5f9;
-  --color-muted-fg: #64748b;
+  --color-muted: #f4f4f5;
+  --color-muted-fg: #71717a;
 
   /* Brand */
   --color-brand: #ea580c;
   --color-brand-fg: #ffffff;
   --color-brand-gradient: linear-gradient(135deg, #fb923c, #ea580c);
-  --color-bg-subtle: #f8fafc;
-  --color-bg-secondary: #f1f5f9;
+  --color-bg-subtle: #f7f7f8;
+  --color-bg-secondary: #f4f4f5;
 
-  /* Sidebar — subtle recessed gray so the main card floats above it */
-  --sidebar-bg: #f6f7f9;
-  --sidebar-fg: #0f172a;
+  /* Sidebar — recessed neutral gray below the main canvas */
+  --sidebar-bg: #f0f0f2;
+  --sidebar-fg: #18181b;
   /* Primary list text (session titles): readable by default, not washed out.
      --sidebar-fg-muted stays reserved for genuinely secondary chrome
      (group labels, timestamps, idle icons). */
-  --sidebar-fg-soft: rgba(15, 23, 42, 0.88);
-  --sidebar-fg-muted: rgba(15, 23, 42, 0.62);
-  --sidebar-accent: rgba(15, 23, 42, 0.07);
-  --sidebar-accent-hover: rgba(15, 23, 42, 0.045);
-  --sidebar-border: #e2e8f0;
+  --sidebar-fg-soft: rgba(24, 24, 27, 0.88);
+  --sidebar-fg-muted: rgba(24, 24, 27, 0.62);
+  --sidebar-accent: rgba(24, 24, 27, 0.07);
+  --sidebar-accent-hover: rgba(24, 24, 27, 0.045);
+  --sidebar-border: #e4e4e7;
 
   /* Popover / Dropdown */
   --color-popover: #ffffff;
-  --color-popover-fg: #0f172a;
+  --color-popover-fg: #18181b;
 
   /* Ring */
   --color-ring: #2563eb;
@@ -45,38 +48,41 @@
 
 /* Dark mode colors */
 .dark {
-  /* Neutral (zinc) elevation ramp — no blue tint mixed in:
-     main well #0a0a0b < sidebar #151517 < popover/subtle #1c1c1f
-     < border #27272a < panels #232327. Sidebar floats above the well. */
-  --color-bg: #0a0a0b;
-  --color-fg: #f1f5f9;
+  /* Neutral (zinc) elevation ramp — no blue tint. The main canvas is a calm
+     dark content well; the sidebar is a distinctly LIGHTER chrome framing it
+     (VSCode/Slack style) so it never reads as a black void and stands clearly
+     apart from the main area:
+     main well #232327 < subtle #2a2a2e < sidebar #2e2e34
+     < popover/panels #34343a < border #3a3a40. */
+  --color-bg: #232327;
+  --color-fg: #f4f4f5;
   --color-fg-muted: #a1a1aa;
-  --color-border: #27272a;
-  --color-accent: #232327;
-  --color-accent-fg: #f1f5f9;
+  --color-border: #3a3a40;
+  --color-accent: #34343a;
+  --color-accent-fg: #f4f4f5;
   --color-primary: #3b82f6;
   --color-primary-fg: #ffffff;
   --color-destructive: #ef4444;
   --color-destructive-fg: #ffffff;
-  --color-muted: #232327;
+  --color-muted: #34343a;
   --color-muted-fg: #a1a1aa;
 
   --color-brand: #ea580c;
   --color-brand-fg: #ffffff;
   --color-brand-gradient: linear-gradient(135deg, #fb923c, #ea580c);
-  --color-bg-subtle: #1c1c1f;
-  --color-bg-secondary: #232327;
+  --color-bg-subtle: #2a2a2e;
+  --color-bg-secondary: #34343a;
 
-  --sidebar-bg: #151517;
-  --sidebar-fg: #f1f5f9;
-  --sidebar-fg-soft: rgba(241, 245, 249, 0.82);
-  --sidebar-fg-muted: rgba(241, 245, 249, 0.60);
-  --sidebar-accent: rgba(241, 245, 249, 0.09);
-  --sidebar-accent-hover: rgba(241, 245, 249, 0.06);
-  --sidebar-border: #27272a;
+  --sidebar-bg: #2e2e34;
+  --sidebar-fg: #f4f4f5;
+  --sidebar-fg-soft: rgba(244, 244, 245, 0.82);
+  --sidebar-fg-muted: rgba(244, 244, 245, 0.60);
+  --sidebar-accent: rgba(244, 244, 245, 0.10);
+  --sidebar-accent-hover: rgba(244, 244, 245, 0.06);
+  --sidebar-border: #3a3a40;
 
-  --color-popover: #1c1c1f;
-  --color-popover-fg: #f1f5f9;
+  --color-popover: #34343a;
+  --color-popover-fg: #f4f4f5;
 
   --color-ring: #3b82f6;
 }
