@@ -1,13 +1,82 @@
-import { useState, useEffect, useCallback, useRef } from "react"
-import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft } from "lucide-react"
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
+import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft, Trash2, X, Sparkles } from "lucide-react"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { useModel } from "@/lib/model-context"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { clearModelCache } from "@/components/chat/model-selector"
-import type { Provider, ProviderAuthInfo } from "@agent/api-client"
+import type { Provider, ProviderAuthInfo, CustomProviderProtocol, CustomProviderDef } from "@agent/api-client"
+
+/**
+ * A user-created custom provider (deletable). `source === "config"` alone is too
+ * broad — it also matches a *built-in* provider that the user merely gave a Base
+ * URL override (existing configure flow), which would wrongly show a delete
+ * button that disables the real built-in. Built-ins retain their models.dev
+ * `env` (e.g. ["OPENAI_API_KEY"]); our custom providers have none. Empirically
+ * verified — see discussion 006 §11.9.
+ */
+const isCustomProvider = (p: Provider) => p.source === "config" && !(p.env && p.env.length > 0)
+
+interface CustomModelRow {
+  /** Stable React key so removing a middle row doesn't shift focus/IME. */
+  key: number
+  id: string
+  name: string
+  context: string
+  output: string
+}
+
+let modelRowSeq = 0
+const blankModelRow = (): CustomModelRow => ({ key: modelRowSeq++, id: "", name: "", context: "", output: "" })
+
+/** Parse a user-entered positive integer; "" / non-finite / ≤0 / fractional → undefined. */
+const parsePositiveInt = (s: string): number | undefined => {
+  const t = s.trim()
+  if (!t) return undefined
+  const n = Number(t)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
+/**
+ * Icon button whose label appears INSTANTLY on hover via CSS group-hover (no
+ * native-`title` delay). `aria-label` keeps it accessible/testable. Used for the
+ * ambiguous ✓/✗ inline delete-confirm icons.
+ */
+function HoverLabelButton({
+  label,
+  onClick,
+  className,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={cn(
+        "group/tip relative flex shrink-0 items-center justify-center rounded-md transition-colors",
+        className,
+      )}
+    >
+      {children}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded bg-[var(--color-fg)] px-1.5 py-0.5 text-[10px] text-[var(--color-bg)] opacity-0 transition-opacity duration-75 group-hover/tip:opacity-100"
+      >
+        {label}
+      </span>
+    </button>
+  )
+}
+
 
 /**
  * Model provider management as a Settings section.
@@ -37,7 +106,33 @@ export function ModelsSection() {
   // Guards against post-await side effects after the section unmounts — the user
   // can switch the settings nav to another section while a save is in flight.
   const mountedRef = useRef(true)
-  useEffect(() => () => { mountedRef.current = false }, [])
+  // Reset in the SETUP, not just cleanup: React StrictMode (dev) runs effects
+  // setup→cleanup→setup, so a cleanup-only reset leaves the ref false after mount
+  // → post-await guards skip setSaving(false) and the spinner spins forever.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  // Custom provider form state (separate "customMode" sub-view)
+  const [customMode, setCustomMode] = useState(false)
+  const [customId, setCustomId] = useState("")
+  const [customName, setCustomName] = useState("")
+  const [customProtocol, setCustomProtocol] = useState<CustomProviderProtocol>("openai")
+  const [customBaseUrl, setCustomBaseUrl] = useState("")
+  const [customApiKey, setCustomApiKey] = useState("")
+  const [customModels, setCustomModels] = useState<CustomModelRow[]>([blankModelRow()])
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  // Inline two-step delete confirm (avoids the unstyled native window.confirm in
+  // the Tauri webview; matches the app's inline-action convention).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  // Custom-provider config persists per-workspace; without a workspace context
+  // the api client sends no x-opencode-directory and hits a drifting default
+  // instance where the provider never resolves (discussion 006 §11.9).
+  const hasWorkspace = Boolean(api.getWorkingDirectory())
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -149,6 +244,242 @@ export function ModelsSection() {
     }
   }
 
+  // --- Custom provider form ---
+
+  const handleShowCustom = () => {
+    setCustomId("")
+    setCustomName("")
+    setCustomProtocol("openai")
+    setCustomBaseUrl("")
+    setCustomApiKey("")
+    setCustomModels([blankModelRow()])
+    setCustomMode(true)
+  }
+
+  const closeCustom = () => setCustomMode(false)
+
+  const updateModelRow = (idx: number, patch: Partial<CustomModelRow>) => {
+    setCustomModels((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+  const addModelRow = () => setCustomModels((rows) => [...rows, blankModelRow()])
+  const removeModelRow = (idx: number) =>
+    setCustomModels((rows) => (rows.length <= 1 ? rows : rows.filter((_, i) => i !== idx)))
+
+  const handleSaveCustom = async () => {
+    const id = customId.trim().toLowerCase()
+    // Rows with any content; a row with content but no ID is a user error
+    // (don't silently drop it), fully-blank rows are ignored.
+    const filled = customModels.filter((m) => m.id.trim() || m.name.trim() || m.context.trim() || m.output.trim())
+    // Validation
+    if (!/^[a-z0-9-]+$/.test(id)) return toast.error(t("model.customProvider.err.id"))
+    if (providers.some((p) => p.id === id)) return toast.error(t("model.customProvider.err.idTaken"))
+    if (!customName.trim()) return toast.error(t("model.customProvider.err.name"))
+    if (!/^https?:\/\/.+/.test(customBaseUrl.trim())) return toast.error(t("model.customProvider.err.baseUrl"))
+    if (filled.length === 0) return toast.error(t("model.customProvider.err.noModels"))
+    if (filled.some((m) => !m.id.trim())) return toast.error(t("model.customProvider.err.modelId"))
+    const modelIds = filled.map((m) => m.id.trim())
+    if (new Set(modelIds).size !== modelIds.length) return toast.error(t("model.customProvider.err.modelDup"))
+
+    const parsed = filled.map((m) => ({
+      id: m.id.trim(),
+      name: m.name.trim() || m.id.trim(),
+      context: parsePositiveInt(m.context),
+      output: parsePositiveInt(m.output),
+    }))
+    // opencode requires context+output together inside a model's `limit`; reject a
+    // lone value rather than silently dropping it (the api-client omits a partial limit).
+    if (parsed.some((m) => (m.context == null) !== (m.output == null))) {
+      return toast.error(t("model.customProvider.err.limitPair"))
+    }
+
+    const def: CustomProviderDef = {
+      id,
+      name: customName.trim(),
+      protocol: customProtocol,
+      baseURL: customBaseUrl.trim(),
+      apiKey: customApiKey.trim() || undefined,
+      models: parsed,
+    }
+
+    setSaving(true)
+    try {
+      await api.upsertCustomProvider(def)
+      clearModelCache()
+      if (!mountedRef.current) return
+      toast.success(t("model.customProvider.saveSuccess"))
+      setSearch("")
+      setCustomMode(false)
+      setConfiguring(false)
+      fetchData()
+    } catch (err) {
+      console.error("Failed to save custom provider:", err)
+      if (mountedRef.current) toast.error(t("model.customProvider.saveError"))
+    } finally {
+      if (mountedRef.current) setSaving(false)
+    }
+  }
+
+  const handleDeleteProvider = async (pid: string) => {
+    setConfirmDeleteId(null)
+    setDeletingId(pid)
+    try {
+      // Hide via disabled_providers (PATCH can't remove the config key) + clear key.
+      await api.setProviderDisabled(pid, true)
+      await api.deleteProviderAuth(pid).catch(() => {})
+      clearModelCache()
+      if (!mountedRef.current) return
+      toast.success(t("model.customProvider.deleteSuccess"))
+      fetchData()
+    } catch (err) {
+      console.error("Failed to remove provider:", err)
+      if (mountedRef.current) toast.error(t("model.customProvider.deleteError"))
+    } finally {
+      if (mountedRef.current) setDeletingId(null)
+    }
+  }
+
+  // ---- Custom Provider form view ----
+  if (customMode) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={closeCustom}
+            className="flex size-7 items-center justify-center rounded-md text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+          >
+            <ArrowLeft className="size-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("model.customProvider.title")}</h2>
+        </div>
+        <p className="text-sm text-[var(--color-fg-muted)]">
+          {t("model.customProvider.hint")} {t("model.customProvider.scopeHint")}
+        </p>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">{t("model.customProvider.id")}</label>
+            <input
+              type="text"
+              value={customId}
+              onChange={(e) => setCustomId(e.target.value)}
+              placeholder={t("model.customProvider.idPlaceholder")}
+              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">{t("model.customProvider.name")}</label>
+            <input
+              type="text"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder={t("model.customProvider.namePlaceholder")}
+              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">{t("model.customProvider.protocol")}</label>
+            <Select value={customProtocol} onValueChange={(v) => setCustomProtocol(v as CustomProviderProtocol)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">{t("model.customProvider.protocol.openai")}</SelectItem>
+                <SelectItem value="anthropic">{t("model.customProvider.protocol.anthropic")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">{t("model.addProvider.baseUrl")}</label>
+            <input
+              type="text"
+              value={customBaseUrl}
+              onChange={(e) => setCustomBaseUrl(e.target.value)}
+              placeholder="https://api.example.com/v1"
+              className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
+            {t("model.addProvider.apiKey")} ({t("model.configureProvider.optional")})
+          </label>
+          <input
+            type="password"
+            value={customApiKey}
+            onChange={(e) => setCustomApiKey(e.target.value)}
+            placeholder="sk-..."
+            className="w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+          />
+        </div>
+
+        {/* Models */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-[var(--color-fg-muted)]">{t("model.customProvider.models")}</label>
+            <button type="button" onClick={addModelRow} className="flex items-center gap-1 text-xs text-[var(--color-brand)] hover:underline">
+              <Plus className="size-3" /> {t("model.customProvider.addModel")}
+            </button>
+          </div>
+          {customModels.map((m, idx) => (
+            <div key={m.key} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={m.id}
+                onChange={(e) => updateModelRow(idx, { id: e.target.value })}
+                placeholder={t("model.customProvider.modelId")}
+                className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              />
+              <input
+                type="text"
+                value={m.name}
+                onChange={(e) => updateModelRow(idx, { name: e.target.value })}
+                placeholder={t("model.customProvider.modelName")}
+                className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              />
+              <input
+                type="number"
+                min="1"
+                value={m.context}
+                onChange={(e) => updateModelRow(idx, { context: e.target.value })}
+                placeholder={t("model.customProvider.context")}
+                className="w-24 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              />
+              <input
+                type="number"
+                min="1"
+                value={m.output}
+                onChange={(e) => updateModelRow(idx, { output: e.target.value })}
+                placeholder={t("model.customProvider.output")}
+                className="w-24 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+              />
+              <button
+                type="button"
+                onClick={() => removeModelRow(idx)}
+                disabled={customModels.length <= 1}
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={closeCustom}>
+            {t("button.cancel")}
+          </Button>
+          <Button size="sm" onClick={handleSaveCustom} disabled={saving}>
+            {saving ? <Loader2 className="size-4 animate-spin" /> : t("button.save")}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   // ---- Configure Provider view ----
   if (configuring) {
     return (
@@ -170,6 +501,22 @@ export function ModelsSection() {
             <p className="text-sm text-[var(--color-fg-muted)]">
               {t("model.configureProvider.selectHint")}
             </p>
+            {/* Add a fully custom provider (OpenAI-compatible / Anthropic) */}
+            <button
+              type="button"
+              onClick={handleShowCustom}
+              disabled={!hasWorkspace}
+              title={!hasWorkspace ? t("model.customProvider.noWorkspace") : undefined}
+              className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[var(--color-border)] px-4 py-3 text-left transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--color-border)] disabled:hover:bg-transparent"
+            >
+              <Sparkles className="size-4 shrink-0 text-[var(--color-brand)]" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-[var(--color-fg)]">{t("model.customProvider.add")}</div>
+                <div className="text-xs text-[var(--color-fg-muted)]">
+                  {hasWorkspace ? t("model.customProvider.hint") : t("model.customProvider.noWorkspace")}
+                </div>
+              </div>
+            </button>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-fg-muted)]" />
               <input
@@ -338,11 +685,13 @@ export function ModelsSection() {
                 key={provider.id}
                 className="rounded-lg border border-[var(--color-border)] transition-colors hover:border-[var(--color-fg-muted)]/30"
               >
-                {/* Provider header */}
+                {/* Provider header (+ delete affordance for custom providers, as a
+                    sibling button to avoid nesting interactive elements) */}
+                <div className="flex items-center">
                 <button
                   type="button"
                   onClick={() => !search && setExpandedProvider(isExpanded ? null : provider.id)}
-                  className="flex w-full items-center gap-3 px-4 py-3"
+                  className="flex flex-1 min-w-0 items-center gap-3 px-4 py-3"
                 >
                   <ChevronRight
                     className={cn(
@@ -356,6 +705,11 @@ export function ModelsSection() {
                       {provider.connected.length > 0 && (
                         <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-500">
                           {t("model.enabled")}
+                        </span>
+                      )}
+                      {isCustomProvider(provider) && (
+                        <span className="rounded-full bg-[var(--color-brand)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--color-brand)]">
+                          {t("model.customProvider.badge")}
                         </span>
                       )}
                     </div>
@@ -372,6 +726,39 @@ export function ModelsSection() {
                     )}
                   </div>
                 </button>
+                {isCustomProvider(provider) && (
+                  deletingId === provider.id ? (
+                    <span className="mr-2 flex size-8 shrink-0 items-center justify-center text-[var(--color-fg-muted)]">
+                      <Loader2 className="size-4 animate-spin" />
+                    </span>
+                  ) : confirmDeleteId === provider.id ? (
+                    <span className="mr-2 flex shrink-0 items-center gap-1">
+                      <HoverLabelButton
+                        label={t("model.customProvider.delete")}
+                        onClick={() => handleDeleteProvider(provider.id)}
+                        className="size-7 text-red-500 hover:bg-red-500/10"
+                      >
+                        <Check className="size-4" />
+                      </HoverLabelButton>
+                      <HoverLabelButton
+                        label={t("button.cancel")}
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="size-7 text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+                      >
+                        <X className="size-4" />
+                      </HoverLabelButton>
+                    </span>
+                  ) : (
+                    <HoverLabelButton
+                      label={t("model.customProvider.delete")}
+                      onClick={() => setConfirmDeleteId(provider.id)}
+                      className="mr-2 size-8 text-[var(--color-fg-muted)] hover:bg-red-500/10 hover:text-red-500"
+                    >
+                      <Trash2 className="size-4" />
+                    </HoverLabelButton>
+                  )
+                )}
+                </div>
 
                 {/* Model list (expanded) */}
                 {isExpanded && (() => {

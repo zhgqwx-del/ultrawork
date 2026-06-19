@@ -284,10 +284,54 @@ export interface ProviderAuthMethod {
 
 // --- Config types ---
 
+/** A single model entry inside a config provider's `models` map. */
+export interface ProviderConfigModel {
+  id?: string
+  name?: string
+  tool_call?: boolean
+  reasoning?: boolean
+  attachment?: boolean
+  temperature?: boolean
+  cost?: { input?: number; output?: number }
+  limit?: { context?: number; output?: number }
+}
+
+/**
+ * Config-level provider definition (opencode.json `provider.<id>`). A superset
+ * of the legacy `{ options }` shape — supports defining a brand-new custom
+ * provider (name/npm/api/models) beyond just overriding an existing one.
+ */
+export interface ProviderConfig {
+  name?: string
+  npm?: string
+  api?: string
+  env?: string[]
+  models?: Record<string, ProviderConfigModel>
+  /** Restrict exposed models to these ids — hides stale models that linger in
+   *  `models` after a delete→re-add (PATCH can't remove config keys). */
+  whitelist?: string[]
+  options?: Record<string, unknown>
+}
+
 export interface OpenCodeConfig {
   model?: string
-  provider?: Record<string, { options?: Record<string, unknown> }>
+  provider?: Record<string, ProviderConfig>
+  /** Provider IDs hidden from `GET /provider` (used to "delete" custom providers). */
+  disabled_providers?: string[]
   [key: string]: unknown
+}
+
+/** Supported protocols for a user-defined custom provider. */
+export type CustomProviderProtocol = "openai" | "anthropic"
+
+/** Input collected by the "add custom provider" form. */
+export interface CustomProviderDef {
+  id: string
+  name: string
+  protocol: CustomProviderProtocol
+  baseURL: string
+  apiKey?: string
+  models: Array<{ id: string; name: string; context?: number; output?: number }>
 }
 
 // --- Agent types ---

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-17 -->
+<!-- last-synced: 2026-06-19 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -33,6 +33,7 @@
 - **产物识别只看「工具意图」会漏真产物（2026-06-15，ADR-033）**：`artifacts-panel`/`delegate.ts` 旧逻辑只从 `write/edit/create/patch` 工具 input 的路径参数（+ delegate D-2 JSON + 文本正则）提产物。但**最终产物常是 `bash` 跑脚本的副作用**（agent `write` 一个 `.py` → `bash python x.py` 生成 `report.pdf`）：bash 产物没有工具路径参数 → **完全识别不到**；那个 `.py` 反而因被 `write` 写过而冒充产物。**正解 = 文件系统真相（仅桌面端）**：扫会话目录里 **mtime ≥ 回合基线**的文件并入产物（桌面 Tauri `scan_workspace_changes` 返回 `{path, mtimeMs}`，基线 = 会话最早消息 `time.created`、仅 agent 空闲时扫）。忽略 `.git/node_modules/__pycache__/*.pyc/隐藏/temp`，**限深度 8 + 匹配 500 + 访问 50000 项**（大工作区里匹配稀疏会强制全树遍历，每项一次 stat，故须有访问上限），命令 **`async`** 跑在非 UI 线程（大目录别卡 webview）。再用扩展名分「产物 / 工作文件」两组（工作文件=脚本/代码/配置白名单，其余皆产物；无产物时工作文件提升），避免 `.py` 等冒充。**基线为 0（消息无 time）时不扫**——否则 `since=0` 会把工作区里所有既存文件当产物。**编排侧 `collectDeliverable` 刻意不做 fs 扫描**（见 §9）——D-2 `artifacts[]` 只取子会话自己的 write/edit 工具路径。
 - **多个会话共用一个工作区时，mtime 扫描会「串会话」——必须按本会话的回合时间窗过滤（2026-06-16 真机踩到）**：`mtime ≥ 会话起点` 不足以归属——同一工作区下的会话 A/B/C 各自产物的 mtime 互相落在对方的 `[起点, now]` 区间内，于是 A 的产物区会显示 B、C 的文件。**正解**：`sessionTurnWindows(messages, active)` 算出本会话**实际在跑回合**的时间窗（user 消息开窗 → 该回合最后一条 assistant `time.completed`(+5s grace) 关窗；最后一回合在 active 时开放到 `Infinity`；回合间的 idle 间隙不在任何窗内），`filterScanByWindows` 只保留 mtime 落在某个窗内的扫描文件。别人会话在它自己回合里写的文件落在它自己的窗、不在本会话的窗 → 不再串。纯 mtime 上下界（span）也不够：会漏掉「本会话 idle 期间别的会话写文件」的串扰，必须按**回合**切窗。
 - **opencode `GET /file/content` 对 PDF/二进制返回空 content，前端必须自行判型（2026-06-15）**：后端 `file/index.ts` 的 binary 集合含 `pdf`/`doc(x)`/`xls(x)`/`ppt(x)` 等 → 这些类型 `getFileContent` 返回 `{type:"binary", content:""}`（**图片例外**：返回 base64）。前端 `isBinaryFile`（`file-icon.tsx BINARY_EXTS`）**故意不含 pdf**——pdf 走 `pdf-view.tsx` 用 `pdfjs-dist` 自己读字节渲染（见下条），不依赖后端 content；若把 pdf 误当文本去拉 content 就会拿到空串、渲成「无内容」空白（这正是修复前的 bug）。Office 类仍留在 `BINARY_EXTS` → 走 `BinaryFileCard`「用系统应用打开」（无内嵌渲染器，刻意）。
+- **`PATCH /config` 是 per-(instance)-directory + 只增改不删 key（2026-06-19，自定义 provider 实测）**：① **作用域 per-workspace**——`Config.update` 写 `<x-opencode-directory>/opencode.json`（实例目录），不是 global `~/.config/ultrawork/`。api-client 自带 `x-opencode-directory = workingDirectory`（`buildHeaders`），**前提是 `workingDirectory` 非空**；为空时请求命中漂移的默认实例 → provider/config 时隐时现、`getModel` 抛 `ProviderModelNotFoundError`、config 偶不落盘。故配置类入口（自定义 provider 等）**无活动工作区时应禁用**。② **`PATCH` 走 `mergeDeep`，只能增/改 key、删不掉**——`{provider:{id:null}}` 被 schema 拒 400；删自定义 provider 用 `disabled_providers:[id]`（数组，merge 时整体替换）隐藏 + `DELETE /auth/:id` 清 key，**config 里的 `provider.<id>` 物理残留**。③ 残留导致**幽灵子项**：删→同 id 重加且 `models` 更少时，旧 model 因深合并存活；**用 `provider.<id>.whitelist=[当前 model id]` 过滤**（vendor `provider.ts` 据 whitelist 删除未列出模型；数组 merge 即替换）。④ 自定义 provider 完整机制（OpenAI 兼容/Anthropic、auth.json 落 key、models.dev merge）见 [`discussions/006`](./discussions/006-custom-llm-provider.md)。
 
 ## 2. OpenCode Server 运行时限制
 
