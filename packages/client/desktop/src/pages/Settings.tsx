@@ -33,17 +33,37 @@ import type { SkillSource, SkillItem } from "@/lib/use-skills"
 
 type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
 
-const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings; labelKey: string }[] = [
-  { key: "general", icon: Settings, labelKey: "settingsPage.general" },
-  { key: "models", icon: Cpu, labelKey: "settingsPage.models" },
-  { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
-  { key: "capabilities", icon: Cpu, labelKey: "settingsPage.capabilities" },
-  { key: "agents", icon: Bot, labelKey: "settingsPage.agents" },
-  { key: "services", icon: Server, labelKey: "settingsPage.services" },
-  { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
-  { key: "knowledge", icon: BookOpen, labelKey: "settingsPage.knowledge" },
-  { key: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
-  { key: "about", icon: Info, labelKey: "settingsPage.about" },
+type NavItem = { key: SettingsSection; icon: typeof Settings; labelKey: string }
+
+const NAV_GROUPS: { titleKey: string; items: NavItem[] }[] = [
+  {
+    titleKey: "settingsPage.group.general",
+    items: [{ key: "general", icon: Settings, labelKey: "settingsPage.general" }],
+  },
+  {
+    titleKey: "settingsPage.group.ai",
+    items: [
+      { key: "models", icon: Cpu, labelKey: "settingsPage.models" },
+      { key: "agents", icon: Bot, labelKey: "settingsPage.agents" },
+      { key: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
+      { key: "knowledge", icon: BookOpen, labelKey: "settingsPage.knowledge" },
+    ],
+  },
+  {
+    titleKey: "settingsPage.group.integration",
+    items: [
+      { key: "services", icon: Server, labelKey: "settingsPage.services" },
+      { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
+    ],
+  },
+  {
+    titleKey: "settingsPage.group.account",
+    items: [
+      { key: "capabilities", icon: SlidersHorizontal, labelKey: "settingsPage.capabilities" },
+      { key: "privacy", icon: Shield, labelKey: "settingsPage.privacy" },
+      { key: "about", icon: Info, labelKey: "settingsPage.about" },
+    ],
+  },
 ]
 
 export function SettingsPage() {
@@ -66,21 +86,28 @@ export function SettingsPage() {
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left nav */}
-        <nav className="flex w-56 shrink-0 flex-col gap-1 border-r border-[var(--color-border)] p-3">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setActiveSection(item.key)}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
-                activeSection === item.key
-                  ? "bg-[var(--color-accent)] font-medium text-[var(--color-fg)]"
-                  : "text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
-              )}
-            >
-              <item.icon className="size-4" />
-              {t(item.labelKey)}
-            </button>
+        <nav className="flex w-56 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--color-border)] p-3">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.titleKey} className="mb-2 flex flex-col gap-0.5">
+              <p className="px-3 pb-1 pt-2 text-xs font-medium text-[var(--color-fg-muted)]">
+                {t(group.titleKey)}
+              </p>
+              {group.items.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => setActiveSection(item.key)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
+                    activeSection === item.key
+                      ? "bg-[var(--color-accent)] font-medium text-[var(--color-fg)]"
+                      : "text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+                  )}
+                >
+                  <item.icon className="size-4" />
+                  {t(item.labelKey)}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
 

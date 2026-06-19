@@ -111,6 +111,10 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Settings page
     "settingsPage.title": "Settings",
+    "settingsPage.group.general": "General",
+    "settingsPage.group.ai": "AI Capabilities",
+    "settingsPage.group.integration": "Integrations",
+    "settingsPage.group.account": "Account & Security",
     "settingsPage.general": "General",
     "settingsPage.models": "Models",
     "settingsPage.models.desc": "Configure model providers, API keys, and the active model",
@@ -705,6 +709,10 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Settings page
     "settingsPage.title": "设置",
+    "settingsPage.group.general": "通用设置",
+    "settingsPage.group.ai": "AI 能力",
+    "settingsPage.group.integration": "集成",
+    "settingsPage.group.account": "账户与安全",
     "settingsPage.general": "通用",
     "settingsPage.models": "模型",
     "settingsPage.models.desc": "配置模型供应商、API 密钥与当前模型",
