@@ -289,9 +289,10 @@ export interface ProviderAuthMethod {
  * fields opencode accepts (models.dev `Model`, applied as `partial()`): the
  * capability booleans, `cost`/`limit`, plus `modalities`/`headers`/`options`
  * (model-level `options` is merged into the AI SDK `providerOptions` at call
- * time — vendor `session/llm.ts`). The index signature lets the "advanced JSON"
- * escape hatch pass through any other valid field; opencode's schema is
- * non-strict, so unknown keys are silently stripped rather than rejected.
+ * time — vendor `session/llm.ts`). The "advanced JSON" escape hatch passes any
+ * OTHER valid field through `deepMergePlain` (typed loosely there, not here) —
+ * opencode's schema is non-strict, so unknown keys are silently stripped rather
+ * than rejected. Kept as a closed interface so typos in literals are caught.
  */
 export interface ProviderConfigModel {
   id?: string
@@ -305,7 +306,6 @@ export interface ProviderConfigModel {
   modalities?: { input?: string[]; output?: string[] }
   headers?: Record<string, string>
   options?: Record<string, unknown>
-  [key: string]: unknown
 }
 
 /**

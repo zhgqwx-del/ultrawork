@@ -43,13 +43,16 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * opencode's mergeDeep array-replace semantics). Used to let a custom model's
  * "advanced JSON" override the structured fields the form built.
  */
-function deepMergePlain<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+function deepMergePlain(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base }
   for (const [k, v] of Object.entries(patch)) {
     const prev = out[k]
     out[k] = isPlainObject(prev) && isPlainObject(v) ? deepMergePlain(prev, v) : v
   }
-  return out as T
+  return out
 }
 
 export class ApiClient {
@@ -350,7 +353,14 @@ export class ApiClient {
       }
       // The "advanced JSON" escape hatch wins: deep-merge it LAST so a user can
       // set `options`/`headers`/`cost` or override any structured field above.
-      models[m.id] = m.advanced ? deepMergePlain(base, m.advanced) : base
+      // BUT force `id` back to the map key afterwards — opencode resolves a model
+      // by its map key, so letting advanced JSON change the inner `id` would
+      // desync `models[id].id` from the key (and the whitelist), producing a
+      // model that can't be selected. (`name` may still be overridden; harmless.)
+      const merged = m.advanced
+        ? (deepMergePlain(base as Record<string, unknown>, m.advanced) as ProviderConfigModel)
+        : base
+      models[m.id] = { ...merged, id: m.id }
     }
     // API key goes to auth.json (PUT /auth), never into opencode.json plaintext.
     if (def.apiKey?.trim()) {

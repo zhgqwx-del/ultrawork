@@ -371,8 +371,9 @@ const translations: Record<Language, Record<string, string>> = {
     "model.customProvider.test": "Test connection",
     "model.customProvider.test.ok": "Connection succeeded",
     "model.customProvider.test.auth": "Authentication failed — check the API key",
+    "model.customProvider.test.authNoKey": "This endpoint requires authentication — enter an API key",
     "model.customProvider.test.network": "Could not reach the Base URL",
-    "model.customProvider.test.notfound": "Reachable, but the model-list endpoint was not found",
+    "model.customProvider.test.notfound": "Reachable, but no model-list endpoint here — this doesn't block saving",
     "model.customProvider.test.http": "Provider returned an error",
 
     // Services page
@@ -1015,8 +1016,9 @@ const translations: Record<Language, Record<string, string>> = {
     "model.customProvider.test": "测试连接",
     "model.customProvider.test.ok": "连接成功",
     "model.customProvider.test.auth": "鉴权失败——请检查 API 密钥",
+    "model.customProvider.test.authNoKey": "该端点需要鉴权——请填写 API 密钥",
     "model.customProvider.test.network": "无法访问 Base URL",
-    "model.customProvider.test.notfound": "可访问，但未找到模型列表端点",
+    "model.customProvider.test.notfound": "可访问，但此处无模型列表端点——不影响保存",
     "model.customProvider.test.http": "供应商返回错误",
     "model.modelsAvailable": "个模型",
     "model.switchSuccess": "模型已切换",

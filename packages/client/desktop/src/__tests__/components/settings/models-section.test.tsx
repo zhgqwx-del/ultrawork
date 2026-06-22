@@ -341,11 +341,76 @@ describe("ModelsSection", () => {
     await openCustomForm()
     const texts = container.querySelectorAll('input[type="text"]')
     fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    // provide a key so the message is the "wrong key" variant, not "needs a key"
+    const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: "sk-bad" } })
     fireEvent.click(screen.getByRole("button", { name: "model.customProvider.test" }))
 
     await waitFor(() =>
       expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("model.customProvider.test.auth")),
     )
     expect(h.toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it("test connection with no API key maps 401 to the 'needs a key' message, not 'wrong key'", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 401, message: "auth" })
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    const texts = container.querySelectorAll('input[type="text"]')
+    fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    // no key entered
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.test" }))
+
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("model.customProvider.test.authNoKey")),
+    )
+  })
+
+  it("blocks a partial limit slipped in via advanced JSON (context only, no output)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '{"limit":{"context":128000}}' } })
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.limitPair"))
+    expect(h.upsertCustomProvider).not.toHaveBeenCalled()
+  })
+
+  it("allows a limit split across the number field (context) and advanced JSON (output)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    const nums = container.querySelectorAll('input[type="number"]')
+    fireEvent.change(nums[0], { target: { value: "128000" } }) // context only
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '{"limit":{"output":4096}}' } }) // output via advanced
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.upsertCustomProvider).toHaveBeenCalled())
+    expect(h.toastError).not.toHaveBeenCalledWith("model.customProvider.err.limitPair")
+  })
+
+  it("does not silently drop a row touched only via a capability toggle (still requires an ID)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    // fill provider-level fields + first model id, then add a SECOND row
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: /model\.customProvider\.addModel/ }))
+    // toggle a capability on the second row but leave its id blank
+    const checks = container.querySelectorAll('input[type="checkbox"]')
+    // second row's checkboxes start at index 4 (4 per row); index 6 = its "vision"
+    fireEvent.click(checks[6])
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.modelId"))
+    expect(h.upsertCustomProvider).not.toHaveBeenCalled()
   })
 })

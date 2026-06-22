@@ -724,6 +724,27 @@ describe("ApiClient", () => {
       expect(m.limit).toEqual({ context: 200000, output: 8192, input: 100 })
       expect(m.modalities).toEqual({ input: ["text"], output: ["text"] })
     })
+
+    it("never lets advanced JSON change the model id away from its map key", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+
+      await client.upsertCustomProvider({
+        id: "p",
+        name: "P",
+        protocol: "openai",
+        baseURL: "https://api.example.com/v1",
+        models: [{ id: "m1", name: "M1", advanced: { id: "gpt-4o", name: "Renamed" } }],
+      })
+
+      const prov = patchedConfig().provider["p"]
+      // map key stays "m1"; the model's own id is forced back to it (advanced's
+      // "gpt-4o" is overridden) so resolution/whitelist can't desync. name may change.
+      expect(Object.keys(prov.models)).toEqual(["m1"])
+      expect(prov.models["m1"].id).toBe("m1")
+      expect(prov.models["m1"].name).toBe("Renamed")
+      expect(prov.whitelist).toEqual(["m1"])
+    })
   })
 
   // --- Factory ---

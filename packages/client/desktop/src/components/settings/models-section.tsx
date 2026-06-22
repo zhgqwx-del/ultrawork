@@ -318,6 +318,7 @@ export function ModelsSection() {
     if (!/^https?:\/\/.+/.test(customBaseUrl.trim())) {
       return toast.error(t("model.customProvider.err.baseUrl"))
     }
+    const hadKey = Boolean(customApiKey.trim())
     setTesting(true)
     try {
       const res = await invoke<{ ok: boolean; status: number; message: string }>(
@@ -328,31 +329,50 @@ export function ModelsSection() {
           protocol: customProtocol,
         },
       )
+      // The probe can take up to 15s (curl timeout); bail if the form unmounted
+      // meanwhile (user hit Cancel) so we don't toast/setState on a dead view.
+      if (!mountedRef.current) return
+      const suffix = res.status ? ` (${res.status})` : ""
       if (res.ok) {
         toast.success(t("model.customProvider.test.ok"))
+      } else if (res.message === "auth") {
+        // 401/403 with no key entered isn't a "wrong key" — it just needs one.
+        const key = hadKey ? "model.customProvider.test.auth" : "model.customProvider.test.authNoKey"
+        toast.error(`${t(key)}${suffix}`)
+      } else if (res.message === "notfound") {
+        // Advisory, not a failure: the model-list path varies by gateway and this
+        // does not block saving. Use a neutral toast, not an error.
+        toast(`${t("model.customProvider.test.notfound")}${suffix}`)
       } else {
-        // Map the Rust classification to a localized hint.
-        const key =
-          res.message === "auth"
-            ? "model.customProvider.test.auth"
-            : res.message === "network"
-              ? "model.customProvider.test.network"
-              : res.message === "notfound"
-                ? "model.customProvider.test.notfound"
-                : "model.customProvider.test.http"
-        toast.error(`${t(key)}${res.status ? ` (${res.status})` : ""}`)
+        const key = res.message === "network" ? "model.customProvider.test.network" : "model.customProvider.test.http"
+        toast.error(`${t(key)}${suffix}`)
       }
     } catch (err) {
       console.error("Provider connection test failed:", err)
-      toast.error(t("model.customProvider.test.network"))
+      if (mountedRef.current) toast.error(t("model.customProvider.test.network"))
     } finally {
-      setTesting(false)
+      if (mountedRef.current) setTesting(false)
     }
   }
 
-  /** True for a row the user has touched (so a content-less leftover row is skipped). */
+  /**
+   * True for a row the user has touched, so a content-less leftover row is
+   * skipped but a touched-yet-id-less row still surfaces the "needs ID" error
+   * instead of being silently dropped. Includes capability toggles (toolCall
+   * defaults to true, so a flipped-off toolCall or any other flag = touched).
+   */
   const rowHasContent = (m: CustomModelRow) =>
-    m.id.trim() || m.name.trim() || m.context.trim() || m.output.trim() || m.advanced.trim()
+    Boolean(
+      m.id.trim() ||
+        m.name.trim() ||
+        m.context.trim() ||
+        m.output.trim() ||
+        m.advanced.trim() ||
+        !m.toolCall ||
+        m.reasoning ||
+        m.vision ||
+        m.attachment,
+    )
 
   const handleSaveCustom = async () => {
     const id = customId.trim().toLowerCase()
@@ -368,12 +388,12 @@ export function ModelsSection() {
     if (filled.some((m) => !m.id.trim())) return toast.error(t("model.customProvider.err.modelId"))
     const modelIds = filled.map((m) => m.id.trim())
     if (new Set(modelIds).size !== modelIds.length) return toast.error(t("model.customProvider.err.modelDup"))
+    // Parse each row's advanced JSON ONCE; reuse for both validation and the def.
+    const advParsed = filled.map((m) => parseAdvanced(m.advanced))
     // Any malformed advanced JSON blocks the save (the textarea is already flagged).
-    if (filled.some((m) => parseAdvanced(m.advanced).error)) {
-      return toast.error(t("model.customProvider.err.advancedJson"))
-    }
+    if (advParsed.some((a) => a.error)) return toast.error(t("model.customProvider.err.advancedJson"))
 
-    const parsed: CustomProviderModelDef[] = filled.map((m) => ({
+    const parsed: CustomProviderModelDef[] = filled.map((m, i) => ({
       id: m.id.trim(),
       name: m.name.trim() || m.id.trim(),
       context: parsePositiveInt(m.context),
@@ -382,13 +402,26 @@ export function ModelsSection() {
       reasoning: m.reasoning,
       attachment: m.attachment,
       vision: m.vision,
-      advanced: parseAdvanced(m.advanced).value,
+      advanced: advParsed[i].value,
     }))
-    // opencode requires context+output together inside a model's `limit`; reject a
-    // lone value rather than silently dropping it (the api-client omits a partial limit).
-    if (parsed.some((m) => (m.context == null) !== (m.output == null))) {
-      return toast.error(t("model.customProvider.err.limitPair"))
+    // opencode requires context+output together inside a model's `limit` (a partial
+    // `{ context }` is rejected 400). The limit can come from EITHER the number
+    // fields OR `advanced.limit` (deep-merged in the api-client), so validate the
+    // EFFECTIVE pairing across both sources — otherwise a partial limit slipped in
+    // via advanced JSON reaches opencode, or a split (context in field, output in
+    // advanced) is wrongly rejected.
+    const limitField = (lim: unknown, k: "context" | "output"): number | undefined => {
+      if (!lim || typeof lim !== "object") return undefined
+      const v = (lim as Record<string, unknown>)[k]
+      return typeof v === "number" ? v : undefined
     }
+    const limitMismatch = parsed.some((m, i) => {
+      const advLimit = advParsed[i].value?.limit
+      const ctx = m.context ?? limitField(advLimit, "context")
+      const out = m.output ?? limitField(advLimit, "output")
+      return (ctx == null) !== (out == null)
+    })
+    if (limitMismatch) return toast.error(t("model.customProvider.err.limitPair"))
 
     const def: CustomProviderDef = {
       id,

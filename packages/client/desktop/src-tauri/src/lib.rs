@@ -378,11 +378,15 @@ async fn test_provider_connection(
     if base.is_empty() {
         return Err("Base URL is empty".into());
     }
-    let url = build_provider_test_url(&base_url, &protocol);
+    let url = build_provider_test_url(base, &protocol);
     let key = api_key.trim();
 
     let mut args: Vec<String> = vec![
         "-sS".into(),
+        // Follow redirects so a model-list endpoint behind a 301/302 (common for
+        // gateways that normalize trailing slashes) reports the final status, not
+        // a bogus "3xx → http error".
+        "-L".into(),
         "-o".into(),
         "/dev/null".into(),
         "-w".into(),
