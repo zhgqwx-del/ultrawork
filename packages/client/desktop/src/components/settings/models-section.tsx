@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
-import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft, Trash2, X, Sparkles } from "lucide-react"
+import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft, Trash2, X, Sparkles, Plug } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { useModel } from "@/lib/model-context"
@@ -8,7 +9,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { clearModelCache } from "@/components/chat/model-selector"
-import type { Provider, ProviderAuthInfo, CustomProviderProtocol, CustomProviderDef } from "@agent/api-client"
+import type { Provider, ProviderAuthInfo, CustomProviderProtocol, CustomProviderModelDef, CustomProviderDef } from "@agent/api-client"
 
 /**
  * A user-created custom provider (deletable). `source === "config"` alone is too
@@ -27,10 +28,31 @@ interface CustomModelRow {
   name: string
   context: string
   output: string
+  /** Capability flags. toolCall defaults to true (most models support tools). */
+  toolCall: boolean
+  reasoning: boolean
+  attachment: boolean
+  vision: boolean
+  /** Raw "advanced (JSON)" escape hatch; "" when unused. */
+  advanced: string
+  /** Whether the advanced JSON editor is expanded for this row. */
+  advancedOpen: boolean
 }
 
 let modelRowSeq = 0
-const blankModelRow = (): CustomModelRow => ({ key: modelRowSeq++, id: "", name: "", context: "", output: "" })
+const blankModelRow = (): CustomModelRow => ({
+  key: modelRowSeq++,
+  id: "",
+  name: "",
+  context: "",
+  output: "",
+  toolCall: true,
+  reasoning: false,
+  attachment: false,
+  vision: false,
+  advanced: "",
+  advancedOpen: false,
+})
 
 /** Parse a user-entered positive integer; "" / non-finite / ≤0 / fractional → undefined. */
 const parsePositiveInt = (s: string): number | undefined => {
@@ -38,6 +60,26 @@ const parsePositiveInt = (s: string): number | undefined => {
   if (!t) return undefined
   const n = Number(t)
   return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
+/**
+ * Validate the "advanced (JSON)" field. Empty → valid (no extra). Must parse to
+ * a plain JSON object (not array/scalar) since it deep-merges into the model
+ * config. Returns `error: true` on bad input so the form can block save + flag
+ * the textarea.
+ */
+const parseAdvanced = (
+  s: string,
+): { ok: boolean; value?: Record<string, unknown>; error?: boolean } => {
+  const t = s.trim()
+  if (!t) return { ok: true }
+  try {
+    const v = JSON.parse(t)
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return { ok: false, error: true }
+    return { ok: true, value: v as Record<string, unknown> }
+  } catch {
+    return { ok: false, error: true }
+  }
 }
 
 /**
@@ -124,6 +166,8 @@ export function ModelsSection() {
   const [customBaseUrl, setCustomBaseUrl] = useState("")
   const [customApiKey, setCustomApiKey] = useState("")
   const [customModels, setCustomModels] = useState<CustomModelRow[]>([blankModelRow()])
+  // "test connection" probe in flight (custom-provider form).
+  const [testing, setTesting] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   // Inline two-step delete confirm (avoids the unstyled native window.confirm in
   // the Tauri webview; matches the app's inline-action convention).
@@ -265,11 +309,56 @@ export function ModelsSection() {
   const removeModelRow = (idx: number) =>
     setCustomModels((rows) => (rows.length <= 1 ? rows : rows.filter((_, i) => i !== idx)))
 
+  /**
+   * Best-effort connectivity + auth probe against the entered Base URL. Runs a
+   * Rust `curl` command (no webview CORS, key stays out of the renderer's
+   * network log) hitting the provider's model-list endpoint.
+   */
+  const handleTestConnection = async () => {
+    if (!/^https?:\/\/.+/.test(customBaseUrl.trim())) {
+      return toast.error(t("model.customProvider.err.baseUrl"))
+    }
+    setTesting(true)
+    try {
+      const res = await invoke<{ ok: boolean; status: number; message: string }>(
+        "test_provider_connection",
+        {
+          baseUrl: customBaseUrl.trim(),
+          apiKey: customApiKey.trim(),
+          protocol: customProtocol,
+        },
+      )
+      if (res.ok) {
+        toast.success(t("model.customProvider.test.ok"))
+      } else {
+        // Map the Rust classification to a localized hint.
+        const key =
+          res.message === "auth"
+            ? "model.customProvider.test.auth"
+            : res.message === "network"
+              ? "model.customProvider.test.network"
+              : res.message === "notfound"
+                ? "model.customProvider.test.notfound"
+                : "model.customProvider.test.http"
+        toast.error(`${t(key)}${res.status ? ` (${res.status})` : ""}`)
+      }
+    } catch (err) {
+      console.error("Provider connection test failed:", err)
+      toast.error(t("model.customProvider.test.network"))
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  /** True for a row the user has touched (so a content-less leftover row is skipped). */
+  const rowHasContent = (m: CustomModelRow) =>
+    m.id.trim() || m.name.trim() || m.context.trim() || m.output.trim() || m.advanced.trim()
+
   const handleSaveCustom = async () => {
     const id = customId.trim().toLowerCase()
     // Rows with any content; a row with content but no ID is a user error
     // (don't silently drop it), fully-blank rows are ignored.
-    const filled = customModels.filter((m) => m.id.trim() || m.name.trim() || m.context.trim() || m.output.trim())
+    const filled = customModels.filter(rowHasContent)
     // Validation
     if (!/^[a-z0-9-]+$/.test(id)) return toast.error(t("model.customProvider.err.id"))
     if (providers.some((p) => p.id === id)) return toast.error(t("model.customProvider.err.idTaken"))
@@ -279,12 +368,21 @@ export function ModelsSection() {
     if (filled.some((m) => !m.id.trim())) return toast.error(t("model.customProvider.err.modelId"))
     const modelIds = filled.map((m) => m.id.trim())
     if (new Set(modelIds).size !== modelIds.length) return toast.error(t("model.customProvider.err.modelDup"))
+    // Any malformed advanced JSON blocks the save (the textarea is already flagged).
+    if (filled.some((m) => parseAdvanced(m.advanced).error)) {
+      return toast.error(t("model.customProvider.err.advancedJson"))
+    }
 
-    const parsed = filled.map((m) => ({
+    const parsed: CustomProviderModelDef[] = filled.map((m) => ({
       id: m.id.trim(),
       name: m.name.trim() || m.id.trim(),
       context: parsePositiveInt(m.context),
       output: parsePositiveInt(m.output),
+      toolCall: m.toolCall,
+      reasoning: m.reasoning,
+      attachment: m.attachment,
+      vision: m.vision,
+      advanced: parseAdvanced(m.advanced).value,
     }))
     // opencode requires context+output together inside a model's `limit`; reject a
     // lone value rather than silently dropping it (the api-client omits a partial limit).
@@ -424,57 +522,126 @@ export function ModelsSection() {
               <Plus className="size-3" /> {t("model.customProvider.addModel")}
             </button>
           </div>
-          {customModels.map((m, idx) => (
-            <div key={m.key} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={m.id}
-                onChange={(e) => updateModelRow(idx, { id: e.target.value })}
-                placeholder={t("model.customProvider.modelId")}
-                className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
-              />
-              <input
-                type="text"
-                value={m.name}
-                onChange={(e) => updateModelRow(idx, { name: e.target.value })}
-                placeholder={t("model.customProvider.modelName")}
-                className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
-              />
-              <input
-                type="number"
-                min="1"
-                value={m.context}
-                onChange={(e) => updateModelRow(idx, { context: e.target.value })}
-                placeholder={t("model.customProvider.context")}
-                className="w-24 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
-              />
-              <input
-                type="number"
-                min="1"
-                value={m.output}
-                onChange={(e) => updateModelRow(idx, { output: e.target.value })}
-                placeholder={t("model.customProvider.output")}
-                className="w-24 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
-              />
-              <button
-                type="button"
-                onClick={() => removeModelRow(idx)}
-                disabled={customModels.length <= 1}
-                className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30"
-              >
-                <X className="size-4" />
-              </button>
+          {customModels.map((m, idx) => {
+            const advErr = parseAdvanced(m.advanced).error
+            return (
+            <div key={m.key} className="space-y-2 rounded-lg border border-[var(--color-border)] p-3">
+              {/* Row 1: id + name + remove */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={m.id}
+                  onChange={(e) => updateModelRow(idx, { id: e.target.value })}
+                  placeholder={t("model.customProvider.modelId")}
+                  className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                />
+                <input
+                  type="text"
+                  value={m.name}
+                  onChange={(e) => updateModelRow(idx, { name: e.target.value })}
+                  placeholder={t("model.customProvider.modelName")}
+                  className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeModelRow(idx)}
+                  disabled={customModels.length <= 1}
+                  aria-label={t("model.customProvider.removeModel")}
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-30"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              {/* Row 2: context + output limits */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  value={m.context}
+                  onChange={(e) => updateModelRow(idx, { context: e.target.value })}
+                  placeholder={t("model.customProvider.context")}
+                  className="w-32 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  value={m.output}
+                  onChange={(e) => updateModelRow(idx, { output: e.target.value })}
+                  placeholder={t("model.customProvider.output")}
+                  className="w-32 rounded-md border border-[var(--color-border)] bg-transparent px-2.5 py-1.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                />
+              </div>
+
+              {/* Row 3: capability flags */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                {([
+                  ["toolCall", "model.customProvider.cap.toolCall"],
+                  ["reasoning", "model.customProvider.cap.reasoning"],
+                  ["vision", "model.customProvider.cap.vision"],
+                  ["attachment", "model.customProvider.cap.attachment"],
+                ] as const).map(([field, label]) => (
+                  <label key={field} className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg)]">
+                    <input
+                      type="checkbox"
+                      checked={m[field]}
+                      onChange={(e) => updateModelRow(idx, { [field]: e.target.checked } as Partial<CustomModelRow>)}
+                      className="size-3.5 accent-[var(--color-brand)]"
+                    />
+                    {t(label)}
+                  </label>
+                ))}
+              </div>
+
+              {/* Advanced (JSON) escape hatch */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => updateModelRow(idx, { advancedOpen: !m.advancedOpen })}
+                  className="flex items-center gap-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]"
+                >
+                  <ChevronRight className={cn("size-3.5 transition-transform", m.advancedOpen && "rotate-90")} />
+                  {t("model.customProvider.advanced")}
+                </button>
+                {m.advancedOpen && (
+                  <div className="mt-1.5">
+                    <textarea
+                      value={m.advanced}
+                      onChange={(e) => updateModelRow(idx, { advanced: e.target.value })}
+                      rows={4}
+                      spellCheck={false}
+                      placeholder={'{ "options": { … }, "headers": { … } }'}
+                      className={cn(
+                        "w-full rounded-md border bg-transparent px-2.5 py-1.5 font-mono text-xs text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1",
+                        advErr
+                          ? "border-red-500 focus:ring-red-500"
+                          : "border-[var(--color-border)] focus:ring-[var(--color-brand)]",
+                      )}
+                    />
+                    <p className={cn("mt-1 text-[10px]", advErr ? "text-red-500" : "text-[var(--color-fg-muted)]")}>
+                      {advErr ? t("model.customProvider.advancedError") : t("model.customProvider.advancedHint")}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
-          ))}
+            )
+          })}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={closeCustom}>
-            {t("button.cancel")}
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={handleTestConnection} disabled={testing}>
+            {testing ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Plug className="mr-1.5 size-3.5" />}
+            {t("model.customProvider.test")}
           </Button>
-          <Button size="sm" onClick={handleSaveCustom} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : t("button.save")}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={closeCustom}>
+              {t("button.cancel")}
+            </Button>
+            <Button size="sm" onClick={handleSaveCustom} disabled={saving}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : t("button.save")}
+            </Button>
+          </div>
         </div>
       </div>
     )

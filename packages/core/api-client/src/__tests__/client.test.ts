@@ -646,6 +646,86 @@ describe("ApiClient", () => {
     })
   })
 
+  // --- Custom provider ---
+
+  describe("upsertCustomProvider", () => {
+    /** Extract the parsed body of the PATCH /config call. */
+    function patchedConfig() {
+      const call = mockFetch.mock.calls.find(
+        (c) => c[0] === "http://localhost:4096/config" && c[1]?.method === "PATCH",
+      )
+      return JSON.parse(call![1].body)
+    }
+
+    it("maps capability flags, vision→modalities, and limit", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (setProviderDisabled)
+
+      await client.upsertCustomProvider({
+        id: "my-llm",
+        name: "My LLM",
+        protocol: "openai",
+        baseURL: "https://api.example.com/v1",
+        models: [
+          { id: "m1", name: "Model 1", context: 128000, output: 4096, toolCall: true, reasoning: true, vision: true },
+          { id: "m2", name: "", toolCall: false },
+        ],
+      })
+
+      const prov = patchedConfig().provider["my-llm"]
+      expect(prov.npm).toBe("@ai-sdk/openai-compatible")
+      expect(prov.whitelist).toEqual(["m1", "m2"])
+
+      const m1 = prov.models["m1"]
+      expect(m1.tool_call).toBe(true)
+      expect(m1.reasoning).toBe(true)
+      expect(m1.attachment).toBeUndefined()
+      expect(m1.modalities).toEqual({ input: ["text", "image"], output: ["text"] })
+      expect(m1.limit).toEqual({ context: 128000, output: 4096 })
+
+      const m2 = prov.models["m2"]
+      expect(m2.tool_call).toBe(false)
+      expect(m2.name).toBe("m2") // falls back to id
+      expect(m2.limit).toBeUndefined()
+      expect(m2.modalities).toBeUndefined()
+    })
+
+    it("deep-merges advanced JSON, letting it override structured fields", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+
+      await client.upsertCustomProvider({
+        id: "p",
+        name: "P",
+        protocol: "anthropic",
+        baseURL: "https://gw.example.com/v1",
+        models: [
+          {
+            id: "a",
+            name: "A",
+            context: 200000,
+            output: 8192,
+            vision: true,
+            advanced: {
+              options: { reasoningEffort: "high" },
+              headers: { "x-foo": "bar" },
+              limit: { input: 100 }, // merges into the {context,output} limit
+              modalities: { input: ["text"], output: ["text"] }, // replaces vision's modalities
+            },
+          },
+        ],
+      })
+
+      const m = patchedConfig().provider["p"].models["a"]
+      expect(patchedConfig().provider["p"].npm).toBe("@ai-sdk/anthropic")
+      expect(m.options).toEqual({ reasoningEffort: "high" })
+      expect(m.headers).toEqual({ "x-foo": "bar" })
+      // nested object deep-merges; arrays replace
+      expect(m.limit).toEqual({ context: 200000, output: 8192, input: 100 })
+      expect(m.modalities).toEqual({ input: ["text"], output: ["text"] })
+    })
+  })
+
   // --- Factory ---
 
   describe("createApiClient", () => {

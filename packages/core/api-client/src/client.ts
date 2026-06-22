@@ -34,6 +34,24 @@ export class ApiError extends Error {
   }
 }
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v)
+
+/**
+ * Recursively merge `patch` into `base`, returning a new object. Nested plain
+ * objects merge; arrays and scalars from `patch` REPLACE `base` (matching
+ * opencode's mergeDeep array-replace semantics). Used to let a custom model's
+ * "advanced JSON" override the structured fields the form built.
+ */
+function deepMergePlain<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+  const out: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(patch)) {
+    const prev = out[k]
+    out[k] = isPlainObject(prev) && isPlainObject(v) ? deepMergePlain(prev, v) : v
+  }
+  return out as T
+}
+
 export class ApiClient {
   private baseUrl: string
   private username?: string
@@ -313,16 +331,26 @@ export class ApiClient {
     const npm = def.protocol === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible"
     const models: Record<string, ProviderConfigModel> = {}
     for (const m of def.models) {
-      models[m.id] = {
+      const base: ProviderConfigModel = {
         id: m.id,
         name: m.name || m.id,
-        tool_call: true,
+        // Capability flags. tool_call defaults to true (most models support it);
+        // the others only emit when explicitly enabled.
+        tool_call: m.toolCall ?? true,
+        ...(m.reasoning ? { reasoning: true } : {}),
+        ...(m.attachment ? { attachment: true } : {}),
+        // Image input → modalities. opencode maps modalities.input/output to the
+        // text/image/… capability flags (vendor provider.ts fromModelsDevModel).
+        ...(m.vision ? { modalities: { input: ["text", "image"], output: ["text"] } } : {}),
         // opencode's model schema requires BOTH context and output inside `limit`
         // — a partial `{ context }` is rejected (400). Only emit when both present.
         ...(m.context != null && m.output != null
           ? { limit: { context: m.context, output: m.output } }
           : {}),
       }
+      // The "advanced JSON" escape hatch wins: deep-merge it LAST so a user can
+      // set `options`/`headers`/`cost` or override any structured field above.
+      models[m.id] = m.advanced ? deepMergePlain(base, m.advanced) : base
     }
     // API key goes to auth.json (PUT /auth), never into opencode.json plaintext.
     if (def.apiKey?.trim()) {
