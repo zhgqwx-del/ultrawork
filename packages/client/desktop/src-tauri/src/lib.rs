@@ -328,6 +328,99 @@ async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+#[derive(Serialize)]
+struct ProviderTestResult {
+    ok: bool,
+    status: u16,
+    /// Classification consumed by the frontend to pick a localized message:
+    /// "ok" | "auth" | "notfound" | "network" | "http".
+    message: String,
+}
+
+/// Build the model-list URL used to probe a custom provider. OpenAI-compatible
+/// base URLs already include the version segment (…/v1) → `{base}/models`.
+/// Anthropic base URLs may or may not include `/v1`.
+fn build_provider_test_url(base_url: &str, protocol: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    if protocol == "anthropic" {
+        if base.ends_with("/v1") {
+            format!("{}/models", base)
+        } else {
+            format!("{}/v1/models", base)
+        }
+    } else {
+        format!("{}/models", base)
+    }
+}
+
+/// Map an HTTP status to the frontend message key. status 0 = couldn't connect.
+fn classify_provider_status(status: u16) -> &'static str {
+    match status {
+        0 => "network",
+        200..=299 => "ok",
+        401 | 403 => "auth",
+        404 => "notfound",
+        _ => "http",
+    }
+}
+
+/// Best-effort connectivity + auth check for a custom model provider. Shells out
+/// to `curl` (same pattern as download_node — no extra HTTP dependency, no
+/// webview CORS) and hits the provider's model-list endpoint. The API key only
+/// ever travels to the provider's own host. Returns the HTTP status + a class.
+#[tauri::command(async)]
+async fn test_provider_connection(
+    base_url: String,
+    api_key: String,
+    protocol: String,
+) -> Result<ProviderTestResult, String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Base URL is empty".into());
+    }
+    let url = build_provider_test_url(base, &protocol);
+    let key = api_key.trim();
+
+    let mut args: Vec<String> = vec![
+        "-sS".into(),
+        // Follow redirects so a model-list endpoint behind a 301/302 (common for
+        // gateways that normalize trailing slashes) reports the final status, not
+        // a bogus "3xx → http error".
+        "-L".into(),
+        "-o".into(),
+        "/dev/null".into(),
+        "-w".into(),
+        "%{http_code}".into(),
+        "-m".into(),
+        "15".into(),
+    ];
+    if !key.is_empty() {
+        args.push("-H".into());
+        if protocol == "anthropic" {
+            args.push(format!("x-api-key: {}", key));
+        } else {
+            args.push(format!("Authorization: Bearer {}", key));
+        }
+    }
+    if protocol == "anthropic" {
+        args.push("-H".into());
+        args.push("anthropic-version: 2023-06-01".into());
+    }
+    args.push(url);
+
+    let output = Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    let status: u16 = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(0);
+    Ok(ProviderTestResult {
+        ok: (200..=299).contains(&status),
+        status,
+        message: classify_provider_status(status).to_string(),
+    })
+}
+
 /// Reveal a file in Finder (macOS). Uses `open -R` which highlights the file in its folder.
 #[tauri::command]
 fn reveal_file_in_finder(path: String) -> Result<(), String> {
@@ -1732,6 +1825,7 @@ pub fn run() {
             check_skill_dependencies,
             scan_workspace_changes,
             read_file_bytes,
+            test_provider_connection,
         ])
         .setup(|app| {
             // Stage 0: catch catchable termination signals so sidecars are
@@ -2123,5 +2217,47 @@ mod lifecycle_tests {
         // Nothing listens on this port in the test environment, so there is no
         // orphan to report. (We pick a high, unlikely-bound port.)
         assert!(!port_listener_orphaned(59_237));
+    }
+}
+
+#[cfg(test)]
+mod provider_test_tests {
+    use super::*;
+
+    #[test]
+    fn openai_url_appends_models() {
+        assert_eq!(
+            build_provider_test_url("https://api.example.com/v1", "openai"),
+            "https://api.example.com/v1/models"
+        );
+        // Trailing slash is trimmed (no double slash).
+        assert_eq!(
+            build_provider_test_url("https://api.example.com/v1/", "openai"),
+            "https://api.example.com/v1/models"
+        );
+    }
+
+    #[test]
+    fn anthropic_url_inserts_v1_when_missing() {
+        assert_eq!(
+            build_provider_test_url("https://api.anthropic.com", "anthropic"),
+            "https://api.anthropic.com/v1/models"
+        );
+        // …but does not double it when already present.
+        assert_eq!(
+            build_provider_test_url("https://gw.example.com/v1", "anthropic"),
+            "https://gw.example.com/v1/models"
+        );
+    }
+
+    #[test]
+    fn status_classification() {
+        assert_eq!(classify_provider_status(0), "network");
+        assert_eq!(classify_provider_status(200), "ok");
+        assert_eq!(classify_provider_status(204), "ok");
+        assert_eq!(classify_provider_status(401), "auth");
+        assert_eq!(classify_provider_status(403), "auth");
+        assert_eq!(classify_provider_status(404), "notfound");
+        assert_eq!(classify_provider_status(500), "http");
     }
 }

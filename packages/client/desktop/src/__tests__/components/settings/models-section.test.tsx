@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   clearModelCache: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  invoke: vi.fn(() => Promise.resolve({ ok: true, status: 200, message: "ok" })),
 }))
 
 vi.mock("@/lib/model-context", () => ({
@@ -42,6 +43,7 @@ vi.mock("@/lib/i18n-context", () => ({
 // radix Popover; we only assert that clearModelCache fires on save.
 vi.mock("@/components/chat/model-selector", () => ({ clearModelCache: h.clearModelCache }))
 vi.mock("sonner", () => ({ toast: { success: h.toastSuccess, error: h.toastError } }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: h.invoke }))
 
 import { ModelsSection } from "@/components/settings/models-section"
 
@@ -251,5 +253,164 @@ describe("ModelsSection", () => {
     await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
     expect(screen.queryByRole("button", { name: "model.customProvider.delete" })).toBeNull()
     expect(screen.queryByText("model.customProvider.badge")).toBeNull()
+  })
+
+  // --- Custom provider: per-model params ---
+
+  /** Fill the provider-level fields + a model id; returns the form's text inputs. */
+  const fillBaseCustomForm = (container: HTMLElement, modelId = "m1") => {
+    const texts = container.querySelectorAll('input[type="text"]')
+    fireEvent.change(texts[0], { target: { value: "my-llm" } })
+    fireEvent.change(texts[1], { target: { value: "My LLM" } })
+    fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    fireEvent.change(texts[3], { target: { value: modelId } })
+    return texts
+  }
+
+  it("includes capability flags in the saved def (toolCall on by default)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    // checkbox order: toolCall, reasoning, vision, attachment
+    const checks = container.querySelectorAll('input[type="checkbox"]')
+    fireEvent.click(checks[2]) // vision on
+    fireEvent.click(checks[0]) // toolCall off
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.upsertCustomProvider).toHaveBeenCalled())
+    const def = (h.upsertCustomProvider.mock.calls[0] as unknown[])[0] as {
+      models: Array<{ id: string; toolCall: boolean; reasoning: boolean; vision: boolean; attachment: boolean }>
+    }
+    expect(def.models[0]).toMatchObject({ id: "m1", toolCall: false, reasoning: false, vision: true, attachment: false })
+  })
+
+  it("parses valid advanced JSON into the model def", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '{"options":{"reasoningEffort":"high"}}' } })
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.upsertCustomProvider).toHaveBeenCalled())
+    const def = (h.upsertCustomProvider.mock.calls[0] as unknown[])[0] as {
+      models: Array<{ advanced?: Record<string, unknown> }>
+    }
+    expect(def.models[0].advanced).toEqual({ options: { reasoningEffort: "high" } })
+  })
+
+  it("blocks save when a model's advanced JSON is malformed", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: "{ not json" } })
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.advancedJson"))
+    expect(h.upsertCustomProvider).not.toHaveBeenCalled()
+  })
+
+  it("test connection invokes the Tauri command and toasts the result", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: true, status: 200, message: "ok" })
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    const texts = container.querySelectorAll('input[type="text"]')
+    fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.test" }))
+
+    await waitFor(() =>
+      expect(h.invoke).toHaveBeenCalledWith(
+        "test_provider_connection",
+        expect.objectContaining({ baseUrl: "https://api.example.com/v1", protocol: "openai" }),
+      ),
+    )
+    await waitFor(() => expect(h.toastSuccess).toHaveBeenCalledWith("model.customProvider.test.ok"))
+  })
+
+  it("test connection maps an auth failure to the localized error", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 401, message: "auth" })
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    const texts = container.querySelectorAll('input[type="text"]')
+    fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    // provide a key so the message is the "wrong key" variant, not "needs a key"
+    const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: "sk-bad" } })
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.test" }))
+
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("model.customProvider.test.auth")),
+    )
+    expect(h.toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it("test connection with no API key maps 401 to the 'needs a key' message, not 'wrong key'", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 401, message: "auth" })
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    const texts = container.querySelectorAll('input[type="text"]')
+    fireEvent.change(texts[2], { target: { value: "https://api.example.com/v1" } })
+    // no key entered
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.test" }))
+
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("model.customProvider.test.authNoKey")),
+    )
+  })
+
+  it("blocks a partial limit slipped in via advanced JSON (context only, no output)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '{"limit":{"context":128000}}' } })
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.limitPair"))
+    expect(h.upsertCustomProvider).not.toHaveBeenCalled()
+  })
+
+  it("allows a limit split across the number field (context) and advanced JSON (output)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    const nums = container.querySelectorAll('input[type="number"]')
+    fireEvent.change(nums[0], { target: { value: "128000" } }) // context only
+    fireEvent.click(screen.getByRole("button", { name: "model.customProvider.advanced" }))
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '{"limit":{"output":4096}}' } }) // output via advanced
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.upsertCustomProvider).toHaveBeenCalled())
+    expect(h.toastError).not.toHaveBeenCalledWith("model.customProvider.err.limitPair")
+  })
+
+  it("does not silently drop a row touched only via a capability toggle (still requires an ID)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    // fill provider-level fields + first model id, then add a SECOND row
+    fillBaseCustomForm(container)
+    fireEvent.click(screen.getByRole("button", { name: /model\.customProvider\.addModel/ }))
+    // toggle a capability on the second row but leave its id blank
+    const checks = container.querySelectorAll('input[type="checkbox"]')
+    // second row's checkboxes start at index 4 (4 per row); index 6 = its "vision"
+    fireEvent.click(checks[6])
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.modelId"))
+    expect(h.upsertCustomProvider).not.toHaveBeenCalled()
   })
 })

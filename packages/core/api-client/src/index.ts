@@ -36,6 +36,7 @@ export type {
   ProviderConfig,
   ProviderConfigModel,
   CustomProviderProtocol,
+  CustomProviderModelDef,
   CustomProviderDef,
   Agent,
   ModelOverride,

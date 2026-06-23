@@ -284,7 +284,16 @@ export interface ProviderAuthMethod {
 
 // --- Config types ---
 
-/** A single model entry inside a config provider's `models` map. */
+/**
+ * A single model entry inside a config provider's `models` map. Mirrors the
+ * fields opencode accepts (models.dev `Model`, applied as `partial()`): the
+ * capability booleans, `cost`/`limit`, plus `modalities`/`headers`/`options`
+ * (model-level `options` is merged into the AI SDK `providerOptions` at call
+ * time — vendor `session/llm.ts`). The "advanced JSON" escape hatch passes any
+ * OTHER valid field through `deepMergePlain` (typed loosely there, not here) —
+ * opencode's schema is non-strict, so unknown keys are silently stripped rather
+ * than rejected. Kept as a closed interface so typos in literals are caught.
+ */
 export interface ProviderConfigModel {
   id?: string
   name?: string
@@ -294,6 +303,9 @@ export interface ProviderConfigModel {
   temperature?: boolean
   cost?: { input?: number; output?: number }
   limit?: { context?: number; output?: number }
+  modalities?: { input?: string[]; output?: string[] }
+  headers?: Record<string, string>
+  options?: Record<string, unknown>
 }
 
 /**
@@ -324,6 +336,26 @@ export interface OpenCodeConfig {
 /** Supported protocols for a user-defined custom provider. */
 export type CustomProviderProtocol = "openai" | "anthropic"
 
+/** A single model row collected by the "add custom provider" form. */
+export interface CustomProviderModelDef {
+  id: string
+  name: string
+  context?: number
+  output?: number
+  /** Capability flags. `toolCall` defaults to true when omitted. */
+  toolCall?: boolean
+  reasoning?: boolean
+  attachment?: boolean
+  /** Image input → emitted as `modalities: { input: ["text","image"], output: ["text"] }`. */
+  vision?: boolean
+  /**
+   * Raw extra fields (parsed JSON object), deep-merged into the model config
+   * LAST so it can override anything above (e.g. `options`, `headers`, a custom
+   * `modalities`/`cost`/`limit`). The form is responsible for parsing/validating.
+   */
+  advanced?: Record<string, unknown>
+}
+
 /** Input collected by the "add custom provider" form. */
 export interface CustomProviderDef {
   id: string
@@ -331,7 +363,7 @@ export interface CustomProviderDef {
   protocol: CustomProviderProtocol
   baseURL: string
   apiKey?: string
-  models: Array<{ id: string; name: string; context?: number; output?: number }>
+  models: CustomProviderModelDef[]
 }
 
 // --- Agent types ---
