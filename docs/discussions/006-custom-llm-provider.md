@@ -572,8 +572,20 @@ useEffect(() => { mountedRef.current = true; return () => { mountedRef.current =
 - `packages/opencode/src/auth/index.ts` — auth.json（ApiAuth/OAuth/WellKnown）
 - `packages/opencode/src/server/routes/provider.ts` — `GET /provider`、`GET /provider/auth`、OAuth 端点
 
+## §12 增强：每模型参数配置 + 测试连接（2026-06-23 实现，分支 `feat/custom-provider-model-params`）
+
+在 §11 落地的自定义 provider 基础上扩展「每模型可配更多字段」+「测试连接」，**仍零改 vendor**。
+
+- **关键前提（逐行核验 + headless 实证）**：opencode config `provider.<id>.models.<modelId>` 用 `ModelsDev.Model.partial()`（`config.ts:808`），原生接受完整 models.dev Model schema——能力 bool（tool_call/reasoning/attachment/temperature）、`modalities`、`cost`、`limit`、`headers`、`options`、`variants` 等全字段；non-strict（未知 key 静默 strip）。model 级 `options` 经 `session/llm.ts:139 mergeDeep` 注入 AI SDK `providerOptions`，`headers`/`modalities`/能力位由 `provider.ts:912-957 fromModelsDevModel` 消费。**所以无需 vendor patch 即可暴露全字段**（固化于 gotchas §1）。
+- **UI**：每个模型行 = id/name + context/output + 能力勾选（工具调用/推理/视觉/附件）+ 可折叠「高级（JSON）」。高级 JSON 经 api-client `deepMergePlain` 最后深合并覆盖；`vision`→`modalities:{input:["text","image"],output:["text"]}`；**强制 `id` 回 map key**（advanced 不可改 id，防与 whitelist/解析失配）；limit 成对校验跨「数字框 + advanced.limit」有效值（拦 partial 防 400 / 放行拆分填写）。
+- **测试连接**：Tauri `test_provider_connection`（`lib.rs`，`curl` shell-out，按协议拼 `/models`，`-L` 跟随，分类 200/401/404/网络 → 本地化文案）。理由与坑见 gotchas §6（curl 而非 reqwest/webview fetch）。
+- **类型**：api-client `ProviderConfigModel` 扩 `modalities`/`headers`/`options`；新增 `CustomProviderModelDef`（能力位 + `advanced`）。
+- **验证**：typecheck 8/8 · api-client 61 · desktop 232 · cargo 16 · headless API 走查 19/19 · Chrome+Vite+Playwright GUI 走查 15/15（shim 注入 `window.__TAURI_INTERNALS__.invoke`，见 gotchas §6）· 真机 Tauri 已验。
+
+---
+
 **Ultrawork main**
-- `packages/client/desktop/src/components/settings/model-dialog.tsx` — provider 配置 UI（现状）
+- `packages/client/desktop/src/components/settings/models-section.tsx` — provider 配置 UI（model-dialog.tsx 已于 §11 重构为此 section；§12 加每模型参数 + 测试连接）
 - `packages/client/desktop/src/lib/model-context.tsx` — 当前模型 / 切换
 - `packages/client/desktop/src/components/chat/model-selector.tsx` — 模型选择 + 缓存
 - `packages/core/api-client/src/client.ts:237-321` — getConfig/patchConfig/getProviders/getProviderAuth/putProviderAuth/promptAsync
