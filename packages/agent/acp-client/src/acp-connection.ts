@@ -26,6 +26,7 @@ import type {
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk"
 import type { ACPAgentConfig, ACPAgentStatus, UwSSEEvent } from "./types.js"
+import { configFile } from "./config-paths.js"
 import { permissionPattern, resolvePermission } from "./permission-label.js"
 import { TurnShaper } from "./turn-shaper.js"
 
@@ -107,7 +108,7 @@ export function delegateShimCommand(execPath = process.execPath): string | undef
 //    under bunx, adds a process layer that the three-phase shutdown can't
 //    see) — keep it single-process.
 // Defaults only: an explicit value in the agent's env always wins.
-const GEMINI_MANAGED_SETTINGS_PATH = join(homedir(), ".config", "ultrawork", "gemini-acp-settings.json")
+const GEMINI_MANAGED_SETTINGS_PATH = configFile("gemini-acp-settings.json")
 const GEMINI_MANAGED_SETTINGS = { tools: { shell: { enableInteractiveShell: false } } }
 
 export function applyGeminiQuirks(

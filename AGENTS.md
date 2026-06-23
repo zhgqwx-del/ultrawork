@@ -152,7 +152,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）
 - `acp-connection.ts` — 子进程 + SDK stdio + 权限挂起回环 + 三阶段关闭 + per-agent 怪癖（`applyGeminiQuirks` env 注入、spawn cwd/PATH、`applyThoughtLevel` → session/set_config_option）
 - `permission-label.ts` — 权限标签分层推断（claude 丢 kind 的补救：kind → shaper 查表 → rawInput 形状 → title → 中性 "tool"）
-- `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发 + session/load 懒恢复）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（`~/.config/ultrawork/agents.json`）
+- `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发 + session/load 懒恢复）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（agents.json 读写）
+- `config-paths.ts` — **sidecar config 目录 SSOT**：`resolveConfigDir`/`configFile` 镜像 Rust `global_config_dir()`（XDG_CONFIG_HOME 隔离）；agents.json / gemini-acp-settings.json（`acp-connection.ts`）/ sidecar-auth.json（`opencode-credentials.ts`）全经此解析（gotchas §8/§11）
 - `session-store.ts` — W4b 会话历史持久化：event-fold reducer（与前端同构）+ 落盘 `~/.local/share/ultrawork/acp-sessions/`
 - `packages/agent/acp-client/scripts/mock-acp-agent.ts`（确定性测试 agent）, `packages/agent/acp-client/scripts/spike-claude.ts`（真实 claude → desktop fixture）
 

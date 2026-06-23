@@ -23,7 +23,11 @@ async function getAuth(): Promise<string> {
     const envUser = process.env.ULTRAWORK_SIDECAR_USERNAME || "opencode"
     return "Basic " + Buffer.from(`${envUser}:${envPw}`).toString("base64")
   }
-  const credsPath = join(homedir(), ".config", "ultrawork", "sidecar-auth.json")
+  // Honor XDG_CONFIG_HOME (mirrors the sidecar's config-paths.ts / Rust
+  // global_config_dir); empty string is treated as unset per the XDG spec.
+  const xdg = process.env.XDG_CONFIG_HOME
+  const configBase = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config")
+  const credsPath = join(configBase, "ultrawork", "sidecar-auth.json")
   const file = Bun.file(credsPath)
   if (!(await file.exists())) {
     console.error(`❌ Sidecar credentials not found at ${credsPath}`)

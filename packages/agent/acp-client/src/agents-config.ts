@@ -1,13 +1,12 @@
 // Agent registry persistence: ~/.config/ultrawork/agents.json
 // Schema carried over from feat/acp-support (ADR-027): agent name → command.
 
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { ACPAgentConfig, AgentsFile } from "./types.js"
+import { configFile, resolveConfigDir } from "./config-paths.js"
 
-const CONFIG_DIR = join(homedir(), ".config", "ultrawork")
-const CONFIG_PATH = join(CONFIG_DIR, "agents.json")
+const CONFIG_DIR = resolveConfigDir()
+const CONFIG_PATH = configFile("agents.json")
 
 // First-batch default (target architecture §0 B1): claude via the official
 // adapter, reusing the local Claude Code login. bunx --bun, never npx —
