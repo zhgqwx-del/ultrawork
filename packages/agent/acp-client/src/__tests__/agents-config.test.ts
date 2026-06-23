@@ -2,7 +2,10 @@
 // package are rewritten on load (exact token match; explicit pins respected).
 
 import { describe, it, expect } from "bun:test"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { migrateLegacyClaudeAdapter } from "../agents-config.js"
+import { configFile, resolveConfigDir } from "../config-paths.js"
 import type { AgentsFile } from "../types.js"
 
 const LEGACY = "@zed-industries/claude-code-acp"
@@ -71,5 +74,27 @@ describe("migrateLegacyClaudeAdapter", () => {
   it("tolerates empty/missing agents", () => {
     expect(migrateLegacyClaudeAdapter({ agents: {} })).toBe(false)
     expect(migrateLegacyClaudeAdapter({} as AgentsFile)).toBe(false)
+  })
+})
+
+describe("resolveConfigDir", () => {
+  it("honors a non-empty XDG_CONFIG_HOME (mirrors Rust global_config_dir)", () => {
+    expect(resolveConfigDir({ XDG_CONFIG_HOME: "/tmp/xdg" })).toBe(join("/tmp/xdg", "ultrawork"))
+  })
+
+  it("falls back to ~/.config when XDG_CONFIG_HOME is unset or empty", () => {
+    const fallback = join(homedir(), ".config", "ultrawork")
+    expect(resolveConfigDir({})).toBe(fallback)
+    expect(resolveConfigDir({ XDG_CONFIG_HOME: "" })).toBe(fallback)
+  })
+
+  it("configFile places every config file under the same resolved dir", () => {
+    // agents.json / gemini-acp-settings.json / sidecar-auth.json must all share
+    // one isolation namespace — they go through this single helper.
+    const env = { XDG_CONFIG_HOME: "/tmp/xdg" }
+    for (const name of ["agents.json", "gemini-acp-settings.json", "sidecar-auth.json"]) {
+      expect(configFile(name, env)).toBe(join("/tmp/xdg", "ultrawork", name))
+    }
+    expect(configFile("agents.json", {})).toBe(join(homedir(), ".config", "ultrawork", "agents.json"))
   })
 })
