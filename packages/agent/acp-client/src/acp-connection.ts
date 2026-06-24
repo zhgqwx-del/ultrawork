@@ -51,6 +51,27 @@ const SIGKILL_GRACE_MS = 1000
 // Blocking delegate MCP calls run a whole child turn — keep the agent's MCP
 // tool timeout above the orchestrator's default per-turn timeout (10 min).
 const DELEGATE_MCP_TOOL_TIMEOUT_MS = 1_800_000
+// Abort a turn if the agent goes fully silent (no session/update) for this
+// long while no tool is running (gotchas §8). Mirrors the opencode-side
+// llm.ts idle guard: a stalled agent leaves prompt() blocked forever and the
+// desktop session spinning. Tool execution is excused — an agent's tool_call
+// can legitimately run for minutes with no chunks, so the guard is disarmed
+// whenever any tool_call for the session is `in_progress`.
+// Read lazily so tests (and ops) can shrink them via env after module load.
+// Two-tier (mirrors the opencode-side llm.ts guard): before the agent's first
+// session/update a long budget tolerates its own prefill / cold start (TTFB);
+// once it has spoken the gap is small, so a shorter idle catches a mid-turn
+// stall quickly instead of waiting out the whole TTFB budget.
+const promptTtfbTimeoutMs = () => Number(process.env.ACP_PROMPT_TTFB_TIMEOUT_MS ?? 90_000)
+const promptIdleTimeoutMs = () => Number(process.env.ACP_PROMPT_IDLE_TIMEOUT_MS ?? 30_000)
+const promptIdleCheckMs = () => Number(process.env.ACP_PROMPT_IDLE_CHECK_MS ?? 15_000)
+// While a tool is in flight the agent may be silent for minutes, so the idle
+// guard above is relaxed — but not infinite. If the agent goes *fully* silent
+// (no session/update at all) for this much longer window while a tool is still
+// `in_progress`, the tool itself is wedged (e.g. the documented gemini
+// interactive-shell hang, §8) or its completion frame omitted a status (the
+// SDK allows it) and never cleared activeTools. Either way, break the turn.
+const promptToolSilenceMaxMs = () => Number(process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS ?? 600_000)
 
 // GUI-launched processes (the packaged Tauri app) inherit a minimal PATH that
 // misses the user bin dirs where agent CLIs live (e.g. qodercli in
@@ -165,6 +186,8 @@ export class ACPConnection {
   private pendingPermissions = new Map<string, PendingPermission>()
   private permSeq = 0
   private activePrompts = new Set<string>()
+  /** Idle-guard state per in-flight prompt: last activity + running tools + TTFB flag. */
+  private promptActivity = new Map<string, { last: number; activeTools: Set<string>; sawFirst: boolean }>()
   private pendingRequests = new Set<PendingRequest>()
   private updateChain: Promise<void> = Promise.resolve()
   private closing = false
@@ -356,24 +379,61 @@ export class ACPConnection {
     const conn = this.requireConnection()
     const shaper = this.shapers.get(sessionId)
     if (!shaper) throw new Error(`Unknown session: ${sessionId}`)
+    // ACP is single-turn-per-session. A concurrent prompt on the same session
+    // would clobber the idle-guard's per-session activity entry (keyed by
+    // sessionId) and cross-abort both turns, so reject it explicitly.
+    if (this.activePrompts.has(sessionId)) throw new Error(`Session already has an in-flight prompt: ${sessionId}`)
 
     const wireText = opts?.systemPrefix ? `${opts.systemPrefix}\n\n${text}` : text
     shaper.startTurn(text)
     this.activePrompts.add(sessionId)
+    const activity = { last: Date.now(), activeTools: new Set<string>(), sawFirst: false }
+    this.promptActivity.set(sessionId, activity)
+    let idleTimer: ReturnType<typeof setInterval> | undefined
     try {
-      const res = await this.runRequest(() =>
+      const promptPromise = this.runRequest(() =>
         conn.prompt({ sessionId, prompt: [{ type: "text", text: wireText }] }),
       )
+      // Avoid an unhandled rejection if the idle watchdog wins the race below;
+      // the real handling stays on the awaited Promise.race.
+      promptPromise.catch(() => {})
+      // Two-tier idle watchdog. `activity.last` is refreshed on every
+      // session/update (the handler in createClient). With no tool running the
+      // bar is the idle timeout; while a tool is `in_progress` the bar relaxes
+      // to the much longer tool-silence cap, so a long tool that streams
+      // progress stays alive but a fully-wedged one still gets broken.
+      const idleTimeoutMs = promptIdleTimeoutMs()
+      const ttfbTimeoutMs = promptTtfbTimeoutMs()
+      const toolSilenceMaxMs = promptToolSilenceMaxMs()
+      const idlePromise = new Promise<never>((_, reject) => {
+        idleTimer = setInterval(() => {
+          const inTool = activity.activeTools.size > 0
+          // tool running → tool-silence cap; else first-update-yet → TTFB; else idle.
+          const limit = inTool ? toolSilenceMaxMs : activity.sawFirst ? idleTimeoutMs : ttfbTimeoutMs
+          if (Date.now() - activity.last > limit) {
+            if (idleTimer) clearInterval(idleTimer)
+            // Best-effort: tell the agent to stop so it does not keep running.
+            this.cancel(sessionId).catch(() => {})
+            const what = inTool ? `tool silent for ${limit}ms` : `idle for ${limit}ms`
+            reject(new Error(`ACP turn ${what} (agent ${this.config.id}); aborting`))
+          }
+        }, promptIdleCheckMs())
+      })
+      const res = await Promise.race([promptPromise, idlePromise])
       // Flush queued session/update notifications before sealing the turn so
-      // the finish event is the last thing subscribers see.
-      await this.updateChain
+      // the finish event is the last thing subscribers see. Guard the await:
+      // a throwing handleUpdate poisons updateChain, and an unprotected await
+      // here would skip endTurn/failTurn and leave the desktop spinning.
+      await this.updateChain.catch(() => {})
       shaper.endTurn(res.stopReason, res.usage)
       return res.stopReason
     } catch (err) {
-      await this.updateChain
+      await this.updateChain.catch(() => {})
       shaper.failTurn(err instanceof Error ? err.message : String(err))
       throw err
     } finally {
+      if (idleTimer) clearInterval(idleTimer)
+      this.promptActivity.delete(sessionId)
       this.activePrompts.delete(sessionId)
     }
   }
@@ -561,6 +621,28 @@ export class ACPConnection {
         if (replay) {
           replay.lastUpdateAt = Date.now()
           return Promise.resolve()
+        }
+        // Idle-guard activity: any update means the agent is alive; track
+        // running tool_calls so the watchdog is disarmed during execution.
+        const activity = this.promptActivity.get(params.sessionId)
+        if (activity) {
+          activity.last = Date.now()
+          const u = params.update
+          // Only *content* output flips to the shorter idle bar — `agent has
+          // spoken`. A leading usage_update/plan frame is not speech and must
+          // not downgrade the TTFB budget before the model produces anything.
+          if (u.sessionUpdate === "agent_message_chunk" || u.sessionUpdate === "agent_thought_chunk") {
+            activity.sawFirst = true
+          } else if (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") {
+            if (u.status === "in_progress") activity.activeTools.add(u.toolCallId)
+            else if (u.status === "completed" || u.status === "failed") {
+              activity.activeTools.delete(u.toolCallId)
+              // Post-tool the agent re-enters a cold first-content window (it
+              // may re-read a large context before answering), so restore the
+              // longer TTFB budget until it speaks again.
+              if (activity.activeTools.size === 0) activity.sawFirst = false
+            }
+          }
         }
         // Fix 2: keep arrival order.
         this.updateChain = this.updateChain.then(() => {

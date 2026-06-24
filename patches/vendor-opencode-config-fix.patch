@@ -175,3 +175,104 @@ index 8c92bb6b2..2df9b9772 100644
          return yield* connectTransport(transport, connectTimeout).pipe(
            Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
              client,
+diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
+index dc89db409..3ce16090e 100644
+--- a/packages/opencode/src/session/llm.ts
++++ b/packages/opencode/src/session/llm.ts
+@@ -22,6 +22,80 @@ export namespace LLM {
+   const log = Log.create({ service: "llm" })
+   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+ 
++  // Ultrawork patch (ADR / gotchas §1): abort a turn if the model stops
++  // streaming tokens for this long. Some custom providers (observed:
++  // alibaba-cn/qwen) can stall *after* opening the answer block — the SSE
++  // connection neither emits, closes, nor errors — which leaves `fullStream`
++  // hung forever, the prompt loop deadlocked, and the session lock never
++  // released. There is no idle/stall timeout in the AI SDK, so we add one.
++  //
++  // Tools execute *inside* the AI SDK stream (fullStream is silent between
++  // `tool-call` and `tool-result`/`tool-error`), and a tool may legitimately
++  // run far longer than this (bash, webfetch, the 30-min delegate). So the
++  // guard is DISARMED while any tool is in flight. A single step can emit
++  // MULTIPLE parallel tool-calls whose results arrive out of order, so we
++  // track outstanding tool-call ids in a set (a boolean would re-arm the
++  // moment the FIRST result landed, killing siblings still executing). The id
++  // field on fullStream tool events is `toolCallId`.
++  //
++  // Two-tier: before the first token a long budget tolerates prefill / cold
++  // start / a reasoning model thinking silently (TTFB); once tokens are
++  // flowing the gap collapses to sub-second, so a much shorter idle catches a
++  // mid-stream stall (the observed qwen case: reasoning streamed, then the
++  // answer block opened and wedged) without waiting out the whole TTFB budget.
++  // Each opencode step is a fresh streamText/idleGuard, so a multi-step turn's
++  // post-tool first token already re-enters TTFB naturally; env-overridable so
++  // ops can tune without recompiling the sidecar.
++  const STREAM_TTFB_TIMEOUT_MS = Number(process.env.OPENCODE_STREAM_TTFB_TIMEOUT_MS ?? 90_000)
++  const STREAM_IDLE_TIMEOUT_MS = Number(process.env.OPENCODE_STREAM_IDLE_TIMEOUT_MS ?? 30_000)
++
++  async function* idleGuard<T extends { type: string }>(
++    source: AsyncIterable<T>,
++    onIdle: () => void,
++  ): AsyncGenerator<T> {
++    const it = source[Symbol.asyncIterator]()
++    const inflightTools = new Set<string>()
++    let sawFirstToken = false
++    try {
++      while (true) {
++        let timer: ReturnType<typeof setTimeout> | undefined
++        const limit = sawFirstToken ? STREAM_IDLE_TIMEOUT_MS : STREAM_TTFB_TIMEOUT_MS
++        const idle = new Promise<never>((_, reject) => {
++          if (inflightTools.size === 0)
++            timer = setTimeout(() => reject(new Error(`LLM stream idle for ${limit}ms`)), limit)
++        })
++        let res: IteratorResult<T>
++        try {
++          res = await Promise.race([it.next(), idle])
++        } catch (err) {
++          onIdle()
++          throw err
++        } finally {
++          if (timer) clearTimeout(timer)
++        }
++        if (res.done) return
++        const ev = res.value as { type: string; toolCallId?: string }
++        // First real token (content delta) switches to the shorter idle bar.
++        if (ev.type === "text-delta" || ev.type === "reasoning-delta") sawFirstToken = true
++        if (ev.type === "tool-call") {
++          if (ev.toolCallId) inflightTools.add(ev.toolCallId)
++        } else if (ev.type === "tool-result" || ev.type === "tool-error") {
++          if (ev.toolCallId) inflightTools.delete(ev.toolCallId)
++          // Defensive (today each step is its own stream, so this is moot): if
++          // a future AI SDK emits a post-tool generation in the same stream,
++          // restore the TTFB budget for that next first token.
++          if (inflightTools.size === 0) sawFirstToken = false
++        }
++        yield res.value
++      }
++    } finally {
++      // Fire-and-forget: a wedged provider read may never let return() settle,
++      // and awaiting it here would trap the thrown idle error inside the
++      // generator — exactly the deadlock this guard exists to break.
++      if (it.return) void it.return().catch(() => {})
++    }
++  }
++
+   export type StreamInput = {
+     user: MessageV2.User
+     sessionID: string
+@@ -63,8 +137,13 @@ export namespace LLM {
+ 
+                 const result = yield* Effect.promise(() => LLM.stream({ ...input, abort: ctrl.signal }))
+ 
+-                return Stream.fromAsyncIterable(result.fullStream, (e) =>
+-                  e instanceof Error ? e : new Error(String(e)),
++                // Wrap with the idle guard so a model-side stall aborts the
++                // underlying fetch (ctrl.abort) and fails the stream — which
++                // flows to processor's Effect.catch(halt) → error terminal →
++                // session unlocked. Tool execution is excused (see idleGuard).
++                return Stream.fromAsyncIterable(
++                  idleGuard(result.fullStream, () => ctrl.abort()),
++                  (e) => (e instanceof Error ? e : new Error(String(e))),
+                 )
+               }),
+             ),

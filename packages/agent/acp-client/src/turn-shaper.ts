@@ -65,6 +65,12 @@ export class TurnShaper {
   private modelID: string | undefined
   private plan: { messageID: string; partID: string } | null = null
   private userSeq = 0
+  // Sealed between turns: after endTurn/failTurn, late session/update frames
+  // (an aborted agent keeps emitting until cancel lands) must not re-open a
+  // message *after* the turn was finished — that renders zombie content past
+  // the stop/error. Cleared by startTurn. Meta-only updates are no-ops anyway,
+  // so dropping everything while sealed is behaviour-preserving for them.
+  private sealed = false
 
   constructor(
     private readonly sessionId: string,
@@ -81,6 +87,7 @@ export class TurnShaper {
    */
   startTurn(userText?: string): void {
     this.current = null
+    this.sealed = false
     this.tools.clear()
     this.plan = null
     this.turnCost = undefined
@@ -116,6 +123,7 @@ export class TurnShaper {
   }
 
   handleUpdate(update: SessionUpdate): void {
+    if (this.sealed) return
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         this.onAgentText(update.content)
@@ -172,6 +180,7 @@ export class TurnShaper {
     if (this.turnCost !== undefined) info.cost = this.turnCost
     this.emit({ type: "message.updated", properties: { info } })
     this.current = null
+    this.sealed = true
   }
 
   /** Fail the turn: seal the open message (if any) and surface the error. */
@@ -181,6 +190,7 @@ export class TurnShaper {
       this.emit({ type: "message.updated", properties: { info } })
       this.current = null
     }
+    this.sealed = true
     this.emit({ type: "session.error", properties: { sessionID: this.sessionId, error } })
   }
 
