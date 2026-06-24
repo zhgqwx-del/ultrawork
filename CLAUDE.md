@@ -168,6 +168,7 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `config/paths.ts` | 跳过 `~/.opencode/` home 目录搜索 | ADR-020 |
 | `mcp/index.ts` | MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s） | ADR-028 |
 | `script/build.ts` | 新增 `--target=<os>-<arch>` 单目标过滤，支持跨编译 darwin-x64（Universal DMG） | ADR-028 |
+| `session/llm.ts` | `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态） | ADR-034 |
 
 ### 修改 vendor/opencode 的完整流程
 
@@ -184,6 +185,7 @@ cd vendor/opencode && git diff -- \
   packages/opencode/src/config/paths.ts \
   packages/opencode/src/global/index.ts \
   packages/opencode/src/mcp/index.ts \
+  packages/opencode/src/session/llm.ts \
   packages/opencode/script/build.ts \
   > ../../patches/vendor-opencode-config-fix.patch
 

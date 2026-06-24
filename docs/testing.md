@@ -490,3 +490,19 @@ packages/knowledge/sidecar/
 4. **P1 - Session面板**: ProgressPanel, ArtifactsPanel, WorkspacePanel
 5. **P2 - 边缘场景**: ArtifactPreview, MCPPanel
 6. **手动测试**: 按 4.1-4.7 清单执行（含技能面板 S1-S8 + 技能管理 S9-S28）
+
+## 8. Headless 走查配方：LLM 流式 idle 看门狗（ADR-034）
+
+验证「provider 流式回复静默挂死 → idle guard 转成错误终态 + 解锁会话」**在真实编译后的 sidecar 二进制上**生效（单测只能 mock 流，这层补「二进制运行时」缺口）。两侧 harness 思路一致：**隔离沙箱（独立 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` + 非标准端口 + env 短超时）+ 一个故意「发部分流后静默」的 mock + 真起 sidecar + 观察终态 + 按 PID 清理 + 沙箱随删**，全程零碰真实数据。
+
+**opencode 侧**（你截图的主路径）：
+- mock = 一个 OpenAI-compatible `/chat/completions` SSE 端点（Bun.serve，`idleTimeout:0` 别让 Bun 关 socket），按路径分三态：`/idle` 发 2 个 content chunk 后**不关连接静默**、`/ttfb` 啥都不发就挂、`/normal` 发 chunk+finish+`[DONE]`；title 请求（body 含 "Generate a title"）一律快速正常回，免得标题生成挂住干扰主回合断言。
+- 起 sidecar：`opencode serve --port <非标准>`，env 设 `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`OPENCODE_APP_NAME=ultrawork`/`ULTRAWORK_SIDECAR_PASSWORD=<已知>`/`OPENCODE_STREAM_IDLE_TIMEOUT_MS=2000`/`OPENCODE_STREAM_TTFB_TIMEOUT_MS=3500`。
+- 配 provider：`PATCH /config`（带 `x-opencode-directory` header）写 `provider.<id>.{npm:"@ai-sdk/openai-compatible", options:{baseURL, apiKey}}`，baseURL 指向 mock 各路径。
+- 发 `POST /session/:id/prompt_async`（`{parts:[{type:text,text}], model:{providerID,modelID}}`，204），轮询 `GET /session/:id/message` 看末条 assistant `info.error`（落 `"LLM stream idle for Nms"`）或 `info.time.completed`（终态）。**断言**：idle 路径 ~2s 报错、ttfb 路径 ~3.5s 报错（更长，证明两级）、normal 路径 `finish=stop` 无 error（不误杀）。实测 6/6。
+
+**ACP 侧**：
+- mock = 一个 silent ACP stdio agent（复用 `@agentclientprotocol/sdk`，**必须放在 acp-client 包内才解析得到 SDK**，走查后删），MODE env：`idle` prompt 永挂、`wedged` 发一个 `tool_call in_progress` 再挂、`spoke` 发一个 `agent_message_chunk` 再挂（验流中 idle 档）、`normal` 快速 end_turn。
+- 起 acp-client 二进制：env `ACP_CLIENT_PORT=<非标准>`/`XDG_*`/`ACP_PROMPT_TTFB_TIMEOUT_MS`/`ACP_PROMPT_IDLE_TIMEOUT_MS`/`ACP_PROMPT_TOOL_SILENCE_MAX_MS`（全调短），agents.json 写进隔离 `$XDG_CONFIG_HOME/ultrawork/`。
+- `POST /acp/session` 建会话、`POST /acp/session/:id/prompt`，**断言** 502 + error 文案（`idle for Nms`/`tool silent for Nms`）+ 时间窗 + SSE `session.error`；normal 200。实测 14/14。
+- **坑**：silent agent 的 SDK 解析（放包内）、mock OpenAI 端点别被 Bun 的 socket idle timeout 提前关（`idleTimeout:0`）、prompt 后用回合**跨过**超时阈值才采得到（短回合测不出）。
