@@ -26,6 +26,11 @@ export interface DelegateRequest {
   workspace: string
   model?: string
   timeoutMs?: number
+  /** The LEADER session that issued this delegate (when the shim could supply it:
+   * ACP via per-session env, opencode via MCP `_meta`). Lets the DelegateDock
+   * scope by originating session so two teams in one workspace don't cross-show
+   * (discussions/022). Absent → dock falls back to workspace scope. */
+  ownerSessionId?: string
 }
 
 export type DelegateStatus = "running" | TaskStatus
@@ -37,6 +42,9 @@ export interface DelegateRecord {
   workspace: string
   status: DelegateStatus
   sessionId?: string
+  /** The leader session that issued this delegate (from DelegateRequest), for
+   * per-session DelegateDock scoping (discussions/022). */
+  ownerSessionId?: string
   startedAt: number
   endedAt?: number
   error?: string
@@ -150,6 +158,7 @@ export class DelegateManager {
       task: req.task,
       workspace,
       status: "running",
+      ownerSessionId: req.ownerSessionId,
       startedAt: this.now(),
     }
     this.records.set(record.id, record)

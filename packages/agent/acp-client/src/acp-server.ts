@@ -167,6 +167,26 @@ export function createServer(manager: ACPManager): Hono {
     }
   })
 
+  // Global lifecycle stream: cross-session session.status (busy/idle) only.
+  // Per-session message events stay on /acp/session/:id/events; this lets the
+  // desktop maintain app-level activeSessionIds (busy markers that survive
+  // switching away mid-turn) without subscribing to every session (discussions/022).
+  app.get("/acp/global/events", (c) => {
+    return streamSSE(c, async (stream) => {
+      const unsubscribe = manager.subscribeGlobal((event) => {
+        void stream.writeSSE({ data: JSON.stringify(event) })
+      })
+      const heartbeat = setInterval(() => {
+        void stream.writeSSE({ data: JSON.stringify({ type: "heartbeat", properties: {} }) })
+      }, HEARTBEAT_MS)
+      stream.onAbort(() => {
+        clearInterval(heartbeat)
+        unsubscribe()
+      })
+      await new Promise<void>((resolve) => stream.onAbort(resolve))
+    })
+  })
+
   // Unknown session ids are allowed on purpose: the desktop subscribes by its
   // own session id before the ACP session exists; events flow once a session
   // is created with that clientSessionId.

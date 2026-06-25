@@ -166,9 +166,9 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `global/index.ts` | `OPENCODE_APP_NAME` env var 控制 app 名称 | ADR-020 |
 | `config/config.ts` | managed dir 对齐 + endsWith 过滤 + PINNED_PLUGIN_VERSION + config.json→opencode.json 修复 | ADR-020 |
 | `config/paths.ts` | 跳过 `~/.opencode/` home 目录搜索 | ADR-020 |
-| `mcp/index.ts` | MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s） | ADR-028 |
+| `mcp/index.ts` | ① MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s）② MCP 工具 execute 把 `options.experimental_context.sessionID` 注入 `callTool` 的 `_meta.ultrawork_session`（委派归属，discussions/022） | ADR-028 / 022 |
 | `script/build.ts` | 新增 `--target=<os>-<arch>` 单目标过滤，支持跨编译 darwin-x64（Universal DMG） | ADR-028 |
-| `session/llm.ts` | `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态） | ADR-034 |
+| `session/llm.ts` | ① `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态）② streamText `experimental_context:{sessionID}` 暴露给工具 execute（委派归属，discussions/022） | ADR-034 / 022 |
 
 ### 修改 vendor/opencode 的完整流程
 

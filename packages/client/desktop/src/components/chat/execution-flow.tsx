@@ -88,10 +88,18 @@ function useNow(active: boolean): number {
   return now
 }
 
-function ToolStatusIcon({ status }: { status: string }) {
+function ToolStatusIcon({ status, live = true }: { status: string; live?: boolean }) {
   switch (status) {
     case "running":
-      return <Loader2 className="size-3.5 shrink-0 animate-spin text-orange-500" />
+      // A genuinely terminal/restored turn can carry a tool whose last reported
+      // state is "running" (errored mid-tool, or restored history with no terminal
+      // tool update). The turn is not live, so the spinner must NOT run forever —
+      // show a neutral indeterminate marker instead (discussions/022 §6).
+      return live ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-orange-500" />
+      ) : (
+        <Circle className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+      )
     case "completed":
       return <Check className="size-3.5 shrink-0 text-green-500" />
     case "error":
@@ -191,7 +199,7 @@ const ToolRow = memo(function ToolRow({ part, live }: { part: ToolPart; live: bo
     ticking && state.status === "running" ? Math.max(0, now - state.time.start) : toolDuration(state)
   return (
     <FlowRow
-      icon={<ToolStatusIcon status={state.status} />}
+      icon={<ToolStatusIcon status={state.status} live={live} />}
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <Wrench className="size-3 shrink-0 text-[var(--color-fg-muted)]" />

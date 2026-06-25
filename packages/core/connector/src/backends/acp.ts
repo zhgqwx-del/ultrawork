@@ -34,7 +34,12 @@ const CAPABILITIES: BackendCapabilities = {
   reasoning: true,
   historyReplay: true,
   revert: false,
-  globalEvents: false,
+  // The sidecar exposes a global lifecycle stream (/acp/global/events) carrying
+  // session.status busy/idle, consumed by the desktop's app-level activeSessionIds
+  // (discussions/022). sessionStatus stays false on purpose: that flag governs
+  // orchestrator idle-wait / mounted-session idle semantics (no ripple), whereas
+  // these global events only feed the cross-session busy markers.
+  globalEvents: true,
   paginatedHistory: false,
   model: false,
   sessionStatus: false,
@@ -67,6 +72,8 @@ export class ACPBackend implements AgentBackend {
   readonly http: ACPHttpClient
 
   private pool = new Map<string, SharedConnection>()
+  /** Single shared connection to the sidecar's global lifecycle stream. */
+  private global: SharedConnection | null = null
   private lastHealth = false
 
   constructor(opts?: { baseUrl?: string }) {
@@ -136,6 +143,48 @@ export class ACPBackend implements AgentBackend {
     }
   }
 
+  /**
+   * Global lifecycle stream (session.status busy/idle). Refcounted single
+   * connection, mirroring the per-session pool. Enables connector.subscribeGlobal
+   * to fan ACP busy/idle into the desktop's app-level activeSessionIds
+   * (discussions/022). Carries no message events — those stay per-session.
+   */
+  subscribeGlobal(handler: (event: ConnectorEvent) => void): Unsubscribe {
+    if (!this.global) this.global = this.openGlobal()
+    const shared = this.global
+    shared.handlers.add(handler)
+    return () => {
+      shared.handlers.delete(handler)
+      if (shared.handlers.size === 0) {
+        shared.transport.close()
+        this.global = null
+      }
+    }
+  }
+
+  private openGlobal(): SharedConnection {
+    const handlers = new Set<(event: ConnectorEvent) => void>()
+    const transport = createSseTransport({
+      url: this.http.globalEventsURL(),
+      retry: ACP_SSE_RETRY,
+      onEvent: (event) => {
+        if (event.type === "heartbeat") return
+        for (const handler of handlers) handler(event)
+      },
+      onStatusChange: (status) => {
+        // The lifecycle stream giving up means busy/idle stops flowing; a
+        // transient drop self-heals because the sidecar re-emits a busy snapshot
+        // on reconnect (acp-manager.subscribeGlobal). Surface a permanent give-up
+        // so a stuck busy marker isn't completely silent (discussions/022 M2).
+        if (status === "gave-up") {
+          console.warn("[acp] global lifecycle stream gave up — busy markers may be stale until reconnect")
+        }
+      },
+    })
+    void transport.connect()
+    return { transport, handlers }
+  }
+
   private open(sessionId: string): SharedConnection {
     const handlers = new Set<(event: ConnectorEvent) => void>()
     const transport = createSseTransport({
@@ -191,6 +240,8 @@ export class ACPBackend implements AgentBackend {
   dispose(): void {
     for (const shared of this.pool.values()) shared.transport.close()
     this.pool.clear()
+    this.global?.transport.close()
+    this.global = null
   }
 }
 

@@ -127,7 +127,7 @@ export class Connector {
 
   // --- events (dual-form subscribe, ADR-030 D-2) ---
 
-  /** Fan out over every backend with a global stream (today: opencode only). */
+  /** Fan out over every backend with a global stream (opencode + ACP). */
   subscribeGlobal(handler: (event: ConnectorEvent) => void): Unsubscribe {
     const unsubs: Unsubscribe[] = []
     for (const backend of this.backends.values()) {

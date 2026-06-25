@@ -47,6 +47,34 @@ describe("delegate-mcp shim", () => {
     expect(JSON.parse(result.content[0].text)).toMatchObject({ status: "completed", deliverable: "done" })
   })
 
+  it("tags the request with ownerSessionId — from opts (opencode _meta) or env (ACP) (discussions/022)", async () => {
+    const capture = () => {
+      let body: any
+      const fetchImpl = (async (_u: any, init: any) => {
+        body = JSON.parse(init.body)
+        return jsonResponse({ result: { status: "completed", sessionId: "c" } })
+      }) as unknown as FetchLike
+      return { fetchImpl, get: () => body }
+    }
+
+    // opencode: forwarded via opts.ownerSessionId (MCP _meta).
+    const a = capture()
+    await callDelegate(deps(a.fetchImpl), { agentId: "x", task: "t", cwd: "/ws" }, { ownerSessionId: "ses_leader_oc" })
+    expect(a.get().ownerSessionId).toBe("ses_leader_oc")
+
+    // ACP: forwarded via the per-session env var.
+    const b = capture()
+    await callDelegate(deps(b.fetchImpl), { agentId: "x", task: "t", cwd: "/ws" }, { env: { ULTRAWORK_DELEGATE_SESSION: "ses_leader_acp" } as NodeJS.ProcessEnv })
+    expect(b.get().ownerSessionId).toBe("ses_leader_acp")
+
+    // Absent → omitted (workspace-scope fallback in the dock). Pass an explicit
+    // empty env so a stray ULTRAWORK_DELEGATE_SESSION in the real environment
+    // can't make this flaky.
+    const c = capture()
+    await callDelegate(deps(c.fetchImpl), { agentId: "x", task: "t", cwd: "/ws" }, { env: {} as NodeJS.ProcessEnv })
+    expect("ownerSessionId" in c.get()).toBe(false)
+  })
+
   it("falls back to ULTRAWORK_DELEGATE_CWD and errors when no cwd at all", async () => {
     let captured: any
     const fetchImpl = (async (_url: any, init: any) => {

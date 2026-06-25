@@ -290,7 +290,7 @@ export class ACPConnection {
       () =>
         conn.newSession({
           cwd,
-          mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false),
+          mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false, emitSessionId),
           ...this.sessionMeta(opts?.systemPrompt),
         }),
       SESSION_NEW_TIMEOUT_MS,
@@ -333,7 +333,7 @@ export class ACPConnection {
           conn.loadSession({
             sessionId: acpSessionId,
             cwd,
-            mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false),
+            mcpServers: this.hostMcpServers(cwd, opts?.orchestrate ?? false, emitAs),
             ...this.sessionMeta(opts?.systemPrompt),
           }),
         SESSION_LOAD_TIMEOUT_MS,
@@ -490,7 +490,7 @@ export class ACPConnection {
    *   tool (recursion guard). Command = this very sidecar binary with the
    *   delegate-mcp subcommand.
    */
-  private hostMcpServers(cwd: string, orchestrate: boolean): McpServer[] {
+  private hostMcpServers(cwd: string, orchestrate: boolean, ownerSessionId?: string): McpServer[] {
     const servers: McpServer[] = []
     if (this.config.knowledgeMcp) {
       const sidecar = join(homedir(), ".ultrawork", "sidecars", "knowledge-sidecar")
@@ -511,6 +511,10 @@ export class ACPConnection {
             { name: "ACP_CLIENT_PORT", value: String(process.env.ACP_CLIENT_PORT ?? 4099) },
             // cwd fallback so the agent may omit `cwd` in delegate calls.
             { name: "ULTRAWORK_DELEGATE_CWD", value: cwd },
+            // This (leader) session id → delegate record `ownerSessionId`, so the
+            // DelegateDock scopes by originating session (discussions/022). The MCP
+            // is injected per-session, so the env is correct for THIS leader.
+            ...(ownerSessionId ? [{ name: "ULTRAWORK_DELEGATE_SESSION", value: ownerSessionId }] : []),
           ],
         })
       } else {

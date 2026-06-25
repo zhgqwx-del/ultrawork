@@ -58,10 +58,14 @@ export interface DelegateToolInput {
 export async function callDelegate(
   deps: ShimDeps,
   input: DelegateToolInput,
-  opts: { signal?: AbortSignal; onKeepalive?: () => void; env?: NodeJS.ProcessEnv } = {},
+  opts: { signal?: AbortSignal; onKeepalive?: () => void; env?: NodeJS.ProcessEnv; ownerSessionId?: string } = {},
 ): Promise<ToolResultShape> {
   const env = opts.env ?? process.env
   const workspace = input.cwd ?? env.ULTRAWORK_DELEGATE_CWD
+  // The leader session that issued this delegate, for per-session DelegateDock
+  // scoping (discussions/022): ACP injects it as a per-session env var; opencode
+  // passes it through MCP `_meta` (opts.ownerSessionId). Absent → workspace scope.
+  const ownerSessionId = opts.ownerSessionId ?? env.ULTRAWORK_DELEGATE_SESSION
   if (!workspace) {
     return textResult(
       "No workspace: pass `cwd` (absolute project root the sub-agent should work in).",
@@ -83,6 +87,7 @@ export async function callDelegate(
         workspace,
         model: input.model,
         timeoutMs: input.timeoutMs,
+        ownerSessionId,
       }),
       signal: opts.signal,
     })
@@ -164,7 +169,14 @@ export function createDelegateMcpServer(deps: ShimDeps): McpServer {
                 })
                 .catch(() => {})
             }
-      return callDelegate(shimRuntimeDeps, input, { signal: extra.signal, onKeepalive })
+      // opencode forwards the leader sessionID via MCP `_meta` (vendor patch);
+      // ACP supplies it via env inside callDelegate.
+      const ownerSessionId = (extra._meta as Record<string, unknown> | undefined)?.ultrawork_session
+      return callDelegate(shimRuntimeDeps, input, {
+        signal: extra.signal,
+        onKeepalive,
+        ownerSessionId: typeof ownerSessionId === "string" ? ownerSessionId : undefined,
+      })
     },
   )
 

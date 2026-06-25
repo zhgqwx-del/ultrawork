@@ -25,7 +25,7 @@ interface PendingDelegatePermission {
   request: PermissionRequest
 }
 
-export function DelegateDock({ workspacePath }: { workspacePath: string | null }) {
+export function DelegateDock({ workspacePath, sessionId }: { workspacePath: string | null; sessionId?: string }) {
   const { t } = useI18n()
   const api = useApi()
   const [delegates, setDelegates] = useState<Map<string, DelegateRecord>>(new Map())
@@ -66,20 +66,23 @@ export function DelegateDock({ workspacePath }: { workspacePath: string | null }
     })
   }, [])
 
+  // A delegate belongs to THIS session when its owner (leader) session matches —
+  // scopes the dock per-session so two teams in one workspace never cross-show
+  // (discussions/022). Delegates without an ownerSessionId (a future backend that
+  // can't supply it) fall back to the original workspace scope.
+  const belongs = (d: DelegateRecord) =>
+    d.ownerSessionId ? d.ownerSessionId === sessionId : (!workspacePath || d.workspace === workspacePath)
   const active = useMemo(
-    () =>
-      [...delegates.values()].filter(
-        (d) => d.status === "running" && (!workspacePath || d.workspace === workspacePath),
-      ),
-    [delegates, workspacePath],
+    () => [...delegates.values()].filter((d) => d.status === "running" && belongs(d)),
+    [delegates, sessionId, workspacePath],
   )
   const visiblePermissions = useMemo(
     () =>
       permissions.filter((p) => {
         const record = delegates.get(p.delegateId)
-        return record && (!workspacePath || record.workspace === workspacePath)
+        return record ? belongs(record) : false
       }),
-    [permissions, delegates, workspacePath],
+    [permissions, delegates, sessionId, workspacePath],
   )
 
   if (active.length === 0 && visiblePermissions.length === 0) return null

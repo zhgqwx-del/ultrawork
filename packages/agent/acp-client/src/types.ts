@@ -196,5 +196,6 @@ export type UwSSEEvent =
   | { type: "permission.asked"; properties: UwPermissionRequest }
   | { type: "permission.replied"; properties: { id: string; sessionID: string } }
   | { type: "session.error"; properties: { sessionID: string; error: string } }
+  | { type: "session.status"; properties: { sessionID: string; status: { type: "busy" | "idle" } } }
   | { type: "acp.connected"; properties: { sessionId: string } }
   | { type: "heartbeat"; properties: Record<string, never> }

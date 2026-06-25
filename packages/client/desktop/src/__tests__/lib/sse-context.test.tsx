@@ -36,7 +36,10 @@ function Probe() {
 describe("SSEProvider (ConnectorProvider)", () => {
   beforeEach(() => {
     mockFetch.mockReset()
-    mockFetch.mockResolvedValue({ ok: true, body: openStream() })
+    // Fresh stream per call: the global subscription now opens TWO streams
+    // (opencode /event + ACP /acp/global/events), and a shared ReadableStream
+    // body would lock on the second reader.
+    mockFetch.mockImplementation(async () => ({ ok: true, body: openStream() }))
     holder.workspacePath = null
   })
 
@@ -60,9 +63,12 @@ describe("SSEProvider (ConnectorProvider)", () => {
     )
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalled())
-    const url = mockFetch.mock.calls[0][0] as string
-    // dev mode (import.meta.env.DEV stubbed true) -> relative URL + directory query
-    expect(url).toBe(`/event?${new URLSearchParams({ directory: "/w1" }).toString()}`)
+    const urls = mockFetch.mock.calls.map((c) => c[0] as string)
+    // dev mode (import.meta.env.DEV stubbed true) -> relative URL + directory query.
+    // The global subscription fans out to BOTH backends now: opencode's /event
+    // AND the ACP sidecar's lifecycle stream (ACP globalEvents=true, discussions/022).
+    expect(urls).toContain(`/event?${new URLSearchParams({ directory: "/w1" }).toString()}`)
+    expect(urls.some((u) => u.includes("/acp/global/events"))).toBe(true)
     await waitFor(() => expect(screen.getByTestId("connected").textContent).toBe("true"))
   })
 

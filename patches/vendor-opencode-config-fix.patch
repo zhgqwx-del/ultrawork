@@ -142,7 +142,7 @@ index 869019e2c..6509ec1ba 100644
  const data = path.join(xdgData!, app)
  const cache = path.join(xdgCache!, app)
 diff --git a/packages/opencode/src/mcp/index.ts b/packages/opencode/src/mcp/index.ts
-index 8c92bb6b2..2df9b9772 100644
+index 8c92bb6b2..b5869c738 100644
 --- a/packages/opencode/src/mcp/index.ts
 +++ b/packages/opencode/src/mcp/index.ts
 @@ -33,6 +33,11 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -157,7 +157,25 @@ index 8c92bb6b2..2df9b9772 100644
  
    export const Resource = z
      .object({
-@@ -312,7 +317,7 @@ export namespace MCP {
+@@ -144,11 +149,16 @@ export namespace MCP {
+     return dynamicTool({
+       description: mcpTool.description ?? "",
+       inputSchema: jsonSchema(schema),
+-      execute: async (args: unknown) => {
++      execute: async (args: unknown, options?: { experimental_context?: unknown }) => {
++        // Ultrawork patch (discussions/022): forward the running sessionID (set by
++        // session/llm.ts via experimental_context) to the MCP server through
++        // `_meta`, so the delegate shim can tag delegates with their owner session.
++        const sessionID = (options?.experimental_context as { sessionID?: string } | undefined)?.sessionID
+         return client.callTool(
+           {
+             name: mcpTool.name,
+             arguments: (args || {}) as Record<string, unknown>,
++            ...(sessionID ? { _meta: { ultrawork_session: sessionID } } : {}),
+           },
+           CallToolResultSchema,
+           {
+@@ -312,7 +322,7 @@ export namespace MCP {
            },
          ]
  
@@ -166,7 +184,7 @@ index 8c92bb6b2..2df9b9772 100644
          let lastStatus: Status | undefined
  
          for (const { name, transport } of transports) {
-@@ -395,7 +400,7 @@ export namespace MCP {
+@@ -395,7 +405,7 @@ export namespace MCP {
            log.info(`mcp stderr: ${chunk.toString()}`, { key })
          })
  
@@ -176,7 +194,7 @@ index 8c92bb6b2..2df9b9772 100644
            Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
              client,
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
-index dc89db409..3ce16090e 100644
+index dc89db409..31cb5666e 100644
 --- a/packages/opencode/src/session/llm.ts
 +++ b/packages/opencode/src/session/llm.ts
 @@ -22,6 +22,80 @@ export namespace LLM {
@@ -276,3 +294,15 @@ index dc89db409..3ce16090e 100644
                  )
                }),
              ),
+@@ -289,6 +368,11 @@ export namespace LLM {
+       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+       tools,
++      // Ultrawork patch (discussions/022): expose the running sessionID to tool
++      // execute via options.experimental_context, so the delegate MCP shim can
++      // tag delegates with their owner (leader) session for per-session dock
++      // scoping. opencode's MCP execute (mcp/index.ts) reads it into `_meta`.
++      experimental_context: { sessionID: input.sessionID },
+       toolChoice: input.toolChoice,
+       maxOutputTokens,
+       abortSignal: input.abort,

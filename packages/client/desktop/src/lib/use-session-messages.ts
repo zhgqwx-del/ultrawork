@@ -14,6 +14,114 @@ const HISTORY_PAGE_SIZE = 200  // Older history API request limit
 const PREFETCH_BUFFER = 16    // Start prefetching when turnStart <= this
 const PREFETCH_COOLDOWN = 400  // ms between prefetch requests
 
+// --- Cross-session-switch message cache (discussions/022 Issue 1) ---
+// Switching sessions resets `messages` to [] (the [sessionId] effect below) and
+// rebuilds from a fetchHistory snapshot + resumed SSE deltas. For opencode the
+// persisted snapshot LAGS the live stream, and while a session is backgrounded no
+// mounted hook folds its deltas, so the text that streamed during the switch is
+// lost until the terminal full part.updated. Fix: the app-level GLOBAL listener
+// (use-sessions) folds EVERY session's opencode message events into this cache via
+// applyMessageEventToCache — even backgrounded ones — so the cache is always
+// current. On switch-back the fetchHistory merge applies it as a TEXT-ONLY patch
+// (never re-seeding the list — that would reorder paginated history and resurrect
+// reverted turns). ACP is immune (history folded synchronously) so its events
+// (per-session, not on the global stream) need no caching.
+const MESSAGE_CACHE_LIMIT = 30
+const messageCache = new Map<string, SendMessageResponse[]>()
+function cacheMessages(sessionId: string, messages: SendMessageResponse[]): void {
+  if (messageCache.has(sessionId)) messageCache.delete(sessionId) // refresh LRU order
+  messageCache.set(sessionId, messages)
+  if (messageCache.size > MESSAGE_CACHE_LIMIT) {
+    const oldest = messageCache.keys().next().value
+    if (oldest !== undefined) messageCache.delete(oldest)
+  }
+}
+/** Test-only: clear the cross-switch cache so module-level state can't leak
+ *  between cases (the cache is process-global within a test file). */
+export function __resetMessageCache(): void {
+  messageCache.clear()
+}
+/** Total streamed text length of a message — lets the switch-back merge prefer
+ *  the richer version so a lagging snapshot can't shrink an in-flight message. */
+function textLength(m: SendMessageResponse): number {
+  return m.parts.reduce(
+    (n, p) => n + (p && "text" in p && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text.length : 0),
+    0,
+  )
+}
+
+/**
+ * Apply one opencode message event to the cross-switch cache for ANY session.
+ * Driven by the app-level GLOBAL SSE listener (use-sessions), so a session's
+ * stream keeps folding into its cache even while it is NOT the mounted session —
+ * the only way switch-back can restore text that streamed WHILE you were away
+ * (discussions/022 Issue 1). Mirrors the hook's reducer (part.updated upsert /
+ * delta append / message.updated merge). ACP message events aren't on the global
+ * stream, but ACP history is already current so its cache isn't needed.
+ */
+export function applyMessageEventToCache(event: SSEEvent): void {
+  const props = event.properties as Record<string, any>
+  const part = props.part
+  const sid: string | undefined = part?.sessionID ?? props.sessionID ?? props.info?.sessionID
+  // Only fold into sessions the user has actually VIEWED (registered on mount,
+  // see the initial-load effect). The opencode global stream also carries task/
+  // orchestrator CHILD sessions that are never switched back to — without this
+  // guard they'd flood the bounded LRU and evict the leader/parent you do switch
+  // back to, re-opening the gap (discussions/022 Issue 1, M1).
+  if (!sid || !messageCache.has(sid)) return
+  const prev = messageCache.get(sid)!
+
+  if (event.type === "message.part.updated") {
+    if (!part || !("messageID" in part)) return
+    const idx = prev.findIndex((m) => m.info.id === part.messageID)
+    if (idx >= 0) {
+      const msg = { ...prev[idx] }
+      const pIdx = msg.parts.findIndex((p) => "id" in p && (p as any).id === part.id)
+      msg.parts = pIdx >= 0
+        ? [...msg.parts.slice(0, pIdx), part, ...msg.parts.slice(pIdx + 1)]
+        : [...msg.parts, part]
+      cacheMessages(sid, [...prev.slice(0, idx), msg, ...prev.slice(idx + 1)])
+    } else {
+      cacheMessages(sid, [...prev, { info: { id: part.messageID, sessionID: sid, role: "assistant", time: { created: Date.now() } }, parts: [part] }])
+    }
+  } else if (event.type === "message.part.delta") {
+    const { messageID, partID, field, delta } = props
+    if (!messageID) return
+    const idx = prev.findIndex((m) => m.info.id === messageID)
+    if (idx >= 0) {
+      const msg = { ...prev[idx] }
+      const pIdx = msg.parts.findIndex((p) => "id" in p && (p as any).id === partID)
+      if (pIdx < 0) return
+      const existing = msg.parts[pIdx] as any
+      msg.parts = [...msg.parts.slice(0, pIdx), { ...existing, [field]: (existing[field] || "") + delta }, ...msg.parts.slice(pIdx + 1)]
+      cacheMessages(sid, [...prev.slice(0, idx), msg, ...prev.slice(idx + 1)])
+    } else {
+      cacheMessages(sid, [...prev, { info: { id: messageID, sessionID: sid, role: "assistant", time: { created: Date.now() } }, parts: [{ type: "text", id: partID, sessionID: sid, messageID, [field]: delta } as any] }])
+    }
+  } else if (event.type === "message.part.removed") {
+    const { messageID, partID } = props
+    if (!messageID) return
+    // Mirror the removal so a later text-patch can't resurrect a deleted part (M2).
+    cacheMessages(sid, prev.map((m) =>
+      m.info.id === messageID ? { ...m, parts: m.parts.filter((p) => !("id" in p) || (p as any).id !== partID) } : m,
+    ))
+  } else if (event.type === "message.updated") {
+    const info = props.info
+    if (!info?.id) return
+    cacheMessages(sid, prev.map((m) => (m.info.id === info.id ? { ...m, info: { ...m.info, ...info } } : m)))
+  }
+}
+
+/** Register/forget a session in the cross-switch cache. The hook calls register
+ *  on mount so the global listener folds only viewed sessions (M1); deleteSession
+ *  forgets it (L1). */
+export function registerMessageCacheSession(sessionId: string): void {
+  if (!messageCache.has(sessionId)) messageCache.set(sessionId, [])
+}
+export function forgetMessageCacheSession(sessionId: string): void {
+  messageCache.delete(sessionId)
+}
+
 interface UseSessionMessagesOptions {
   /** True when navigating from Home with an in-flight prompt */
   initialSending?: boolean
@@ -38,7 +146,7 @@ export function useSessionMessages(
   sessionId: string | undefined,
   options?: UseSessionMessagesOptions,
 ) {
-  const { sessions, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
+  const { sessions, activeSessionIds, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
   const connector = useConnector()
   const { t } = useI18n()
 
@@ -72,6 +180,10 @@ export function useSessionMessages(
   const frozenMessageIdsRef = useRef<Set<string>>(new Set())
   const optionsRef = useRef(options)
   optionsRef.current = options
+  // App-level busy truth, read synchronously in sendMessage's concurrency guard
+  // (a switched-back session has sending/sendingRef reset but may still be busy).
+  const activeIdsRef = useRef(activeSessionIds)
+  activeIdsRef.current = activeSessionIds
   const prefetchUntilRef = useRef(0)
   // Home→Session optimistic-send safety timer. Fires once if the navigated send
   // never produces a turn; MUST be cancelled the moment real SSE activity proves
@@ -101,6 +213,12 @@ export function useSessionMessages(
   // --- Session navigation reset ---
   useEffect(() => {
     const opts = optionsRef.current
+    // Reset to empty (NOT seeded from the cross-switch cache): seeding the full
+    // cached list would break the paginated merge below — older-than-page cached
+    // messages fall into `sseOnly` and reorder, and reverted turns get
+    // resurrected. The cache is instead applied as a TEXT-ONLY patch in the
+    // fetchHistory merge, which can't change membership/order (discussions/022
+    // Issue 1, F1/F2).
     setMessages([])
     setStreamingMessageId(null)
     setToolCompletionCount(0)
@@ -159,6 +277,9 @@ export function useSessionMessages(
       setLoading(false)
       return
     }
+    // Register so the global listener folds THIS session's stream into the cache
+    // (even while backgrounded) — bounding the cache to viewed sessions (M1).
+    registerMessageCacheSession(sessionId)
     setLoading(true)
     // Dispatched by binding: opencode pages by cursor; the ACP sidecar serves
     // the whole shaped history (the turn window below limits what renders).
@@ -166,14 +287,47 @@ export function useSessionMessages(
       .then((result) => {
         if (!cancelled) {
           const msgs = result.messages
+          // Only consult the cache while the turn is in flight (busy). Idle
+          // sessions trust the snapshot fully, so a revert can't be undone and
+          // paginated history can't be reordered.
+          const cached = sessionId && activeIdsRef.current.has(sessionId)
+            ? messageCache.get(sessionId)
+            : undefined
           setMessages(prev => {
-            if (prev.length === 0) return msgs
-            if (msgs.length === 0) return prev
-            const serverIds = new Set(msgs.map(m => m.info.id))
-            const sseOnly = prev.filter(m =>
-              !m.info.id.startsWith("temp-") && !serverIds.has(m.info.id)
-            )
-            return [...msgs, ...sseOnly]
+            let base: SendMessageResponse[]
+            if (prev.length === 0) base = msgs
+            else if (msgs.length === 0) base = prev
+            else {
+              const serverIds = new Set(msgs.map(m => m.info.id))
+              const sseOnly = prev.filter(m =>
+                !m.info.id.startsWith("temp-") && !serverIds.has(m.info.id)
+              )
+              base = [...msgs, ...sseOnly]
+            }
+            if (!cached) return base
+            // TEXT patch (discussions/022 Issue 1): opencode's persisted snapshot
+            // lags the live stream, but the app-level cache (kept current for
+            // viewed sessions, even backgrounded) has the full streamed text. For
+            // messages ALREADY in `base` (never add/reorder → reverted/paginated
+            // turns unaffected, F1/F2), MERGE BY PART id: upgrade each base part to
+            // the cache's richer-text version, keep base parts the cache lacks
+            // (don't drop tool/structure parts, M2), append cache-only parts
+            // (streamed-but-not-yet-persisted). Base info (finish/tokens) is kept.
+            const cacheById = new Map(cached.map(m => [m.info.id, m]))
+            const partTextLen = (p: any): number =>
+              p && "text" in p && typeof p.text === "string" ? p.text.length : 0
+            return base.map(m => {
+              const cm = cacheById.get(m.info.id)
+              if (!cm || textLength(cm) <= textLength(m)) return m
+              const cParts = new Map(cm.parts.filter(p => "id" in p).map(p => [(p as any).id, p]))
+              const baseIds = new Set(m.parts.filter(p => "id" in p).map(p => (p as any).id))
+              const merged = m.parts.map(bp => {
+                const cp = "id" in bp ? cParts.get((bp as any).id) : undefined
+                return cp && partTextLen(cp) > partTextLen(bp) ? cp : bp
+              })
+              const extra = cm.parts.filter(p => "id" in p && !baseIds.has((p as any).id))
+              return { ...m, parts: [...merged, ...extra] }
+            })
           })
           setCursor(result.cursor)
           setHasMore(result.hasMore)
@@ -201,6 +355,11 @@ export function useSessionMessages(
       })
     return () => { cancelled = true }
   }, [sessionId, connector]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // (The cross-switch cache is maintained app-level by the global SSE listener in
+  // use-sessions via applyMessageEventToCache — for ALL sessions, including
+  // backgrounded ones — so it stays current and switch-back loses no streamed
+  // text. The mounted hook only READS it in the fetchHistory patch above.)
 
   // --- History loading: fetch older messages ---
   const loadOlderMessages = useCallback(async () => {
@@ -508,9 +667,18 @@ export function useSessionMessages(
   useSessionSubscribe(sessionId, handleSSEEvent)
 
   // --- Cleanup: mark session idle on unmount/session change ---
+  // Only for backends WITHOUT a global lifecycle stream: they have no app-level
+  // idle signal, so a locally-tracked `sending` would leak the busy marker forever
+  // once you leave. Both opencode (session.status) and ACP (the sidecar's global
+  // /acp/global/events, discussions/022 §8) now maintain activeSessionIds at the
+  // app level, so switching away from a STILL-running turn must NOT mark it idle
+  // here — that would drop the marker that lets switch-back re-derive
+  // sessionActive, reintroducing the false-complete. Gated on globalEvents (not
+  // sessionStatus) so ACP is covered too; kept as a fallback for any future
+  // backend without a global stream.
   useEffect(() => {
     return () => {
-      if (sessionId && sendingRef.current) {
+      if (sessionId && sendingRef.current && !capabilities.globalEvents) {
         markSessionIdle(sessionId)
       }
     }
@@ -573,7 +741,11 @@ export function useSessionMessages(
     text: string,
     model?: string | null,
   ) => {
-    if (!sessionId || !text.trim() || sending || sendingRef.current) return
+    // The last clause guards switch-back: a session still running in the
+    // background has sending/sendingRef reset by remount, so without the
+    // app-level busy check a second prompt could slip past the UI's disabled
+    // state and collide with the in-flight turn (discussions/022).
+    if (!sessionId || !text.trim() || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
     sendingRef.current = true
     markSessionActive(sessionId)
 

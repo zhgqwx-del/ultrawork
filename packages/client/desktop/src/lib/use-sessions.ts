@@ -6,6 +6,7 @@ import { useWorkspace } from "./workspace-context"
 import { useConnector, useSSESubscribe } from "./sse-context"
 import { useTeamSessions, type TeamSessionEntry } from "./team-sessions-context"
 import { deleteTeamSession } from "./orchestration-client"
+import { applyMessageEventToCache, forgetMessageCacheSession } from "./use-session-messages"
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -66,10 +67,15 @@ export function useSessions() {
       next.delete(id)
       return next
     })
-    // Update time.updated so StatusIcon can show checkmark (updated - created > 5s)
-    setSessions(prev => prev.map(s =>
-      s.id === id ? { ...s, time: { ...s.time, updated: Date.now() } } : s
-    ))
+    // Update time.updated so StatusIcon can show checkmark (updated - created > 5s).
+    // Skip entirely for ids not in the sidebar list (child/subagent/cross-workspace
+    // sessions that the global session.status stream also reports) — they'd return
+    // a fresh array every idle and churn the list for no visible change.
+    setSessions(prev =>
+      prev.some(s => s.id === id)
+        ? prev.map(s => (s.id === id ? { ...s, time: { ...s.time, updated: Date.now() } } : s))
+        : prev,
+    )
   }, [])
 
   const refresh = useCallback(async () => {
@@ -167,6 +173,7 @@ export function useSessions() {
         await connector.deleteSession(sessionId)
       }
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      forgetMessageCacheSession(sessionId) // L1: don't leak the deleted session's cache
     },
     [connector, isTeamSession, removeTeamEntry]
   )
@@ -202,6 +209,14 @@ export function useSessions() {
 
   // Listen for SSE session events to keep sidebar in sync
   useSSESubscribe(useCallback((event: { type: string; properties: any }) => {
+    // Fold EVERY session's opencode message events into the cross-switch cache —
+    // even sessions that aren't currently mounted — so switch-back loses no
+    // streamed text (discussions/022 Issue 1). Message events don't touch the
+    // sidebar list, so return early.
+    if (event.type.startsWith("message.")) {
+      applyMessageEventToCache(event as any)
+      return
+    }
     if (event.type === "session.updated") {
       const info = event.properties?.info ?? event.properties
       const sid = info?.id ?? info?.sessionID
@@ -233,8 +248,30 @@ export function useSessions() {
       if (sid) {
         setSessions((prev) => prev.filter((s) => s.id !== sid))
       }
+    } else if (event.type === "session.status") {
+      // App-level busy/idle truth, emitted on the GLOBAL stream by both backends
+      // (opencode natively; ACP via the sidecar's /acp/global/events, ADR/discussions
+      // 022). Maintaining activeSessionIds here — not only from the currently-mounted
+      // session's hook — keeps a session that is still running after you switch away
+      // marked active, so Session.tsx keeps rendering its in-flight turn as streaming
+      // on switch-back instead of false-completing it during model-thinking gaps.
+      const sid = event.properties?.sessionID
+      const type = event.properties?.status?.type
+      if (sid) {
+        if (type === "idle") markSessionIdle(sid)
+        else markSessionActive(sid) // "busy" / "retry"
+      }
+    } else if (event.type === "server.instance.disposed") {
+      // Instance.dispose() cancels every opencode runner and the trailing
+      // session.status:idle may never arrive (SSE disconnects first). Drop ALL
+      // busy markers so a backgrounded session can't stay stuck active forever
+      // (which would show a permanent spinner + locked input on switch-back).
+      // ACP lives in a separate process and isn't disposed here; clearing its
+      // markers at worst degrades to a brief false-complete until the next delta
+      // / global snapshot — far milder than a stuck spinner (discussions/022 §7).
+      setActiveSessionIds((prev) => (prev.size === 0 ? prev : new Set()))
     }
-  }, [workspacePath]))
+  }, [workspacePath, markSessionActive, markSessionIdle]))
 
   return { sessions, loading, error, activeSessionIds, refresh, createSession, deleteSession, updateSession, renameSession, markSessionActive, markSessionIdle }
 }

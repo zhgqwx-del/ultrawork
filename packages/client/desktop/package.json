@@ -12,7 +12,9 @@
     "tauri:dev": "bun run --bun tauri dev",
     "tauri:build": "bun run --bun tauri build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
+    "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",
@@ -68,6 +70,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

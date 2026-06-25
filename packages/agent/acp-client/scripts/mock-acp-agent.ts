@@ -105,6 +105,19 @@ new AgentSideConnection(
       const send = (update: SessionUpdate) =>
         conn.sessionUpdate({ sessionId: params.sessionId, update })
 
+      // MOCK_ACP_HOLD_MS: stream a thought, then go SILENT for the given
+      // duration (no tool, no permission) before a short answer — a clean
+      // "long thinking gap" with the turn genuinely in flight. Used by the
+      // switch-away/back UI walkthrough (discussions/022): no PermissionDock to
+      // muddy the rendered turn state. Additive + opt-in; default turn unchanged.
+      const holdMs = Number(process.env.MOCK_ACP_HOLD_MS ?? 0)
+      if (holdMs > 0) {
+        await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Thinking for a while…" } })
+        await new Promise((resolve) => setTimeout(resolve, holdMs))
+        await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } })
+        return { stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }
+      }
+
       if (ECHO_PROMPT) {
         const first = params.prompt.find((p) => p.type === "text")
         const wireText = first && "text" in first ? first.text : ""

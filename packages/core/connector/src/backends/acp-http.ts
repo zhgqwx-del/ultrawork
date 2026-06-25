@@ -165,4 +165,8 @@ export class ACPHttpClient {
   eventsURL(sessionId: string): string {
     return `${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/events`
   }
+
+  globalEventsURL(): string {
+    return `${this.baseUrl}/acp/global/events`
+  }
 }

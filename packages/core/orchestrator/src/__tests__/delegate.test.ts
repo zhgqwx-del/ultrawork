@@ -84,6 +84,16 @@ describe("DelegateManager", () => {
     expect(result.sessionId).toBeTruthy()
   })
 
+  it("tags the delegate record with ownerSessionId from the request (discussions/022)", async () => {
+    const { delegates } = build({})
+    let ownerSeen: string | undefined
+    delegates.subscribe((e) => {
+      if (e.type === "delegate.updated") ownerSeen = e.properties.delegate.ownerSessionId
+    })
+    await delegates.delegate({ agentId: "acp:claude", task: "t", workspace, ownerSessionId: "ses_leader_A" })
+    expect(ownerSeen).toBe("ses_leader_A")
+  })
+
   it("omits tokens/cost when the backend reports none (ACP without usage)", async () => {
     const { acp, delegates } = build({})
     acp.fetchHistory = vi.fn(async () => ({ hasMore: false, messages: [assistantMessage("done")] }))

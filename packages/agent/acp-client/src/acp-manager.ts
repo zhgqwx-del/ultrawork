@@ -31,6 +31,12 @@ export class ACPManager {
   private connections = new Map<string, ACPConnection>()
   private sessions = new Map<string, SessionEntry>()
   private subscribers = new Map<string, Set<Subscriber>>()
+  /** Cross-session lifecycle (session.status busy/idle) — served on the global
+   * SSE stream, kept off per-session streams + history fold (discussions/022). */
+  private globalSubscribers = new Set<Subscriber>()
+  /** Sessions with a prompt currently in flight — the source for the
+   * snapshot-on-subscribe so busy survives an SSE reconnect / WebView reload. */
+  private running = new Set<string>()
 
   constructor(configs: ACPAgentConfig[]) {
     for (const config of configs) this.register(config)
@@ -129,18 +135,28 @@ export class ACPManager {
   async prompt(sessionId: string, text: string): Promise<StopReason> {
     const entry = this.requireSession(sessionId)
     const conn = this.requireAgent(entry.agentId)
-    await this.restoreAgentSession(conn, entry)
-    // Fallback system-prompt delivery for agents without _meta.systemPrompt:
-    // prefix the FIRST prompt only (later turns already have it in context).
-    // Residual gap (accepted): a load-failure fresh session on such an agent
-    // restarts mid-history and never re-receives the prefix.
-    const needsPrefix =
-      entry.systemPrompt && !supportsMetaSystemPrompt(conn.config) && entry.messages.length === 0
-    return conn.prompt(
-      entry.acpSessionId,
-      text,
-      needsPrefix ? { systemPrefix: entry.systemPrompt } : undefined,
-    )
+    // Bracket the whole turn with busy/idle on the global stream so the desktop's
+    // app-level activeSessionIds survives switching away mid-turn (discussions/022,
+    // mirrors opencode's session.status). Emitted before restore so a slow
+    // session/load still shows busy immediately; the finally guarantees a matching
+    // idle even if restore/prompt throws.
+    this.emitStatus(sessionId, "busy")
+    try {
+      await this.restoreAgentSession(conn, entry)
+      // Fallback system-prompt delivery for agents without _meta.systemPrompt:
+      // prefix the FIRST prompt only (later turns already have it in context).
+      // Residual gap (accepted): a load-failure fresh session on such an agent
+      // restarts mid-history and never re-receives the prefix.
+      const needsPrefix =
+        entry.systemPrompt && !supportsMetaSystemPrompt(conn.config) && entry.messages.length === 0
+      return await conn.prompt(
+        entry.acpSessionId,
+        text,
+        needsPrefix ? { systemPrefix: entry.systemPrompt } : undefined,
+      )
+    } finally {
+      this.emitStatus(sessionId, "idle")
+    }
   }
 
   /**
@@ -272,6 +288,34 @@ export class ACPManager {
       set.delete(subscriber)
       if (set.size === 0) this.subscribers.delete(sessionId)
     }
+  }
+
+  /** Subscribe to cross-session lifecycle events (session.status busy/idle). */
+  subscribeGlobal(subscriber: Subscriber): () => void {
+    this.globalSubscribers.add(subscriber)
+    // Snapshot-on-subscribe (mirrors delegate.snapshot): a fresh OR reconnecting
+    // client immediately learns which sessions are mid-turn, so a busy marker
+    // survives an SSE reconnect or a WebView reload during a turn — and isn't
+    // lost just because the busy transition predated this subscription
+    // (discussions/022, closes the ACP cold-start gap on app reload).
+    for (const sessionId of this.running) {
+      subscriber({ type: "session.status", properties: { sessionID: sessionId, status: { type: "busy" } } })
+    }
+    return () => {
+      this.globalSubscribers.delete(subscriber)
+    }
+  }
+
+  /** Broadcast a session busy/idle transition to global subscribers only.
+   * Keeps `running` in lock-step so subscribeGlobal can snapshot the live set. */
+  private emitStatus(sessionId: string, type: "busy" | "idle"): void {
+    if (type === "busy") this.running.add(sessionId)
+    else this.running.delete(sessionId)
+    const event: UwSSEEvent = {
+      type: "session.status",
+      properties: { sessionID: sessionId, status: { type } },
+    }
+    for (const subscriber of this.globalSubscribers) subscriber(event)
   }
 
   async shutdown(): Promise<void> {

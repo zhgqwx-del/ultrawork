@@ -29,7 +29,7 @@ export function SessionPage() {
   const { id } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const { sessions } = useSessionsContext()
+  const { sessions, activeSessionIds } = useSessionsContext()
   const { t } = useI18n()
   const { currentModel, setModel } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
@@ -45,8 +45,18 @@ export function SessionPage() {
 
   // Team session (018 统一交互): identity comes from the sidecar registry.
   const { entryOf } = useTeamSessions()
-  const { agents } = useAgents()
+  const { agents, getSessionAgentId } = useAgents()
   const teamEntry = entryOf(id)
+  // Whether THIS session can own delegates (→ render the DelegateDock). opencode
+  // single-agent sessions deny `orchestrator_*` (can't delegate); only Team
+  // Leaders do. ACP sessions can delegate when their agent has orchestratorMcp on
+  // — we can't cheaply read that flag here, so we include all ACP-bound sessions
+  // (a non-delegating one just shows an empty dock; the important thing is we
+  // never HIDE the dock from a session that does delegate, which would strand its
+  // child-permission relay). Cross-team leakage is now prevented at the row level
+  // by `ownerSessionId` scoping in the dock (discussions/022 §8.5); this gate just
+  // keeps the dock off non-delegating sessions.
+  const canShowDelegates = !!teamEntry || isACPAgentId(getSessionAgentId(id))
 
   // Capability-gated UI (ADR-030 D-5): model override only where supported.
   const connector = useConnector()
@@ -97,7 +107,15 @@ export function SessionPage() {
   })
 
   // --- Permission/Question management hook ---
-  const isAgentActive = sending || streamingMessageId !== null
+  // sessionBusy = app-level "this session has a turn in flight" truth that
+  // SURVIVES switching away/back (fed by opencode session.status in use-sessions;
+  // ACP stays false → covered separately by the sidecar running endpoint). Local
+  // `sending`/`streamingMessageId` reset to false on remount, so without this a
+  // turn still running when you re-open the session would false-render as
+  // completed (green check + collapsed flow + footer) and lose the stop button
+  // during model-thinking gaps. See docs/discussions/022.
+  const sessionBusy = !!id && activeSessionIds.has(id)
+  const isAgentActive = sending || streamingMessageId !== null || sessionBusy
   const {
     pendingPermission,
     pendingQuestion,
@@ -194,7 +212,7 @@ export function SessionPage() {
             {teamEntry && messages.length === 0 && !loading && (
               <p className="py-10 text-center text-sm text-[var(--color-fg-muted)]">{t("team.emptyHint")}</p>
             )}
-            {sending && !stopped && (
+            {isAgentActive && !stopped && (
               <ExecutionStatus
                 state="working"
                 onStop={stopGeneration}
@@ -204,10 +222,19 @@ export function SessionPage() {
           </div>
         </div>
 
-        {/* Active delegates + relayed child permissions (ADR-031 ②) */}
-        <div className="flex shrink-0 justify-center">
-          <DelegateDock workspacePath={workspacePath} />
-        </div>
+        {/* Active delegates + relayed child permissions (ADR-031 ②). Scoping
+            (discussions/022 §8.5): (1) `canShowDelegates` keeps the dock off
+            non-delegating sessions; (2) `isAgentActive` hides it on idle/completed
+            sessions (a delegate call blocks its leader's turn, so a session with
+            running delegates is itself busy); (3) the dock filters rows by
+            `ownerSessionId === this session` — delegates are tagged with their
+            leader session (opencode via MCP `_meta`, ACP via per-session env), so
+            two teams in one workspace never cross-show, even simultaneously. */}
+        {canShowDelegates && isAgentActive && (
+          <div className="flex shrink-0 justify-center">
+            <DelegateDock workspacePath={workspacePath} sessionId={id} />
+          </div>
+        )}
 
         {/* Reply Input / Permission Dock / Question Dock */}
         <div className="relative flex shrink-0 justify-center">
@@ -230,8 +257,8 @@ export function SessionPage() {
                 onSend={handleSend}
                 onStop={stopGeneration}
                 placeholder={t("placeholder.reply")}
-                disabled={sending}
-                loading={sending}
+                disabled={isAgentActive}
+                loading={isAgentActive}
                 variant="reply"
                 leftSlot={
                   <div className="flex items-center gap-1">
