@@ -28,7 +28,7 @@ index b104dd267..a94791e3b 100755
        if (item.os !== process.platform || item.arch !== process.arch) {
          return false
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28b..efc900b8a 100644
+index 850bcc28b..7968040ce 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
 @@ -60,13 +60,14 @@ export namespace Config {
@@ -78,7 +78,22 @@ index 850bcc28b..efc900b8a 100644
      const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
        dependencies: {},
      }))
-@@ -1335,7 +1349,9 @@ export namespace Config {
+@@ -1034,6 +1048,14 @@ export namespace Config {
+             .positive()
+             .optional()
+             .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
++          tool_disclosure: z
++            .boolean()
++            .optional()
++            .describe("Ultrawork (discussions/023): progressive tool disclosure — collapse low-frequency tools behind a tool_search tool"),
++          tool_disclosure_debug: z
++            .boolean()
++            .optional()
++            .describe("Ultrawork: log per-step tool disclosure decisions"),
+         })
+         .optional(),
+     })
+@@ -1335,7 +1357,9 @@ export namespace Config {
            const deps: Promise<void>[] = []
  
            for (const dir of unique(directories)) {
@@ -89,7 +104,7 @@ index 850bcc28b..efc900b8a 100644
                for (const file of ["opencode.json", "opencode.jsonc"]) {
                  const source = path.join(dir, file)
                  log.debug(`loading config from ${source}`)
-@@ -1479,7 +1495,7 @@ export namespace Config {
+@@ -1479,7 +1503,7 @@ export namespace Config {
  
          const update = Effect.fn("Config.update")(function* (config: Info) {
            const dir = yield* InstanceState.directory
@@ -193,6 +208,285 @@ index 8c92bb6b2..b5869c738 100644
          return yield* connectTransport(transport, connectTimeout).pipe(
            Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
              client,
+diff --git a/packages/opencode/src/plugin/index.ts b/packages/opencode/src/plugin/index.ts
+index fb60fa096..757414e08 100644
+--- a/packages/opencode/src/plugin/index.ts
++++ b/packages/opencode/src/plugin/index.ts
+@@ -5,6 +5,7 @@ import { Log } from "../util/log"
+ import { createOpencodeClient } from "@opencode-ai/sdk"
+ import { Flag } from "../flag/flag"
+ import { CodexAuthPlugin } from "./codex"
++import { ToolDisclosurePlugin } from "./tool-disclosure"
+ import { Session } from "../session"
+ import { NamedError } from "@opencode-ai/util/error"
+ import { CopilotAuthPlugin } from "./github-copilot/copilot"
+@@ -46,7 +47,13 @@ export namespace Plugin {
+   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Plugin") {}
+ 
+   // Built-in plugins that are directly imported (not installed from npm)
+-  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin, GitlabAuthPlugin, PoeAuthPlugin]
++  const INTERNAL_PLUGINS: PluginInstance[] = [
++    CodexAuthPlugin,
++    CopilotAuthPlugin,
++    GitlabAuthPlugin,
++    PoeAuthPlugin,
++    ToolDisclosurePlugin,
++  ]
+ 
+   function isServerPlugin(value: unknown): value is PluginInstance {
+     return typeof value === "function"
+diff --git a/packages/opencode/src/plugin/tool-disclosure.ts b/packages/opencode/src/plugin/tool-disclosure.ts
+new file mode 100644
+index 000000000..61aad50d9
+--- /dev/null
++++ b/packages/opencode/src/plugin/tool-disclosure.ts
+@@ -0,0 +1,246 @@
++import type { Hooks, PluginInput } from "@opencode-ai/plugin"
++import { tool, jsonSchema } from "ai"
++import { Log } from "../util/log"
++
++const log = Log.create({ service: "plugin.tool-disclosure" })
++
++/**
++ * Ultrawork progressive tool disclosure (discussions/023). Architecture A
++ * (search-then-promote-to-native), NOT a generic proxy:
++ *  - disclosable (low-frequency) tools are collapsed out of the `tools` array;
++ *  - their names+1-line descriptions are injected as TEXT into the system prompt
++ *    (the AI SDK `tools` array has no name-only state) — STATICALLY: the catalog
++ *    lists the whole disclosable universe regardless of fetch state, so the system
++ *    text does not change as tools load (preserves system prefix cache, §4.4);
++ *  - a single `tool_search` tool lets the model discover them; on a hit the tool
++ *    is added to a per-session "fetched" set and the NEXT step restores its real
++ *    native schema (reusing the already-wired AITool — no generic dispatch).
++ *
++ * 2b hardening (post adversarial review 2026-06-26, §6.1):
++ *  - #1 static catalog (above) — cache-stable.
++ *  - #2 lifecycle: per-session state is cleaned on `session.deleted` + swept by
++ *    TTL + capped (LRU) — no unbounded growth.
++ *  - #3 dangling-safe demotion: a fetched-but-unused tool is demoted back to
++ *    name-only after a grace window to reclaim tokens, but NEVER if it is
++ *    referenced by the current message history (usedToolIds) — demoting such a
++ *    tool would leave a dangling tool-call → provider error.
++ *
++ * Enabled by DEFAULT (opt-out). Turn off via config `experimental.tool_disclosure: false`
++ * or env `ULTRAWORK_TOOL_DISCLOSURE=0`. Other knobs:
++ *  - ULTRAWORK_TOOL_DISCLOSURE=1|0   force on/off (A/B escape hatch, overrides config)
++ *  - ULTRAWORK_DISCLOSE_PREFIX=...   restrict collapse to these id prefixes (csv; test/rollout scoping)
++ *  - ULTRAWORK_DISCLOSE_GRACE=N      ticks a freshly-fetched unused tool is kept (default 3)
++ *  - ULTRAWORK_DISCLOSE_DEBUG=1      log per-step decisions
++ *  - ULTRAWORK_FORCE_FETCH=a,b       pre-seed fetched set (deterministic test state)
++ */
++
++const TTL_MS = Number(process.env["ULTRAWORK_DISCLOSE_TTL_MS"] || 60 * 60 * 1000) // 1h
++const MAX_SESSIONS = Number(process.env["ULTRAWORK_DISCLOSE_MAX_SESSIONS"] || 500)
++const GRACE = Number(process.env["ULTRAWORK_DISCLOSE_GRACE"] || 3)
++
++// Default ON (opt-out, discussions/023 §7 — decided 2026-06-26 after single-agent +
++// team real-machine verification). Disabled only by explicit config
++// `experimental.tool_disclosure: false`, or env `ULTRAWORK_TOOL_DISCLOSURE=0`.
++// The `config` hook below reconciles cfgEnabled; env is a force on/off A/B escape hatch.
++let cfgEnabled = true
++let cfgDebug = false
++const isEnabled = () => {
++  const env = process.env["ULTRAWORK_TOOL_DISCLOSURE"]
++  if (env === "0" || env === "false") return false // force off
++  if (env) return true // force on
++  return cfgEnabled // else config (default ON)
++}
++const isDebug = () => cfgDebug || !!process.env["ULTRAWORK_DISCLOSE_DEBUG"]
++
++// per-session state. fetched: toolId -> tick it was (re)fetched (presence == fetched).
++const fetched = new Map<string, Map<string, number>>()
++const catalogStash = new Map<string, Array<{ name: string; desc: string }>>()
++const lastSeen = new Map<string, number>()
++const ticks = new Map<string, number>()
++
++// #4 policy by REAL ids (not prefix-guessing). opencode v1.3.13 built-ins — every
++// built-in must be in exactly one list so "unknown id ⇒ MCP/plugin tool" holds for
++// the collapse decision. RE-VERIFY on vendor bump (built-in set may change).
++const EAGER_BUILTINS = new Set([
++  // coding core + delegation + todowrite (opencode's planning/todo tool — base prompt
++  // actively drives it for multi-step plans; keep eager to avoid a search round-trip
++  // before the model can plan). Decided 2026-06-26.
++  "read", "write", "edit", "bash", "grep", "glob", "task", "invalid", "patch", "ls", "list", "todowrite",
++])
++const COLLAPSE_BUILTINS = new Set([
++  "skill", "question", "webfetch", "websearch", "lsp", "repo_clone", "repo_overview",
++  "web_explore", "present",
++])
++// synthetic / control tools opencode injects — never collapse.
++const isSynthetic = (id: string) =>
++  id === "StructuredOutput" || id === "_noop" || id === "tool_search" || id === "uw_tool_search"
++
++// #5 policy (decided 2026-06-26): collapse ALL MCP + situational built-ins; keep the
++// coding core + delegation eager. Delegation (task builtin + orchestrator* MCP) is a
++// HARD eager constraint (#3592). per-server eager override via env (csv server prefixes).
++function eagerMcpPrefixes(): string[] {
++  return (process.env["ULTRAWORK_DISCLOSE_EAGER_MCP"] || "orchestrator")
++    .split(",").map((s) => s.trim()).filter(Boolean)
++}
++function isEager(id: string): boolean {
++  return isSynthetic(id) || EAGER_BUILTINS.has(id) || eagerMcpPrefixes().some((p) => id.startsWith(p))
++}
++function isDisclosable(id: string): boolean {
++  if (isEager(id)) return false
++  // optional test/rollout scoping: when set, only collapse ids matching these prefixes.
++  const scope = (process.env["ULTRAWORK_DISCLOSE_PREFIX"] || "")
++    .split(",").map((s) => s.trim()).filter(Boolean)
++  if (scope.length && !scope.some((p) => id.startsWith(p))) return false
++  if (COLLAPSE_BUILTINS.has(id)) return true
++  return true // unknown id ⇒ MCP/plugin tool ⇒ collapse (all-MCP policy)
++}
++
++function firstLine(desc: unknown): string {
++  return (typeof desc === "string" ? desc : "").split("\n")[0].slice(0, 120)
++}
++
++function forget(sid: string) {
++  fetched.delete(sid)
++  catalogStash.delete(sid)
++  lastSeen.delete(sid)
++  ticks.delete(sid)
++}
++
++/** TTL sweep + LRU cap. Current session is touched first so it is never evicted. */
++function sweep(now: number) {
++  for (const [sid, ts] of lastSeen) if (now - ts > TTL_MS) forget(sid)
++  if (lastSeen.size > MAX_SESSIONS) {
++    const oldest = [...lastSeen.entries()].sort((a, b) => a[1] - b[1])
++    for (let i = 0; i < oldest.length - MAX_SESSIONS; i++) forget(oldest[i][0])
++  }
++}
++
++export async function ToolDisclosurePlugin(_input: PluginInput): Promise<Hooks> {
++  return {
++    "experimental.chat.tools.transform": async (input, output) => {
++      if (!isEnabled()) return
++      const sid = input.sessionID
++      if (!sid) return
++
++      const now = Date.now()
++      lastSeen.set(sid, now)
++      sweep(now)
++      const tick = (ticks.get(sid) ?? 0) + 1
++      ticks.set(sid, tick)
++
++      const fset = fetched.get(sid) ?? new Map<string, number>()
++      for (const id of (process.env["ULTRAWORK_FORCE_FETCH"] || "").split(",").map((s) => s.trim()).filter(Boolean)) {
++        if (!fset.has(id)) fset.set(id, tick)
++      }
++      const used = new Set(input.usedToolIds)
++
++      // #3 demotion: drop fetched-but-unused tools past the grace window, but
++      // never those referenced by current history (used) — that would dangle.
++      for (const [id, fetchTick] of [...fset]) {
++        if (used.has(id)) continue
++        if (tick - fetchTick < GRACE) continue
++        fset.delete(id)
++      }
++
++      // #1 static catalog: the whole disclosable universe (fetched or not), so the
++      // injected system text stays stable across steps.
++      const universe: Array<{ name: string; desc: string }> = []
++      for (const id of Object.keys(output.tools)) {
++        if (!isDisclosable(id)) continue
++        universe.push({ name: id, desc: firstLine((output.tools as any)[id]?.description) })
++        if (!fset.has(id)) delete output.tools[id] // collapse non-fetched; fetched stay native
++      }
++      universe.sort((a, b) => a.name.localeCompare(b.name))
++      catalogStash.set(sid, universe)
++      fetched.set(sid, fset)
++
++      if (isDebug()) {
++        log.info("disclose", {
++          sid,
++          tick,
++          step: input.step,
++          disclosable: universe.length,
++          fetched: fset.size,
++          remainingTools: Object.keys(output.tools).length,
++          sessions: lastSeen.size,
++        })
++      }
++
++      if (universe.length === 0) return // nothing to disclose → no tool_search
++
++      const SEARCH = output.tools["tool_search"] ? "uw_tool_search" : "tool_search"
++      output.tools[SEARCH] = tool({
++        description:
++          "Search for tools that are listed in <discoverable_tools> but not yet loaded. " +
++          "Pass `query` keywords (or `select:<exact_tool_name>`). Matching tools become " +
++          "available as native tools on your NEXT step — then call them directly.",
++        inputSchema: jsonSchema<{ query: string }>({
++          type: "object",
++          properties: { query: { type: "string", description: "keywords or select:<name>" } },
++          required: ["query"],
++        }),
++        async execute({ query }) {
++          const uni = catalogStash.get(sid) ?? []
++          const q = (query || "").trim()
++          let hits: string[]
++          if (q.toLowerCase().startsWith("select:")) {
++            const names = new Set(q.slice(7).split(",").map((s) => s.trim()).filter(Boolean))
++            hits = uni.filter((t) => names.has(t.name)).map((t) => t.name)
++          } else {
++            const terms = q.toLowerCase().split(/\s+/).filter(Boolean)
++            hits = uni
++              .filter((t) => terms.some((term) => (t.name + " " + t.desc).toLowerCase().includes(term)))
++              .map((t) => t.name)
++          }
++          const s = fetched.get(sid) ?? new Map<string, number>()
++          const tk = ticks.get(sid) ?? 0
++          hits.forEach((h) => s.set(h, tk)) // (re)set fetch tick → fresh grace window
++          fetched.set(sid, s)
++          log.info("tool_search", { sid, query: q, hits: hits.length })
++          // Must return opencode's tool-result shape {output,title,metadata}; the
++          // processor reads `value.output.output` (processor.ts:223). A bare string
++          // leaves part.state.output undefined → invalid replay on the next step.
++          const text = hits.length
++            ? `Loaded ${hits.length} tool(s): ${hits.join(", ")}. They are now native tools — call them directly on your next step.`
++            : `No tools matched "${q}". Available: ${uni.map((t) => t.name).join(", ")}`
++          return { output: text, title: SEARCH, metadata: {} }
++        },
++      })
++    },
++
++    "experimental.chat.system.transform": async (input, output) => {
++      if (!isEnabled()) return
++      const sid = input.sessionID
++      const uni = sid ? catalogStash.get(sid) : undefined
++      if (!uni || !uni.length) return
++      // Static text: lists the whole disclosable universe (stable across steps).
++      output.system.push(
++        [
++          "<discoverable_tools>",
++          "These tools exist but may not be loaded yet. Call `tool_search` with keywords",
++          "(or `select:<name>`) to load the ones you need, then call them directly.",
++          ...uni.map((t) => `- ${t.name}: ${t.desc}`),
++          "</discoverable_tools>",
++        ].join("\n"),
++      )
++    },
++
++    // Capture the enable/debug flags from opencode config (experimental.tool_disclosure).
++    // Fires whenever config (re)loads, before prompts run. Cast: the published
++    // @opencode-ai/plugin Config type may lag the vendor schema addition.
++    config: async (cfg) => {
++      const exp = (cfg as any)?.experimental
++      cfgEnabled = exp?.tool_disclosure !== false // default ON; only explicit false disables
++      cfgDebug = !!exp?.tool_disclosure_debug
++    },
++
++    // #2 lifecycle: free per-session state when a session is deleted.
++    event: async ({ event }) => {
++      const e = event as any
++      if (e?.type === "session.deleted") {
++        const sid = e?.properties?.sessionID
++        if (sid) forget(sid)
++      }
++    },
++  }
++}
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
 index dc89db409..31cb5666e 100644
 --- a/packages/opencode/src/session/llm.ts
@@ -306,3 +600,47 @@ index dc89db409..31cb5666e 100644
        toolChoice: input.toolChoice,
        maxOutputTokens,
        abortSignal: input.abort,
+diff --git a/packages/opencode/src/session/prompt.ts b/packages/opencode/src/session/prompt.ts
+index 8facf7aba..5cd04ec12 100644
+--- a/packages/opencode/src/session/prompt.ts
++++ b/packages/opencode/src/session/prompt.ts
+@@ -1476,6 +1476,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
+                   })
+                 }
+ 
++                // Ultrawork (discussions/023): let plugins rewrite the final tool
++                // map before it reaches the model (progressive tool disclosure).
++                // Fired per step, so the disclosed set can grow within a turn.
++                // usedToolIds = tools referenced by the current message history; the
++                // disclosure engine must never demote one of these (would leave a
++                // dangling tool-call → provider error). See discussions/023 §6.1.
++                const usedToolIds: string[] = []
++                for (const m of msgs) for (const p of m.parts) if (p.type === "tool") usedToolIds.push(p.tool)
++                yield* plugin.trigger(
++                  "experimental.chat.tools.transform",
++                  { sessionID, agent: agent.name, model, step, usedToolIds },
++                  { tools },
++                )
++
+                 if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
+ 
+                 if (step > 1 && lastFinished) {
+diff --git a/packages/plugin/src/index.ts b/packages/plugin/src/index.ts
+index 473cac8a9..046b00a52 100644
+--- a/packages/plugin/src/index.ts
++++ b/packages/plugin/src/index.ts
+@@ -273,4 +273,14 @@ export interface Hooks {
+    * Modify tool definitions (description and parameters) sent to LLM
+    */
+   "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: any }) => Promise<void>
++  /**
++   * Ultrawork (discussions/023): rewrite the final tool map before it is sent to
++   * the model. Fired per step after resolveTools, so the set can change mid-turn.
++   * Enables progressive tool disclosure (collapse low-frequency tools to a
++   * name-only catalog + a `tool_search` tool, promote to native on demand).
++   */
++  "experimental.chat.tools.transform"?: (
++    input: { sessionID: string; agent: string; model: Model; step: number; usedToolIds: string[] },
++    output: { tools: Record<string, any> },
++  ) => Promise<void>
+ }

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-24 -->
+<!-- last-synced: 2026-06-26 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -38,6 +38,8 @@
 - **写自定义 model 时 `models[mapKey].id` 必须 == mapKey（否则 opencode 解析/whitelist 失配）**：opencode 按 **map key** 注册/解析模型，若让「高级 JSON」覆盖内层 `id` 使其 ≠ map key（也 ≠ `whitelist` 项），会得到一个选不中/对不上的幽灵模型。api-client `upsertCustomProvider` 深合并 advanced 后**强制 `id` 回 map key**（`name` 可改、无害）。
 - **LLM 流式回复会「静默挂死」，AI SDK 无空闲超时——vendor patch 加了工具感知两级 idle guard（2026-06-24，ADR-034，真机+headless 实证）**：某些自定义 provider（实测 `alibaba-cn/qwen3.5-plus`）的 SSE 流会在**发完 reasoning、正文 block 刚开**处静默 stall——连接既不再发 chunk、也不发结束帧、也不报错（TCP 挂着）。AI SDK v6 `streamText` 只有 `abortSignal`、**无任何 idle/stall 超时**，于是 `fullStream` 异步迭代器永远不 yield 也不 throw → `session/processor.ts` 的 `Stream.runDrain` 协程永久挂起 → **该回合永不收尾、session 忙锁不释放 → 后续 prompt 全部排队卡死**（前端表现：永久转圈 + 重试无反应）。**注意这与上面两条出错回合不同**：既无 `finish` 也无 `info.error`（text part 只有 `time.start` 无 end、tokens 全 0），既有的终态判定都兜不住。**修复 = `session/llm.ts` 的 `idleGuard`**（vendor patch，包在 `result.fullStream` 外）：① **两级超时**——首 token 前 `STREAM_TTFB_TIMEOUT_MS`（默认 90s，容忍 prefill/冷启动/reasoning 静默思考），首个 `text-delta`/`reasoning-delta` 后降到 `STREAM_IDLE_TIMEOUT_MS`（默认 30s，流动中 chunk 是亚秒级、stall 快报错）；②**工具感知**——工具在 stream 内部执行（`tool-call`→`tool-result`/`tool-error` 间 `fullStream` 静默），用 `Set<toolCallId>` 跟踪在飞工具，**有工具在跑时撤销看门狗**（长 bash/webfetch/30min delegate 不被误杀；布尔会被并行工具的首个 result 过早重置，故必须用 Set）；③ 触发时 `ctrl.abort()`（断挂死的 fetch、释放连接）+ 抛 plain Error → 经 `SessionRetry.policy`（plain Error 判**不可重试**）→ `Effect.catch(halt)` → 落 `info.error = "LLM stream idle for Nms"`（**终态、解锁、可重试**）；④ finally 里 `it.return()` 必须 **fire-and-forget**（wedged read 可能让 `await` 永挂、反吞掉错误）。env 旋钮 `OPENCODE_STREAM_TTFB_TIMEOUT_MS`/`OPENCODE_STREAM_IDLE_TIMEOUT_MS`。**每个 opencode step 是独立 streamText/idleGuard**（`prompt.ts:1344` 外层 while 每轮 `handle.process`）→ 多 step 回合的工具后首字天然在新 step 重获 TTFB（无需跨 step 状态）。headless 复现配方见 [testing.md](./testing.md)。
 
+- **hook 注入的工具，execute 必须返回 opencode 工具结果形状 `{output,title,metadata}`，不能返回裸字符串（2026-06-26，ADR-036 渐进式工具披露 e2e 踩坑）**：通过 `experimental.chat.tools.transform` 钩子往 `tools` map 注入的 AI-SDK 工具（如 `tool_search`），其 execute 返回值经 `session/processor.ts:223` 读 **`value.output.output`** 落 `part.state.output`。若 execute 返回裸 `string`，`value.output.output` 为 `undefined` → `part.state.output` 为空 → **下一步 `toModelMessages` replay 时报 `Invalid prompt: messages do not match ModelMessage[] schema`，拖垮整个多步回合**。opencode 自己的内置/MCP 工具都返回 `{output,title,metadata,attachments?}`，照抄即可。**这类工具的状态不能跨步 evict**（若加 TTL/回落淘汰，绝不能淘汰 message 历史里仍有 tool-call 的工具，否则同样悬空 → schema 错）。
+
 ## 2. OpenCode Server 运行时限制
 
 - **`PATCH /config` 不影响运行时**：只写磁盘 `opencode.json`。运行时模型切换**必须**用 `prompt_async` 的 `model` 参数。
@@ -49,6 +51,7 @@
 - **SQLite WAL disk I/O**：偶发 500；恢复手段 `PRAGMA wal_checkpoint(TRUNCATE)` + 重启。
 - **会话 db 的 WAL 极脆弱（数据恢复实操教训，2026-06-10）**：`opencode-.db` 主文件可能长期不 checkpoint（实测停在两周前），近期数据全部只活在 `-wal` 里；**任何 sqlite3 直接打开（含只读查询和 `.recover`）都会触发 checkpoint 并清空 WAL 历史帧**，毁掉「截断 WAL 回滚到误操作前」的恢复路径。正确顺序：先 `cp -a` 整个目录（db+wal+shm 三件套），再在副本上一次性做 `.recover`；被删行可从 free pages 的 `lost_and_found` 按列前缀（ses_/msg_/prt_）重建。
 - **Config.update 文件名 bug**：vendor 已 patch 修复（`config.json` → `opencode.json`），详见 auto-memory `vendor-patches.md`。
+- **opencode 会 unlink「当前活动」日志文件——按文件名 `tail`/`ls`/`find` 找不到，调试日志要走 lsof（2026-06-26，渐进式工具披露真机验证踩坑）**：`util/log.ts` 启动时 `cleanup(Global.Path.log)` 会删旧日志，活动日志文件可能被 unlink（句柄仍开、`lsof` 看得到，但 `ls`/`find`/按名 `tail` 都不可见）。日志在 `~/.local/share/ultrawork/log/`：**dev 模式（从源码 `bun run ... serve`）写 `dev.log`；编译版 sidecar（app 拉起）写带时间戳的 `<ISO>.log`**——别盯错文件。真机看 app 的实时日志：`LOG=$(lsof -p $(lsof -nP -iTCP:4096 -sTCP:LISTEN|grep LISTEN|awk "{print \$2}"|head -1) | grep -oE "/Users/.*ultrawork.*\.log" | head -1)`，或直接看 UI「执行流程」面板（输入 token + 工具步）更可靠。
 
 ## 3. MCP
 

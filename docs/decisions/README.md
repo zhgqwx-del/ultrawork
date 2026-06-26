@@ -65,6 +65,7 @@
 | [033](./033-artifact-capture-and-pdf-preview.md) | 产物识别改用文件系统真相（mtime 扫描，捕获 bash 副作用）+ 产物/工作文件分类 + PDF 内嵌预览（pdf.js + scope-free `read_file_bytes`） | 2026-06-16 | Accepted (✅ 已实现) |
 | [034](./034-llm-stream-idle-guard.md) | LLM 流式 idle 看门狗（工具感知两级超时，opencode `llm.ts` + ACP `prompt()` 对称）— 根治静默挂死导致的会话死锁 | 2026-06-24 | Accepted (✅ 已实现，两侧 headless 验证) |
 | [035](./035-delegate-owner-session-scoping.md) | 委派 owner-session 归属（`DelegateRecord.ownerSessionId`，ACP per-session env / opencode `_meta` vendor patch 双通道）— DelegateDock 按发起会话精确过滤，根治同 workspace 多 Team 委派串显 | 2026-06-25 | Accepted (✅ 已实现，运行时+源码双验证) |
+| [036](./036-progressive-tool-disclosure.md) | 渐进式工具披露（搜索-提升为原生，对齐 Anthropic Tool Search）— 折叠低频工具→name-only 名录+`tool_search`、按需提升原生；接缝钩子 `experimental.chat.tools.transform` + internal plugin；EAGER 委派硬约束；默认 ON config flag。根治多 MCP 下工具 schema token 膨胀（hi 19k→11.7k） | 2026-06-26 | Accepted (✅ 已实现，单 agent+team 真机验收) |
 
 > ADR-027 的探索过程见 [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性）与 [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）。阶段0-1 已按 B2「参考重写」在 `feat/agent-os-phase0` 分支落地（旧 `feat/acp-support` MVP 弃用）；实测坑点固化在 [gotchas §8](../gotchas.md)。
 

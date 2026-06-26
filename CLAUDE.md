@@ -169,6 +169,11 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `mcp/index.ts` | ① MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s）② MCP 工具 execute 把 `options.experimental_context.sessionID` 注入 `callTool` 的 `_meta.ultrawork_session`（委派归属，discussions/022） | ADR-028 / 022 |
 | `script/build.ts` | 新增 `--target=<os>-<arch>` 单目标过滤，支持跨编译 darwin-x64（Universal DMG） | ADR-028 |
 | `session/llm.ts` | ① `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态）② streamText `experimental_context:{sessionID}` 暴露给工具 execute（委派归属，discussions/022） | ADR-034 / 022 |
+| `session/prompt.ts` | 每 step `resolveTools` 后 fire `experimental.chat.tools.transform` 钩子（含 `usedToolIds`），供渐进式工具披露引擎改写工具表 | discussions/023 |
+| `plugin/src/index.ts` (`@opencode-ai/plugin`) | 新增 `experimental.chat.tools.transform` 钩子类型 | discussions/023 |
+| `plugin/index.ts` | 注册内置插件 `ToolDisclosurePlugin` 进 `INTERNAL_PLUGINS` | discussions/023 |
+| `plugin/tool-disclosure.ts` (**新文件**) | 渐进式工具披露引擎：折叠低频工具→name-only 名录(system)+`tool_search`，按需提升为原生；静态名录/会话清理/grace 安全降级；由 `experimental.tool_disclosure` config flag 或 `ULTRAWORK_TOOL_DISCLOSURE` env 门控 | discussions/023 |
+| `config/config.ts` (追加) | experimental schema 增 `tool_disclosure` / `tool_disclosure_debug` | discussions/023 |
 
 ### 修改 vendor/opencode 的完整流程
 
@@ -180,16 +185,24 @@ vim vendor/opencode/packages/opencode/src/...
 
 # 2. 重新生成 patch 文件（覆盖旧的）
 #    ⚠️ 必须列全 patch 涉及的所有文件，漏掉任何一个都会在重新生成时丢失对应改动
-cd vendor/opencode && git diff -- \
+#    ⚠️ 新文件（如 tool-disclosure.ts）必须先 `git add -N` 才会出现在 git diff 里
+cd vendor/opencode && \
+git add -N packages/opencode/src/plugin/tool-disclosure.ts && \
+git diff -- \
   packages/opencode/src/config/config.ts \
   packages/opencode/src/config/paths.ts \
   packages/opencode/src/global/index.ts \
   packages/opencode/src/mcp/index.ts \
   packages/opencode/src/session/llm.ts \
+  packages/opencode/src/session/prompt.ts \
+  packages/opencode/src/plugin/index.ts \
+  packages/opencode/src/plugin/tool-disclosure.ts \
+  packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \
-  > ../../patches/vendor-opencode-config-fix.patch
+  > ../../patches/vendor-opencode-config-fix.patch && \
+git reset -q packages/opencode/src/plugin/tool-disclosure.ts   # 取消 intent-to-add，保持 submodule index 干净
 
-# 3. 如果新增了文件，在上面的 git diff 命令中追加路径
+# 3. 如果再新增文件，在 git diff 命令中追加路径（新文件记得也 git add -N）
 # 4. 重编译 sidecar
 bun run --bun scripts/build-opencode.ts
 
