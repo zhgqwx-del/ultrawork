@@ -32,7 +32,7 @@ ultrawork/
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
-│   │   ├── README.md                  #   ADR 索引：模板说明 + 32 条决策一览表（权威索引）
+│   │   ├── README.md                  #   ADR 索引：模板说明 + 36 条决策一览表（权威索引）
 │   │   ├── 001..017                   #   Phase 1 → Round 17 早期决策（Tauri/Sidecar/消息渲染/Dock/模型/工作区/SSE/MCP/暗色模式/Browser MCP 等）
 │   │   ├── 018-wechat-channel-ilink.md       # 微信 Channel ilink 协议接入（2026-03-24）
 │   │   ├── 019-knowledge-base-integration.md # 知识库集成方案（Withdrawn）
@@ -140,7 +140,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 16 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 36 (README + 35 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **决策层** | `docs/decisions/` | 37 (README + 36 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 18 (README + 17) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
