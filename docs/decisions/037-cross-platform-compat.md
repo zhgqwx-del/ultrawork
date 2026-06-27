@@ -52,7 +52,16 @@
 
 - **嵌入式 Node 下载 / Browser MCP / Chrome 进程清理**：Unix 取向（`get_platform_arch` 仅 darwin/linux）。Windows 上整套优雅不可用（返 Err / spawn 失败即 no-op，不崩）；Linux 走 linux 分支可用。Windows 完整支持需单独移植 node `.zip` 布局，列为后续。
 - **dev/perf 一次性脚本**（`scripts/perf/health-contention/gen-tree.ts` 的 `/bin/bash`、`export-agentos-ref.ts` 的 `/tmp` 默认）：不进产品、不进常规构建，保留未改。
-- **首次 CI 跑通需观察**：`ci.yml` 的 `rust` job 假设 `tauri::generate_context!` 不校验 sidecar 二进制存在（仅需前端 dist + 占位文件），`release.yml` 未本地验证——首次触发需确认。
+- **Windows node job 只跑 typecheck（不跑 TS 单测）**：CI 实跑（4 轮）暴露——多个计时密集套件在 Windows 留未关闭 timer 句柄（ACP idle-guard/keepalive 看门狗）+ vitest 启动期 esbuild 扫描预打包 pdfjs，导致 bun/vitest 跑完不退出/挂死（`timeout-minutes` 兜底）。这是**测试 harness 在 Windows 的退出限制、非产品 bug**（测试本身都 pass）。取舍：Windows 留 typecheck（TS 编译信号）+ 完整 Rust 单测（rust job 覆盖所有 Windows 特定逻辑）；完整 TS 单测在 mac+linux（被测 TS 逻辑平台无关）。knowledge-sidecar 顺带从 vitest 切 bun 原生 runner。待 bun 有可靠 force-exit 再恢复 Windows 单测。
+- **`release.yml` 未本地验证**——首次 tag 触发需确认。
+
+## CI 硬化迭代（2026-06-27，4 轮）
+
+CI 是真正门禁——push main 后实跑 4 轮逐个收敛 Windows 首跑问题，**全部为测试适配/harness 问题、无一跨平台业务逻辑 bug**：
+1. 3 失败：`process_ppid` 补 `#[cfg(unix)]`（漏网第 4 个）、`delegate-mcp` 计时窗口放宽、knowledge-sidecar vite-node path 错。**rust(windows) 编译/链接全过**（最强验证，也确证 `generate_context!` 会校验 externalBin → stub 必需）。
+2. rust(windows) ✅、delegate-mcp ✅，但 `--continue` 让 knowledge-sidecar vitest **挂死 24min**（externalize 反把快速失败变挂死）→ 加 `timeout-minutes`。
+3. timeout 生效，knowledge-sidecar 仍挂（`skipIf` 无效，挂在 vitest 启动扫描）→ 改 bun 原生 runner（`Ran 6 tests` ✅）。
+4. knowledge-sidecar ✅，acp-client 计时套件 bun test 退出挂死 → Windows node 改 typecheck-only。
 
 ## 备选与放弃
 
