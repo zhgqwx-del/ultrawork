@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect } from "bun:test"
 import { convertDocument, BINARY_DOC_EXTENSIONS } from "./doc-parser"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
