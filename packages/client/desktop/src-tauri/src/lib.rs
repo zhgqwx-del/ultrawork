@@ -2309,6 +2309,7 @@ mod lifecycle_tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)] // process_ppid uses `ps` and is intentionally None on Windows
     fn process_ppid_resolves_self_and_misses_dead_pid() {
         // The current test process always has a live parent.
         let ppid = process_ppid(std::process::id());

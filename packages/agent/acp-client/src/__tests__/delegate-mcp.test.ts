@@ -130,7 +130,9 @@ describe("delegate-mcp shim", () => {
         ticks++
       },
     })
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    // Windows timer granularity is ~15ms, so a 5ms keepalive fires far less often
+    // than on Linux/macOS — widen the window so ≥2 ticks is reliable everywhere.
+    await new Promise((resolve) => setTimeout(resolve, 150))
     expect(ticks).toBeGreaterThanOrEqual(2)
     release()
     await pending
