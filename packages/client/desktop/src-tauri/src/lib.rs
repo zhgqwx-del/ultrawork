@@ -53,27 +53,70 @@ fn check_health(port: u16, path: &str, auth: Option<&str>) -> bool {
     response.contains("200")
 }
 
-fn kill_port_process(port: u16) {
-    let Ok(output) = Command::new("lsof")
-        .args(["-ti", &format!(":{}", port)])
-        .output()
-    else {
-        return;
-    };
-    let pids = String::from_utf8_lossy(&output.stdout);
-    for pid in pids.trim().lines() {
-        let pid = pid.trim();
-        if !pid.is_empty() {
-            println!("Killing stale process {} on port {}", pid, port);
-            Command::new("kill").arg(pid).output().ok();
+/// OS PATH-list separator (";" on Windows, ":" on Unix).
+const PATH_LIST_SEP: &str = if cfg!(windows) { ";" } else { ":" };
+
+/// PIDs whose local TCP endpoint is bound to `port`. Unix uses `lsof`, Windows
+/// parses `netstat -ano`. Returns empty on any failure (tool missing, no match).
+fn pids_on_port(port: u16) -> Vec<u32> {
+    let needle = format!(":{}", port);
+    if cfg!(target_os = "windows") {
+        // `-p tcp` lists IPv4 TCP only — consistent with is_port_in_use/check_health,
+        // which connect to 127.0.0.1 (IPv4); sidecars must bind IPv4 to be detected
+        // either way, and this conveniently avoids parsing `[::]:port` IPv6 rows.
+        let Ok(output) = Command::new("netstat").args(["-ano", "-p", "tcp"]).output() else {
+            return Vec::new();
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut pids = Vec::new();
+        for line in text.lines() {
+            // Columns: Proto  LocalAddress  ForeignAddress  State  PID
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() >= 5 && cols[0].eq_ignore_ascii_case("TCP") && cols[1].ends_with(&needle) {
+                if let Ok(pid) = cols[4].parse::<u32>() {
+                    if pid != 0 && !pids.contains(&pid) {
+                        pids.push(pid);
+                    }
+                }
+            }
         }
+        pids
+    } else {
+        let Ok(output) = Command::new("lsof").args(["-ti", &needle]).output() else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .collect()
+    }
+}
+
+/// Terminate a process by PID using the platform-native killer
+/// (`taskkill /F` on Windows, `kill` on Unix).
+fn kill_pid(pid: u32) {
+    if cfg!(target_os = "windows") {
+        Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output().ok();
+    } else {
+        Command::new("kill").arg(pid.to_string()).output().ok();
+    }
+}
+
+fn kill_port_process(port: u16) {
+    for pid in pids_on_port(port) {
+        println!("Killing stale process {} on port {}", pid, port);
+        kill_pid(pid);
     }
     std::thread::sleep(Duration::from_millis(200));
 }
 
-/// Read a process's parent PID via `ps`. None if the process is gone or the
-/// output can't be parsed.
+/// Read a process's parent PID via `ps` (Unix). Orphan detection is a Unix
+/// concept (launchd reparenting), so this returns None on Windows.
 fn process_ppid(pid: u32) -> Option<u32> {
+    if cfg!(target_os = "windows") {
+        return None;
+    }
     let output = Command::new("ps")
         .args(["-o", "ppid=", "-p", &pid.to_string()])
         .output()
@@ -87,7 +130,13 @@ fn process_ppid(pid: u32) -> Option<u32> {
 /// force-quit). Such a process is healthy but stale: reusing it would silently
 /// bind us to a leftover (possibly old-version) sidecar. We detect it here so
 /// `prepare_port` can reclaim the port instead of reusing it.
+///
+/// Windows has no launchd-style reparenting, so there is nothing to detect —
+/// a healthy listener is always treated as a live owner there.
 fn port_listener_orphaned(port: u16) -> bool {
+    if cfg!(target_os = "windows") {
+        return false;
+    }
     let Ok(output) = Command::new("lsof")
         .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
         .output()
@@ -119,7 +168,7 @@ fn shutdown_sidecars() {
     for entry in &entries {
         if let Some(pid) = entry.pid {
             println!("[shutdown] Killing sidecar pid {} (port {})", pid, entry.port);
-            Command::new("kill").arg(pid.to_string()).output().ok();
+            kill_pid(pid);
         }
     }
 
@@ -152,6 +201,7 @@ fn shutdown_sidecars() {
 /// async-signal context), so calling `shutdown_sidecars` here — which locks a
 /// Mutex and spawns `kill` — is safe. `shutdown_sidecars` is idempotent (it
 /// drains the registry), so a later `RunEvent::Exit` is a harmless no-op.
+#[cfg(unix)]
 fn install_signal_handlers() {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
     use signal_hook::iterator::Signals;
@@ -171,6 +221,12 @@ fn install_signal_handlers() {
         }
     });
 }
+
+/// Windows has no POSIX signals; the only catchable cleanup path is Tauri's
+/// `RunEvent::Exit` (wired in `run()`). Console Ctrl+C / taskkill termination
+/// falls back to `prepare_port`'s startup self-heal on the next launch.
+#[cfg(not(unix))]
+fn install_signal_handlers() {}
 
 /// Prepare a port: reuse healthy process, kill stale, or confirm free.
 /// Returns Ok(true) if a healthy process is already running (skip spawn),
@@ -268,7 +324,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
         if start.elapsed() > max_wait {
             // Kill the unhealthy child and drop it from the registry — otherwise it
             // would leak as a zombie sidecar until app shutdown.
-            Command::new("kill").arg(pid.to_string()).output().ok();
+            kill_pid(pid);
             if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
                 reg.retain(|e| e.pid != Some(pid));
             }
@@ -294,22 +350,19 @@ fn ensure_default_workspace() -> Result<String, String> {
 }
 
 /// Open a file with the system default application (e.g. browser for .html, Keynote for .pptx).
-/// Uses macOS `open` command.
+/// Delegates to tauri-plugin-opener, which uses the platform-native opener
+/// (macOS `open` / Windows ShellExecute / Linux xdg-open) — no shell, so no
+/// cmd-metacharacter escaping concerns with agent-generated artifact names.
 #[tauri::command]
-fn open_file_with_system(path: String) -> Result<(), String> {
+fn open_file_with_system(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
     let p = std::path::Path::new(&path);
     if !p.exists() {
         return Err(format!("File not found: {}", path));
     }
-    let output = Command::new("open")
-        .arg(&path)
-        .output()
-        .map_err(|e| format!("Failed to open {}: {}", path, e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("open failed: {}", stderr));
-    }
-    Ok(())
+    app.opener()
+        .open_path(path.clone(), None::<&str>)
+        .map_err(|e| format!("Failed to open {}: {}", path, e))
 }
 
 /// Read a file's raw bytes for in-app preview (e.g. pdf.js). Returns the bytes
@@ -388,7 +441,7 @@ async fn test_provider_connection(
         // a bogus "3xx → http error".
         "-L".into(),
         "-o".into(),
-        "/dev/null".into(),
+        if cfg!(target_os = "windows") { "nul".into() } else { "/dev/null".into() },
         "-w".into(),
         "%{http_code}".into(),
         "-m".into(),
@@ -421,22 +474,19 @@ async fn test_provider_connection(
     })
 }
 
-/// Reveal a file in Finder (macOS). Uses `open -R` which highlights the file in its folder.
+/// Reveal a file in the system file manager, highlighting it where supported.
+/// Delegates to tauri-plugin-opener (macOS Finder `open -R` / Windows
+/// `explorer /select,` / Linux opens the parent folder).
 #[tauri::command]
-fn reveal_file_in_finder(path: String) -> Result<(), String> {
+fn reveal_file_in_finder(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
     let p = std::path::Path::new(&path);
     if !p.exists() {
         return Err(format!("File not found: {}", path));
     }
-    let output = Command::new("open")
-        .args(["-R", &path])
-        .output()
-        .map_err(|e| format!("Failed to reveal {}: {}", path, e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("open -R failed: {}", stderr));
-    }
-    Ok(())
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|e| format!("Failed to reveal {}: {}", path, e))
 }
 
 /// Check whether a directory exists on disk.
@@ -484,7 +534,7 @@ pub struct BrowserEnvInfo {
 
 fn ultrawork_dir() -> PathBuf {
     dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .unwrap_or_else(std::env::temp_dir)
         .join(".ultrawork")
 }
 
@@ -839,7 +889,7 @@ fn extract_sentinel(out: &str) -> Option<String> {
 fn merge_paths(primary: &str, secondary: &str) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut parts: Vec<&str> = Vec::new();
-    for seg in primary.split(':').chain(secondary.split(':')) {
+    for seg in primary.split(PATH_LIST_SEP).chain(secondary.split(PATH_LIST_SEP)) {
         if seg.is_empty() {
             continue;
         }
@@ -847,7 +897,7 @@ fn merge_paths(primary: &str, secondary: &str) -> String {
             parts.push(seg);
         }
     }
-    parts.join(":")
+    parts.join(PATH_LIST_SEP)
 }
 
 /// Capture the full PATH from the user's real login shell.
@@ -907,7 +957,7 @@ fn rich_path() -> String {
 /// Hard-coded portion of [`rich_path`]: common Node.js install locations plus
 /// the inherited PATH. Used directly when the login shell is unavailable.
 fn rich_path_base() -> String {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
     let home = home.to_string_lossy();
     let current = std::env::var("PATH").unwrap_or_default();
     let extras = [
@@ -952,7 +1002,7 @@ fn rich_path_base() -> String {
     let mut parts: Vec<String> = versioned_paths.into_iter().map(|(_, p)| p).collect();
     parts.extend(extras);
     parts.push(current);
-    parts.join(":")
+    parts.join(PATH_LIST_SEP)
 }
 
 fn compute_rich_path() -> String {
@@ -966,13 +1016,20 @@ fn compute_rich_path() -> String {
 /// Detect system Node.js ≥v18 (fallback when embedded is unavailable).
 fn detect_system_node() -> Option<NodeInfo> {
     let path_env = rich_path();
-    let node_path = Command::new("/usr/bin/which")
+    // Windows `where` (may return several lines — take the first); Unix `which`.
+    let which = if cfg!(target_os = "windows") { "where" } else { "/usr/bin/which" };
+    let node_path = Command::new(which)
         .arg("node")
         .env("PATH", &path_env)
         .output()
         .ok()
         .and_then(|o| {
-            let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let p = String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if p.is_empty() { None } else { Some(p) }
         })?;
     let output = Command::new(&node_path).arg("--version").output().ok()?;
@@ -991,14 +1048,37 @@ fn detect_system_node() -> Option<NodeInfo> {
 
 // ── Chrome detection ───────────────────────────────────────────────
 
-/// Detect system Chrome browser path (macOS).
+/// Detect a system Chrome/Chromium browser path for the current platform.
 #[tauri::command]
 fn detect_chrome() -> Option<String> {
-    let candidates = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ];
+    let candidates: &[&str] = if cfg!(target_os = "macos") {
+        &[
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    } else if cfg!(target_os = "windows") {
+        // Per-user installs live under %LOCALAPPDATA%; checked first since Chrome
+        // increasingly installs without admin rights.
+        let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let user_chrome = format!(r"{}\Google\Chrome\Application\chrome.exe", local);
+        return [
+            user_chrome,
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string(),
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".to_string(),
+            r"C:\Program Files\Chromium\Application\chrome.exe".to_string(),
+        ]
+        .into_iter()
+        .find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+    } else {
+        &[
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+        ]
+    };
     candidates
         .iter()
         .find(|p| std::path::Path::new(p).exists())
@@ -1548,13 +1628,25 @@ const SKILL_DEP_BINS: &[&str] = &[
     "python3", "node", "pandoc", "soffice", "pdftoppm", "git", "markdown-exporter",
 ];
 
-/// Probe a `:`-separated PATH for each bin (pure; testable).
+/// Probe a PATH-list (platform separator) for each bin (pure; testable).
 fn probe_bins(path: &str, bins: &[&str]) -> Vec<DepStatus> {
-    let dirs: Vec<&str> = path.split(':').filter(|s| !s.is_empty()).collect();
+    let dirs: Vec<&str> = path.split(PATH_LIST_SEP).filter(|s| !s.is_empty()).collect();
+    // On Windows an executable on PATH carries an extension (PATHEXT).
+    let exts: &[&str] = if cfg!(target_os = "windows") {
+        &["", ".exe", ".cmd", ".bat"]
+    } else {
+        &[""]
+    };
     bins
         .iter()
         .map(|bin| {
-            let found = dirs.iter().map(|d| std::path::Path::new(d).join(bin)).find(|p| p.is_file());
+            let found = dirs
+                .iter()
+                .flat_map(|d| {
+                    exts.iter()
+                        .map(move |ext| std::path::Path::new(d).join(format!("{}{}", bin, ext)))
+                })
+                .find(|p| p.is_file());
             DepStatus {
                 name: bin.to_string(),
                 available: found.is_some(),
@@ -1569,7 +1661,16 @@ fn probe_bins(path: &str, bins: &[&str]) -> Vec<DepStatus> {
 /// python3/git (in /usr/bin) are found regardless of how the app was launched
 /// (Finder vs terminal give different inherited PATHs).
 fn skill_dep_path() -> String {
-    format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", rich_path())
+    if cfg!(target_os = "windows") {
+        // System dirs (System32, …) are already part of the inherited PATH.
+        rich_path()
+    } else {
+        format!(
+            "{p}{s}/usr/bin{s}/bin{s}/usr/sbin{s}/sbin",
+            p = rich_path(),
+            s = PATH_LIST_SEP
+        )
+    }
 }
 
 /// Probe the PATH for the external tools built-in skills shell out to. The
@@ -2010,7 +2111,9 @@ mod scan_tests {
 
         let names: Vec<String> = collect_changed_files(&root, 0)
             .into_iter()
-            .map(|(p, _)| p.rsplit('/').next().unwrap().to_string())
+            .map(|(p, _)| {
+                std::path::Path::new(&p).file_name().unwrap().to_string_lossy().to_string()
+            })
             .collect();
 
         assert!(names.contains(&"report.pdf".to_string()));
@@ -2130,6 +2233,7 @@ mod builtin_skills_tests {
     }
 
     #[test]
+    #[cfg(unix)] // asserts POSIX system dirs / sh; skill_dep_path() differs on Windows
     fn skill_dep_path_includes_system_dirs() {
         let p = skill_dep_path();
         assert!(p.contains("/usr/bin"), "skill dep path must include /usr/bin: {p}");
@@ -2163,6 +2267,7 @@ mod builtin_skills_tests {
     }
 
     #[test]
+    #[cfg(unix)] // hardcodes ":" PATH separator; PATH_LIST_SEP is ";" on Windows
     fn merge_paths_dedups_preserves_order_and_prefers_primary() {
         // primary entries come first, in order
         assert_eq!(merge_paths("/a:/b", "/c:/d"), "/a:/b:/c:/d");
@@ -2177,6 +2282,7 @@ mod builtin_skills_tests {
     }
 
     #[test]
+    #[cfg(unix)] // uses ":" PATH separator + POSIX dirs; PATH_LIST_SEP differs on Windows
     fn probe_bins_detects_present_and_missing() {
         let dir = unique_tmp("bin");
         std::fs::create_dir_all(&dir).unwrap();

@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-19 -->
+<!-- last-synced: 2026-06-27 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -300,3 +300,30 @@ setTimeout(() => fetchSources(), 500)
 **依赖徽标 SSOT**：技能→运行依赖映射唯一权威是 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（驱动设置页 `DepBadge`）；SKILL.md 的 `x-requires` 仅人读文档，两者改一处需对齐另一处。可探测的是 PATH 上的二进制（`check_skill_dependencies` 探 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter），Python 库不可探（脚本自身优雅报错兜底）。
 
 **设置-技能页三区**（`Settings.tsx` SkillsSection）：内置（`skill.location` 含 `/skills/builtin/`，只读+依赖徽标）/ 可安装（`INSTALLABLE_SKILLS` curated，「安装」→ `navigate("/",{state:{initialInput}})` 交给内置 skill-installer 在新对话完成）/ 自定义（现有 paths·urls + 非内置发现技能）。新增可安装项**只放可再分发许可的来源**。
+
+## 13. 跨平台编码规范（macOS / Windows / Linux，ADR-037）
+
+> 本项目要在三平台打包可安装软件。所有新代码与改动**默认必须三平台兼容**。CI（`.github/workflows/ci.yml`）在 mac/win/linux 跑 typecheck+test+`cargo test`，是真正门禁；下列是写代码时的正向模式（违反通常被 CI 抓到，但应在写时就避免）。反向坑点见 `docs/gotchas.md` §12。
+
+### 路径处理
+- **拼路径用 `path.join` / `PathBuf::join`，绝不字符串拼 `/`**。取文件名用 `path.basename`（Node/Bun 侧）。
+- **Renderer（`.tsx`，跑在 WebView，无 `node:path`）**：用 `@/lib/path-utils` 的 `pathBasename` / `isAbsolutePath` / `shortenPath`（同时吃 `/` 和 `\`）。判断绝对路径用 `isAbsolutePath`（认 `/…`、`C:\…`、UNC），**不要** `startsWith("/")`。切段用 `split(/[\\/]/)`，不要 `split("/")`。
+  - 例外：URL 和「provider/model」逻辑 id 的 `/` 是恒定分隔符，**不算文件路径**，保持 `split("/")`。
+- **Home 目录用 `os.homedir()`（TS）/ `dirs::home_dir()`（Rust）**，绝不 `process.env.HOME`（Windows 无 `HOME`）。临时目录用 `os.tmpdir()` / `std::env::temp_dir()`，不要硬编码 `/tmp`。
+- **PATH 列表分隔符**：TS 用 `node:path` 的 `delimiter`；Rust 用本仓的 `PATH_LIST_SEP`（`;` on win / `:` on unix），不要硬编码 `:`。
+
+### 外部命令与进程
+- 调外部命令前问「这命令 Windows 有吗」：`lsof`/`ps`/`pgrep`/`which`/`open`/`kill`/`/bin/sh` 都是 unix-only。用**运行时分支** `if cfg!(target_os = "windows") { … } else { … }`（Rust）或 `if (process.platform === "win32")`（TS）选平台等价命令（`netstat`/`tasklist`/`where`/`explorer`/`taskkill`）。
+- **Rust 跨平台优先用运行时 `cfg!()` 分支而非 `#[cfg]` 属性门控**——这样所有分支都能在本机（macOS）`cargo check` 时参与编译/类型检查；`#[cfg(windows)]` 分支本机不编译，只有 Windows CI 才验证。仅当用到平台专属 API（`std::os::unix::*`、`signal_hook`）或平台专属 crate 才用 `#[cfg]` 属性 + 另一侧 no-op，且 Cargo.toml 里把 unix-only crate 放 `[target.'cfg(unix)'.dependencies]`。
+- 文件权限 `chmod` / `0o755` 仅 unix 有意义：Rust 用 `#[cfg(unix)]` 包；Bun Shell `$` 里 `chmod` 要 `if (process.platform !== "win32")` 守卫（`mkdir -p`/`cp`/`rm`/`mv` 是 Bun Shell 跨平台**内置**，可直接用，但 `chmod` 不是）。
+- 打开文件/在文件管理器中显示：用 lib.rs 现成的 `open_file_with_system` / `reveal_file_in_finder`（已三平台分支），不要新写 `Command::new("open")`。
+
+### 构建 / 脚本
+- 构建脚本用 `bun run --bun`（跨平台）；初始化用 `bun run setup`（`scripts/setup.ts`，三平台），不要只写 `setup.sh`（Windows 跑不了）。
+- Sidecar 产物命名 `<name>-<target-triple>[.exe]`，Tauri `externalBin` 自动按当前 triple + `.exe` 解析（已 wire，勿改）。
+- codesign / lipo / notarytool / strip 仅 macOS：脚本里用 `process.platform === "darwin"` 守卫。`build-release.ts` 非 mac 走「构建 sidecar + `tauri build`」分支，不碰 Apple 签名。
+- Tauri `bundle.targets` 设 `"all"`，由 Tauri 按平台产对应安装包（mac dmg/app、win nsis/msi、linux deb/appimage）。
+
+### 已知平台边界（非 bug，刻意降级）
+- **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：当前是 Unix 取向（`get_platform_arch` 仅 darwin/linux）。Windows 上整套功能优雅不可用（`get_platform_arch` 返 Err、`lsof`/`pgrep` spawn 失败即 no-op），不崩。Linux 走 linux 分支可用。要让 Windows 支持需单独移植（node `.zip` 布局 + `node.exe`），列为后续。
+- **渐进式工具披露内置工具 id 集**：与平台无关，但 vendor bump 时仍需复核（见 MEMORY Pending Issues）。

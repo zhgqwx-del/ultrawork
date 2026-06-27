@@ -16,9 +16,10 @@ export interface SkillItem {
   builtin: boolean
 }
 
-/** A skill is built-in when its SKILL.md lives under the bundled builtin dir. */
+/** A skill is built-in when its SKILL.md lives under the bundled builtin dir.
+ *  Tolerates Windows backslash separators in the reported location. */
 export function isBuiltinLocation(location?: string): boolean {
-  return !!location && location.includes("/skills/builtin/")
+  return !!location && /[\\/]skills[\\/]builtin[\\/]/.test(location)
 }
 
 export interface SkillGroup {

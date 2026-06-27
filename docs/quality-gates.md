@@ -1,6 +1,6 @@
 # 质量门禁 / 完成定义 (Quality Gates)
 
-<!-- last-synced: 2026-06-06 -->
+<!-- last-synced: 2026-06-27 -->
 
 > 一页式 checklist：一处改动在"算完成 / 可合入 / 可收尾"之前必须满足的条件。
 > 背景：本项目主要由 AI（Claude Code）开发，没有人类的隐性"完成感"。显式门禁让每次改动有统一、可对照的标准，避免漏项。
@@ -36,6 +36,7 @@
 - [ ] 改了 **Gateway** 源码 → `bun run build:gateway` 重编译 sidecar（否则不生效）。
 - [ ] 改了 **vendor/opencode** 源码 → 重新生成 patch 文件 + `bun run build:opencode`（流程见 CLAUDE.md §Vendor Patch 管理）。
 - [ ] 涉及 OpenCode/MCP/Gateway/IMA/Tauri 的改动 → 已对照 `docs/gotchas.md` 对应章节，未踩已知坑。
+- [ ] **跨平台自检（mac/win/linux，详见 `docs/conventions.md` §13）**：新增/改动代码无硬编码 `/` 拼路径、无 `process.env.HOME`、无硬编码 `:`(PATH)/`​/tmp`、无 unix-only 命令（`lsof`/`ps`/`pgrep`/`which`/`open`/`/bin/sh`）未做平台分支；Renderer 路径用 `path-utils`（吃 `\`）；unix-only API/crate 已 `#[cfg]` 门控。**强制门禁是 CI**（`.github/workflows/ci.yml` 三平台 typecheck+test+`cargo test`）——本机改完无法验 Windows，靠 CI 兜底；本机至少 `turbo run typecheck` + `cargo test`(src-tauri) 绿。
 - [ ] 失败如实报告：测试红了就说红了，不把"跳过"说成"通过"。
 
 ## 3. 状态门禁（仅里程碑式变更）

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-26 -->
+<!-- last-synced: 2026-06-27 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -208,6 +208,21 @@
 - **被刻意排除的路径（隔离关键）**：patch（`config/paths.ts`）在 `OPENCODE_APP_NAME` 设置时**跳过 `~/.opencode/` home 目录搜索** → 原生 opencode CLI 用户的 `~/.opencode/` 配置**不会泄漏进 Ultrawork**；同时 `config.ts` 的 endsWith 过滤改认 `.ultrawork` 后缀。
 - **各 sidecar 的 env 注入差异（易踩）**：只有 **opencode-server** 拿 `OPENCODE_APP_NAME`（`lib.rs:1957`）；**acp-client / gateway / knowledge sidecar 都不带它**——它们不直接解析 opencode 配置路径所以无需要（acp-client 只拿 `PATH`+`OPENCODE_SERVER_PASSWORD`，见 `lib.rs:1932`）。生产环境**四个 sidecar 都不被注入 `XDG_CONFIG_HOME`**（继承用户 shell 环境，通常未设）。
 - **`agents.json` 现跟随 `XDG_CONFIG_HOME` 隔离（2026-06-23 已修，曾是与 §8 同源的缺口）**：`agents-config.ts` 早先硬编码 `homedir()/.config/ultrawork`、无视 XDG，设了 `XDG_CONFIG_HOME` 时与 opencode 配置劈叉。现 `config-paths.ts` 的 `resolveConfigDir()`/`configFile()` SSOT 镜像 Rust `global_config_dir()`（读 XDG_CONFIG_HOME 否则回落 `~/.config`，再接 `ultrawork`），与 opencode-server 同一命名空间；生产默认路径不变。**sidecar 内三处 config 文件（agents.json / gemini-acp-settings.json / sidecar-auth.json）全部走这一个 SSOT**，不再各自硬编码。详见 §8 对应条目。
+
+## 12. 跨平台（macOS / Windows / Linux，ADR-037，2026-06-27）
+
+> 正向模式见 `docs/conventions.md` §13。这里是**实测/分析确认的反向坑**。强制门禁 = `.github/workflows/ci.yml` 三平台矩阵。
+
+- **本机 `cargo check` 不编译 `#[cfg(windows)]` 分支**：macOS 上 `cargo check`/`cargo test` 只编译当前 target，`#[cfg(windows)]` 属性门控的代码**完全不参与编译/类型检查**——写错了本机发现不了，只有 Windows CI 才报。**所以 Rust 跨平台优先用运行时 `if cfg!(target_os = "windows") { … }` 分支**（`cfg!()` 是编译期 bool，所有分支都编译），仅平台专属 API/crate 才用 `#[cfg]` 属性。
+- **`process.env.HOME` 在 Windows 是 `undefined`**：曾导致 knowledge sidecar DB 路径变 `undefined/.ultrawork/...` 初始化失败。一律 `os.homedir()`（已修，`knowledge/sidecar/index.ts`）。
+- **Renderer 跑在 WebView，没有 `node:path`**：`.tsx`/`src/lib`/`src/components` 里**不能 import `node:path`**。用 `@/lib/path-utils`（`pathBasename`/`isAbsolutePath`/`shortenPath`，同吃 `/` 和 `\`）。`fs.watch` 在 Windows 给反斜杠路径——段过滤要 `split(/[\\/]/)`（已修 `watcher.ts`）。
+- **`split("/")` 不全是路径**：URL（`part.url`）、provider/model id（`anthropic/claude-x`）的 `/` 是恒定逻辑分隔符，**不要**当路径改成双分隔符——会误伤。改前先判断语义。
+- **Bun Shell `$` 的内置命令跨平台、但 `chmod` 不是**：`mkdir`/`cp`/`rm`/`mv`/`cat`/`which` 是 Bun Shell 跨平台内置（Windows 也能用，不依赖 cmd）；**`chmod` 不是内置**，Windows 上会「command not found」抛错——必须 `if (process.platform !== "win32")` 守卫（已修 `build-opencode.ts`）。
+- **`signal-hook` 是 unix-only crate**：放 Cargo.toml `[target.'cfg(unix)'.dependencies]`，否则 Windows 编译拉它失败。`install_signal_handlers()` 走 `#[cfg(unix)]` 真实现 + `#[cfg(not(unix))]` no-op；Windows 退出清理只靠 Tauri `RunEvent::Exit` + 下次启动 `prepare_port` 自愈。
+- **`lsof`/`ps`/`pgrep`/`/usr/bin/which`/`open`/`kill` 全 unix-only**：Windows 等价 `netstat -ano`(端口→PID) / `where` / `taskkill /F /PID`。lib.rs 已抽 `pids_on_port`/`kill_pid` 跨平台 helper + `PATH_LIST_SEP` 常量。**杀进程统一走 `kill_pid()`、勿直调 `Command::new("kill")`**（曾在 `start_sidecar` 漏一处，review 抓到）。
+- **「打开文件 / 在文件管理器中显示」别手搓 `Command`**：用 `tauri-plugin-opener`（`app.opener().open_path(path, None::<&str>)` / `reveal_item_in_dir(path)`，内部 ShellExecute/`open`/xdg-open）。手搓 Windows `cmd /C start "" <path>` 有 **cmd 元字符注入面**（文件名含 `& % ^`，产物名半可信）且对正斜杠不可靠——opener 插件规避这一切。
+- **Tauri `externalBin` 自动解析 triple + `.exe`**：conf 里写 `binaries/opencode-server`（无后缀），Tauri 按当前 target 找 `opencode-server-<triple>[.exe]`。构建脚本产物命名必须严格对齐（已对齐，含 windows-x64）。`bundle.targets` 用 `"all"` 让 Tauri 按平台产对应安装包。
+- **已知降级（非 bug）**：嵌入式 Node 下载 / Browser MCP / Chrome 进程清理是 Unix 取向，Windows 上整套优雅不可用（`get_platform_arch` 返 Err、`lsof`/`pgrep` spawn 失败即 no-op，不崩）。Linux 走 linux 分支可用。Windows 完整支持需单独移植（node `.zip` 布局），列为后续。
 
 ---
 

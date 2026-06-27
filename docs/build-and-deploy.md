@@ -1,7 +1,87 @@
 # Ultrawork 桌面应用打包指南
 
+<!-- last-synced: 2026-06-27 -->
+
 > 目标平台：macOS (ARM64 / x86_64) · Windows (x64) · Linux (x64/ARM64)
 > 技术栈：Tauri 2 + React 19 + Vite 7 + OpenCode Sidecar (Bun compiled binary)
+> **想快速上手 → 直接看下面 §〇 三平台速查**。§二–§七 是 macOS 签名/公证细节，§八–§九 是交叉编译与 CI。三平台兼容背景见 ADR-037。
+
+---
+
+## 〇、三平台速查（dev / build / 安装包）
+
+> 一页覆盖 macOS / Windows / Linux 的「开发模式」与「打包模式」。跨平台兼容已系统落地（ADR-037）。
+
+### 0.1 前置依赖（每台机器装一次）
+
+| 平台 | 必装 |
+|---|---|
+| **全部** | **Bun**（bun.sh）、**Rust**（rustup / cargo）、**Git** |
+| **macOS** | Xcode CLT：`xcode-select --install`。Apple Silicon 要出 Universal 包另需 `rustup target add x86_64-apple-darwin`（`setup` 会自动加）。签名/公证细节见 §二–§三 |
+| **Windows** | ① **Visual Studio Build Tools 2022**（勾「使用 C++ 的桌面开发」——含 MSVC 链接器 + `rc.exe`，**winres 嵌图标必需，缺了打包失败**）② **WebView2 Runtime**（Win10 1803+/Win11 内置，否则装 Evergreen）③ NSIS/WiX 由 Tauri 自动下载，无需手装 |
+| **Linux**（Debian/Ubuntu） | `sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libgtk-3-dev` |
+
+### 0.2 开发模式（dev）
+
+**首次**（自动：检查工具 → 拉 submodule → apply patch → `bun install`(根+vendor) → 编 4 个 sidecar → 起 dev）：
+
+| 平台 | 命令 |
+|---|---|
+| macOS / Linux | `./setup.sh --dev` &nbsp;或&nbsp; `bun run setup --dev` |
+| Windows | `bun run setup --dev`（Windows 无 bash，必须用这个跨平台入口 `scripts/setup.ts`） |
+
+**之后日常迭代**（sidecar 已编好）：`bun run tauri:dev`
+- 改了某个 sidecar 源码 → 单独重编 `bun run build:gateway`（/`build:knowledge`/`build:acp`）；`opencode` 随 `tauri:dev` 自动增量重编
+- 改了 `vendor/opencode` → `bun run build:opencode`
+- 端口：Vite 1420 / OpenCode 4096 / Gateway 4097 / Knowledge 4098 / ACP 4099
+
+### 0.3 打包模式（build / 安装包）
+
+两条路径，按需选：
+
+**A. 一键打包（最简单，各平台通用）**
+```bash
+bun run setup --build           # 任意平台：编 sidecar + tauri build（当前架构，bundle.targets:"all" 自动产平台安装包）
+# macOS/Linux 亦可： ./setup.sh --build
+```
+
+**B. 发布级打包（`bun run release`，`scripts/build-release.ts`）**——Win/Linux 与 A 基本等价，macOS 额外做 Universal + 签名/公证：
+
+| 平台 | 命令 | 产出 |
+|---|---|---|
+| **macOS** | `bun run release`（需 `APPLE_SIGNING_IDENTITY` 等做签名/公证，见 §三）<br>`bun run release --unsigned`（免签，本地用，Universal） | `.dmg` + `.app`（Universal） |
+| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `.msi` + `*-setup.exe`(NSIS) |
+| **Linux** | `bun run release` | `.deb` + `.AppImage`（+ `.rpm`） |
+
+> **A vs B**：A/`tauri:build` = 当前架构、不签名、快（日常本地验证）；B/`release` 在 mac 上是 Universal 双架构 + 可签名公证（对外分发），win/linux 上两者基本一样。`--force-build` 可强制全重编 sidecar（默认 hash 增量缓存，重跑很快）。
+
+### 0.4 产物位置
+
+| 入口 | 输出根目录 |
+|---|---|
+| `tauri:build` / `setup --build`（无 `--target`） | `packages/client/desktop/src-tauri/target/release/bundle/` |
+| `release`（带 `--target`，mac 为 `universal-apple-darwin`） | `…/target/<triple>/release/bundle/` |
+
+子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `msi/*.msi`、`nsis/*-setup.exe`；Linux → `deb/*.deb`、`appimage/*.AppImage`、`rpm/*.rpm`。
+
+### 0.5 在其他平台验证打包（干净环境完备步骤）
+
+```bash
+git clone --recursive <repo>        # 必须 --recursive 带 submodule（漏了就 git submodule update --init --recursive 补）
+cd ultrawork
+# 装好 §0.1 对应平台前置依赖
+bun run setup --build               # 一条命令：编 sidecar + 打包
+# 去 target/release/bundle/ 取安装包，装机试运行
+```
+
+**Mac 上静态预检 Windows 代码能否编译**（不真打包）：
+```bash
+rustup target add x86_64-pc-windows-msvc
+cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-msvc
+# 一路过到 winres 因缺宿主 llvm-rc 停 = 正常；前面依赖/代码/codegen 全过即说明 Rust 侧 OK
+```
+
+**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg/msi/nsis/deb/appimage，下载 artifact 装机验证）。
 
 ---
 
@@ -298,7 +378,8 @@ chmod +x packages/client/desktop/src-tauri/binaries/opencode-server-*
 | Mac → **Linux** | ✅ Bun 交叉编译 | ❌ 需交叉工具链 | ⚠️ 不推荐，用 CI |
 
 > **结论**：在你的 Mac 上可以直接产出 Mac ARM + Mac Intel + Mac Universal 三种包。
-> Windows 和 Linux 包建议通过 GitHub Actions CI 在对应系统上构建。
+> Windows 和 Linux 包需在对应系统上构建（物理机/VM 用 `bun run setup --build`，或推荐走 CI）。
+> 速查命令见 §〇；CI 已落地为 `.github/workflows/{ci,release}.yml`，push/tag 即自动构建三平台。
 
 ---
 
@@ -354,25 +435,25 @@ Tauri 的 Rust 编译依赖 MSVC 工具链，**无法在 macOS 上交叉编译�
 #### 方案 A：Windows 物理机或虚拟机
 
 ```powershell
-# 在 Windows 上：
-# 前置条件：安装 Rust、Bun、Visual Studio Build Tools (C++ workload)
+# 前置条件见 §0.1（Bun / Rust / VS Build Tools C++ / WebView2）
 
-bun install
-bun run build:opencode
-cd packages/client/desktop
-bun run --bun tauri build
+# 推荐一键：编 sidecar + 打包
+bun run setup --build
+#   或手动等价：
+#   bun install; cd vendor/opencode; bun install; cd ../..
+#   bun run build:opencode; bun run build:gateway; bun run build:knowledge; bun run build:acp
+#   bun run tauri:build
 
 # 产物：
 # src-tauri\target\release\bundle\msi\Ultrawork_0.1.0_x64_en-US.msi
 # src-tauri\target\release\bundle\nsis\Ultrawork_0.1.0_x64-setup.exe
 ```
 
-> Windows 打包前需修改 `tauri.conf.json` 的 `bundle.targets`：
-> ```json
-> "targets": ["msi", "nsis"]
-> ```
+> **无需再手改 `bundle.targets`**——已设为 `"all"`（ADR-037），Tauri 在 Windows 上自动产 `msi` + `nsis`。
 
-#### 方案 B：GitHub Actions CI（推荐）
+#### 方案 B：GitHub Actions CI（已落地为真实文件）
+
+> 下面的 yaml 仅作说明；仓库已提交可用的 `.github/workflows/ci.yml`（push/PR 三平台校验）与 `release.yml`（tag `v*` 触发三平台出安装包）。直接 push/tag 即可，无需手抄。
 
 ```yaml
 # .github/workflows/build.yml 中添加 job:
@@ -399,7 +480,7 @@ bun run --bun tauri build
 
 ### 8.4 Linux (x64) — 需要 Linux 环境
 
-类似 Windows，推荐用 CI：
+本地（装好 §0.1 Linux 依赖后）：`bun run setup --build` → 产 `.deb` + `.AppImage`。或推荐用 CI：
 
 ```yaml
   build-linux:

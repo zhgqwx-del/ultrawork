@@ -11,6 +11,7 @@ import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
+import { pathBasename } from "@/lib/path-utils"
 import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
 import { useBrowserMCP } from "@/lib/use-browser-mcp"
@@ -1242,7 +1243,7 @@ function ChannelCard({
           )}
           {workspaceDir && (
             <p className="mt-1 truncate text-xs text-[var(--color-fg-muted)]" title={workspaceDir}>
-              {t("channel.workspaceDir")}: {workspaceDir.split("/").pop() || workspaceDir}
+              {t("channel.workspaceDir")}: {pathBasename(workspaceDir)}
             </p>
           )}
         </div>

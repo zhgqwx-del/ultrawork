@@ -22,6 +22,7 @@
 | `docs/decisions/README.md` | 需要了解某个技术选型的背景时 |
 | `docs/requirements.md` | 确认功能需求和验收标准时 |
 | `docs/testing.md` | 编写或运行测试时 |
+| `docs/build-and-deploy.md` | 编译/打包/安装包时（**§〇 = macOS/Windows/Linux 三平台 dev+build 速查**；§二–§七 mac 签名公证；§八–§九 交叉编译与 CI） |
 | `docs/document-map.md` | 找不到某个文档在哪时 |
 
 ---
@@ -43,6 +44,7 @@
 | 架构层变更 | `docs/architecture-phase1.md` + 相关 ADR |
 | 修复 Bug | 先定位文件，再按涉及模块选读（含 `docs/gotchas.md`） |
 | 全新功能/跨模块 | `docs/conventions.md` + `docs/architecture-phase1.md` |
+| **涉及路径/进程/文件IO/外部命令/构建脚本/Rust** | `docs/conventions.md §13`（跨平台编码规范）+ `gotchas.md §12` —— 默认三平台兼容 |
 
 ### 2. 检查当前状态
 
@@ -138,6 +140,7 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 ## 通用约定
 
 - 用中文交流（当用户用中文时）
+- **跨平台默认要求（macOS / Windows / Linux，ADR-037）**：本项目要在三平台打包可安装软件，**所有新特性/改动默认必须三平台兼容**——不硬编码 `/` 拼路径（用 `path.join`/`PathBuf::join`）、不用 `process.env.HOME`（用 `os.homedir()`）、不硬编码 `/tmp`/`:`(PATH 分隔符)、不调 unix-only 命令（`lsof`/`ps`/`pgrep`/`which`/`open`/`/bin/sh` 等）未做平台分支；renderer（`.tsx`）路径用 `@/lib/path-utils`（WebView 无 `node:path`）；Rust 优先运行时 `if cfg!(target_os=…)` 分支而非 `#[cfg]` 属性（本机 `cargo check` 才能验全分支）。正向模式 → `docs/conventions.md §13`；反向坑 → `gotchas.md §12`；收尾对照 `quality-gates.md §2` 跨平台自检。**强制门禁 = CI**（`.github/workflows/ci.yml` 三平台 typecheck+test+`cargo test`）——本机改完无法验 Windows，靠 CI 兜底。
 - 所有脚本用 `bun run --bun`，不要用 `npx` 或系统 Node.js
 - TypeCheck：`bun run --bun turbo run typecheck`
 - 测试：见 `docs/getting-started.md`

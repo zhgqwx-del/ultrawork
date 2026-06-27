@@ -102,8 +102,9 @@ export class FileWatcher {
     // Filter: only supported extensions
     if (!SUPPORTED_EXTENSIONS.has(ext)) return
 
-    // Filter: ignore paths containing ignored segments
-    const segments = filename.split("/")
+    // Filter: ignore paths containing ignored segments.
+    // fs.watch yields backslash-separated paths on Windows — split on both.
+    const segments = filename.split(/[\\/]/)
     if (segments.some((s) => IGNORE_SEGMENTS.has(s) || s.startsWith("."))) return
 
     // Per-file debounce: cancel previous timer for this file

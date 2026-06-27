@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { delimiter, dirname, join } from "node:path"
+import { basename, delimiter, dirname, join } from "node:path"
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk"
 import type {
   AgentCapabilities,
@@ -79,8 +79,8 @@ const promptToolSilenceMaxMs = () => Number(process.env.ACP_PROMPT_TOOL_SILENCE_
 const EXTRA_PATH_DIRS = [
   join(homedir(), ".local", "bin"),
   join(homedir(), ".bun", "bin"),
-  "/usr/local/bin",
-  "/opt/homebrew/bin",
+  // Unix-only Homebrew / system bin dirs; meaningless on Windows.
+  ...(process.platform === "win32" ? [] : ["/usr/local/bin", "/opt/homebrew/bin"]),
 ]
 
 function augmentPath(path: string | undefined): string {
@@ -112,7 +112,7 @@ export function supportsMetaSystemPrompt(
  * manually, execPath is bun itself — fall back to the stable user-data copy.
  */
 export function delegateShimCommand(execPath = process.execPath): string | undefined {
-  const base = execPath.split("/").pop() ?? ""
+  const base = basename(execPath)
   if (!base.startsWith("bun")) return execPath
   const copy = join(homedir(), ".ultrawork", "sidecars", "acp-client")
   return existsSync(copy) ? copy : undefined

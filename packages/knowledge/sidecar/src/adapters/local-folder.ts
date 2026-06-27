@@ -1,3 +1,4 @@
+import { basename } from "node:path"
 import type { KnowledgeAdapter, TestConnectionResult } from "./types"
 import type { AdapterSearchResult, LocalFolderConfig } from "../types"
 import type { SearchOptions } from "../retriever"
@@ -34,7 +35,7 @@ export class LocalFolderAdapter implements KnowledgeAdapter {
       limit: (options?.limit ?? 5) * 2, // fetch more to filter
     })
 
-    const folderName = folderPath.split("/").pop() || folderPath
+    const folderName = basename(folderPath) || folderPath
 
     return results
       .filter((r) => r.folderPath === folderPath)

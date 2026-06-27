@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { pathBasename } from "@/lib/path-utils"
 
 const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
 const MCP_NAME = "knowledge-base"
@@ -116,7 +117,7 @@ export function useKnowledgeBase() {
             toast.success(
               t("knowledge.indexComplete")
                 .replace("{files}", String(event.indexedFiles))
-                .replace("{folder}", event.folderPath.split("/").pop() || event.folderPath),
+                .replace("{folder}", pathBasename(event.folderPath)),
             )
           } else if (event.status === "error") {
             toast.error(t("knowledge.indexFailed"))
@@ -210,7 +211,7 @@ export function useKnowledgeBase() {
           return [...prev, {
             id: result.id,
             type: "local_folder" as const,
-            name: folderPath.split("/").pop() || folderPath,
+            name: pathBasename(folderPath),
             config: { folderPath },
             enabled: true,
             status: "indexing" as const,

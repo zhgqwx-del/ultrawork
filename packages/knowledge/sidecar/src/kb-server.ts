@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
+import { basename } from "node:path"
 import type { Indexer } from "./indexer"
 import type { SearchResult, IndexProgressEvent, KnowledgeSourceRow } from "./types"
 import type { SearchOptions } from "./retriever"
@@ -480,7 +481,7 @@ export function createApp(deps: AppDeps): Hono {
     // Create or find knowledge_source entry
     let ks = store.getKnowledgeSourceByFolderPath(folderPath)
     if (!ks) {
-      const name = folderPath.split("/").pop() || folderPath
+      const name = basename(folderPath) || folderPath
       const id = store.createKnowledgeSource("local_folder", name, { folderPath })
       ks = store.getKnowledgeSource(id)
       if (!ks) {

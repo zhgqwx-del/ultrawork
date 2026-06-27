@@ -15,6 +15,11 @@ describe("isBuiltinLocation", () => {
     expect(isBuiltinLocation(undefined)).toBe(false)
     expect(isBuiltinLocation("")).toBe(false)
   })
+
+  it("recognizes Windows backslash locations (opencode reports native separators)", () => {
+    expect(isBuiltinLocation("C:\\Users\\me\\AppData\\Roaming\\ultrawork\\skills\\builtin\\pdf\\SKILL.md")).toBe(true)
+    expect(isBuiltinLocation("C:\\Users\\me\\ultrawork\\skills\\my-skill\\SKILL.md")).toBe(false)
+  })
 })
 
 describe("BUILTIN_DEP_MAP + missingDeps", () => {

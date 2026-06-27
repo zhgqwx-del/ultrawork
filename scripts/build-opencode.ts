@@ -165,7 +165,10 @@ console.log(`Binary built at: ${binaryPath}`)
 await $`mkdir -p ${tauriBinDir}`
 
 await $`cp ${binaryPath} ${targetPath}`
-await $`chmod +x ${targetPath}`
+// chmod is a no-op concept on Windows (and not a Bun Shell builtin there).
+if (process.platform !== "win32") {
+  await $`chmod +x ${targetPath}`
+}
 
 // Save hash after successful build
 await saveHash(hashFilePath, currentHash)
