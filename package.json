@@ -13,6 +13,7 @@
     "packages/proactive/*"
   ],
   "scripts": {
+    "setup": "bun run scripts/setup.ts",
     "dev": "turbo run dev",
     "dev:desktop": "turbo run dev --filter=@agent/client-desktop",
     "tauri:dev": "cd packages/client/desktop && bun run --bun tauri dev",
@@ -25,6 +26,7 @@
     "sync:plugin-version": "bun run scripts/sync-plugin-version.ts",
     "check:docs": "bun run scripts/check-docs.ts",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx,json,md}\"",

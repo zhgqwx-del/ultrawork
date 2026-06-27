@@ -9,6 +9,7 @@ import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { useTheme } from "@/lib/theme-context"
 import { cn } from "@/lib/utils"
+import { pathBasename, isAbsolutePath } from "@/lib/path-utils"
 import { extractExtension, getLanguageExtension } from "@/lib/codemirror-lang"
 import { FileIcon, isBinaryFile, getFileTypeLabel } from "@/components/ui/file-icon"
 import { PdfView } from "./pdf-view"
@@ -73,13 +74,14 @@ function ArtifactIcon({ artifact }: { artifact: Artifact }) {
 }
 
 function basename(path: string): string {
-  return path.split("/").pop() || path
+  return pathBasename(path)
 }
 
 /** Resolve artifact path to absolute path for system operations */
 function resolveAbsPath(artifactPath: string, directory?: string): string {
-  if (artifactPath.startsWith("/")) return artifactPath
-  if (directory) return `${directory.replace(/\/$/, "")}/${artifactPath}`
+  if (isAbsolutePath(artifactPath)) return artifactPath
+  // Forward slash join is accepted by Windows file APIs too — keep it simple.
+  if (directory) return `${directory.replace(/[\\/]$/, "")}/${artifactPath}`
   return artifactPath
 }
 

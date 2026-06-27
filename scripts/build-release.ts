@@ -34,7 +34,32 @@ const sidecarTargets = (() => {
   return ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 })()
 
-// ── Environment checks ────────────────────────────────────────────
+// ── Non-macOS release path ────────────────────────────────────────
+// Windows/Linux have no Apple signing/notarization pipeline. Build the
+// current-platform sidecars + run `tauri build`, which emits the platform's
+// native installers (Windows: nsis/msi, Linux: deb/appimage/rpm). Installer
+// code signing, where wanted, is delegated to CI secrets + Tauri's own config.
+if (!isMacOS) {
+  const target = getCurrentTauriTarget()
+  console.log(`\n🚀 Ultrawork Release Build (${process.platform})`)
+  console.log(`   Target: ${target}`)
+  if (!skipSidecar) {
+    console.log(`📦 Building sidecars for ${target}...`)
+    await $`bun run ${path.join(rootDir, "scripts/build-opencode.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-gateway.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
+    await $`bun run ${path.join(rootDir, "scripts/build-acp.ts")} --target ${target}`.quiet(!verbose)
+  }
+  console.log("\n🔨 Running tauri build...")
+  await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${target}`
+    .quiet(!verbose)
+  const bundleDir = path.join(tauriDir, "target", target, "release/bundle")
+  console.log(`\n🎉 Release build complete! Installers under:`)
+  console.log(`   ${bundleDir}`)
+  process.exit(0)
+}
+
+// ── Environment checks (macOS only below) ─────────────────────────
 const signingIdentity = process.env.APPLE_SIGNING_IDENTITY
 if (!unsigned && !signingIdentity) {
   console.error("❌ APPLE_SIGNING_IDENTITY is required (or pass --unsigned for ad-hoc build)")

@@ -1,5 +1,7 @@
 # Ultrawork - AI Quick Reference
 
+> **跨平台是硬约束**：所有新代码默认须 macOS / Windows / Linux 三平台兼容（规则见 `CLAUDE.md` §通用约定 + `docs/conventions.md §13`，门禁 = `.github/workflows/ci.yml`，背景 ADR-037）。
+
 ## Project Overview
 
 Ultrawork is a desktop-grade AI agent built on OpenCode's server capabilities.
@@ -116,10 +118,11 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`）/ `use-channels.ts` / `use-knowledge-base.ts`
-- `src/lib/path-utils.ts`（shortenPath/pathBasename）、`src/lib/platform.ts`（isMacOS）
+- `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
-- `open_file_with_system`（`open`）、`reveal_file_in_finder`（`open -R`）、`get_sidecar_credentials`、`rich_path()`（补 PATH）
+- `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
+- **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
 - `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
 - `check_skill_dependencies`（探测内置技能依赖，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`（首启拷贝 `skills/builtin/` → `~/.config/ultrawork/skills/builtin`，sentinel 控刷新，ADR-032）
 
@@ -162,6 +165,14 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `doc-parser.ts`（unpdf/mammoth/xlsx/jszip）, `watcher.ts`（fs.watch + debounce）, `mcp-bridge.ts`（knowledge_search/list_sources/save_note）
 - `adapters/` — types.ts（KnowledgeAdapter 接口）, registry.ts, ima.ts, local-folder.ts
 
+**构建 / 打包 / CI（跨平台 mac/win/linux，ADR-037）**
+- `scripts/build-{opencode,gateway,knowledge,acp}.ts` — sidecar 编译（已支持全 target triple；产物 `<name>-<triple>[.exe]`，Tauri externalBin 自动解析；codesign/chmod 仅 darwin 守卫）
+- `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包
+- `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
+- `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）
+- `.github/workflows/release.yml` — tag 触发三平台出安装包（dmg/msi/nsis/deb/appimage）
+- `packages/client/desktop/src-tauri/tauri.conf.json` — `bundle.targets:"all"`（Tauri 按平台产对应安装包）
+
 ## Key Documentation
 
 - [docs/architecture-phase1.md](./docs/architecture-phase1.md) — Phase 1 architecture design
@@ -169,7 +180,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (36 ADRs, 001–036)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (37 ADRs, 001–037)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

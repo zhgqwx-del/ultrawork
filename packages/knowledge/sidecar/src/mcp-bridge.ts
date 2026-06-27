@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
+import { basename } from "node:path"
 import type { SearchOptions } from "./retriever"
 import type { SearchResult, AdapterSearchResult } from "./types"
 import type { Indexer } from "./indexer"
@@ -62,7 +63,7 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
               // Use existing retriever for local folders
               const results = deps.search({ query, limit: maxResults })
               const folderPath = config.folderPath as string
-              const folderName = folderPath?.split("/").pop() || folderPath
+              const folderName = folderPath ? basename(folderPath) : folderPath
               return results
                 .filter((r) => r.folderPath === folderPath)
                 .slice(0, maxResults)
@@ -132,7 +133,7 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
             score: r.score,
             title: r.filePath,
             sourceId: 0,
-            sourceLabel: `Local: ${r.folderPath?.split("/").pop()}`,
+            sourceLabel: `Local: ${r.folderPath ? basename(r.folderPath) : ""}`,
             metadata: { filePath: r.filePath, startLine: r.startLine, endLine: r.endLine },
           }))
 

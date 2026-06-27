@@ -8,14 +8,18 @@ import { FileWatcher } from "./watcher"
 import { registerAdapter } from "./adapters/registry"
 import { LocalFolderAdapter } from "./adapters/local-folder"
 import { IMAAdapter } from "./adapters/ima"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 const KB_PORT = 4098
-const DB_DIR = `${process.env.HOME}/.ultrawork/knowledge`
-const DB_PATH = `${DB_DIR}/kb.db`
+// os.homedir() resolves USERPROFILE on Windows and HOME on macOS/Linux.
+const DB_DIR = join(homedir(), ".ultrawork", "knowledge")
+const DB_PATH = join(DB_DIR, "kb.db")
 
 async function ensureDir(dir: string) {
   const fs = await import("fs")
   if (!fs.existsSync(dir)) {
+    // mode is a no-op on Windows; harmless and correct on Unix.
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
 }

@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite"
+import { basename } from "node:path"
 import type { SourceRow, ChunkRow, ChunkMetadata, KnowledgeSourceRow } from "./types"
 
 export class KnowledgeStore {
@@ -146,7 +147,7 @@ export class KnowledgeStore {
         "INSERT INTO knowledge_sources (type, name, config_json, status) VALUES ('local_folder', ?, ?, 'complete') RETURNING id",
       )
       for (const { folder_path } of folders) {
-        const name = folder_path.split("/").pop() || folder_path
+        const name = basename(folder_path) || folder_path
         const configJson = JSON.stringify({ folderPath: folder_path })
         insertKS.get(name, configJson)
       }

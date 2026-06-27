@@ -5,6 +5,7 @@ import type { SendMessageResponse, FilePart, PatchPart, ToolPart } from "@agent/
 import type { Artifact } from "./artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
+import { pathBasename, isAbsolutePath } from "@/lib/path-utils"
 import { FileIcon } from "@/components/ui/file-icon"
 
 interface ArtifactsPanelProps {
@@ -21,7 +22,7 @@ interface ArtifactsPanelProps {
 function toRelative(filePath: string, workspaceRoot?: string): string {
   if (!workspaceRoot || !filePath.startsWith(workspaceRoot)) return filePath
   let rel = filePath.slice(workspaceRoot.length)
-  if (rel.startsWith("/")) rel = rel.slice(1)
+  rel = rel.replace(/^[\\/]+/, "")
   return rel || filePath
 }
 
@@ -31,14 +32,14 @@ const FILE_TOOL_SUFFIXES = ["write", "edit", "create", "patch"]
 /** Tool name suffixes that produce file output via a path parameter */
 const OUTPUT_TOOL_SUFFIXES = ["take_screenshot", "screenshot", "pdf_save", "save_file"]
 
-/** Directories to exclude from artifact detection (temp/system paths) */
-const TEMP_PATH_RE = /\/(var\/folders|tmp|private\/tmp|Caches|playwright-mcp-output)\//i
+/** Directories to exclude from artifact detection (temp/system paths). Tolerates both separators + Windows temp. */
+const TEMP_PATH_RE = /[\\/](var[\\/]folders|tmp|private[\\/]tmp|Caches|playwright-mcp-output|AppData[\\/]Local[\\/]Temp)[\\/]/i
 
 /** Match file paths in tool output text */
 const FILE_PATH_RE = /(?:saved?\s+(?:screenshot|file|trace|report|image)\s+(?:to|as)\s+)(\S+)/gi
 
-/** Match absolute file paths with common extensions in tool output */
-const ABS_PATH_RE = /(\/[\w./-]+\.(?:png|jpe?g|gif|svg|webp|pdf|html|json|csv|txt|md|ts|js|py))\b/gi
+/** Match absolute file paths with common extensions in tool output (POSIX `/…` or Windows `C:\…`) */
+const ABS_PATH_RE = /((?:\/|[A-Za-z]:[\\/])[\w./\\-]+\.(?:png|jpe?g|gif|svg|webp|pdf|html|json|csv|txt|md|ts|js|py))\b/gi
 
 /** Path input parameter names to check */
 const PATH_PARAMS = ["filePath", "file_path", "path", "outputPath", "filename"]
@@ -58,7 +59,7 @@ function isValidArtifactPath(filePath: string, workspaceRoot?: string): boolean 
   if (filePath.length > 500) return false
   // If workspace root is known, only accept paths within it or relative paths
   if (workspaceRoot) {
-    if (filePath.startsWith("/")) {
+    if (isAbsolutePath(filePath)) {
       return filePath.startsWith(workspaceRoot)
     }
     // Relative paths are fine (e.g. "google.png")
@@ -247,7 +248,7 @@ const WORKING_EXTS = new Set([
 ])
 
 function extOf(path: string): string {
-  const base = path.split("/").pop() || path
+  const base = pathBasename(path)
   const dot = base.lastIndexOf(".")
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : ""
 }
@@ -280,7 +281,7 @@ function ArtifactIcon({ artifact }: { artifact: Artifact }) {
 }
 
 function basename(path: string): string {
-  return path.split("/").pop() || path
+  return pathBasename(path)
 }
 
 function ArtifactRow({

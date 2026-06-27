@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils"
+import { pathBasename } from "@/lib/path-utils"
 
 /**
  * File type icon component — renders a colored file icon with extension badge.
@@ -110,7 +111,7 @@ const DEFAULT_STYLE: IconStyle = {
 }
 
 function getExtension(filename: string): string {
-  const name = filename.split("/").pop() || filename
+  const name = pathBasename(filename)
   if (name.startsWith(".") && !name.includes(".", 1)) {
     return name.slice(1)
   }
