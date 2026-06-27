@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun run --bun src/index.ts",
     "build": "bun build --compile src/index.ts --outfile dist/knowledge-sidecar",
-    "test": "bun run --bun vitest run",
+    "test": "bun test src",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
