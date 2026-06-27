@@ -24,6 +24,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15 # fail fast if a test hangs (e.g. an unclosed handle on Windows)
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -45,6 +46,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25 # Windows Rust compile (deps + winres) runs ~9min; guard hangs
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
