@@ -33,7 +33,9 @@ jobs:
       - name: Typecheck
         run: bun run --bun turbo run typecheck
       - name: Unit tests
-        run: bun run --bun turbo run test
+        # --continue: run every package's tests even if one fails, so a single CI
+        # run surfaces all failures instead of stopping at the first.
+        run: bun run --bun turbo run test --continue
 
   # ── Rust: compile (all #[cfg] branches for the host OS) + cargo test ─
   rust:
