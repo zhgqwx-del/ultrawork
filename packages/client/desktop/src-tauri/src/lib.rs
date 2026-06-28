@@ -996,12 +996,32 @@ fn rich_path_base() -> String {
     let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
     let home = home.to_string_lossy();
     let current = std::env::var("PATH").unwrap_or_default();
-    let extras = [
-        format!("{home}/.volta/bin"),
-        format!("{home}/.local/bin"),
-        "/opt/homebrew/bin".to_string(),
-        "/usr/local/bin".to_string(),
-    ];
+    // Common Node install dirs. On Windows there's no login-shell PATH enrichment
+    // (login_shell_path() is None), so add the standard installer / nvm-windows
+    // symlink / Volta locations explicitly so `where node` finds a system Node even
+    // when it isn't on the GUI-inherited PATH.
+    let extras: Vec<String> = if cfg!(target_os = "windows") {
+        let pf = std::env::var("ProgramFiles").unwrap_or_default();
+        let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+        let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let appdata = std::env::var("APPDATA").unwrap_or_default();
+        [
+            format!(r"{pf}\nodejs"),       // standard installer + nvm-windows active symlink
+            format!(r"{pf86}\nodejs"),
+            format!(r"{local}\Volta\bin"), // Volta for Windows
+            format!(r"{appdata}\npm"),     // npm global bin
+        ]
+        .into_iter()
+        .filter(|p| !p.starts_with('\\')) // drop entries whose env var was empty
+        .collect()
+    } else {
+        vec![
+            format!("{home}/.volta/bin"),
+            format!("{home}/.local/bin"),
+            "/opt/homebrew/bin".to_string(),
+            "/usr/local/bin".to_string(),
+        ]
+    };
     let version_dirs = [
         format!("{home}/.nvm/versions/node"),
         format!("{home}/.local/share/fnm/node-versions"),
