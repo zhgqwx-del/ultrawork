@@ -53,7 +53,7 @@
 - **嵌入式 Node 下载 / Browser MCP / Chrome 进程清理**：Unix 取向（`get_platform_arch` 仅 darwin/linux）。Windows 上整套优雅不可用（返 Err / spawn 失败即 no-op，不崩）；Linux 走 linux 分支可用。Windows 完整支持需单独移植 node `.zip` 布局，列为后续。
 - **dev/perf 一次性脚本**（`scripts/perf/health-contention/gen-tree.ts` 的 `/bin/bash`、`export-agentos-ref.ts` 的 `/tmp` 默认）：不进产品、不进常规构建，保留未改。
 - **Windows node job 只跑 typecheck（不跑 TS 单测）**：CI 实跑（4 轮）暴露——多个计时密集套件在 Windows 留未关闭 timer 句柄（ACP idle-guard/keepalive 看门狗）+ vitest 启动期 esbuild 扫描预打包 pdfjs，导致 bun/vitest 跑完不退出/挂死（`timeout-minutes` 兜底）。这是**测试 harness 在 Windows 的退出限制、非产品 bug**（测试本身都 pass）。取舍：Windows 留 typecheck（TS 编译信号）+ 完整 Rust 单测（rust job 覆盖所有 Windows 特定逻辑）；完整 TS 单测在 mac+linux（被测 TS 逻辑平台无关）。knowledge-sidecar 顺带从 vitest 切 bun 原生 runner。待 bun 有可靠 force-exit 再恢复 Windows 单测。
-- **`release.yml` 未本地验证**——首次 tag 触发需确认。
+- **Linux 暂不出 AppImage（只 deb+rpm）**：release 实跑确认 macOS `.dmg` + Windows `.msi`/`.exe` + Linux `.deb`/`.rpm` 均成功出包；唯 AppImage 的 `linuxdeploy` 在 GitHub Actions runner 上 `failed to run linuxdeploy`（FUSE/GStreamer 插件链 CI 失败模式多，libfuse2+`APPIMAGE_EXTRACT_AND_RUN` 未解），故 `build-release.ts` 非 mac 分支对 linux 传 `--bundles deb rpm` 跳过。deb/rpm 已覆盖 Debian/Ubuntu+Fedora/RHEL 主流安装。AppImage 列后续（或换 self-hosted/容器内打）。
 
 ## CI 硬化迭代（2026-06-27，4 轮）
 
