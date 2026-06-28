@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libssl-dev libgtk-3-dev
+            librsvg2-dev patchelf libssl-dev libgtk-3-dev libfuse2
 
       - name: Install dependencies
         shell: bash
@@ -71,8 +71,12 @@ jobs:
           fi
 
       # Windows / Linux: build-release.ts builds sidecars + `tauri build`.
+      # APPIMAGE_EXTRACT_AND_RUN: linuxdeploy/appimagetool need FUSE, which GitHub
+      # Actions runners lack — extract-and-run avoids FUSE (ignored on Windows).
       - name: Release build (Windows/Linux)
         if: runner.os != 'macOS'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: bun run release
 
       - uses: actions/upload-artifact@v4
