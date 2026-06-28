@@ -214,17 +214,29 @@ export function useKnowledgeBase() {
     if (loading || !hasSources) return
     let cancelled = false
     ;(async () => {
-      try {
-        const mcpStatus = await api.getMCP()
-        if (cancelled || mcpStatus[MCP_NAME]?.status === "connected") return
-        await registerKnowledgeMCP(api)
-      } catch (err) {
-        console.error("Knowledge MCP auto-restore failed:", err)
+      // OpenCode (:4096) may still be booting when KB sources (:4098, an
+      // independent sidecar) have already loaded, so api.getMCP() can throw
+      // transiently. Retry a few times with backoff so a single early failure
+      // doesn't leave an IMA/remote-only KB unregistered for the whole session.
+      const delays = [0, 1500, 3000, 5000]
+      for (const d of delays) {
+        if (cancelled) return
+        if (d) await new Promise((r) => setTimeout(r, d))
+        if (cancelled) return
+        try {
+          const mcpStatus = await api.getMCP()
+          if (cancelled) return
+          if (mcpStatus[MCP_NAME]?.status === "connected") return
+          await registerKnowledgeMCP(api)
+          return // registered (persisted config covers connect on next launch)
+        } catch (err) {
+          console.error("Knowledge MCP auto-restore attempt failed:", err)
+          // transient (OpenCode not reachable yet) — fall through to retry
+        }
       }
     })()
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, hasSources])
+  }, [loading, hasSources, api])
 
   const addFolder = useCallback(
     async (folderPath: string) => {

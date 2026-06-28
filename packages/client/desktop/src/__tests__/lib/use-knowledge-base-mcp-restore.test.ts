@@ -110,6 +110,23 @@ describe("useKnowledgeBase — MCP auto-restore", () => {
     expect(mockApi.connectMCP).not.toHaveBeenCalled()
   })
 
+  it("retries when getMCP fails transiently (OpenCode still booting), then registers", async () => {
+    mockSources([IMA_SOURCE])
+    // First attempt rejects (OpenCode not reachable yet), second resolves empty.
+    mockApi.getMCP
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValue({})
+
+    renderHook(() => useKnowledgeBase())
+
+    // Second attempt fires after the first backoff (~1.5s); allow margin.
+    await waitFor(
+      () => expect(mockApi.createMCP).toHaveBeenCalledWith("knowledge-base", expect.any(Object)),
+      { timeout: 4000 },
+    )
+    expect(mockApi.getMCP.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
   it("does nothing when there are no knowledge sources", async () => {
     mockSources([])
     mockApi.getMCP.mockResolvedValue({})
