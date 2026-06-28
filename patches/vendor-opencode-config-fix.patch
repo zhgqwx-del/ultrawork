@@ -157,7 +157,7 @@ index 869019e2c..6509ec1ba 100644
  const data = path.join(xdgData!, app)
  const cache = path.join(xdgCache!, app)
 diff --git a/packages/opencode/src/mcp/index.ts b/packages/opencode/src/mcp/index.ts
-index 8c92bb6b2..b5869c738 100644
+index 8c92bb6b2..cbc6b9c67 100644
 --- a/packages/opencode/src/mcp/index.ts
 +++ b/packages/opencode/src/mcp/index.ts
 @@ -33,6 +33,11 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -208,6 +208,21 @@ index 8c92bb6b2..b5869c738 100644
          return yield* connectTransport(transport, connectTimeout).pipe(
            Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
              client,
+@@ -560,6 +570,14 @@ export namespace MCP {
+           result[key] = s.status[key] ?? { status: "disabled" }
+         }
+ 
++        // Ultrawork: include dynamically added MCPs (registered via add()/POST
++        // /mcp) that aren't yet in the persisted config, so a freshly registered
++        // server (e.g. knowledge-base) is visible in GET /mcp before OpenCode
++        // reloads the config file.
++        for (const [key, st] of Object.entries(s.status)) {
++          if (!(key in result)) result[key] = st
++        }
++
+         return result
+       })
+ 
 diff --git a/packages/opencode/src/plugin/index.ts b/packages/opencode/src/plugin/index.ts
 index fb60fa096..757414e08 100644
 --- a/packages/opencode/src/plugin/index.ts

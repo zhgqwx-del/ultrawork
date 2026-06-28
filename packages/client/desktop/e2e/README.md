@@ -47,3 +47,58 @@ bun run --bun e2e:meta              # exit 0 = PASS, 1 = FAIL
 If an opencode bump silently drops the patch (`session/llm.ts`
 `experimental_context` or `mcp/index.ts` `_meta` injection), this flips to FAIL —
 that's why it's kept. Same isolation as above (temp `HOME`/`XDG`, port 4096).
+
+## `mcp-status-dynamic.e2e.ts` — `MCP.status()` surfaces dynamically-added MCPs
+
+Guards the vendor patch (`mcp/index.ts` `MCP.status()`) that includes runtime
+`s.status` entries not yet in the persisted config, so a server registered via
+`POST /mcp` is visible in `GET /mcp`. Pure-HTTP (no browser): real (patched)
+**opencode** with an **empty** mcp config → `POST /mcp` registers `knowledge-base`
+at the real knowledge-sidecar → asserts `GET /mcp` now shows it (only the patch
+can surface it, since config is empty). Bonus: asserts `status==="connected"`,
+re-confirming the knowledge-sidecar `mcp-stdio` stays alive under opencode's
+held-open stdin (so no keep-alive hack is needed).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:mcp-status        # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, non-standard port 4196 (avoids a running dev app).
+
+## `kb-mcp-autoregister.e2e.ts` — IMA/remote-only KB auto-registers its MCP
+
+Browser walkthrough of the `fix/knowledge-mcp-ima-autoregister` fix. Seeds an
+`ima` source directly via `POST /kb/sources` (the add-source-dialog path — no
+folder, no MCP registration), boots opencode with an **empty** mcp config, then
+drives real Chrome → Settings → Knowledge Base so the real `useKnowledgeBase()`
+auto-restore effect runs against real sidecars. Asserts opencode `GET /mcp` shows
+`knowledge-base === connected`. The Tauri-invoke shim provides the real
+knowledge-sidecar path for `get_sidecar_path`; `write_mcp_config` is a no-op (the
+assertion is the runtime registration, not the persisted file).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:kb-autoregister   # exit 0 = PASS, 1 = FAIL
+```
+
+Negative control: revert the auto-restore effect in `use-knowledge-base.ts` and
+the harness FAILs (knowledge-base never registered) — exactly the original bug.
+Same isolation (temp `HOME`/`XDG`, ports 4096/4098/1420).
+
+## `kb-mcp-restart-persist.e2e.ts` — persisted KB MCP survives an app restart
+
+The persistence half of the fix. After `registerKnowledgeMCP` writes the entry to
+the global `opencode.json` (what the Rust `write_mcp_config` command does), a FRESH
+OpenCode process must auto-connect the knowledge-base MCP on boot from that config
+— so the one-time auto-restore registration keeps working across restarts with no
+UI involvement. Pure-HTTP: boot opencode (empty config) → mirror `write_mcp_config`
+into `root.mcp` → kill opencode → restart on the same config → assert `GET /mcp`
+shows `knowledge-base === connected` with no `POST /mcp`.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:kb-restart        # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, non-standard port 4296.

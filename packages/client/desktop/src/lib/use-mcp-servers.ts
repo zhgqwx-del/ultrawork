@@ -5,8 +5,13 @@ import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import type { MCPStatusMap, MCPConfig } from "@agent/api-client"
 
-// Built-in MCP servers managed by dedicated UI (not shown in generic list)
-const BUILTIN_MCP_NAMES = new Set(["browser"])
+// Built-in MCP servers managed by dedicated UI (not shown in the generic MCP
+// list, so users can't delete/disable them there and silently break the feature).
+// "browser" → Settings → MCP browser toggle; "knowledge-base" → Settings →
+// Knowledge Base (add/remove sources). The knowledge-base entry is registered
+// for ANY source type (incl. IMA/remote-only) and is also surfaced by the
+// runtime MCP.status() patch, so it must be hidden here too.
+const BUILTIN_MCP_NAMES = new Set(["browser", "knowledge-base"])
 
 /** Filter built-in servers from a backend response */
 function filterBuiltin(data: MCPStatusMap): MCPStatusMap {
