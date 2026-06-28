@@ -74,7 +74,8 @@ export function useBrowserMCP(): BrowserMCPState {
     : env?.devtools_installed ?? false
 
   const buildMcpCommand = useCallback((envInfo: BrowserEnvInfo, m: BrowserMode): string[] => {
-    const homeDir = envInfo.mcp_dir.replace(/\/\.ultrawork\/mcp$/, "")
+    // Tolerate Windows backslash separators in mcp_dir (…\.ultrawork\mcp).
+    const homeDir = envInfo.mcp_dir.replace(/[\\/]\.ultrawork[\\/]mcp$/, "")
     if (m === "playwright") {
       const entry = `${envInfo.mcp_dir}/playwright/node_modules/@playwright/mcp/cli.js`
       const args = [envInfo.node_path, entry]
