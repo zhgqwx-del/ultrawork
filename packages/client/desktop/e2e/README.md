@@ -85,3 +85,20 @@ bun run --bun e2e:kb-autoregister   # exit 0 = PASS, 1 = FAIL
 Negative control: revert the auto-restore effect in `use-knowledge-base.ts` and
 the harness FAILs (knowledge-base never registered) — exactly the original bug.
 Same isolation (temp `HOME`/`XDG`, ports 4096/4098/1420).
+
+## `kb-mcp-restart-persist.e2e.ts` — persisted KB MCP survives an app restart
+
+The persistence half of the fix. After `registerKnowledgeMCP` writes the entry to
+the global `opencode.json` (what the Rust `write_mcp_config` command does), a FRESH
+OpenCode process must auto-connect the knowledge-base MCP on boot from that config
+— so the one-time auto-restore registration keeps working across restarts with no
+UI involvement. Pure-HTTP: boot opencode (empty config) → mirror `write_mcp_config`
+into `root.mcp` → kill opencode → restart on the same config → assert `GET /mcp`
+shows `knowledge-base === connected` with no `POST /mcp`.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:kb-restart        # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, non-standard port 4296.
