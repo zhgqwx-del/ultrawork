@@ -37,8 +37,8 @@ const sidecarTargets = (() => {
 // ── Non-macOS release path ────────────────────────────────────────
 // Windows/Linux have no Apple signing/notarization pipeline. Build the
 // current-platform sidecars + run `tauri build`, which emits the platform's
-// native installers (Windows: nsis/msi, Linux: deb/appimage/rpm). Installer
-// code signing, where wanted, is delegated to CI secrets + Tauri's own config.
+// native installers (Windows: nsis/msi, Linux: deb/rpm). Installer code
+// signing, where wanted, is delegated to CI secrets + Tauri's own config.
 if (!isMacOS) {
   const target = getCurrentTauriTarget()
   console.log(`\n🚀 Ultrawork Release Build (${process.platform})`)
@@ -50,8 +50,12 @@ if (!isMacOS) {
     await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
     await $`bun run ${path.join(rootDir, "scripts/build-acp.ts")} --target ${target}`.quiet(!verbose)
   }
+  // Linux: restrict to deb+rpm. AppImage's linuxdeploy needs FUSE/GStreamer
+  // plumbing that's fragile on CI runners; deb/rpm cover the install story.
+  // (Windows keeps bundle.targets:"all" → nsis+msi.)
+  const bundles = process.platform === "linux" ? ["--bundles", "deb", "rpm"] : []
   console.log("\n🔨 Running tauri build...")
-  await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${target}`
+  await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${target} ${bundles}`
     .quiet(!verbose)
   const bundleDir = path.join(tauriDir, "target", target, "release/bundle")
   console.log(`\n🎉 Release build complete! Installers under:`)
