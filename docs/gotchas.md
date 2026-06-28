@@ -222,7 +222,7 @@
 - **`lsof`/`ps`/`pgrep`/`/usr/bin/which`/`open`/`kill` 全 unix-only**：Windows 等价 `netstat -ano`(端口→PID) / `where` / `taskkill /F /PID`。lib.rs 已抽 `pids_on_port`/`kill_pid` 跨平台 helper + `PATH_LIST_SEP` 常量。**杀进程统一走 `kill_pid()`、勿直调 `Command::new("kill")`**（曾在 `start_sidecar` 漏一处，review 抓到）。
 - **「打开文件 / 在文件管理器中显示」别手搓 `Command`**：用 `tauri-plugin-opener`（`app.opener().open_path(path, None::<&str>)` / `reveal_item_in_dir(path)`，内部 ShellExecute/`open`/xdg-open）。手搓 Windows `cmd /C start "" <path>` 有 **cmd 元字符注入面**（文件名含 `& % ^`，产物名半可信）且对正斜杠不可靠——opener 插件规避这一切。
 - **Tauri `externalBin` 自动解析 triple + `.exe`**：conf 里写 `binaries/opencode-server`（无后缀），Tauri 按当前 target 找 `opencode-server-<triple>[.exe]`。构建脚本产物命名必须严格对齐（已对齐，含 windows-x64）。`bundle.targets` 用 `"all"` 让 Tauri 按平台产对应安装包。
-- **已知降级（非 bug）**：嵌入式 Node 下载 / Browser MCP / Chrome 进程清理是 Unix 取向，Windows 上整套优雅不可用（`get_platform_arch` 返 Err、`lsof`/`pgrep` spawn 失败即 no-op，不崩）。Linux 走 linux 分支可用。Windows 完整支持需单独移植（node `.zip` 布局），列为后续。
+- **嵌入式 Node / Browser MCP / Chrome 清理三平台已支持（ADR-037 后续移植）**：Windows 的 node 是 `.zip` 布局——`node.exe` 在 dist 根（非 `bin/node`）、`node_modules/npm` 在根（非 `lib/`）、npm-cli 在 `node_modules/npm/bin/npm-cli.js`。移植已覆盖：`get_platform_arch`(win)/`embedded_node_bin`(node.exe)/`download_node`(zip+`tar -xf`)/`resolve_npm_cli`/`npm_install_in`(PATH `;`)/`kill_browser_mcp_processes`(PowerShell WMI+`taskkill /F /T`，no pgrep)。**坑**：① Windows node 用 `tar -xf`（不带 `-z`，bsdtar 自识别 zip）；② 前端 `buildMcpCommand` 的 `homeDir` 正则要吃反斜杠；③ Browser MCP 的 Windows 运行时**只能真机验**，CI/cargo 测不到。前置 Win10 1803+ 的 `tar.exe`/`curl`。
 
 ---
 

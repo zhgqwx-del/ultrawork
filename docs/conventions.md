@@ -325,5 +325,5 @@ setTimeout(() => fetchSources(), 500)
 - Tauri `bundle.targets` 设 `"all"`，由 Tauri 按平台产对应安装包（mac dmg/app、win nsis/msi、linux deb/appimage）。
 
 ### 已知平台边界（非 bug，刻意降级）
-- **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：当前是 Unix 取向（`get_platform_arch` 仅 darwin/linux）。Windows 上整套功能优雅不可用（`get_platform_arch` 返 Err、`lsof`/`pgrep` spawn 失败即 no-op），不崩。Linux 走 linux 分支可用。要让 Windows 支持需单独移植（node `.zip` 布局 + `node.exe`），列为后续。
+- **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：三平台均已支持（ADR-037 后续移植）。Windows 走 node `.zip`（`node.exe` 在根 + `node_modules/npm` 无 `lib/`）、`tar -xf` 解压（Win10+ bsdtar）、`resolve_npm_cli`/`embedded_node_bin` 平台分支、Chrome 清理用 PowerShell WMI 命令行匹配 + `taskkill /F /T`。**代码层三平台编译通过，但 Windows 上 Browser MCP 的运行时（真装 + 真起浏览器）需在真 Windows 机器实测**——CI 覆盖不到浏览器自动化运行时。前置：Windows 需 `tar.exe`（Win10 1803+ 自带）+ `curl`（Win10+ 自带）。
 - **渐进式工具披露内置工具 id 集**：与平台无关，但 vendor bump 时仍需复核（见 MEMORY Pending Issues）。

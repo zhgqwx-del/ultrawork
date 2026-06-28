@@ -547,7 +547,12 @@ fn embedded_node_dir() -> PathBuf {
 }
 
 fn embedded_node_bin() -> PathBuf {
-    embedded_node_dir().join("bin").join("node")
+    // Windows Node ships node.exe at the dist root; Unix uses bin/node.
+    if cfg!(target_os = "windows") {
+        embedded_node_dir().join("node.exe")
+    } else {
+        embedded_node_dir().join("bin").join("node")
+    }
 }
 
 fn mode_file() -> PathBuf {
@@ -579,10 +584,13 @@ fn download_node() -> Result<NodeInfo, String> {
     let node_dir = embedded_node_dir();
     let tmp_dir = ultrawork_dir().join(".node-tmp");
 
-    // Determine platform + arch
+    // Determine platform + arch. Windows uses a .zip with node.exe + node_modules/npm
+    // at the dist root; Unix uses a .tar.gz with bin/node + lib/node_modules/npm.
     let (platform, arch) = get_platform_arch()?;
-    let tarball_name = format!("node-{}-{}-{}.tar.gz", NODE_VERSION, platform, arch);
-    let url = format!("https://nodejs.org/dist/{}/{}", NODE_VERSION, tarball_name);
+    let is_win = cfg!(target_os = "windows");
+    let ext = if is_win { "zip" } else { "tar.gz" };
+    let archive_name = format!("node-{}-{}-{}.{}", NODE_VERSION, platform, arch, ext);
+    let url = format!("https://nodejs.org/dist/{}/{}", NODE_VERSION, archive_name);
     let extracted_dir = format!("node-{}-{}-{}", NODE_VERSION, platform, arch);
 
     // Clean up any previous temp
@@ -590,10 +598,10 @@ fn download_node() -> Result<NodeInfo, String> {
     std::fs::create_dir_all(&tmp_dir)
         .map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    // Download tarball via curl
-    let tarball_path = tmp_dir.join(&tarball_name);
+    // Download archive via curl (present on macOS, modern Windows 10+, and Linux runners)
+    let archive_path = tmp_dir.join(&archive_name);
     let output = Command::new("curl")
-        .args(["-fSL", "-o", &tarball_path.to_string_lossy(), &url])
+        .args(["-fSL", "-o", &archive_path.to_string_lossy(), &url])
         .output()
         .map_err(|e| format!("Failed to run curl: {}", e))?;
     if !output.status.success() {
@@ -602,54 +610,80 @@ fn download_node() -> Result<NodeInfo, String> {
         return Err(format!("Download failed: {}", stderr));
     }
 
-    // Extract node binary
-    let output = Command::new("tar")
-        .args([
-            "-xzf", &tarball_path.to_string_lossy(),
-            "-C", &tmp_dir.to_string_lossy(),
-            &format!("{}/bin/node", extracted_dir),
-            &format!("{}/bin/npm", extracted_dir),
-            &format!("{}/lib/node_modules/npm", extracted_dir),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to extract: {}", e))?;
+    // Extract. bsdtar (Windows 10+ `tar.exe`) auto-detects .zip — pull the whole
+    // tree and copy what we need below; Unix extracts only the needed members.
+    let extract = if is_win {
+        Command::new("tar")
+            .args(["-xf", &archive_path.to_string_lossy(), "-C", &tmp_dir.to_string_lossy()])
+            .output()
+    } else {
+        Command::new("tar")
+            .args([
+                "-xzf", &archive_path.to_string_lossy(),
+                "-C", &tmp_dir.to_string_lossy(),
+                &format!("{}/bin/node", extracted_dir),
+                &format!("{}/bin/npm", extracted_dir),
+                &format!("{}/lib/node_modules/npm", extracted_dir),
+            ])
+            .output()
+    };
+    let output = extract.map_err(|e| format!("Failed to extract: {}", e))?;
     if !output.status.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        return Err("Failed to extract Node.js tarball".to_string());
+        return Err("Failed to extract Node.js archive".to_string());
     }
 
-    // Create target directories
-    let target_bin = node_dir.join("bin");
-    let target_lib = node_dir.join("lib").join("node_modules");
-    std::fs::create_dir_all(&target_bin)
-        .map_err(|e| format!("Failed to create {}: {}", target_bin.display(), e))?;
-    std::fs::create_dir_all(&target_lib)
-        .map_err(|e| format!("Failed to create {}: {}", target_lib.display(), e))?;
+    // Per-platform source (in the extracted tree) + target (in the embedded dir).
+    let src_root = tmp_dir.join(&extracted_dir);
+    let (src_node, src_npm, target_npm) = if is_win {
+        (
+            src_root.join("node.exe"),
+            src_root.join("node_modules").join("npm"),
+            node_dir.join("node_modules").join("npm"),
+        )
+    } else {
+        (
+            src_root.join("bin").join("node"),
+            src_root.join("lib").join("node_modules").join("npm"),
+            node_dir.join("lib").join("node_modules").join("npm"),
+        )
+    };
+
+    // Create target parents (target_node parent: <dir> on win, <dir>/bin on unix).
+    if let Some(p) = target_node.parent() {
+        std::fs::create_dir_all(p)
+            .map_err(|e| format!("Failed to create {}: {}", p.display(), e))?;
+    }
+    if let Some(p) = target_npm.parent() {
+        std::fs::create_dir_all(p)
+            .map_err(|e| format!("Failed to create {}: {}", p.display(), e))?;
+    }
 
     // Copy node binary
-    let src_node = tmp_dir.join(&extracted_dir).join("bin/node");
     std::fs::copy(&src_node, &target_node)
         .map_err(|e| format!("Failed to copy node: {}", e))?;
     set_executable(&target_node)?;
 
-    // Strip debug symbols to reduce size (~105MB → ~84MB)
-    let _ = Command::new("strip").arg(&target_node).output();
-    // Re-sign after strip (macOS requires valid signature)
-    let _ = Command::new("codesign")
-        .args(["--remove-signature", &target_node.to_string_lossy()])
-        .output();
-    let _ = Command::new("codesign")
-        .args(["-s", "-", &target_node.to_string_lossy()])
-        .output();
+    // Strip debug symbols (Unix; ~105MB → ~84MB). Re-sign on macOS (Apple Silicon
+    // requires a valid signature). Both are no-ops / unavailable on Windows.
+    if !is_win {
+        let _ = Command::new("strip").arg(&target_node).output();
+    }
+    if cfg!(target_os = "macos") {
+        let _ = Command::new("codesign")
+            .args(["--remove-signature", &target_node.to_string_lossy()])
+            .output();
+        let _ = Command::new("codesign")
+            .args(["-s", "-", &target_node.to_string_lossy()])
+            .output();
+    }
 
-    // Copy npm lib
-    let src_npm_lib = tmp_dir.join(&extracted_dir).join("lib/node_modules/npm");
-    if src_npm_lib.exists() {
-        let target_npm_lib = target_lib.join("npm");
-        if target_npm_lib.exists() {
-            std::fs::remove_dir_all(&target_npm_lib).ok();
+    // Copy npm package
+    if src_npm.exists() {
+        if target_npm.exists() {
+            std::fs::remove_dir_all(&target_npm).ok();
         }
-        copy_dir_recursive(&src_npm_lib, &target_npm_lib)?;
+        copy_dir_recursive(&src_npm, &target_npm)?;
     }
 
     // Clean up temp
@@ -663,6 +697,8 @@ fn get_platform_arch() -> Result<(&'static str, &'static str), String> {
         "darwin"
     } else if cfg!(target_os = "linux") {
         "linux"
+    } else if cfg!(target_os = "windows") {
+        "win"
     } else {
         return Err("Unsupported platform".to_string());
     };
@@ -1091,6 +1127,24 @@ fn detect_chrome() -> Option<String> {
 /// or Playwright). Called before disconnect to prevent "session locked" errors.
 #[tauri::command]
 fn kill_browser_mcp_processes() {
+    if cfg!(target_os = "windows") {
+        // Windows has no pgrep — match by command line via WMI and tree-kill each
+        // (taskkill /T also kills the Chrome children spawned by the MCP server).
+        // "chrome-profile" (the user-data-dir folder name) is backslash-free, so it
+        // needs no WQL LIKE escaping.
+        for needle in &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp", "chrome-profile"] {
+            let ps = format!(
+                "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%{}%'\" | \
+                 ForEach-Object {{ taskkill /F /T /PID $_.ProcessId 2>$null }}",
+                needle
+            );
+            Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+                .output()
+                .ok();
+        }
+        return;
+    }
     // Kill chrome-devtools-mcp node processes and their Chrome children
     for pattern in &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp"] {
         // Find node processes running the MCP server
@@ -1162,28 +1216,29 @@ fn set_browser_mode(mode: String) -> Result<(), String> {
 /// and system npm (sibling npm script → follow to find cli.js).
 fn resolve_npm_cli(node_path: &str) -> Result<PathBuf, String> {
     let node = std::path::Path::new(node_path);
-    let node_base = node.parent().and_then(|p| p.parent()); // e.g. ~/.ultrawork/node
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // Try embedded layout: <node_base>/lib/node_modules/npm/bin/npm-cli.js
-    if let Some(base) = node_base {
-        let cli = base.join("lib/node_modules/npm/bin/npm-cli.js");
-        if cli.exists() {
-            return Ok(cli);
+    if cfg!(target_os = "windows") {
+        // Windows Node (embedded or system): node.exe sits at <base>, with npm at
+        // <base>/node_modules/npm/bin/npm-cli.js (no lib/ segment).
+        if let Some(base) = node.parent() {
+            candidates.push(base.join("node_modules/npm/bin/npm-cli.js"));
+        }
+    } else {
+        // Embedded layout: <base>/bin/node → <base>/lib/node_modules/npm/...
+        if let Some(base) = node.parent().and_then(|p| p.parent()) {
+            candidates.push(base.join("lib/node_modules/npm/bin/npm-cli.js"));
+        }
+        // System layout: <bin_dir>/node → <bin_dir>/../lib/node_modules/npm/...
+        if let Some(prefix) = node.parent().and_then(|p| p.parent()) {
+            candidates.push(prefix.join("lib/node_modules/npm/bin/npm-cli.js"));
         }
     }
 
-    // Try system layout: npm binary is sibling of node
-    if let Some(bin_dir) = node.parent() {
-        // System npm is at <bin_dir>/../lib/node_modules/npm/bin/npm-cli.js
-        if let Some(prefix) = bin_dir.parent() {
-            let cli = prefix.join("lib/node_modules/npm/bin/npm-cli.js");
-            if cli.exists() {
-                return Ok(cli);
-            }
-        }
-    }
-
-    Err("Cannot find npm-cli.js".to_string())
+    candidates
+        .into_iter()
+        .find(|c| c.exists())
+        .ok_or_else(|| "Cannot find npm-cli.js".to_string())
 }
 
 /// Run npm install in a given MCP subdirectory.
@@ -1207,7 +1262,7 @@ fn npm_install_in(node_path: &str, sub_dir: &str, package: &str) -> Result<(), S
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let current_path = std::env::var("PATH").unwrap_or_default();
-    let enriched_path = format!("{}:{}", node_bin_dir, current_path);
+    let enriched_path = format!("{}{}{}", node_bin_dir, PATH_LIST_SEP, current_path);
 
     let output = Command::new(node_path)
         .args([npm_cli.to_string_lossy().as_ref(), "install", package])
