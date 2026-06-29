@@ -126,6 +126,24 @@ export type MessagePart =
   | PatchPart
   | { type: string; [key: string]: any } // fallback for unknown/partial types
 
+// --- Plan / task-plan step (ADR-038) ---
+
+/**
+ * One task-plan step. The unified model for the right-sidebar plan panel,
+ * fed by OpenCode's `todowrite` (REST `GET /session/{id}/todo` + `todo.updated`
+ * SSE) and ACP's `session/update:plan`. Both backends emit the WHOLE list each
+ * time (整表替换 semantics), so "latest array" is always complete.
+ *
+ * `status`/`priority` mirror opencode's loose `z.string()` schema; the listed
+ * unions are the documented set. ACP only ever produces the first three
+ * statuses (no `cancelled`).
+ */
+export interface PlanStep {
+  content: string
+  status: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: "high" | "medium" | "low"
+}
+
 // --- Message types ---
 
 // Request parts don't have PartBase identity fields (server assigns them)

@@ -1,3 +1,4 @@
+import type { PlanStep } from "@agent/api-client"
 import type { ConnectorEvent } from "../events"
 import { createSseTransport, type SseTransport } from "../sse-transport"
 import {
@@ -111,6 +112,10 @@ export class ACPBackend implements AgentBackend {
     // the desktop's turn window limits what actually renders.
     const messages = await this.http.fetchMessages(sessionId)
     return { messages, cursor: undefined, hasMore: false }
+  }
+
+  async getPlan(sessionId: string): Promise<PlanStep[]> {
+    return this.http.fetchPlan(sessionId)
   }
 
   /**

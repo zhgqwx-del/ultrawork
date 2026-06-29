@@ -107,6 +107,8 @@ export interface PersistedACPSession {
   /** Session system prompt — restored so session/load re-injects it via _meta. */
   systemPrompt?: string
   messages: UwStoredMessage[]
+  /** Latest task plan (ADR-038) — restored so switch-back after restart still shows it. */
+  plan?: UwPlanStep[]
 }
 
 // --- OpenCode-shaped wire types (subset the sidecar emits) ---
@@ -166,6 +168,17 @@ export interface UwToolPart extends UwPartBase {
 
 export type UwPart = UwTextPart | UwReasoningPart | UwToolPart
 
+/**
+ * One task-plan step (ADR-038). Mirrors api-client's PlanStep and opencode's
+ * Todo so the desktop plan panel consumes one shape across backends. ACP's
+ * native PlanEntry only ever produces the first three statuses (no `cancelled`).
+ */
+export interface UwPlanStep {
+  content: string
+  status: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: "high" | "medium" | "low"
+}
+
 export interface UwMessageInfo {
   id: string
   sessionID: string
@@ -193,6 +206,8 @@ export type UwSSEEvent =
       properties: { sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
     }
   | { type: "message.updated"; properties: { info: UwMessageInfo } }
+  // Task plan (ADR-038): session-level, whole list each time (整表替换).
+  | { type: "plan.updated"; properties: { sessionID: string; entries: UwPlanStep[] } }
   | { type: "permission.asked"; properties: UwPermissionRequest }
   | { type: "permission.replied"; properties: { id: string; sessionID: string } }
   | { type: "session.error"; properties: { sessionID: string; error: string } }

@@ -2,7 +2,7 @@ import { Loader2, Check, XCircle, Circle } from "lucide-react"
 import type { SendMessageResponse, ToolPart } from "@agent/api-client"
 import { useI18n } from "@/lib/i18n-context"
 
-interface ProgressPanelProps {
+interface ActivityPanelProps {
   messages: SendMessageResponse[]
 }
 
@@ -50,7 +50,12 @@ function StepIcon({ status }: { status: string }) {
   }
 }
 
-export function ProgressPanel({ messages }: ProgressPanelProps) {
+/**
+ * "Activity" view (ADR-038 方案 B, 次级区): the flat tool-call timeline that
+ * used to mislabel itself as "Plan Progress". Keeps observability of what the
+ * agent is doing; the structured task plan now lives in PlanPanel.
+ */
+export function ActivityPanel({ messages }: ActivityPanelProps) {
   const { t } = useI18n()
   const steps = extractToolSteps(messages)
   const completed = steps.filter((s) => s.status === "completed").length

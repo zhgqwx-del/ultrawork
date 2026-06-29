@@ -124,6 +124,25 @@ describe("ACPBackend", () => {
     })
   })
 
+  describe("getPlan (ADR-038)", () => {
+    it("fetches the plan snapshot from /acp/session/:id/plan", async () => {
+      const entries = [{ content: "a", status: "in_progress", priority: "high" }]
+      mockFetch.mockResolvedValueOnce(jsonResponse({ entries }))
+      const result = await backend.getPlan("s1")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4099/acp/session/s1/plan")
+      expect(result).toEqual(entries)
+    })
+
+    it("resolves empty for unknown sessions (404)", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) })
+      await expect(backend.getPlan("s1")).resolves.toEqual([])
+    })
+
+    it("declares plan capability", () => {
+      expect(backend.capabilities.plan).toBe(true)
+    })
+  })
+
   describe("subscribeSession — refcounted shared pool (legacy use-acp-sse semantics)", () => {
     it("multiplexes one stream across subscribers and closes on last release", async () => {
       const push = createPushStream()

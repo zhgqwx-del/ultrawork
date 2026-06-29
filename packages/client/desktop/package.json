@@ -17,7 +17,12 @@
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
     "e2e:mcp-status": "bun run --bun e2e/mcp-status-dynamic.e2e.ts",
     "e2e:kb-autoregister": "bun run --bun e2e/kb-mcp-autoregister.e2e.ts",
-    "e2e:kb-restart": "bun run --bun e2e/kb-mcp-restart-persist.e2e.ts"
+    "e2e:kb-restart": "bun run --bun e2e/kb-mcp-restart-persist.e2e.ts",
+    "e2e:plan-opencode": "bun run --bun e2e/plan-opencode.e2e.ts",
+    "e2e:plan-ui": "bun run --bun e2e/plan-panel-ui.e2e.ts",
+    "e2e:plan-realmodel": "bun run --bun e2e/plan-realmodel-ui.e2e.ts",
+    "e2e:plan-acp": "bun run --bun e2e/plan-acp.e2e.ts",
+    "e2e:plan-switchback": "bun run --bun e2e/plan-switchback.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",

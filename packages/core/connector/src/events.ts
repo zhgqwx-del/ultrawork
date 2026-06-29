@@ -1,4 +1,4 @@
-import type { MessagePart, MessageInfo, PermissionRequest, QuestionRequest } from "@agent/api-client"
+import type { MessagePart, MessageInfo, PermissionRequest, QuestionRequest, PlanStep } from "@agent/api-client"
 
 // Unified event model (ADR-030 C3): the opencode SSE shape is the common
 // event model for ALL backends. ACP events are already normalized into this
@@ -18,6 +18,9 @@ export type ConnectorEvent =
   | { type: "session.created"; properties: { id: string; [key: string]: any } }
   | { type: "session.deleted"; properties: { id: string } }
   | { type: "session.status"; properties: SessionStatusProperties }
+  // Task-plan events (ADR-038): normalized from opencode `todo.updated` and
+  // ACP `session/update:plan`. WHOLE list each time (整表替换).
+  | { type: "plan.updated"; properties: PlanUpdatedProperties }
   // Permission / Question blocking-interaction events
   | { type: "permission.asked"; properties: PermissionRequest }
   | { type: "permission.replied"; properties: { sessionID: string; requestID: string; reply: string } }
@@ -50,6 +53,11 @@ export interface SessionUpdatedProperties {
   id?: string
   title?: string
   [key: string]: any
+}
+
+export interface PlanUpdatedProperties {
+  sessionID: string
+  entries: PlanStep[]
 }
 
 export interface SessionStatusProperties {
@@ -90,7 +98,8 @@ export function sessionIdOf(event: ConnectorEvent): string | undefined {
       return props.sessionID ?? props.id
     default:
       // part.delta / part.removed / message.removed / session.status /
-      // permission.* / question.* / legacy events all carry a flat sessionID.
+      // plan.updated / permission.* / question.* / legacy events all carry a
+      // flat sessionID.
       return typeof props.sessionID === "string" ? props.sessionID : undefined
   }
 }

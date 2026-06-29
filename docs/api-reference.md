@@ -37,6 +37,7 @@
 | POST | `/:sessionID/message` | ~~发送消息~~ | ⚠️ 已弃用，改用 `/:sessionID/prompt_async`（204） |
 | POST | `/:sessionID/prompt_async` | **发送消息（当前）** | 异步，返回 204；`model` 可覆盖运行时模型；`tools` per-tool 开关（落成 **sticky session permission**，支持通配 key）；`system` 附加 system prompt（**per-message append**，不 sticky）——Team Leader 每轮携带编排指令用 |
 | GET | `/:sessionID/message` | 获取消息列表 | 返回所有消息 |
+| GET | `/:sessionID/todo` | **任务规划快照** | 返回 `Todo[]`（`{content,status,priority}`，整表）；connector `getPlan` 用于面板水合（ADR-038）。变更时 opencode 发 `todo.updated` SSE，connector 归一为 `plan.updated` |
 | POST | `/:sessionID/abort` | 中止 session | 停止 AI 处理 |
 
 #### 全局端点

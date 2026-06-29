@@ -127,6 +127,14 @@ export function createServer(manager: ACPManager): Hono {
     return messages ? c.json({ messages }) : c.json({ error: "unknown session" }, 404)
   })
 
+  // Task-plan snapshot (ADR-038): switch-back hydration for the plan panel.
+  // ACP has no SQLite todo store; the manager folds plan.updated into a
+  // per-session snapshot. Unknown sessions return an empty plan, not 404 (the
+  // panel just shows nothing — matches opencode's "no todos" behaviour).
+  app.get("/acp/session/:id/plan", (c) => {
+    return c.json({ entries: manager.getPlan(c.req.param("id")) })
+  })
+
   app.delete("/acp/session/:id", (c) => {
     const ok = manager.deleteSession(c.req.param("id"))
     return ok ? c.json({ ok: true }) : c.json({ error: "unknown session" }, 404)

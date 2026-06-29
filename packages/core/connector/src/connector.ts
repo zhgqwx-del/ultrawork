@@ -1,3 +1,4 @@
+import type { PlanStep } from "@agent/api-client"
 import { BindingStore } from "./binding-store"
 import type { ConnectorEvent } from "./events"
 import { OPENCODE_BACKEND_KIND } from "./backends/opencode"
@@ -104,6 +105,16 @@ export class Connector {
 
   fetchHistory(sessionId: string, opts?: FetchHistoryOptions): Promise<FetchHistoryResult> {
     return this.backendFor(sessionId).fetchHistory(sessionId, opts)
+  }
+
+  /**
+   * Current task-plan snapshot for a session (ADR-038). Hydrates the plan
+   * panel on open / switch-back. Returns [] for backends without plan support.
+   */
+  getPlan(sessionId: string): Promise<PlanStep[]> {
+    const backend = this.backendFor(sessionId)
+    if (!backend.capabilities.plan || !backend.getPlan) return Promise.resolve([])
+    return backend.getPlan(sessionId)
   }
 
   replyPermission(sessionId: string, permissionId: string, reply: PermissionReply): Promise<void> {

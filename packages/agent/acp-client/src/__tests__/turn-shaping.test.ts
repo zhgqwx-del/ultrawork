@@ -106,13 +106,24 @@ describe("W1 turn shaping (mock agent, stdio e2e)", () => {
 
     // Contract 2: intermediate messages sealed with finish:"tool-calls".
     expect(narration.info.finish).toBe("tool-calls")
-    expect(narration.parts.map((p) => p.type).sort()).toEqual(["reasoning", "reasoning", "text"])
+    // Plan is no longer a reasoning part (ADR-038) — only the real thought is.
+    expect(narration.parts.map((p) => p.type).sort()).toEqual(["reasoning", "text"])
     const reasoningParts = narration.parts.filter((p) => p.type === "reasoning")
     expect((reasoningParts[0] as { text: string }).text).toBe("I should list the directory first.")
-    // Plan part is upserted wholesale — the final state wins.
-    expect((reasoningParts[1] as { text: string }).text).toBe(
-      "Plan\n✓ List directory\n→ Summarize",
+
+    // Contract 2b (ADR-038): plan is a session-level `plan.updated` event,
+    // whole list each time, NOT a message part. The last update wins.
+    const planEvents = events.filter(
+      (e): e is Extract<UwSSEEvent, { type: "plan.updated" }> => e.type === "plan.updated",
     )
+    expect(planEvents.length).toBe(2)
+    expect(planEvents[planEvents.length - 1].properties).toEqual({
+      sessionID: "ses_pub",
+      entries: [
+        { content: "List directory", status: "completed", priority: "high" },
+        { content: "Summarize", status: "in_progress", priority: "medium" },
+      ],
+    })
 
     // Contract 3: tool step lives in its own message, never in the answer;
     // a re-sent tool_call for the same id must upsert, not duplicate.

@@ -22,6 +22,7 @@ import type {
   FileStatusEntry,
   FileContentResponse,
   PaginatedMessagesResponse,
+  PlanStep,
 } from "./types"
 
 export class ApiError extends Error {
@@ -191,6 +192,15 @@ export class ApiClient {
 
   async getMessages(sessionId: string): Promise<SendMessageResponse[]> {
     return this.request<SendMessageResponse[]>(`/session/${sessionId}/message`)
+  }
+
+  /**
+   * Current task-plan snapshot for a session (ADR-038). OpenCode persists
+   * todos per session (SQLite), so this is the authoritative current list —
+   * used to hydrate the plan panel on session open / switch-back.
+   */
+  async getTodos(sessionId: string): Promise<PlanStep[]> {
+    return this.request<PlanStep[]>(`/session/${sessionId}/todo`)
   }
 
   async getMessagesPaginated(

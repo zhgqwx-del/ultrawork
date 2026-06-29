@@ -6,6 +6,7 @@ import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useModel } from "@/lib/model-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
+import { useSessionPlan } from "@/lib/use-session-plan"
 import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
 import { ChatInput, MessageList, ModelSelector, AgentSelector, AgentAvatar } from "@/components/chat"
@@ -21,7 +22,7 @@ import { buildLeaderSystemPrompt } from "@/lib/team-leader-prompt"
 import { isACPAgentId } from "@agent/connector"
 import { cn } from "@/lib/utils"
 import { PanelRight, ChevronDown, ChevronRight, Crown } from "lucide-react"
-import { ProgressPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview, TeamHeader } from "@/components/session"
+import { PlanPanel, ActivityPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview, TeamHeader } from "@/components/session"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
 
@@ -116,6 +117,11 @@ export function SessionPage() {
   // during model-thinking gaps. See docs/discussions/022.
   const sessionBusy = !!id && activeSessionIds.has(id)
   const isAgentActive = sending || streamingMessageId !== null || sessionBusy
+
+  // Task plan (ADR-038): session-level state hydrated from backend truth +
+  // live plan.updated. Shown only when the agent actually produced a plan
+  // (complex tasks); simple tasks fall back to the Activity section below.
+  const { steps: planSteps } = useSessionPlan(id)
   const {
     pendingPermission,
     pendingQuestion,
@@ -313,8 +319,13 @@ export function SessionPage() {
         <aside className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
           <div onMouseDown={handleDrag} className="h-9 shrink-0" />
           <div className="flex-1 overflow-y-auto p-3 pt-0 scrollbar-soft">
-            <RightSidebarSection title={t("session.rightSidebar.plan")}>
-              <ProgressPanel messages={allMessages} />
+            {planSteps.length > 0 && (
+              <RightSidebarSection title={t("session.rightSidebar.plan")} defaultOpen>
+                <PlanPanel steps={planSteps} active={isAgentActive} />
+              </RightSidebarSection>
+            )}
+            <RightSidebarSection title={t("session.rightSidebar.activity")}>
+              <ActivityPanel messages={allMessages} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.workspace")}>
               <WorkspacePanel directory={workspaceDir} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
@@ -346,8 +357,8 @@ function leaderName(agents: Array<{ id: string; name: string }>, id: string): st
   return agents.find((a) => a.id === id)?.name ?? id
 }
 
-function RightSidebarSection({ title, placeholder, children }: { title: string; placeholder?: string; children?: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
+function RightSidebarSection({ title, placeholder, children, defaultOpen = false }: { title: string; placeholder?: string; children?: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
 
   return (
     <div className="border-b border-[var(--color-border)] last:border-b-0">

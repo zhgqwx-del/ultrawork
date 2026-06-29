@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-27 -->
+<!-- last-synced: 2026-06-29 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -83,8 +83,32 @@ useEffect(() => { mountedRef.current = true; return () => { mountedRef.current =
 | `message.updated` | 消息元数据更新 |
 | `message.part.removed` | 移除 part |
 | `session.status:idle` | Agent 完成，清除 sending 状态 |
+| `plan.updated` | 任务规划整表替换（会话级状态，ADR-038；OpenCode 由 connector 从 `todo.updated` 归一，ACP 由 `turn-shaper` 发） |
 | `permission.asked` | 弹出权限授权 Dock |
 | `question.asked` | 弹出问答 Dock |
+
+### 会话级状态：REST 水合 + SSE 订阅（整表替换）模式（ADR-038 `useSessionPlan`）
+"按会话取一份后端整表状态、实时整表替换"的 hook（如任务规划）按此写，**两个竞态各踩过一次**：
+
+1. **水合 vs 实时竞态**：进入会话同时做「`getPlan()` REST 拉权威快照」+「订阅 `plan.updated` 整表替换」。若快照 Promise 在某个实时事件**之后**才 resolve，会用过期快照覆盖更新的实时数据。
+   → 用 `liveArrivedRef`：当前会话一旦收到实时事件就置位，快照回填前检查 `!liveArrivedRef.current`（**live 永远 ≥ 快照，live-wins**）。
+2. **绑定异步水合竞态**：ACP 的 session→backend 绑定在 sidecar 启动后**异步**水合（ADR-030），可能在 hook 挂载**之后**才把绑定从 opencode 翻成 acp。若水合 effect 只依赖 `[connector, sessionId]`，绑定翻转后不会按正确后端重取 → ACP 会话状态恒空。
+   → 把绑定纳入依赖：`useSyncExternalStore(connector.bindings.onChange, () => connector.bindings.get(sessionId))`，绑定变化即重新水合。
+
+```ts
+const binding = useSyncExternalStore(
+  useCallback((cb) => connector.bindings.onChange(cb), [connector]),
+  () => (sessionId ? connector.bindings.get(sessionId) : ""),
+)
+useEffect(() => {
+  let cancelled = false; liveArrivedRef.current = false
+  connector.getPlan(sessionId).then((snap) => {
+    if (!cancelled && !liveArrivedRef.current) setState(snap) // 不覆盖更新的 live
+  })
+  return () => { cancelled = true }
+}, [connector, sessionId, binding]) // ← binding 必须在依赖里
+// handler: liveArrivedRef.current = true; setState(event.properties.entries)
+```
 
 ### 轮询兜底
 Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permission/question API，防 SSE 竞态丢事件。

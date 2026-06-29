@@ -208,6 +208,14 @@ describe("ApiClient", () => {
       expect(result).toEqual(messages)
     })
 
+    it("getTodos", async () => {
+      const todos = [{ content: "step 1", status: "in_progress", priority: "high" }]
+      mockFetch.mockResolvedValueOnce(jsonResponse(todos))
+      const result = await client.getTodos("s1")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/session/s1/todo")
+      expect(result).toEqual(todos)
+    })
+
     it("deleteSession", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse(true))
       await client.deleteSession("s1")

@@ -103,7 +103,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Desktop — chat / session 组件**
 - `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
-- `src/components/session/` — progress-panel, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
+- `src/components/session/` — plan-panel（**任务规划**主区：渲 `PlanStep[]`，ADR-038）, progress-panel（导出 `ActivityPanel`=工具调用流水「执行活动」次级区）, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
 - `src/components/settings/models-section.tsx` — 模型管理设置页 section（provider 卡片列表 + 配置流程 + **自定义 provider 表单/删除**；取代旧的全局 ModelDialog，由 Settings 页 `models` section 渲染，Home/Session「管理模型」深链至此）
@@ -114,6 +114,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
 - `src/lib/use-api.ts` — backend-specific REST 面：返回 connector 持有的 ApiClient（签名不变）
 - `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）
+- `src/lib/use-session-plan.ts` — 任务规划会话级状态（ADR-038）：`connector.getPlan` 水合 + 订阅 `plan.updated` 整表替换，按 sessionID；两竞态防护见 conventions §3（`liveArrivedRef` live-wins + binding 纳入依赖）
 - `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
@@ -138,8 +139,9 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `connector.ts` — 注册表 + 按会话绑定派发 + 双形态 subscribe（global / per-session 双流合并）+ deleteSession 三清
 - `sse-transport.ts` — 参数化 fetch-reader（退避三策略 / 心跳看门狗 / gave-up 状态）——三套 SSE 收敛于此
 - `binding-store.ts` — 会话↔agent 绑定：BindingCache 注入（desktop=localStorage）+ hydrate 合并（sidecar 优先 + dirty set 防竞态）
-- `backends/opencode.ts` — 包装 createApiClient（⚠️ 必须工厂，bridge.test mock 依赖）+ 全局 /event 流；`.api` 暴露 backend-specific 面
-- `backends/acp.ts` + `acp-http.ts` — acp-stdio 族通用 adapter：per-session SSE 引用计数池 + :4099 REST（原 desktop agent-router）
+- `backends/opencode.ts` — 包装 createApiClient（⚠️ 必须工厂，bridge.test mock 依赖）+ 全局 /event 流（`normalizeOpenCodeEvent` 把 `todo.updated`→统一 `plan.updated`，ADR-038）；`.api` 暴露 backend-specific 面；`getPlan`=REST `/session/{id}/todo`
+- `backends/acp.ts` + `acp-http.ts` — acp-stdio 族通用 adapter：per-session SSE 引用计数池 + :4099 REST（原 desktop agent-router）；`getPlan`=`fetchPlan` → `GET /acp/session/:id/plan`（ADR-038）
+- `events.ts` — `ConnectorEvent` 统一事件模型；`plan.updated{sessionID,entries}`（ADR-038）+ `PlanStep` 经 `@agent/api-client`；`Connector.getPlan(sessionId)` 按 `capabilities.plan` 门控派发
 
 **Orchestrator（`packages/core/orchestrator/src/`，ADR-031 阶段3 全量）**
 - `orchestrator.ts` — 原语（spawn/awaitTask/steer/cancelTask）+ recipe 层（createRun/cancelRun 中止全部在途）+ 治理（含 opencode 子会话 `orchestrator_*` tools deny）+ loadPersisted（重启标 interrupted）
@@ -180,7 +182,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (37 ADRs, 001–037)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (38 ADRs, 001–038)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

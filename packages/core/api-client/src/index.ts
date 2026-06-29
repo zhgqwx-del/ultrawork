@@ -21,6 +21,7 @@ export type {
   StepFinishPart,
   FilePart,
   PatchPart,
+  PlanStep,
   PermissionRequest,
   QuestionRequest,
   QuestionInfo,

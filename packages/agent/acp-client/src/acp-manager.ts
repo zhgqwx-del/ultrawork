@@ -14,6 +14,7 @@ import type {
   ACPAgentConfig,
   ACPAgentInfo,
   ACPSessionInfo,
+  UwPlanStep,
   UwSSEEvent,
   UwStoredMessage,
 } from "./types.js"
@@ -25,6 +26,8 @@ interface SessionEntry extends ACPSessionInfo {
   acpSessionId: string
   /** Shaped history, folded from the event stream and persisted at turn ends. */
   messages: UwStoredMessage[]
+  /** Latest task plan (ADR-038), folded from plan.updated; served as a snapshot. */
+  plan?: UwPlanStep[]
 }
 
 export class ACPManager {
@@ -54,6 +57,7 @@ export class ACPManager {
         orchestrate: persisted.orchestrate,
         systemPrompt: persisted.systemPrompt,
         messages: persisted.messages,
+        plan: persisted.plan,
       })
     }
   }
@@ -270,6 +274,11 @@ export class ACPManager {
     return this.sessions.get(sessionId)?.messages
   }
 
+  /** Latest task-plan snapshot for a session (ADR-038). [] when none/unknown. */
+  getPlan(sessionId: string): UwPlanStep[] {
+    return this.sessions.get(sessionId)?.plan ?? []
+  }
+
   /** Drop a session and its persisted history. Returns false if unknown. */
   deleteSession(sessionId: string): boolean {
     const existed = this.sessions.delete(sessionId)
@@ -327,8 +336,15 @@ export class ACPManager {
     // subscriber — persistence must not depend on an open SSE stream).
     const entry = this.sessions.get(sessionId)
     if (entry) {
-      applyEvent(entry.messages, event)
-      if (isPersistencePoint(event)) this.persist(entry)
+      // Plan is session-level state, not a message — fold it onto the entry
+      // (whole list) and persist so switch-back / restart still shows it.
+      if (event.type === "plan.updated") {
+        entry.plan = event.properties.entries
+        this.persist(entry)
+      } else {
+        applyEvent(entry.messages, event)
+        if (isPersistencePoint(event)) this.persist(entry)
+      }
     }
     const set = this.subscribers.get(sessionId)
     if (!set) return
@@ -348,6 +364,7 @@ export class ACPManager {
         orchestrate: entry.orchestrate,
         systemPrompt: entry.systemPrompt,
         messages: entry.messages,
+        plan: entry.plan,
       })
     } catch (err) {
       console.error(`[acp] failed to persist session ${entry.sessionId}:`, err)
