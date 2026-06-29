@@ -1,4 +1,4 @@
-import type { SendMessageResponse } from "@agent/api-client"
+import type { SendMessageResponse, PlanStep } from "@agent/api-client"
 import type { ConnectorEvent } from "./events"
 
 // --- Backend taxonomy (ADR-030 D-8) ---
@@ -177,6 +177,12 @@ export interface AgentBackend {
   cancel(sessionId: string): Promise<void>
   revert?(sessionId: string, messageID: string): Promise<void>
   fetchHistory(sessionId: string, opts?: FetchHistoryOptions): Promise<FetchHistoryResult>
+  /**
+   * Current task-plan snapshot for a session (capabilities.plan, ADR-038).
+   * Used to hydrate the plan panel on open / switch-back. opencode = REST
+   * `/session/{id}/todo`; ACP = sidecar plan snapshot. Returns [] when none.
+   */
+  getPlan?(sessionId: string): Promise<PlanStep[]>
   /** Delete backend-side state for a session (opencode session / ACP persistence). */
   deleteSessionState(sessionId: string): Promise<void>
   replyPermission(sessionId: string, permissionId: string, reply: PermissionReply): Promise<void>

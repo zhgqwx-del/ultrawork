@@ -167,7 +167,8 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.capabilities.title": "Connection Settings",
 
     // Session right sidebar
-    "session.rightSidebar.plan": "Plan Progress",
+    "session.rightSidebar.plan": "Task Plan",
+    "session.rightSidebar.activity": "Activity",
     "session.rightSidebar.workspace": "Workspace",
     "session.rightSidebar.artifacts": "Artifacts",
     "session.rightSidebar.mcp": "MCP Services",
@@ -281,6 +282,8 @@ const translations: Record<Language, Record<string, string>> = {
     "message.workingDirectory": "Working Directory",
     "message.noArtifacts": "No artifacts yet",
     "message.noSteps": "No steps yet",
+    "message.noPlan": "No task plan — simple tasks don't need one",
+    "message.turnEnded": "Turn ended",
     "message.aiTyping": "AI is typing...",
     "message.turnError": "Turn failed:",
     "message.copyAnswer": "Copy answer",
@@ -814,7 +817,8 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.capabilities.title": "连接设置",
 
     // Session right sidebar
-    "session.rightSidebar.plan": "计划执行进度",
+    "session.rightSidebar.plan": "任务规划",
+    "session.rightSidebar.activity": "执行活动",
     "session.rightSidebar.workspace": "工作区",
     "session.rightSidebar.artifacts": "产物",
     "session.rightSidebar.mcp": "MCP服务",
@@ -928,6 +932,8 @@ const translations: Record<Language, Record<string, string>> = {
     "message.workingDirectory": "工作目录",
     "message.noArtifacts": "暂无产物",
     "message.noSteps": "暂无步骤",
+    "message.noPlan": "暂无任务规划（简单任务无需规划）",
+    "message.turnEnded": "回合已结束",
     "message.aiTyping": "AI 正在输入...",
     "message.turnError": "回合出错：",
     "message.copyAnswer": "复制回答",

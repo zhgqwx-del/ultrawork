@@ -2,7 +2,7 @@
 // agent-router.ts, function-for-function. Always absolute (no Vite proxy
 // entry for :4099): the sidecar allows the dev/Tauri origins via CORS.
 
-import type { SendMessageResponse } from "@agent/api-client"
+import type { SendMessageResponse, PlanStep } from "@agent/api-client"
 
 export const ACP_DEFAULT_BASE_URL = "http://localhost:4099"
 
@@ -132,6 +132,19 @@ export class ACPHttpClient {
     if (!res.ok) throw new Error(`ACP request failed: ${res.status}`)
     const body = (await res.json()) as { messages: SendMessageResponse[] }
     return body.messages ?? []
+  }
+
+  /**
+   * Task-plan snapshot (ADR-038). ACP has no SQLite todo store — the sidecar
+   * folds plan.updated into a per-session snapshot. Unknown sessions / a dead
+   * sidecar resolve to an empty plan (the panel just shows nothing).
+   */
+  async fetchPlan(sessionId: string): Promise<PlanStep[]> {
+    const res = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/plan`)
+    if (res.status === 404) return []
+    if (!res.ok) throw new Error(`ACP request failed: ${res.status}`)
+    const body = (await res.json()) as { entries?: PlanStep[] }
+    return body.entries ?? []
   }
 
   deleteSession(sessionId: string): Promise<void> {

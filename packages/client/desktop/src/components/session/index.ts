@@ -1,4 +1,5 @@
-export { ProgressPanel } from "./progress-panel"
+export { ActivityPanel } from "./progress-panel"
+export { PlanPanel } from "./plan-panel"
 export { ArtifactsPanel } from "./artifacts-panel"
 export { WorkspacePanel } from "./workspace-panel"
 export { MCPPanel } from "./mcp-panel"

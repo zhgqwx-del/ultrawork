@@ -1,4 +1,4 @@
-import { createApiClient, ApiError, type ApiClient } from "@agent/api-client"
+import { createApiClient, ApiError, type ApiClient, type PlanStep } from "@agent/api-client"
 import { sessionIdOf, type ConnectorEvent } from "../events"
 import {
   createSseTransport,
@@ -23,6 +23,27 @@ import {
 } from "../types"
 
 export const OPENCODE_BACKEND_KIND = "opencode"
+
+/**
+ * Normalize opencode-native events into the unified ConnectorEvent model
+ * (ADR-038): opencode emits `todo.updated {sessionID, todos}` over /event;
+ * map it to the cross-backend `plan.updated {sessionID, entries}` so the plan
+ * panel consumes one event shape regardless of backend. Other events pass
+ * through untouched.
+ */
+function normalizeOpenCodeEvent(event: ConnectorEvent): ConnectorEvent {
+  if (event.type === "todo.updated") {
+    const props = event.properties as { sessionID?: string; todos?: unknown }
+    return {
+      type: "plan.updated",
+      properties: {
+        sessionID: props.sessionID ?? "",
+        entries: Array.isArray(props.todos) ? props.todos : [],
+      },
+    } as ConnectorEvent
+  }
+  return event
+}
 
 /** Legacy desktop SSEClient policy: 1s exponential, give up after 5 attempts. */
 export const FINITE_SSE_RETRY: SseRetryPolicy = { baseDelayMs: 1000, maxAttempts: 5 }
@@ -114,7 +135,7 @@ export class OpenCodeBackend implements AgentBackend {
       heartbeatTimeoutMs: this.options.sse?.heartbeatTimeoutMs,
       heartbeatReconnectBudget: this.options.sse?.heartbeatReconnectBudget,
       onEvent: (event) => {
-        this.handlers.forEach((h) => h(event))
+        this.handlers.forEach((h) => h(normalizeOpenCodeEvent(event)))
       },
       onStatusChange: (status) => {
         this.transportStatus = status
@@ -222,6 +243,10 @@ export class OpenCodeBackend implements AgentBackend {
       limit: opts?.limit ?? DEFAULT_HISTORY_LIMIT,
       before: opts?.before,
     })
+  }
+
+  async getPlan(sessionId: string): Promise<PlanStep[]> {
+    return this.api.getTodos(sessionId)
   }
 
   async deleteSessionState(sessionId: string): Promise<void> {

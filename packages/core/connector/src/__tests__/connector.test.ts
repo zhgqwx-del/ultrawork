@@ -39,6 +39,7 @@ function fakeBackend(kind: string, capabilities: Partial<BackendCapabilities> = 
     cancel: vi.fn(async () => {}),
     revert: caps.revert ? vi.fn(async () => {}) : undefined,
     fetchHistory: vi.fn(async () => ({ messages: [], hasMore: false })),
+    getPlan: caps.plan ? vi.fn(async () => [{ content: "step", status: "pending" as const }]) : undefined,
     deleteSessionState: vi.fn(async () => {}),
     replyPermission: vi.fn(async () => {}),
     subscribeSession: vi.fn((_sessionId: string, handler: (event: ConnectorEvent) => void) => {
@@ -125,6 +126,22 @@ describe("Connector", () => {
     it("throws for backends without revert capability", async () => {
       connector.bindings.bind("s1", "acp:claude")
       await expect(connector.revert("s1", "m1")).rejects.toThrow(/does not support revert/)
+    })
+  })
+
+  describe("getPlan gating (ADR-038)", () => {
+    it("delegates to the bound backend when plan is supported", async () => {
+      const planful = fakeBackend("opencode", { globalEvents: true, plan: true })
+      const c = new Connector({ bindings: new BindingStore() })
+      c.registerBackend(planful)
+      await expect(c.getPlan("s1")).resolves.toEqual([{ content: "step", status: "pending" }])
+      expect(planful.getPlan).toHaveBeenCalledWith("s1")
+    })
+
+    it("returns [] for backends without plan capability (no throw)", async () => {
+      connector.bindings.bind("s1", "acp:claude") // acp fake has plan:false
+      await expect(connector.getPlan("s1")).resolves.toEqual([])
+      expect(acp.getPlan).toBeUndefined()
     })
   })
 

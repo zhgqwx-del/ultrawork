@@ -7,6 +7,7 @@ const mockApi = {
   abortSession: vi.fn(),
   revertSession: vi.fn(),
   getMessagesPaginated: vi.fn(),
+  getTodos: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
 }
@@ -250,6 +251,69 @@ describe("OpenCodeBackend", () => {
       push.push({ type: "server.heartbeat", properties: {} })
       await new Promise((r) => setTimeout(r, 10))
       expect(received).toHaveLength(0)
+    })
+  })
+
+  describe("plan (ADR-038)", () => {
+    it("getPlan -> api.getTodos", async () => {
+      const todos = [{ content: "step 1", status: "in_progress", priority: "high" }]
+      mockApi.getTodos.mockResolvedValueOnce(todos)
+      const backend = track(makeBackend())
+      await expect(backend.getPlan("s1")).resolves.toEqual(todos)
+      expect(mockApi.getTodos).toHaveBeenCalledWith("s1")
+    })
+
+    it("declares plan capability", () => {
+      expect(track(makeBackend()).capabilities.plan).toBe(true)
+    })
+
+    it("normalizes opencode todo.updated -> plan.updated (whole list, todos -> entries)", async () => {
+      const push = createPushStream()
+      mockFetch.mockResolvedValueOnce({ ok: true, body: push.stream })
+      const backend = track(makeBackend())
+
+      const events: Array<{ type: string; properties: any }> = []
+      backend.subscribeGlobal((e) => events.push(e as any))
+      await backend.ready()
+
+      const todos = [
+        { content: "a", status: "completed", priority: "low" },
+        { content: "b", status: "pending", priority: "medium" },
+      ]
+      push.push({ type: "todo.updated", properties: { sessionID: "s1", todos } })
+
+      await vi.waitFor(() => expect(events).toHaveLength(1))
+      expect(events[0].type).toBe("plan.updated")
+      expect(events[0].properties).toEqual({ sessionID: "s1", entries: todos })
+    })
+
+    it("normalized plan.updated is filtered by session id on subscribeSession", async () => {
+      const push = createPushStream()
+      mockFetch.mockResolvedValueOnce({ ok: true, body: push.stream })
+      const backend = track(makeBackend())
+
+      const s1: string[] = []
+      backend.subscribeSession("s1", (e) => s1.push(e.type))
+      await backend.ready()
+
+      push.push({ type: "todo.updated", properties: { sessionID: "s2", todos: [] } })
+      push.push({ type: "todo.updated", properties: { sessionID: "s1", todos: [] } })
+
+      await vi.waitFor(() => expect(s1).toEqual(["plan.updated"]))
+    })
+
+    it("tolerates a malformed todo.updated (missing todos) -> empty entries", async () => {
+      const push = createPushStream()
+      mockFetch.mockResolvedValueOnce({ ok: true, body: push.stream })
+      const backend = track(makeBackend())
+
+      const events: Array<{ type: string; properties: any }> = []
+      backend.subscribeGlobal((e) => events.push(e as any))
+      await backend.ready()
+
+      push.push({ type: "todo.updated", properties: { sessionID: "s1" } })
+      await vi.waitFor(() => expect(events).toHaveLength(1))
+      expect(events[0].properties).toEqual({ sessionID: "s1", entries: [] })
     })
   })
 })

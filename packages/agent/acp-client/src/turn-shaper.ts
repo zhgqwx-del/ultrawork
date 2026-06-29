@@ -22,7 +22,7 @@ import type {
   ToolCallUpdate,
   Usage,
 } from "@agentclientprotocol/sdk"
-import type { UwMessageInfo, UwPart, UwSSEEvent, UwToolPart, UwToolState } from "./types.js"
+import type { UwMessageInfo, UwPart, UwPlanStep, UwSSEEvent, UwToolPart, UwToolState } from "./types.js"
 
 const FINISH_BY_STOP_REASON: Record<StopReason, string> = {
   end_turn: "stop",
@@ -63,7 +63,6 @@ export class TurnShaper {
   private tools = new Map<string, ToolEntry>()
   private turnCost: number | undefined
   private modelID: string | undefined
-  private plan: { messageID: string; partID: string } | null = null
   private userSeq = 0
   // Sealed between turns: after endTurn/failTurn, late session/update frames
   // (an aborted agent keeps emitting until cancel lands) must not re-open a
@@ -89,7 +88,6 @@ export class TurnShaper {
     this.current = null
     this.sealed = false
     this.tools.clear()
-    this.plan = null
     this.turnCost = undefined
     if (userText) {
       const messageID = `acp_usr_${this.sessionId}_${this.epoch}_${this.userSeq++}`
@@ -290,23 +288,17 @@ export class TurnShaper {
   }
 
   /**
-   * Plan (e.g. claude's TodoWrite) → one reasoning part per turn, replaced
-   * wholesale on every update. Reasoning parts always render inside the
-   * ExecutionFlow and can never leak into the answer (not an output type).
+   * Plan (e.g. claude's TodoWrite) → session-level `plan.updated`, whole list
+   * each time (ADR-038). NOT a message part: plan is session-scoped state, the
+   * peer of opencode's `todo.updated`. Keeping it off message.parts means it no
+   * longer mis-renders as a "deep thinking" reasoning block, and never leaks
+   * into the answer. The manager folds it into a per-session snapshot served at
+   * `GET /acp/session/:id/plan` for switch-back hydration.
    */
   private onPlan(entries: PlanEntry[]): void {
-    const text = formatPlan(entries)
-    if (!this.plan) {
-      const msg = this.ensureMessage()
-      this.plan = { messageID: msg.id, partID: this.newPartId() }
-    }
-    // part.updated upserts by id even after its message was sealed.
-    this.emitPart({
-      id: this.plan.partID,
-      sessionID: this.sessionId,
-      messageID: this.plan.messageID,
-      type: "reasoning",
-      text,
+    this.emit({
+      type: "plan.updated",
+      properties: { sessionID: this.sessionId, entries: entries.map(toPlanStep) },
     })
   }
 
@@ -397,15 +389,16 @@ export class TurnShaper {
   }
 }
 
-const PLAN_STATUS_ICON: Record<PlanEntry["status"], string> = {
-  pending: "○",
-  in_progress: "→",
-  completed: "✓",
-}
-
-function formatPlan(entries: PlanEntry[]): string {
-  const lines = entries.map((e) => `${PLAN_STATUS_ICON[e.status] ?? "○"} ${e.content}`)
-  return `Plan\n${lines.join("\n")}`
+/** ACP PlanEntry → unified UwPlanStep (ADR-038). ACP carries content/status
+ *  and may carry priority; nothing else is rendered. Priority is read
+ *  defensively (the adapter's schema is looser than ours). */
+function toPlanStep(entry: PlanEntry): UwPlanStep {
+  const priority = (entry as { priority?: string }).priority
+  return {
+    content: entry.content,
+    status: entry.status,
+    priority: priority === "high" || priority === "medium" || priority === "low" ? priority : undefined,
+  }
 }
 
 function contentBlockText(content: ContentBlock): string {

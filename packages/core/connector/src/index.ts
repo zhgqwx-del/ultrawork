@@ -10,6 +10,7 @@ export {
   type PartDeltaProperties,
   type SessionUpdatedProperties,
   type SessionStatusProperties,
+  type PlanUpdatedProperties,
   type LegacyDeltaProperties,
   type LegacyCompletedProperties,
 } from "./events"
