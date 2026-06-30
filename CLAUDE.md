@@ -177,6 +177,12 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
 | `plugin/index.ts` | 注册内置插件 `ToolDisclosurePlugin` 进 `INTERNAL_PLUGINS` | discussions/023 |
 | `plugin/tool-disclosure.ts` (**新文件**) | 渐进式工具披露引擎：折叠低频工具→name-only 名录(system)+`tool_search`，按需提升为原生；静态名录/会话清理/grace 安全降级；由 `experimental.tool_disclosure` config flag 或 `ULTRAWORK_TOOL_DISCLOSURE` env 门控 | discussions/023 |
 | `config/config.ts` (追加) | experimental schema 增 `tool_disclosure` / `tool_disclosure_debug` | discussions/023 |
+| `effect/soft-invalidate-registry.ts` (**新文件**) | 与 disposer 平行的「软失效器」集合：`registerSoftInvalidator`/`softInvalidate(dir)`（返回 settled 结果供上层报失败） | ADR-039 |
+| `effect/instance-state.ts` | `make(init, {soft})` 旗标 + `makeSoft` 包装：soft state 额外注册进软失效集合（复用同一 invalidator） | ADR-039 |
+| `project/instance.ts` | `softRefreshAll()`：遍历活跃目录只软失效（惰性驱逐），失败 `log.warn` 不静默；**不** disposeAll | ADR-039 |
+| `config/config.ts` (追加) | `refreshGlobal()`（软：`invalidateGlobal` + `softRefreshAll`，不 dispose）+ `updateGlobal(config,{soft})` 模式 + Interface/Service/public wrapper | ADR-039 |
+| `skill/index.ts` · `agent/agent.ts` · `command/index.ts` · `format/index.ts` · `provider/provider.ts` · `provider/auth.ts` · `tool/registry.ts` | `make`→`makeSoft`（8 个配置派生纯缓存标记可软失效；config 也标） | ADR-039 |
+| `server/routes/global.ts` | `PATCH /global/config?refresh=soft`（写+软刷新；缺省仍 hard disposeAll）+ 新增 `POST /global/refresh`（只软刷新不写） | ADR-039 |
 
 ### 修改 vendor/opencode 的完整流程
 
@@ -190,7 +196,7 @@ vim vendor/opencode/packages/opencode/src/...
 #    ⚠️ 必须列全 patch 涉及的所有文件，漏掉任何一个都会在重新生成时丢失对应改动
 #    ⚠️ 新文件（如 tool-disclosure.ts）必须先 `git add -N` 才会出现在 git diff 里
 cd vendor/opencode && \
-git add -N packages/opencode/src/plugin/tool-disclosure.ts && \
+git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
 git diff -- \
   packages/opencode/src/config/config.ts \
   packages/opencode/src/config/paths.ts \
@@ -200,10 +206,21 @@ git diff -- \
   packages/opencode/src/session/prompt.ts \
   packages/opencode/src/plugin/index.ts \
   packages/opencode/src/plugin/tool-disclosure.ts \
+  packages/opencode/src/effect/soft-invalidate-registry.ts \
+  packages/opencode/src/effect/instance-state.ts \
+  packages/opencode/src/project/instance.ts \
+  packages/opencode/src/skill/index.ts \
+  packages/opencode/src/agent/agent.ts \
+  packages/opencode/src/command/index.ts \
+  packages/opencode/src/format/index.ts \
+  packages/opencode/src/provider/provider.ts \
+  packages/opencode/src/provider/auth.ts \
+  packages/opencode/src/tool/registry.ts \
+  packages/opencode/src/server/routes/global.ts \
   packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \
   > ../../patches/vendor-opencode-config-fix.patch && \
-git reset -q packages/opencode/src/plugin/tool-disclosure.ts   # 取消 intent-to-add，保持 submodule index 干净
+git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
 
 # 3. 如果再新增文件，在 git diff 命令中追加路径（新文件记得也 git add -N）
 # 4. 重编译 sidecar

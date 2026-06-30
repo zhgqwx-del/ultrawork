@@ -74,6 +74,17 @@ export function useSkills() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Explicit refresh (e.g. after installing a skill). opencode caches the skill
+  // list in an instance state and has NO skill-dir watcher, so a freshly installed
+  // skill under ~/.config/ultrawork/skills/ is invisible until the cache is
+  // refreshed. Soft-refresh first (cheap, non-disruptive — does NOT abort in-flight
+  // turns, ADR-039) so the re-read reflects on-disk truth. Mount uses fetchData
+  // directly since caches are fresh at startup.
+  const refresh = useCallback(async () => {
+    await api.refreshGlobalConfig().catch(() => {})
+    await fetchData()
+  }, [api, fetchData])
+
   // Merge commands + skills into SkillItems, dedup by name
   const allItems = useMemo(() => {
     const seen = new Set<string>()
@@ -157,7 +168,7 @@ export function useSkills() {
     error,
     totalCount,
     skillsConfig,
-    refresh: fetchData,
+    refresh,
     updateSkillsConfig,
   }
 }

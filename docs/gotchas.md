@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-27 -->
+<!-- last-synced: 2026-06-30 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -208,6 +208,8 @@
 - **被刻意排除的路径（隔离关键）**：patch（`config/paths.ts`）在 `OPENCODE_APP_NAME` 设置时**跳过 `~/.opencode/` home 目录搜索** → 原生 opencode CLI 用户的 `~/.opencode/` 配置**不会泄漏进 Ultrawork**；同时 `config.ts` 的 endsWith 过滤改认 `.ultrawork` 后缀。
 - **各 sidecar 的 env 注入差异（易踩）**：只有 **opencode-server** 拿 `OPENCODE_APP_NAME`（`lib.rs:1957`）；**acp-client / gateway / knowledge sidecar 都不带它**——它们不直接解析 opencode 配置路径所以无需要（acp-client 只拿 `PATH`+`OPENCODE_SERVER_PASSWORD`，见 `lib.rs:1932`）。生产环境**四个 sidecar 都不被注入 `XDG_CONFIG_HOME`**（继承用户 shell 环境，通常未设）。
 - **`agents.json` 现跟随 `XDG_CONFIG_HOME` 隔离（2026-06-23 已修，曾是与 §8 同源的缺口）**：`agents-config.ts` 早先硬编码 `homedir()/.config/ultrawork`、无视 XDG，设了 `XDG_CONFIG_HOME` 时与 opencode 配置劈叉。现 `config-paths.ts` 的 `resolveConfigDir()`/`configFile()` SSOT 镜像 Rust `global_config_dir()`（读 XDG_CONFIG_HOME 否则回落 `~/.config`，再接 `ultrawork`），与 opencode-server 同一命名空间；生产默认路径不变。**sidecar 内三处 config 文件（agents.json / gemini-acp-settings.json / sidecar-auth.json）全部走这一个 SSOT**，不再各自硬编码。详见 §8 对应条目。
+- **改全局 config 想"即时生效"别用 hard `invalidate`——它 `disposeAll` 会中止所有在流回合（ADR-039）**：opencode 的 `Config.invalidate()`（`PATCH /global/config` 缺省路径、`config.ts`）= `invalidateGlobal` + **`Instance.disposeAll()`**，而 `disposeInstance` 运行 `SessionPrompt` runner 的 finalizer → `Fiber.interrupt` → `llm.ts acquireRelease` `ctrl.abort()` → **真正 abort 那个实例所有正在流式的回合**。所以"在设置页改/加/删 provider"若走 hard 路径，会把**所有**工作区（含 Team 并发委派）正在流的回合一起打断。反过来：单纯从外部进程（Rust）写全局 `opencode.json` **运行时不生效**——全局 config 是无限 TTL 缓存（`cachedGlobal`）、**配置目录无 file watcher**、`POST /instance/dispose`/`/global/dispose` 都**不**刷全局缓存（只清实例缓存后又从无限缓存重读旧全局）。**正解 = 软刷新**：`PATCH /global/config?refresh=soft` / `POST /global/refresh` → `Config.refreshGlobal()` 只惰性驱逐**配置派生纯缓存**（config/provider/provider-auth/skill/agent/command/format/tool-registry，经 `InstanceState.makeSoft` 标记 + `soft-invalidate-registry`），**绝不碰活资源**（流式 runner/MCP 子进程/LSP/PTY/watcher/Bus）→ 即时生效且不打断在流回合。Ultrawork 的 `patchGlobalConfig` 已默认带 `?refresh=soft`。**判断标记 (A) 可软失效 vs (B) 必存活**：看该 `InstanceState` 的 init 有没有注册 `addFinalizer`/`acquireRelease` 杀活资源——有就是 (B)、绝不能 soft。**已知限制**：软刷新不覆盖 MCP/plugin/LSP 配置变更（它们是 (B)，需 hard/重启）；但 MCP 走 Rust 持久化 + `POST /mcp` 本就 live、不依赖此机制，API key 也不进缓存（`Auth` 每次读 `auth.json`）。**bump 连带**：(A)/(B) 分类基于 v1.3.13 的 `InstanceState.make` 站点；上游若新增 state，按"有无杀资源 finalizer"归类，纯配置缓存才标 `makeSoft`。
+- **自定义 provider 配置是全局的（ADR-039，2026-06-30 起）**：经 `PATCH /global/config`（`patchGlobalConfig`）写 `~/.config/ultrawork/opencode.json`，**不再** per-workspace（旧 `PATCH /config` 写 `<workspace>/opencode.json` 的行为见本节上方 line 36 仍适用于 `model` 选择等其它 key）。换工作区不丢、无工作区也可配。**存量坑**：opencode 合并顺序"全局先、项目后"、**项目优先级更高**——老用户在某工作区残留过 `provider`/`disabled_providers` 会**遮蔽**新全局值（编辑看似无效），需手删该工作区 `opencode.json` 的对应块。`model` 选择仍刻意 per-workspace（会话粘滞，见 §9）。
 
 ## 12. 跨平台（macOS / Windows / Linux，ADR-037，2026-06-27）
 

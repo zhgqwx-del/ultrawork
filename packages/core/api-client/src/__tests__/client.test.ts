@@ -406,6 +406,30 @@ describe("ApiClient", () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body)
       expect(body.model).toBe("opencode/new-model")
     })
+
+    it("getGlobalConfig hits /global/config (not the per-workspace /config)", async () => {
+      const config = { disabled_providers: ["x"] }
+      mockFetch.mockResolvedValueOnce(jsonResponse(config))
+      const result = await client.getGlobalConfig()
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/config")
+      expect(result).toEqual(config)
+    })
+
+    it("patchGlobalConfig PATCHes /global/config?refresh=soft", async () => {
+      const updates = { provider: { foo: { name: "Foo" } } }
+      mockFetch.mockResolvedValueOnce(jsonResponse(updates))
+      await client.patchGlobalConfig(updates)
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/config?refresh=soft")
+      expect(mockFetch.mock.calls[0][1].method).toBe("PATCH")
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).provider.foo.name).toBe("Foo")
+    })
+
+    it("refreshGlobalConfig POSTs /global/refresh", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(true))
+      await client.refreshGlobalConfig()
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/refresh")
+      expect(mockFetch.mock.calls[0][1].method).toBe("POST")
+    })
   })
 
   // --- Provider ---
@@ -458,12 +482,13 @@ describe("ApiClient", () => {
   // --- Custom provider ---
 
   describe("custom provider operations", () => {
-    // Sequence: (optional) PUT /auth → PATCH /config (provider def) →
-    // setProviderDisabled(false) which GETs /config (no-op when not disabled).
-    it("upsertCustomProvider (OpenAI) writes the key to auth then the provider config", async () => {
+    // Sequence (ADR-039, global scope): (optional) PUT /auth → PATCH /global/config
+    // (provider def) → setProviderDisabled(false) which GETs /global/config (no-op
+    // when not disabled).
+    it("upsertCustomProvider (OpenAI) writes the key to auth then the global provider config", async () => {
       mockFetch.mockResolvedValueOnce(emptyResponse(204)) // PUT /auth
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable read → no-op)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable read → no-op)
       await client.upsertCustomProvider({
         id: "my-llm",
         name: "My LLM",
@@ -475,8 +500,8 @@ describe("ApiClient", () => {
       // 1st: PUT /auth/my-llm
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
       expect(mockFetch.mock.calls[0][1].method).toBe("PUT")
-      // 2nd: PATCH /config with provider def
-      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/config")
+      // 2nd: PATCH /global/config?refresh=soft with provider def
+      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/global/config?refresh=soft")
       expect(mockFetch.mock.calls[1][1].method).toBe("PATCH")
       const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-llm"]
       expect(p.npm).toBe("@ai-sdk/openai-compatible")
@@ -487,8 +512,8 @@ describe("ApiClient", () => {
     })
 
     it("upsertCustomProvider (Anthropic) maps npm + skips auth when no key", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable read → no-op)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable read → no-op)
       await client.upsertCustomProvider({
         id: "my-anth",
         name: "My Anthropic",
@@ -496,9 +521,9 @@ describe("ApiClient", () => {
         baseURL: "https://gw.example.com/v1",
         models: [{ id: "c1", name: "Claude proxy" }],
       })
-      // No PUT /auth (no apiKey): PATCH /config then GET /config (un-disable no-op)
+      // No PUT /auth (no apiKey): PATCH /global/config then GET /global/config (un-disable no-op)
       expect(mockFetch).toHaveBeenCalledTimes(2)
-      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/config")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/config?refresh=soft")
       expect(mockFetch.mock.calls[0][1].method).toBe("PATCH")
       expect(JSON.parse(mockFetch.mock.calls[0][1].body).provider["my-anth"].npm).toBe("@ai-sdk/anthropic")
     })
@@ -657,17 +682,17 @@ describe("ApiClient", () => {
   // --- Custom provider ---
 
   describe("upsertCustomProvider", () => {
-    /** Extract the parsed body of the PATCH /config call. */
+    /** Extract the parsed body of the PATCH /global/config?refresh=soft call (ADR-039). */
     function patchedConfig() {
       const call = mockFetch.mock.calls.find(
-        (c) => c[0] === "http://localhost:4096/config" && c[1]?.method === "PATCH",
+        (c) => c[0] === "http://localhost:4096/global/config?refresh=soft" && c[1]?.method === "PATCH",
       )
       return JSON.parse(call![1].body)
     }
 
     it("maps capability flags, vision→modalities, and limit", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config
-      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (setProviderDisabled)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (setProviderDisabled)
 
       await client.upsertCustomProvider({
         id: "my-llm",

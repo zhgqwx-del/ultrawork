@@ -173,11 +173,6 @@ export function ModelsSection() {
   // the Tauri webview; matches the app's inline-action convention).
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  // Custom-provider config persists per-workspace; without a workspace context
-  // the api client sends no x-opencode-directory and hits a drifting default
-  // instance where the provider never resolves (discussion 006 §11.9).
-  const hasWorkspace = Boolean(api.getWorkingDirectory())
-
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
@@ -261,7 +256,9 @@ export function ModelsSection() {
         await api.putProviderAuth(selectedProvider.id, configApiKey.trim())
       }
       if (configBaseUrl.trim()) {
-        await api.patchConfig({
+        // Global scope (ADR-039): write the provider override to the global
+        // config so it applies in every workspace and goes live immediately.
+        await api.patchGlobalConfig({
           provider: {
             [selectedProvider.id]: {
               options: {
@@ -705,15 +702,13 @@ export function ModelsSection() {
             <button
               type="button"
               onClick={handleShowCustom}
-              disabled={!hasWorkspace}
-              title={!hasWorkspace ? t("model.customProvider.noWorkspace") : undefined}
-              className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[var(--color-border)] px-4 py-3 text-left transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--color-border)] disabled:hover:bg-transparent"
+              className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[var(--color-border)] px-4 py-3 text-left transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-accent)]"
             >
               <Sparkles className="size-4 shrink-0 text-[var(--color-brand)]" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-[var(--color-fg)]">{t("model.customProvider.add")}</div>
                 <div className="text-xs text-[var(--color-fg-muted)]">
-                  {hasWorkspace ? t("model.customProvider.hint") : t("model.customProvider.noWorkspace")}
+                  {t("model.customProvider.hint")}
                 </div>
               </div>
             </button>
