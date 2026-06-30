@@ -87,10 +87,7 @@ opencode 会话的 model 是**会话粘滞**的（首轮 prompt 解析后固化�
 - 零 vendor 改动、零新 Tauri 命令、零跨平台路径代码，diff 极小，bump 维护面不增加。
 
 **负面 / 风险**
-- **存量迁移（必须处理）**：opencode 配置合并顺序是"全局先、项目后"，**项目配置优先级更高**。已在某工作区 `opencode.json` 写过 provider 的老用户，其工作区残留会**覆盖**新写的全局 provider。处置选一：
-  - (a) **一次性清扫**：首启检测各 recent workspace `opencode.json` 的 `provider`/`disabled_providers`，迁移并入全局后从项目文件删除（best-effort，按 recent-workspaces 列表，找不到就算）；
-  - (b) **文档化 + 不迁移**：只保证新写为全局，老残留极少（多数用户工作区少），文档说明"如旧工作区仍有残留 provider 覆盖全局，手动删该工作区 `opencode.json` 的 `provider` 块"。
-  - 推荐 (a) 的轻量版（仅扫 recent workspaces，不全盘遍历），失败安全降级到 (b)。**第一步先做 (b) 文档化，(a) 留观察。**
+- **存量迁移 — 经评估不实现（无存量用户）**：opencode 配置合并顺序是"全局先、项目后"，**项目配置优先级更高**。理论上，已在某工作区 `opencode.json` 写过 provider 的老用户，其工作区残留会**覆盖**新写的全局 provider。曾考虑两案：(a) 首启一次性清扫 recent workspaces（迁移残留入全局后剥离）；(b) 仅文档化、手动清理。**最终决策：(b)，且不实现 (a)。** 该软件尚无存量用户——自动迁移是为"不存在的安装"写的兼容代码，纯冗余且要永久维护（曾实现 (a) 后整段回退，分支已删）。残留只可能来自开发者自测，手动删对应工作区 `opencode.json` 的 `provider`/`disabled_providers` 块即可（gotchas §8 已记）。**若将来有了存量用户基数再考虑 (a)。**
 - **跨进程写竞态（低、已存在类）**：Rust（`write_mcp_config`，原子 rename + 进程内锁）与 opencode（`updateGlobal`，`fs.writeFileString` 非原子）写**同一个**全局 `opencode.json`。极端并发下 last-writer-wins 可能丢一侧改动；但二者都是用户驱动的、相隔数秒的离散动作（设置页存 provider vs 加 MCP），重叠概率极低，且 Rust 侧读到半写文件会解析失败而中止（不损坏）。与 gotchas §8 既有结论一致（"last writer wins，文件不损坏"）。不额外加锁。
 - 跨平台：无新增路径代码；全局文件位置由 opencode 自身（`Global.Path.config`，已随 `OPENCODE_APP_NAME` + xdg-basedir 三平台解析）决定。
 - 测试：api-client 改 `upsertCustomProvider`/`setProviderDisabled` 的单测断言从 `/config` 改为 `/global/config`；新增 `getGlobalConfig`/`patchGlobalConfig` 单测；desktop `models-section.test.tsx` baseURL 路径断言更新；真机走查"配 provider → 切工作区仍在 → 即时可选"。**无 Rust 测试改动。**
