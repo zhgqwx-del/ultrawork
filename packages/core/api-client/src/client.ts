@@ -287,6 +287,41 @@ export class ApiClient {
     })
   }
 
+  /** Read the GLOBAL config file (`~/.config/ultrawork/opencode.json`), not the
+   *  merged per-workspace view. Use for editing global-scoped keys (providers). */
+  async getGlobalConfig(): Promise<OpenCodeConfig> {
+    return this.request<OpenCodeConfig>("/global/config")
+  }
+
+  /**
+   * Update the GLOBAL config file via opencode's `Config.updateGlobal`. Unlike
+   * `patchConfig` (which writes the per-workspace `<dir>/opencode.json` and needs
+   * an `x-opencode-directory`), this writes `~/.config/ultrawork/opencode.json`
+   * and makes the change live immediately for every workspace — no restart, no
+   * workspace required (ADR-039).
+   *
+   * Uses `?refresh=soft` so only the config-derived caches (providers/skills/
+   * agents/commands) are re-read; in-flight streaming turns in any workspace are
+   * NOT aborted (a plain global config write would `disposeAll`, killing them).
+   */
+  async patchGlobalConfig(updates: Partial<OpenCodeConfig>): Promise<OpenCodeConfig> {
+    return this.request<OpenCodeConfig>("/global/config?refresh=soft", {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    })
+  }
+
+  /**
+   * Soft-refresh the global config-derived caches (providers/skills/agents/
+   * commands) WITHOUT writing config and without aborting in-flight turns. Call
+   * after an external change to the global config dir that opencode can't observe
+   * — e.g. a newly installed skill copied into `~/.config/ultrawork/skills/`
+   * (opencode has no skill-dir watcher; the skill list is cached until refreshed).
+   */
+  async refreshGlobalConfig(): Promise<void> {
+    await this.request<boolean>("/global/refresh", { method: "POST" })
+  }
+
   // --- Provider ---
 
   async getProviders(): Promise<Provider[]> {
@@ -333,12 +368,13 @@ export class ApiClient {
 
   /**
    * Create or update a user-defined custom provider (OpenAI-compatible or
-   * Anthropic protocol). Writes the provider definition to opencode.json via
-   * PATCH /config and the API key (if any) to auth.json via PUT /auth.
+   * Anthropic protocol). Writes the provider definition to the GLOBAL
+   * opencode.json via PATCH /global/config and the API key (if any) to the
+   * (already-global) auth.json via PUT /auth.
    *
-   * Persists to the CURRENT workspace's opencode.json (per-workspace scope) —
-   * `getWorkingDirectory()` must be non-empty or the request hits a drifting
-   * default instance (discussion 006 §11.9).
+   * Global scope (ADR-039): the provider is visible in every workspace and the
+   * change is live immediately (updateGlobal invalidates the config cache). No
+   * active workspace is required.
    */
   async upsertCustomProvider(def: CustomProviderDef): Promise<void> {
     const npm = def.protocol === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible"
@@ -376,7 +412,7 @@ export class ApiClient {
     if (def.apiKey?.trim()) {
       await this.putProviderAuth(def.id, def.apiKey.trim())
     }
-    await this.patchConfig({
+    await this.patchGlobalConfig({
       provider: {
         [def.id]: {
           name: def.name,
@@ -398,16 +434,18 @@ export class ApiClient {
 
   /**
    * Hide/unhide a provider via opencode's `disabled_providers` list. Used to
-   * "delete" a custom provider (PATCH can't remove a config key). Reads the
-   * current list and writes back the full array (mergeDeep replaces arrays).
+   * "delete" a custom provider (PATCH can't remove a config key). Reads and
+   * writes the GLOBAL config (ADR-039) so the hide is workspace-wide and matches
+   * where `upsertCustomProvider` writes the provider definition. Reads/writes the
+   * full array (mergeDeep replaces arrays).
    */
   async setProviderDisabled(providerId: string, disabled: boolean): Promise<void> {
-    const config = await this.getConfig()
+    const config = await this.getGlobalConfig()
     const current = Array.isArray(config.disabled_providers) ? config.disabled_providers : []
     const has = current.includes(providerId)
     if (disabled === has) return
     const next = disabled ? [...current, providerId] : current.filter((id) => id !== providerId)
-    await this.patchConfig({ disabled_providers: next })
+    await this.patchGlobalConfig({ disabled_providers: next })
   }
 
   // --- Agent ---

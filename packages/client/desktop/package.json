@@ -22,7 +22,12 @@
     "e2e:plan-ui": "bun run --bun e2e/plan-panel-ui.e2e.ts",
     "e2e:plan-realmodel": "bun run --bun e2e/plan-realmodel-ui.e2e.ts",
     "e2e:plan-acp": "bun run --bun e2e/plan-acp.e2e.ts",
-    "e2e:plan-switchback": "bun run --bun e2e/plan-switchback.e2e.ts"
+    "e2e:plan-switchback": "bun run --bun e2e/plan-switchback.e2e.ts",
+    "e2e:provider-global": "bun run --bun e2e/global-provider-config.e2e.ts",
+    "e2e:provider-soft-refresh": "bun run --bun e2e/provider-soft-refresh.e2e.ts",
+    "e2e:skill-soft-refresh": "bun run --bun e2e/skill-soft-refresh.e2e.ts",
+    "e2e:provider-ui": "bun run --bun e2e/provider-ui-walkthrough.e2e.ts",
+    "e2e:provider-realmodel": "bun run --bun e2e/provider-realmodel.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",

@@ -27,8 +27,34 @@ index b104dd267..a94791e3b 100755
    ? allTargets.filter((item) => {
        if (item.os !== process.platform || item.arch !== process.arch) {
          return false
+diff --git a/packages/opencode/src/agent/agent.ts b/packages/opencode/src/agent/agent.ts
+index 0c6fe6ec9..71de4bf2d 100644
+--- a/packages/opencode/src/agent/agent.ts
++++ b/packages/opencode/src/agent/agent.ts
+@@ -77,7 +77,7 @@ export namespace Agent {
+       const skill = yield* Skill.Service
+       const provider = yield* Provider.Service
+ 
+-      const state = yield* InstanceState.make<State>(
++      const state = yield* InstanceState.makeSoft<State>(
+         Effect.fn("Agent.state")(function* (ctx) {
+           const cfg = yield* config.get()
+           const skillDirs = yield* skill.dirs()
+diff --git a/packages/opencode/src/command/index.ts b/packages/opencode/src/command/index.ts
+index 088d7c565..8c6841674 100644
+--- a/packages/opencode/src/command/index.ts
++++ b/packages/opencode/src/command/index.ts
+@@ -165,7 +165,7 @@ export namespace Command {
+         }
+       })
+ 
+-      const state = yield* InstanceState.make<State>((ctx) => init(ctx))
++      const state = yield* InstanceState.makeSoft<State>((ctx) => init(ctx))
+ 
+       const get = Effect.fn("Command.get")(function* (name: string) {
+         const s = yield* InstanceState.get(state)
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28b..7968040ce 100644
+index 850bcc28b..15671dd78 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
 @@ -60,13 +60,14 @@ export namespace Config {
@@ -93,7 +119,18 @@ index 850bcc28b..7968040ce 100644
          })
          .optional(),
      })
-@@ -1335,7 +1357,9 @@ export namespace Config {
+@@ -1056,8 +1078,9 @@ export namespace Config {
+     readonly get: () => Effect.Effect<Info>
+     readonly getGlobal: () => Effect.Effect<Info>
+     readonly update: (config: Info) => Effect.Effect<void>
+-    readonly updateGlobal: (config: Info) => Effect.Effect<Info>
++    readonly updateGlobal: (config: Info, opts?: { soft?: boolean }) => Effect.Effect<Info>
+     readonly invalidate: (wait?: boolean) => Effect.Effect<void>
++    readonly refreshGlobal: (wait?: boolean) => Effect.Effect<void>
+     readonly directories: () => Effect.Effect<string[]>
+     readonly waitForDependencies: () => Effect.Effect<void>
+   }
+@@ -1335,7 +1358,9 @@ export namespace Config {
            const deps: Promise<void>[] = []
  
            for (const dir of unique(directories)) {
@@ -104,7 +141,16 @@ index 850bcc28b..7968040ce 100644
                for (const file of ["opencode.json", "opencode.jsonc"]) {
                  const source = path.join(dir, file)
                  log.debug(`loading config from ${source}`)
-@@ -1479,7 +1503,7 @@ export namespace Config {
+@@ -1459,7 +1484,7 @@ export namespace Config {
+           }
+         })
+ 
+-        const state = yield* InstanceState.make<State>(
++        const state = yield* InstanceState.makeSoft<State>(
+           Effect.fn("Config.state")(function* (ctx) {
+             return yield* loadInstanceState(ctx)
+           }),
+@@ -1479,7 +1504,7 @@ export namespace Config {
  
          const update = Effect.fn("Config.update")(function* (config: Info) {
            const dir = yield* InstanceState.directory
@@ -113,6 +159,67 @@ index 850bcc28b..7968040ce 100644
            const existing = yield* loadFile(file)
            yield* fs
              .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
+@@ -1504,7 +1529,18 @@ export namespace Config {
+           else void task
+         })
+ 
+-        const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info) {
++        // Soft sibling of `invalidate`: drop the global config cache and evict the
++        // soft-registered (config-derived) instance caches, WITHOUT disposing
++        // instances. Live resources and in-flight streaming turns are untouched.
++        // Waits by default so a follow-up GET sees the rebuilt state.
++        const refreshGlobal = Effect.fn("Config.refreshGlobal")(function* (wait = true) {
++          yield* invalidateGlobal
++          const task = Instance.softRefreshAll().catch(() => undefined)
++          if (wait) yield* Effect.promise(() => task)
++          else void task
++        })
++
++        const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info, opts?: { soft?: boolean }) {
+           const file = globalConfigFile()
+           const before = (yield* readConfigFile(file)) ?? "{}"
+           const input = writable(config)
+@@ -1521,7 +1557,10 @@ export namespace Config {
+             yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
+           }
+ 
+-          yield* invalidate()
++          // soft: refresh config-derived caches without aborting in-flight turns
++          // (ADR-039). Default (hard): full disposeAll, preserving prior behavior.
++          if (opts?.soft) yield* refreshGlobal()
++          else yield* invalidate()
+           return next
+         })
+ 
+@@ -1531,6 +1570,7 @@ export namespace Config {
+           update,
+           updateGlobal,
+           invalidate,
++          refreshGlobal,
+           directories,
+           waitForDependencies,
+         })
+@@ -1557,14 +1597,18 @@ export namespace Config {
+     return runPromise((svc) => svc.update(config))
+   }
+ 
+-  export async function updateGlobal(config: Info) {
+-    return runPromise((svc) => svc.updateGlobal(config))
++  export async function updateGlobal(config: Info, opts?: { soft?: boolean }) {
++    return runPromise((svc) => svc.updateGlobal(config, opts))
+   }
+ 
+   export async function invalidate(wait = false) {
+     return runPromise((svc) => svc.invalidate(wait))
+   }
+ 
++  export async function refreshGlobal(wait = true) {
++    return runPromise((svc) => svc.refreshGlobal(wait))
++  }
++
+   export async function directories() {
+     return runPromise((svc) => svc.directories())
+   }
 diff --git a/packages/opencode/src/config/paths.ts b/packages/opencode/src/config/paths.ts
 index 82ccf3945..07bc9e5a3 100644
 --- a/packages/opencode/src/config/paths.ts
@@ -143,6 +250,108 @@ index 82ccf3945..07bc9e5a3 100644
        ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
      ]
    }
+diff --git a/packages/opencode/src/effect/instance-state.ts b/packages/opencode/src/effect/instance-state.ts
+index cc5901fb5..45ed02617 100644
+--- a/packages/opencode/src/effect/instance-state.ts
++++ b/packages/opencode/src/effect/instance-state.ts
+@@ -3,6 +3,7 @@ import { Instance, type InstanceContext } from "@/project/instance"
+ import { Context } from "@/util/context"
+ import { InstanceRef } from "./instance-ref"
+ import { registerDisposer } from "./instance-registry"
++import { registerSoftInvalidator } from "./soft-invalidate-registry"
+ 
+ const TypeId = "~opencode/InstanceState"
+ 
+@@ -32,6 +33,7 @@ export namespace InstanceState {
+ 
+   export const make = <A, E = never, R = never>(
+     init: (ctx: InstanceContext) => Effect.Effect<A, E, R | Scope.Scope>,
++    opts?: { soft?: boolean },
+   ): Effect.Effect<InstanceState<A, E, Exclude<R, Scope.Scope>>, never, R | Scope.Scope> =>
+     Effect.gen(function* () {
+       const cache = yield* ScopedCache.make<string, A, E, R>({
+@@ -42,15 +44,31 @@ export namespace InstanceState {
+           }),
+       })
+ 
+-      const off = registerDisposer((directory) => Effect.runPromise(ScopedCache.invalidate(cache, directory)))
++      const invalidator = (directory: string) => Effect.runPromise(ScopedCache.invalidate(cache, directory))
++      const off = registerDisposer(invalidator)
+       yield* Effect.addFinalizer(() => Effect.sync(off))
+ 
++      // Config-derived caches additionally register with the soft-invalidate
++      // registry so Config.refreshGlobal can evict+rebuild them WITHOUT a full
++      // instance dispose (which would abort in-flight streaming turns). Live-
++      // resource states must NOT pass soft. See soft-invalidate-registry.ts.
++      if (opts?.soft) {
++        const offSoft = registerSoftInvalidator(invalidator)
++        yield* Effect.addFinalizer(() => Effect.sync(offSoft))
++      }
++
+       return {
+         [TypeId]: TypeId,
+         cache,
+       }
+     })
+ 
++  // Convenience for config-derived caches: same as make, but also registers the
++  // state for soft refresh (see make's `soft` option).
++  export const makeSoft = <A, E = never, R = never>(
++    init: (ctx: InstanceContext) => Effect.Effect<A, E, R | Scope.Scope>,
++  ): Effect.Effect<InstanceState<A, E, Exclude<R, Scope.Scope>>, never, R | Scope.Scope> => make(init, { soft: true })
++
+   export const get = <A, E, R>(self: InstanceState<A, E, R>) =>
+     Effect.gen(function* () {
+       return yield* ScopedCache.get(self.cache, yield* directory)
+diff --git a/packages/opencode/src/effect/soft-invalidate-registry.ts b/packages/opencode/src/effect/soft-invalidate-registry.ts
+new file mode 100644
+index 000000000..f66dc0a85
+--- /dev/null
++++ b/packages/opencode/src/effect/soft-invalidate-registry.ts
+@@ -0,0 +1,30 @@
++// Soft-invalidation registry — a parallel set to instance-registry's disposers.
++//
++// A "soft refresh" re-reads config-derived caches (config / provider / skills /
++// agents / commands / formatters / tool-registry) WITHOUT tearing down the whole
++// instance. Only InstanceStates created via `InstanceState.makeSoft` register
++// here; live-resource states (session prompt runners, MCP clients, LSP servers,
++// PTYs, file watchers, Bus PubSubs, permission/question deferreds) do NOT — so an
++// in-flight streaming turn survives a soft refresh completely untouched.
++//
++// Driven by `Config.refreshGlobal` (HTTP: `PATCH /global/config?refresh=soft` and
++// `POST /global/refresh`) to make a global config / skill change live immediately
++// without aborting any active work. See Ultrawork ADR-039.
++
++const soft = new Set<(directory: string) => Promise<void>>()
++
++export function registerSoftInvalidator(invalidator: (directory: string) => Promise<void>) {
++  soft.add(invalidator)
++  return () => {
++    soft.delete(invalidator)
++  }
++}
++
++// Evict the soft-registered caches for one directory. Invalidation is lazy
++// eviction (the ScopedCache rebuilds on next access in dependency order), so the
++// registration order of invalidators does not affect correctness. Returns the
++// settled results so the caller can surface failures (a swallowed eviction failure
++// would otherwise leave a stale cache with no signal).
++export async function softInvalidate(directory: string): Promise<PromiseSettledResult<void>[]> {
++  return Promise.allSettled([...soft].map((invalidator) => invalidator(directory)))
++}
+diff --git a/packages/opencode/src/format/index.ts b/packages/opencode/src/format/index.ts
+index c05c2bf45..4b85aaa6d 100644
+--- a/packages/opencode/src/format/index.ts
++++ b/packages/opencode/src/format/index.ts
+@@ -39,7 +39,7 @@ export namespace Format {
+       const config = yield* Config.Service
+       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+ 
+-      const state = yield* InstanceState.make(
++      const state = yield* InstanceState.makeSoft(
+         Effect.fn("Format.state")(function* (_ctx) {
+           const commands: Record<string, string[] | false> = {}
+           const formatters: Record<string, Formatter.Info> = {}
 diff --git a/packages/opencode/src/global/index.ts b/packages/opencode/src/global/index.ts
 index 869019e2c..6509ec1ba 100644
 --- a/packages/opencode/src/global/index.ts
@@ -502,6 +711,115 @@ index 000000000..61aad50d9
 +    },
 +  }
 +}
+diff --git a/packages/opencode/src/project/instance.ts b/packages/opencode/src/project/instance.ts
+index a0d6f2414..c69ef6b07 100644
+--- a/packages/opencode/src/project/instance.ts
++++ b/packages/opencode/src/project/instance.ts
+@@ -1,5 +1,6 @@
+ import { GlobalBus } from "@/bus/global"
+ import { disposeInstance } from "@/effect/instance-registry"
++import { softInvalidate } from "@/effect/soft-invalidate-registry"
+ import { Filesystem } from "@/util/filesystem"
+ import { iife } from "@/util/iife"
+ import { Log } from "@/util/log"
+@@ -172,4 +173,21 @@ export const Instance = {
+ 
+     return disposal.all
+   },
++  // Soft refresh: evict the soft-registered (config-derived) caches for every live
++  // instance so a global config/skill change is picked up immediately, WITHOUT
++  // disposing the instances. Live resources (session runners, MCP clients, LSP,
++  // watchers, Bus) are untouched, so in-flight streaming turns are not aborted.
++  // See effect/soft-invalidate-registry.ts and Config.refreshGlobal.
++  async softRefreshAll() {
++    const dirs = [...cache.keys()]
++    const settled = await Promise.all(dirs.map((dir) => softInvalidate(dir)))
++    // Surface (don't swallow) any cache that failed to evict — otherwise a stale
++    // cache would silently return old data with HTTP 200 and no signal.
++    const failed = settled.flat().filter((r) => r.status === "rejected")
++    if (failed.length > 0)
++      Log.Default.warn("soft refresh: some caches failed to evict", {
++        count: failed.length,
++        reasons: failed.map((r) => String((r as PromiseRejectedResult).reason)).slice(0, 5),
++      })
++  },
+ }
+diff --git a/packages/opencode/src/provider/auth.ts b/packages/opencode/src/provider/auth.ts
+index 38ef4b11f..8cf064826 100644
+--- a/packages/opencode/src/provider/auth.ts
++++ b/packages/opencode/src/provider/auth.ts
+@@ -116,7 +116,7 @@ export namespace ProviderAuth {
+     Effect.gen(function* () {
+       const auth = yield* Auth.Service
+       const plugin = yield* Plugin.Service
+-      const state = yield* InstanceState.make<State>(
++      const state = yield* InstanceState.makeSoft<State>(
+         Effect.fn("ProviderAuth.state")(function* () {
+           const plugins = yield* plugin.list()
+           return {
+diff --git a/packages/opencode/src/provider/provider.ts b/packages/opencode/src/provider/provider.ts
+index afd69f9e7..e48dd3e01 100644
+--- a/packages/opencode/src/provider/provider.ts
++++ b/packages/opencode/src/provider/provider.ts
+@@ -982,7 +982,7 @@ export namespace Provider {
+       const auth = yield* Auth.Service
+       const plugin = yield* Plugin.Service
+ 
+-      const state = yield* InstanceState.make<State>(() =>
++      const state = yield* InstanceState.makeSoft<State>(() =>
+         Effect.gen(function* () {
+           using _ = log.time("state")
+           const cfg = yield* config.get()
+diff --git a/packages/opencode/src/server/routes/global.ts b/packages/opencode/src/server/routes/global.ts
+index 16b9e559f..b2445c967 100644
+--- a/packages/opencode/src/server/routes/global.ts
++++ b/packages/opencode/src/server/routes/global.ts
+@@ -202,7 +202,8 @@ export const GlobalRoutes = lazy(() =>
+       "/config",
+       describeRoute({
+         summary: "Update global configuration",
+-        description: "Update global OpenCode configuration settings and preferences.",
++        description:
++          "Update global OpenCode configuration settings and preferences. Pass ?refresh=soft to re-read config-derived caches (providers/skills/agents/commands) without disposing instances or aborting in-flight turns; default disposes all instances.",
+         operationId: "global.config.update",
+         responses: {
+           200: {
+@@ -219,10 +220,34 @@ export const GlobalRoutes = lazy(() =>
+       validator("json", Config.Info),
+       async (c) => {
+         const config = c.req.valid("json")
+-        const next = await Config.updateGlobal(config)
++        const soft = c.req.query("refresh") === "soft"
++        const next = await Config.updateGlobal(config, { soft })
+         return c.json(next)
+       },
+     )
++    .post(
++      "/refresh",
++      describeRoute({
++        summary: "Soft-refresh global configuration",
++        description:
++          "Re-read config-derived caches (providers/skills/agents/commands/formatters) for every live instance WITHOUT disposing instances or aborting in-flight streaming turns. Use after an external write to the global config dir (e.g. a newly installed skill).",
++        operationId: "global.refresh",
++        responses: {
++          200: {
++            description: "Soft refresh complete",
++            content: {
++              "application/json": {
++                schema: resolver(z.boolean()),
++              },
++            },
++          },
++        },
++      }),
++      async (c) => {
++        await Config.refreshGlobal(true)
++        return c.json(true)
++      },
++    )
+     .post(
+       "/dispose",
+       describeRoute({
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
 index dc89db409..31cb5666e 100644
 --- a/packages/opencode/src/session/llm.ts
@@ -640,6 +958,32 @@ index 8facf7aba..5cd04ec12 100644
                  if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
  
                  if (step > 1 && lastFinished) {
+diff --git a/packages/opencode/src/skill/index.ts b/packages/opencode/src/skill/index.ts
+index a2ac3d351..79fb24cc2 100644
+--- a/packages/opencode/src/skill/index.ts
++++ b/packages/opencode/src/skill/index.ts
+@@ -196,7 +196,7 @@ export namespace Skill {
+       const config = yield* Config.Service
+       const bus = yield* Bus.Service
+       const fsys = yield* AppFileSystem.Service
+-      const state = yield* InstanceState.make(
++      const state = yield* InstanceState.makeSoft(
+         Effect.fn("Skill.state")(function* (ctx) {
+           const s: State = { skills: {}, dirs: new Set() }
+           yield* loadSkills(s, config, discovery, bus, fsys, ctx.directory, ctx.worktree)
+diff --git a/packages/opencode/src/tool/registry.ts b/packages/opencode/src/tool/registry.ts
+index 1bb270716..0fa5d9c27 100644
+--- a/packages/opencode/src/tool/registry.ts
++++ b/packages/opencode/src/tool/registry.ts
+@@ -58,7 +58,7 @@ export namespace ToolRegistry {
+       const config = yield* Config.Service
+       const plugin = yield* Plugin.Service
+ 
+-      const state = yield* InstanceState.make<State>(
++      const state = yield* InstanceState.makeSoft<State>(
+         Effect.fn("ToolRegistry.state")(function* (ctx) {
+           const custom: Tool.Info[] = []
+ 
 diff --git a/packages/plugin/src/index.ts b/packages/plugin/src/index.ts
 index 473cac8a9..046b00a52 100644
 --- a/packages/plugin/src/index.ts

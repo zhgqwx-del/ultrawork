@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   getProviderAuth: vi.fn(),
   putProviderAuth: vi.fn(() => Promise.resolve()),
   patchConfig: vi.fn(() => Promise.resolve()),
+  patchGlobalConfig: vi.fn(() => Promise.resolve()),
+  getGlobalConfig: vi.fn(() => Promise.resolve({})),
   upsertCustomProvider: vi.fn(() => Promise.resolve()),
   deleteProviderAuth: vi.fn(() => Promise.resolve()),
   setProviderDisabled: vi.fn(() => Promise.resolve()),
@@ -30,6 +32,8 @@ vi.mock("@/lib/use-api", () => ({
     getProviderAuth: h.getProviderAuth,
     putProviderAuth: h.putProviderAuth,
     patchConfig: h.patchConfig,
+    patchGlobalConfig: h.patchGlobalConfig,
+    getGlobalConfig: h.getGlobalConfig,
     upsertCustomProvider: h.upsertCustomProvider,
     deleteProviderAuth: h.deleteProviderAuth,
     setProviderDisabled: h.setProviderDisabled,
@@ -217,13 +221,13 @@ describe("ModelsSection", () => {
     expect(h.upsertCustomProvider).not.toHaveBeenCalled()
   })
 
-  it("disables the custom-provider entry when there is no active workspace", async () => {
+  it("allows adding a custom provider even with no active workspace (global scope, ADR-039)", async () => {
     h.workingDirectory.value = undefined
     render(<ModelsSection />)
     await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
     fireEvent.click(screen.getByRole("button", { name: /model\.configureProvider/ }))
     const addBtn = await screen.findByRole("button", { name: /model\.customProvider\.add/ })
-    expect(addBtn).toBeDisabled()
+    expect(addBtn).not.toBeDisabled()
   })
 
   it("removing a custom provider needs inline confirm, then disables it and clears its key", async () => {
