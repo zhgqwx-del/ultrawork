@@ -27,7 +27,8 @@
     "e2e:provider-soft-refresh": "bun run --bun e2e/provider-soft-refresh.e2e.ts",
     "e2e:skill-soft-refresh": "bun run --bun e2e/skill-soft-refresh.e2e.ts",
     "e2e:provider-ui": "bun run --bun e2e/provider-ui-walkthrough.e2e.ts",
-    "e2e:provider-realmodel": "bun run --bun e2e/provider-realmodel.e2e.ts"
+    "e2e:provider-realmodel": "bun run --bun e2e/provider-realmodel.e2e.ts",
+    "e2e:settings-collapse": "bun run --bun e2e/settings-collapse-return.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",

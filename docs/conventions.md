@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-06-29 -->
+<!-- last-synced: 2026-07-01 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -63,6 +63,28 @@ useEffect(() => () => { mountedRef.current = false }, []);
 useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, []);
 ```
 **测试也要包 StrictMode 才测得出**（`render(<StrictMode><Comp/></StrictMode>)`，断言 await 后的成功路径执行）——testing-library 默认不包，是此类 bug 长期漏网的原因。**优先用局部变量式守卫**（`let cancelled=false; …; return () => { cancelled=true }`，每次 effect 重建新闭包、StrictMode 天然安全，见 `pdf-view.tsx`/`pipeline-tab.tsx`），仅在跨多个 handler 共享时才用 ref。
+
+### 临时 UI 态优先「派生自路由」而非「进入时改写全局态再还原」（2026-07-01 实测）
+当某 UI 态只应在特定路由期间成立（如左侧栏在 `/settings` 强制折叠），**从路由派生**它，不要进入时改写共享/全局态、离开时还原：
+```ts
+// ❌ 脆：进入改写、离开还原，需存"进来前的原值"，快速来回/二次导航易漂 + 污染用户偏好
+useEffect(() => { if (isSettings) { prev.current = leftOpen; setLeftOpen(false) } else setLeftOpen(prev.current) }, [isSettings])
+// ✅ 稳：纯派生，零存储零还原，离开路由自动恢复用户真实偏好
+const effectiveOpen = leftOpen && !isSettings   // 用 effectiveOpen 渲染，绝不写 leftOpen
+```
+无竞态、不污染偏好、离开自动还原。配套：路由判定抽成单一 `isSettingsPath(pathname)`（`=== "/settings" || startsWith("/settings/")`，避免 `startsWith("/settings")` 误命中未来 `/settings-*` 兄弟路由 + 消除多处重复）。见 `left-sidebar.tsx` / `sidebar-context.tsx`。
+
+### 「返回来源页」用 SPA 内导航历史 ref，别写死目标也别靠 `navigate(-1)`（ADR-038 后续 UX）
+关闭覆盖型路由页（如 Settings）要回到"进来前那一页"（Home / `/session/:id` / …）：在共享 Provider（`SidebarProvider`，必在 Router 内）用 effect 记录"最后一个非目标路由"到 ref，关闭时 `navigate(ref.current, { replace: true })`：
+```ts
+const lastMainPathRef = useRef("/")
+const loc = useLocation()
+useEffect(() => { if (!isSettingsPath(loc.pathname)) lastMainPathRef.current = loc.pathname + loc.search }, [loc.pathname, loc.search])
+```
+- **别用 `navigate(-1)`**：页内二次 `navigate("/settings",{state})`（如 popover 点 About）会压历史栈，`-1` 退回 settings 自身而非退出。
+- **别写死 `navigate("/")`**：丢失来源。
+- ref 初值兜底默认路由；`replace:true` 让历史栈不残留 settings。
+- **e2e 坑**：`page.goto` 全量重载会重置 SPA 状态，故造"来源页"必须靠真实 SPA 点击导航（发 prompt 造真 session 再点），不能 goto。见 `e2e/settings-collapse-return.e2e.ts`。
 
 ## 3. SSE 事件处理
 
