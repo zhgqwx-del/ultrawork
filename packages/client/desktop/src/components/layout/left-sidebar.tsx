@@ -31,7 +31,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useSidebar } from "./sidebar-context"
+import { useSidebar, isSettingsPath } from "./sidebar-context"
 import { isMacOS } from "@/lib/platform"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
@@ -131,6 +131,13 @@ export function LeftSidebar() {
     ? location.pathname.split("/session/")[1]
     : null
 
+  // On the Settings page the sidebar is force-collapsed (Settings has its own
+  // left nav), regardless of the user's real `leftOpen` preference. Deriving it
+  // from the route means leaving Settings automatically restores the preference
+  // — no global state to save/restore.
+  const isSettings = isSettingsPath(location.pathname)
+  const effectiveOpen = leftOpen && !isSettings
+
   const filteredSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
@@ -142,10 +149,10 @@ export function LeftSidebar() {
       <aside
         className={cn(
           "flex h-full shrink-0 flex-col bg-[var(--sidebar-bg)] transition-all duration-300",
-          leftOpen ? "w-72" : isMacOS ? "w-[68px]" : "w-12"
+          effectiveOpen ? "w-72" : isMacOS ? "w-[68px]" : "w-12"
         )}
       >
-        {leftOpen ? (
+        {effectiveOpen ? (
           <>
             {/* Expanded: Brand. Sidebar collapse lives in the main-area TopBar
                 (single toggle, avoids the duplicate that sat here). */}
@@ -324,23 +331,28 @@ export function LeftSidebar() {
                 <TooltipContent side="right">{t("sidebar.newTask")}</TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    aria-label="Sessions"
-                    onClick={toggleLeft}
-                    className={cn(
-                      "flex size-9 items-center justify-center rounded-lg transition-colors",
-                      location.pathname.startsWith("/session")
-                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
-                        : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
-                    )}
-                  >
-                    <MessageSquare className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
-              </Tooltip>
+              {/* The "expand sidebar" toggle is hidden on Settings: there the
+                  collapse is route-derived and locked, so toggling would only
+                  pollute the user's real `leftOpen` for after they leave. */}
+              {!isSettings && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      aria-label="Sessions"
+                      onClick={toggleLeft}
+                      className={cn(
+                        "flex size-9 items-center justify-center rounded-lg transition-colors",
+                        location.pathname.startsWith("/session")
+                          ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
+                          : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                      )}
+                    >
+                      <MessageSquare className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
+                </Tooltip>
+              )}
               {/* 019 后续：折叠态「自动化」入口同步下线（见展开态注释 / 019 §7）。 */}
             </div>
 

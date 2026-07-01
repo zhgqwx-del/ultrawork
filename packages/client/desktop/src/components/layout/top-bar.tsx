@@ -8,11 +8,14 @@ interface TopBarProps {
   title?: string
   onClose?: () => void
   showBackForward?: boolean
+  /** Hide the sidebar collapse toggle (e.g. on Settings, where the sidebar is
+   *  route-locked collapsed and toggling it would only affect after you leave). */
+  hideSidebarToggle?: boolean
   children?: ReactNode
   className?: string
 }
 
-export function TopBar({ title, onClose, showBackForward, children, className }: TopBarProps) {
+export function TopBar({ title, onClose, showBackForward, hideSidebarToggle, children, className }: TopBarProps) {
   const { toggleLeft } = useSidebar()
 
   return (
@@ -25,13 +28,15 @@ export function TopBar({ title, onClose, showBackForward, children, className }:
     >
       {/* Left: sidebar toggle + optional back/forward */}
       <div className="flex items-center gap-1">
-        <button
-          onClick={toggleLeft}
-          aria-label="Toggle sidebar"
-          className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
-        >
-          <PanelLeft className="size-4" />
-        </button>
+        {!hideSidebarToggle && (
+          <button
+            onClick={toggleLeft}
+            aria-label="Toggle sidebar"
+            className="flex size-8 items-center justify-center rounded-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+          >
+            <PanelLeft className="size-4" />
+          </button>
+        )}
 
         {showBackForward && (
           <>

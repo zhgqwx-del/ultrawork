@@ -9,6 +9,7 @@ import { ModelsSection } from "@/components/settings/models-section"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
+import { useSidebar } from "@/components/layout/sidebar-context"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
@@ -73,6 +74,7 @@ export function SettingsPage() {
   const sectionFromState = (location.state as { section?: SettingsSection })?.section
   const [activeSection, setActiveSection] = useState<SettingsSection>(sectionFromState || "general")
   const { t } = useI18n()
+  const { getReturnPath } = useSidebar()
 
   // Sync activeSection when navigating to /settings with a different section in state
   useEffect(() => {
@@ -83,7 +85,11 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <TopBar title={t("settingsPage.title")} onClose={() => navigate("/")} />
+      <TopBar
+        title={t("settingsPage.title")}
+        onClose={() => navigate(getReturnPath(), { replace: true })}
+        hideSidebarToggle
+      />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left nav */}
