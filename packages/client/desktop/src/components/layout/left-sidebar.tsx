@@ -356,7 +356,10 @@ export function LeftSidebar() {
               {/* 019 后续：折叠态「自动化」入口同步下线（见展开态注释 / 019 §7）。 */}
             </div>
 
-            <div className="flex-1" />
+            {/* Empty vertical strip doubles as a window drag handle — collapsed
+                mode otherwise loses the wide brand-bar handle the expanded state
+                has (handleDrag skips buttons, so the icon column stays clickable). */}
+            <div onMouseDown={handleDrag} className="flex-1" />
 
             <div className="flex shrink-0 flex-col items-center gap-2 px-1 pb-3">
               <SettingsPopover>

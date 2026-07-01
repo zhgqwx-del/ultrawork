@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-06-30 -->
+<!-- last-synced: 2026-07-01 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -98,7 +98,7 @@
 - **`open_file_with_system` / `reveal_file_in_finder`**：用 macOS `open` / `open -R` 命令，绕过 Tauri opener plugin 的 scope 限制。
 - **Tauri opener scope 坑**：`opener:allow-open-path` 需配 scope 且对隐藏目录（如 `.ultrawork`）不可靠，改用自定义 Tauri command + `Command::new("open")` 更可靠。
 - **`window.open` 打不开系统浏览器**：Tauri WebView 中必须用 `@tauri-apps/plugin-opener` 的 `openUrl()`。
-- **titleBarStyle Overlay 坑**：`data-tauri-drag-region` 在 Overlay 模式不生效（tauri-apps/tauri#9503），须用 `getCurrentWindow().startDragging()` + `onMouseDown`，且需 `core:window:allow-start-dragging` 权限（不在 `core:window:default` 中）。
+- **titleBarStyle Overlay 坑**：`data-tauri-drag-region` 在 Overlay 模式不生效（tauri-apps/tauri#9503），须用 `getCurrentWindow().startDragging()` + `onMouseDown`，且需 `core:window:allow-start-dragging` 权限（不在 `core:window:default` 中）。**推论：拖窗口只认显式挂了 `onMouseDown={handleDrag}` 的元素**，没挂的区域一律拖不动（macOS-only；Win/Linux 有原生标题栏，`decorations` 未关，靠系统标题栏拖，感知不到）。因此**折叠/变窄的 UI 容易丢掉拖拽面**——如左侧栏折叠后原本 288px 宽的品牌栏拖拽条塌成 68px 窄缝、且被 logo 按钮占满（`handleDrag` 跳过 `button/a/input/...`，logo 是 button 不可拖）→ 用户无处抓。规避：给折叠态的空白撑满区（`flex-1` spacer）补挂 `onMouseDown={handleDrag}`，`handleDrag` 自带按钮跳过逻辑保证图标列仍可点（`left-sidebar.tsx` 折叠分支）。
 - **Finder 启动 PATH 受限 → 已注入登录 shell PATH**：从 Finder/launchd 启动的 app PATH 极简、不读 shell rc，自定义安装目录（`~/.opencode/bin`、`~/.cargo/bin`、`~/.qoder/bin`、各类 bundle wrapper）里的 agent/知识库可执行文件不可见 → `Bun.spawn(["hermes"])` 报 `Executable not found in $PATH`。`rich_path()`（`lib.rs`）以前只手动扫描**硬编码 node-centric 清单**（volta/local/homebrew + nvm/fnm node 目录），追不上跨机器变动的自定义目录。**现已合并登录 shell PATH**：`login_shell_path()` 跑 `$SHELL -lic 'printf <sentinel>$PATH'`（`-l` source `.zprofile`、`-i` source `.zshrc`，PATH export 多在此），sentinel 包裹防 rc 噪音，**5s 超时 + 子线程读 stdout**（rc 挂起/弹交互绝不阻塞启动，失败回落 `rich_path_base`，绝不比旧行为差），`OnceLock` memoize 全进程只跑一次；结果 = `merge_paths(登录PATH, base)`（登录目录优先、保序去重）。`ULTRAWORK_SKIP_LOGIN_SHELL_PATH=1` 可关（排障/CI）。三处调用方（`detect_system_node`/`skill_dep_path`/acp sidecar 启动）统一受益。仍找不到时：检查工具目录是否在 `-li` shell 的 `$PATH` 里（非 sourced 文件设的 PATH 看不到），或 agent 启动命令直接填绝对路径。TS 侧 `acp-connection.ts augmentPath`（`EXTRA_PATH_DIRS` = `~/.local/bin`/`~/.bun/bin`/`/usr/local/bin`/`/opt/homebrew/bin`）作 belt-and-suspenders 保留，**不覆盖** `~/.opencode/bin` 等——根治靠 rich_path 注入的登录 PATH。
 - **Production vs Dev URL**：Dev 有 Vite proxy（相对路径转发），Production 没有。所有 localhost 服务请求必须区分环境：`import.meta.env.DEV ? "" : "http://localhost:4096"`。
 - **健康检查端点是 `/global/health`**（不是 `/health` / `/api/health`）。
