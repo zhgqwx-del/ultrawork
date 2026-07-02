@@ -1645,53 +1645,473 @@ fn find_builtin_source(root: &std::path::Path, max_depth: usize) -> Option<PathB
     best
 }
 
+/// Serializes every builtin-skills install/reconcile/override mutation.
+/// refresh_builtin_skills and remove_user_skill_override are `async` commands
+/// (thread pool) reachable concurrently from several renderer paths; without
+/// exclusion two reconciles race on the SHARED staging dirs (.builtin.staging /
+/// .builtin.restore) and a rename can land a partial tree as the live builtin.
+static BUILTIN_SKILLS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Idempotently copy bundled built-in skills into the config skills dir,
 /// gated by a content-hash sentinel (`.builtin-version`). On an app upgrade the
-/// version changes and we wipe-and-recopy `builtin/` only. Non-fatal: any error
-/// is logged and startup proceeds (skills simply won't appear).
-fn ensure_builtin_skills(app: &tauri::App) {
+/// version changes and we wipe-and-recopy `builtin/` only. Afterwards (and on
+/// every call, even when up to date) same-name shadowing is reconciled — a
+/// user-installed skill deterministically wins over its builtin twin (see
+/// reconcile_builtin_shadowing). Non-fatal at startup: the caller ignores Err
+/// (skills simply won't appear).
+fn ensure_builtin_skills(app: &tauri::AppHandle) -> Result<BuiltinSkillsStatus, String> {
+    let _guard = BUILTIN_SKILLS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    ensure_builtin_skills_locked(app)
+}
+
+/// Body of ensure_builtin_skills; caller must hold BUILTIN_SKILLS_LOCK.
+fn ensure_builtin_skills_locked(app: &tauri::AppHandle) -> Result<BuiltinSkillsStatus, String> {
     use tauri::Manager;
-    let Ok(resource_dir) = app.path().resource_dir() else {
-        eprintln!("[builtin-skills] no resource dir; skipping");
-        return;
-    };
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("no resource dir: {}", e))?;
     // Tauri can place a `..`-sourced resource at different depths (map form puts
     // it at the mapped destination; glob/array form mangles `..` into `_up_`
     // segments). Rather than guess, search the resource dir for the directory
     // holding our `.builtin-version` sentinel (bounded depth, cheap).
     let Some(src) = find_builtin_source(&resource_dir, 8) else {
-        eprintln!(
-            "[builtin-skills] bundled source (.builtin-version) not found under {}",
+        return Err(format!(
+            "bundled source (.builtin-version) not found under {}",
             resource_dir.display()
-        );
-        return;
+        ));
     };
     let version = std::fs::read_to_string(src.join(".builtin-version"))
         .unwrap_or_default()
         .trim()
         .to_string();
     let target = builtin_skills_target();
-    // Dot-dir staging sibling: excluded from opencode's {skill,skills}/** scan
+    // Dot-dir staging siblings: excluded from opencode's {skill,skills}/** scan
     // (no `dot` option), so a leftover from an interrupted run is never picked
-    // up as duplicate skills. Cleared on every start.
+    // up as duplicate skills. Cleared on every call (lock held).
     let staging = target
         .parent()
         .map(|p| p.join(".builtin.staging"))
         .unwrap_or_else(|| target.with_extension("staging"));
     let _ = std::fs::remove_dir_all(&staging);
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::remove_dir_all(parent.join(".builtin.restore"));
+    }
     let sentinel = target.join(".builtin-version");
     let stored = std::fs::read_to_string(&sentinel).ok().map(|s| s.trim().to_string());
-    if !builtin_needs_refresh(&version, stored.as_deref(), target.exists()) {
-        return; // up to date
+    let mut installed_now = false;
+    if builtin_needs_refresh(&version, stored.as_deref(), target.exists()) {
+        // Refresh: stage-then-rename so an interrupted copy (quit/disk-full mid-way
+        // through 12k files) can never leave a half tree with a valid sentinel; the
+        // swap removes ONLY builtin/ — siblings under skills/ are user-installed.
+        install_builtin_tree(&src, &target, &staging).map_err(|e| {
+            format!("install failed ({} -> {}): {}", src.display(), target.display(), e)
+        })?;
+        println!("[builtin-skills] installed -> {} (version {})", target.display(), version);
+        installed_now = true;
     }
-    // Refresh: stage-then-rename so an interrupted copy (quit/disk-full mid-way
-    // through 12k files) can never leave a half tree with a valid sentinel; the
-    // swap removes ONLY builtin/ — siblings under skills/ are user-installed.
-    if let Err(e) = install_builtin_tree(&src, &target, &staging) {
-        eprintln!("[builtin-skills] install failed ({} -> {}): {}", src.display(), target.display(), e);
-        return;
+    // Shadowing runs after install: on an upgrade-while-shadowed the fresh copy
+    // of a shadowed skill is pruned right back (wasted copy, but rare + correct).
+    let mut status = reconcile_builtin_shadowing(&src, &target, &global_config_dir());
+    status.changed |= installed_now;
+    Ok(status)
+}
+
+/// Status of the bundled built-in skills vs user-installed same-name skills.
+/// `bundled` = frontmatter names shipped in the app bundle; `shadowed` = the
+/// subset currently overridden by a user install (builtin disk copy pruned);
+/// `changed` = this call mutated disk (install/prune/restore) — the frontend
+/// follows a changed reconcile with a soft refresh so opencode's cached scan
+/// matches disk truth again.
+#[derive(Debug, Clone, Serialize)]
+struct BuiltinSkillsStatus {
+    bundled: Vec<String>,
+    shadowed: Vec<String>,
+    changed: bool,
+}
+
+/// Parse the skill identity from SKILL.md the way opencode's registration does
+/// (gray-matter + js-yaml + fallbackSanitization + zod `{name, description}`
+/// pick, vendor skill/index.ts + config/markdown.ts): returns the frontmatter
+/// `name` only when the WHOLE frontmatter block looks like YAML js-yaml would
+/// accept AND a real `description` value is present — opencode silently SKIPS
+/// files failing either, so a None here means "opencode will not register this
+/// file". Callers must never prune a builtin based on a None/mismatch (that
+/// would delete the builtin with no live replacement).
+///
+/// The validation is a conservative line-oriented approximation. Divergence
+/// policy: when unsure return None — that fails OPEN (no prune; worst case the
+/// duplicate race persists). Concretely: BOM stripped; the opening `---` must
+/// be at column 0 and the fence must CLOSE; tab indentation rejected (js-yaml
+/// errors); every unindented line must be a clean `key: value` (space after
+/// the colon required — `key:x` is not a YAML mapping), keys must not repeat
+/// (js-yaml throws on duplicates), and every value must be a shape we can
+/// vouch for (plain/balanced-quoted scalar, `>`/`|` block header, single-line
+/// balanced flow collection, or empty for nested blocks).
+fn skill_registration_name(skill_md: &std::path::Path) -> Option<String> {
+    let raw_text = std::fs::read_to_string(skill_md).ok()?;
+    let text = raw_text.strip_prefix('\u{feff}').unwrap_or(&raw_text);
+    let mut lines = text.lines();
+    // gray-matter requires the file to START with the fence (column 0).
+    let first = lines.next()?.strip_prefix("---")?;
+    if !first.trim().is_empty() {
+        return None;
     }
-    println!("[builtin-skills] installed -> {} (version {})", target.display(), version);
+    let mut name: Option<String> = None;
+    let mut has_description = false;
+    let mut seen_keys: std::collections::HashSet<String> = Default::default();
+    let mut closed = false;
+    for line in lines {
+        if line.starts_with('\t') {
+            return None; // tab indentation is a js-yaml error
+        }
+        if line.starts_with(' ') {
+            continue; // nested mapping / block-scalar continuation
+        }
+        let t = line.trim_end();
+        if t == "---" {
+            closed = true;
+            break;
+        }
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let colon = t.find(':')?;
+        let (key, rest) = t.split_at(colon);
+        let rest = &rest[1..];
+        // `key:value` without a space is a plain scalar to YAML, not a mapping
+        // entry — inside a block mapping js-yaml throws and opencode skips.
+        if !rest.is_empty() && !rest.starts_with(' ') {
+            return None;
+        }
+        let key = key.trim_end();
+        if key.is_empty()
+            || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return None; // quoted/complex keys — can't vouch, fail open
+        }
+        if !seen_keys.insert(key.to_string()) {
+            return None; // js-yaml throws on duplicate mapping keys
+        }
+        let value = rest.trim();
+        match key {
+            "name" => {
+                // Block-scalar names fold to a value we can't compute (fail
+                // open via None from the scalar parser).
+                name = parse_yaml_name_scalar(value);
+            }
+            "description" => {
+                if value.is_empty() {
+                    has_description = false; // null -> zod rejects
+                } else if matches!(value.chars().next(), Some('>' | '|')) {
+                    has_description = true; // folded block scalar
+                } else if parse_yaml_name_scalar(value).is_some() {
+                    has_description = true;
+                } else {
+                    return None; // comment-only / unterminated quote etc.
+                }
+            }
+            _ => {
+                if !yaml_line_value_ok(value) {
+                    return None; // a throwing line anywhere skips the whole file
+                }
+            }
+        }
+    }
+    if closed && has_description { name } else { None }
+}
+
+/// Can we vouch that js-yaml (plus opencode's fallbackSanitization) accepts
+/// this single-line value? Empty = null/nested block; `>`/`|` = block scalar;
+/// balanced single-line flow collections; otherwise a clean scalar.
+fn yaml_line_value_ok(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    match value.chars().next() {
+        Some('>' | '|') => true,
+        Some('[') => value.ends_with(']'),
+        Some('{') => value.ends_with('}'),
+        _ => parse_yaml_name_scalar(value).is_some(),
+    }
+}
+
+/// Conservative single-line YAML scalar for a `key: value` line. None on any
+/// shape js-yaml would treat differently from a plain literal (see caller).
+fn parse_yaml_name_scalar(raw: &str) -> Option<String> {
+    if raw.is_empty() || raw.starts_with('#') {
+        return None; // empty / comment-only value = null
+    }
+    for q in ['"', '\''] {
+        if let Some(body) = raw.strip_prefix(q) {
+            // Unterminated quote makes js-yaml throw -> opencode skips the skill.
+            let v = body.strip_suffix(q)?;
+            return if v.is_empty() { None } else { Some(v.to_string()) };
+        }
+    }
+    if matches!(raw.chars().next(), Some('>' | '|' | '&' | '*')) {
+        return None; // block scalar / anchor — js-yaml resolves these; fail open
+    }
+    // YAML comments start at whitespace + '#' in plain scalars.
+    let end = [" #", "\t#"]
+        .iter()
+        .filter_map(|m| raw.find(m))
+        .min()
+        .unwrap_or(raw.len());
+    let v = raw[..end].trim();
+    if v.is_empty() { None } else { Some(v.to_string()) }
+}
+
+/// Case-SENSITIVE lookup of a `SKILL.md` file in `dir`. `dir.join("SKILL.md")
+/// .is_file()` would also match `skill.md` on case-insensitive filesystems
+/// (macOS/Windows) which opencode's glob does not — pruning on such a match
+/// would delete the builtin without a live replacement.
+fn exact_skill_md(dir: &std::path::Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()) {
+        if entry.file_name() == "SKILL.md" {
+            let p = entry.path();
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// A user-installed skill discovered under the config skill roots.
+/// `dir` is the directory containing its SKILL.md.
+struct UserSkill {
+    name: String,
+    dir: PathBuf,
+}
+
+/// Bounded scan for user-installed skills under the CONFIG-DIR skill roots
+/// (`skill/` and `skills/` — where skill-installer and the builtin pipeline
+/// write). Deliberately narrower than opencode's full scan surface (which also
+/// covers ~/.claude/skills, ~/.agents/skills, project dirs and cfg.skills.paths
+/// — same-name skills there still race; out of scope per ADR-040) and than the
+/// `**` glob (bounded depth, no descent past a skill dir — nested SKILL.md are
+/// reference templates, not installs). Skips the managed builtin dir and
+/// dot-dirs (staging leftovers), never reports a root itself (a stray SKILL.md
+/// at the root would otherwise make the override-removal path delete the whole
+/// roots tree), and only reports dirs opencode would actually register
+/// (skill_registration_name — see fail-open policy there). Symlinked dirs are
+/// followed (opencode's glob follows symlinks; depth bound caps cycles).
+fn collect_user_skills(config_dir: &std::path::Path, builtin_dir: &std::path::Path, max_depth: usize) -> Vec<UserSkill> {
+    let mut out = Vec::new();
+    for root in ["skill", "skills"] {
+        let root_path = config_dir.join(root);
+        let mut stack = vec![(root_path, 0usize)];
+        while let Some((dir, depth)) = stack.pop() {
+            if dir == builtin_dir {
+                continue;
+            }
+            let fname = dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if depth > 0 && fname.starts_with('.') {
+                continue;
+            }
+            if depth > 0 {
+                if let Some(skill_md) = exact_skill_md(&dir) {
+                    if let Some(name) = skill_registration_name(&skill_md) {
+                        out.push(UserSkill { name, dir });
+                    }
+                    // Registered or not, don't descend past a skill-shaped dir.
+                    continue;
+                }
+            }
+            if depth >= max_depth {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let Ok(ft) = entry.file_type() else { continue };
+                    if ft.is_dir() || (ft.is_symlink() && entry.path().is_dir()) {
+                        stack.push((entry.path(), depth + 1));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Deterministic same-name shadowing between bundled built-ins and user
+/// installs (discussions/025 §5). opencode registers all skills from ONE glob
+/// scan with unbounded concurrency — two same-name SKILL.md files race and the
+/// winner is arbitrary. Resolved at the filesystem layer so the scan only ever
+/// sees one copy:
+///   prune   — a user skill with the same frontmatter name exists → delete the
+///             builtin disk copy (user version PERMANENTLY wins, even across
+///             app upgrades, until the user removes it);
+///   restore — no user twin and the builtin dir is missing (previously pruned,
+///             or hand-deleted) → recopy from the bundle via stage+rename, so
+///             "remove user version → builtin returns" works without waiting
+///             for an app upgrade to rotate the sentinel.
+/// Errors are logged, not fatal: worst case the race window stays open until
+/// the next reconcile.
+fn reconcile_builtin_shadowing(
+    bundle_src: &std::path::Path,
+    target: &std::path::Path,
+    config_dir: &std::path::Path,
+) -> BuiltinSkillsStatus {
+    let user = collect_user_skills(config_dir, target, 6);
+    let user_names: std::collections::HashSet<&str> =
+        user.iter().map(|u| u.name.as_str()).collect();
+    let mut bundled = Vec::new();
+    let mut shadowed = Vec::new();
+    let mut changed = false;
+    let Ok(entries) = std::fs::read_dir(bundle_src) else {
+        return BuiltinSkillsStatus { bundled, shadowed, changed };
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let skill_md = entry.path().join("SKILL.md");
+        if !skill_md.is_file() {
+            continue; // .builtin-version / README.md / plain files
+        }
+        let dir_name = entry.file_name();
+        // Bundle content is controlled (fetch script guarantees frontmatter);
+        // the dirname fallback here can never mis-key a prune — pruning keys on
+        // USER names, which have no fallback (see collect_user_skills).
+        let name = skill_registration_name(&skill_md)
+            .unwrap_or_else(|| dir_name.to_string_lossy().to_string());
+        bundled.push(name.clone());
+        let installed = target.join(&dir_name);
+        if user_names.contains(name.as_str()) {
+            if installed.exists() {
+                match std::fs::remove_dir_all(&installed) {
+                    Ok(()) => {
+                        changed = true;
+                        println!(
+                            "[builtin-skills] pruned builtin '{}' (shadowed by user install)",
+                            name
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[builtin-skills] prune {} failed: {}", installed.display(), e);
+                        continue; // both copies still on disk — do not report as shadowed
+                    }
+                }
+            }
+            shadowed.push(name);
+        } else if exact_skill_md(&installed).is_none() {
+            // Missing OR partial (no SKILL.md — e.g. an interrupted earlier
+            // restore): recopy from the bundle so the tree self-heals without
+            // waiting for an app upgrade to rotate the sentinel.
+            let staging = target
+                .parent()
+                .map(|p| p.join(".builtin.restore"))
+                .unwrap_or_else(|| target.with_extension("restore"));
+            let _ = std::fs::remove_dir_all(&staging);
+            let _ = std::fs::create_dir_all(target);
+            let result = copy_dir_recursive(&entry.path(), &staging).and_then(|_| {
+                // A partial tree (or a stray plain FILE, which remove_dir_all
+                // can't remove) at `installed` would make the rename fail.
+                let _ = std::fs::remove_dir_all(&installed);
+                let _ = std::fs::remove_file(&installed);
+                std::fs::rename(&staging, &installed)
+                    .map_err(|e| format!("rename {} -> {}: {}", staging.display(), installed.display(), e))
+            });
+            match result {
+                Ok(()) => {
+                    changed = true;
+                    println!("[builtin-skills] restored builtin '{}' from bundle", name);
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    eprintln!("[builtin-skills] restore '{}' failed: {}", name, e);
+                }
+            }
+        }
+    }
+    BuiltinSkillsStatus { bundled, shadowed, changed }
+}
+
+/// Re-run the builtin-skills install/shadowing reconcile on demand. The skills
+/// settings page calls this before soft-refreshing opencode so a skill just
+/// installed by skill-installer (mid-session, same name as a builtin) never
+/// coexists with the builtin copy in a scan (`async`: real fs work off the UI
+/// thread).
+#[tauri::command(async)]
+fn refresh_builtin_skills(app: tauri::AppHandle) -> Result<BuiltinSkillsStatus, String> {
+    ensure_builtin_skills(&app)
+}
+
+/// Delete the user-installed override(s) of a BUILTIN skill and restore the
+/// bundled copy. Refuses names that are not currently-shadowed builtins, so
+/// this can never delete an unrelated user skill.
+#[tauri::command(async)]
+fn remove_user_skill_override(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<BuiltinSkillsStatus, String> {
+    // Hold the lock across verify → delete → restore so a concurrent
+    // refresh_builtin_skills can't interleave with the mutation.
+    let _guard = BUILTIN_SKILLS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let status = ensure_builtin_skills_locked(&app)?;
+    if !status.shadowed.contains(&name) {
+        return Err(format!("'{}' is not a shadowed builtin skill", name));
+    }
+    let config_dir = global_config_dir();
+    let builtin = builtin_skills_target();
+    let candidates = collect_user_skills(&config_dir, &builtin, 6);
+    let mut removed = 0usize;
+    for u in candidates.iter().filter(|u| u.name == name) {
+        // Belt-and-suspenders: collect_user_skills already excludes builtin/ and
+        // the roots themselves; verify anyway before a recursive delete.
+        let under_root = ["skill", "skills"].iter().any(|r| {
+            let root = config_dir.join(r);
+            u.dir.starts_with(&root) && u.dir != root
+        });
+        if !under_root || u.dir.starts_with(&builtin) {
+            return Err(format!("refusing to delete unexpected path {}", u.dir.display()));
+        }
+        // Never delete THROUGH a symlinked ancestor: `u.dir` may sit lexically
+        // under the skills root while its contents physically live elsewhere
+        // (skills/group -> ~/dev/my-skills); remove_dir_all would then destroy
+        // the user's real source files. Refuse — manual removal is the safe out.
+        let linked_ancestor = u
+            .dir
+            .ancestors()
+            .skip(1)
+            .take_while(|a| a.starts_with(&config_dir) && *a != config_dir.as_path())
+            .any(|a| {
+                std::fs::symlink_metadata(a)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+            });
+        if linked_ancestor {
+            return Err(format!(
+                "refusing to delete {} through a symlinked parent directory — remove it manually",
+                u.dir.display()
+            ));
+        }
+        // A symlinked install (skill dev workflow): remove only the link, never
+        // the target it points to. Windows directory symlinks/junctions must be
+        // removed with remove_dir — remove_file fails on them (unix symlinks
+        // are files).
+        let is_link = std::fs::symlink_metadata(&u.dir)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let result = if is_link {
+            if cfg!(target_os = "windows") {
+                std::fs::remove_dir(&u.dir).or_else(|_| std::fs::remove_file(&u.dir))
+            } else {
+                std::fs::remove_file(&u.dir)
+            }
+        } else {
+            std::fs::remove_dir_all(&u.dir)
+        };
+        result.map_err(|e| format!("remove {}: {}", u.dir.display(), e))?;
+        println!("[builtin-skills] removed user override {} ('{}')", u.dir.display(), name);
+        removed += 1;
+    }
+    if removed == 0 {
+        return Err(format!("no user install of '{}' found to remove", name));
+    }
+    // Reconcile again: restores the builtin copy now that the override is gone.
+    let mut fresh = ensure_builtin_skills_locked(&app)?;
+    fresh.changed = true; // the delete itself mutated disk
+    Ok(fresh)
 }
 
 /// Stage-then-rename install of the builtin skills tree. The sentinel inside the
@@ -2136,6 +2556,8 @@ pub fn run() {
             get_sidecar_path,
             get_sidecar_credentials,
             check_skill_dependencies,
+            refresh_builtin_skills,
+            remove_user_skill_override,
             scan_workspace_changes,
             read_file_bytes,
             test_provider_connection,
@@ -2150,8 +2572,11 @@ pub fn run() {
             ensure_sidecar_copies();
 
             // Stage 1b: copy bundled built-in skills into the config skills dir
-            // (before OpenCode starts, so the first /skill scan sees them).
-            ensure_builtin_skills(app);
+            // (before OpenCode starts, so the first /skill scan sees them) and
+            // reconcile same-name shadowing (user installs win, gotchas §10).
+            if let Err(e) = ensure_builtin_skills(app.handle()) {
+                eprintln!("[builtin-skills] {}", e);
+            }
 
             // Stage 2: migrate any pre-existing MCP entries in opencode.json to
             // point at the canonical user-local path (handles dev → DMG and old
@@ -2592,6 +3017,294 @@ mod builtin_skills_tests {
 
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn skill_registration_name_mirrors_opencode_predicate() {
+        let dir = unique_tmp("fm");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("SKILL.md");
+
+        std::fs::write(&f, "---\nname: ppt-master\ndescription: x\n---\nbody").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        // Block-scalar description (ppt-master upstream shape) counts as present.
+        std::fs::write(&f, "---\nname: ppt-master\ndescription: >\n  folded text\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        std::fs::write(&f, "---\nname: \"quoted-name\"\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("quoted-name"));
+
+        // Trailing comment on an unquoted scalar is stripped (js-yaml semantics).
+        std::fs::write(&f, "---\nname: ppt-master # my fork\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        // BOM before the frontmatter fence must not break parsing.
+        std::fs::write(&f, "\u{feff}---\nname: ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        // CRLF (Windows checkout) parses identically.
+        std::fs::write(&f, "---\r\nname: ppt-master\r\ndescription: x\r\n---\r\n").unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        // opencode requires name AND description — either missing means the
+        // file is never registered, so it must never key a prune.
+        std::fs::write(&f, "---\nname: ppt-master\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Unterminated quote makes js-yaml throw -> opencode skips.
+        std::fs::write(&f, "---\nname: \"ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Block-scalar NAME is resolved by js-yaml to a folded value we don't
+        // implement — fail open.
+        std::fs::write(&f, "---\nname: >\n  ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Indented `name:` is nested under another key (e.g. metadata:) — not
+        // the skill name.
+        std::fs::write(&f, "---\nmetadata:\n   name: nested\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // No frontmatter fence at all.
+        std::fs::write(&f, "# just markdown\nname: not-frontmatter\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Comment-valued description = null to js-yaml -> zod rejects -> skip.
+        std::fs::write(&f, "---\nname: ppt-master\ndescription: # TODO write\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // `key:value` without a space is NOT a YAML mapping entry — js-yaml
+        // throws inside a block mapping and opencode skips the file.
+        std::fs::write(&f, "---\nname:ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+        std::fs::write(&f, "---\nname: ppt-master\ndescription:x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // A throwing line ANYWHERE in the block skips the whole file.
+        std::fs::write(&f, "---\nname: ppt-master\ndescription: x\nlicense: \"MIT\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+        std::fs::write(&f, "---\nname: ppt-master\ntags: [a, b\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Duplicate mapping keys make js-yaml throw.
+        std::fs::write(&f, "---\nname: a\nname: ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // gray-matter requires the opening fence at column 0.
+        std::fs::write(&f, "   ---\nname: ppt-master\ndescription: x\n---\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Unclosed frontmatter never yields data.
+        std::fs::write(&f, "---\nname: ppt-master\ndescription: x\n").unwrap();
+        assert_eq!(skill_registration_name(&f), None);
+
+        // Benign shapes real skills use must PASS: single-line flow sequence,
+        // nested mappings (indented), empty-valued parent keys.
+        std::fs::write(
+            &f,
+            "---\nname: ppt-master\ndescription: x\nx-requires: [python3.10+, python-pptx]\nmetadata:\n   author: someone\n---\n",
+        ).unwrap();
+        assert_eq!(skill_registration_name(&f).as_deref(), Some("ppt-master"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn all_real_bundled_skill_md_parse_as_registrable() {
+        // The whole-block validator must never reject our own shipped skills —
+        // a false negative here would break shadowing for that skill (and a
+        // regression would only surface at runtime).
+        let bundled = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../skills/builtin");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&bundled).expect("skills/builtin missing") {
+            let entry = entry.unwrap();
+            let skill_md = entry.path().join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            let name = skill_registration_name(&skill_md);
+            assert!(
+                name.is_some(),
+                "bundled skill {} failed the registration parser",
+                skill_md.display()
+            );
+            checked += 1;
+        }
+        assert!(checked >= 6, "expected >= 6 bundled skills, found {}", checked);
+    }
+
+    /// Lay out a fake config dir with a bundle src (two skills) and an installed
+    /// builtin tree, returning (config_dir, bundle_src, builtin_target).
+    fn shadow_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let config = unique_tmp(tag);
+        let src = config.join("bundle-src");
+        let target = config.join("skills").join("builtin");
+        for (dir, name) in [("ppt-master", "ppt-master"), ("doc-edit", "doc-edit")] {
+            let s = src.join(dir);
+            std::fs::create_dir_all(s.join("scripts")).unwrap();
+            std::fs::write(s.join("SKILL.md"), format!("---\nname: {}\ndescription: bundled\n---\n", name)).unwrap();
+            std::fs::write(s.join("scripts/tool.py"), "print('hi')\n").unwrap();
+        }
+        std::fs::write(src.join(".builtin-version"), "v1\n").unwrap();
+        std::fs::write(src.join("README.md"), "not a skill\n").unwrap();
+        copy_dir_recursive(&src, &target).unwrap();
+        (config, src, target)
+    }
+
+    #[test]
+    fn reconcile_prunes_builtin_when_user_installs_same_name() {
+        let (config, src, target) = shadow_fixture("shadow-prune");
+        // User install under a DIFFERENT dir name but same frontmatter name —
+        // shadowing must key on the frontmatter name (opencode's index key).
+        let user = config.join("skills").join("my-ppt");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("SKILL.md"), "---\nname: ppt-master\ndescription: mine\n---\nuser version").unwrap();
+
+        let status = reconcile_builtin_shadowing(&src, &target, &config);
+
+        assert_eq!(status.shadowed, vec!["ppt-master"]);
+        assert!(status.changed, "prune must report changed");
+        assert!(status.bundled.contains(&"ppt-master".to_string()));
+        assert!(status.bundled.contains(&"doc-edit".to_string()));
+        assert!(!target.join("ppt-master").exists(), "builtin copy must be pruned");
+        assert!(target.join("doc-edit/SKILL.md").is_file(), "unrelated builtin untouched");
+        assert!(user.join("SKILL.md").is_file(), "user install untouched");
+
+        // Idempotent: a second run keeps the exact same state and reports no change.
+        let again = reconcile_builtin_shadowing(&src, &target, &config);
+        assert_eq!(again.shadowed, vec!["ppt-master"]);
+        assert!(!again.changed, "steady state must not report changed");
+        assert!(!target.join("ppt-master").exists());
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[test]
+    fn reconcile_never_prunes_for_dirs_opencode_would_not_register() {
+        let (config, src, target) = shadow_fixture("shadow-junk");
+        // A junk dir named like the builtin but with frontmatter opencode
+        // rejects (no description / no name): opencode registers NEITHER it nor
+        // a replacement — pruning would make the skill vanish entirely.
+        let junk = config.join("skills").join("ppt-master");
+        std::fs::create_dir_all(&junk).unwrap();
+        std::fs::write(junk.join("SKILL.md"), "just some notes, no frontmatter").unwrap();
+
+        let status = reconcile_builtin_shadowing(&src, &target, &config);
+        assert!(status.shadowed.is_empty(), "junk dir must not shadow");
+        assert!(target.join("ppt-master/SKILL.md").is_file(), "builtin must survive");
+
+        // Same for name-without-description (zod pick requires both).
+        std::fs::write(junk.join("SKILL.md"), "---\nname: ppt-master\n---\n").unwrap();
+        let status = reconcile_builtin_shadowing(&src, &target, &config);
+        assert!(status.shadowed.is_empty(), "name-only frontmatter must not shadow");
+        assert!(target.join("ppt-master/SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[test]
+    fn reconcile_restores_builtin_after_user_removed() {
+        let (config, src, target) = shadow_fixture("shadow-restore");
+        let user = config.join("skills").join("ppt-master");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("SKILL.md"), "---\nname: ppt-master\ndescription: mine\n---\n").unwrap();
+        reconcile_builtin_shadowing(&src, &target, &config);
+        assert!(!target.join("ppt-master").exists());
+
+        // User removes their copy → builtin restored from bundle (full tree).
+        std::fs::remove_dir_all(&user).unwrap();
+        let status = reconcile_builtin_shadowing(&src, &target, &config);
+
+        assert!(status.shadowed.is_empty());
+        assert!(status.changed, "restore must report changed");
+        assert!(target.join("ppt-master/SKILL.md").is_file());
+        assert!(target.join("ppt-master/scripts/tool.py").is_file());
+        assert!(
+            !config.join("skills").join(".builtin.restore").exists(),
+            "restore staging must be consumed"
+        );
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[test]
+    fn reconcile_heals_partial_builtin_tree() {
+        let (config, src, target) = shadow_fixture("shadow-heal");
+        // Simulate an interrupted earlier restore: builtin dir exists but has
+        // no SKILL.md (partial tree). The old `.exists()` gate would keep this
+        // corpse forever (sentinel still valid); the SKILL.md gate self-heals.
+        std::fs::remove_dir_all(target.join("ppt-master")).unwrap();
+        std::fs::create_dir_all(target.join("ppt-master/scripts")).unwrap();
+        std::fs::write(target.join("ppt-master/scripts/leftover.py"), "x").unwrap();
+
+        let status = reconcile_builtin_shadowing(&src, &target, &config);
+        assert!(status.changed);
+        assert!(target.join("ppt-master/SKILL.md").is_file(), "partial tree must be re-restored");
+        assert!(target.join("ppt-master/scripts/tool.py").is_file());
+        assert!(!target.join("ppt-master/scripts/leftover.py").exists(), "partial content replaced wholesale");
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[test]
+    fn collect_user_skills_skips_builtin_dotdirs_and_roots() {
+        let (config, _src, target) = shadow_fixture("shadow-collect");
+        // builtin/ content must never count as a user skill.
+        // Dot-dir (staging leftover) must be skipped.
+        let stg = config.join("skills").join(".builtin.staging").join("ppt-master");
+        std::fs::create_dir_all(&stg).unwrap();
+        std::fs::write(stg.join("SKILL.md"), "---\nname: ppt-master\ndescription: x\n---\n").unwrap();
+        // A stray SKILL.md at the skills ROOT must not be reported (deleting a
+        // "skill" that is the root itself would nuke every user skill).
+        std::fs::write(config.join("skills").join("SKILL.md"), "---\nname: root\ndescription: x\n---\n").unwrap();
+        // Legit skills under both roots, one nested.
+        let a = config.join("skill").join("alpha");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("SKILL.md"), "---\nname: alpha\ndescription: x\n---\n").unwrap();
+        let b = config.join("skills").join("group").join("beta");
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(b.join("SKILL.md"), "---\nname: beta\ndescription: x\n---\n").unwrap();
+        // A lowercase `skill.md` is not what opencode's case-sensitive glob
+        // matches — must not be reported even on case-insensitive filesystems.
+        let c = config.join("skills").join("lowercase");
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(c.join("skill.md"), "---\nname: lower\ndescription: x\n---\n").unwrap();
+
+        let found = collect_user_skills(&config, &target, 6);
+        let names: Vec<&str> = found.iter().map(|u| u.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+        assert!(!names.contains(&"root"), "root SKILL.md must not be reported");
+        assert!(!names.contains(&"lower"), "lowercase skill.md must not be reported");
+        assert!(
+            !names.contains(&"ppt-master") && !names.contains(&"doc-edit"),
+            "builtin/ and dot-dir content leaked into user skills: {:?}",
+            names
+        );
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_user_skills_follows_symlinked_installs() {
+        let (config, _src, target) = shadow_fixture("shadow-link");
+        // Skill-dev workflow: skills/ppt-master -> ~/dev/my-ppt (opencode's
+        // glob follows symlinks, so shadowing must see it too).
+        let real = config.join("elsewhere").join("my-ppt");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("SKILL.md"), "---\nname: ppt-master\ndescription: dev\n---\n").unwrap();
+        std::os::unix::fs::symlink(&real, config.join("skills").join("ppt-master")).unwrap();
+
+        let found = collect_user_skills(&config, &target, 6);
+        assert!(
+            found.iter().any(|u| u.name == "ppt-master"),
+            "symlinked install must be collected"
+        );
+
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     #[test]

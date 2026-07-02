@@ -30,7 +30,9 @@
     "e2e:provider-realmodel": "bun run --bun e2e/provider-realmodel.e2e.ts",
     "e2e:settings-collapse": "bun run --bun e2e/settings-collapse-return.e2e.ts",
     "e2e:builtin-ppt": "bun run --bun e2e/builtin-ppt-master.e2e.ts",
-    "e2e:builtin-ppt-ui": "bun run --bun e2e/builtin-ppt-ui.e2e.ts"
+    "e2e:builtin-ppt-ui": "bun run --bun e2e/builtin-ppt-ui.e2e.ts",
+    "e2e:builtin-shadowing": "bun run --bun e2e/builtin-skill-shadowing.e2e.ts",
+    "e2e:builtin-shadow-ui": "bun run --bun e2e/builtin-shadow-ui.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",

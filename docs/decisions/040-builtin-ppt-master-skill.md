@@ -1,6 +1,6 @@
 # ADR-040: 内置 ppt-master PPT 生成技能（打包路线 + 依赖引导体系）
 
-- 状态：Accepted（✅ 阶段 1 已实现并真机验收；阶段 2 见下）
+- 状态：Accepted（✅ 阶段 1 + 阶段 2 均已实现并真机验收）
 - 日期：2026-07-02
 - 关联：discussions/025（完整调研与体积/token 实测）、ADR-032（内置技能管线）、ADR-037（跨平台约束）、gotchas §10/§6
 
@@ -36,8 +36,19 @@ PATH 存在性探测不够（e2e 首跑即暴露：本机 python3=3.9 而技能�
 - **八项确认不改 question dock**：确认页（localhost:5050）的视觉候选卡片（色卡/字体样张/目录+推荐徽标/两层表单）是设计确认的质量核心，文本化直接损伤产出质量；且阶段 2 用户自装 raw upstream 会与打过 patch 的内置版行为分叉。chat fallback 是上游一等公民，已兜远程/headless。可选的两全增强（app 侧识别 URL 内嵌 webview 承载）列为后续独立特性。
 - **不打包 Python 运行时**（沿 ADR-032 D3：检测+引导；pip 走国内镜像把网络暴露面压到最小）。
 
-## 阶段 2（待做，独立分支）
-「内置保底 + curated 自助更新」混合形态：设置页推荐安装区加条目（install prompt 注明 `--method git` sparse）+ **Rust `ensure_builtin_skills` prune/restore 确定性遮蔽**（用户版永远优先；同名 skill 在同一 glob 扫描 unbounded 并发下谁赢是竞态，**不能天真并存**——已源码核验）+ 遮蔽态 UI 与「恢复内置」。注意用户自装版是 raw upstream（无 D2 post-patch）。详见 discussions/025 §5/§7。
+## 阶段 2（✅ 已实现，2026-07-02，同分支；两轮共 6 路对抗审查 + 真机全链验收）
+「内置保底 + curated 自助更新」混合形态三件套同批落地：
+
+### D6 — Rust 文件层确定性遮蔽（`reconcile_builtin_shadowing`）
+同名 skill 在同一 glob 扫描 unbounded 并发下谁赢是竞态（源码核验）→ 在扫描面上只留一份：**prune**（存在同名用户技能 → 删 builtin 磁盘副本；按 frontmatter name 匹配非目录名；用户版永久胜出、跨升级不回退）/ **restore**（用户版移除 → bundle 经 `.builtin.restore` staging+rename 补拷；门=SKILL.md 精确大小写存在 → 残缺树自愈）。**遮蔽判定 = 整块镜像 opencode 注册谓词**（name+description 双必需 + 任一行 js-yaml 抛错即整文件不注册），分歧一律 fail-open（不 prune）——反向错误会让技能两边皆无；配「全部真实 bundled SKILL.md 解析通过」cargo 回归。三入口 `BUILTIN_SKILLS_LOCK` 串行化（并发共享 staging 会落残缺树且 sentinel 有效）。命令 `refresh_builtin_skills`（返回 `{bundled, shadowed, changed}`）/ `remove_user_skill_override`（只认 shadowed 名 + 路径双护栏 + 拒绝 symlink 祖先删除、直接 symlink 只删 link）。
+### D7 — curated 自助更新条目 + 遮蔽态 UI
+`INSTALLABLE_SKILLS` 加 ppt-master（`method:"git"` → prompt 强制 `--method git` sparse，auto 模式会下数百 MB 整仓 zip）；installed 判定改「存在非 builtin 同名项」。内置区遮蔽卡（永久遮蔽规则 + raw upstream 无 D2 post-patch 差异文案）+ 确认 Dialog + 恢复流（删用户目录 + reconcile + `POST /global/refresh` 软刷新即时生效，ADR-039）。**`changed` 协调契约**：动了磁盘的 reconcile 由 SkillsSection 精确一次跟进 soft refresh + 重取（identity 去重）；命令先变更后 Err 时 catch 必须无条件链 refresh。workspace 切换补 best-effort reconcile 收窄 mid-session 竞态窗。
+### 阶段 2 刻意边界
+遮蔽只覆盖 config-dir `skill|skills` 两根（`~/.claude/skills`/project/`skills.paths` 同名仍竞态）；mid-session 安装到下一 reconcile 触点间的新 instance 扫描窄竞态窗未硬关闭。可选增强（确认页/预览 URL 的 app 内嵌 webview 承载）仍留后续。
+### 验证
+cargo 29（谓词镜像 ×10/junk 不遮蔽/残树自愈/symlink/大小写/changed）· vitest 278 · e2e `builtin-shadowing`（真 opencode：竞态记录→prune 用户版胜出→restore 回归，全程软刷新）3/3 + `builtin-shadow-ui`（Chrome+Vite+真 fs helper）12/12 · **真机全链**（curated 安装 86M/12143 文件 → 启动日志 `pruned` 实证接线 → API 用户版确定性胜出 → 恢复闭环 `removed`+`restored`、12086 文件回归、无 staging 遗留、不重启即时切回内置版）。
+
+详见 discussions/025 §5/§7、gotchas §10（遮蔽三条目）。
 
 ## 影响
 

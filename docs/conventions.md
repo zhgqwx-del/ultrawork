@@ -348,7 +348,7 @@ setTimeout(() => fetchSources(), 500)
 
 **依赖徽标 SSOT**：技能→运行依赖映射唯一权威是 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（驱动设置页 `DepBadge`）；SKILL.md 的 `x-requires` 仅人读文档，两者改一处需对齐另一处。可探测的除 PATH 二进制（`check_skill_dependencies` 探 python3/node/pandoc/…）外，还支持 **python 内探针**（`run_python_feature_probe`：版本门 `python3.10+` + pip 库 import 探测如 `python-pptx`；探针防御与语义见 gotchas §10，改探针前必读）。**依赖缺失引导**：`DepBadge` 的 `onGuide` → `depGuidePrompt` handoff 新对话让 AI 按平台引导安装（与 curated 安装同一 `navigate("/",{state:{initialInput}})` 模式）；引导词必须写死**收敛标准**（如「`python3` 命令本身 ≥3.10」），否则 AI 装个版本化命令就交差、徽标不收敛。`DEP_HINTS` 按平台三分支（`isWindows`/`isMacOS`/Linux 兜底，`@/lib/platform` 模块级常量）。
 
-**设置-技能页三区**（`Settings.tsx` SkillsSection）：内置（`skill.location` 含 `/skills/builtin/`，只读+依赖徽标）/ 可安装（`INSTALLABLE_SKILLS` curated，「安装」→ `navigate("/",{state:{initialInput}})` 交给内置 skill-installer 在新对话完成）/ 自定义（现有 paths·urls + 非内置发现技能）。新增可安装项**只放可再分发许可的来源**。
+**设置-技能页三区**（`Settings.tsx` SkillsSection）：内置（`skill.location` 含 `/skills/builtin/`，只读+依赖徽标；**被用户同名安装遮蔽的内置技能渲染遮蔽卡**——琥珀徽标+规则说明+「移除用户版本，恢复内置」，fs 真相来自 `useBuiltinShadow` hook 的 `refresh_builtin_skills` 命令）/ 可安装（`INSTALLABLE_SKILLS` curated，「安装」→ `navigate("/",{state:{initialInput}})` 交给内置 skill-installer 在新对话完成；**installed 判定 = 存在非 builtin 同名项**——内置技能的 curated 条目是其自助更新通道，装完永久遮蔽内置版）/ 自定义（现有 paths·urls + 非内置发现技能；name ∈ `BUILTIN_DEP_MAP` 的项也渲依赖徽标）。新增可安装项**只放可再分发许可的来源**；大仓库条目加 **`method:"git"`**（→ `skills.installPromptGit` 强制 `--method git` sparse checkout，skill-installer auto 模式会先下整仓 zip）。遮蔽机制/坑点见 gotchas §10（`changed` 协调契约、fail-open 谓词、`BUILTIN_SKILLS_LOCK`）。
 
 ## 13. 跨平台编码规范（macOS / Windows / Linux，ADR-037）
 

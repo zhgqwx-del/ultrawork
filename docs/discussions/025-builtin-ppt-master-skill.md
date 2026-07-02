@@ -1,6 +1,6 @@
 # 025 — 内置 PPT 生成技能：ppt-master 调研与打包方案
 
-> 状态：✅ 阶段 1 已落地（**ADR-040**，四路对抗审查 + 真机全链验收：真模型完整生成一次 PPT 通过）；阶段 2（§5 混合更新通道）待做
+> 状态：✅ 阶段 1 + 阶段 2 均已落地（**ADR-040**；阶段 1 四路对抗审查 + 真模型完整生成验收；阶段 2〔§5 混合更新通道〕两轮共 6 路对抗审查 + 真机遮蔽/恢复全链验收，2026-07-02）
 > ⚠️ 实施时对本文的两处升级：① X_REQUIRES 从 `["python3"]` 升级为 `["python3.10+", "python-pptx"]`（e2e 暴露 3.9 假就绪 → Rust python 内探针版本门，ADR-040 D3）；② 追加 opencode-server rich PATH 注入 + builtin staging+rename 原子落地（审查产出，ADR-040 D4）
 > 日期：2026-07-02
 > 关联：ADR-032（内置技能打包与分发）· gotchas §10（内置技能坑点）· ADR-039（`POST /global/refresh` 软刷新）· ADR-037（跨平台约束）· ADR-033（产物识别 = 文件系统真相）
@@ -73,7 +73,7 @@ ppt-master 本身就是标准 Agent Skill 形态（`SKILL.md` + scripts/referenc
 
 **被否决的替代**：vendor patch 在 `skill/index.ts add()` 里做 builtin-path 让位裁决——一行可写但扩大 patch 面、每次 bump 多一个 hunk 维护成本，且 Rust 方案在文件层已根治，无必要。
 
-**分期**：混合模式属**阶段 2**（Rust prune/restore + 遮蔽 UI + curated 条目三件套必须同批上线，缺一即竞态/体验破损）。阶段 1 只上内置版，不加 curated 条目。
+**分期**：混合模式属**阶段 2**（Rust prune/restore + 遮蔽 UI + curated 条目三件套必须同批上线，缺一即竞态/体验破损）。阶段 1 只上内置版，不加 curated 条目。**→ 阶段 2 已于 2026-07-02 同分支落地**（实现细节/审查加固/真机验证见 ADR-040 阶段 2 节 + gotchas §10 遮蔽三条目；相对本节的主要升级：遮蔽判定升级为「整块镜像 opencode 注册谓词、fail-open」、三入口互斥锁、`changed` 前端协调契约、symlink 祖先删除防护）。
 
 ## 6. Python 环境引导（分层）
 
@@ -97,9 +97,10 @@ ppt-master 本身就是标准 Agent Skill 形态（`SKILL.md` + scripts/referenc
 4. （可选）Rust import 探针。
 5. 收尾：ADR（内置 ppt-master 决策）、gotchas §10 追补（体积/token 预期、同名竞态、`--method git` 注记）、CHANGELOG。
 
-**阶段 2（混合更新通道，独立分支）**
-6. Rust `ensure_builtin_skills` prune/restore + 单测。
-7. Settings：curated 数组加 ppt-master 条目（install prompt 注明 `--method git` + path）+ 内置区遮蔽态 UI + 「恢复内置」按钮。
+**阶段 2（混合更新通道，✅ 已落地 2026-07-02，同分支）**
+6. ✅ Rust `ensure_builtin_skills` prune/restore（`reconcile_builtin_shadowing` + `BUILTIN_SKILLS_LOCK` + 两个 Tauri 命令）+ cargo 单测 ×8。
+7. ✅ Settings：curated 数组加 ppt-master 条目（`method:"git"` 强制 sparse prompt）+ 内置区遮蔽态 UI + 「恢复内置」按钮（软刷新即时生效）。
+8. ✅ e2e ×2（`builtin-shadowing` 真 opencode / `builtin-shadow-ui` 真浏览器+真 fs helper）+ 真机全链冒烟（安装→启动 prune→用户版胜出→恢复闭环）。
 
 ## 8. 验证清单（阶段 1）
 

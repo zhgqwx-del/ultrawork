@@ -597,6 +597,16 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.catalog.webappTesting": "Test web apps end-to-end with a headless browser.",
     "skills.catalog.frontendDesign": "Produce polished frontend UI and design.",
     "skills.catalog.algorithmicArt": "Generate algorithmic / generative art.",
+    "skills.catalog.pptMaster": "AI-driven PPT generation: source docs → designed SVG pages → truly editable PPTX (upstream latest).",
+    "skills.installPromptGit": "Use the skill-installer skill to install the \"{name}\" skill from {repo} (path: {path}). You MUST pass `--method git` (sparse checkout of the skill path only) — do NOT use the default auto mode: this repository's zip archive is hundreds of MB, while a git sparse checkout only fetches the skill subdirectory.",
+    "skills.builtinUpdateHint": "A built-in copy already ships with the app — installing here fetches the latest upstream version, which permanently overrides the built-in copy (even across app updates) until you remove it.",
+    "skills.shadowedBadge": "Overridden by user install",
+    "skills.shadowedDetail": "A user-installed \"{name}\" (raw upstream, without the built-in copy's bundled patches, e.g. the .env location warning) permanently overrides the built-in copy — even across app updates — until you remove it. The user copy is listed under the Custom tab.",
+    "skills.restoreBuiltin": "Remove user version, restore built-in",
+    "skills.restoreConfirmTitle": "Restore the built-in skill?",
+    "skills.restoreConfirmBody": "This deletes the user-installed \"{name}\" skill directory (in the app's skills directory) and restores the built-in copy. Local changes in the user copy are lost.",
+    "skills.restoreDone": "Built-in skill restored",
+    "skills.restoreFailed": "Failed to restore the built-in skill",
     "command.title": "Commands",
 
     // Artifact preview
@@ -1248,6 +1258,16 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.catalog.webappTesting": "用无头浏览器端到端测试 Web 应用。",
     "skills.catalog.frontendDesign": "产出精致的前端 UI 与设计。",
     "skills.catalog.algorithmicArt": "生成算法 / 生成式艺术。",
+    "skills.catalog.pptMaster": "AI 驱动的 PPT 生成：源文档 → 设计级 SVG 页面 → 真可编辑 PPTX（上游最新版）。",
+    "skills.installPromptGit": "使用 skill-installer 技能，从 {repo} 安装 \"{name}\" 技能（路径：{path}）。必须传 `--method git`（只 sparse checkout 技能子目录）——不要用默认 auto 模式：该仓库 zip 包有数百 MB，git sparse checkout 只拉技能子目录。",
+    "skills.builtinUpdateHint": "应用已内置该技能——此处安装 = 获取上游最新版，安装后将持续覆盖内置版（应用更新也不回退），直到手动移除。",
+    "skills.shadowedBadge": "已被用户安装版本覆盖",
+    "skills.shadowedDetail": "用户安装的「{name}」（上游原版，不含内置版的打包适配补丁，如 .env 存放位置警告）会持续覆盖内置版——即使应用更新携带了更新的内置版——直到手动移除。用户版本在「自定义」标签页中。",
+    "skills.restoreBuiltin": "移除用户版本，恢复内置",
+    "skills.restoreConfirmTitle": "恢复内置技能？",
+    "skills.restoreConfirmBody": "将删除用户安装的「{name}」技能目录（位于应用技能目录下），并恢复内置版本。用户目录中的本地改动会丢失。",
+    "skills.restoreDone": "已恢复内置技能",
+    "skills.restoreFailed": "恢复内置技能失败",
     "command.title": "命令",
 
     // Artifact preview

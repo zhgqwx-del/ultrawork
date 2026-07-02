@@ -21,6 +21,7 @@ import { useChannels } from "@/lib/use-channels"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
 import { useSkillDeps, BUILTIN_DEP_MAP, missingDeps, type DepMap } from "@/lib/use-skill-deps"
+import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 import { useWorkspace } from "@/lib/workspace-context"
 import { Button } from "@/components/ui/button"
 import {
@@ -1906,14 +1907,20 @@ const SOURCE_BADGE_COLORS: Record<SkillSource, string> = {
   skill: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 }
 
-// Curated, permissively-licensed (Apache-2.0) community skills the user can
-// install on demand via the built-in skill-installer. Keep this list to
-// known-good, non-proprietary sources only.
-const INSTALLABLE_SKILLS: { name: string; descKey: string; repo: string; path: string }[] = [
+// Curated, permissively-licensed (Apache-2.0 / MIT) community skills the user
+// can install on demand via the built-in skill-installer. Keep this list to
+// known-good, non-proprietary sources only. `method: "git"` forces the install
+// prompt to mandate `--method git` (sparse checkout) — skill-installer's auto
+// mode downloads the whole repo zip first, which for huge repos (ppt-master's
+// upstream ships ~580MB of examples) is hundreds of MB.
+const INSTALLABLE_SKILLS: { name: string; descKey: string; repo: string; path: string; method?: "git" }[] = [
   { name: "mcp-builder", descKey: "skills.catalog.mcpBuilder", repo: "anthropics/skills", path: "skills/mcp-builder" },
   { name: "webapp-testing", descKey: "skills.catalog.webappTesting", repo: "anthropics/skills", path: "skills/webapp-testing" },
   { name: "frontend-design", descKey: "skills.catalog.frontendDesign", repo: "anthropics/skills", path: "skills/frontend-design" },
   { name: "algorithmic-art", descKey: "skills.catalog.algorithmicArt", repo: "anthropics/skills", path: "skills/algorithmic-art" },
+  // Self-update channel for the builtin ppt-master (ADR-040 phase 2): installing
+  // the upstream latest permanently shadows the builtin copy until removed.
+  { name: "ppt-master", descKey: "skills.catalog.pptMaster", repo: "hugohe3/ppt-master", path: "skills/ppt-master", method: "git" },
 ]
 
 function matchesQuery(name: string, description: string, q: string) {
@@ -1929,16 +1936,38 @@ function SkillsSection() {
     skillsConfig, refresh, updateSkillsConfig,
   } = useSkills()
   const { deps, loading: depsLoading } = useSkillDeps()
+  const { status: builtinStatus, reconcile, removeOverride } = useBuiltinShadow()
   const [searchQuery, setSearchQuery] = useState("")
   const [refreshing, setRefreshing] = useState(false)
   const [newPath, setNewPath] = useState("")
   const [newUrl, setNewUrl] = useState("")
   const [tab, setTab] = useState<"builtin" | "installable" | "custom">("builtin")
   const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
+  const [restoring, setRestoring] = useState(false)
+
+  // Coordination (hook contract): a reconcile that mutated disk (`changed`)
+  // leaves opencode's skill cache stale — follow with a soft refresh + refetch
+  // exactly once per status object, or the tabs show both copies / a live
+  // skill whose files are gone (e.g. mount reconcile pruning after an
+  // in-session skill-installer run).
+  const handledStatusRef = useRef<unknown>(null)
+  useEffect(() => {
+    if (builtinStatus.changed && handledStatusRef.current !== builtinStatus) {
+      handledStatusRef.current = builtinStatus
+      refresh()
+    }
+  }, [builtinStatus, refresh])
 
   const onRefresh = async () => {
     setRefreshing(true)
-    try { await refresh() } finally { setRefreshing(false) }
+    try {
+      // Reconcile FIRST so the shadow status and the list update together —
+      // otherwise a mid-session install leaves a pruned builtin with no shadow
+      // card (or a stale card after an external user-copy delete).
+      handledStatusRef.current = await reconcile()
+      await refresh()
+    } finally { setRefreshing(false) }
   }
 
   const q = searchQuery.trim()
@@ -1950,15 +1979,52 @@ function SkillsSection() {
   const customItems = allItems
     .filter((i) => !i.builtin)
     .filter((i) => !q || matchesQuery(i.name, i.description, q))
-  const installedNames = new Set(allItems.map((i) => i.name))
+  // Builtin skills currently overridden by a user install (fs truth from Rust):
+  // their builtin disk copy is pruned, so they surface in customItems — the
+  // builtin tab shows an explanatory shadow card with a restore action instead.
+  const shadowedNames = builtinStatus.shadowed
+    .filter((n) => !q || matchesQuery(n, t("skills.shadowedDetail", { name: n }), q))
+  // "Installed" for the catalog means a USER copy exists — a builtin twin does
+  // not count (the catalog entry is exactly the builtin's self-update channel).
+  const userInstalledNames = new Set(allItems.filter((i) => !i.builtin).map((i) => i.name))
   const catalogItems = INSTALLABLE_SKILLS
     .filter((s) => !q || matchesQuery(s.name, t(s.descKey), q))
 
   // Install a curated skill by handing the request to the built-in skill-installer
   // in a fresh chat (avoids reimplementing git/auth in the shell).
-  const handleInstall = (s: { name: string; repo: string; path: string }) => {
-    const prompt = t("skills.installPrompt", { name: s.name, repo: s.repo, path: s.path })
+  const handleInstall = (s: { name: string; repo: string; path: string; method?: "git" }) => {
+    const key = s.method === "git" ? "skills.installPromptGit" : "skills.installPrompt"
+    const prompt = t(key, { name: s.name, repo: s.repo, path: s.path })
     navigate("/", { state: { initialInput: prompt } })
+  }
+
+  // Remove the user override of a builtin skill and restore the bundled copy;
+  // soft-refresh (ADR-039) so the restored skill is live without a restart.
+  const handleRestoreBuiltin = async () => {
+    if (!restoreTarget) return
+    setRestoring(true)
+    try {
+      handledStatusRef.current = await removeOverride(restoreTarget)
+      await refresh()
+      toast.success(t("skills.restoreDone"))
+      setRestoreTarget(null)
+    } catch (err) {
+      console.error("restore builtin skill failed:", err)
+      toast.error(t("skills.restoreFailed"))
+      // The Rust command may have mutated disk BEFORE erroring (e.g. a stale
+      // card: its pre-check reconcile restores the builtin, then rejects the
+      // override removal — the `changed` info dies with the Err). Resync the
+      // status AND unconditionally refresh the list; the follow-up reconcile
+      // alone can report changed:false against already-steady disk.
+      reconcile()
+        .then(async (s) => {
+          handledStatusRef.current = s
+          await refresh()
+        })
+        .catch(() => {})
+    } finally {
+      setRestoring(false)
+    }
   }
 
   // Missing skill dependencies: hand off to the AI in a fresh chat, which detects the
@@ -2073,7 +2139,7 @@ function SkillsSection() {
             <TabsTrigger value="builtin" className="gap-1.5">
               <Package className="size-3.5" />
               {t("skills.zone.builtin")}
-              <span className="text-xs opacity-60">{builtinItems.length}</span>
+              <span className="text-xs opacity-60">{builtinItems.length + shadowedNames.length}</span>
             </TabsTrigger>
             <TabsTrigger value="installable" className="gap-1.5">
               <Download className="size-3.5" />
@@ -2090,6 +2156,9 @@ function SkillsSection() {
           {/* 内置 */}
           <TabsContent value="builtin" className="space-y-2">
             <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.zone.builtinNote")}</p>
+            {shadowedNames.map((name) => (
+              <ShadowedSkillCard key={name} name={name} onRestore={() => setRestoreTarget(name)} />
+            ))}
             {builtinItems.length > 0
               ? builtinItems.map((item) => (
                   <SettingsSkillCard
@@ -2105,7 +2174,7 @@ function SkillsSection() {
                     }
                   />
                 ))
-              : tabEmptyHint}
+              : shadowedNames.length === 0 && tabEmptyHint}
           </TabsContent>
 
           {/* 推荐安装 */}
@@ -2113,7 +2182,8 @@ function SkillsSection() {
             <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.zone.installableNote")}</p>
             {catalogItems.length > 0
               ? catalogItems.map((s) => {
-                  const installed = installedNames.has(s.name)
+                  const installed = userInstalledNames.has(s.name)
+                  const builtinBacked = builtinStatus.bundled.includes(s.name)
                   return (
                     <div key={s.name} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
                       <div className="flex items-start gap-3">
@@ -2131,6 +2201,9 @@ function SkillsSection() {
                             </a>
                           </div>
                           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t(s.descKey)}</p>
+                          {builtinBacked && !installed && (
+                            <p className="mt-1 text-[10px] text-[var(--color-fg-muted)]">{t("skills.builtinUpdateHint")}</p>
+                          )}
                         </div>
                         {installed ? (
                           <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
@@ -2153,7 +2226,25 @@ function SkillsSection() {
           {/* 自定义 */}
           <TabsContent value="custom" className="space-y-2">
             {customItems.length > 0 ? (
-              customItems.map((item) => <SettingsSkillCard key={item.name} item={item} />)
+              // A user skill that shadows a builtin (name in BUILTIN_DEP_MAP)
+              // runs on the same external tools — keep the readiness badge and
+              // the guided install visible where the raw-upstream copy lives.
+              customItems.map((item) => (
+                <SettingsSkillCard
+                  key={item.name}
+                  item={item}
+                  depBadge={
+                    BUILTIN_DEP_MAP[item.name] ? (
+                      <DepBadge
+                        skillName={item.name}
+                        deps={deps}
+                        loading={depsLoading}
+                        onGuide={(missing) => handleDepGuide(item, missing)}
+                      />
+                    ) : undefined
+                  }
+                />
+              ))
             ) : (
               <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-10">
                 <Wrench className="size-7 text-[var(--color-fg-muted)]" />
@@ -2251,6 +2342,55 @@ function SkillsSection() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 恢复内置 confirm: deleting the user override is destructive */}
+      <Dialog open={restoreTarget !== null} onOpenChange={(open) => { if (!open && !restoring) setRestoreTarget(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("skills.restoreConfirmTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("skills.restoreConfirmBody", { name: restoreTarget ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRestoreTarget(null)} disabled={restoring}>
+              {t("button.cancel")}
+            </Button>
+            <Button size="sm" onClick={handleRestoreBuiltin} disabled={restoring}>
+              {restoring && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              {t("skills.restoreBuiltin")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+/** Builtin-tab placeholder for a builtin skill whose disk copy is pruned because
+ *  a user-installed same-name skill overrides it (the user copy itself shows in
+ *  the custom tab). Explains the permanent-shadow rule and offers the restore. */
+function ShadowedSkillCard({ name, onRestore }: { name: string; onRestore: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <div className="flex items-start gap-3">
+        <Package className="mt-0.5 size-4 shrink-0 text-[var(--color-fg-muted)]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-[var(--color-fg)]">/{name}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-3" />
+              {t("skills.shadowedBadge")}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("skills.shadowedDetail", { name })}</p>
+        </div>
+        <Button variant="outline" size="sm" className="shrink-0" onClick={onRestore}>
+          <RefreshCw className="mr-1 size-3.5" />
+          {t("skills.restoreBuiltin")}
+        </Button>
+      </div>
     </div>
   )
 }

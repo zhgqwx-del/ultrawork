@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { toast } from "sonner"
+import { invoke } from "@tauri-apps/api/core"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import type { Command, Skill } from "@agent/api-client"
@@ -81,6 +82,12 @@ export function useSkills() {
   // turns, ADR-039) so the re-read reflects on-disk truth. Mount uses fetchData
   // directly since caches are fresh at startup.
   const refresh = useCallback(async () => {
+    // Reconcile builtin-vs-user shadowing BEFORE the rescan: a skill installed
+    // by skill-installer mid-session may share its name with a builtin twin,
+    // and opencode's single glob scan races on duplicates (gotchas §10). The
+    // Rust reconcile prunes the builtin copy so the scan only sees one file.
+    // Best-effort: browser walkthroughs have no Tauri bridge.
+    await invoke("refresh_builtin_skills").catch(() => {})
     await api.refreshGlobalConfig().catch(() => {})
     await fetchData()
   }, [api, fetchData])

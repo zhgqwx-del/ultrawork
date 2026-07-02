@@ -50,6 +50,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY_PATH, path)
     setLastPath(path)
 
+    // Entering a workspace opencode hasn't seen yet creates a fresh instance,
+    // whose skill scan would race on builtin-vs-user same-name duplicates if a
+    // skill was installed mid-session (gotchas §10). Reconcile shadowing
+    // best-effort before that scan can happen; harmless no-op otherwise.
+    invoke("refresh_builtin_skills").catch(() => {})
+
     // Update recent list: add to front, deduplicate, cap at MAX_RECENT
     setRecentPaths((prev) => {
       const updated = [path, ...prev.filter((p) => p !== path)].slice(0, MAX_RECENT)
