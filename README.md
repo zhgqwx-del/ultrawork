@@ -203,7 +203,7 @@ rm -rf node_modules .turbo packages/client/desktop/src-tauri/binaries/*
 - SSE 流式响应 — 全局 SSE 连接，跨页面不丢事件
 - 工作区管理 — 多目录隔离，按工作区过滤 Session
 - 模型管理 — Provider 配置、模型快速切换
-- MCP 集成 — 远程/本地 MCP 服务器管理 + Browser MCP（Playwright/DevTools）
+- MCP 集成 — 远程/本地 MCP 连接器管理 + Browser MCP（Playwright/DevTools）
 - 知识库 — 本地文件夹 RAG（混合检索）+ IMA 第三方平台接入，经 MCP 提供给 Agent
 - 权限/问答 — Agent 权限授权 Dock、交互式问答 Dock
 - 文件预览 — 50/50 分屏预览（代码/Markdown/图片/Diff）

@@ -59,13 +59,13 @@ rm -rf ~/.config/ultrawork ~/.local/share/ultrawork ~/.cache/ultrawork ~/.local/
 - [ ] 历史会话仍然存在（迁移前的对话记录）
 - [ ] 可以打开历史会话查看完整消息
 
-### 2.3 MCP 服务
+### 2.3 MCP 连接器
 
 **操作**：打开 Settings → MCP 或查看 AI 对话中的工具列表
 
 **验证**：
-- [ ] 已配置的 MCP 服务仍然显示（如 browser）
-- [ ] MCP 服务可以正常连接（状态为 connected）
+- [ ] 已配置的 MCP 连接器仍然显示（如 browser）
+- [ ] MCP 连接器可以正常连接（状态为 connected）
 
 ### 2.4 发送消息
 
@@ -138,7 +138,7 @@ rm -rf ~/.local/state/ultrawork ~/.local/state/opencode
 | 1.2 | 迁移幂等性 | | |
 | 2.1 | Provider 配置可用 | | |
 | 2.2 | 会话历史完整 | | |
-| 2.3 | MCP 服务正常 | | |
+| 2.3 | MCP 连接器正常 | | |
 | 2.4 | 发送消息正常 | | |
 | 3.1 | 配置写入隔离 | | |
 | 3.2 | 新路径确认 | | |
