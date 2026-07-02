@@ -13,7 +13,8 @@ import { buildLeaderSystemPrompt, type TeamMember } from "@/lib/team-leader-prom
 import { ensureOrchestratorMcp } from "@/lib/orchestrator-mcp"
 import { createTeamSession } from "@/lib/orchestration-client"
 import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId } from "@agent/connector"
-import { ChatInput, ModelSelector, AgentSelector, TeamMemberSelect } from "@/components/chat"
+import { ChatInput, CopyButton, ModelSelector, AgentSelector, TeamMemberSelect } from "@/components/chat"
+import { shortenPath } from "@/lib/path-utils"
 import { TopBar } from "@/components/layout/top-bar"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
@@ -233,44 +234,71 @@ export function HomePage() {
           </div>
 
           {/* Input */}
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            placeholder={mode === "team" ? t("team.inputPlaceholder") : t("placeholder.askAnything")}
-            disabled={sending}
-            loading={sending}
-            variant="home"
-            className="w-full"
-            ctaLabel={t("home.startNow")}
-            topSlot={<ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />}
-            leftSlot={
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                <AgentSelector agentId={agentId} onAgentChange={setAgentId} leader={mode === "team"} />
-                {mode === "team" && (
-                  <TeamMemberSelect selected={memberIds} onToggle={toggleMember} />
-                )}
-                {isACP ? (
-                  // ACP agents bring their own model — show why the picker is
-                  // absent instead of silently vanishing (018 reported "no linkage").
-                  <span
-                    title={t("home.model.agentManaged.hint")}
-                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)]"
-                  >
-                    <Cpu className="size-3" />
-                    {t("home.model.agentManaged")}
-                  </span>
-                ) : (
-                  <ModelSelector
-                    currentModel={currentModel}
-                    onModelChange={setModel}
-                    onOpenModelDialog={() => navigate("/settings", { state: { section: "models" } })}
-                    title={mode === "team" ? t("home.model.leaderScope.hint") : undefined}
-                  />
-                )}
+          <div className="flex w-full flex-col gap-2">
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              placeholder={mode === "team" ? t("team.inputPlaceholder") : t("placeholder.askAnything")}
+              disabled={sending}
+              loading={sending}
+              variant="home"
+              className="w-full"
+              ctaLabel={t("home.startNow")}
+              topSlot={<ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />}
+              leftSlot={
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                  <AgentSelector agentId={agentId} onAgentChange={setAgentId} leader={mode === "team"} />
+                  {mode === "team" && (
+                    <TeamMemberSelect selected={memberIds} onToggle={toggleMember} />
+                  )}
+                  {isACP ? (
+                    // ACP agents bring their own model — show why the picker is
+                    // absent instead of silently vanishing (018 reported "no linkage").
+                    <span
+                      title={t("home.model.agentManaged.hint")}
+                      className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs text-[var(--color-fg-muted)]"
+                    >
+                      <Cpu className="size-3" />
+                      {t("home.model.agentManaged")}
+                    </span>
+                  ) : (
+                    <ModelSelector
+                      currentModel={currentModel}
+                      onModelChange={setModel}
+                      onOpenModelDialog={() => navigate("/settings", { state: { section: "models" } })}
+                      title={mode === "team" ? t("home.model.leaderScope.hint") : undefined}
+                    />
+                  )}
+                </div>
+              }
+            />
+
+            {/* Workspace indicator (hidden until a workspace is confirmed):
+                clicking the path copies the FULL path (display is shortened);
+                the trailing entry mirrors the settings-popover workspace item. */}
+            {workspacePath && (
+              <div className="flex max-w-full items-center gap-0.5 text-xs text-[var(--color-fg-muted)]">
+                <CopyButton
+                  text={workspacePath}
+                  label={shortenPath(workspacePath)}
+                  title={workspacePath}
+                  ariaLabel={t("home.workspace.copyHint")}
+                  className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-[var(--color-accent)]/60 hover:text-[var(--color-fg)]"
+                  iconClassName="size-3 shrink-0"
+                  labelClassName="truncate"
+                />
+                <button
+                  type="button"
+                  onClick={() => navigate("/workspace")}
+                  className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-[var(--color-accent)]/60 hover:text-[var(--color-fg)]"
+                >
+                  <FolderOpen className="size-3" />
+                  {t("home.workspace.switch")}
+                </button>
               </div>
-            }
-          />
+            )}
+          </div>
         </div>
       </div>
 

@@ -52,6 +52,8 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.files.prompt": "Help me organize and sort files in my folder",
     "home.card.content.prompt": "Help me write an article or email",
     "home.card.docs.prompt": "Help me analyze and summarize a document",
+    "home.workspace.copyHint": "Copy workspace path",
+    "home.workspace.switch": "Switch",
 
     // Orchestration
     "orchestration.title": "Pipelines",
@@ -713,6 +715,8 @@ const translations: Record<Language, Record<string, string>> = {
     "home.card.files.prompt": "帮我整理和分类文件夹中的文件",
     "home.card.content.prompt": "帮我写一篇文章或邮件",
     "home.card.docs.prompt": "帮我分析和总结一份文档",
+    "home.workspace.copyHint": "复制工作区路径",
+    "home.workspace.switch": "切换",
 
     // Orchestration
     "orchestration.title": "流水线",

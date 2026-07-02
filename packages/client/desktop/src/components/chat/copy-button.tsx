@@ -12,6 +12,10 @@ interface CopyButtonProps {
   className?: string
   /** Classes for the icon (size/color). Defaults to `size-3`. */
   iconClassName?: string
+  /** Classes for the label <span> (e.g. `truncate` when the label may overflow). */
+  labelClassName?: string
+  /** Native tooltip (e.g. the untruncated text when `label` is shortened). */
+  title?: string
   /** Accessible label (defaults to "Copy"). */
   ariaLabel?: string
 }
@@ -29,6 +33,8 @@ export const CopyButton = memo(function CopyButton({
   copiedLabel,
   className,
   iconClassName = "size-3",
+  labelClassName,
+  title,
   ariaLabel = "Copy",
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
@@ -51,13 +57,13 @@ export const CopyButton = memo(function CopyButton({
   }, [text])
 
   return (
-    <button onClick={handleCopy} className={className} aria-label={ariaLabel} type="button">
+    <button onClick={handleCopy} className={className} aria-label={ariaLabel} title={title} type="button">
       {copied ? (
         <Check className={`${iconClassName} text-green-600 dark:text-green-400`} />
       ) : (
         <Copy className={iconClassName} />
       )}
-      {label != null && <span>{copied ? (copiedLabel ?? label) : label}</span>}
+      {label != null && <span className={labelClassName}>{copied ? (copiedLabel ?? label) : label}</span>}
     </button>
   )
 })

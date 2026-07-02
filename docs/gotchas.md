@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-02 -->
+<!-- last-synced: 2026-07-03 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -233,6 +233,11 @@
 - **Tauri `externalBin` 自动解析 triple + `.exe`**：conf 里写 `binaries/opencode-server`（无后缀），Tauri 按当前 target 找 `opencode-server-<triple>[.exe]`。构建脚本产物命名必须严格对齐（已对齐，含 windows-x64）。`bundle.targets` 用 `"all"` 让 Tauri 按平台产对应安装包（Windows/Linux 实际由 `build-release.ts` 的 `--bundles` 特判收窄，见下条）。
 - **Windows MSI（WiX v3）扛不住超大 bundle 资源树——ppt-master 合入后 MSI 停用，Windows 只出 NSIS（2026-07-02 release CI 实证）**：`bundle.resources` 带上 `skills/builtin`（含 ppt-master 后 1.2 万文件、深层图标路径）后，Windows MSI 打包在链接期直接挂（`failed to bundle project: failed to run ...WixTools314\light.exe`——WiX v3 对 260 字符路径/超大文件集 known-fragile）；**同一棵资源树 NSIS 打包正常**。`build-release.ts` 按平台特判 `--bundles nsis`（与 Linux `deb+rpm` 特判同处），`*-setup.exe` 是 Windows 主安装器、无用户损失。若未来要恢复 MSI（企业部署诉求），评估 WiX 4 或资源 zip+首启解压，**别直接把 msi 加回 targets**。
 - **嵌入式 Node / Browser MCP / Chrome 清理三平台已支持（ADR-037 后续移植）**：Windows 的 node 是 `.zip` 布局——`node.exe` 在 dist 根（非 `bin/node`）、`node_modules/npm` 在根（非 `lib/`）、npm-cli 在 `node_modules/npm/bin/npm-cli.js`。移植已覆盖：`get_platform_arch`(win)/`embedded_node_bin`(node.exe)/`download_node`(zip+`tar -xf`)/`resolve_npm_cli`/`npm_install_in`(PATH `;`)/`kill_browser_mcp_processes`(PowerShell WMI+`taskkill /F /T`，no pgrep)。**坑**：① Windows node 用 `tar -xf`（不带 `-z`，bsdtar 自识别 zip）；② 前端 `buildMcpCommand` 的 `homeDir` 正则要吃反斜杠；③ Browser MCP 的 Windows 运行时**只能真机验**，CI/cargo 测不到。前置 Win10 1803+ 的 `tar.exe`/`curl`。
+
+## 13. 桌面组件测试（vitest + jsdom）
+
+- **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
+- **不要用 `importOriginal` 部分 mock 大 barrel（如 `@/components/chat`）**：`importOriginal()` 会实例化整个桶文件的真实依赖树（markdown/代码高亮栈），转换耗时数分钟拖垮 worker。要保留个别真实组件时精确单文件导入：`vi.mock("@/components/chat", async () => ({ CopyButton: (await import("@/components/chat/copy-button")).CopyButton, ChatInput: () => null, ... }))`。（同上）
 
 ---
 
