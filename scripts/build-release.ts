@@ -52,8 +52,14 @@ if (!isMacOS) {
   }
   // Linux: restrict to deb+rpm. AppImage's linuxdeploy needs FUSE/GStreamer
   // plumbing that's fragile on CI runners; deb/rpm cover the install story.
-  // (Windows keeps bundle.targets:"all" → nsis+msi.)
-  const bundles = process.platform === "linux" ? ["--bundles", "deb", "rpm"] : []
+  // Windows: NSIS only. WiX v3 (MSI) light.exe fails outright on the
+  // ppt-master resource tree (12k files / deep icon paths, CI-proven
+  // 2026-07-02: "failed to run ...WixTools314\light.exe"); NSIS packs the
+  // same tree fine and *-setup.exe is the primary installer anyway.
+  const bundles =
+    process.platform === "linux" ? ["--bundles", "deb", "rpm"]
+    : process.platform === "win32" ? ["--bundles", "nsis"]
+    : []
   console.log("\n🔨 Running tauri build...")
   await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${target} ${bundles}`
     .quiet(!verbose)

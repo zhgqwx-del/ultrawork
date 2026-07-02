@@ -50,7 +50,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | 平台 | 命令 | 产出 |
 |---|---|---|
 | **macOS** | `bun run release`（需 `APPLE_SIGNING_IDENTITY` 等做签名/公证，见 §三）<br>`bun run release --unsigned`（免签，本地用，Universal） | `.dmg` + `.app`（Universal） |
-| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `.msi` + `*-setup.exe`(NSIS) |
+| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `*-setup.exe`(NSIS；MSI 已停用——WiX v3 扛不住 ppt-master 1.2 万文件资源树) |
 | **Linux** | `bun run release` | `.deb` + `.rpm`（AppImage 暂跳过，CI 上 linuxdeploy/FUSE 不稳，见 ADR-037） |
 
 > **A vs B**：A/`tauri:build` = 当前架构、不签名、快（日常本地验证）；B/`release` 在 mac 上是 Universal 双架构 + 可签名公证（对外分发），win/linux 上两者基本一样。`--force-build` 可强制全重编 sidecar（默认 hash 增量缓存，重跑很快）。
@@ -62,7 +62,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | `tauri:build` / `setup --build`（无 `--target`） | `packages/client/desktop/src-tauri/target/release/bundle/` |
 | `release`（带 `--target`，mac 为 `universal-apple-darwin`） | `…/target/<triple>/release/bundle/` |
 
-子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `msi/*.msi`、`nsis/*-setup.exe`；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
+子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe`（MSI 已停用，见上表）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
 
 ### 0.5 在其他平台验证打包（干净环境完备步骤）
 
@@ -81,7 +81,7 @@ cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-m
 # 一路过到 winres 因缺宿主 llvm-rc 停 = 正常；前面依赖/代码/codegen 全过即说明 Rust 侧 OK
 ```
 
-**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg/msi/nsis/deb/rpm，下载 artifact 装机验证）。
+**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg/nsis/deb/rpm + 自动创建 GitHub Release 发布页；workflow_dispatch 仅出 artifact）。
 
 ---
 
