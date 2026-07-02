@@ -2331,7 +2331,11 @@ function DepBadge({
       </span>
     )
   }
-  const hint = missing.map((m) => DEP_HINTS[m] ?? m).join("; ")
+  // Append the actually-probed binary path when the probe reported one — makes
+  // "installed but still missing" self-explanatory (wrong interpreter resolved).
+  const hint = missing
+    .map((m) => (DEP_HINTS[m] ?? m) + (deps[m]?.path ? ` [${deps[m].path}]` : ""))
+    .join("; ")
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       <span

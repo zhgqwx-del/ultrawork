@@ -1873,6 +1873,10 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
     // and python-pptx for the PPTX export step (svg_to_pptx.py).
     let mut ver = false;
     let mut pptx = false;
+    // The interpreter the verdict is about — surfaced in the badge tooltip so a
+    // "still missing after install" case is self-explanatory (e.g. the user
+    // installed a versioned `python3.11` while `python3` still resolves to 3.9).
+    let mut probed: Option<String> = None;
     for c in &candidates {
         if !python_probe_allowed(c) {
             continue;
@@ -1880,11 +1884,12 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
         if let Some((v, p)) = run_python_feature_probe(c, Duration::from_secs(5)) {
             ver = v;
             pptx = p;
+            probed = Some(c.clone());
             break;
         }
     }
-    deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: None });
-    deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: None });
+    deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: probed.clone() });
+    deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: probed });
     deps
 }
 
