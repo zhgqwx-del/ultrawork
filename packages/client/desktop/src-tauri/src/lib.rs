@@ -1748,12 +1748,46 @@ fn skill_dep_path() -> String {
     }
 }
 
+/// Probe a condition inside the resolved python3 interpreter (exit 0 = available).
+/// PATH probing can't see pip packages or interpreter versions (gotchas §10) —
+/// this closes the "badge says ready but python is too old / the pip dep is
+/// missing" gap for load-bearing requirements.
+fn probe_python_ok(python: Option<&str>, dep_name: &str, code: &str) -> DepStatus {
+    let available = python
+        .map(|p| {
+            Command::new(p)
+                .args(["-c", code])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    DepStatus {
+        name: dep_name.to_string(),
+        available,
+        path: None,
+    }
+}
+
 /// Probe the PATH for the external tools built-in skills shell out to. The
 /// frontend maps each skill to its required tools (BUILTIN_DEP_MAP) and renders
 /// readiness badges.
 #[tauri::command]
 fn check_skill_dependencies() -> Vec<DepStatus> {
-    probe_bins(&skill_dep_path(), SKILL_DEP_BINS)
+    let mut deps = probe_bins(&skill_dep_path(), SKILL_DEP_BINS);
+    let python = deps
+        .iter()
+        .find(|d| d.name == "python3" && d.available)
+        .and_then(|d| d.path.clone());
+    // ppt-master hard-requires Python >= 3.10 (uses `X | None` unions at module
+    // level) and python-pptx for the PPTX export step (svg_to_pptx.py).
+    deps.push(probe_python_ok(
+        python.as_deref(),
+        "python3.10+",
+        "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
+    ));
+    deps.push(probe_python_ok(python.as_deref(), "python-pptx", "import pptx"));
+    deps
 }
 
 /// Resolve the canonical (user-local) path of a sidecar. After
@@ -2376,6 +2410,54 @@ mod builtin_skills_tests {
         assert!(missing.path.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)] // fake interpreters are shell scripts
+    fn probe_python_ok_reports_exit_status() {
+        // No python at all -> unavailable (never panics).
+        assert!(!probe_python_ok(None, "python-pptx", "import pptx").available);
+
+        use std::os::unix::fs::PermissionsExt;
+        let dir = unique_tmp("pylib");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ok = dir.join("python-ok");
+        std::fs::write(&ok, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let probed = probe_python_ok(Some(ok.to_str().unwrap()), "python-pptx", "import pptx");
+        assert!(probed.available);
+        assert!(probed.path.is_none());
+
+        let bad = dir.join("python-bad");
+        std::fs::write(&bad, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!probe_python_ok(Some(bad.to_str().unwrap()), "python3.10+", "import sys").available);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probe_python_ok_version_gate_against_real_python() {
+        // If a real python3 is on this dev/CI host, the version expression itself
+        // must be valid syntax on ANY python (it guards 3.10+ features, so it has
+        // to run on 3.9 too and just exit 1).
+        let found = probe_bins(&skill_dep_path(), &["python3"]);
+        let Some(py) = found.iter().find(|d| d.available).and_then(|d| d.path.clone()) else {
+            return; // no python on host — covered by the fake-interpreter test above
+        };
+        let d = probe_python_ok(
+            Some(&py),
+            "python3.10+",
+            "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
+        );
+        // Availability tracks the actual interpreter version — never a crash/parse error.
+        let out = Command::new(&py)
+            .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
+            .output()
+            .unwrap();
+        let expect = String::from_utf8_lossy(&out.stdout).trim() == "True";
+        assert_eq!(d.available, expect);
     }
 }
 

@@ -13,6 +13,7 @@ import { useSidebar } from "@/components/layout/sidebar-context"
 import { useConfig } from "@/lib/config-context"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
+import { isMacOS, isWindows } from "@/lib/platform"
 import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
 import { useBrowserMCP } from "@/lib/use-browser-mcp"
@@ -1960,6 +1961,17 @@ function SkillsSection() {
     navigate("/", { state: { initialInput: prompt } })
   }
 
+  // Missing skill dependencies: hand off to the AI in a fresh chat, which detects the
+  // OS and walks the user through platform-appropriate installs (same pattern as install).
+  const handleDepGuide = (item: SkillItem, missing: string[]) => {
+    const prompt = t("skills.depGuidePrompt", {
+      name: item.name,
+      deps: missing.join(", "),
+      location: item.location ?? "",
+    })
+    navigate("/", { state: { initialInput: prompt } })
+  }
+
   const handleAddPath = () => {
     const trimmed = newPath.trim()
     if (!trimmed) return
@@ -2083,7 +2095,14 @@ function SkillsSection() {
                   <SettingsSkillCard
                     key={item.name}
                     item={item}
-                    depBadge={<DepBadge skillName={item.name} deps={deps} loading={depsLoading} />}
+                    depBadge={
+                      <DepBadge
+                        skillName={item.name}
+                        deps={deps}
+                        loading={depsLoading}
+                        onGuide={(missing) => handleDepGuide(item, missing)}
+                      />
+                    }
                   />
                 ))
               : tabEmptyHint}
@@ -2236,18 +2255,55 @@ function SkillsSection() {
   )
 }
 
-// Install-guidance hints shown when a dependency is missing.
-const DEP_HINTS: Record<string, string> = {
-  python3: "python.org / brew install python",
-  node: "nodejs.org / brew install node",
-  pandoc: "brew install pandoc",
-  soffice: "LibreOffice",
-  pdftoppm: "brew install poppler",
-  git: "git-scm.com / brew install git",
-  "markdown-exporter": "pip install md-exporter",
-}
+// Install-guidance hints shown when a dependency is missing (per host platform).
+const DEP_HINTS: Record<string, string> = isWindows
+  ? {
+      python3: "winget install Python.Python.3.12 / python.org",
+      "python3.10+": "winget install Python.Python.3.12 / python.org",
+      node: "winget install OpenJS.NodeJS.LTS / nodejs.org",
+      pandoc: "winget install JohnMacFarlane.Pandoc",
+      soffice: "LibreOffice",
+      pdftoppm: "scoop/choco install poppler",
+      git: "winget install Git.Git / git-scm.com",
+      "markdown-exporter": "pip install md-exporter",
+      "python-pptx": "pip install python-pptx",
+    }
+  : isMacOS
+    ? {
+        python3: "brew install python / python.org",
+        "python3.10+": "brew install python / python.org (>= 3.10)",
+        node: "brew install node / nodejs.org",
+        pandoc: "brew install pandoc",
+        soffice: "LibreOffice",
+        pdftoppm: "brew install poppler",
+        git: "brew install git / git-scm.com",
+        "markdown-exporter": "pip install md-exporter",
+        "python-pptx": "pip install python-pptx",
+      }
+    : {
+        python3: "apt/dnf install python3",
+        "python3.10+": "apt/dnf install python3 (>= 3.10)",
+        node: "apt/dnf install nodejs / nodejs.org",
+        pandoc: "apt/dnf install pandoc",
+        soffice: "LibreOffice (apt install libreoffice)",
+        pdftoppm: "apt/dnf install poppler-utils",
+        git: "apt/dnf install git",
+        "markdown-exporter": "pip install md-exporter",
+        "python-pptx": "pip install python-pptx",
+      }
 
-function DepBadge({ skillName, deps, loading }: { skillName: string; deps: DepMap; loading: boolean }) {
+function DepBadge({
+  skillName,
+  deps,
+  loading,
+  onGuide,
+}: {
+  skillName: string
+  deps: DepMap
+  loading: boolean
+  /** When set, missing deps render a "guide install" button handing off to a fresh chat. */
+  onGuide?: (missing: string[]) => void
+}) {
   const { t } = useI18n()
   const required = BUILTIN_DEP_MAP[skillName]
   if (!required) return null
@@ -2277,12 +2333,24 @@ function DepBadge({ skillName, deps, loading }: { skillName: string; deps: DepMa
   }
   const hint = missing.map((m) => DEP_HINTS[m] ?? m).join("; ")
   return (
-    <span
-      title={`${t("skills.depMissingHint")}: ${hint}`}
-      className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-    >
-      <AlertTriangle className="size-3" />
-      {t("skills.depMissing")}: {missing.join(", ")}
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      <span
+        title={`${t("skills.depMissingHint")}: ${hint}`}
+        className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+      >
+        <AlertTriangle className="size-3" />
+        {t("skills.depMissing")}: {missing.join(", ")}
+      </span>
+      {onGuide && (
+        <button
+          type="button"
+          onClick={() => onGuide(missing)}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg-secondary)]"
+        >
+          <Download className="size-3" />
+          {t("skills.depGuide")}
+        </button>
+      )}
     </span>
   )
 }

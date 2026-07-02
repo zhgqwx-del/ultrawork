@@ -23,6 +23,11 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   pdf: ["python3", "pdftoppm"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
   "doc-edit": ["python3"],
+  // python3.10+ (version-probed: skill uses `X | None` unions at module level) and
+  // python-pptx (pip library, import-probed — needed by the PPTX export step
+  // svg_to_pptx.py). Neither is PATH-probeable; both come from Rust probe_python_ok.
+  // Other pip deps are per-feature and error gracefully in-skill (error_helper.py).
+  "ppt-master": ["python3.10+", "python-pptx"],
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */

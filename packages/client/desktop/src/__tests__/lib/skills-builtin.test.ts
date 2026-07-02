@@ -26,9 +26,9 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all five built-in skills", () => {
+  it("covers all six built-in skills", () => {
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["doc-edit", "markdown-exporter", "pdf", "skill-creator", "skill-installer"].sort(),
+      ["doc-edit", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer"].sort(),
     )
   })
 
@@ -41,6 +41,14 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     expect(missingDeps("pdf", present("python3"))).toEqual(["pdftoppm"])
     expect(missingDeps("skill-installer", present())).toEqual(["python3", "git"])
     expect(missingDeps("markdown-exporter", present("pandoc"))).toEqual(["markdown-exporter"])
+  })
+
+  it("ppt-master requires a version-gated python plus the import-probed python-pptx", () => {
+    expect(missingDeps("ppt-master", present("python3.10+", "python-pptx"))).toEqual([])
+    // Old interpreter (3.9): python3 present but the version probe fails.
+    expect(missingDeps("ppt-master", present("python3"))).toEqual(["python3.10+", "python-pptx"])
+    expect(missingDeps("ppt-master", present("python3.10+"))).toEqual(["python-pptx"])
+    expect(missingDeps("ppt-master", present())).toEqual(["python3.10+", "python-pptx"])
   })
 
   it("returns no requirements for unknown skill names", () => {

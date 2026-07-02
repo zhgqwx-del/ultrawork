@@ -32,6 +32,8 @@ interface Source {
   drop?: string[]
   /** 若设置，只保留这些顶层文件/目录（优先于 drop） */
   keepOnly?: string[]
+  /** 用 git sparse checkout 只拉 subdir（整仓 tarball 过大的仓库用，如 ppt-master 含 581M examples） */
+  sparse?: boolean
   notice: string
 }
 
@@ -76,6 +78,22 @@ const SOURCES: Source[] = [
       "Distributed as the PyPI package `md-exporter` (CLI `markdown-exporter`); only SKILL.md + LICENSE are " +
       "bundled — the tool itself is installed on demand via `pip install md-exporter` (see SKILL.md / dependency badges).",
   },
+  {
+    // pin release tag（非 main）：上游约周更，bump 时改 ref 重跑本脚本即可（复核项见 discussions/025 §9）。
+    // sparse 必开：整仓 tarball ≈ 700MB（examples/ 占 581M），sparse checkout 只拉 skill 子目录。
+    dest: "ppt-master",
+    repo: "hugohe3/ppt-master",
+    ref: "v2.12.0",
+    subdir: "skills/ppt-master",
+    sparse: true,
+    drop: ["references/ai-image-comparison"],
+    notice:
+      "Derived from hugohe3/ppt-master `skills/ppt-master` (MIT). AI-driven presentation generation: " +
+      "source docs -> Strategist design spec -> per-page hand-written SVG -> editable PPTX export. " +
+      "Trimmed for bundling: references/ai-image-comparison (43MB of AI-image-provider comparison PNGs, " +
+      "documentation-only) is dropped. Requires python3 (>=3.10); per-feature pip deps in requirements.txt " +
+      "(python-pptx needed for PPTX export). See docs/discussions/025-builtin-ppt-master-skill.md.",
+  },
 ]
 
 /** x-requires frontmatter 注入（人读文档用；与前端 BUILTIN_DEP_MAP 保持一致） */
@@ -84,28 +102,47 @@ const X_REQUIRES: Record<string, string[]> = {
   "skill-installer": ["python3", "git"],
   pdf: ["python3", "pdftoppm"],
   "markdown-exporter": ["python3", "pandoc"],
+  "ppt-master": ["python3.10+"],
+}
+
+/** 把取到的源目录整理进落地目录（keepOnly/drop 共用逻辑）。 */
+function placeInto(from: string, src: Source, into: string) {
+  if (!existsSync(from)) throw new Error(`子目录不存在: ${src.repo}/${src.subdir}`)
+  rmSync(into, { recursive: true, force: true })
+  cpSync(from, into, { recursive: true })
+  if (src.keepOnly) {
+    const keep = new Set(src.keepOnly)
+    for (const name of readdirSync(into)) {
+      if (!keep.has(name)) rmSync(join(into, name), { recursive: true, force: true })
+    }
+  }
+  for (const d of src.drop ?? []) rmSync(join(into, d), { recursive: true, force: true })
 }
 
 async function fetchSubdir(src: Source, into: string) {
   const tmp = mkdtempSync(join(tmpdir(), "uw-skill-"))
   try {
+    if (src.sparse) {
+      // 大仓库：blobless sparse clone 只取 subdir（tag/branch 均可作 --branch）
+      const repoDir = join(tmp, "repo")
+      await $`git clone --depth 1 --filter=blob:none --sparse --branch ${src.ref} https://github.com/${src.repo}.git ${repoDir}`.quiet()
+      await $`git -C ${repoDir} sparse-checkout set ${src.subdir}`.quiet()
+      placeInto(src.subdir === "." ? repoDir : join(repoDir, src.subdir), src, into)
+      // 许可合规：子目录本身无 LICENSE 时从仓库根补拷（cone mode 顶层文件默认已检出）
+      const hasLicense = readdirSync(into).some((n) => n.toLowerCase().startsWith("license"))
+      if (!hasLicense) {
+        const rootLicense = readdirSync(repoDir).find((n) => n.toLowerCase().startsWith("license"))
+        if (rootLicense) cpSync(join(repoDir, rootLicense), join(into, rootLicense))
+      }
+      return
+    }
     const tgz = join(tmp, "src.tgz")
     // gh api tarball -> gzip 二进制；--cache 0 避免陈旧
     await $`gh api repos/${src.repo}/tarball/${src.ref} > ${tgz}`.quiet()
     await $`tar xzf ${tgz} -C ${tmp}`.quiet()
     const top = readdirSync(tmp).find((n) => statSync(join(tmp, n)).isDirectory() && n !== "src.tgz")
     if (!top) throw new Error(`tarball 无顶层目录: ${src.repo}`)
-    const from = src.subdir === "." ? join(tmp, top) : join(tmp, top, src.subdir)
-    if (!existsSync(from)) throw new Error(`子目录不存在: ${src.repo}/${src.subdir}`)
-    rmSync(into, { recursive: true, force: true })
-    cpSync(from, into, { recursive: true })
-    if (src.keepOnly) {
-      const keep = new Set(src.keepOnly)
-      for (const name of readdirSync(into)) {
-        if (!keep.has(name)) rmSync(join(into, name), { recursive: true, force: true })
-      }
-    }
-    for (const d of src.drop ?? []) rmSync(join(into, d), { recursive: true, force: true })
+    placeInto(src.subdir === "." ? join(tmp, top) : join(tmp, top, src.subdir), src, into)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
@@ -167,7 +204,13 @@ function injectXRequires(dir: string, deps: string[]) {
 
 async function main() {
   console.log(`内置技能目录: ${BUILTIN_DIR}`)
-  for (const src of SOURCES) {
+  // 可选按名过滤：`bun run scripts/fetch-builtin-skills.ts ppt-master` 只刷新指定技能，
+  // 避免顺带把 pin 在 main 的其它技能拉到未审内容。缺省全量。sentinel 始终全目录重算。
+  const only = process.argv.slice(2)
+  const unknown = only.filter((n) => !SOURCES.some((s) => s.dest === n))
+  if (unknown.length) throw new Error(`未知技能名: ${unknown.join(", ")}（可选: ${SOURCES.map((s) => s.dest).join(", ")}）`)
+  const selected = only.length ? SOURCES.filter((s) => only.includes(s.dest)) : SOURCES
+  for (const src of selected) {
     const into = join(BUILTIN_DIR, src.dest)
     process.stdout.write(`• ${src.dest} <- ${src.repo}/${src.subdir} ... `)
     await fetchSubdir(src, into)
