@@ -1,6 +1,7 @@
 # 025 — 内置 PPT 生成技能：ppt-master 调研与打包方案
 
-> 状态：讨论中（调研已完成、方案已收敛，待实施）
+> 状态：✅ 阶段 1 已落地（**ADR-040**，四路对抗审查 + 真机全链验收：真模型完整生成一次 PPT 通过）；阶段 2（§5 混合更新通道）待做
+> ⚠️ 实施时对本文的两处升级：① X_REQUIRES 从 `["python3"]` 升级为 `["python3.10+", "python-pptx"]`（e2e 暴露 3.9 假就绪 → Rust python 内探针版本门，ADR-040 D3）；② 追加 opencode-server rich PATH 注入 + builtin staging+rename 原子落地（审查产出，ADR-040 D4）
 > 日期：2026-07-02
 > 关联：ADR-032（内置技能打包与分发）· gotchas §10（内置技能坑点）· ADR-039（`POST /global/refresh` 软刷新）· ADR-037（跨平台约束）· ADR-033（产物识别 = 文件系统真相）
 > 范围：评估 [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) 能否直接/微改造为 Ultrawork 内置 PPT 技能；给出打包路线、更新跟随策略、Python 环境引导方案。**不涉及**自研 PPT 生成能力。

@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-01 -->
+<!-- last-synced: 2026-07-02 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -16,6 +16,7 @@
 - 遵循 shadcn/ui 模式：Radix 无样式原语 + Tailwind CSS 4
 - CSS 变量 token 体系（见 `index.css`）
 - 只在用户要求时使用 emoji
+- i18n `t(key, params)` 插值用 `split/join` 而非 `String.replace`（replace 会解释替换值里的 `$&`/`$'` 序列——文件路径参数如 `{location}` 可能含）；同一占位符只写一次
 
 ### TypeScript
 - 构建顺序：修改 `api-client` 类型后，必须先 `tsc --build` 再检查 client
@@ -339,11 +340,13 @@ setTimeout(() => fetchSources(), 500)
 
 ## 12. 内置技能 authoring（`skills/builtin/`，ADR-032）
 
-**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（doc-edit）可直接编辑。改任意内容后重跑 fetch 脚本刷新 `.builtin-version`（内容 hash，触发桌面端升级刷新）。
+**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter/ppt-master）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（doc-edit）可直接编辑。改任意内容后重跑 fetch 脚本刷新 `.builtin-version`（内容 hash，触发桌面端升级刷新）。
+
+**新增上游技能条目流程**（fetch 脚本 `SOURCES`）：核对 LICENSE 可再分发 → `ref` **pin release tag**（勿 main，bump 时改 tag 重跑）→ 大仓库（整仓 tarball 过大）设 `sparse: true`（blobless sparse clone 只拉 `subdir`；`--branch` 不接受 commit SHA）→ 用 `drop`/`keepOnly` 裁非功能大文件（纯文档图等）→ `X_REQUIRES` 与前端 `BUILTIN_DEP_MAP` 同步 → 专属适配写成 `applyXxxPatches`（先例：skill-installer 改安装目标、ppt-master 注 `.env` 警告+清悬空引用）→ 跑 `bun run --bun scripts/fetch-builtin-skills.ts <name>`（按名过滤）并提交产物。
 
 **自写技能脚本模式**（参考 `doc-edit/scripts/*.py`）：argv 驱动、`--json` 可选结构化输出、依赖缺失时 stderr 打印缺失库名 + `sys.exit(1)`（让 agent 据此提示安装）、无网络副作用、就地改默认/`--out` 另存。保持「薄」：只覆盖高频操作，复杂场景让 agent 直接写库 API 代码。
 
-**依赖徽标 SSOT**：技能→运行依赖映射唯一权威是 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（驱动设置页 `DepBadge`）；SKILL.md 的 `x-requires` 仅人读文档，两者改一处需对齐另一处。可探测的是 PATH 上的二进制（`check_skill_dependencies` 探 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter），Python 库不可探（脚本自身优雅报错兜底）。
+**依赖徽标 SSOT**：技能→运行依赖映射唯一权威是 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（驱动设置页 `DepBadge`）；SKILL.md 的 `x-requires` 仅人读文档，两者改一处需对齐另一处。可探测的除 PATH 二进制（`check_skill_dependencies` 探 python3/node/pandoc/…）外，还支持 **python 内探针**（`run_python_feature_probe`：版本门 `python3.10+` + pip 库 import 探测如 `python-pptx`；探针防御与语义见 gotchas §10，改探针前必读）。**依赖缺失引导**：`DepBadge` 的 `onGuide` → `depGuidePrompt` handoff 新对话让 AI 按平台引导安装（与 curated 安装同一 `navigate("/",{state:{initialInput}})` 模式）；引导词必须写死**收敛标准**（如「`python3` 命令本身 ≥3.10」），否则 AI 装个版本化命令就交差、徽标不收敛。`DEP_HINTS` 按平台三分支（`isWindows`/`isMacOS`/Linux 兜底，`@/lib/platform` 模块级常量）。
 
 **设置-技能页三区**（`Settings.tsx` SkillsSection）：内置（`skill.location` 含 `/skills/builtin/`，只读+依赖徽标）/ 可安装（`INSTALLABLE_SKILLS` curated，「安装」→ `navigate("/",{state:{initialInput}})` 交给内置 skill-installer 在新对话完成）/ 自定义（现有 paths·urls + 非内置发现技能）。新增可安装项**只放可再分发许可的来源**。
 
