@@ -102,3 +102,38 @@ bun run --bun e2e:kb-restart        # exit 0 = PASS, 1 = FAIL
 ```
 
 Isolated: temp `HOME`/`XDG`, non-standard port 4296.
+
+## `builtin-skill-shadowing.e2e.ts` — builtin-vs-user same-name shadowing (ADR-040 阶段 2)
+
+The opencode half of the deterministic-shadowing proof (the Rust half —
+`reconcile_builtin_shadowing` prune/restore — is covered by cargo tests).
+Against a real opencode: (A) both same-name copies on disk collapse to ONE
+arbitrary winner (the race reconcile exists to prevent — logged, not asserted);
+(B) after the prune state (builtin copy removed) + `POST /global/refresh` the
+USER version is served immediately; (C) after the restore state (user removed,
+builtin recopied) the builtin returns — all live, no restart (ADR-039).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:builtin-shadowing   # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, non-standard port 4302.
+
+## `builtin-shadow-ui.e2e.ts` — shadow-state Settings UI + restore flow
+
+Real React app (Chrome + Vite + real opencode). The two Tauri commands are
+shimmed onto a local helper HTTP server (port 4977) that performs REAL fs
+mutations mirroring the Rust reconcile, so the restore flow exercises a real
+opencode rescan: shadow card (overridden badge + raw-upstream copy + restore
+button) → custom tab shows the user copy → catalog Installed→Install round-trip
+→ confirm dialog → fs truth asserted → builtin card back → install prompt
+mandates `--method git`.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:builtin-shadow-ui   # exit 0 = PASS, 1 = FAIL
+```
+
+Standard ports 4096/1420 (kill a running dev instance first, like
+builtin-ppt-ui).

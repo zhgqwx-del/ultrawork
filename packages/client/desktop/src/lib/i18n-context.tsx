@@ -590,11 +590,23 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.depMissingHint": "Install to enable",
     "skills.install": "Install",
     "skills.installed": "Installed",
-    "skills.installPrompt": "Use the skill-installer skill to install the \"{name}\" skill from {repo} (path: {path}).",
+    "skills.installPrompt": "Use the skill-installer skill to install the \"{name}\" skill from {repo} (path: {path}). For large repositories prefer `--method git` (sparse checkout of the skill path only).",
+    "skills.depGuide": "Set up",
+    "skills.depGuidePrompt": "Help me install the missing dependencies ({deps}) required by the \"{name}\" skill (SKILL.md: {location}). First detect my OS and existing environment, then give platform-appropriate install commands step by step. If python3 is missing or older than 3.10, install Python 3.10+ first. ⚠️ Convergence criterion (the task is NOT done until this holds): the skill's scripts invoke the literal `python3` command, so in a fresh terminal `python3 --version` must be >= 3.10 and `python3 -c \"import pptx\"` must succeed — if the install only produced a versioned command (python3.11/python3.12), you must also point `python3` at it (e.g. a symlink in a PATH dir that precedes /usr/bin: ln -s python3.12 ~/.local/bin/python3); a versioned binary alone with `python3` still old does NOT count. Install ONLY the missing items listed above — the skill directory's requirements.txt entries beyond them are per-feature optional; offer them but skip on failure (use a regional PyPI mirror such as https://pypi.tuna.tsinghua.edu.cn/simple if the default index is slow). Finally verify against the convergence criterion and show me the verification output.",
     "skills.catalog.mcpBuilder": "Scaffold and build MCP servers.",
     "skills.catalog.webappTesting": "Test web apps end-to-end with a headless browser.",
     "skills.catalog.frontendDesign": "Produce polished frontend UI and design.",
     "skills.catalog.algorithmicArt": "Generate algorithmic / generative art.",
+    "skills.catalog.pptMaster": "AI-driven PPT generation: source docs → designed SVG pages → truly editable PPTX (upstream latest).",
+    "skills.installPromptGit": "Use the skill-installer skill to install the \"{name}\" skill from {repo} (path: {path}). You MUST pass `--method git` (sparse checkout of the skill path only) — do NOT use the default auto mode: this repository's zip archive is hundreds of MB, while a git sparse checkout only fetches the skill subdirectory.",
+    "skills.builtinUpdateHint": "A built-in copy already ships with the app — installing here fetches the latest upstream version, which permanently overrides the built-in copy (even across app updates) until you remove it.",
+    "skills.shadowedBadge": "Overridden by user install",
+    "skills.shadowedDetail": "A user-installed \"{name}\" (raw upstream, without the built-in copy's bundled patches, e.g. the .env location warning) permanently overrides the built-in copy — even across app updates — until you remove it. The user copy is listed under the Custom tab.",
+    "skills.restoreBuiltin": "Remove user version, restore built-in",
+    "skills.restoreConfirmTitle": "Restore the built-in skill?",
+    "skills.restoreConfirmBody": "This deletes the user-installed \"{name}\" skill directory (in the app's skills directory) and restores the built-in copy. Local changes in the user copy are lost.",
+    "skills.restoreDone": "Built-in skill restored",
+    "skills.restoreFailed": "Failed to restore the built-in skill",
     "command.title": "Commands",
 
     // Artifact preview
@@ -1239,11 +1251,23 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.depMissingHint": "安装后启用",
     "skills.install": "安装",
     "skills.installed": "已安装",
-    "skills.installPrompt": "使用 skill-installer 技能，从 {repo} 安装 \"{name}\" 技能（路径：{path}）。",
+    "skills.installPrompt": "使用 skill-installer 技能，从 {repo} 安装 \"{name}\" 技能（路径：{path}）。大仓库请用 `--method git`（只 sparse checkout 技能子目录）。",
+    "skills.depGuide": "引导安装",
+    "skills.depGuidePrompt": "请帮我安装「{name}」技能缺少的依赖：{deps}（SKILL.md 位置：{location}）。先检测我的操作系统和已有环境，按平台给出安装命令并逐步引导；缺 python3 或版本低于 3.10 就先装 Python 3.10+。⚠️ 收敛标准（必须满足才算完成）：技能脚本固定用 `python3` 命令调用，所以装完后新终端里 `python3 --version` 必须 ≥3.10 且 `python3 -c \"import pptx\"` 必须成功——如果安装产物是版本化命令（如 python3.11、python3.12），必须再把 `python3` 指向它（例如在 PATH 中早于 /usr/bin 的目录里建 symlink：ln -s python3.12 ~/.local/bin/python3），只装一个 python3.x 而 python3 仍是旧版不算完成。只需装上面列出的缺失项——技能目录 requirements.txt 里的其余包按功能可选，可以顺带建议但失败就跳过、不影响核心导出（国内网络可用清华镜像 -i https://pypi.tuna.tsinghua.edu.cn/simple）；最后按收敛标准逐项验证并把验证命令的输出展示给我。",
     "skills.catalog.mcpBuilder": "脚手架式构建 MCP 服务器。",
     "skills.catalog.webappTesting": "用无头浏览器端到端测试 Web 应用。",
     "skills.catalog.frontendDesign": "产出精致的前端 UI 与设计。",
     "skills.catalog.algorithmicArt": "生成算法 / 生成式艺术。",
+    "skills.catalog.pptMaster": "AI 驱动的 PPT 生成：源文档 → 设计级 SVG 页面 → 真可编辑 PPTX（上游最新版）。",
+    "skills.installPromptGit": "使用 skill-installer 技能，从 {repo} 安装 \"{name}\" 技能（路径：{path}）。必须传 `--method git`（只 sparse checkout 技能子目录）——不要用默认 auto 模式：该仓库 zip 包有数百 MB，git sparse checkout 只拉技能子目录。",
+    "skills.builtinUpdateHint": "应用已内置该技能——此处安装 = 获取上游最新版，安装后将持续覆盖内置版（应用更新也不回退），直到手动移除。",
+    "skills.shadowedBadge": "已被用户安装版本覆盖",
+    "skills.shadowedDetail": "用户安装的「{name}」（上游原版，不含内置版的打包适配补丁，如 .env 存放位置警告）会持续覆盖内置版——即使应用更新携带了更新的内置版——直到手动移除。用户版本在「自定义」标签页中。",
+    "skills.restoreBuiltin": "移除用户版本，恢复内置",
+    "skills.restoreConfirmTitle": "恢复内置技能？",
+    "skills.restoreConfirmBody": "将删除用户安装的「{name}」技能目录（位于应用技能目录下），并恢复内置版本。用户目录中的本地改动会丢失。",
+    "skills.restoreDone": "已恢复内置技能",
+    "skills.restoreFailed": "恢复内置技能失败",
     "command.title": "命令",
 
     // Artifact preview
@@ -1326,7 +1350,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     let value = translations[language]?.[key] || key
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        value = value.replace(`{${k}}`, String(v))
+        // split/join: String.replace would interpret `$&`-style sequences in the
+        // value (file paths can contain them, e.g. {location}/{path} params).
+        value = value.split(`{${k}}`).join(String(v))
       })
     }
     return value

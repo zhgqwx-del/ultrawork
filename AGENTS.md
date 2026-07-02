@@ -118,18 +118,18 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
-- `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`）/ `use-channels.ts` / `use-knowledge-base.ts`
+- `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
 - `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
 - **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
 - `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
-- `check_skill_dependencies`（探测内置技能依赖，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`（首启拷贝 `skills/builtin/` → `~/.config/ultrawork/skills/builtin`，sentinel 控刷新，ADR-032）
+- `check_skill_dependencies`（async；PATH 探测 + `run_python_feature_probe` python 内探针〔python3.10+ 版本门/python-pptx，四防御见 gotchas §10〕，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`/`install_builtin_tree`/`reconcile_builtin_shadowing`（首启拷贝 `skills/builtin/` → `~/.config/ultrawork/skills/builtin`，staging+rename 原子交换，sentinel 控刷新；同名用户技能确定性遮蔽 prune/restore + `BUILTIN_SKILLS_LOCK`，命令 `refresh_builtin_skills`/`remove_user_skill_override`，ADR-032/040）
 
-**内置技能（`skills/builtin/`，ADR-032）**
-- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0，由 `scripts/fetch-builtin-skills.ts` 同步+打补丁）+ `doc-edit`（自写，Office 读改脚本）
-- 设置-技能页三区在 `src/pages/Settings.tsx`（SkillsSection/DepBadge/INSTALLABLE_SKILLS）；安装走 Home `initialInput` 预填 + 内置 skill-installer
+**内置技能（`skills/builtin/`，ADR-032 / ADR-040）**
+- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）可直接编辑
+- 设置-技能页三区在 `src/pages/Settings.tsx`（SkillsSection/DepBadge〔含「引导安装」handoff〕/INSTALLABLE_SKILLS/平台化 DEP_HINTS）；安装/依赖引导都走 Home `initialInput` 预填
 
 **Gateway（`packages/channel/gateway/src/`）**
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
@@ -182,7 +182,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (39 ADRs, 001–039)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (40 ADRs, 001–040)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

@@ -23,6 +23,11 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   pdf: ["python3", "pdftoppm"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
   "doc-edit": ["python3"],
+  // python3.10+ (version-probed: skill uses `X | None` unions at module level) and
+  // python-pptx (pip library, import-probed — needed by the PPTX export step
+  // svg_to_pptx.py). Neither is PATH-probeable; both come from Rust probe_python_ok.
+  // Other pip deps are per-feature and error gracefully in-skill (error_helper.py).
+  "ppt-master": ["python3.10+", "python-pptx"],
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */
@@ -37,7 +42,9 @@ export function missingDeps(skillName: string, deps: DepMap): string[] {
 /**
  * Probe host dependencies via the `check_skill_dependencies` Tauri command.
  * Returns an empty map outside Tauri (e.g. browser GUI walkthroughs) so callers
- * degrade to "unknown" rather than crashing.
+ * don't crash; note an empty map renders every required tool as "missing"
+ * (pessimistic, matches pre-Tauri-failure behavior) — the guide prompt asks the
+ * AI to re-detect the environment first, so the handoff still degrades safely.
  */
 export function useSkillDeps(): { deps: DepMap; loading: boolean } {
   const [deps, setDeps] = useState<DepMap>({})
