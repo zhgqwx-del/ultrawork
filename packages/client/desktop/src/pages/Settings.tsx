@@ -87,6 +87,7 @@ export function SettingsPage() {
     <div className="flex flex-1 flex-col overflow-hidden">
       <TopBar
         title={t("settingsPage.title")}
+        onBack={() => navigate(getReturnPath(), { replace: true })}
         onClose={() => navigate(getReturnPath(), { replace: true })}
         hideSidebarToggle
       />
