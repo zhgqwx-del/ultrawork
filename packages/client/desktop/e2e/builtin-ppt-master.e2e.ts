@@ -4,7 +4,8 @@
 //
 // Flow (pure HTTP, real opencode, isolated env):
 //   1. copy repo skills/builtin/ppt-master → <tmp>/.config/ultrawork/skills/builtin/
-//      (simulates the Rust first-boot copy; also measures the 12k-file copy cost)
+//      (simulates the Rust first-boot copy; the ms figure printed is Node cpSync
+//      on-volume clonefile — the real Rust cross-volume copy is slower, seconds)
 //   2. boot opencode (OPENCODE_APP_NAME=ultrawork) → GET /skill lists ppt-master,
 //      location points into skills/builtin/, description carries the trigger words
 //   3. self-containment smoke: run a bundled stdlib-only script (project_manager.py info)

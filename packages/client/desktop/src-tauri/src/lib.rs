@@ -1671,18 +1671,45 @@ fn ensure_builtin_skills(app: &tauri::App) {
         .trim()
         .to_string();
     let target = builtin_skills_target();
+    // Dot-dir staging sibling: excluded from opencode's {skill,skills}/** scan
+    // (no `dot` option), so a leftover from an interrupted run is never picked
+    // up as duplicate skills. Cleared on every start.
+    let staging = target
+        .parent()
+        .map(|p| p.join(".builtin.staging"))
+        .unwrap_or_else(|| target.with_extension("staging"));
+    let _ = std::fs::remove_dir_all(&staging);
     let sentinel = target.join(".builtin-version");
     let stored = std::fs::read_to_string(&sentinel).ok().map(|s| s.trim().to_string());
     if !builtin_needs_refresh(&version, stored.as_deref(), target.exists()) {
         return; // up to date
     }
-    // Refresh: remove ONLY builtin/ — siblings under skills/ are user-installed.
-    let _ = std::fs::remove_dir_all(&target);
-    if let Err(e) = copy_dir_recursive(&src, &target) {
-        eprintln!("[builtin-skills] copy failed ({} -> {}): {}", src.display(), target.display(), e);
+    // Refresh: stage-then-rename so an interrupted copy (quit/disk-full mid-way
+    // through 12k files) can never leave a half tree with a valid sentinel; the
+    // swap removes ONLY builtin/ — siblings under skills/ are user-installed.
+    if let Err(e) = install_builtin_tree(&src, &target, &staging) {
+        eprintln!("[builtin-skills] install failed ({} -> {}): {}", src.display(), target.display(), e);
         return;
     }
     println!("[builtin-skills] installed -> {} (version {})", target.display(), version);
+}
+
+/// Stage-then-rename install of the builtin skills tree. The sentinel inside the
+/// tree only becomes visible at `target` after the FULL copy succeeded (rename is
+/// same-volume); interruption leaves either the old consistent target or no
+/// target at all — never "sentinel says done, tree is partial".
+fn install_builtin_tree(
+    src: &std::path::Path,
+    target: &std::path::Path,
+    staging: &std::path::Path,
+) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(staging);
+    copy_dir_recursive(src, staging)?;
+    let _ = std::fs::remove_dir_all(target);
+    std::fs::rename(staging, target).map_err(|e| {
+        let _ = std::fs::remove_dir_all(staging);
+        format!("rename staging -> {}: {}", target.display(), e)
+    })
 }
 
 /// Pure refresh decision: copy is needed unless the target exists AND the source
@@ -1748,45 +1775,116 @@ fn skill_dep_path() -> String {
     }
 }
 
-/// Probe a condition inside the resolved python3 interpreter (exit 0 = available).
-/// PATH probing can't see pip packages or interpreter versions (gotchas §10) —
-/// this closes the "badge says ready but python is too old / the pip dep is
-/// missing" gap for load-bearing requirements.
-fn probe_python_ok(python: Option<&str>, dep_name: &str, code: &str) -> DepStatus {
-    let available = python
-        .map(|p| {
-            Command::new(p)
-                .args(["-c", code])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-    DepStatus {
-        name: dep_name.to_string(),
-        available,
-        path: None,
+/// Run a probe command with output capture, a hard deadline, and no console
+/// window on Windows. Returns None on spawn failure, timeout, or non-zero exit —
+/// probes must never hang the caller (a stuck interpreter would otherwise pin
+/// the skills page in "checking" forever).
+fn run_probe(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    }
+    // Probe stdout is a few bytes — no pipe-buffer deadlock risk waiting post-exit.
+    let out = child.wait_with_output().ok()?;
+    if out.status.success() { Some(out) } else { None }
 }
 
-/// Probe the PATH for the external tools built-in skills shell out to. The
-/// frontend maps each skill to its required tools (BUILTIN_DEP_MAP) and renders
-/// readiness badges.
-#[tauri::command]
+/// macOS ships /usr/bin/python3 as an Xcode CLT shim; EXECUTING it without CLT
+/// installed pops the system "install developer tools" dialog. Only run it when
+/// CLT is actually present (`xcode-select -p` succeeds, cheap and dialog-free).
+fn python_probe_allowed(python: &str) -> bool {
+    if cfg!(target_os = "macos") && python == "/usr/bin/python3" {
+        return Command::new("/usr/bin/xcode-select")
+            .arg("-p")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    true
+}
+
+/// One-shot feature probe inside a python interpreter: (version >= 3.10, pptx
+/// importable). `find_spec` avoids actually importing the package (fast, no side
+/// effects). Returns None when the interpreter can't run the probe at all (spawn
+/// failure / timeout / non-zero exit, e.g. a Windows Store alias stub) so the
+/// caller can try the next candidate.
+fn run_python_feature_probe(python: &str, timeout: Duration) -> Option<(bool, bool)> {
+    const CODE: &str = "import sys, importlib.util\nprint(1 if sys.version_info >= (3, 10) else 0)\nprint(1 if importlib.util.find_spec('pptx') else 0)";
+    let out = run_probe(Command::new(python).args(["-c", CODE]), timeout)?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines();
+    let ver = lines.next().map(|l| l.trim() == "1")?;
+    let pptx = lines.next().map(|l| l.trim() == "1")?;
+    Some((ver, pptx))
+}
+
+/// Probe the PATH for the external tools built-in skills shell out to, plus
+/// python feature probes (interpreter version / pip libraries — invisible to
+/// PATH probing, gotchas §10). The frontend maps each skill to its required
+/// tools (BUILTIN_DEP_MAP) and renders readiness badges.
+/// `async`: runs off the UI thread — the python probes spawn real processes.
+#[tauri::command(async)]
 fn check_skill_dependencies() -> Vec<DepStatus> {
     let mut deps = probe_bins(&skill_dep_path(), SKILL_DEP_BINS);
-    let python = deps
+
+    // Candidate interpreters, in order. On Windows the python.org installer
+    // provides only `python.exe` (no python3) and `python3.exe` may be a Store
+    // App-Execution-Alias stub — the execution-based probe rejects stubs
+    // (non-zero exit) and falls through to the next candidate.
+    let mut candidates: Vec<String> = deps
         .iter()
-        .find(|d| d.name == "python3" && d.available)
-        .and_then(|d| d.path.clone());
-    // ppt-master hard-requires Python >= 3.10 (uses `X | None` unions at module
-    // level) and python-pptx for the PPTX export step (svg_to_pptx.py).
-    deps.push(probe_python_ok(
-        python.as_deref(),
-        "python3.10+",
-        "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
-    ));
-    deps.push(probe_python_ok(python.as_deref(), "python-pptx", "import pptx"));
+        .filter(|d| d.name == "python3" && d.available)
+        .filter_map(|d| d.path.clone())
+        .collect();
+    if cfg!(target_os = "windows") {
+        candidates.extend(
+            probe_bins(&skill_dep_path(), &["python"])
+                .into_iter()
+                .filter(|d| d.available)
+                .filter_map(|d| d.path),
+        );
+    }
+
+    // ppt-master hard-requires Python >= 3.10 (module-level `X | None` unions)
+    // and python-pptx for the PPTX export step (svg_to_pptx.py).
+    let mut ver = false;
+    let mut pptx = false;
+    for c in &candidates {
+        if !python_probe_allowed(c) {
+            continue;
+        }
+        if let Some((v, p)) = run_python_feature_probe(c, Duration::from_secs(5)) {
+            ver = v;
+            pptx = p;
+            break;
+        }
+    }
+    deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: None });
+    deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: None });
     deps
 }
 
@@ -2154,7 +2252,13 @@ pub fn run() {
 
             // Start OpenCode Server sidecar (critical — blocks until ready).
             // Credentials and auth_header were loaded at the top of setup().
+            // PATH: rich (login-shell) PATH, same as acp-client — skills shell out
+            // to python3/pandoc/… and a Finder-launched app only inherits the
+            // minimal GUI PATH. This also keeps the skill-dependency probes
+            // (skill_dep_path, rich-based) consistent with what skill bash
+            // actually resolves at runtime.
             let oc_port = OPENCODE_PORT.to_string();
+            let oc_path = rich_path();
             if let Err(e) = start_sidecar(
                 app,
                 "opencode-server",
@@ -2165,6 +2269,7 @@ pub fn run() {
                 &[
                     ("OPENCODE_SERVER_PASSWORD", creds.password.as_str()),
                     ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
+                    ("PATH", oc_path.as_str()),
                 ],
             ) {
                 eprintln!("OpenCode Server startup failed: {}", e);
@@ -2414,50 +2519,113 @@ mod builtin_skills_tests {
 
     #[test]
     #[cfg(unix)] // fake interpreters are shell scripts
-    fn probe_python_ok_reports_exit_status() {
-        // No python at all -> unavailable (never panics).
-        assert!(!probe_python_ok(None, "python-pptx", "import pptx").available);
-
+    fn run_python_feature_probe_parses_and_rejects() {
         use std::os::unix::fs::PermissionsExt;
         let dir = unique_tmp("pylib");
         std::fs::create_dir_all(&dir).unwrap();
+        let mk = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
 
-        let ok = dir.join("python-ok");
-        std::fs::write(&ok, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let probed = probe_python_ok(Some(ok.to_str().unwrap()), "python-pptx", "import pptx");
-        assert!(probed.available);
-        assert!(probed.path.is_none());
-
-        let bad = dir.join("python-bad");
-        std::fs::write(&bad, "#!/bin/sh\nexit 1\n").unwrap();
-        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(!probe_python_ok(Some(bad.to_str().unwrap()), "python3.10+", "import sys").available);
+        // modern python with pptx
+        let both = mk("py-both", "#!/bin/sh\necho 1\necho 1\n");
+        assert_eq!(run_python_feature_probe(both.to_str().unwrap(), Duration::from_secs(5)), Some((true, true)));
+        // modern python, no pptx
+        let ver_only = mk("py-ver", "#!/bin/sh\necho 1\necho 0\n");
+        assert_eq!(run_python_feature_probe(ver_only.to_str().unwrap(), Duration::from_secs(5)), Some((true, false)));
+        // broken interpreter / Store alias stub (non-zero exit) -> None (try next candidate)
+        let stub = mk("py-stub", "#!/bin/sh\nexit 9\n");
+        assert_eq!(run_python_feature_probe(stub.to_str().unwrap(), Duration::from_secs(5)), None);
+        // missing binary -> None, no panic
+        assert_eq!(run_python_feature_probe(dir.join("nope").to_str().unwrap(), Duration::from_secs(5)), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn probe_python_ok_version_gate_against_real_python() {
-        // If a real python3 is on this dev/CI host, the version expression itself
-        // must be valid syntax on ANY python (it guards 3.10+ features, so it has
-        // to run on 3.9 too and just exit 1).
+    #[cfg(unix)]
+    fn run_probe_kills_hung_process_on_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = unique_tmp("probe-hang");
+        std::fs::create_dir_all(&dir).unwrap();
+        let hang = dir.join("hang");
+        std::fs::write(&hang, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&hang, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let start = std::time::Instant::now();
+        let out = run_probe(&mut Command::new(hang.to_str().unwrap()), Duration::from_millis(300));
+        assert!(out.is_none());
+        assert!(start.elapsed() < Duration::from_secs(5), "timeout did not bound the probe");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_builtin_tree_stages_then_swaps() {
+        let src = unique_tmp("ibt-src");
+        let target = unique_tmp("ibt-dst");
+        let staging = unique_tmp("ibt-stg");
+        std::fs::create_dir_all(src.join("ppt-master")).unwrap();
+        std::fs::write(src.join(".builtin-version"), "v1\n").unwrap();
+        std::fs::write(src.join("ppt-master/SKILL.md"), "---\nname: x\n---\n").unwrap();
+
+        // Pre-existing garbage in staging (interrupted previous run) must not leak.
+        std::fs::create_dir_all(staging.join("stale")).unwrap();
+        // Old target content must be fully replaced.
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("old-file"), "x").unwrap();
+
+        install_builtin_tree(&src, &target, &staging).unwrap();
+
+        assert!(target.join(".builtin-version").is_file());
+        assert!(target.join("ppt-master/SKILL.md").is_file());
+        assert!(!target.join("old-file").exists(), "old target content not wiped");
+        assert!(!staging.exists(), "staging must be consumed by the rename");
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn check_skill_dependencies_includes_python_probes() {
+        // The command must always report the two python probe entries (frontend
+        // BUILTIN_DEP_MAP requires them for ppt-master) — regardless of host state.
+        let deps = check_skill_dependencies();
+        for name in ["python3", "python3.10+", "python-pptx"] {
+            assert!(
+                deps.iter().any(|d| d.name == name),
+                "missing dep entry: {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn feature_probe_code_runs_on_any_real_python() {
+        // The probe snippet must be valid syntax even on old interpreters (it
+        // GATES 3.10+, so it has to run on 3.9 and just print 0). Tolerant of
+        // hosts without python (fake-interpreter tests cover parsing).
         let found = probe_bins(&skill_dep_path(), &["python3"]);
         let Some(py) = found.iter().find(|d| d.available).and_then(|d| d.path.clone()) else {
-            return; // no python on host — covered by the fake-interpreter test above
+            return;
         };
-        let d = probe_python_ok(
-            Some(&py),
-            "python3.10+",
-            "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
-        );
-        // Availability tracks the actual interpreter version — never a crash/parse error.
-        let out = Command::new(&py)
+        if !python_probe_allowed(&py) {
+            return; // macOS CLT shim without CLT — executing it would pop a dialog
+        }
+        let Some((ver, _pptx)) = run_python_feature_probe(&py, Duration::from_secs(10)) else {
+            return; // interpreter present but not runnable (stub) — probe correctly rejected it
+        };
+        let Ok(out) = Command::new(&py)
             .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
             .output()
-            .unwrap();
+        else {
+            return;
+        };
         let expect = String::from_utf8_lossy(&out.stdout).trim() == "True";
-        assert_eq!(d.available, expect);
+        assert_eq!(ver, expect);
     }
 }
 

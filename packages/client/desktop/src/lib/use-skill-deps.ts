@@ -42,7 +42,9 @@ export function missingDeps(skillName: string, deps: DepMap): string[] {
 /**
  * Probe host dependencies via the `check_skill_dependencies` Tauri command.
  * Returns an empty map outside Tauri (e.g. browser GUI walkthroughs) so callers
- * degrade to "unknown" rather than crashing.
+ * don't crash; note an empty map renders every required tool as "missing"
+ * (pessimistic, matches pre-Tauri-failure behavior) — the guide prompt asks the
+ * AI to re-detect the environment first, so the handoff still degrades safely.
  */
 export function useSkillDeps(): { deps: DepMap; loading: boolean } {
   const [deps, setDeps] = useState<DepMap>({})

@@ -416,7 +416,7 @@ When the deck includes any `ai` rows, Strategist locks a **deck-wide rendering**
 After the candidates, append one line:
 
 ```
-> Reference images: see references/ai-image-comparison/ for matching PNGs by name.
+> (Reference image gallery not bundled in ultrawork — rely on the textual descriptors above.)
 ```
 
 **Hard rules for candidate construction**:
@@ -451,7 +451,7 @@ After the candidates, append one line:
   Color: off-white #F8F9FA digital field (50%) + deep navy #1E3A5F main (35%) + gold #D4AF37 emphasis (10-15%)
   Mood: forward, energetic, futuristic; like an Apple or Stripe product keynote
 
-> Reference images: see references/ai-image-comparison/ for matching PNGs by name.
+> (Reference image gallery not bundled in ultrawork — rely on the textual descriptors above.)
 ```
 
 **Worked example — `custom × custom`** (tail-case; e.g. 新中式 deck with `#1A1A1A` + `#F5EFE0` + `#A52A2A`):

@@ -5,8 +5,8 @@
  * 下载内置技能源码到 `skills/builtin/<name>/`，应用 ultrawork 适配补丁，写 NOTICE/sentinel。
  * 结果**提交入库**（Tauri `bundle.resources` 从仓库打包它们），本脚本仅用于可复现与升级。
  *
- * 全部源技能均为 **Apache-2.0**（已逐个核对 LICENSE）。Anthropic 的 docx/pdf/pptx/xlsx 是
- * 专有许可、禁止再分发，**不在此列**（详见 docs/gotchas.md、ADR）。
+ * 全部源技能均为可再分发许可（Apache-2.0 / MIT，已逐个核对 LICENSE）。Anthropic 的
+ * docx/pdf/pptx/xlsx 是专有许可、禁止再分发，**不在此列**（详见 docs/gotchas.md、ADR）。
  *
  * 用法：bun run --bun scripts/fetch-builtin-skills.ts
  * 依赖：`gh`（已认证）、`tar`。
@@ -102,7 +102,7 @@ const X_REQUIRES: Record<string, string[]> = {
   "skill-installer": ["python3", "git"],
   pdf: ["python3", "pdftoppm"],
   "markdown-exporter": ["python3", "pandoc"],
-  "ppt-master": ["python3.10+"],
+  "ppt-master": ["python3.10+", "python-pptx"],
 }
 
 /** 把取到的源目录整理进落地目录（keepOnly/drop 共用逻辑）。 */
@@ -123,16 +123,20 @@ async function fetchSubdir(src: Source, into: string) {
   const tmp = mkdtempSync(join(tmpdir(), "uw-skill-"))
   try {
     if (src.sparse) {
-      // 大仓库：blobless sparse clone 只取 subdir（tag/branch 均可作 --branch）
+      // 大仓库：blobless sparse clone 只取 subdir。注意 --branch 只接受 tag/branch，
+      // 不接受 commit SHA（tarball 路径可以）。
+      if (src.subdir === ".") throw new Error(`sparse + subdir="." 会把 .git 拷进落地目录: ${src.dest}`)
       const repoDir = join(tmp, "repo")
       await $`git clone --depth 1 --filter=blob:none --sparse --branch ${src.ref} https://github.com/${src.repo}.git ${repoDir}`.quiet()
-      await $`git -C ${repoDir} sparse-checkout set ${src.subdir}`.quiet()
-      placeInto(src.subdir === "." ? repoDir : join(repoDir, src.subdir), src, into)
+      // --cone 显式指定：老 git 默认非 cone 时根顶层文件（LICENSE）不会检出
+      await $`git -C ${repoDir} sparse-checkout set --cone ${src.subdir}`.quiet()
+      placeInto(join(repoDir, src.subdir), src, into)
       // 许可合规：子目录本身无 LICENSE 时从仓库根补拷（cone mode 顶层文件默认已检出）
       const hasLicense = readdirSync(into).some((n) => n.toLowerCase().startsWith("license"))
       if (!hasLicense) {
         const rootLicense = readdirSync(repoDir).find((n) => n.toLowerCase().startsWith("license"))
-        if (rootLicense) cpSync(join(repoDir, rootLicense), join(into, rootLicense))
+        if (!rootLicense) throw new Error(`无 LICENSE 可落地（子目录与仓库根均未找到）: ${src.repo}`)
+        cpSync(join(repoDir, rootLicense), join(into, rootLicense))
       }
       return
     }
@@ -190,6 +194,36 @@ function applyInstallerPatches(dir: string) {
   }
 }
 
+/** ppt-master 落地补丁：.env 存放引导 + 被裁目录的悬空引用清理 */
+function applyPptMasterPatches(dir: string) {
+  // ① builtin 目录会在 app 升级时被 sentinel 刷新整体重建（ADR-032）——用户把真实
+  //    API key 放这里会被静默清掉。上游 image_gen.py 原生支持 ~/.ppt-master/.env
+  //    （user-level）与 CWD ./.env，引导用户放那里。
+  const envExample = join(dir, ".env.example")
+  if (existsSync(envExample)) {
+    const warn = [
+      "# ⚠️ ultrawork 用户注意 / NOTE FOR ULTRAWORK USERS:",
+      "# 本目录（skills/builtin/）会在 app 升级时被整体重建，放在这里的 .env 会被清掉。",
+      "# 请把真实配置放到 `~/.ppt-master/.env`（用户级，upstream 原生支持）或工作区的 `./.env`。",
+      "# This directory is rebuilt on app upgrades — a real .env placed here WILL be wiped.",
+      "# Put your config in `~/.ppt-master/.env` (user-level) or the workspace `./.env` instead.",
+      "#",
+      "",
+    ].join("\n")
+    writeFileSync(envExample, warn + readFileSync(envExample, "utf8"))
+  }
+  // ② references/ai-image-comparison 已被 drop（43M 纯说明图）——清掉指向它的两处
+  //    "see ... for matching PNGs" 指引，避免模型按图索骥吃 ENOENT。
+  const strategist = join(dir, "references", "strategist.md")
+  if (existsSync(strategist)) {
+    const s = readFileSync(strategist, "utf8").replaceAll(
+      "> Reference images: see references/ai-image-comparison/ for matching PNGs by name.",
+      "> (Reference image gallery not bundled in ultrawork — rely on the textual descriptors above.)",
+    )
+    writeFileSync(strategist, s)
+  }
+}
+
 /** 给 SKILL.md frontmatter 注入 x-requires（若缺） */
 function injectXRequires(dir: string, deps: string[]) {
   const p = join(dir, "SKILL.md")
@@ -215,6 +249,7 @@ async function main() {
     process.stdout.write(`• ${src.dest} <- ${src.repo}/${src.subdir} ... `)
     await fetchSubdir(src, into)
     if (src.dest === "skill-installer") applyInstallerPatches(into)
+    if (src.dest === "ppt-master") applyPptMasterPatches(into)
     injectXRequires(into, X_REQUIRES[src.dest])
     writeFileSync(join(into, "NOTICE"), src.notice + "\n")
     console.log("ok")

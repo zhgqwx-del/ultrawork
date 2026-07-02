@@ -90,7 +90,7 @@ ppt-master 本身就是标准 Agent Skill 形态（`SKILL.md` + scripts/referenc
 ## 7. 实施清单
 
 **阶段 1（分支 `feat/builtin-ppt-master-skill`）**
-1. `scripts/fetch-builtin-skills.ts` 加 Source：`repo: hugohe3/ppt-master`，**`ref` pin release tag（v2.12.0）**而非 main，`subdir: skills/ppt-master`，`drop: ["references/ai-image-comparison"]`，`X_REQUIRES: ["python3"]`，NOTICE（MIT，注明裁剪项）；跑脚本落地 `skills/builtin/ppt-master/` 并提交（`.builtin-version` 随动）。
+1. `scripts/fetch-builtin-skills.ts` 加 Source：`repo: hugohe3/ppt-master`，**`ref` pin release tag（v2.12.0）**而非 main，`subdir: skills/ppt-master`，`drop: ["references/ai-image-comparison"]`，`X_REQUIRES: ["python3.10+", "python-pptx"]`（实现时升级：ppt-master 硬要求 Python ≥3.10——模块级 `X | None` 语法 3.9 直接 TypeError——故引入 Rust 内探针版本门），NOTICE（MIT，注明裁剪项）；另加 ppt-master 落地 post-patch（`.env` 存放引导——builtin 目录升级会重建，引导用户放 `~/.ppt-master/.env`；清理指向被裁 ai-image-comparison 的悬空引用）；跑脚本落地 `skills/builtin/ppt-master/` 并提交（`.builtin-version` 随动）。
 2. `BUILTIN_DEP_MAP` 加 `"ppt-master": ["python3"]`；`DEP_HINTS` 平台化；i18n（技能描述 + 引导文案）。
 3. Python 引导基础层 + 进阶层（§6）。
 4. （可选）Rust import 探针。

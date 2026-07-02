@@ -592,7 +592,7 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.installed": "Installed",
     "skills.installPrompt": "Use the skill-installer skill to install the \"{name}\" skill from {repo} (path: {path}). For large repositories prefer `--method git` (sparse checkout of the skill path only).",
     "skills.depGuide": "Set up",
-    "skills.depGuidePrompt": "Help me install the missing dependencies ({deps}) required by the \"{name}\" skill (SKILL.md: {location}). First detect my OS and existing environment, then give platform-appropriate install commands step by step. If python3 is missing, install Python 3.10+ first. If the skill directory contains a requirements.txt, install it with pip (use a regional PyPI mirror such as https://pypi.tuna.tsinghua.edu.cn/simple if the default index is slow). Verify each dependency at the end (e.g. python3 -c \"import pptx\" for python-pptx).",
+    "skills.depGuidePrompt": "Help me install the missing dependencies ({deps}) required by the \"{name}\" skill (SKILL.md: {location}). First detect my OS and existing environment, then give platform-appropriate install commands step by step. If python3 is missing or older than 3.10, install Python 3.10+ first. Install ONLY the missing items listed above — the skill directory's requirements.txt entries beyond them are per-feature optional; offer them but skip on failure (use a regional PyPI mirror such as https://pypi.tuna.tsinghua.edu.cn/simple if the default index is slow). Verify each installed dependency at the end (e.g. python3 -c \"import pptx\" for python-pptx).",
     "skills.catalog.mcpBuilder": "Scaffold and build MCP servers.",
     "skills.catalog.webappTesting": "Test web apps end-to-end with a headless browser.",
     "skills.catalog.frontendDesign": "Produce polished frontend UI and design.",
@@ -1243,7 +1243,7 @@ const translations: Record<Language, Record<string, string>> = {
     "skills.installed": "已安装",
     "skills.installPrompt": "使用 skill-installer 技能，从 {repo} 安装 \"{name}\" 技能（路径：{path}）。大仓库请用 `--method git`（只 sparse checkout 技能子目录）。",
     "skills.depGuide": "引导安装",
-    "skills.depGuidePrompt": "请帮我安装「{name}」技能缺少的依赖：{deps}（SKILL.md 位置：{location}）。先检测我的操作系统和已有环境，按平台给出安装命令并逐步引导；缺 python3 就先装 Python 3.10+；技能目录下如有 requirements.txt 一并用 pip 安装（国内网络可用清华镜像 -i https://pypi.tuna.tsinghua.edu.cn/simple）；装完逐项验证（如用 python3 -c \"import pptx\" 验证 python-pptx）。",
+    "skills.depGuidePrompt": "请帮我安装「{name}」技能缺少的依赖：{deps}（SKILL.md 位置：{location}）。先检测我的操作系统和已有环境，按平台给出安装命令并逐步引导；缺 python3 或版本低于 3.10 就先装 Python 3.10+。只需装上面列出的缺失项——技能目录 requirements.txt 里的其余包按功能可选，可以顺带建议但失败就跳过、不影响核心导出（国内网络可用清华镜像 -i https://pypi.tuna.tsinghua.edu.cn/simple）；装完逐项验证（如用 python3 -c \"import pptx\" 验证 python-pptx）。",
     "skills.catalog.mcpBuilder": "脚手架式构建 MCP 服务器。",
     "skills.catalog.webappTesting": "用无头浏览器端到端测试 Web 应用。",
     "skills.catalog.frontendDesign": "产出精致的前端 UI 与设计。",
@@ -1330,7 +1330,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     let value = translations[language]?.[key] || key
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        value = value.replace(`{${k}}`, String(v))
+        // split/join: String.replace would interpret `$&`-style sequences in the
+        // value (file paths can contain them, e.g. {location}/{path} params).
+        value = value.split(`{${k}}`).join(String(v))
       })
     }
     return value
