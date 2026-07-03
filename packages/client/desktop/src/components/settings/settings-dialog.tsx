@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react"
+import { APP_VERSION } from "@/lib/app-version"
 
 interface SettingsDialogProps {
   open: boolean
@@ -266,7 +267,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <div className="space-y-3">
                 <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3">
                   <span className="text-sm font-medium text-[var(--color-fg)]">{t("about.version")}</span>
-                  <span className="text-sm text-[var(--color-fg-muted)]">0.1.0</span>
+                  <span className="text-sm text-[var(--color-fg-muted)]">{APP_VERSION}</span>
                 </div>
 
                 <div className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3">

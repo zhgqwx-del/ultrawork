@@ -135,4 +135,4 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 5. **设计资料**不入 git 主仓（`.gitignore` 排除 .fig 和 prototype/node_modules）
 6. **`.claude/memory/`** 是 Claude Code 本地工作记忆，不入版本控制（已在 `.gitignore` 中排除）。GitHub 上看不到此目录。**稳定的团队知识不要只留在此**——应固化到 git 文档（见 CLAUDE.md §记忆与文档分工）
 7. **SSOT 原则**：每类事实指定唯一权威源（API 端点→`api-reference.md`、坑点→`gotchas.md`、命令→`getting-started.md`、关键文件→`AGENTS.md`），其余位置放摘要 + 链接，避免多副本漂移
-8. **漂移校验**：`bun run --bun scripts/check-docs.ts` 机检 ADR 计数 / 引用路径 / MEMORY 行数；收尾时运行
+8. **漂移校验**：`bun run --bun scripts/check-docs.ts` 机检 ADR/分层计数 / 引用路径与 Markdown 链接 / gotchas·conventions §N 章节号 / 版本号一致性 / MEMORY 行数；收尾时运行，CI `docs` job 同跑作合并门禁

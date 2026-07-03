@@ -111,7 +111,7 @@ MEMORY.md 的 `## Current Status` 已自动加载，无需额外操作。
   - 删除已失效 / 已纠错 / 已合并的条目（如分支专属内容合并后清理）
 
 ### Step 3.5: 文档漂移校验
-运行 `bun run --bun scripts/check-docs.ts`，修复报告的漂移（ADR 计数、失效引用路径、MEMORY 行数等）。
+运行 `bun run --bun scripts/check-docs.ts`，修复报告的漂移（ADR/分层计数、失效引用路径与 Markdown 链接、§N 章节号越界、版本号一致性、MEMORY 行数等；CI `docs` job 同跑兜底）。
 
 ### Step 4: 检查状态文档
 如果本次任务涉及**模块状态变更**（新模块实现、功能完成、技术迁移等），检查并更新以下文档中的过时标记：

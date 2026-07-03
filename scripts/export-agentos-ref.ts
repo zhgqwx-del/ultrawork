@@ -43,7 +43,7 @@ const PATHSPEC = [
 // 移植引导 prompt（权威源就在这里——改 prompt 改这个常量即可）。
 const PORT_PROMPT = `# Agent OS 移植引导 prompt（粘贴给 fork 项目的 agent）
 
-> 把本目录（\`reference/ultrawork/\`）作为只读权威参考。先读 \`docs/agent-os-kickoff.md\`。
+> 把本目录（\`reference/ultrawork/\`）作为只读权威参考。先读 \`docs/archive/agent-os-kickoff.md\`。
 
 ---
 
@@ -55,7 +55,7 @@ const PORT_PROMPT = `# Agent OS 移植引导 prompt（粘贴给 fork 项目的 a
 + orchestrator 跨厂商编排 + Team 协作 UX」。
 
 参考材料在 \`reference/ultrawork/\`（只读，权威源，按此优先级）：
-1. 启动指引：docs/agent-os-kickoff.md（先读）
+1. 启动指引：docs/archive/agent-os-kickoff.md（先读）
 2. 设计 SSOT：docs/agent-os-target-architecture.md（§0 基线表）
 3. 决策：docs/decisions/027(ACP)、030(connector)、031(orchestrator)、029(回合渲染)
 4. 当前实现总览：docs/architecture-phase1.md、AGENTS.md

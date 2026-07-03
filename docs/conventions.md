@@ -29,7 +29,7 @@
 - **app 级**（`main.tsx`，Router 外）7 个：`ConfigProvider` → `ThemeProvider` → `I18nProvider` → `WorkspaceProvider` → `SSEProvider` → `AgentProvider`（ACP 多 agent 注册表）→ `ModelProvider`
 - **布局级**（`components/layout/root-layout.tsx`，Router 内）3 个：`TeamSessionsProvider`（编排/Team）→ `SessionsProvider` → `SidebarProvider`
 
-新增 Provider 时按依赖选层：需要 `useLocation`/路由信息的进布局级，其余进 app 级。
+新增 Provider 时按依赖选层：需要路由信息（`useLocation` 等，必须在 Router 内），**或**依赖已确认的工作区上下文（布局级挂在 root-layout 的 workspace-confirmed 门之后、随工作区切换重挂，如 Sessions/TeamSessions）→ 进布局级；两者都不沾的全局横切关注（主题/i18n/配置/SSE 连接）→ 进 app 级。
 
 ### 共享 Hook 提取模式
 多组件共用逻辑时提取为独立 hook（如 `useMCPServers`, `useSkills`）：
