@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils"
 import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChannelConfig } from "@agent/api-client"
 import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
+import { APP_VERSION } from "@/lib/app-version"
 
 type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
 
@@ -2559,7 +2560,7 @@ function AboutSection() {
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
           <div className="text-xs text-[var(--color-fg-muted)]">{t("about.version")}</div>
-          <div className="mt-1 font-mono text-sm font-medium text-[var(--color-fg)]">0.1.0</div>
+          <div className="mt-1 font-mono text-sm font-medium text-[var(--color-fg)]">{APP_VERSION}</div>
         </div>
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
           <div className="text-xs text-[var(--color-fg-muted)]">{t("about.build")}</div>

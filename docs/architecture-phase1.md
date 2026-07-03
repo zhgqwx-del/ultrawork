@@ -46,7 +46,7 @@
   **Desktop Client**（Tauri + React 19）、**Channel Gateway**（独立 sidecar :4097，DingTalk Stream Mode + WeChat ilink）、**Knowledge Sidecar**（独立 sidecar :4098，本地 RAG + IMA + MCP）、**ACP Client Sidecar**（独立 sidecar :4099，ACP 多 agent 后端，Agent OS 阶段1）、**@agent/api-client**（REST/SSE SDK）、**@agent/server-manager**（sidecar 生命周期）。
 - **Part II = 规划中的设计草案**——Agent Workspace 身份/记忆持久化、Proactive Services、Process Lifecycle 进程注册表（🔲 未实现）。原「连接抽象 @agent/connector」草案已被 ADR-030 取代并于阶段2 落地（✅ 见 Part I 状态表）。**阅读现状时可跳过 Part II。**
 
-> 更宏观的远期愿景（多端 Web/Mobile、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
+> 更宏观的远期愿景（多端 Web/Mobile、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./archive/architecture-full.md)。
 
 ## 目录
 
@@ -187,7 +187,7 @@ your-agent/
 │
 ├── docs/
 │   ├── architecture-phase1.md    # This file - Phase 1 architecture
-│   ├── architecture-full.md     # Full system architecture (future phases)
+│   ├── archive/architecture-full.md  # Full system architecture (future vision, frozen)
 │   └── ai-context/               # Shared AI knowledge base
 │       ├── README.md             # Index and navigation guide
 │       ├── team/                 # Team-wide standards
@@ -1080,7 +1080,7 @@ The following features are planned for Phase 2:
 # Part II · 规划中（未实现 · 设计草案）
 
 > 以下内容为 **设计草案，尚未实现**（原散落在 Part I 各处，现统一收拢）。AI 阅读现状时可跳过本部分；实现这些模块时再参考。
-> 更宏观的远期愿景（多端、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./architecture-full.md)。
+> 更宏观的远期愿景（多端、企业管理、Control Plane、跨端协同）见 [`architecture-full.md`](./archive/architecture-full.md)。
 
 ## 规划：连接抽象 @agent/connector
 

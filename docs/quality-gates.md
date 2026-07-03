@@ -23,7 +23,7 @@
 - [ ] 新增/移动文档已登记到 `docs/document-map.md` 与对应索引（ADR → `decisions/README.md`，discussion → `discussions/README.md`）。
 - [ ] 没有把"稳定的团队知识"只写进本地 MEMORY（应进 git，见 CLAUDE.md §记忆与文档分工）。
 - [ ] 同一事实未产生新的"无主副本"——要么放进 SSOT，要么放摘要 + 指针。
-- [ ] `bun run --bun scripts/check-docs.ts` 通过（ADR 计数一致、引用路径存在、MEMORY < 200 行）。
+- [ ] `bun run --bun scripts/check-docs.ts` 通过（ADR/分层计数、引用路径与 Markdown 链接存在、gotchas/conventions §N 章节号、版本号五处一致、MEMORY < 200 行；CI `docs` job 同跑作合并门禁）。
 
 ## 2. 代码门禁
 
@@ -34,7 +34,7 @@
       - Gateway：`cd packages/channel/gateway && bun run --bun vitest run`
       - Knowledge：`cd packages/knowledge/sidecar && bun run --bun vitest run`
 - [ ] 改了 **Gateway** 源码 → `bun run build:gateway` 重编译 sidecar（否则不生效）。
-- [ ] 改了 **vendor/opencode** 源码 → 重新生成 patch 文件 + `bun run build:opencode`（流程见 CLAUDE.md §Vendor Patch 管理）。
+- [ ] 改了 **vendor/opencode** 源码 → 重新生成 patch 文件 + `bun run build:opencode`（完整流程见 `docs/vendor-patch-workflow.md`）。
 - [ ] 涉及 OpenCode/MCP/Gateway/IMA/Tauri 的改动 → 已对照 `docs/gotchas.md` 对应章节，未踩已知坑。
 - [ ] **跨平台自检（mac/win/linux，详见 `docs/conventions.md` §13）**：新增/改动代码无硬编码 `/` 拼路径、无 `process.env.HOME`、无硬编码 `:`(PATH)/`​/tmp`、无 unix-only 命令（`lsof`/`ps`/`pgrep`/`which`/`open`/`/bin/sh`）未做平台分支；Renderer 路径用 `path-utils`（吃 `\`）；unix-only API/crate 已 `#[cfg]` 门控。**强制门禁是 CI**（`.github/workflows/ci.yml` 三平台 typecheck+test+`cargo test`）——本机改完无法验 Windows，靠 CI 兜底；本机至少 `turbo run typecheck` + `cargo test`(src-tauri) 绿。
 - [ ] 失败如实报告：测试红了就说红了，不把"跳过"说成"通过"。

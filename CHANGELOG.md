@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **spec 文档体系健康化（2026-07-03，docs/spec-system-optimization，三路调研驱动）**：① P0 漂移修正——conventions §2 Provider 清单（原文标称 7 个/实列 8 个 → 实际 10，补 `AgentProvider`/`TeamSessionsProvider`）、§4 补 ADR-039 全局配置软刷新模式、gotchas §6 opener 插件实况、requirements 包表自相矛盾+回填 2026-06~07 主线+修 2 断链+后端技术栈 Go→TS/Bun、document-map 计数根治（区间+权威索引指针替代逐条罗列）。② P1 机制加固——`check-docs.ts` 新增 4 类检查（Markdown 相对链接断链 / document-map 分层计数 / `gotchas §N`/`conventions §N` 章节号越界 / requirements 新鲜度 warning），并新增 CI `docs` job 作为合并门禁（收尾自觉 → CI 兜底）；CHANGELOG 切版 0.2.0（`[Unreleased]` 4 个月 280 行恢复正常体量）。③ P2 结构收敛——4 个僵尸文档归档（`architecture-full`〔FROZEN〕/`mcp-technical-flow`/`knowledge-base-replication-guide`/`agent-os-kickoff`）+ 新增 `docs/archive/README.md` 归档索引。行业调研结论（GitHub Spec Kit/AWS Kiro/EARS/Anthropic 官方/AGENTS.md 标准/ADR 实践/漂移治理/martinfowler 批判）：现有体系与最优实践高度吻合，明确不引入重型 SDD 工具链。
+
+## [0.2.0] - 2026-07-03
+
+> v0.1.0 首发后约 4 个月的开发累积（原 `[Unreleased]` 整段切版）。核心主线：Agent OS 多 agent（ACP/connector/orchestrator/Team）、知识库 RAG、内置技能体系（打包→遮蔽→zip 分发）、渐进式工具披露、跨平台 mac/win/linux、Provider 全局化+软刷新、任务规划面板、大量稳定性修复（idle 看门狗/会话切换一致性/回合终态判定）。
+
+### Changed
 - **内置技能改 zip 分发 + 首启解压（2026-07-03，ADR-041，八路对抗审查 + 真机人机走查全链验收）**：bundle 从「1.2 万文件松散树 + 首启整树拷贝」改为「构建期单 zip + 首启解压」。**app Resources 53MB/12k+ 文件 → 10MB/4 文件**（mac 签名/公证与 CI 打包/用户安装 inode 压力消失，gotchas §12 MSI 复活前提成立；下载体积不变——安装器本就压缩）。git 保持松散树（fetch 脚本/代码审查/遮蔽语义地基全不动）；新增 `scripts/pack-builtin-skills.ts`（fflate，按内容 hash 惰性，保 unix exec bit，temp+rename+pid 原子落位，`:`/`\`/symlink/垃圾文件 pack 期 fail-fast）挂 beforeDevCommand/beforeBuildCommand/build-release；产物目录 gitignore + `.gitkeep` 保 `generate_context!` 编译（CI 裸 cargo test 可过）。Rust 加 zip crate（deflate-only）：`install_builtin_tree` 改「解压 staging → **后置写外置 sentinel** → rename」（不变式强化为 sentinel 可见⇔整树完整）；`reconcile_builtin_shadowing` 从 zip central directory 枚举 bundled（`<dir>/SKILL.md` 门 + 谓词复用 `_from_str`），restore 改**按前缀选择性解压**；zip-slip 多重设防（`enclosed_name` 消毒不够——显式拒绝绝对路径/`\`/`:`/symlink entry/dot 开头顶层名 + `clear_staging` 防预置 symlink 穿透 + 0 匹配报错防空树自愈死循环）；空 sentinel 硬失败防每启动全量重装。pack/fetch hash 算法同步改喂「相对路径+`\0`」（裸 basename 对目录改名失明）。**验证**：cargo 36（+7：zip-slip 伪造/symlink/前缀解压/exec-bit/hostile dirs/symlinked staging/corrupt-zip 保旧树）· desktop vitest 281 · typecheck 8/8 · 四 builtin e2e 改用真实 zip 全 PASS（共享 `builtin-zip-helper.ts`）· **真 .app 生命周期自动化 22/22**（首启 1.28s/稳态零写盘/升级重装/遮蔽 prune/前缀恢复 12086 文件 1.03s/残缺自愈）· `tauri dev` 冒烟（beforeDevCommand pack + dev 布局）· **CI 两轮三平台全绿 + mac .dmg/Windows setup.exe 产物抽查**（安装器 15 文件；Windows CRLF sentinel per-platform 自洽）· **真机人机走查**（真实 HOME 升级重装 1.69s → 真 UI curated 装用户版 → 遮蔽卡 → 恢复内置 1.03s，日志+fs 双确认）。坑点固化 gotchas §10（zip 分发合集）。
 
 ### Added

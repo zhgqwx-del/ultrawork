@@ -56,7 +56,7 @@
 - **误触发代价有界**：方案 A 下即使 AI 多搜一次，最坏返回 `"No relevant results found"`（`mcp-bridge.ts:160`），不污染后续上下文、不会把错误内容当事实，且 tool-call-block 全程可见。
 - **已知小坑**：`removeSource`（`use-knowledge-base.ts:237`）删源时**不注销 MCP**——删到 0 个知识源后，3 个工具仍挂着。噪音优先的复制应在删到 0 源时一并 `remove_mcp_config`。
 
-> 复制落地步骤、组件清单、启动方式与给目标 Agent 的 prompt，见 `docs/knowledge-base-replication-guide.md`。
+> 复制落地步骤、组件清单、启动方式与给目标 Agent 的 prompt，见 `docs/archive/knowledge-base-replication-guide.md`。
 
 ## 背景
 

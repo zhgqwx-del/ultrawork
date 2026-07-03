@@ -1,5 +1,6 @@
 # Desktop Agent - 远期愿景架构（Phase 2+ 完整目标）
 
+> 🧊 **FROZEN（2026-07-03 归档）**：本文自 2026-06-06 后未再维护，已移入 archive；文中引用的目录结构（如 `ai-context/`）是当时的设想、并不存在。重启远期规划时以此为素材另起新档。
 > ⚠️ **远期愿景文档，非当前实现。** 本文描述的是完整目标架构（多端 Web/Mobile、企业管理、Control Plane、跨端协同等），**绝大部分尚未实现**。
 > **当前实际架构以 [`architecture-phase1.md`](./architecture-phase1.md) 为准**（含已实现模块的状态表与数据流）。读取本文时不要将其内容当作现状。
 > Phase 1 已实现部分的纯重叠章节（connector 数据流、Key APIs、Build、Updating）已从本文移除，统一以 phase1 为准；本文聚焦 Phase 2+ 独有内容（Context Awareness / Control Plane / Session Hub / 多端 / Observability / Security 等）。
