@@ -18,9 +18,10 @@
 //
 //   cd packages/client/desktop && bun run --bun e2e/builtin-skill-shadowing.e2e.ts
 //   Needs: built opencode sidecar binary. Exit 0 = PASS, 1 = FAIL.
-import { mkdtempSync, mkdirSync, rmSync, cpSync, writeFileSync, existsSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { extractBuiltinZip } from "./builtin-zip-helper"
 
 const DIR = import.meta.dir
 const DESKTOP = join(DIR, "..")
@@ -56,8 +57,11 @@ const base = `http://127.0.0.1:${OC}`
 const USER_MARKER = "USER-INSTALLED upstream latest. 生成PPT via raw upstream."
 
 function installBuiltin() {
-  mkdirSync(builtinDir, { recursive: true })
-  cpSync(REAL_SKILL_MD, join(builtinDir, "SKILL.md"))
+  // What reconcile's restore does for real: prefix-selective extraction of the
+  // whole ppt-master subtree from the bundled skills-builtin.zip.
+  const t0 = Date.now()
+  const n = extractBuiltinZip(builtinDir, "ppt-master")
+  console.log(`[builtin-zip] restored ppt-master (${n} files) in ${Date.now() - t0}ms`)
 }
 function installUser() {
   mkdirSync(userDir, { recursive: true })

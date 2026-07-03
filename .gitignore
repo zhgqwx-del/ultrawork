@@ -38,6 +38,10 @@ bun.lockb
 **/src-tauri/target
 **/src-tauri/binaries
 **/src-tauri/resources/node
+# 构建期产物（scripts/pack-builtin-skills.ts）；目录本身以 .gitkeep 入 git——
+# tauri::generate_context! 编译期要求 bundle.resources 源路径存在（CI cargo test 不打包）
+packages/client/desktop/src-tauri/resources/builtin-skills/*
+!packages/client/desktop/src-tauri/resources/builtin-skills/.gitkeep
 packages/client/desktop/packages/
 
 # Test files

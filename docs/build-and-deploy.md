@@ -1,6 +1,6 @@
 # Ultrawork 桌面应用打包指南
 
-<!-- last-synced: 2026-06-27 -->
+<!-- last-synced: 2026-07-03 -->
 
 > 目标平台：macOS (ARM64 / x86_64) · Windows (x64) · Linux (x64/ARM64)
 > 技术栈：Tauri 2 + React 19 + Vite 7 + OpenCode Sidecar (Bun compiled binary)
@@ -50,7 +50,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | 平台 | 命令 | 产出 |
 |---|---|---|
 | **macOS** | `bun run release`（需 `APPLE_SIGNING_IDENTITY` 等做签名/公证，见 §三）<br>`bun run release --unsigned`（免签，本地用，Universal） | `.dmg` + `.app`（Universal） |
-| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `*-setup.exe`(NSIS；MSI 已停用——WiX v3 扛不住 ppt-master 1.2 万文件资源树) |
+| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `*-setup.exe`(NSIS；MSI 未启用——当年 WiX v3 被 1.2 万文件资源树打挂，2026-07-03 起资源已收敛为单 zip〔ADR-041〕，复活待 CI 实证后再加回 targets，见 gotchas §12) |
 | **Linux** | `bun run release` | `.deb` + `.rpm`（AppImage 暂跳过，CI 上 linuxdeploy/FUSE 不稳，见 ADR-037） |
 
 > **A vs B**：A/`tauri:build` = 当前架构、不签名、快（日常本地验证）；B/`release` 在 mac 上是 Universal 双架构 + 可签名公证（对外分发），win/linux 上两者基本一样。`--force-build` 可强制全重编 sidecar（默认 hash 增量缓存，重跑很快）。
@@ -62,7 +62,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | `tauri:build` / `setup --build`（无 `--target`） | `packages/client/desktop/src-tauri/target/release/bundle/` |
 | `release`（带 `--target`，mac 为 `universal-apple-darwin`） | `…/target/<triple>/release/bundle/` |
 
-子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe`（MSI 已停用，见上表）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
+子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe`（MSI 未启用，见上表）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
 
 ### 0.5 在其他平台验证打包（干净环境完备步骤）
 
@@ -213,11 +213,12 @@ export APPLE_KEYCHAIN_PROFILE="ultrawork-notarize"
 
 `bun run release` 是发布构建的唯一入口（脚本：`scripts/build-release.ts`）。会自动跑以下流程：
 
-1. 检查环境变量（`APPLE_SIGNING_IDENTITY` / `APPLE_ID` 等，可选）
-2. 双架构编译四个 sidecar（OpenCode / Gateway / Knowledge / ACP Client）— `aarch64-apple-darwin` + `x86_64-apple-darwin`
-3. `lipo -create` 合并每个 sidecar 成 universal binary（`<name>-universal-apple-darwin`），ad-hoc 重签
-4. `tauri build --target universal-apple-darwin` 编译 Rust 端 + 前端 + lipo 主二进制 + 打包 `.app` + 打包 DMG
-5. 验证签名 / 公证（如配置）/ stapler
+1. 内置技能 zip 打包（`scripts/pack-builtin-skills.ts`，按内容 hash 惰性、已新鲜则瞬时跳过；`tauri build` 的 beforeBuildCommand 也会跑，双保险，ADR-041）
+2. 检查环境变量（`APPLE_SIGNING_IDENTITY` / `APPLE_ID` 等，可选）
+3. 双架构编译四个 sidecar（OpenCode / Gateway / Knowledge / ACP Client）— `aarch64-apple-darwin` + `x86_64-apple-darwin`
+4. `lipo -create` 合并每个 sidecar 成 universal binary（`<name>-universal-apple-darwin`），ad-hoc 重签
+5. `tauri build --target universal-apple-darwin` 编译 Rust 端 + 前端 + lipo 主二进制 + 打包 `.app` + 打包 DMG
+6. 验证签名 / 公证（如配置）/ stapler
 
 ### 4.1 签名 + 公证（正式发布）
 

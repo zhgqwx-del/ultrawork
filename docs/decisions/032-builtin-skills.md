@@ -1,6 +1,6 @@
 # ADR-032: 内置技能（built-in skills）打包与分发
 
-- 状态：Accepted
+- 状态：Accepted（分发形态已被 ADR-041 修订：松散树拷贝 → 构建期 zip + 首启解压；注入位置/sentinel 升级语义不变）
 - 日期：2026-06-14
 - 关联：ADR-020（配置隔离 / `OPENCODE_APP_NAME`）、ADR-026（知识库）、gotchas §10
 

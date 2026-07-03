@@ -1602,10 +1602,14 @@ fn ensure_sidecar_copies() {
 
 // ---------------------------------------------------------------------------
 // Built-in skills — bundled under <resource_dir>/skills/builtin (Tauri
-// bundle.resources) and copied at startup into
-// ~/.config/ultrawork/skills/builtin so the OpenCode sidecar auto-discovers
-// them ({skill,skills}/**/SKILL.md over the config dir). vendor untouched, no
-// opencode.json mutation. See skills/builtin/README.md + ADR.
+// bundle.resources) as a single skills-builtin.zip + a `.builtin-version`
+// sentinel beside it (built by scripts/pack-builtin-skills.ts from the loose
+// git tree), and extracted at startup into ~/.config/ultrawork/skills/builtin
+// so the OpenCode sidecar auto-discovers them ({skill,skills}/**/SKILL.md over
+// the config dir). The zip deliberately does NOT contain the sentinel — the
+// installer writes it into the staged tree only after a full extraction, so a
+// visible sentinel always means a complete tree. vendor untouched, no
+// opencode.json mutation. See skills/builtin/README.md + ADR-032/040.
 // ---------------------------------------------------------------------------
 
 /// Target dir for built-in skills. Sits *inside* the config skills dir so it is
@@ -1681,10 +1685,26 @@ fn ensure_builtin_skills_locked(app: &tauri::AppHandle) -> Result<BuiltinSkillsS
             resource_dir.display()
         ));
     };
+    let bundle_zip = src.join("skills-builtin.zip");
+    if !bundle_zip.is_file() {
+        return Err(format!(
+            "bundled skills zip missing beside sentinel: {} (run scripts/pack-builtin-skills.ts)",
+            bundle_zip.display()
+        ));
+    }
     let version = std::fs::read_to_string(src.join(".builtin-version"))
         .unwrap_or_default()
         .trim()
         .to_string();
+    if version.is_empty() {
+        // An empty/unreadable sentinel would make builtin_needs_refresh true on
+        // EVERY call (installed "" never matches) — a full 12k-file reinstall
+        // per startup/workspace-switch. Fail cleanly like a missing zip instead.
+        return Err(format!(
+            "bundled sentinel empty/unreadable: {}",
+            src.join(".builtin-version").display()
+        ));
+    }
     let target = builtin_skills_target();
     // Dot-dir staging siblings: excluded from opencode's {skill,skills}/** scan
     // (no `dot` option), so a leftover from an interrupted run is never picked
@@ -1693,26 +1713,35 @@ fn ensure_builtin_skills_locked(app: &tauri::AppHandle) -> Result<BuiltinSkillsS
         .parent()
         .map(|p| p.join(".builtin.staging"))
         .unwrap_or_else(|| target.with_extension("staging"));
-    let _ = std::fs::remove_dir_all(&staging);
+    clear_staging(&staging);
     if let Some(parent) = target.parent() {
-        let _ = std::fs::remove_dir_all(parent.join(".builtin.restore"));
+        clear_staging(&parent.join(".builtin.restore"));
     }
     let sentinel = target.join(".builtin-version");
     let stored = std::fs::read_to_string(&sentinel).ok().map(|s| s.trim().to_string());
     let mut installed_now = false;
     if builtin_needs_refresh(&version, stored.as_deref(), target.exists()) {
-        // Refresh: stage-then-rename so an interrupted copy (quit/disk-full mid-way
-        // through 12k files) can never leave a half tree with a valid sentinel; the
-        // swap removes ONLY builtin/ — siblings under skills/ are user-installed.
-        install_builtin_tree(&src, &target, &staging).map_err(|e| {
-            format!("install failed ({} -> {}): {}", src.display(), target.display(), e)
+        // Refresh: extract-to-staging then rename so an interrupted extraction
+        // (quit/disk-full mid-way through 12k files) can never leave a half tree
+        // with a valid sentinel; the swap removes ONLY builtin/ — siblings under
+        // skills/ are user-installed.
+        let t0 = std::time::Instant::now();
+        let files = install_builtin_tree(&bundle_zip, &version, &target, &staging).map_err(|e| {
+            format!("install failed ({} -> {}): {}", bundle_zip.display(), target.display(), e)
         })?;
-        println!("[builtin-skills] installed -> {} (version {})", target.display(), version);
+        println!(
+            "[builtin-skills] installed {} files -> {} (version {}) in {}ms",
+            files,
+            target.display(),
+            version,
+            t0.elapsed().as_millis()
+        );
         installed_now = true;
     }
     // Shadowing runs after install: on an upgrade-while-shadowed the fresh copy
-    // of a shadowed skill is pruned right back (wasted copy, but rare + correct).
-    let mut status = reconcile_builtin_shadowing(&src, &target, &global_config_dir());
+    // of a shadowed skill is pruned right back (wasted extraction, but rare +
+    // correct).
+    let mut status = reconcile_builtin_shadowing(&bundle_zip, &target, &global_config_dir());
     status.changed |= installed_now;
     Ok(status)
 }
@@ -1750,7 +1779,13 @@ struct BuiltinSkillsStatus {
 /// balanced flow collection, or empty for nested blocks).
 fn skill_registration_name(skill_md: &std::path::Path) -> Option<String> {
     let raw_text = std::fs::read_to_string(skill_md).ok()?;
-    let text = raw_text.strip_prefix('\u{feff}').unwrap_or(&raw_text);
+    skill_registration_name_from_str(&raw_text)
+}
+
+/// Same predicate over in-memory content (SKILL.md read out of the bundled
+/// zip); `skill_registration_name` is the on-disk wrapper.
+fn skill_registration_name_from_str(raw_text: &str) -> Option<String> {
+    let text = raw_text.strip_prefix('\u{feff}').unwrap_or(raw_text);
     let mut lines = text.lines();
     // gray-matter requires the file to START with the fence (column 0).
     let first = lines.next()?.strip_prefix("---")?;
@@ -1950,7 +1985,7 @@ fn collect_user_skills(config_dir: &std::path::Path, builtin_dir: &std::path::Pa
 /// Errors are logged, not fatal: worst case the race window stays open until
 /// the next reconcile.
 fn reconcile_builtin_shadowing(
-    bundle_src: &std::path::Path,
+    bundle_zip: &std::path::Path,
     target: &std::path::Path,
     config_dir: &std::path::Path,
 ) -> BuiltinSkillsStatus {
@@ -1960,20 +1995,56 @@ fn reconcile_builtin_shadowing(
     let mut bundled = Vec::new();
     let mut shadowed = Vec::new();
     let mut changed = false;
-    let Ok(entries) = std::fs::read_dir(bundle_src) else {
-        return BuiltinSkillsStatus { bundled, shadowed, changed };
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
-        let skill_md = entry.path().join("SKILL.md");
-        if !skill_md.is_file() {
-            continue; // .builtin-version / README.md / plain files
+    // Enumerate bundled skills straight from the zip central directory: every
+    // entry exactly at `<dir>/SKILL.md` marks a skill dir (mirrors the loose
+    // tree's read_dir + SKILL.md gate; the root README.md has no dir and the
+    // sentinel is not in the zip at all). A broken/missing zip fails OPEN —
+    // empty bundled list means no prunes and no restores, logged, never fatal.
+    let mut archive = match open_builtin_zip(bundle_zip) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[builtin-skills] reconcile: {}", e);
+            return BuiltinSkillsStatus { bundled, shadowed, changed };
         }
-        let dir_name = entry.file_name();
+    };
+    let mut skill_dirs: Vec<(String, usize)> = Vec::new();
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index_raw(i) else { continue };
+        let mut parts = entry.name().split('/');
+        if let (Some(dir), Some("SKILL.md"), None) = (parts.next(), parts.next(), parts.next()) {
+            // Mirror extract_builtin_zip's tamper-rejection on the derived dir
+            // name: it keys `target.join` + `remove_dir_all` below, so a
+            // hostile "../SKILL.md" entry (dir "..") would otherwise aim the
+            // prune at the skills ROOT. Dot-prefixed names ("."/".."/
+            // ".builtin-version" — deleting the live sentinel would thrash-
+            // reinstall forever) are rejected wholesale: opencode's glob never
+            // scans dot-dirs and the pack script never emits such names.
+            let safe = !dir.is_empty()
+                && !dir.starts_with('.')
+                && !dir.contains('\\')
+                && !dir.contains(':');
+            if safe {
+                skill_dirs.push((dir.to_string(), i));
+            } else {
+                eprintln!("[builtin-skills] ignoring unsafe zip skill dir: {}", entry.name());
+            }
+        }
+    }
+    skill_dirs.sort();
+    for (dir_name, idx) in skill_dirs {
         // Bundle content is controlled (fetch script guarantees frontmatter);
         // the dirname fallback here can never mis-key a prune — pruning keys on
         // USER names, which have no fallback (see collect_user_skills).
-        let name = skill_registration_name(&skill_md)
-            .unwrap_or_else(|| dir_name.to_string_lossy().to_string());
+        let name = archive
+            .by_index(idx)
+            .ok()
+            .and_then(|mut f| {
+                use std::io::Read;
+                let mut s = String::new();
+                f.read_to_string(&mut s).ok()?;
+                skill_registration_name_from_str(&s)
+            })
+            .unwrap_or_else(|| dir_name.clone());
         bundled.push(name.clone());
         let installed = target.join(&dir_name);
         if user_names.contains(name.as_str()) {
@@ -1995,26 +2066,34 @@ fn reconcile_builtin_shadowing(
             shadowed.push(name);
         } else if exact_skill_md(&installed).is_none() {
             // Missing OR partial (no SKILL.md — e.g. an interrupted earlier
-            // restore): recopy from the bundle so the tree self-heals without
-            // waiting for an app upgrade to rotate the sentinel.
+            // restore): re-extract this skill's subtree from the bundled zip
+            // (prefix-selective) so the tree self-heals without waiting for an
+            // app upgrade to rotate the sentinel.
             let staging = target
                 .parent()
                 .map(|p| p.join(".builtin.restore"))
                 .unwrap_or_else(|| target.with_extension("restore"));
-            let _ = std::fs::remove_dir_all(&staging);
+            clear_staging(&staging);
             let _ = std::fs::create_dir_all(target);
-            let result = copy_dir_recursive(&entry.path(), &staging).and_then(|_| {
+            let t0 = std::time::Instant::now();
+            let result = extract_builtin_zip(bundle_zip, Some(&dir_name), &staging).and_then(|n| {
                 // A partial tree (or a stray plain FILE, which remove_dir_all
                 // can't remove) at `installed` would make the rename fail.
                 let _ = std::fs::remove_dir_all(&installed);
                 let _ = std::fs::remove_file(&installed);
                 std::fs::rename(&staging, &installed)
+                    .map(|_| n)
                     .map_err(|e| format!("rename {} -> {}: {}", staging.display(), installed.display(), e))
             });
             match result {
-                Ok(()) => {
+                Ok(n) => {
                     changed = true;
-                    println!("[builtin-skills] restored builtin '{}' from bundle", name);
+                    println!(
+                        "[builtin-skills] restored builtin '{}' from bundle ({} files in {}ms)",
+                        name,
+                        n,
+                        t0.elapsed().as_millis()
+                    );
                 }
                 Err(e) => {
                     let _ = std::fs::remove_dir_all(&staging);
@@ -2114,22 +2193,136 @@ fn remove_user_skill_override(
     Ok(fresh)
 }
 
-/// Stage-then-rename install of the builtin skills tree. The sentinel inside the
-/// tree only becomes visible at `target` after the FULL copy succeeded (rename is
-/// same-volume); interruption leaves either the old consistent target or no
+/// Clear a staging path before use, robust to a SYMLINK planted there:
+/// `remove_dir_all` errors on a top-level symlink (an error the `let _ =`
+/// call sites swallow), after which extraction would write THROUGH the link
+/// into whatever it points at. Kill links/files with remove_file/remove_dir
+/// (Windows dir-symlinks need remove_dir), trees with remove_dir_all.
+fn clear_staging(path: &std::path::Path) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return };
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(path);
+    } else {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
+/// Open the bundled skills zip (built by scripts/pack-builtin-skills.ts,
+/// shipped beside the `.builtin-version` sentinel in bundle.resources).
+fn open_builtin_zip(
+    zip_path: &std::path::Path,
+) -> Result<zip::ZipArchive<std::io::BufReader<std::fs::File>>, String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("open {}: {}", zip_path.display(), e))?;
+    zip::ZipArchive::new(std::io::BufReader::new(file))
+        .map_err(|e| format!("read zip {}: {}", zip_path.display(), e))
+}
+
+/// Extract the bundled skills zip into `dest` — all entries, or (for the
+/// shadowing restore path) only those under `prefix/` with the prefix
+/// stripped. Returns the number of files written; 0 matches is an error (a
+/// rename of an empty staging dir would land a hollow tree that the SKILL.md
+/// self-heal gate re-restores forever).
+///
+/// Security (zip-slip): every entry path must be "enclosed" — no absolute
+/// paths, no `..` traversal (`enclosed_name`). Symlink entries are refused
+/// outright: the pack script never emits them, and extracting one could
+/// redirect later writes outside `dest`. Unix mode bits are restored so
+/// bundled scripts keep their executable bit.
+fn extract_builtin_zip(
+    zip_path: &std::path::Path,
+    prefix: Option<&str>,
+    dest: &std::path::Path,
+) -> Result<usize, String> {
+    let mut archive = open_builtin_zip(zip_path)?;
+    std::fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {}", dest.display(), e))?;
+    let mut written = 0usize;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("zip entry #{}: {}", i, e))?;
+        if let Some(mode) = entry.unix_mode() {
+            if mode & 0o170000 == 0o120000 {
+                return Err(format!("refusing symlink zip entry: {}", entry.name()));
+            }
+        }
+        // enclosed_name() SANITIZES an absolute name (strips the leading '/')
+        // instead of rejecting it. Our own pack script never emits absolute
+        // names, '\' separators or drive letters — any of those means a
+        // tampered bundle, so refuse outright rather than guess.
+        let raw = entry.name();
+        if raw.starts_with('/') || raw.contains('\\') || raw.contains(':') {
+            return Err(format!("unsafe zip entry path: {}", raw));
+        }
+        let Some(path) = entry.enclosed_name() else {
+            return Err(format!("unsafe zip entry path: {}", entry.name()));
+        };
+        let rel = match prefix {
+            Some(p) => match path.strip_prefix(p) {
+                Ok(r) => r.to_path_buf(),
+                Err(_) => continue, // other skills' entries
+            },
+            None => path,
+        };
+        if rel.as_os_str().is_empty() || entry.is_dir() {
+            let _ = std::fs::create_dir_all(dest.join(&rel));
+            continue;
+        }
+        let out_path = dest.join(&rel);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
+        }
+        let mut out = std::fs::File::create(&out_path)
+            .map_err(|e| format!("create {}: {}", out_path.display(), e))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("write {}: {}", out_path.display(), e))?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode & 0o777));
+        }
+        written += 1;
+    }
+    if written == 0 {
+        return Err(format!(
+            "no zip entries matched{} in {}",
+            prefix.map(|p| format!(" prefix '{}'", p)).unwrap_or_default(),
+            zip_path.display()
+        ));
+    }
+    Ok(written)
+}
+
+/// Extract-to-staging-then-rename install of the builtin skills tree. The
+/// sentinel is written into the staged tree only AFTER the full extraction
+/// succeeded and becomes visible at `target` atomically with the rename
+/// (same-volume); interruption leaves either the old consistent target or no
 /// target at all — never "sentinel says done, tree is partial".
 fn install_builtin_tree(
-    src: &std::path::Path,
+    zip_path: &std::path::Path,
+    version: &str,
     target: &std::path::Path,
     staging: &std::path::Path,
-) -> Result<(), String> {
-    let _ = std::fs::remove_dir_all(staging);
-    copy_dir_recursive(src, staging)?;
+) -> Result<usize, String> {
+    clear_staging(staging);
+    let written = extract_builtin_zip(zip_path, None, staging).inspect_err(|_| {
+        let _ = std::fs::remove_dir_all(staging);
+    })?;
+    std::fs::write(staging.join(".builtin-version"), format!("{}\n", version)).map_err(|e| {
+        let _ = std::fs::remove_dir_all(staging);
+        format!("write staged sentinel: {}", e)
+    })?;
     let _ = std::fs::remove_dir_all(target);
+    // A stray plain FILE at the target path (remove_dir_all can't remove it)
+    // would fail the rename on every call — same belt-and-suspenders as restore.
+    let _ = std::fs::remove_file(target);
     std::fs::rename(staging, target).map_err(|e| {
         let _ = std::fs::remove_dir_all(staging);
         format!("rename staging -> {}: {}", target.display(), e)
-    })
+    })?;
+    Ok(written)
 }
 
 /// Pure refresh decision: copy is needed unless the target exists AND the source
@@ -2993,14 +3186,28 @@ mod builtin_skills_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Build a small test zip mirroring the pack script's output shape
+    /// (file entries only, '/' separators, no sentinel inside).
+    fn write_test_zip(path: &std::path::Path, entries: &[(&str, &str)]) {
+        use std::io::Write;
+        let file = std::fs::File::create(path).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, content) in entries {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(content.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
     #[test]
     fn install_builtin_tree_stages_then_swaps() {
-        let src = unique_tmp("ibt-src");
-        let target = unique_tmp("ibt-dst");
-        let staging = unique_tmp("ibt-stg");
-        std::fs::create_dir_all(src.join("ppt-master")).unwrap();
-        std::fs::write(src.join(".builtin-version"), "v1\n").unwrap();
-        std::fs::write(src.join("ppt-master/SKILL.md"), "---\nname: x\n---\n").unwrap();
+        let root = unique_tmp("ibt");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("skills-builtin.zip");
+        write_test_zip(&zip, &[("ppt-master/SKILL.md", "---\nname: x\n---\n")]);
+        let target = root.join("target");
+        let staging = root.join("staging");
 
         // Pre-existing garbage in staging (interrupted previous run) must not leak.
         std::fs::create_dir_all(staging.join("stale")).unwrap();
@@ -3008,15 +3215,229 @@ mod builtin_skills_tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("old-file"), "x").unwrap();
 
-        install_builtin_tree(&src, &target, &staging).unwrap();
+        let n = install_builtin_tree(&zip, "v1", &target, &staging).unwrap();
 
-        assert!(target.join(".builtin-version").is_file());
+        assert_eq!(n, 1);
+        // Sentinel is written by the installer from the OUTSIDE version (the
+        // zip itself has none) and must be visible only in the final tree.
+        assert_eq!(
+            std::fs::read_to_string(target.join(".builtin-version")).unwrap().trim(),
+            "v1"
+        );
         assert!(target.join("ppt-master/SKILL.md").is_file());
         assert!(!target.join("old-file").exists(), "old target content not wiped");
+        assert!(!target.join("stale").exists(), "stale staging content must not leak");
         assert!(!staging.exists(), "staging must be consumed by the rename");
 
-        let _ = std::fs::remove_dir_all(&src);
-        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_refresh_preserves_old_consistent_tree() {
+        // Extraction happens INTO STAGING before the old target is touched — a
+        // corrupt bundle zip must leave the previously installed tree (and its
+        // sentinel) fully intact. Anchors the code ordering: reordering
+        // remove_dir_all(target) before the extract would break this.
+        let root = unique_tmp("keepold");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("skills-builtin.zip");
+        write_test_zip(&zip, &[("ppt-master/SKILL.md", "old")]);
+        let target = root.join("target");
+        let staging = root.join("staging");
+        install_builtin_tree(&zip, "v1", &target, &staging).unwrap();
+
+        std::fs::write(&zip, b"this is not a zip").unwrap();
+        assert!(install_builtin_tree(&zip, "v2", &target, &staging).is_err());
+
+        assert_eq!(
+            std::fs::read_to_string(target.join(".builtin-version")).unwrap().trim(),
+            "v1",
+            "old sentinel must survive a failed refresh"
+        );
+        assert!(target.join("ppt-master/SKILL.md").is_file(), "old tree must survive");
+        assert!(!staging.exists(), "failed staging must be cleaned");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_rejects_zip_slip_and_absolute_paths() {
+        let root = unique_tmp("zipslip");
+        std::fs::create_dir_all(&root).unwrap();
+        for evil in ["../evil.txt", "a/../../evil.txt"] {
+            let zip = root.join("z.zip");
+            write_test_zip(&zip, &[("ok/SKILL.md", "x"), (evil, "boom")]);
+            let dest = root.join("out");
+            let _ = std::fs::remove_dir_all(&dest);
+            assert!(
+                extract_builtin_zip(&zip, None, &dest).is_err(),
+                "entry {} must be rejected",
+                evil
+            );
+            assert!(!root.join("evil.txt").exists(), "{} escaped the dest dir", evil);
+        }
+
+        // ZipWriter itself normalizes a leading '/', so a genuinely absolute
+        // entry (what a hostile zip would carry) is forged by byte-patching an
+        // equal-length name in both the local header and central directory.
+        let zip = root.join("abs.zip");
+        write_test_zip(&zip, &[("aa/evil.txt", "boom")]);
+        let bytes = std::fs::read(&zip).unwrap();
+        let patched: Vec<u8> = {
+            let from = b"aa/evil.txt";
+            let to = b"/a/evil.txt";
+            let mut out = bytes.clone();
+            let mut i = 0;
+            while i + from.len() <= out.len() {
+                if &out[i..i + from.len()] == from {
+                    out[i..i + to.len()].copy_from_slice(to);
+                }
+                i += 1;
+            }
+            out
+        };
+        std::fs::write(&zip, patched).unwrap();
+        assert!(
+            extract_builtin_zip(&zip, None, &root.join("out-abs")).is_err(),
+            "absolute entry path must be rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_rejects_symlink_entries() {
+        let root = unique_tmp("ziplink");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("z.zip");
+        {
+            use std::io::Write;
+            let f = std::fs::File::create(&zip).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file("ok/SKILL.md", opts).unwrap();
+            w.write_all(b"x").unwrap();
+            w.add_symlink("ok/link", "/etc/passwd", opts).unwrap();
+            w.finish().unwrap();
+        }
+        let dest = root.join("out");
+        assert!(extract_builtin_zip(&zip, None, &dest).is_err());
+        assert!(!dest.join("ok/link").exists(), "symlink entry must not materialize");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_prefix_selects_single_skill_and_strips_prefix() {
+        let root = unique_tmp("zipprefix");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("z.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("ppt-master/SKILL.md", "a"),
+                ("ppt-master/scripts/tool.py", "b"),
+                // Same string prefix but a different dir — must NOT match
+                // (component-wise strip_prefix, not starts_with on the string).
+                ("ppt-master-extra/SKILL.md", "c"),
+                ("doc-edit/SKILL.md", "d"),
+            ],
+        );
+        let dest = root.join("out");
+        let n = extract_builtin_zip(&zip, Some("ppt-master"), &dest).unwrap();
+        assert_eq!(n, 2);
+        assert!(dest.join("SKILL.md").is_file(), "prefix must be stripped");
+        assert!(dest.join("scripts/tool.py").is_file());
+        assert!(!dest.join("doc-edit").exists());
+        assert!(!dest.join("ppt-master-extra").exists());
+
+        // Zero matches is an error — a rename of a hollow staging dir would
+        // otherwise land a tree the SKILL.md self-heal gate re-restores forever.
+        assert!(extract_builtin_zip(&zip, Some("nope"), &root.join("out2")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reconcile_ignores_hostile_traversal_skill_dirs() {
+        // A tampered bundle carrying "../SKILL.md" (dir "..") must never key a
+        // prune/restore: target.join("..") is the skills ROOT and a prune there
+        // would remove_dir_all every user skill.
+        let (config, _src, target) = shadow_fixture("shadow-hostile");
+        let zip = config.join("bundle-src").join("hostile.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("../SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                ("./SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                // Deleting target/.builtin-version via a restore would
+                // thrash-reinstall forever — dot-prefixed dirs are rejected.
+                (".builtin-version/SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                ("doc-edit/SKILL.md", "---\nname: doc-edit\ndescription: bundled\n---\n"),
+            ],
+        );
+        // A user skill whose name the hostile entry claims — the bait.
+        let user = config.join("skills").join("alpha");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("SKILL.md"), "---\nname: alpha\ndescription: x\n---\n").unwrap();
+
+        let status = reconcile_builtin_shadowing(&zip, &target, &config);
+
+        assert!(config.join("skills").exists(), "skills root must survive");
+        assert!(user.join("SKILL.md").is_file(), "user skill must survive");
+        assert!(target.join("doc-edit/SKILL.md").is_file(), "builtin must survive");
+        assert!(
+            !status.bundled.iter().any(|n| n == "alpha"),
+            "hostile entries must not enter the bundled list: {:?}",
+            status.bundled
+        );
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_replaces_symlinked_staging_instead_of_writing_through() {
+        // A symlink planted at the staging path must be REPLACED, not followed:
+        // remove_dir_all errors on a top-level symlink (swallowed by `let _ =`),
+        // after which extraction would write through it into the victim dir.
+        let root = unique_tmp("stg-link");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("skills-builtin.zip");
+        write_test_zip(&zip, &[("ppt-master/SKILL.md", "x")]);
+        let victim = root.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        let staging = root.join("staging");
+        std::os::unix::fs::symlink(&victim, &staging).unwrap();
+        let target = root.join("target");
+
+        install_builtin_tree(&zip, "v1", &target, &staging).unwrap();
+
+        assert!(
+            !victim.join("ppt-master").exists(),
+            "extraction must not write through the planted symlink"
+        );
+        assert!(target.join("ppt-master/SKILL.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_restores_exec_bits() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = unique_tmp("zipmode");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("z.zip");
+        {
+            use std::io::Write;
+            let f = std::fs::File::create(&zip).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let x = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+            w.start_file("s/run.py", x).unwrap();
+            w.write_all(b"#!/usr/bin/env python3\n").unwrap();
+            w.finish().unwrap();
+        }
+        let dest = root.join("out");
+        extract_builtin_zip(&zip, None, &dest).unwrap();
+        let mode = std::fs::metadata(dest.join("s/run.py")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "exec bits must survive extraction: {:o}", mode);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -3135,21 +3556,25 @@ mod builtin_skills_tests {
         assert!(checked >= 6, "expected >= 6 bundled skills, found {}", checked);
     }
 
-    /// Lay out a fake config dir with a bundle src (two skills) and an installed
-    /// builtin tree, returning (config_dir, bundle_src, builtin_target).
+    /// Lay out a fake config dir with a bundled zip (two skills, plus a root
+    /// README.md that must never count as a skill) and an installed builtin
+    /// tree, returning (config_dir, bundle_zip, builtin_target).
     fn shadow_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
         let config = unique_tmp(tag);
-        let src = config.join("bundle-src");
+        std::fs::create_dir_all(config.join("bundle-src")).unwrap();
+        let src = config.join("bundle-src").join("skills-builtin.zip");
+        write_test_zip(
+            &src,
+            &[
+                ("ppt-master/SKILL.md", "---\nname: ppt-master\ndescription: bundled\n---\n"),
+                ("ppt-master/scripts/tool.py", "print('hi')\n"),
+                ("doc-edit/SKILL.md", "---\nname: doc-edit\ndescription: bundled\n---\n"),
+                ("doc-edit/scripts/tool.py", "print('hi')\n"),
+                ("README.md", "not a skill\n"),
+            ],
+        );
         let target = config.join("skills").join("builtin");
-        for (dir, name) in [("ppt-master", "ppt-master"), ("doc-edit", "doc-edit")] {
-            let s = src.join(dir);
-            std::fs::create_dir_all(s.join("scripts")).unwrap();
-            std::fs::write(s.join("SKILL.md"), format!("---\nname: {}\ndescription: bundled\n---\n", name)).unwrap();
-            std::fs::write(s.join("scripts/tool.py"), "print('hi')\n").unwrap();
-        }
-        std::fs::write(src.join(".builtin-version"), "v1\n").unwrap();
-        std::fs::write(src.join("README.md"), "not a skill\n").unwrap();
-        copy_dir_recursive(&src, &target).unwrap();
+        extract_builtin_zip(&src, None, &target).unwrap();
         (config, src, target)
     }
 

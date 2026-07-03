@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-02 -->
+<!-- last-synced: 2026-07-03 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -340,7 +340,7 @@ setTimeout(() => fetchSources(), 500)
 
 ## 12. 内置技能 authoring（`skills/builtin/`，ADR-032）
 
-**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter/ppt-master）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（doc-edit）可直接编辑。改任意内容后重跑 fetch 脚本刷新 `.builtin-version`（内容 hash，触发桌面端升级刷新）。
+**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter/ppt-master）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（doc-edit）可直接编辑。**生效链路（2026-07-03 起 zip 分发，ADR-041）**：改任意内容 → 重跑 fetch 脚本刷新 `.builtin-version`（内容 hash）→ 构建期 `scripts/pack-builtin-skills.ts` 按 hash 惰性重打 `skills-builtin.zip`（beforeDevCommand/beforeBuildCommand/build-release 自动跑）→ 桌面端 sentinel 变化触发升级重装。注意：**已在跑的 `tauri dev` 期间直接改 `skills/builtin/` 不会进 bundle**——需重启 dev 或手动 `bun run --bun scripts/pack-builtin-skills.ts`；pack/fetch 两脚本的 hash 算法必须逐字节一致（gotchas §10）。
 
 **新增上游技能条目流程**（fetch 脚本 `SOURCES`）：核对 LICENSE 可再分发 → `ref` **pin release tag**（勿 main，bump 时改 tag 重跑）→ 大仓库（整仓 tarball 过大）设 `sparse: true`（blobless sparse clone 只拉 `subdir`；`--branch` 不接受 commit SHA）→ 用 `drop`/`keepOnly` 裁非功能大文件（纯文档图等）→ `X_REQUIRES` 与前端 `BUILTIN_DEP_MAP` 同步 → 专属适配写成 `applyXxxPatches`（先例：skill-installer 改安装目标、ppt-master 注 `.env` 警告+清悬空引用）→ 跑 `bun run --bun scripts/fetch-builtin-skills.ts <name>`（按名过滤）并提交产物。
 
