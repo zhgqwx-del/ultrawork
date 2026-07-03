@@ -1,5 +1,9 @@
 export { ApiClient, ApiError, createApiClient } from "./client"
+export { SEARCH_AUTH_IDS } from "./types"
 export type {
+  WebsearchProviderId,
+  WebsearchConfig,
+  AuthStatus,
   ApiClientConfig,
   SessionCreateRequest,
   SendMessageRequest,

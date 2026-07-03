@@ -343,11 +343,46 @@ export interface ProviderConfig {
   options?: Record<string, unknown>
 }
 
+// --- BYOK web search (ADR-042) ---
+
+export type WebsearchProviderId = "tavily" | "aliyun-iqs" | "exa"
+
+/** `experimental.websearch` in the global opencode.json. API keys are NOT here —
+ *  they live in auth.json under the `search-tavily` / `search-aliyun-iqs` ids. */
+export interface WebsearchConfig {
+  /** Master toggle; only `false` disables (unset = on when a provider is configured). */
+  enabled?: boolean
+  /** Preferred provider. "auto" = no explicit preference (PATCH merge can't
+   *  delete keys, so "auto" exists to clear a previous explicit choice). */
+  provider?: WebsearchProviderId | "auto"
+  /** Opt in to Exa's keyless public MCP endpoint (off by default). */
+  exa?: boolean
+  tavily?: { searchDepth?: "basic" | "advanced" }
+  aliyunIqs?: { engineType?: "Generic" | "GenericAdvanced" | "LiteAdvanced" | "Deep" }
+}
+
+/** auth.json ids for BYOK search keys (safe: unknown ids are skipped by
+ *  provider enumeration — they never become phantom model providers). */
+export const SEARCH_AUTH_IDS = {
+  tavily: "search-tavily",
+  "aliyun-iqs": "search-aliyun-iqs",
+} as const
+
+/** Response of `GET /global/auth/:authId/status` — presence only, never the key. */
+export interface AuthStatus {
+  configured: boolean
+  type?: "api" | "oauth" | "wellknown"
+}
+
 export interface OpenCodeConfig {
   model?: string
   provider?: Record<string, ProviderConfig>
   /** Provider IDs hidden from `GET /provider` (used to "delete" custom providers). */
   disabled_providers?: string[]
+  experimental?: {
+    websearch?: WebsearchConfig
+    [key: string]: unknown
+  }
   [key: string]: unknown
 }
 
@@ -366,6 +401,9 @@ export interface CustomProviderModelDef {
   attachment?: boolean
   /** Image input → emitted as `modalities: { input: ["text","image"], output: ["text"] }`. */
   vision?: boolean
+  /** Model-native web search (Aliyun DashScope `enable_search`) → emitted as
+   *  `options: { enable_search: true }`. Reuses the provider's API key. */
+  builtinSearch?: boolean
   /**
    * Raw extra fields (parsed JSON object), deep-merged into the model config
    * LAST so it can override anything above (e.g. `options`, `headers`, a custom

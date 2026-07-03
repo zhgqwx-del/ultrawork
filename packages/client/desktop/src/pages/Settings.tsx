@@ -6,6 +6,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
 import { ModelsSection } from "@/components/settings/models-section"
+import { SearchToolsSection } from "@/components/settings/search-tools-section"
 import { Logo } from "@/components/ui/logo"
 import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
@@ -36,7 +37,7 @@ import { QRCodeSVG } from "qrcode.react"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 import { APP_VERSION } from "@/lib/app-version"
 
-type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "channels" | "knowledge" | "skills" | "about"
+type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "tools" | "channels" | "knowledge" | "skills" | "about"
 
 type NavItem = { key: SettingsSection; icon: typeof Settings; labelKey: string }
 
@@ -58,6 +59,7 @@ const NAV_GROUPS: { titleKey: string; items: NavItem[] }[] = [
     titleKey: "settingsPage.group.integration",
     items: [
       { key: "services", icon: Server, labelKey: "settingsPage.services" },
+      { key: "tools", icon: Wrench, labelKey: "settingsPage.tools" },
       { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
     ],
   },
@@ -131,6 +133,7 @@ export function SettingsPage() {
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "agents" && <AgentsSection />}
             {activeSection === "services" && <ServicesSection />}
+            {activeSection === "tools" && <SearchToolsSection />}
             {activeSection === "channels" && <ChannelsSection />}
             {activeSection === "knowledge" && <KnowledgeSection />}
             {activeSection === "skills" && <SkillsSection />}

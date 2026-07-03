@@ -474,6 +474,77 @@ async fn test_provider_connection(
     })
 }
 
+/// Probe URL + JSON body for a BYOK search provider (ADR-042). A minimal real
+/// search (1 result, cheapest tier) is the only meaningful auth check — neither
+/// Tavily nor Aliyun IQS has a free list/ping endpoint, so one test click costs
+/// one search credit (the UI says so). Base URLs are env-overridable to point
+/// the probe at a local stub in e2e runs, mirroring the vendor websearch tool.
+fn build_search_probe(provider: &str) -> Result<(String, String), String> {
+    match provider {
+        "tavily" => {
+            let base = std::env::var("ULTRAWORK_TAVILY_BASE_URL")
+                .unwrap_or_else(|_| "https://api.tavily.com".into());
+            Ok((
+                format!("{}/search", base.trim_end_matches('/')),
+                r#"{"query":"ping","search_depth":"basic","max_results":1}"#.into(),
+            ))
+        }
+        "aliyun-iqs" => {
+            let base = std::env::var("ULTRAWORK_ALIYUN_IQS_BASE_URL")
+                .unwrap_or_else(|_| "https://cloud-iqs.aliyuncs.com".into());
+            Ok((
+                format!("{}/search/unified", base.trim_end_matches('/')),
+                r#"{"query":"ping","engineType":"LiteAdvanced","advancedParams":{"numResults":1}}"#.into(),
+            ))
+        }
+        other => Err(format!("Unknown search provider: {}", other)),
+    }
+}
+
+/// Connectivity + auth check for a BYOK web-search provider (Tavily/Aliyun IQS).
+/// Same curl-out pattern as `test_provider_connection`: no webview CORS, and the
+/// key never enters the renderer's network log — it only travels to the
+/// provider's own host. Returns the HTTP status + a message class.
+#[tauri::command(async)]
+async fn test_search_provider(provider: String, api_key: String) -> Result<ProviderTestResult, String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("API key is empty".into());
+    }
+    let (url, body) = build_search_probe(&provider)?;
+
+    let args: Vec<String> = vec![
+        "-sS".into(),
+        "-o".into(),
+        if cfg!(target_os = "windows") { "nul".into() } else { "/dev/null".into() },
+        "-w".into(),
+        "%{http_code}".into(),
+        "-m".into(),
+        "15".into(),
+        "-X".into(),
+        "POST".into(),
+        "-H".into(),
+        "content-type: application/json".into(),
+        "-H".into(),
+        format!("Authorization: Bearer {}", key),
+        "-d".into(),
+        body,
+        url,
+    ];
+
+    let output = Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    let status: u16 = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(0);
+    Ok(ProviderTestResult {
+        ok: (200..=299).contains(&status),
+        status,
+        message: classify_provider_status(status).to_string(),
+    })
+}
+
 /// Reveal a file in the system file manager, highlighting it where supported.
 /// Delegates to tauri-plugin-opener (macOS Finder `open -R` / Windows
 /// `explorer /select,` / Linux opens the parent folder).
@@ -2754,6 +2825,7 @@ pub fn run() {
             scan_workspace_changes,
             read_file_bytes,
             test_provider_connection,
+            test_search_provider,
         ])
         .setup(|app| {
             // Stage 0: catch catchable termination signals so sidecars are
@@ -2920,6 +2992,36 @@ pub fn run() {
                 shutdown_sidecars();
             }
         });
+}
+
+#[cfg(test)]
+mod search_probe_tests {
+    use super::*;
+
+    #[test]
+    fn tavily_probe_defaults() {
+        let (url, body) = build_search_probe("tavily").unwrap();
+        assert_eq!(url, "https://api.tavily.com/search");
+        assert!(body.contains("\"max_results\":1"));
+        assert!(body.contains("\"search_depth\":\"basic\""));
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["query"], "ping");
+    }
+
+    #[test]
+    fn iqs_probe_uses_cheapest_engine() {
+        let (url, body) = build_search_probe("aliyun-iqs").unwrap();
+        assert_eq!(url, "https://cloud-iqs.aliyuncs.com/search/unified");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["engineType"], "LiteAdvanced");
+        assert_eq!(v["advancedParams"]["numResults"], 1);
+    }
+
+    #[test]
+    fn unknown_provider_rejected() {
+        assert!(build_search_probe("exa").is_err());
+        assert!(build_search_probe("").is_err());
+    }
 }
 
 #[cfg(test)]

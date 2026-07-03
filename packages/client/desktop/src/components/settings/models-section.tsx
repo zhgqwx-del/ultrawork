@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
-import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft, Trash2, X, Sparkles, Plug } from "lucide-react"
+import { Search, Check, ChevronRight, Plus, Loader2, Key, ArrowLeft, Trash2, X, Sparkles, Plug, ExternalLink } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
+import { openUrl } from "@tauri-apps/plugin-opener"
+import { EXTERNAL_LINKS } from "@/lib/external-links"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { useModel } from "@/lib/model-context"
@@ -21,6 +23,19 @@ import type { Provider, ProviderAuthInfo, CustomProviderProtocol, CustomProvider
  */
 const isCustomProvider = (p: Provider) => p.source === "config" && !(p.env && p.env.length > 0)
 
+/**
+ * Heuristic: does this provider look like Aliyun DashScope (百炼)? Gates the
+ * per-model "built-in web search" toggle (`enable_search` is DashScope-only —
+ * other OpenAI-compatible hosts may reject the unknown body key). Matches the
+ * built-in alibaba/alibaba-cn providers by id/name and custom providers by
+ * their DashScope base URL. A model with the flag already set in config always
+ * shows the toggle (never strand an "on" you can't turn off).
+ */
+const isDashScopeLike = (p: Provider) => {
+  const hay = `${p.id} ${p.name} ${String(p.options?.["baseURL"] ?? "")}`.toLowerCase()
+  return /dashscope|aliyun|alibaba|bailian|qwen/.test(hay)
+}
+
 interface CustomModelRow {
   /** Stable React key so removing a middle row doesn't shift focus/IME. */
   key: number
@@ -33,6 +48,8 @@ interface CustomModelRow {
   reasoning: boolean
   attachment: boolean
   vision: boolean
+  /** DashScope model-native web search (`options.enable_search`, ADR-042). */
+  builtinSearch: boolean
   /** Raw "advanced (JSON)" escape hatch; "" when unused. */
   advanced: string
   /** Whether the advanced JSON editor is expanded for this row. */
@@ -50,6 +67,7 @@ const blankModelRow = (): CustomModelRow => ({
   reasoning: false,
   attachment: false,
   vision: false,
+  builtinSearch: false,
   advanced: "",
   advancedOpen: false,
 })
@@ -173,15 +191,32 @@ export function ModelsSection() {
   // the Tauri webview; matches the app's inline-action convention).
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // Model-native web search (DashScope `enable_search`, ADR-042): per-model flag
+  // living in the GLOBAL config `provider.<pid>.models.<mid>.options.enable_search`.
+  // Keyed "pid/mid". Loaded with the provider list; toggled via patchGlobalConfig.
+  const [builtinSearchMap, setBuiltinSearchMap] = useState<Record<string, boolean>>({})
+  const [togglingSearch, setTogglingSearch] = useState<string | null>(null)
+
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [provs, auths] = await Promise.all([
+      const [provs, auths, globalCfg] = await Promise.all([
         api.getProviders(),
         api.getProviderAuth(),
+        api.getGlobalConfig().catch(() => null),
       ])
       setProviders(provs)
       setAuthInfos(auths)
+      if (globalCfg) {
+        const map: Record<string, boolean> = {}
+        for (const [pid, pcfg] of Object.entries(globalCfg.provider ?? {})) {
+          for (const [mid, mcfg] of Object.entries(pcfg.models ?? {})) {
+            const es = mcfg.options?.["enable_search"]
+            if (typeof es === "boolean") map[`${pid}/${mid}`] = es
+          }
+        }
+        setBuiltinSearchMap(map)
+      }
     } catch (err) {
       console.error("Failed to fetch providers:", err)
     } finally {
@@ -192,6 +227,30 @@ export function ModelsSection() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  /**
+   * Flip a model's built-in web search. Writes the GLOBAL config (soft refresh →
+   * the next turn picks it up, no restart). PATCH merge can't delete keys, so
+   * "off" writes `false` rather than removing the entry. `id` is forced to the
+   * map key (see upsertCustomProvider) so the entry never desyncs.
+   */
+  const handleToggleBuiltinSearch = async (pid: string, mid: string, next: boolean) => {
+    const key = `${pid}/${mid}`
+    setTogglingSearch(key)
+    try {
+      await api.patchGlobalConfig({
+        provider: { [pid]: { models: { [mid]: { id: mid, options: { enable_search: next } } } } },
+      })
+      if (!mountedRef.current) return
+      setBuiltinSearchMap((m) => ({ ...m, [key]: next }))
+      toast.success(t(next ? "model.builtinSearch.on" : "model.builtinSearch.off"))
+    } catch (err) {
+      console.error("Failed to toggle builtin search:", err)
+      if (mountedRef.current) toast.error(t("model.builtinSearch.err"))
+    } finally {
+      if (mountedRef.current) setTogglingSearch(null)
+    }
+  }
 
   const handleShowConfig = () => {
     setConfigSearch("")
@@ -368,7 +427,8 @@ export function ModelsSection() {
         !m.toolCall ||
         m.reasoning ||
         m.vision ||
-        m.attachment,
+        m.attachment ||
+        m.builtinSearch,
     )
 
   const handleSaveCustom = async () => {
@@ -399,6 +459,7 @@ export function ModelsSection() {
       reasoning: m.reasoning,
       attachment: m.attachment,
       vision: m.vision,
+      builtinSearch: m.builtinSearch,
       advanced: advParsed[i].value,
     }))
     // opencode requires context+output together inside a model's `limit` (a partial
@@ -610,8 +671,13 @@ export function ModelsSection() {
                   ["reasoning", "model.customProvider.cap.reasoning"],
                   ["vision", "model.customProvider.cap.vision"],
                   ["attachment", "model.customProvider.cap.attachment"],
+                  ["builtinSearch", "model.customProvider.cap.builtinSearch"],
                 ] as const).map(([field, label]) => (
-                  <label key={field} className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg)]">
+                  <label
+                    key={field}
+                    title={field === "builtinSearch" ? t("model.builtinSearch.hint") : undefined}
+                    className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg)]"
+                  >
                     <input
                       type="checkbox"
                       checked={m[field]}
@@ -622,6 +688,19 @@ export function ModelsSection() {
                   </label>
                 ))}
               </div>
+              {m.builtinSearch && (
+                <p className="text-[10px] text-[var(--color-fg-muted)]">
+                  {t("model.builtinSearch.hint")}{" "}
+                  <button
+                    type="button"
+                    onClick={() => void openUrl(EXTERNAL_LINKS.dashscopeKeys)}
+                    className="inline-flex items-center gap-0.5 text-[var(--color-brand)] hover:underline"
+                  >
+                    {t("model.builtinSearch.getDashScopeKey")}
+                    <ExternalLink className="size-2.5" />
+                  </button>
+                </p>
+              )}
 
               {/* Advanced (JSON) escape hatch */}
               <div>
@@ -974,14 +1053,20 @@ export function ModelsSection() {
                         const modelInfo = provider.models.find((m) => m.id === modelId)
                         const fullId = `${provider.id}/${modelId}`
                         const isActive = currentModel === fullId
+                        const searchKey = `${provider.id}/${modelId}`
+                        const searchOn = builtinSearchMap[searchKey] === true
+                        // Toggle as a SIBLING of the select button (no nested
+                        // interactive elements), same pattern as the provider
+                        // header's delete affordance.
+                        const showSearchToggle = isDashScopeLike(provider) || searchKey in builtinSearchMap
 
                         return (
+                          <div key={modelId} className="flex items-center gap-1">
                           <button
-                            key={modelId}
                             type="button"
                             onClick={() => handleSelectModel(provider.id, modelId)}
                             className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-accent)]",
+                              "flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-accent)]",
                               isActive && "bg-[var(--color-accent)]"
                             )}
                           >
@@ -999,6 +1084,28 @@ export function ModelsSection() {
                               <Check className="size-4 shrink-0 text-[var(--color-brand)]" />
                             )}
                           </button>
+                          {showSearchToggle && (
+                            <label
+                              className="flex shrink-0 cursor-pointer items-center gap-1 px-2 text-[10px] text-[var(--color-fg-muted)]"
+                              title={t("model.builtinSearch.hint")}
+                            >
+                              {togglingSearch === searchKey ? (
+                                <Loader2 className="size-3 animate-spin" />
+                              ) : (
+                                <input
+                                  type="checkbox"
+                                  checked={searchOn}
+                                  onChange={(e) =>
+                                    handleToggleBuiltinSearch(provider.id, modelId, e.target.checked)
+                                  }
+                                  aria-label={`${t("model.builtinSearch.label")} ${modelId}`}
+                                  className="size-3 accent-[var(--color-brand)]"
+                                />
+                              )}
+                              {t("model.builtinSearch.label")}
+                            </label>
+                          )}
+                          </div>
                         )
                       })}
 

@@ -276,7 +276,7 @@ describe("ModelsSection", () => {
     await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
     await openCustomForm()
     fillBaseCustomForm(container)
-    // checkbox order: toolCall, reasoning, vision, attachment
+    // checkbox order: toolCall, reasoning, vision, attachment, builtinSearch
     const checks = container.querySelectorAll('input[type="checkbox"]')
     fireEvent.click(checks[2]) // vision on
     fireEvent.click(checks[0]) // toolCall off
@@ -318,6 +318,79 @@ describe("ModelsSection", () => {
 
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.advancedJson"))
     expect(h.upsertCustomProvider).not.toHaveBeenCalled()
+  })
+
+  it("includes builtinSearch in the saved def when the checkbox is on (ADR-042)", async () => {
+    const { container } = render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    await openCustomForm()
+    fillBaseCustomForm(container)
+    const checks = container.querySelectorAll('input[type="checkbox"]')
+    fireEvent.click(checks[4]) // builtinSearch on
+    fireEvent.click(screen.getByRole("button", { name: "button.save" }))
+
+    await waitFor(() => expect(h.upsertCustomProvider).toHaveBeenCalled())
+    const def = (h.upsertCustomProvider.mock.calls[0] as unknown[])[0] as {
+      models: Array<{ builtinSearch?: boolean }>
+    }
+    expect(def.models[0].builtinSearch).toBe(true)
+  })
+
+  // --- Model-native web search toggle in the model list (ADR-042) ---
+
+  const DASHSCOPE_PROVIDER = {
+    id: "alibaba-cn",
+    name: "Alibaba (China)",
+    env: ["DASHSCOPE_API_KEY"],
+    connected: ["qwen-max"],
+    models: [{ id: "qwen-max", name: "Qwen Max" }],
+  }
+
+  it("DashScope-like providers get a per-model web-search toggle that patches global config", async () => {
+    h.getProviders.mockResolvedValue([DASHSCOPE_PROVIDER])
+    render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("Alibaba (China)")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("Alibaba (China)")) // expand
+    const toggle = await screen.findByRole("checkbox", { name: /model\.builtinSearch\.label qwen-max/ })
+    expect((toggle as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(toggle)
+    await waitFor(() =>
+      expect(h.patchGlobalConfig).toHaveBeenCalledWith({
+        provider: { "alibaba-cn": { models: { "qwen-max": { id: "qwen-max", options: { enable_search: true } } } } },
+      }),
+    )
+    await waitFor(() => expect(h.toastSuccess).toHaveBeenCalledWith("model.builtinSearch.on"))
+  })
+
+  it("hydrates the toggle state from the global config", async () => {
+    h.getProviders.mockResolvedValue([DASHSCOPE_PROVIDER])
+    h.getGlobalConfig.mockResolvedValue({
+      provider: { "alibaba-cn": { models: { "qwen-max": { id: "qwen-max", options: { enable_search: true } } } } },
+    })
+    render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("Alibaba (China)")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("Alibaba (China)"))
+    const toggle = await screen.findByRole("checkbox", { name: /model\.builtinSearch\.label qwen-max/ })
+    expect((toggle as HTMLInputElement).checked).toBe(true)
+  })
+
+  it("non-DashScope providers do NOT show the toggle (enable_search is DashScope-only)", async () => {
+    render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("OpenAI"))
+    await screen.findByText("GPT-4")
+    expect(screen.queryByRole("checkbox", { name: /model\.builtinSearch\.label/ })).toBeNull()
+  })
+
+  it("a non-DashScope model with the flag already set still shows the toggle (never strand an 'on')", async () => {
+    h.getGlobalConfig.mockResolvedValue({
+      provider: { openai: { models: { "gpt-4": { id: "gpt-4", options: { enable_search: true } } } } },
+    })
+    render(<ModelsSection />)
+    await waitFor(() => expect(screen.getByText("OpenAI")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("OpenAI"))
+    const toggle = await screen.findByRole("checkbox", { name: /model\.builtinSearch\.label gpt-4/ })
+    expect((toggle as HTMLInputElement).checked).toBe(true)
   })
 
   it("test connection invokes the Tauri command and toasts the result", async () => {
@@ -410,8 +483,8 @@ describe("ModelsSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /model\.customProvider\.addModel/ }))
     // toggle a capability on the second row but leave its id blank
     const checks = container.querySelectorAll('input[type="checkbox"]')
-    // second row's checkboxes start at index 4 (4 per row); index 6 = its "vision"
-    fireEvent.click(checks[6])
+    // second row's checkboxes start at index 5 (5 per row); index 7 = its "vision"
+    fireEvent.click(checks[7])
     fireEvent.click(screen.getByRole("button", { name: "button.save" }))
 
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith("model.customProvider.err.modelId"))

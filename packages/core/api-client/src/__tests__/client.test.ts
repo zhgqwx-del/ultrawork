@@ -477,6 +477,13 @@ describe("ApiClient", () => {
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
       expect(mockFetch.mock.calls[0][1].method).toBe("DELETE")
     })
+
+    it("getAuthStatus hits the presence-only route (ADR-042) and URL-encodes the id", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ configured: true, type: "api" }))
+      const res = await client.getAuthStatus("search-tavily")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/auth/search-tavily/status")
+      expect(res).toEqual({ configured: true, type: "api" })
+    })
   })
 
   // --- Custom provider ---
@@ -509,6 +516,45 @@ describe("ApiClient", () => {
       expect(p.options.baseURL).toBe("https://api.example.com/v1")
       expect(p.models.m1).toMatchObject({ id: "m1", name: "Model 1", tool_call: true, limit: { context: 8192, output: 2048 } })
       expect(p.whitelist).toEqual(["m1"]) // pins exposed models, hides delete→re-add orphans
+    })
+
+    it("upsertCustomProvider maps builtinSearch → options.enable_search (ADR-042)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable no-op)
+      await client.upsertCustomProvider({
+        id: "my-qwen",
+        name: "My Qwen",
+        protocol: "openai",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: [
+          { id: "qwen-max", name: "Qwen Max", builtinSearch: true },
+          { id: "qwen-mini", name: "Qwen Mini" },
+        ],
+      })
+      const p = JSON.parse(mockFetch.mock.calls[0][1].body).provider["my-qwen"]
+      expect(p.models["qwen-max"].options).toEqual({ enable_search: true })
+      expect(p.models["qwen-mini"].options).toBeUndefined()
+    })
+
+    it("advanced JSON can override the builtinSearch-derived options (escape hatch wins)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      await client.upsertCustomProvider({
+        id: "my-qwen",
+        name: "My Qwen",
+        protocol: "openai",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: [
+          {
+            id: "qwen-max",
+            name: "Qwen Max",
+            builtinSearch: true,
+            advanced: { options: { enable_search: false, search_options: { forced_search: true } } },
+          },
+        ],
+      })
+      const p = JSON.parse(mockFetch.mock.calls[0][1].body).provider["my-qwen"]
+      expect(p.models["qwen-max"].options).toEqual({ enable_search: false, search_options: { forced_search: true } })
     })
 
     it("upsertCustomProvider (Anthropic) maps npm + skips auth when no key", async () => {
