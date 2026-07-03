@@ -1,11 +1,14 @@
 # 内置技能 (built-in skills)
 
-本目录随 ultrawork 打包（Tauri `bundle.resources`），首启时由 `src-tauri` 幂等拷贝到
-`~/.config/ultrawork/skills/builtin/`，被 OpenCode sidecar 自动发现（`{skill,skills}/**/SKILL.md`）。
+本目录是**打包源**（git 松散树）：构建期由 `scripts/pack-builtin-skills.ts` 按内容 hash 惰性打成
+`skills-builtin.zip`（+ 外置 `.builtin-version` sentinel）进 Tauri `bundle.resources`
+（beforeDevCommand/beforeBuildCommand 自动跑）；首启由 `src-tauri` 解压到
+`~/.config/ultrawork/skills/builtin/`（staging+rename 原子落地），被 OpenCode sidecar
+自动发现（`{skill,skills}/**/SKILL.md`）。详见 ADR-041 / docs/gotchas.md §10。
 
-**不要手改本目录**——`skill-creator/skill-installer/pdf/markdown-exporter` 由
+**不要手改本目录**——`skill-creator/skill-installer/pdf/markdown-exporter/ppt-master` 由
 `scripts/fetch-builtin-skills.ts` 从上游拉取并打补丁；重跑该脚本会覆盖。`doc-edit` 为自写，可直接改。
-改动后 `.builtin-version` 哈希会变，桌面端据此触发刷新。
+改动后 `.builtin-version` 哈希会变，构建期重打 zip、桌面端据此触发升级重装。
 
 ## 技能与许可证
 

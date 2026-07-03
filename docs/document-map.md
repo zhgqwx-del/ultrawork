@@ -140,7 +140,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 16 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 41 (README + 40 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **决策层** | `docs/decisions/` | 41 (README + 41 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 18 (README + 17) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |

@@ -125,7 +125,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
 - **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
 - `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
-- `check_skill_dependencies`（async；PATH 探测 + `run_python_feature_probe` python 内探针〔python3.10+ 版本门/python-pptx，四防御见 gotchas §10〕，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`/`install_builtin_tree`/`reconcile_builtin_shadowing`（首启拷贝 `skills/builtin/` → `~/.config/ultrawork/skills/builtin`，staging+rename 原子交换，sentinel 控刷新；同名用户技能确定性遮蔽 prune/restore + `BUILTIN_SKILLS_LOCK`，命令 `refresh_builtin_skills`/`remove_user_skill_override`，ADR-032/040）
+- `check_skill_dependencies`（async；PATH 探测 + `run_python_feature_probe` python 内探针〔python3.10+ 版本门/python-pptx，四防御见 gotchas §10〕，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`/`install_builtin_tree`/`extract_builtin_zip`/`open_builtin_zip`/`clear_staging`/`reconcile_builtin_shadowing`（首启解压 bundle 内 `skills-builtin.zip` → `~/.config/ultrawork/skills/builtin`，解压到 staging+后置写 sentinel+rename 原子交换；zip-slip/symlink/篡改名多重设防；同名用户技能确定性遮蔽 prune / 按前缀选择性解压 restore + `BUILTIN_SKILLS_LOCK`，命令 `refresh_builtin_skills`/`remove_user_skill_override`，ADR-032/040/041）
 
 **内置技能（`skills/builtin/`，ADR-032 / ADR-040）**
 - `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）可直接编辑
@@ -169,7 +169,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **构建 / 打包 / CI（跨平台 mac/win/linux，ADR-037）**
 - `scripts/build-{opencode,gateway,knowledge,acp}.ts` — sidecar 编译（已支持全 target triple；产物 `<name>-<triple>[.exe]`，Tauri externalBin 自动解析；codesign/chmod 仅 darwin 守卫）
-- `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包
+- `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包；开头显式跑 pack-builtin-skills（双保险）
+- `scripts/pack-builtin-skills.ts` — **内置技能构建期打包**（松散树→`skills-builtin.zip`+外置 sentinel，按内容 hash 惰性；fflate 保 unix exec bit；产物在 `src-tauri/resources/builtin-skills/`，gitignore、`.gitkeep` 保 `generate_context!` 编译；beforeDevCommand/beforeBuildCommand 自动跑，ADR-041）；e2e 侧共享 helper `packages/client/desktop/e2e/builtin-zip-helper.ts`
 - `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
 - `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）
 - `.github/workflows/release.yml` — tag 触发三平台出安装包（dmg/msi/nsis/deb/appimage）
@@ -182,7 +183,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (40 ADRs, 001–040)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (41 ADRs, 001–041)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

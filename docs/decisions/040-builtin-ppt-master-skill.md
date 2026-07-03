@@ -1,6 +1,6 @@
 # ADR-040: 内置 ppt-master PPT 生成技能（打包路线 + 依赖引导体系）
 
-- 状态：Accepted（✅ 阶段 1 + 阶段 2 均已实现并真机验收）
+- 状态：Accepted（✅ 阶段 1 + 阶段 2 均已实现并真机验收；bundle 分发形态与遮蔽 restore 路径已被 ADR-041 修订为 zip + 按前缀解压）
 - 日期：2026-07-02
 - 关联：discussions/025（完整调研与体积/token 实测）、ADR-032（内置技能管线）、ADR-037（跨平台约束）、gotchas §10/§6
 
