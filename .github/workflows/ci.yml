@@ -16,6 +16,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Docs: drift gate (ADR counts, broken refs/links, section refs) ─
+  # Same script the wrap-up flow runs locally (scripts/check-docs.ts); here it
+  # is a merge gate so a forgotten wrap-up step can't land drifted docs.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # requirements freshness check compares git commit times
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+      # No `bun install` needed: the script only uses bun/node builtins.
+      - run: bun run --bun scripts/check-docs.ts
+
   # ── TS: typecheck + unit tests on all three OSes ──────────────────
   node:
     name: node (${{ matrix.os }})

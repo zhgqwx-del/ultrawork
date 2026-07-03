@@ -17,9 +17,7 @@ ultrawork/
 ├── docs/                              # ═══ 功能文档层 ═══
 │   ├── getting-started.md             #   快速上手：依赖安装、Clone、启动、FAQ、AI 协作工作流
 │   ├── architecture-phase1.md         #   架构设计：Part I 已实现现状（系统架构图/模块职责/数据流）+ Part II 规划中设计草案
-│   ├── architecture-full.md           #   远期愿景架构（Phase 2+）：Control Plane、多端、企业管理、跨端协同（暂未纳入开发索引；已移除与 phase1 的重叠章节）
-│   ├── agent-os-target-architecture.md #  Agent OS 目标架构（开发起点）：ADR-027/030/031 + discussions 011-014 收敛；§0 决策基线表 + 渲染统一/connector/orchestrator 分层 + 阶段0-4 路线图
-│   ├── agent-os-kickoff.md             #  Agent OS 开发启动指引：换窗口/换电脑/换项目的启动方式 + 首条 prompt（同项目 clone+setup、新项目可移植 vs 专属甄别）
+│   ├── agent-os-target-architecture.md #  Agent OS 目标架构（开发起点，阶段1-3 已落地）：ADR-027/030/031 + discussions 011-014 收敛；§0 决策基线表 + 阶段0-4 路线图
 │   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台
 │   ├── api-reference.md               #   API 参考：OpenCode Server 全部端点、请求/响应格式、认证
 │   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（正向模式）
@@ -27,8 +25,6 @@ ultrawork/
 │   ├── quality-gates.md                #   质量门禁：改动合入/收尾前的完成定义 checklist
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
 │   ├── requirements.md                #   需求文档：产品定位、包状态摘要、功能需求与实现状态
-│   ├── knowledge-base-replication-guide.md  # 知识库能力复制指南：组件清单 + 触发/噪音控制 + 启动方式 + 目标 Agent prompt
-│   ├── mcp-technical-flow.md          #   MCP 技术流程：MCP 配置/连接/工具调用的端到端链路
 │   ├── test-config-isolation.md       #   配置隔离测试说明（ADR-020 验证）
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
@@ -40,9 +36,14 @@ ultrawork/
 │   │   ├── README.md                  #   讨论权威索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」vs「已落地」）★ 找讨论从这里进
 │   │   └── 001..025                   #   调研/方案正文（mobile-relay/sidecar-sharing/custom-provider/vendor-bump-perf/工具披露/会话一致性/plan 面板/ppt-master 等）
 │   │
-│   └── archive/                       # ═══ 历史归档层 ═══
+│   └── archive/                       # ═══ 历史归档层（README.md 是索引）═══
+│       ├── README.md                  #   归档索引：每个文件的归档原因 + 何时值得回看
 │       ├── progress-raw.md            #   完整开发进度（Phase 1 → Round 15 全部记录）
 │       ├── initial-monorepo-plan.md   #   项目初始化计划（原根目录 .plan.md，归档）
+│       ├── architecture-full.md       #   远期愿景架构（Phase 2+，FROZEN 2026-07-03）
+│       ├── mcp-technical-flow.md      #   MCP 端到端技术流程（已被 gotchas §3/§11 + conventions §7 + ADR 取代）
+│       ├── knowledge-base-replication-guide.md  # 知识库能力复制指南（KB 已落地，ADR-026 为权威）
+│       ├── agent-os-kickoff.md        #   Agent OS 启动 prompt（阶段0-3 已全部落地，使命完成）
 │       ├── reviews/
 │       │   ├── review-phase1.md       #   Phase 1 代码审查
 │       │   ├── review-2.3-markdown.md #   Phase 2.3 Markdown 渲染审查
@@ -117,10 +118,10 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 16 | 开发者 | 按需更新 |
+| **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 42 (README + 41 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 26 (README + 25) | 架构师 | 探索阶段记录 |
-| **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
+| **归档层** | `docs/archive/` | 14 | 考古/追溯 | 归档时可加 FROZEN 头，之后只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | auto-memory (本地) | 6 | Claude Code | 每次 session |
 

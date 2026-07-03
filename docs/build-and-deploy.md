@@ -260,7 +260,7 @@ bun run release -- --unsigned
 ```
 packages/client/desktop/src-tauri/target/universal-apple-darwin/release/bundle/
 ├── dmg/
-│   └── Ultrawork_0.1.0_universal.dmg      ← 可分发 DMG（含 arm64 + x86_64）
+│   └── Ultrawork_<版本>_universal.dmg      ← 可分发 DMG（含 arm64 + x86_64）
 └── macos/
     └── Ultrawork.app/                       ← 独立 .app 应用包
         └── Contents/MacOS/
@@ -399,7 +399,7 @@ cd packages/client/desktop
 bun run --bun tauri build --target x86_64-apple-darwin
 
 # ---- 产物 ----
-# src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Ultrawork_0.1.0_x64.dmg
+# src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Ultrawork_<版本>_x64.dmg
 ```
 
 ### 8.2 Mac Universal Binary (ARM64 + x86_64) — 推荐分发
@@ -423,7 +423,7 @@ cd packages/client/desktop
 bun run --bun tauri build --target universal-apple-darwin
 
 # ---- 产物 ----
-# src-tauri/target/universal-apple-darwin/release/bundle/dmg/Ultrawork_0.1.0_universal.dmg
+# src-tauri/target/universal-apple-darwin/release/bundle/dmg/Ultrawork_<版本>_universal.dmg
 # Tauri 会自动用 lipo 合并两个架构的二进制
 ```
 
@@ -446,8 +446,8 @@ bun run setup --build
 #   bun run tauri:build
 
 # 产物：
-# src-tauri\target\release\bundle\msi\Ultrawork_0.1.0_x64_en-US.msi
-# src-tauri\target\release\bundle\nsis\Ultrawork_0.1.0_x64-setup.exe
+# src-tauri\target\release\bundle\msi\Ultrawork_<版本>_x64_en-US.msi
+# src-tauri\target\release\bundle\nsis\Ultrawork_<版本>_x64-setup.exe
 ```
 
 > **无需再手改 `bundle.targets`**——已设为 `"all"`（ADR-037），Tauri 在 Windows 上自动产 `msi` + `nsis`。
