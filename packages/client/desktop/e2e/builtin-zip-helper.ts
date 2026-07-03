@@ -25,8 +25,11 @@ export function ensureBuiltinZip(): string {
 }
 
 /**
- * 解压 zip 到 dest（等价 Rust extract_builtin_zip）。prefix 给定时只解该技能
- * 子树且剥掉前缀（= 遮蔽 restore 的按前缀选择性解压语义）。返回写入文件数。
+ * 解压 zip 到 dest（等价 Rust extract_builtin_zip 的路径/前缀语义）。prefix
+ * 给定时只解该技能子树且剥掉前缀（= 遮蔽 restore 的按前缀选择性解压语义）。
+ * 已知分叉：不恢复 unix 可执行位（fflate unzipSync 不暴露 attrs；Rust 侧会恢复）——
+ * harness 全部经 `python3 <path>` 调脚本、opencode 发现不看 mode，如需直接 `./script`
+ * 断言请自行 chmod。返回写入文件数。
  */
 export function extractBuiltinZip(dest: string, prefix?: string): number {
   const data = readFileSync(ensureBuiltinZip())

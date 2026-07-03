@@ -1696,6 +1696,15 @@ fn ensure_builtin_skills_locked(app: &tauri::AppHandle) -> Result<BuiltinSkillsS
         .unwrap_or_default()
         .trim()
         .to_string();
+    if version.is_empty() {
+        // An empty/unreadable sentinel would make builtin_needs_refresh true on
+        // EVERY call (installed "" never matches) — a full 12k-file reinstall
+        // per startup/workspace-switch. Fail cleanly like a missing zip instead.
+        return Err(format!(
+            "bundled sentinel empty/unreadable: {}",
+            src.join(".builtin-version").display()
+        ));
+    }
     let target = builtin_skills_target();
     // Dot-dir staging siblings: excluded from opencode's {skill,skills}/** scan
     // (no `dot` option), so a leftover from an interrupted run is never picked
@@ -1704,9 +1713,9 @@ fn ensure_builtin_skills_locked(app: &tauri::AppHandle) -> Result<BuiltinSkillsS
         .parent()
         .map(|p| p.join(".builtin.staging"))
         .unwrap_or_else(|| target.with_extension("staging"));
-    let _ = std::fs::remove_dir_all(&staging);
+    clear_staging(&staging);
     if let Some(parent) = target.parent() {
-        let _ = std::fs::remove_dir_all(parent.join(".builtin.restore"));
+        clear_staging(&parent.join(".builtin.restore"));
     }
     let sentinel = target.join(".builtin-version");
     let stored = std::fs::read_to_string(&sentinel).ok().map(|s| s.trim().to_string());
@@ -2003,8 +2012,21 @@ fn reconcile_builtin_shadowing(
         let Ok(entry) = archive.by_index_raw(i) else { continue };
         let mut parts = entry.name().split('/');
         if let (Some(dir), Some("SKILL.md"), None) = (parts.next(), parts.next(), parts.next()) {
-            if !dir.is_empty() {
+            // Mirror extract_builtin_zip's tamper-rejection on the derived dir
+            // name: it keys `target.join` + `remove_dir_all` below, so a
+            // hostile "../SKILL.md" entry (dir "..") would otherwise aim the
+            // prune at the skills ROOT. Dot-prefixed names ("."/".."/
+            // ".builtin-version" — deleting the live sentinel would thrash-
+            // reinstall forever) are rejected wholesale: opencode's glob never
+            // scans dot-dirs and the pack script never emits such names.
+            let safe = !dir.is_empty()
+                && !dir.starts_with('.')
+                && !dir.contains('\\')
+                && !dir.contains(':');
+            if safe {
                 skill_dirs.push((dir.to_string(), i));
+            } else {
+                eprintln!("[builtin-skills] ignoring unsafe zip skill dir: {}", entry.name());
             }
         }
     }
@@ -2051,7 +2073,7 @@ fn reconcile_builtin_shadowing(
                 .parent()
                 .map(|p| p.join(".builtin.restore"))
                 .unwrap_or_else(|| target.with_extension("restore"));
-            let _ = std::fs::remove_dir_all(&staging);
+            clear_staging(&staging);
             let _ = std::fs::create_dir_all(target);
             let t0 = std::time::Instant::now();
             let result = extract_builtin_zip(bundle_zip, Some(&dir_name), &staging).and_then(|n| {
@@ -2171,6 +2193,21 @@ fn remove_user_skill_override(
     Ok(fresh)
 }
 
+/// Clear a staging path before use, robust to a SYMLINK planted there:
+/// `remove_dir_all` errors on a top-level symlink (an error the `let _ =`
+/// call sites swallow), after which extraction would write THROUGH the link
+/// into whatever it points at. Kill links/files with remove_file/remove_dir
+/// (Windows dir-symlinks need remove_dir), trees with remove_dir_all.
+fn clear_staging(path: &std::path::Path) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return };
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(path);
+    } else {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 /// Open the bundled skills zip (built by scripts/pack-builtin-skills.ts,
 /// shipped beside the `.builtin-version` sentinel in bundle.resources).
 fn open_builtin_zip(
@@ -2269,7 +2306,7 @@ fn install_builtin_tree(
     target: &std::path::Path,
     staging: &std::path::Path,
 ) -> Result<usize, String> {
-    let _ = std::fs::remove_dir_all(staging);
+    clear_staging(staging);
     let written = extract_builtin_zip(zip_path, None, staging).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(staging);
     })?;
@@ -2278,6 +2315,9 @@ fn install_builtin_tree(
         format!("write staged sentinel: {}", e)
     })?;
     let _ = std::fs::remove_dir_all(target);
+    // A stray plain FILE at the target path (remove_dir_all can't remove it)
+    // would fail the rename on every call — same bel-and-suspenders as restore.
+    let _ = std::fs::remove_file(target);
     std::fs::rename(staging, target).map_err(|e| {
         let _ = std::fs::remove_dir_all(staging);
         format!("rename staging -> {}: {}", target.display(), e)
@@ -3285,6 +3325,68 @@ mod builtin_skills_tests {
         // Zero matches is an error — a rename of a hollow staging dir would
         // otherwise land a tree the SKILL.md self-heal gate re-restores forever.
         assert!(extract_builtin_zip(&zip, Some("nope"), &root.join("out2")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reconcile_ignores_hostile_traversal_skill_dirs() {
+        // A tampered bundle carrying "../SKILL.md" (dir "..") must never key a
+        // prune/restore: target.join("..") is the skills ROOT and a prune there
+        // would remove_dir_all every user skill.
+        let (config, _src, target) = shadow_fixture("shadow-hostile");
+        let zip = config.join("bundle-src").join("hostile.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("../SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                ("./SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                // Deleting target/.builtin-version via a restore would
+                // thrash-reinstall forever — dot-prefixed dirs are rejected.
+                (".builtin-version/SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
+                ("doc-edit/SKILL.md", "---\nname: doc-edit\ndescription: bundled\n---\n"),
+            ],
+        );
+        // A user skill whose name the hostile entry claims — the bait.
+        let user = config.join("skills").join("alpha");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("SKILL.md"), "---\nname: alpha\ndescription: x\n---\n").unwrap();
+
+        let status = reconcile_builtin_shadowing(&zip, &target, &config);
+
+        assert!(config.join("skills").exists(), "skills root must survive");
+        assert!(user.join("SKILL.md").is_file(), "user skill must survive");
+        assert!(target.join("doc-edit/SKILL.md").is_file(), "builtin must survive");
+        assert!(
+            !status.bundled.iter().any(|n| n == "alpha"),
+            "hostile entries must not enter the bundled list: {:?}",
+            status.bundled
+        );
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_replaces_symlinked_staging_instead_of_writing_through() {
+        // A symlink planted at the staging path must be REPLACED, not followed:
+        // remove_dir_all errors on a top-level symlink (swallowed by `let _ =`),
+        // after which extraction would write through it into the victim dir.
+        let root = unique_tmp("stg-link");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("skills-builtin.zip");
+        write_test_zip(&zip, &[("ppt-master/SKILL.md", "x")]);
+        let victim = root.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        let staging = root.join("staging");
+        std::os::unix::fs::symlink(&victim, &staging).unwrap();
+        let target = root.join("target");
+
+        install_builtin_tree(&zip, "v1", &target, &staging).unwrap();
+
+        assert!(
+            !victim.join("ppt-master").exists(),
+            "extraction must not write through the planted symlink"
+        );
+        assert!(target.join("ppt-master/SKILL.md").is_file());
         let _ = std::fs::remove_dir_all(&root);
     }
 

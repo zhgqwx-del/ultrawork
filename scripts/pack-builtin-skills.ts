@@ -22,7 +22,7 @@
  */
 import { zipSync, type Zippable } from "fflate"
 import { createHash } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -40,14 +40,22 @@ if (!existsSync(join(BUILTIN_DIR, "README.md"))) {
 // （树未被手改时 == 提交在 git 的 skills/builtin/.builtin-version，便于对账）
 const hash = createHash("sha256")
 const files: string[] = [] // 相对路径，zip 统一 '/' 分隔
+// 本地垃圾（Finder/资源管理器浏览产生）不进 hash 也不进 zip——否则会解压进用户 config 目录，
+// 且本机 hash 偏离 git 提交的 sentinel。刻意与 fetch 脚本略有分歧（fetch 在干净 CI/审查后提交）。
+const JUNK = new Set([".DS_Store", "Thumbs.db"])
 const walk = (dir: string, rel: string) => {
   for (const name of readdirSync(dir).sort()) {
-    if (name === ".builtin-version") continue
+    if (name === ".builtin-version" || JUNK.has(name)) continue
     const fp = join(dir, name)
     const st = lstatSync(fp)
     if (st.isSymbolicLink()) {
       // zip 侧不支持 symlink（Rust 解压也会拒绝）；技能树不应出现——fetch 脚本产物全是实体文件
       throw new Error(`skills/builtin 里发现 symlink，拒绝打包: ${fp}`)
+    }
+    if (name.includes(":") || name.includes("\\")) {
+      // Rust extract_builtin_zip 对这类名字整体硬 Err（篡改即拒 + Windows 语义），
+      // 漏进 zip 会让所有用户「零内置技能」。在打包期 fail-fast，把失败拉回构建面。
+      throw new Error(`文件名含 ':' 或 '\\'，Rust 解压会整体拒绝，请改名: ${fp}`)
     }
     if (st.isDirectory()) walk(fp, rel ? `${rel}/${name}` : name)
     else {
@@ -80,8 +88,12 @@ for (const rel of files) {
 }
 const zipped = zipSync(zippable, { level: 6, mtime: MTIME })
 mkdirSync(OUT_DIR, { recursive: true })
-writeFileSync(ZIP_PATH, zipped)
-writeFileSync(SENTINEL_PATH, version + "\n")
+// temp+rename 原子落位：tauri dev 的 beforeDevCommand 不等待（wait:false），孤儿 vite 占着
+// devUrl 端口时 cargo build 可能与本脚本并发——绝不能让 tauri-build 拷走写了一半的 zip。
+writeFileSync(ZIP_PATH + ".tmp", zipped)
+renameSync(ZIP_PATH + ".tmp", ZIP_PATH)
+writeFileSync(SENTINEL_PATH + ".tmp", version + "\n")
+renameSync(SENTINEL_PATH + ".tmp", SENTINEL_PATH)
 console.log(
   `[pack-builtin-skills] ${files.length} files -> ${(zipped.length / 1024 / 1024).toFixed(1)}MB zip in ${Date.now() - t0}ms (version ${version})`,
 )
