@@ -12,8 +12,10 @@ const DESKTOP = join(import.meta.dir, "..")
 const REPO = join(DESKTOP, "../../..")
 export const BUILTIN_ZIP = join(DESKTOP, "src-tauri/resources/builtin-skills/skills-builtin.zip")
 
-/** 保证 zip 相对松散树新鲜（pack 脚本 hash 惰性：已新鲜时瞬时跳过）。 */
+/** 保证 zip 相对松散树新鲜（pack 脚本 hash 惰性；进程内只跑一次——每次 0.5s 的全树 hash walk 没必要重复）。 */
+let ensured = false
 export function ensureBuiltinZip(): string {
+  if (ensured) return BUILTIN_ZIP
   const r = Bun.spawnSync([process.execPath, "run", "--bun", join(REPO, "scripts/pack-builtin-skills.ts")], {
     cwd: REPO,
   })
@@ -21,6 +23,7 @@ export function ensureBuiltinZip(): string {
     throw new Error(`pack-builtin-skills.ts failed: ${r.stderr.toString().slice(0, 400)}`)
   }
   if (!existsSync(BUILTIN_ZIP)) throw new Error(`missing ${BUILTIN_ZIP}`)
+  ensured = true
   return BUILTIN_ZIP
 }
 

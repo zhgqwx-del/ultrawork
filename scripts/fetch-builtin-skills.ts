@@ -255,21 +255,25 @@ async function main() {
     console.log("ok")
   }
 
-  // sentinel：基于全部内置内容（含自写 doc-edit）的哈希，内容变即触发桌面端刷新
+  // sentinel：基于全部内置内容（含自写 doc-edit）的哈希，内容变即触发桌面端刷新。
+  // 喂相对路径 + \0 分隔（非裸 basename）：目录改名/文件搬家也改变 hash。
+  // ⚠️ 与 scripts/pack-builtin-skills.ts 的 hash 算法必须逐字节一致（对账不变式），改一处必须同步另一处。
   const hash = createHash("sha256")
-  const walk = (d: string) => {
+  const walk = (d: string, rel: string) => {
     for (const name of readdirSync(d).sort()) {
       if (name === ".builtin-version") continue
       const fp = join(d, name)
       const st = statSync(fp)
-      if (st.isDirectory()) walk(fp)
+      const relPath = rel ? `${rel}/${name}` : name
+      if (st.isDirectory()) walk(fp, relPath)
       else {
-        hash.update(name)
+        hash.update(relPath + "\0")
         hash.update(readFileSync(fp))
+        hash.update("\0")
       }
     }
   }
-  walk(BUILTIN_DIR)
+  walk(BUILTIN_DIR, "")
   const version = hash.digest("hex").slice(0, 16)
   writeFileSync(join(BUILTIN_DIR, ".builtin-version"), version + "\n")
   console.log(`\n.builtin-version = ${version}`)

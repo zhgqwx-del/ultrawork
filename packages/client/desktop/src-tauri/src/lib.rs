@@ -2316,7 +2316,7 @@ fn install_builtin_tree(
     })?;
     let _ = std::fs::remove_dir_all(target);
     // A stray plain FILE at the target path (remove_dir_all can't remove it)
-    // would fail the rename on every call — same bel-and-suspenders as restore.
+    // would fail the rename on every call — same belt-and-suspenders as restore.
     let _ = std::fs::remove_file(target);
     std::fs::rename(staging, target).map_err(|e| {
         let _ = std::fs::remove_dir_all(staging);
@@ -3229,6 +3229,33 @@ mod builtin_skills_tests {
         assert!(!target.join("stale").exists(), "stale staging content must not leak");
         assert!(!staging.exists(), "staging must be consumed by the rename");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_refresh_preserves_old_consistent_tree() {
+        // Extraction happens INTO STAGING before the old target is touched — a
+        // corrupt bundle zip must leave the previously installed tree (and its
+        // sentinel) fully intact. Anchors the code ordering: reordering
+        // remove_dir_all(target) before the extract would break this.
+        let root = unique_tmp("keepold");
+        std::fs::create_dir_all(&root).unwrap();
+        let zip = root.join("skills-builtin.zip");
+        write_test_zip(&zip, &[("ppt-master/SKILL.md", "old")]);
+        let target = root.join("target");
+        let staging = root.join("staging");
+        install_builtin_tree(&zip, "v1", &target, &staging).unwrap();
+
+        std::fs::write(&zip, b"this is not a zip").unwrap();
+        assert!(install_builtin_tree(&zip, "v2", &target, &staging).is_err());
+
+        assert_eq!(
+            std::fs::read_to_string(target.join(".builtin-version")).unwrap().trim(),
+            "v1",
+            "old sentinel must survive a failed refresh"
+        );
+        assert!(target.join("ppt-master/SKILL.md").is_file(), "old tree must survive");
+        assert!(!staging.exists(), "failed staging must be cleaned");
         let _ = std::fs::remove_dir_all(&root);
     }
 

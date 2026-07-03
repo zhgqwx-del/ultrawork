@@ -57,11 +57,16 @@ const walk = (dir: string, rel: string) => {
       // 漏进 zip 会让所有用户「零内置技能」。在打包期 fail-fast，把失败拉回构建面。
       throw new Error(`文件名含 ':' 或 '\\'，Rust 解压会整体拒绝，请改名: ${fp}`)
     }
-    if (st.isDirectory()) walk(fp, rel ? `${rel}/${name}` : name)
+    const relPath = rel ? `${rel}/${name}` : name
+    if (st.isDirectory()) walk(fp, relPath)
     else {
-      hash.update(name)
+      // 喂相对路径 + \0 分隔而非裸 basename：目录改名/同名跨目录移动也改变 hash
+      // （裸 basename 对纯结构调整失明 → 可能发布陈旧 zip / 存量用户永不重装）。
+      // 与 fetch-builtin-skills.ts 的 sentinel 算法保持逐字节一致（同步修改）。
+      hash.update(relPath + "\0")
       hash.update(readFileSync(fp))
-      files.push(rel ? `${rel}/${name}` : name)
+      hash.update("\0")
+      files.push(relPath)
     }
   }
 }
@@ -90,10 +95,13 @@ const zipped = zipSync(zippable, { level: 6, mtime: MTIME })
 mkdirSync(OUT_DIR, { recursive: true })
 // temp+rename 原子落位：tauri dev 的 beforeDevCommand 不等待（wait:false），孤儿 vite 占着
 // devUrl 端口时 cargo build 可能与本脚本并发——绝不能让 tauri-build 拷走写了一半的 zip。
-writeFileSync(ZIP_PATH + ".tmp", zipped)
-renameSync(ZIP_PATH + ".tmp", ZIP_PATH)
-writeFileSync(SENTINEL_PATH + ".tmp", version + "\n")
-renameSync(SENTINEL_PATH + ".tmp", SENTINEL_PATH)
+// tmp 名带 pid：并发的两个 pack（并行 e2e / dev+release 同跑）各写各的 tmp，rename 后到先赢，
+// 共享固定 tmp 名会互相截断甚至写坏已 rename 上线的 zip（同一打开 fd 续写）。
+const suffix = `.tmp-${process.pid}`
+writeFileSync(ZIP_PATH + suffix, zipped)
+renameSync(ZIP_PATH + suffix, ZIP_PATH)
+writeFileSync(SENTINEL_PATH + suffix, version + "\n")
+renameSync(SENTINEL_PATH + suffix, SENTINEL_PATH)
 console.log(
   `[pack-builtin-skills] ${files.length} files -> ${(zipped.length / 1024 / 1024).toFixed(1)}MB zip in ${Date.now() - t0}ms (version ${version})`,
 )
