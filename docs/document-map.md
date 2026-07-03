@@ -25,6 +25,7 @@ ultrawork/
 │   ├── quality-gates.md                #   质量门禁：改动合入/收尾前的完成定义 checklist
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
 │   ├── requirements.md                #   需求文档：产品定位、包状态摘要、功能需求与实现状态
+│   ├── vendor-patch-workflow.md       #   Vendor patch 管理：patch 内容表 + 重新生成/更新 submodule 完整流程（从 CLAUDE.md 外移）
 │   ├── test-config-isolation.md       #   配置隔离测试说明（ADR-020 验证）
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
@@ -118,7 +119,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 | 层级 | 目录 | 文件数 | 受众 | 更新频率 |
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
-| **功能层** | `docs/*.md` | 12 | 开发者 | 按需更新 |
+| **功能层** | `docs/*.md` | 13 | 开发者 | 按需更新 |
 | **决策层** | `docs/decisions/` | 42 (README + 41 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 26 (README + 25) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 14 | 考古/追溯 | 归档时可加 FROZEN 头，之后只追加不修改 |

@@ -1,5 +1,9 @@
 # UltraWork 需求文档
 
+> **本文职能（2026-07-03 重定义）**：产品定位 + 包状态摘要 + 功能需求清单与实现状态 + 复杂行为需求的验收判据。**不是**全量功能细节库——detail 在 ADR（决策）/ CHANGELOG（验证记录）/ discussions（方案），此处只放清单级条目 + 指针。
+> **防再滞后机制**：① 收尾流程 Step 4（CLAUDE.md）在里程碑式变更时回填状态；② `scripts/check-docs.ts` 在本文落后最新 ADR 超 45 天时告警（CI docs job 同跑）。
+> **验收判据约定**：普通 UI 需求一行描述即可；**状态机类/边界敏感行为**（超时、竞态、遮蔽/恢复、终态判定等）建议用 EARS 句式显式写出触发与响应——`While <前置状态>, When <触发>, the <系统> shall <响应>`（异常路径用 `If <触发>, then ... shall ...`）。例：*While 流式回合进行中且无工具在执行, When 30s 无内容帧, the idleGuard shall abort 请求并把回合落 error 终态（ADR-034）*。这类句式歧义小、AI 可直接转成测试断言；不强制、按需用。
+
 ## 产品定位
 
 UltraWork（无影）是一款桌面 AI Agent 应用，基于 OpenCode Server 作为 sidecar 后端，提供智能对话、工具执行、文件操作等能力。
