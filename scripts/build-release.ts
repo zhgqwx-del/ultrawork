@@ -13,6 +13,11 @@ const verbose = args.has("--verbose")
 const nativeOnly = args.has("--native")     // dev escape hatch: skip cross-compile
 const unsigned  = args.has("--unsigned")    // ad-hoc sign only; produces app that runs locally but fails Gatekeeper for redistribution
 
+// ── Built-in skills zip (bundle.resources 携带物) ──────────────────
+// beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
+console.log("📦 Packing built-in skills zip...")
+await $`bun run --bun ${path.join(rootDir, "scripts/pack-builtin-skills.ts")}`
+
 // ── Resolve Tauri target triple ────────────────────────────────────
 const getCurrentTauriTarget = () => {
   if (process.platform === "darwin") {

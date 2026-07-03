@@ -3,9 +3,9 @@
 // ensure_builtin_skills copies bundle resources on first boot.
 //
 // Flow (pure HTTP, real opencode, isolated env):
-//   1. copy repo skills/builtin/ppt-master → <tmp>/.config/ultrawork/skills/builtin/
-//      (simulates the Rust first-boot copy; the ms figure printed is Node cpSync
-//      on-volume clonefile — the real Rust cross-volume copy is slower, seconds)
+//   1. extract ppt-master from the REAL bundled skills-builtin.zip →
+//      <tmp>/.config/ultrawork/skills/builtin/ (the same artifact + extraction
+//      semantics as the Rust first-boot installer; ms figure printed)
 //   2. boot opencode (OPENCODE_APP_NAME=ultrawork) → GET /skill lists ppt-master,
 //      location points into skills/builtin/, description carries the trigger words
 //   3. self-containment smoke: run a bundled stdlib-only script (project_manager.py info)
@@ -13,9 +13,10 @@
 //
 //   cd packages/client/desktop && bun run --bun e2e/builtin-ppt-master.e2e.ts
 //   Needs: built opencode sidecar binary + python3 on PATH. Exit 0 = PASS, 1 = FAIL.
-import { mkdtempSync, mkdirSync, rmSync, cpSync, writeFileSync, existsSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { extractBuiltinZip } from "./builtin-zip-helper"
 
 const DIR = import.meta.dir
 const DESKTOP = join(DIR, "..")
@@ -50,11 +51,12 @@ let verdict = "INCOMPLETE"
 try {
   if (!existsSync(SRC)) throw new Error(`missing ${SRC} — run scripts/fetch-builtin-skills.ts first`)
 
-  // 1. simulate the Rust first-boot copy (and measure it — 12k files)
+  // 1. the Rust first-boot install path: extract from the real bundled zip
+  //    (prefix-selective, same semantics as extract_builtin_zip; measured)
   const t0 = Date.now()
-  cpSync(SRC, join(builtinDir, "ppt-master"), { recursive: true })
+  const nFiles = extractBuiltinZip(join(builtinDir, "ppt-master"), "ppt-master")
   const copyMs = Date.now() - t0
-  checks.push(`copied skills/builtin/ppt-master (12k files) into config dir in ${copyMs}ms ✓`)
+  checks.push(`extracted ppt-master (${nFiles} files) from skills-builtin.zip into config dir in ${copyMs}ms ✓`)
 
   // 2. real opencode discovers it
   spawn([OPENCODE, "serve", "--port", String(OC)], { ...env, OPENCODE_SERVER_PASSWORD: PW, OPENCODE_APP_NAME: "ultrawork" })

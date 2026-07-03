@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.ultrawork.desktop",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run --bun ../../../scripts/pack-builtin-skills.ts && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run --bun turbo run build --filter=@agent/client-desktop",
+    "beforeBuildCommand": "bun run --bun ../../../scripts/pack-builtin-skills.ts && bun run --bun turbo run build --filter=@agent/client-desktop",
     "frontendDist": "../dist"
   },
   "app": {
@@ -42,7 +42,7 @@
       "binaries/acp-client"
     ],
     "resources": {
-      "../../../../skills/builtin": "skills/builtin"
+      "resources/builtin-skills": "skills/builtin"
     },
     "macOS": {
       "minimumSystemVersion": "10.15",

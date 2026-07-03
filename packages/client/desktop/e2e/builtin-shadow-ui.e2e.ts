@@ -19,9 +19,10 @@
 // Needs: system Chrome (playwright-core channel:"chrome") + built opencode sidecar.
 //        Exit 0 = PASS, 1 = FAIL.
 import { chromium, type Browser } from "playwright-core"
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from "node:fs"
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { extractBuiltinZip } from "./builtin-zip-helper"
 
 const DIR = import.meta.dir
 const DESKTOP = join(DIR, "..")
@@ -55,13 +56,13 @@ const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
 const BUNDLED = ["skill-creator", "skill-installer", "pdf", "markdown-exporter", "doc-edit", "ppt-master"]
 const USER_MARKER = "USER-INSTALLED upstream latest raw copy."
 
-// Post-reconcile shadowed state: all builtins except ppt-master (pruned),
-// user copy at skills/ppt-master. Skip ppt-master's 12k-file tree — discovery
-// only needs SKILL.md (kept for the restore step below).
-cpSync(SRC, join(skillsRoot, "builtin"), {
-  recursive: true,
-  filter: (src) => !src.includes(join("builtin", "ppt-master")),
-})
+// Post-reconcile shadowed state: full first-boot install from the real bundled
+// skills-builtin.zip, then prune ppt-master — exactly the sequence the Rust
+// side runs on an upgrade-while-shadowed (install → reconcile prunes).
+const tExtract = Date.now()
+const nExtracted = extractBuiltinZip(join(skillsRoot, "builtin"))
+console.log(`[builtin-zip] extracted ${nExtracted} files in ${Date.now() - tExtract}ms`)
+rmSync(builtinPpt, { recursive: true, force: true })
 mkdirSync(userPpt, { recursive: true })
 writeFileSync(join(userPpt, "SKILL.md"), `---\nname: ppt-master\ndescription: ${USER_MARKER}\n---\n# user copy\n`)
 
@@ -80,8 +81,8 @@ const helper = Bun.serve({
     }
     if (url.pathname === "/remove-override") {
       rmSync(userPpt, { recursive: true, force: true })
-      mkdirSync(builtinPpt, { recursive: true })
-      cpSync(join(SRC, "ppt-master/SKILL.md"), join(builtinPpt, "SKILL.md"))
+      // Mirrors reconcile's restore: prefix-selective extraction from the zip.
+      extractBuiltinZip(builtinPpt, "ppt-master")
       return new Response(JSON.stringify({ bundled: BUNDLED, shadowed: [], changed: true }), { headers: CORS })
     }
     return new Response("nf", { status: 404, headers: CORS })

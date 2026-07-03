@@ -12,9 +12,10 @@
 // Needs: system Chrome (playwright-core channel:"chrome") + built opencode sidecar.
 //        Exit 0 = PASS, 1 = FAIL.
 import { chromium, type Browser } from "playwright-core"
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from "node:fs"
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { extractBuiltinZip } from "./builtin-zip-helper"
 
 const DIR = import.meta.dir
 const DESKTOP = join(DIR, "..")
@@ -60,8 +61,11 @@ const checks: string[] = []
 let verdict = "INCOMPLETE"
 try {
   if (!existsSync(join(SRC, "ppt-master/SKILL.md"))) throw new Error("skills/builtin/ppt-master missing — run fetch-builtin-skills.ts")
-  // simulate the Rust first-boot copy of ALL builtin skills (so pdf is present too)
-  cpSync(SRC, join(tmp, ".config/ultrawork/skills/builtin"), { recursive: true })
+  // the Rust first-boot install path for ALL builtin skills (so pdf is present
+  // too): extract from the real bundled skills-builtin.zip, measured
+  const tExtract = Date.now()
+  const nExtracted = extractBuiltinZip(join(tmp, ".config/ultrawork/skills/builtin"))
+  console.log(`[builtin-zip] extracted ${nExtracted} files in ${Date.now() - tExtract}ms`)
 
   console.log("=== start opencode + vite ===")
   spawn([OPENCODE, "serve", "--port", "4096"], { ...env, OPENCODE_SERVER_PASSWORD: PW, OPENCODE_APP_NAME: "ultrawork" })
