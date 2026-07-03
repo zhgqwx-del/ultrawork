@@ -25,7 +25,11 @@
 ## 2. 状态管理
 
 ### React Context 分层
-7 个 Provider：`SidebarProvider`, `SessionsProvider`, `ConfigProvider`, `ThemeProvider`, `I18nProvider`, `WorkspaceProvider`, `SSEProvider`, `ModelProvider`
+10 个 Provider，分两层挂载：
+- **app 级**（`main.tsx`，Router 外）7 个：`ConfigProvider` → `ThemeProvider` → `I18nProvider` → `WorkspaceProvider` → `SSEProvider` → `AgentProvider`（ACP 多 agent 注册表）→ `ModelProvider`
+- **布局级**（`components/layout/root-layout.tsx`，Router 内）3 个：`TeamSessionsProvider`（编排/Team）→ `SessionsProvider` → `SidebarProvider`
+
+新增 Provider 时按依赖选层：需要 `useLocation`/路由信息的进布局级，其余进 app 级。
 
 ### 共享 Hook 提取模式
 多组件共用逻辑时提取为独立 hook（如 `useMCPServers`, `useSkills`）：
@@ -151,8 +155,11 @@ Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permi
 // 客户端从 "provider/model" 格式字符串解析
 ```
 
-### Config 限制
-`PATCH /config` 只写磁盘 `opencode.json`，**不影响运行时**。运行时模型切换须用 `prompt_async` 的 `model` 参数。
+### Config 写入分两条路（ADR-039 起）
+- **Per-workspace `PATCH /config`**：只写磁盘工作区 `opencode.json`，**不影响运行时**。运行时模型切换须用 `prompt_async` 的 `model` 参数。
+- **全局配置 `PATCH /global/config?refresh=soft`**（vendor patch，ADR-039）：写全局配置文件 + **软刷新**（`refreshGlobal` 只失效 8 个配置派生纯缓存、不 dispose 活资源）→ **即时生效且不打断在流回合**。provider 定义/baseURL/删除、MCP、skills 等全局心智的配置一律走这条（见 `models-section.tsx` / `use-skills.ts`）。缺省（无 `?refresh=soft`）仍是 hard `disposeAll`，**会中止所有在流回合**，勿在有活跃会话时用。
+- **`POST /global/refresh`**：只软刷新不写盘（如 skills 目录外部变化后让其即时可见）。
+- 机制细节与边界 → gotchas §11（SSOT）。
 
 ### File API
 路径必须为相对路径 + `x-opencode-directory` header。绝对路径会 join 出错误路径。
@@ -203,7 +210,7 @@ ArtifactPreview 使用 `!e.defaultPrevented` 检查，避免与 CommandSelector 
 OpenCode 一个 user 回合会产出 **N 条 assistant message**（每个工具循环 step 一条，`finish="tool-calls"` 则继续；详见 [ADR-029](decisions/029-execution-flow-turn-grouping.md)）。主对话**不要按 message 平铺渲染**，而是：
 - `message-list.tsx` 的 `groupIntoTurns()` 把「一条 user + 其后连续 assistant」聚成一个回合，渲染 `AssistantTurn`。
 - `AssistantTurn` 的 `buildTurnModel()` 把整回合 parts 切成「过程」（收进无卡片包裹的 `ExecutionFlow` 折叠时间线）与「答案」（最后一条**无 tool** message 的输出 part，容器外渲染）；末尾渲染居中带横线的统计页脚。
-- **回合是否在生成**（`message-list.ts` 的 `isTurnTerminal` / `isTurnStreaming`，纯函数可测）：
+- **回合是否在生成**（`message-list.tsx` 的 `isTurnTerminal` / `isTurnStreaming`，纯函数可测）：
   - **终态 = 末条 `finish` 终态（存在且≠`tool-calls`） 或 末条 `info.error` 有值**。出错回合 `finish` 留 `undefined`、错误落在 `info.error`（gotchas §1），**必须把 error 当终态**，否则被误判成「仍在流式」。
   - **「从末条非终态推断流式」这个兜底必须门控 `sessionActive`**（本会话当前真有请求在飞 = `sending || streamingMessageId`）：`isStreaming = !isStopped && (containsStreaming || (isLastGroup && !isTerminal && sessionActive))`。否则**历史/重开会话**里末条非终态（出错/中断）的回合会**永久转圈**（`Session.tsx` 传 `sessionActive`；委派子卡片 `delegate-row` 传 `sessionActive=false`——懒加载历史永不 live）。
   - **不要**用瞬时 `streamingMessageId` 单独判定（step 间/工具执行期会置 null → 抖动）；也**不要**用 `time.completed` 当终态（工具步也有，会误杀回合中段）。
@@ -273,6 +280,8 @@ bun run --bun tauri build               # 打包 DMG
 ## 7. MCP 持久化
 
 > 📍 MCP 的**踩坑点**（必须用 `bunx --bun` 不用 `npx`、Browser MCP npm 调用方式、工具名前缀叠加、CONNECT_TIMEOUT）见 [`gotchas.md`](./gotchas.md) §3（SSOT）。本节只讲持久化约定。
+
+**术语约定（2026-07-02 更名）**：面向用户的 UI 文案统一用「**MCP 连接器**」（右侧栏窄空间可简作「连接器」）；「MCP 服务器」仅用于开发者语境（mcpBuilder、协议层）。新增文案勿回潮「MCP 服务」。
 
 ### 存储迁移（Issue#18）
 MCP 服务配置已从 `localStorage` 迁移到 `opencode.json`（通过 Tauri command 读写工作区配置文件）。浏览器 MCP 全局配置存储在 `~/.config/ultrawork/opencode.json`，跨工作区自动恢复。

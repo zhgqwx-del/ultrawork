@@ -8,7 +8,7 @@ UltraWork（无影）是一款桌面 AI Agent 应用，基于 OpenCode Server �
 
 - [OpenCode](https://github.com/anomalyco/opencode) — 核心依赖，作为 sidecar server 提供 agent 能力（REST API + SSE 事件流）
 - [WorkAny](https://github.com/workany-ai/workany) — 交互设计参考
-- 交互设计稿：`product-uxd-design/` 目录（HTML 原型 + 功能清单 + Figma 原型图）
+- 交互设计稿：`design/product/` 目录（HTML 原型 `prototype/` + 功能清单 + Figma 原型图）
 
 ## 技术栈
 
@@ -21,7 +21,7 @@ UltraWork（无影）是一款桌面 AI Agent 应用，基于 OpenCode Server �
 | UI 组件 | shadcn/ui (Radix + Tailwind) |
 | 包管理 | Bun (monorepo + workspaces) |
 | 构建编排 | Turborepo |
-| 后端 | OpenCode Server (Go, 编译为 sidecar binary) |
+| 后端 | OpenCode Server (TypeScript/Bun，`bun build --compile` 编译为 sidecar binary) |
 | 状态管理 | React Context |
 | 路由 | react-router-dom v7 |
 | 国际化 | 自研 i18n (I18nProvider + `t()`) |
@@ -32,18 +32,18 @@ UltraWork（无影）是一款桌面 AI Agent 应用，基于 OpenCode Server �
 
 Monorepo 结构：
 
+> 包实现状态的 SSOT 是 `docs/architecture-phase1.md` 顶部状态表；下表只列**当前实际存在的包**（与 `packages/` 目录一一对应），远期规划包见文末「未实现功能」。
+
 | 包 | 路径 | 状态 | 说明 |
 |----|------|------|------|
 | `@agent/api-client` | `packages/core/api-client` | ✅ 已实现 | OpenCode REST/SSE SDK |
 | `@agent/server-manager` | `packages/core/server-manager` | ✅ 已实现 | Sidecar 进程管理 |
 | `@agent/client-desktop` | `packages/client/desktop` | ✅ 已实现 | Tauri 桌面应用 |
-| `@agent/connector` | `packages/core/connector` | 🔲 规划中 | 连接抽象层 |
-| `@agent/ui` | `packages/core/ui` | 🔲 规划中 | 共享组件库（当前组件在 desktop 内） |
-| `@agent/workspace` | `packages/core/workspace` | 🔲 规划中 | ~/.ultrawork/ 目录管理 |
-| `@agent/notifier` | `packages/core/notifier` | 🔲 规划中 | 通知分发 |
+| `@agent/connector` | `packages/core/connector` | ✅ 已实现 | 后端统一抽象层（OpenCode/ACP 双后端派发，ADR-030） |
+| `@agent/orchestrator` | `packages/core/orchestrator` | ✅ 已实现 | 多 agent 编排（spawn/delegate/Pipeline/Fan-out，ADR-031） |
+| `@agent/acp-client` | `packages/agent/acp-client` | ✅ 已实现 | ACP 外部 agent sidecar（:4099，ADR-027） |
+| `@agent/knowledge-sidecar` | `packages/knowledge/sidecar` | ✅ 已实现 | 知识库 RAG sidecar（:4098，ADR-026） |
 | `@agent/channel-gateway` | `packages/channel/gateway` | ✅ 已实现 | IM 集成网关（钉钉 Stream Mode，独立 sidecar 进程 :4097，配置持久化 `~/.ultrawork/channels.json`）|
-| `@agent/proactive-heartbeat` | `packages/proactive/heartbeat` | 🔲 规划中 | 心跳服务 |
-| `@agent/proactive-cron` | `packages/proactive/cron` | 🔲 规划中 | 定时任务服务 |
 
 ## Phase 1 已实现功能 (Round 0 ~ Issue#18)
 
@@ -190,6 +190,19 @@ Monorepo 结构：
 - [ ] 能力条件 UI（image gating）
 - [x] 阶段2 @agent/connector（ADR-030）/ 阶段3 编排（ADR-031）— connector 统一层 + orchestrator（spawn/delegate/Pipeline/Fan-out）+ Team UX 主聊天流（017/018）+ 019 流水线 surface 收纳。**已整体合 main**（2026-06-13，merge `232c8fa`）✅
 
+### 2026-06 中旬 ~ 07 月主线 ✅（摘要；detail 是各 ADR + CHANGELOG，此处不复制）
+
+- [x] 内置技能体系 — 5 技能打包+依赖检测（ADR-032）→ ppt-master + curated 自助更新 + 确定性遮蔽（ADR-040）→ zip 分发+首启解压（ADR-041）✅ 2026-06-14 ~ 07-03
+- [x] 产物识别改文件系统真相 + PDF 内嵌预览（ADR-033）✅ 2026-06-16
+- [x] LLM 流式 idle 看门狗，根治静默挂死（ADR-034）✅ 2026-06-24
+- [x] 会话切换一致性 — 切回不丢流式 + 多 Team 委派按发起会话过滤（ADR-035）✅ 2026-06-25
+- [x] 渐进式工具披露 — 多 MCP 下工具 schema token 膨胀治理（ADR-036）✅ 2026-06-26
+- [x] 跨平台兼容 macOS/Windows/Linux + CI 三平台门禁（ADR-037）✅ 2026-06-27
+- [x] 右侧栏任务规划进度面板（ADR-038）✅ 2026-06-29
+- [x] Provider 配置全局化 + opencode 软刷新（ADR-039）✅ 2026-06-30
+- [x] 知识库 MCP 对 IMA/远程-only 源自动注册修复 ✅ 2026-06-28
+- [x] UI/UX 打磨批次 — 设置页折叠+返回来源页、折叠侧栏拖拽把手、「MCP 连接器」更名、Home 工作区路径指示行等（见 CHANGELOG）✅ 2026-07-01 ~ 07-03
+
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
 - [x] MarkItDown → 纯 TS 文档解析（消除 Python 依赖）✅ 2026-05-20
@@ -213,8 +226,10 @@ Monorepo 结构：
 - [ ] Channel Gateway: Feishu/Slack adapter
 - [ ] Channel Gateway: Interactive card（权限交互卡片）
 - [ ] Channel Gateway: Message adaptation（平台特定格式化）
-- [ ] Agent Workspace (~/.ultrawork/ 目录，IDENTITY/SOUL/MEMORY)
-- [ ] Proactive Services（Heartbeat/Cron）
+- [ ] Agent Workspace (~/.ultrawork/ 目录，IDENTITY/SOUL/MEMORY；曾规划 `@agent/workspace` 包)
+- [ ] Proactive Services（Heartbeat/Cron；曾规划 `@agent/proactive-*` 包）
+- [ ] 共享组件库 `@agent/ui`（当前组件在 desktop 内）
+- [ ] 通知分发 `@agent/notifier`
 - [ ] System Tray / 后台常驻
 - [ ] OS Keychain 凭证存储
 
@@ -253,4 +268,4 @@ Monorepo 结构：
 
 ## 开发进度
 
-详见 `PROGRESS.md`。
+详见 `CHANGELOG.md`（当前）与 `docs/archive/progress-raw.md`（2026-06-04 前的原始进度流水）。

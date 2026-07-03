@@ -1,7 +1,8 @@
 # Ultrawork 文档地图
 
-> 全部文档约 70 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
+> 全部文档约 95 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
 > （计数为约数，非权威；准确性由 `scripts/check-docs.ts` 校验 ADR/路径等可机检项。）
+> **本文件不逐条罗列 decisions/discussions 文件名**——那两层的权威索引是各自目录的 `README.md`，此处只放层级说明 + 指针（罗列必然漂移）。
 
 ## 目录树
 
@@ -25,42 +26,19 @@ ultrawork/
 │   ├── gotchas.md                      #   踩坑清单：OpenCode/MCP/Gateway/IMA/Tauri 反向陷阱 + 上游非直觉契约（SSOT，从 MEMORY 固化）
 │   ├── quality-gates.md                #   质量门禁：改动合入/收尾前的完成定义 checklist
 │   ├── testing.md                     #   测试策略：测试框架、用例设计、手动测试清单
-│   ├── requirements.md                #   需求文档：产品功能需求与验收标准
+│   ├── requirements.md                #   需求文档：产品定位、包状态摘要、功能需求与实现状态
 │   ├── knowledge-base-replication-guide.md  # 知识库能力复制指南：组件清单 + 触发/噪音控制 + 启动方式 + 目标 Agent prompt
 │   ├── mcp-technical-flow.md          #   MCP 技术流程：MCP 配置/连接/工具调用的端到端链路
 │   ├── test-config-isolation.md       #   配置隔离测试说明（ADR-020 验证）
 │   ├── document-map.md                #   本文件：文档树 + 功能说明索引
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
-│   │   ├── README.md                  #   ADR 索引：模板说明 + 36 条决策一览表（权威索引）
-│   │   ├── 001..017                   #   Phase 1 → Round 17 早期决策（Tauri/Sidecar/消息渲染/Dock/模型/工作区/SSE/MCP/暗色模式/Browser MCP 等）
-│   │   ├── 018-wechat-channel-ilink.md       # 微信 Channel ilink 协议接入（2026-03-24）
-│   │   ├── 019-knowledge-base-integration.md # 知识库集成方案（Withdrawn）
-│   │   ├── 020-config-isolation.md           # Ultrawork 与 OpenCode 配置隔离
-│   │   ├── 021-long-session-performance.md   # 长对话性能优化
-│   │   ├── 022-model-switch-side-effects.md  # 运行时模型切换副作用修复
-│   │   ├── 023-titlebar-overlay.md           # macOS 标题栏 Overlay 模式
-│   │   ├── 024-workspace-path-display.md     # 工作目录路径展示优化
-│   │   ├── 025-window-layout-symmetry.md     # 窗口布局对称性修复
-│   │   ├── 026-knowledge-base-architecture.md # 知识库能力架构（本地 RAG + IMA + 自定义 API）
-│   │   ├── 027-acp-multi-agent-backend.md   # ACP 多 Agent 后端支持 — 经 ACP 统一调度多 agent（阶段1 归一化实现章节）
-│   │   ├── 028-release-readiness-hardening.md # 发布前 readiness 硬化
-│   │   ├── 029-execution-flow-turn-grouping.md # 主对话「执行流程」收纳 — 回合级消息分组与过程/答案分层
-│   │   ├── 030-agent-connector-control-layer.md # @agent/connector — 后端无关控制+事件统一层（OpenCode REST + ACP 双 backend）
-│   │   └── 031-multi-agent-orchestration.md  # 多 Agent 编排（档2 delegate）— orchestrator + spawn/steer 原语 + 编排模式
+│   │   ├── README.md                  #   ADR 权威索引：模板说明 + 全部决策一览表（编号/标题/状态/日期）★ 找 ADR 从这里进
+│   │   └── 001..041                   #   ADR 正文（Tauri/Sidecar/消息渲染/知识库/ACP 多 agent/connector/orchestrator/内置技能/跨平台/软刷新/zip 分发等）
 │   │
 │   ├── discussions/                   # ═══ 讨论层（探索/调研，提案可能演变为 ADR）═══
-│   │   ├── README.md                  #   讨论索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」）
-│   │   ├── 001-mobile-relay.md        #   移动端与桌面端通信 — Relay Server 方案
-│   │   ├── 002-commercialization.md   #   商业化方案讨论
-│   │   ├── 003-sidecar-sharing.md     #   OpenCode Sidecar 能力共享 — 多进程复用
-│   │   ├── 004-opencode-multi-agent.md  # OpenCode 多 Agent 机制调研
-│   │   ├── 005-permission-question-dock.md  # Permission/Question Dock 机制调研
-│   │   ├── 006-custom-llm-provider.md #   自定义 LLM Provider 机制调研
-│   │   ├── 007-opencode-builtin-tools.md  # OpenCode 内置工具全景调研
-│   │   ├── 008-opencode-builtin-agents-orchestration.md  # 内置 Agent 全景与 runLoop 引擎
-│   │   ├── 009-tauri-vs-electron.md     #   桌面端框架调研 — Tauri vs Electron 迁移评估
-│   │   └── 010-ai-dev-doc-quality.md    #   AI 驱动开发的文档质量保障体系 — 诊断与优化方案
+│   │   ├── README.md                  #   讨论权威索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」vs「已落地」）★ 找讨论从这里进
+│   │   └── 001..025                   #   调研/方案正文（mobile-relay/sidecar-sharing/custom-provider/vendor-bump-perf/工具披露/会话一致性/plan 面板/ppt-master 等）
 │   │
 │   └── archive/                       # ═══ 历史归档层 ═══
 │       ├── progress-raw.md            #   完整开发进度（Phase 1 → Round 15 全部记录）
@@ -140,8 +118,8 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 16 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 41 (README + 41 ADR) | 架构师/新成员 | 有重大决策时新增 |
-| **讨论层** | `docs/discussions/` | 18 (README + 17) | 架构师 | 探索阶段记录 |
+| **决策层** | `docs/decisions/` | 42 (README + 41 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **讨论层** | `docs/discussions/` | 26 (README + 25) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 9 | 考古/追溯 | 只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | auto-memory (本地) | 6 | Claude Code | 每次 session |
