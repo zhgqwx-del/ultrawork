@@ -33,7 +33,8 @@
     "e2e:builtin-ppt-ui": "bun run --bun e2e/builtin-ppt-ui.e2e.ts",
     "e2e:builtin-shadowing": "bun run --bun e2e/builtin-skill-shadowing.e2e.ts",
     "e2e:builtin-shadow-ui": "bun run --bun e2e/builtin-shadow-ui.e2e.ts",
-    "e2e:websearch": "bun run --bun e2e/websearch-byok.e2e.ts"
+    "e2e:websearch": "bun run --bun e2e/websearch-byok.e2e.ts",
+    "e2e:websearch-ui": "bun run --bun e2e/websearch-ui-walkthrough.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",
