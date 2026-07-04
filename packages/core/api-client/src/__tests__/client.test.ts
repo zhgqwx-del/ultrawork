@@ -477,6 +477,13 @@ describe("ApiClient", () => {
       expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
       expect(mockFetch.mock.calls[0][1].method).toBe("DELETE")
     })
+
+    it("getAuthStatus hits the presence-only route (ADR-042) and URL-encodes the id", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ configured: true, type: "api" }))
+      const res = await client.getAuthStatus("search-tavily")
+      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/auth/search-tavily/status")
+      expect(res).toEqual({ configured: true, type: "api" })
+    })
   })
 
   // --- Custom provider ---
@@ -486,6 +493,7 @@ describe("ApiClient", () => {
     // (provider def) → setProviderDisabled(false) which GETs /global/config (no-op
     // when not disabled).
     it("upsertCustomProvider (OpenAI) writes the key to auth then the global provider config", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (enable_search residue read)
       mockFetch.mockResolvedValueOnce(emptyResponse(204)) // PUT /auth
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable read → no-op)
@@ -497,13 +505,13 @@ describe("ApiClient", () => {
         apiKey: "sk-123",
         models: [{ id: "m1", name: "Model 1", context: 8192, output: 2048 }],
       })
-      // 1st: PUT /auth/my-llm
-      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/auth/my-llm")
-      expect(mockFetch.mock.calls[0][1].method).toBe("PUT")
-      // 2nd: PATCH /global/config?refresh=soft with provider def
-      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/global/config?refresh=soft")
-      expect(mockFetch.mock.calls[1][1].method).toBe("PATCH")
-      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-llm"]
+      // 1st: GET /global/config (residue read), 2nd: PUT /auth/my-llm
+      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/auth/my-llm")
+      expect(mockFetch.mock.calls[1][1].method).toBe("PUT")
+      // 3rd: PATCH /global/config?refresh=soft with provider def
+      expect(mockFetch.mock.calls[2][0]).toBe("http://localhost:4096/global/config?refresh=soft")
+      expect(mockFetch.mock.calls[2][1].method).toBe("PATCH")
+      const p = JSON.parse(mockFetch.mock.calls[2][1].body).provider["my-llm"]
       expect(p.npm).toBe("@ai-sdk/openai-compatible")
       expect(p.api).toBe("https://api.example.com/v1")
       expect(p.options.baseURL).toBe("https://api.example.com/v1")
@@ -511,7 +519,82 @@ describe("ApiClient", () => {
       expect(p.whitelist).toEqual(["m1"]) // pins exposed models, hides delete→re-add orphans
     })
 
+    it("upsertCustomProvider maps builtinSearch → options.enable_search (ADR-042)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (residue read)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable no-op)
+      await client.upsertCustomProvider({
+        id: "my-qwen",
+        name: "My Qwen",
+        protocol: "openai",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: [
+          { id: "qwen-max", name: "Qwen Max", builtinSearch: true },
+          { id: "qwen-mini", name: "Qwen Mini" },
+        ],
+      })
+      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-qwen"]
+      expect(p.models["qwen-max"].options).toEqual({ enable_search: true })
+      expect(p.models["qwen-mini"].options).toBeUndefined()
+    })
+
+    it("re-add with builtinSearch UNchecked overwrites a stale enable_search residue with explicit false", async () => {
+      // PATCH merge can't delete keys — the residue read must trigger an explicit false.
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ provider: { "my-qwen": { models: { "qwen-max": { id: "qwen-max", options: { enable_search: true } } } } } }),
+      ) // GET /global/config (residue read)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET un-disable
+      await client.upsertCustomProvider({
+        id: "my-qwen",
+        name: "My Qwen",
+        protocol: "openai",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: [{ id: "qwen-max", name: "Qwen Max" }], // builtinSearch unchecked
+      })
+      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-qwen"]
+      expect(p.models["qwen-max"].options).toEqual({ enable_search: false })
+    })
+
+    it("no residue + unchecked builtinSearch emits NO options (don't inject the key into foreign hosts)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET residue (empty)
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET un-disable
+      await client.upsertCustomProvider({
+        id: "my-llm2",
+        name: "My LLM 2",
+        protocol: "openai",
+        baseURL: "https://api.example.com/v1",
+        models: [{ id: "m1", name: "M1" }],
+      })
+      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-llm2"]
+      expect(p.models["m1"].options).toBeUndefined()
+    })
+
+    it("advanced JSON can override the builtinSearch-derived options (escape hatch wins)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET residue
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET un-disable
+      await client.upsertCustomProvider({
+        id: "my-qwen",
+        name: "My Qwen",
+        protocol: "openai",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: [
+          {
+            id: "qwen-max",
+            name: "Qwen Max",
+            builtinSearch: true,
+            advanced: { options: { enable_search: false, search_options: { forced_search: true } } },
+          },
+        ],
+      })
+      const p = JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-qwen"]
+      expect(p.models["qwen-max"].options).toEqual({ enable_search: false, search_options: { forced_search: true } })
+    })
+
     it("upsertCustomProvider (Anthropic) maps npm + skips auth when no key", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (residue read)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config (provider def)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (un-disable read → no-op)
       await client.upsertCustomProvider({
@@ -521,15 +604,16 @@ describe("ApiClient", () => {
         baseURL: "https://gw.example.com/v1",
         models: [{ id: "c1", name: "Claude proxy" }],
       })
-      // No PUT /auth (no apiKey): PATCH /global/config then GET /global/config (un-disable no-op)
-      expect(mockFetch).toHaveBeenCalledTimes(2)
-      expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:4096/global/config?refresh=soft")
-      expect(mockFetch.mock.calls[0][1].method).toBe("PATCH")
-      expect(JSON.parse(mockFetch.mock.calls[0][1].body).provider["my-anth"].npm).toBe("@ai-sdk/anthropic")
+      // No PUT /auth (no apiKey): GET (residue) → PATCH → GET (un-disable no-op)
+      expect(mockFetch).toHaveBeenCalledTimes(3)
+      expect(mockFetch.mock.calls[1][0]).toBe("http://localhost:4096/global/config?refresh=soft")
+      expect(mockFetch.mock.calls[1][1].method).toBe("PATCH")
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body).provider["my-anth"].npm).toBe("@ai-sdk/anthropic")
     })
 
     it("upsertCustomProvider un-disables a re-added provider (clears disabled_providers)", async () => {
       // provider was previously deleted → still in disabled_providers
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (residue read)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (provider def)
       mockFetch.mockResolvedValueOnce(jsonResponse({ disabled_providers: ["my-llm", "other"] })) // GET /config
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config (disabled_providers)
@@ -538,19 +622,20 @@ describe("ApiClient", () => {
         models: [{ id: "m1", name: "M1" }],
       })
       // last PATCH writes disabled_providers without my-llm
-      const last = mockFetch.mock.calls[2]
+      const last = mockFetch.mock.calls[3]
       expect(last[1].method).toBe("PATCH")
       expect(JSON.parse(last[1].body).disabled_providers).toEqual(["other"])
     })
 
     it("upsertCustomProvider omits a partial limit (only context) to stay schema-valid", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (residue read)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /config
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /config (un-disable no-op)
       await client.upsertCustomProvider({
         id: "p", name: "P", protocol: "openai", baseURL: "https://x/v1",
         models: [{ id: "m1", name: "M1", context: 8192 }], // output missing
       })
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      const body = JSON.parse(mockFetch.mock.calls[1][1].body)
       // opencode requires context+output together; a lone context → no limit emitted
       expect(body.provider["p"].models.m1.limit).toBeUndefined()
     })
@@ -691,6 +776,7 @@ describe("ApiClient", () => {
     }
 
     it("maps capability flags, vision→modalities, and limit", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (residue read)
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH /global/config
       mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET /global/config (setProviderDisabled)
 
@@ -724,8 +810,9 @@ describe("ApiClient", () => {
     })
 
     it("deep-merges advanced JSON, letting it override structured fields", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse({}))
-      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET residue
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET un-disable
 
       await client.upsertCustomProvider({
         id: "p",
@@ -759,8 +846,9 @@ describe("ApiClient", () => {
     })
 
     it("never lets advanced JSON change the model id away from its map key", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse({}))
-      mockFetch.mockResolvedValueOnce(jsonResponse({}))
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET residue
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // PATCH
+      mockFetch.mockResolvedValueOnce(jsonResponse({})) // GET un-disable
 
       await client.upsertCustomProvider({
         id: "p",

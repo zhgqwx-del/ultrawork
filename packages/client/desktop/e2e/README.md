@@ -137,3 +137,43 @@ bun run --bun e2e:builtin-shadow-ui   # exit 0 = PASS, 1 = FAIL
 
 Standard ports 4096/1420 (kill a running dev instance first, like
 builtin-ppt-ui).
+
+## `websearch-byok.e2e.ts` — BYOK websearch ladder against real opencode (ADR-042)
+
+Real (patched) opencode + in-process stub Tavily/IQS HTTP server (endpoints
+overridden via `ULTRAWORK_TAVILY_BASE_URL` / `ULTRAWORK_ALIYUN_IQS_BASE_URL`) +
+in-process mock OpenAI-compatible LLM that records every request's `tools[]` and
+emits a `websearch` tool_call when the tool is present. 15 checks: no key → tool
+absent; `PUT /auth/search-tavily` → tool appears next prompt (auth.json read
+fresh, no refresh) + Bearer key reaches the stub + formatted results reach the
+answer; `GET /global/auth/:id/status` flips; explicit `provider:"aliyun-iqs"`
+via `PATCH /global/config?refresh=soft` routes to IQS (body shape asserted);
+`provider:"auto"` clears the explicit choice; `enabled:false` (soft) hides the
+tool again.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:websearch   # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, ports 4103 (opencode) / 8092 (LLM) / 8093 (stub).
+
+## `websearch-ui-walkthrough.e2e.ts` — Tools settings + per-model toggle, real browser (ADR-042)
+
+Real React app (Chrome + Vite + real patched opencode) walking the whole BYOK
+websearch surface with DISK-truth assertions after every step: Tools section
+renders → test disabled without key → wrong key hits the CORS-enabled stub and
+surfaces the auth toast (the `test_search_provider` Tauri shim does a REAL HTTP
+round-trip with the entered key, classified like the Rust command) → save lands
+`search-tavily`/`search-aliyun-iqs` in auth.json + chips flip + input clears →
+default-provider Select options track configured state → Exa advanced opt-in →
+master enable round-trip → remove-key confirm flow cleans auth.json AND resets a
+stale preferred provider to "auto" → models-section per-model 联网搜索 toggle
+writes `enable_search` true→false into the global opencode.json.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:websearch-ui   # exit 0 = PASS, 1 = FAIL
+```
+
+Standard ports 4096/1420 (kill a running dev instance first) + stub on 8095.

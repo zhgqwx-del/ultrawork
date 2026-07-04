@@ -12,6 +12,7 @@ import type {
   OpenCodeConfig,
   ProviderConfigModel,
   CustomProviderDef,
+  AuthStatus,
   Agent,
   PromptAsyncRequest,
   MCPConfig,
@@ -367,6 +368,15 @@ export class ApiClient {
   }
 
   /**
+   * Whether a credential exists in auth.json for this id (never returns the
+   * secret). Backs the "configured" state for BYOK keys in the settings UI —
+   * e.g. `search-tavily` (ADR-042); upstream has no read endpoint for auth.
+   */
+  async getAuthStatus(authId: string): Promise<AuthStatus> {
+    return this.request<AuthStatus>(`/global/auth/${encodeURIComponent(authId)}/status`)
+  }
+
+  /**
    * Create or update a user-defined custom provider (OpenAI-compatible or
    * Anthropic protocol). Writes the provider definition to the GLOBAL
    * opencode.json via PATCH /global/config and the API key (if any) to the
@@ -378,6 +388,15 @@ export class ApiClient {
    */
   async upsertCustomProvider(def: CustomProviderDef): Promise<void> {
     const npm = def.protocol === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible"
+    // PATCH merge can't delete keys: a delete→re-add of the same provider+model
+    // id with builtinSearch UNchecked would silently inherit a stale
+    // `options.enable_search: true` from the config residue. Read the residue so
+    // we can overwrite it with an explicit false — but ONLY then (an
+    // unconditional false would inject the key into every non-DashScope host's
+    // request body, which strict gateways reject).
+    const residueModels = await this.getGlobalConfig()
+      .then((c) => c.provider?.[def.id]?.models ?? {})
+      .catch(() => ({}) as Record<string, ProviderConfigModel>)
     const models: Record<string, ProviderConfigModel> = {}
     for (const m of def.models) {
       const base: ProviderConfigModel = {
@@ -391,6 +410,13 @@ export class ApiClient {
         // Image input → modalities. opencode maps modalities.input/output to the
         // text/image/… capability flags (vendor provider.ts fromModelsDevModel).
         ...(m.vision ? { modalities: { input: ["text", "image"], output: ["text"] } } : {}),
+        // DashScope model-native web search: the flag rides the model-level
+        // `options`, which opencode spreads into the request body (ADR-042).
+        ...(m.builtinSearch
+          ? { options: { enable_search: true } }
+          : residueModels[m.id]?.options?.["enable_search"] === true
+            ? { options: { enable_search: false } }
+            : {}),
         // opencode's model schema requires BOTH context and output inside `limit`
         // — a partial `{ context }` is rejected (400). Only emit when both present.
         ...(m.context != null && m.output != null
