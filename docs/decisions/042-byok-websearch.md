@@ -34,4 +34,4 @@ config 扩展循环（`provider.ts` config-model-over-models.dev 重建）：`in
 - Team 外部 ACP agent（claude/gemini）用不到本工具（自带搜索；如需覆盖走 `hostMcpServers()` 转发=026 路线 B 思路）。
 - 环境变量：`ULTRAWORK_TAVILY_BASE_URL` / `ULTRAWORK_ALIYUN_IQS_BASE_URL` / `ULTRAWORK_EXA_BASE_URL`（e2e stub / 私有网关）。
 - 深度参数：config 端 pin（`tavily.searchDepth` / `aliyunIqs.engineType`）**优先于**模型请求（防模型烧 advanced credit；两家精确对齐）；IQS 默认 LiteAdvanced（Generic 计费 ~3.5×）、`contents.summary` 付费项不启用（免费 snippet 够用）。
-- 验证：纯函数单测 32 · cargo 40 · desktop vitest 301 · api-client 70 · headless e2e 18/18（真 sidecar + stub 双搜索源 + mock LLM 捕获工具注册态与请求体）；5 路对抗审查 + 二轮核实。
+- 验证：纯函数单测 32 · cargo 40 · desktop vitest 307 · api-client 70 · headless e2e `websearch-byok` 18/18（真 sidecar + stub 双搜索源 + mock LLM 捕获工具注册态与请求体）· 真浏览器 e2e `websearch-ui-walkthrough` 10/10（Chrome+Vite+真 sidecar，每步断言 auth.json/opencode.json 磁盘真相）；5 路对抗审查 + 二轮核实 + 三轮 fresh-eyes（全量 diff / 完备性 / 用户流程）追加修 8 项。

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { toast } from "sonner"
-import { Search, Loader2, CheckCircle2, ExternalLink, ChevronRight, Plug, Trash2, Check, X } from "lucide-react"
+import { Search, Loader2, CheckCircle2, ExternalLink, ChevronRight, Plug, Trash2, Check, X, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { useApi } from "@/lib/use-api"
@@ -59,6 +59,10 @@ export function SearchToolsSection() {
   const [confirmRemove, setConfirmRemove] = useState<KeyProviderId | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [patchingCfg, setPatchingCfg] = useState(false)
+  // Distinguish "loaded, nothing configured" from "couldn't load" (sidecar down):
+  // a user WITH saved keys must not see an interactive "not configured" UI that
+  // invites re-entry — show an explicit error+retry instead.
+  const [loadError, setLoadError] = useState(false)
 
   // Reset in the SETUP, not just cleanup (StrictMode runs setup→cleanup→setup;
   // a cleanup-only reset leaves the ref false and skips every post-await setState).
@@ -71,6 +75,7 @@ export function SearchToolsSection() {
   }, [])
 
   const load = useCallback(async () => {
+    setLoading(true)
     try {
       const [config, tavilyStatus, iqsStatus] = await Promise.all([
         api.getGlobalConfig(),
@@ -80,9 +85,13 @@ export function SearchToolsSection() {
       if (!mountedRef.current) return
       setCfg(config.experimental?.websearch ?? {})
       setConfigured({ tavily: tavilyStatus.configured, "aliyun-iqs": iqsStatus.configured })
+      setLoadError(false)
     } catch (err) {
       console.error("Failed to load search tools state:", err)
-      if (mountedRef.current) toast.error(t("tools.websearch.loadError"))
+      if (mountedRef.current) {
+        setLoadError(true)
+        toast.error(t("tools.websearch.loadError"))
+      }
     } finally {
       if (mountedRef.current) setLoading(false)
     }
@@ -164,14 +173,16 @@ export function SearchToolsSection() {
       const suffix = res.status ? ` (${res.status})` : ""
       if (res.ok) {
         toast.success(t("tools.websearch.test.ok"))
-      } else if (res.message === "auth") {
-        // IQS auth failures get the dedicated hint: IQS key ≠ DashScope key, and
-        // a freshly created key takes ~5 minutes to activate.
-        toast.error(`${t(pid === "aliyun-iqs" ? "tools.websearch.test.authIqs" : "tools.websearch.test.authTavily")}${suffix}`, {
-          duration: 8000,
-        })
       } else if (res.message === "network") {
         toast.error(`${t("tools.websearch.test.network")}${suffix}`)
+      } else if (pid === "aliyun-iqs") {
+        // ANY IQS failure (not just 401/403 — Aliyun may return 400/403-with-body
+        // for a wrong-kind key) gets the dedicated hint: IQS key ≠ DashScope key,
+        // and a freshly created key takes ~5 minutes to activate. Predicted #1
+        // mistake; the disambiguation is worth surfacing on every failure mode.
+        toast.error(`${t("tools.websearch.test.authIqs")}${suffix}`, { duration: 8000 })
+      } else if (res.message === "auth") {
+        toast.error(`${t("tools.websearch.test.authTavily")}${suffix}`, { duration: 8000 })
       } else {
         toast.error(`${t("tools.websearch.test.http")}${suffix}`)
       }
@@ -196,6 +207,26 @@ export function SearchToolsSection() {
     return (
       <div className="flex items-center justify-center py-16">
         <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
+      </div>
+    )
+  }
+
+  // Load failed (e.g. sidecar down): never fall through to an interactive
+  // "not configured" UI — a user WITH saved keys would be misled into re-entry.
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("settingsPage.tools")}</h2>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("tools.desc")}</p>
+        </div>
+        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[var(--color-border)] py-16">
+          <AlertCircle className="size-8 text-[var(--color-fg-muted)]" />
+          <p className="text-sm text-[var(--color-fg-muted)]">{t("tools.websearch.loadError")}</p>
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            {t("tools.websearch.retry")}
+          </Button>
+        </div>
       </div>
     )
   }
@@ -396,8 +427,14 @@ export function SearchToolsSection() {
                 <input
                   type="checkbox"
                   checked={cfg.exa === true}
-                  disabled={patchingCfg}
-                  onChange={(e) => void patchCfg({ exa: e.target.checked })}
+                  disabled={patchingCfg || anyBusy}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    // Turning Exa off while it's the preferred provider would leave
+                    // a stale `provider:"exa"` (still active on the backend, blank in
+                    // the Select) — reset to "auto", mirroring the remove-key path.
+                    void patchCfg(!on && preferred === "exa" ? { exa: false, provider: "auto" } : { exa: on })
+                  }}
                   className="mt-0.5 size-3.5 accent-[var(--color-brand)]"
                 />
                 <span>

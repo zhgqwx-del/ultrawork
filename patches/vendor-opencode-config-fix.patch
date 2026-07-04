@@ -1074,7 +1074,7 @@ index a2ac3d351..79fb24cc2 100644
            const s: State = { skills: {}, dirs: new Set() }
            yield* loadSkills(s, config, discovery, bus, fsys, ctx.directory, ctx.worktree)
 diff --git a/packages/opencode/src/tool/registry.ts b/packages/opencode/src/tool/registry.ts
-index 1bb270716..5470fa917 100644
+index 1bb270716..c1988e6a7 100644
 --- a/packages/opencode/src/tool/registry.ts
 +++ b/packages/opencode/src/tool/registry.ts
 @@ -20,7 +20,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@ope
@@ -1095,23 +1095,26 @@ index 1bb270716..5470fa917 100644
          Effect.fn("ToolRegistry.state")(function* (ctx) {
            const custom: Tool.Info[] = []
  
-@@ -161,8 +161,23 @@ export namespace ToolRegistry {
+@@ -161,8 +161,26 @@ export namespace ToolRegistry {
        ) {
          const s = yield* InstanceState.get(state)
          const allTools = yield* all(s.custom)
-+        // Ultrawork (ADR-042): BYOK websearch — also register when the user
-+        // configured a search provider (key in auth.json / exa opt-in), not just
-+        // for the hosted "opencode" provider. Config comes from the soft-refresh
-+        // cache and auth.json is read fresh, so settings-page changes apply on
-+        // the next step without a restart. codesearch keeps the original gate.
-+        // enabled:false wins over every path (incl. the hosted/env-flag ones); a
-+        // failed availability check (torn/corrupt auth.json read — this runs every
-+        // step) degrades to "not registered" instead of dying and killing the turn.
++        // Ultrawork (ADR-042): BYOK websearch — register when the user configured
++        // a search provider (key in auth.json / exa opt-in), not just for the
++        // hosted "opencode" provider. Config comes from the soft-refresh cache and
++        // auth.json is read fresh, so settings-page changes apply on the next step
++        // without a restart. codesearch keeps the ORIGINAL gate (hosted/EXA only).
++        // The gate is kept EXACTLY in lockstep with websearch.ts execute()'s
++        // resolveSearchProviders — deliberately NO `providerID===opencode` arm here
++        // (execute has no such branch → it would register but throw "not
++        // configured"); the hosted path is served via OPENCODE_ENABLE_EXA on both
++        // sides. enabled:false wins over every path; a failed availability check
++        // (torn/corrupt auth.json read — this runs every step) degrades to "not
++        // registered" instead of dying and killing the turn.
 +        const cfg = yield* config.get()
 +        const websearchAllowed =
 +          cfg.experimental?.websearch?.enabled !== false &&
-+          (model.providerID === ProviderID.opencode ||
-+            Flag.OPENCODE_ENABLE_EXA ||
++          (Flag.OPENCODE_ENABLE_EXA ||
 +            (yield* Effect.promise(() => isWebsearchConfigured(cfg).catch(() => false))))
          const filtered = allTools.filter((tool) => {
 -          if (tool.id === "codesearch" || tool.id === "websearch") {

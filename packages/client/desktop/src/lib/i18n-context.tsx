@@ -194,6 +194,7 @@ const translations: Record<Language, Record<string, string>> = {
     "tools.websearch.test.http": "Provider returned an error",
     "tools.websearch.testCostNote": "Testing runs one minimal search and consumes one credit.",
     "tools.websearch.remove": "Remove key",
+    "tools.websearch.retry": "Retry",
     "tools.websearch.removeConfirm": "Confirm remove",
     "tools.websearch.saved": "API key saved — takes effect immediately",
     "tools.websearch.removed": "API key removed",
@@ -211,7 +212,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Model-native web search (DashScope enable_search, ADR-042)
     "model.customProvider.cap.builtinSearch": "Built-in web search",
-    "model.builtinSearch.label": "Web search",
+    "model.builtinSearch.label": "Built-in web search",
     "model.builtinSearch.hint":
       "Aliyun DashScope (Bailian) models only — the model searches the web natively. Reuses this provider's API key; no extra key needed. Sources are not displayed.",
     "model.builtinSearch.getDashScopeKey": "Get DashScope Key",
@@ -909,6 +910,7 @@ const translations: Record<Language, Record<string, string>> = {
     "tools.websearch.test.http": "服务商返回错误",
     "tools.websearch.testCostNote": "测试会执行一次最小搜索，消耗 1 次额度。",
     "tools.websearch.remove": "删除 Key",
+    "tools.websearch.retry": "重试",
     "tools.websearch.removeConfirm": "确认删除",
     "tools.websearch.saved": "API Key 已保存，即时生效",
     "tools.websearch.removed": "API Key 已删除",
@@ -924,7 +926,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // 模型内置联网搜索（DashScope enable_search，ADR-042）
     "model.customProvider.cap.builtinSearch": "内置联网搜索",
-    "model.builtinSearch.label": "联网搜索",
+    "model.builtinSearch.label": "内置联网搜索",
     "model.builtinSearch.hint":
       "仅阿里云百炼（DashScope）模型支持——由模型自身联网搜索。复用该服务商已配置的 API Key，无需单独配置；来源列表不展示。",
     "model.builtinSearch.getDashScopeKey": "获取 DashScope Key",

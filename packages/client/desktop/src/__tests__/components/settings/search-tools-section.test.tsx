@@ -119,6 +119,44 @@ describe("SearchToolsSection", () => {
     )
   })
 
+  it("shows the IQS key≠DashScope hint on a NON-auth failure too (400/http), not only 401/403", async () => {
+    // Aliyun may 400 a wrong-kind key; the disambiguation must still surface.
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 400, message: "http" })
+    const { container } = await renderLoaded()
+    fireEvent.change(keyInput(container, 1), { target: { value: "sk-dashscope-by-mistake" } })
+    fireEvent.click(screen.getAllByRole("button", { name: /tools\.websearch\.test$/ })[1])
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(
+        expect.stringContaining("tools.websearch.test.authIqs"),
+        expect.anything(),
+      ),
+    )
+  })
+
+  it("maps a network failure (status 0) to the network toast, not the IQS hint", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 0, message: "network" })
+    const { container } = await renderLoaded()
+    fireEvent.change(keyInput(container, 1), { target: { value: "iqs-x" } })
+    fireEvent.click(screen.getAllByRole("button", { name: /tools\.websearch\.test$/ })[1])
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("tools.websearch.test.network")),
+    )
+    expect(h.toastError).not.toHaveBeenCalledWith(
+      expect.stringContaining("tools.websearch.test.authIqs"),
+      expect.anything(),
+    )
+  })
+
+  it("maps a Tavily http (non-auth) failure to the generic http toast", async () => {
+    h.invoke.mockResolvedValueOnce({ ok: false, status: 500, message: "http" })
+    const { container } = await renderLoaded()
+    fireEvent.change(keyInput(container, 0), { target: { value: "tvly-x" } })
+    fireEvent.click(screen.getAllByRole("button", { name: /tools\.websearch\.test$/ })[0])
+    await waitFor(() =>
+      expect(h.toastError).toHaveBeenCalledWith(expect.stringContaining("tools.websearch.test.http")),
+    )
+  })
+
   it("test button is disabled without a pasted key (stored keys never re-enter the renderer)", async () => {
     h.getAuthStatus.mockResolvedValue({ configured: true, type: "api" })
     await renderLoaded()
@@ -145,6 +183,42 @@ describe("SearchToolsSection", () => {
     await waitFor(() =>
       expect(h.patchGlobalConfig).toHaveBeenCalledWith({ experimental: { websearch: { exa: true } } }),
     )
+  })
+
+  it("unchecking Exa while it is the preferred provider resets provider to auto (no stale exa)", async () => {
+    h.getGlobalConfig.mockResolvedValue({ experimental: { websearch: { exa: true, provider: "exa" } } })
+    await renderLoaded()
+    fireEvent.click(screen.getByRole("button", { name: "tools.websearch.advanced" }))
+    // the checkbox is currently on (exa:true); unchecking it must also clear provider
+    fireEvent.click(screen.getByRole("checkbox", { name: /tools\.websearch\.exa\.title/ }))
+    await waitFor(() =>
+      expect(h.patchGlobalConfig).toHaveBeenCalledWith({ experimental: { websearch: { exa: false, provider: "auto" } } }),
+    )
+  })
+
+  it("unchecking Exa when it is NOT preferred leaves provider untouched", async () => {
+    h.getGlobalConfig.mockResolvedValue({ experimental: { websearch: { exa: true, provider: "auto" } } })
+    await renderLoaded()
+    fireEvent.click(screen.getByRole("button", { name: "tools.websearch.advanced" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: /tools\.websearch\.exa\.title/ }))
+    await waitFor(() =>
+      expect(h.patchGlobalConfig).toHaveBeenCalledWith({ experimental: { websearch: { exa: false } } }),
+    )
+  })
+
+  it("sidecar-down on mount → error+retry state (never a misleading interactive 'not configured' UI)", async () => {
+    h.getGlobalConfig.mockRejectedValueOnce(new Error("ECONNREFUSED"))
+    h.getAuthStatus.mockRejectedValue(new Error("ECONNREFUSED"))
+    render(<SearchToolsSection />)
+    await waitFor(() => expect(screen.getByText("tools.websearch.loadError")).toBeInTheDocument())
+    // must NOT render the interactive provider cards / not-configured chips
+    expect(screen.queryByText("tools.websearch.notConfigured")).toBeNull()
+    // retry re-invokes load; recover on the second attempt
+    h.getGlobalConfig.mockResolvedValue({})
+    h.getAuthStatus.mockResolvedValue({ configured: false })
+    fireEvent.click(screen.getByRole("button", { name: "tools.websearch.retry" }))
+    await waitFor(() => expect(screen.getByText("tools.websearch.title")).toBeInTheDocument())
+    expect(screen.getAllByText("tools.websearch.notConfigured")).toHaveLength(2)
   })
 
   it("removing a key needs the inline confirm, then deletes the auth entry", async () => {

@@ -503,7 +503,11 @@ fn build_search_probe_with(provider: &str, base_override: Option<String>) -> Res
             let base = base_override.unwrap_or_else(|| "https://cloud-iqs.aliyuncs.com".into());
             Ok((
                 format!("{}/search/unified", base.trim_end_matches('/')),
-                r#"{"query":"ping","engineType":"LiteAdvanced","advancedParams":{"numResults":1}}"#.into(),
+                // Mirror the vendor searchIqs body shape (incl. `contents`) so the
+                // probe can't get a spurious 400 from a body the real search never
+                // sends — a valid key must not read as broken. summary=false keeps
+                // it on the free tier.
+                r#"{"query":"ping","engineType":"LiteAdvanced","timeRange":"NoLimit","contents":{"summary":false,"rerankScore":true},"advancedParams":{"numResults":1}}"#.into(),
             ))
         }
         other => Err(format!("Unknown search provider: {}", other)),
