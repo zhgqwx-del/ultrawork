@@ -1,6 +1,6 @@
 # ADR-042: BYOK 联网搜索 — 多 provider websearch + qwen enable_search
 
-- 状态：Accepted（✅ 已实现，stub e2e 18/18；真机真 key 验收待用户提供 key）
+- 状态：Accepted（✅ 已实现并真机真 key 验收通过，2026-07-04）
 - 日期：2026-07-04
 - 关联：[discussions/026](../discussions/026-byok-websearch.md)（完整调研与方案，SSOT）、ADR-036（工具披露 EAGER 名单）、ADR-039（全局配置 + 软刷新生效链路）、gotchas §1/§3/§11
 
@@ -35,3 +35,4 @@ config 扩展循环（`provider.ts` config-model-over-models.dev 重建）：`in
 - 环境变量：`ULTRAWORK_TAVILY_BASE_URL` / `ULTRAWORK_ALIYUN_IQS_BASE_URL` / `ULTRAWORK_EXA_BASE_URL`（e2e stub / 私有网关）。
 - 深度参数：config 端 pin（`tavily.searchDepth` / `aliyunIqs.engineType`）**优先于**模型请求（防模型烧 advanced credit；两家精确对齐）；IQS 默认 LiteAdvanced（Generic 计费 ~3.5×）、`contents.summary` 付费项不启用（免费 snippet 够用）。
 - 验证：纯函数单测 32 · cargo 40 · desktop vitest 307 · api-client 70 · headless e2e `websearch-byok` 18/18（真 sidecar + stub 双搜索源 + mock LLM 捕获工具注册态与请求体）· 真浏览器 e2e `websearch-ui-walkthrough` 10/10（Chrome+Vite+真 sidecar，每步断言 auth.json/opencode.json 磁盘真相）；5 路对抗审查 + 二轮核实 + 三轮 fresh-eyes（全量 diff / 完备性 / 用户流程）追加修 8 项。
+- **真机真 key 验收（2026-07-04，通过）**：① 直连 API 契约核实——Tavily 真实响应 `results[].{content,score,title,url}`+`answer` 精确匹配 `parseTavilyResponse`（`published_date` 确认 basic 档不返回、optional 守卫正确）；IQS 对齐后探针 body（含 `contents`/`timeRange`）**200 接受**、`pageItems[].{link,snippet,rerankScore,publishedTime,title}` 匹配 `parseIqsResponse`；坏 key 状态码 IQS+DashScope key→403 / Tavily 垃圾→401（分类器映射 `auth` 正确，IQS 提示放宽已覆盖）。② 真 sidecar + 真 qwen3.7-max + 真 BYOK 全链——Tavily 与 IQS 各驱动模型真实调用 `websearch`、返回真实结果（metadata `provider` 正确、输出格式含 published/score/snippet）、最终答案引用真实新闻。③ `enable_search` 经真 config 管道——关掉 websearch 工具后模型仍返回今日新闻，证明模型内置搜索在真模型上真实触发。验收 harness 为一次性（不入库，stub e2e 是回归套件）；真 key 未泄漏进任何仓库文件。
