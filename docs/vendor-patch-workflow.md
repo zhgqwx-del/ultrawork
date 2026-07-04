@@ -33,6 +33,13 @@
 | `config/config.ts` (追加) | `refreshGlobal()`（软：`invalidateGlobal` + `softRefreshAll`，不 dispose）+ `updateGlobal(config,{soft})` 模式 + Interface/Service/public wrapper | ADR-039 |
 | `skill/index.ts` · `agent/agent.ts` · `command/index.ts` · `format/index.ts` · `provider/provider.ts` · `provider/auth.ts` · `tool/registry.ts` | `make`→`makeSoft`（8 个配置派生纯缓存标记可软失效；config 也标） | ADR-039 |
 | `server/routes/global.ts` | `PATCH /global/config?refresh=soft`（写+软刷新；缺省仍 hard disposeAll）+ 新增 `POST /global/refresh`（只软刷新不写） | ADR-039 |
+| `tool/websearch.ts`（**整文件重写**） | 多 provider BYOK 搜索：Tavily/阿里云 IQS REST 分发（key 走 auth.json `search-tavily`/`search-aliyun-iqs` 现读）+ Exa 显式 opt-in；优先级显式>tavily>iqs>exa、`provider:"auto"` 哨兵；纯函数（resolve/parse/format）供 `scripts/websearch/websearch-unit-test.ts`；endpoint env 可覆盖（`ULTRAWORK_TAVILY_BASE_URL` 等） | ADR-042 |
+| `tool/websearch.txt` | 描述重写：多源搜索、调研/时事优先用本工具、depth/timeRange 说明（保留 `{{year}}` 注入） | ADR-042 |
+| `tool/registry.ts`（追加） | websearch 门控改「`enabled!==false` 且（hosted‖EXA flag‖已配置）」；可用性检查 `catch(()=>false)` 降级（Effect defect 会杀回合）；codesearch 门控不动 | ADR-042 |
+| `config/config.ts`（追加） | experimental schema 增 `websearch`（enabled/provider〔含 auto〕/exa/tavily.searchDepth/aliyunIqs.engineType） | ADR-042 |
+| `server/routes/global.ts`（追加） | `GET /global/auth/:authId/status` 只读 key 存在性端点（永不回显 secret） | ADR-042 |
+| `plugin/tool-disclosure.ts`（追加） | `websearch` 从 COLLAPSE 移入 EAGER（BYOK 门控保证注册即用户已配置） | ADR-042 |
+| `provider/provider.ts`（追加） | config 扩展循环两处上游合并缺陷修复：`interleaved` 补 `existingModel` 回落（部分模型覆写不再破坏 reasoning_content 解析）+ cost 重建补 `experimentalOver200K`（分层计价不丢） | ADR-042 |
 
 ## 修改 vendor/opencode 的完整流程
 
@@ -66,6 +73,8 @@ git diff -- \
   packages/opencode/src/provider/provider.ts \
   packages/opencode/src/provider/auth.ts \
   packages/opencode/src/tool/registry.ts \
+  packages/opencode/src/tool/websearch.ts \
+  packages/opencode/src/tool/websearch.txt \
   packages/opencode/src/server/routes/global.ts \
   packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \

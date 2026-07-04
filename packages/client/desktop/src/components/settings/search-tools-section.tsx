@@ -187,6 +187,10 @@ export function SearchToolsSection() {
   const anyProvider = configured.tavily || configured["aliyun-iqs"] || cfg.exa === true
   const active = enabled && anyProvider
   const preferred = cfg.provider ?? "auto"
+  // One mutating op at a time — also freezes the config controls (Select /
+  // toggles) during a key delete, closing the stale-closure window where a
+  // mid-delete re-pick races the post-delete provider:"auto" reset.
+  const anyBusy = saving !== null || testing !== null || removing !== null
 
   if (loading) {
     return (
@@ -232,7 +236,7 @@ export function SearchToolsSection() {
             <input
               type="checkbox"
               checked={enabled}
-              disabled={patchingCfg}
+              disabled={patchingCfg || anyBusy}
               onChange={(e) => void patchCfg({ enabled: e.target.checked })}
               className="size-3.5 accent-[var(--color-brand)]"
             />
@@ -247,7 +251,7 @@ export function SearchToolsSection() {
             const input = keyInputs[p.id]
             // Serialize mutating ops ACROSS cards too: a save on card A while a
             // remove runs on card B would let auth.json writes race.
-            const busy = saving !== null || testing !== null || removing !== null
+            const busy = anyBusy
             return (
               <div key={p.id} className="rounded-md border border-[var(--color-border)] p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -360,7 +364,7 @@ export function SearchToolsSection() {
           <Select
             value={preferred}
             onValueChange={(v) => void patchCfg({ provider: v as WebsearchProviderId | "auto" })}
-            disabled={patchingCfg}
+            disabled={patchingCfg || anyBusy}
           >
             <SelectTrigger className="w-52" aria-label={t("tools.websearch.defaultProvider")}>
               <SelectValue />
