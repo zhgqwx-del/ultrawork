@@ -44,8 +44,23 @@ eq(
   resolveSearchProviders({ exa: true, provider: "exa" }, both),
   ["exa", "tavily", "aliyun-iqs"],
 )
-eq("explicit exa without opt-in ignored", resolveSearchProviders({ provider: "exa" }, both), ["tavily", "aliyun-iqs"])
+eq(
+  "explicit provider:'exa' counts as the exa opt-in (no silent no-op)",
+  resolveSearchProviders({ provider: "exa" }, both),
+  ["exa", "tavily", "aliyun-iqs"],
+)
+eq("explicit provider:'exa' alone registers keyless", resolveSearchProviders({ provider: "exa" }, none), ["exa"])
 eq("enabled:true but nothing available → empty", resolveSearchProviders({ enabled: true }, none), [])
+eq(
+  "implicitExa (OPENCODE_ENABLE_EXA path) appends exa keylessly",
+  resolveSearchProviders(undefined, none, { implicitExa: true }),
+  ["exa"],
+)
+eq(
+  "enabled:false beats implicitExa too",
+  resolveSearchProviders({ enabled: false }, both, { implicitExa: true }),
+  [],
+)
 eq(
   "provider:'auto' behaves like unset (clears a previous explicit choice)",
   resolveSearchProviders({ provider: "auto" }, both),

@@ -17,7 +17,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const HERE = import.meta.dir
-const OPENCODE = join(HERE, "..", "src-tauri", "binaries", "opencode-server-aarch64-apple-darwin")
+const ARCH = process.arch === "arm64" ? "aarch64" : "x86_64"
+const OPENCODE = join(HERE, "..", "src-tauri", "binaries", `opencode-server-${ARCH}-apple-darwin`)
 const PW = "ws-pw"
 const LLM = 8092
 const STUB = 8093
@@ -62,6 +63,9 @@ Bun.serve({
 
 // ---------- in-process mock LLM (OpenAI-compatible, streaming) ----------
 const toolLog: string[][] = [] // tools[] names per /chat/completions request
+// top-level enable_search flag per request — proves the Phase 3 chain (model
+// options → providerOptions → spread into the request body) end to end.
+const enableSearchLog: unknown[] = []
 function frame(o: unknown) {
   return `data: ${JSON.stringify(o)}\n\n`
 }
@@ -77,9 +81,11 @@ Bun.serve({
     const body = (await req.json().catch(() => ({}))) as {
       messages?: Array<{ role: string; content: unknown }>
       tools?: Array<{ function?: { name?: string } }>
+      enable_search?: unknown
     }
     const names = (body.tools ?? []).map((t) => t.function?.name ?? "").filter(Boolean)
     toolLog.push(names)
+    enableSearchLog.push(body.enable_search)
     const toolMsg = body.messages?.find((m) => m.role === "tool")
     const enc = new TextEncoder()
     const stream = new ReadableStream<Uint8Array>({
@@ -91,7 +97,7 @@ Bun.serve({
           send({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
         } else if (names.includes("websearch")) {
           send({
-            choices: [{ index: 0, delta: { role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_ws", type: "function", function: { name: "websearch", arguments: JSON.stringify({ query: "latest ai news", numResults: 2 }) } }] }, finish_reason: null }],
+            choices: [{ index: 0, delta: { role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_ws", type: "function", function: { name: "websearch", arguments: JSON.stringify({ query: "latest ai news", numResults: 2, timeRange: "week" }) } }] }, finish_reason: null }],
           })
           send({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })
         } else {
@@ -134,7 +140,9 @@ writeFileSync(
         npm: "@ai-sdk/openai-compatible",
         api: llmURL,
         options: { baseURL: llmURL, apiKey: "x" },
-        models: { "mock-model": { id: "mock-model", name: "Mock", tool_call: true } },
+        // enable_search in model-level options — asserted at the mock LLM to
+        // guard the Phase 3 chain (options → providerOptions → body top-level).
+        models: { "mock-model": { id: "mock-model", name: "Mock", tool_call: true, options: { enable_search: true } } },
         whitelist: ["mock-model"],
       },
     },
@@ -210,6 +218,8 @@ try {
   const bHit = stubHits.find((h) => h.path === "/search")
   ok("B: Tavily stub hit with Bearer key", bHit?.auth === `Bearer ${TAVILY_KEY}`)
   ok("B: request body carries query + clamped numResults", bHit?.body?.query === "latest ai news" && bHit?.body?.max_results === 2)
+  ok("B: timeRange maps to Tavily time_range", bHit?.body?.time_range === "week")
+  ok("P3: model options.enable_search reaches the LLM request body top-level", enableSearchLog.some((v) => v === true))
   ok("B: formatted results reach the answer", bAnswer.includes("TAVILY-RESULT-ONE") && bAnswer.includes("provider: tavily"))
   ok("B: tavily answer surfaced", bAnswer.includes("Stub Tavily answer."))
 
@@ -224,6 +234,7 @@ try {
   const cHit = stubHits.find((h) => h.path === "/search/unified")
   ok("C: IQS stub hit with Bearer key after soft refresh", cHit?.auth === `Bearer ${IQS_KEY}`)
   ok("C: IQS body shape (engineType/advancedParams)", cHit?.body?.engineType === "LiteAdvanced" && cHit?.body?.advancedParams?.numResults === 2)
+  ok("C: timeRange maps to IQS OneWeek", cHit?.body?.timeRange === "OneWeek")
   ok("C: answer names IQS provider + stub result", cAnswer.includes("provider: aliyun-iqs") && cAnswer.includes("IQS-RESULT-ONE"))
 
   // --- C2. provider:"auto" clears the explicit choice (PATCH merge can't delete keys) ---

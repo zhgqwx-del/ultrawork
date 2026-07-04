@@ -124,7 +124,8 @@ export function SearchToolsSection() {
       console.error("Failed to save search key:", err)
       if (mountedRef.current) toast.error(t("tools.websearch.saveError"))
     } finally {
-      if (mountedRef.current) setSaving(null)
+      // Functional clear: never wipe a spinner some OTHER card set meanwhile.
+      if (mountedRef.current) setSaving((s) => (s === pid ? null : s))
     }
   }
 
@@ -136,11 +137,14 @@ export function SearchToolsSection() {
       if (!mountedRef.current) return
       setConfigured((c) => ({ ...c, [pid]: false }))
       toast.success(t("tools.websearch.removed"))
+      // A removed key can't stay the preferred provider — clear the stale
+      // explicit choice (backend already degrades; this keeps the Select honest).
+      if (cfg.provider === pid) await patchCfg({ provider: "auto" })
     } catch (err) {
       console.error("Failed to remove search key:", err)
       if (mountedRef.current) toast.error(t("tools.websearch.saveError"))
     } finally {
-      if (mountedRef.current) setRemoving(null)
+      if (mountedRef.current) setRemoving((r) => (r === pid ? null : r))
     }
   }
 
@@ -175,7 +179,7 @@ export function SearchToolsSection() {
       console.error("Search provider test failed:", err)
       if (mountedRef.current) toast.error(t("tools.websearch.test.network"))
     } finally {
-      if (mountedRef.current) setTesting(null)
+      if (mountedRef.current) setTesting((x) => (x === pid ? null : x))
     }
   }
 
@@ -241,7 +245,9 @@ export function SearchToolsSection() {
           {KEY_PROVIDERS.map((p) => {
             const isConfigured = configured[p.id]
             const input = keyInputs[p.id]
-            const busy = saving === p.id || testing === p.id || removing === p.id
+            // Serialize mutating ops ACROSS cards too: a save on card A while a
+            // remove runs on card B would let auth.json writes race.
+            const busy = saving !== null || testing !== null || removing !== null
             return (
               <div key={p.id} className="rounded-md border border-[var(--color-border)] p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -311,8 +317,9 @@ export function SearchToolsSection() {
                         <button
                           type="button"
                           aria-label={t("tools.websearch.removeConfirm")}
+                          disabled={busy}
                           onClick={() => void handleRemoveKey(p.id)}
-                          className="flex size-7 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10"
+                          className="flex size-7 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10 disabled:opacity-40"
                         >
                           <Check className="size-4" />
                         </button>
@@ -330,8 +337,9 @@ export function SearchToolsSection() {
                         type="button"
                         aria-label={t("tools.websearch.remove")}
                         title={t("tools.websearch.remove")}
+                        disabled={busy}
                         onClick={() => setConfirmRemove(p.id)}
-                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] hover:bg-red-500/10 hover:text-red-500"
+                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40"
                       >
                         <Trash2 className="size-4" />
                       </button>

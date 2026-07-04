@@ -790,7 +790,7 @@ index 38ef4b11f..8cf064826 100644
            const plugins = yield* plugin.list()
            return {
 diff --git a/packages/opencode/src/provider/provider.ts b/packages/opencode/src/provider/provider.ts
-index afd69f9e7..e48dd3e01 100644
+index afd69f9e7..3f5ff2189 100644
 --- a/packages/opencode/src/provider/provider.ts
 +++ b/packages/opencode/src/provider/provider.ts
 @@ -982,7 +982,7 @@ export namespace Provider {
@@ -802,6 +802,39 @@ index afd69f9e7..e48dd3e01 100644
          Effect.gen(function* () {
            using _ = log.time("state")
            const cfg = yield* config.get()
+@@ -1087,7 +1087,11 @@ export namespace Provider {
+                       model.modalities?.output?.includes("video") ?? existingModel?.capabilities.output.video ?? false,
+                     pdf: model.modalities?.output?.includes("pdf") ?? existingModel?.capabilities.output.pdf ?? false,
+                   },
+-                  interleaved: model.interleaved ?? false,
++                  // Ultrawork (ADR-042): fall back to the models.dev value like every
++                  // other capability — a partial config entry (e.g. the per-model
++                  // enable_search toggle writing {id, options}) must not clobber
++                  // reasoning-content extraction (transform.ts reads interleaved.field).
++                  interleaved: model.interleaved ?? existingModel?.capabilities.interleaved ?? false,
+                 },
+                 cost: {
+                   input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
+@@ -1096,6 +1100,19 @@ export namespace Provider {
+                     read: model?.cost?.cache_read ?? existingModel?.cost?.cache.read ?? 0,
+                     write: model?.cost?.cache_write ?? existingModel?.cost?.cache.write ?? 0,
+                   },
++                  // Ultrawork (ADR-042): preserve tiered >200K pricing (mirrors
++                  // fromModelsDevModel) instead of silently dropping it on any
++                  // config-side model override.
++                  experimentalOver200K: model?.cost?.context_over_200k
++                    ? {
++                        cache: {
++                          read: model.cost.context_over_200k.cache_read ?? 0,
++                          write: model.cost.context_over_200k.cache_write ?? 0,
++                        },
++                        input: model.cost.context_over_200k.input,
++                        output: model.cost.context_over_200k.output,
++                      }
++                    : existingModel?.cost?.experimentalOver200K,
+                 },
+                 options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
+                 limit: {
 diff --git a/packages/opencode/src/server/routes/global.ts b/packages/opencode/src/server/routes/global.ts
 index 16b9e559f..41e8fb3cd 100644
 --- a/packages/opencode/src/server/routes/global.ts
@@ -1041,7 +1074,7 @@ index a2ac3d351..79fb24cc2 100644
            const s: State = { skills: {}, dirs: new Set() }
            yield* loadSkills(s, config, discovery, bus, fsys, ctx.directory, ctx.worktree)
 diff --git a/packages/opencode/src/tool/registry.ts b/packages/opencode/src/tool/registry.ts
-index 1bb270716..b94cd70a7 100644
+index 1bb270716..5470fa917 100644
 --- a/packages/opencode/src/tool/registry.ts
 +++ b/packages/opencode/src/tool/registry.ts
 @@ -20,7 +20,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@ope
@@ -1062,7 +1095,7 @@ index 1bb270716..b94cd70a7 100644
          Effect.fn("ToolRegistry.state")(function* (ctx) {
            const custom: Tool.Info[] = []
  
-@@ -161,8 +161,19 @@ export namespace ToolRegistry {
+@@ -161,8 +161,23 @@ export namespace ToolRegistry {
        ) {
          const s = yield* InstanceState.get(state)
          const allTools = yield* all(s.custom)
@@ -1071,11 +1104,15 @@ index 1bb270716..b94cd70a7 100644
 +        // for the hosted "opencode" provider. Config comes from the soft-refresh
 +        // cache and auth.json is read fresh, so settings-page changes apply on
 +        // the next step without a restart. codesearch keeps the original gate.
++        // enabled:false wins over every path (incl. the hosted/env-flag ones); a
++        // failed availability check (torn/corrupt auth.json read — this runs every
++        // step) degrades to "not registered" instead of dying and killing the turn.
 +        const cfg = yield* config.get()
 +        const websearchAllowed =
-+          model.providerID === ProviderID.opencode ||
-+          Flag.OPENCODE_ENABLE_EXA ||
-+          (yield* Effect.promise(() => isWebsearchConfigured(cfg)))
++          cfg.experimental?.websearch?.enabled !== false &&
++          (model.providerID === ProviderID.opencode ||
++            Flag.OPENCODE_ENABLE_EXA ||
++            (yield* Effect.promise(() => isWebsearchConfigured(cfg).catch(() => false))))
          const filtered = allTools.filter((tool) => {
 -          if (tool.id === "codesearch" || tool.id === "websearch") {
 +          if (tool.id === "websearch") return websearchAllowed
@@ -1084,15 +1121,16 @@ index 1bb270716..b94cd70a7 100644
            }
  
 diff --git a/packages/opencode/src/tool/websearch.ts b/packages/opencode/src/tool/websearch.ts
-index bf16428df..0faada073 100644
+index bf16428df..2d20c9a38 100644
 --- a/packages/opencode/src/tool/websearch.ts
 +++ b/packages/opencode/src/tool/websearch.ts
-@@ -2,39 +2,278 @@ import z from "zod"
+@@ -2,39 +2,291 @@ import z from "zod"
  import { Tool } from "./tool"
  import DESCRIPTION from "./websearch.txt"
  import { abortAfterAny } from "../util/abort"
 +import { Auth } from "../auth"
 +import { Config } from "../config/config"
++import { Flag } from "@/flag/flag"
  
 -const API_CONFIG = {
 -  BASE_URL: "https://mcp.exa.ai",
@@ -1155,17 +1193,21 @@ index bf16428df..0faada073 100644
 + * Ordered provider candidates given settings + which keys exist.
 + * enabled === false kills everything; an explicitly chosen provider is moved to
 + * the front when available (and silently skipped when its key is gone, so a
-+ * stale `provider` value never bricks search entirely).
++ * stale `provider` value never bricks search entirely). Explicitly choosing
++ * "exa" counts as the exa opt-in (a bare `provider:"exa"` must not be a silent
++ * no-op), as does `opts.implicitExa` (the OPENCODE_ENABLE_EXA env-flag path,
++ * which upstream served keyless via Exa).
 + */
 +export function resolveSearchProviders(
 +  settings: WebsearchSettings | undefined,
 +  hasKey: { tavily: boolean; "aliyun-iqs": boolean },
++  opts?: { implicitExa?: boolean },
 +): WebsearchProviderId[] {
 +  if (settings?.enabled === false) return []
 +  const available: WebsearchProviderId[] = []
 +  if (hasKey.tavily) available.push("tavily")
 +  if (hasKey["aliyun-iqs"]) available.push("aliyun-iqs")
-+  if (settings?.exa === true) available.push("exa")
++  if (settings?.exa === true || settings?.provider === "exa" || opts?.implicitExa === true) available.push("exa")
 +  const explicit = settings?.provider
 +  if (explicit && explicit !== "auto" && available.includes(explicit))
 +    return [explicit, ...available.filter((p) => p !== explicit)]
@@ -1182,7 +1224,7 @@ index bf16428df..0faada073 100644
 +export async function isWebsearchConfigured(cfg: Config.Info): Promise<boolean> {
 +  const settings = cfg.experimental?.websearch
 +  if (settings?.enabled === false) return false
-+  if (settings?.exa === true) return true
++  if (settings?.exa === true || settings?.provider === "exa") return true
 +  const keys = await searchAuthKeys()
 +  return keys.tavily || keys["aliyun-iqs"]
 +}
@@ -1247,6 +1289,12 @@ index bf16428df..0faada073 100644
 +  return lines.join("\n")
 +}
 +
++/** Provider error bodies go into model-visible errors — keep them short. */
++async function errorSnippet(response: Response): Promise<string> {
++  const text = await response.text().catch(() => "")
++  return text.length > 400 ? text.slice(0, 400) + "…" : text
++}
++
 +function clampResults(n: number | undefined, max: number): number {
 +  if (typeof n !== "number" || !Number.isFinite(n)) return DEFAULT_NUM_RESULTS
 +  return Math.min(Math.max(Math.trunc(n), 1), max)
@@ -1290,7 +1338,9 @@ index bf16428df..0faada073 100644
 +    },
 +    body: JSON.stringify({
 +      query: params.query,
-+      search_depth: params.depth ?? settings?.tavily?.searchDepth ?? "basic",
++      // Config-pinned depth wins over the model's request (same precedence as
++      // IQS engineType below) — a user's "basic" pin caps credit burn.
++      search_depth: settings?.tavily?.searchDepth ?? params.depth ?? "basic",
 +      max_results: clampResults(params.numResults, 20),
 +      include_answer: true,
 +      ...(params.timeRange ? { time_range: params.timeRange } : {}),
@@ -1298,24 +1348,17 @@ index bf16428df..0faada073 100644
 +    signal,
 +  })
 +  if (!response.ok) {
-+    const errorText = await response.text().catch(() => "")
++    const errorText = await errorSnippet(response)
 +    if (response.status === 401 || response.status === 403) {
 +      throw new Error(
 +        `Tavily rejected the API key (${response.status}). Ask the user to re-check the key in Settings → Tools. ${errorText}`.trim(),
 +      )
-     }
++    }
 +    throw new Error(`Tavily search error (${response.status}): ${errorText}`)
-   }
++  }
 +  return parseTavilyResponse(await response.json())
- }
- 
--interface McpSearchResponse {
--  jsonrpc: string
--  result: {
--    content: Array<{
--      type: string
--      text: string
--    }>
++}
++
 +async function searchIqs(
 +  params: SearchParams,
 +  settings: WebsearchSettings | undefined,
@@ -1343,17 +1386,24 @@ index bf16428df..0faada073 100644
 +    signal,
 +  })
 +  if (!response.ok) {
-+    const errorText = await response.text().catch(() => "")
++    const errorText = await errorSnippet(response)
 +    if (response.status === 401 || response.status === 403) {
 +      throw new Error(
 +        `Aliyun IQS rejected the API key (${response.status}). Note: IQS keys are separate from DashScope keys, and a freshly created IQS key takes ~5 minutes to activate（IQS key ≠ 百炼 DashScope key；新建 key 约 5 分钟后生效）. Ask the user to re-check it in Settings → Tools. ${errorText}`.trim(),
 +      )
-+    }
+     }
 +    throw new Error(`Aliyun IQS search error (${response.status}): ${errorText}`)
-+  }
+   }
 +  return parseIqsResponse(await response.json())
-+}
-+
+ }
+ 
+-interface McpSearchResponse {
+-  jsonrpc: string
+-  result: {
+-    content: Array<{
+-      type: string
+-      text: string
+-    }>
 +// Original upstream path: Exa's keyless public MCP endpoint (opt-in via config).
 +async function searchExa(params: SearchParams, signal: AbortSignal): Promise<{ raw: string }> {
 +  const response = await fetch(`${EXA_BASE_URL()}/mcp`, {
@@ -1379,7 +1429,7 @@ index bf16428df..0faada073 100644
 +    signal,
 +  })
 +  if (!response.ok) {
-+    const errorText = await response.text().catch(() => "")
++    const errorText = await errorSnippet(response)
 +    throw new Error(`Exa search error (${response.status}): ${errorText}`)
 +  }
 +  const responseText = await response.text()
@@ -1393,7 +1443,7 @@ index bf16428df..0faada073 100644
  }
  
  export const WebSearchTool = Tool.define("websearch", async () => {
-@@ -45,22 +284,14 @@ export const WebSearchTool = Tool.define("websearch", async () => {
+@@ -45,22 +297,14 @@ export const WebSearchTool = Tool.define("websearch", async () => {
      parameters: z.object({
        query: z.string().describe("Websearch query"),
        numResults: z.number().optional().describe("Number of search results to return (default: 8)"),
@@ -1422,7 +1472,7 @@ index bf16428df..0faada073 100644
      }),
      async execute(params, ctx) {
        await ctx.ask({
-@@ -70,80 +301,46 @@ export const WebSearchTool = Tool.define("websearch", async () => {
+@@ -70,80 +314,53 @@ export const WebSearchTool = Tool.define("websearch", async () => {
          metadata: {
            query: params.query,
            numResults: params.numResults,
@@ -1450,7 +1500,11 @@ index bf16428df..0faada073 100644
 -        },
 +      const cfg = await Config.get()
 +      const settings = cfg.experimental?.websearch
-+      const providers = resolveSearchProviders(settings, await searchAuthKeys())
++      // OPENCODE_ENABLE_EXA registered this tool pre-BYOK (keyless via Exa) —
++      // keep that path executable so gate and execute can't diverge.
++      const providers = resolveSearchProviders(settings, await searchAuthKeys(), {
++        implicitExa: Flag.OPENCODE_ENABLE_EXA,
++      })
 +      if (providers.length === 0) {
 +        throw new Error(
 +          "No web search provider is configured. Ask the user to add a Tavily or Aliyun IQS API key in Settings → Tools (设置 → 工具 → 联网搜索).",
@@ -1479,17 +1533,7 @@ index bf16428df..0faada073 100644
 -        if (!response.ok) {
 -          const errorText = await response.text()
 -          throw new Error(`Search error (${response.status}): ${errorText}`)
-+        let output: string
-+        let resultCount = 0
-+        if (provider === "exa") {
-+          const { raw } = await searchExa(params, signal)
-+          output = raw || `No search results found for "${params.query}" (provider: exa). Try a different query.`
-+        } else {
-+          const result: { items: SearchResultItem[]; answer?: string } =
-+            provider === "tavily" ? await searchTavily(params, settings, signal) : await searchIqs(params, settings, signal)
-+          resultCount = result.items.length
-+          output = formatSearchOutput(params.query, provider, result.items, result.answer)
-         }
+-        }
 -
 -        const responseText = await response.text()
 -
@@ -1506,7 +1550,17 @@ index bf16428df..0faada073 100644
 -              }
 -            }
 -          }
--        }
++        let output: string
++        let resultCount = 0
++        if (provider === "exa") {
++          const { raw } = await searchExa(params, signal)
++          output = raw || `No search results found for "${params.query}" (provider: exa). Try a different query.`
++        } else {
++          const result: { items: SearchResultItem[]; answer?: string } =
++            provider === "tavily" ? await searchTavily(params, settings, signal) : await searchIqs(params, settings, signal)
++          resultCount = result.items.length
++          output = formatSearchOutput(params.query, provider, result.items, result.answer)
+         }
 -
          return {
 -          output: "No search results found. Please try a different query.",
@@ -1520,6 +1574,9 @@ index bf16428df..0faada073 100644
 -
          if (error instanceof Error && error.name === "AbortError") {
 -          throw new Error("Search request timed out")
++          // A user/system abort also surfaces as AbortError via AbortSignal.any —
++          // don't misreport it as a provider timeout.
++          if (ctx.abort.aborted) throw error
 +          throw new Error(`Search request timed out (provider: ${provider})`)
          }
 -

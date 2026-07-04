@@ -32,8 +32,11 @@ const isCustomProvider = (p: Provider) => p.source === "config" && !(p.env && p.
  * shows the toggle (never strand an "on" you can't turn off).
  */
 const isDashScopeLike = (p: Provider) => {
+  // Deliberately NO bare "qwen" match: a self-hosted "Qwen local (vLLM)" is not
+  // DashScope and would 400 on the unknown enable_search body key. A DashScope
+  // proxy under another name still gets the flag via the creation-form checkbox.
   const hay = `${p.id} ${p.name} ${String(p.options?.["baseURL"] ?? "")}`.toLowerCase()
-  return /dashscope|aliyun|alibaba|bailian|qwen/.test(hay)
+  return /dashscope|aliyun|alibaba|bailian/.test(hay)
 }
 
 interface CustomModelRow {
@@ -248,7 +251,8 @@ export function ModelsSection() {
       console.error("Failed to toggle builtin search:", err)
       if (mountedRef.current) toast.error(t("model.builtinSearch.err"))
     } finally {
-      if (mountedRef.current) setTogglingSearch(null)
+      // Functional clear — don't wipe another row's in-flight spinner.
+      if (mountedRef.current) setTogglingSearch((k) => (k === key ? null : k))
     }
   }
 
