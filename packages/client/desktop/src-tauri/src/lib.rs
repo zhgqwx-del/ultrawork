@@ -2732,10 +2732,15 @@ struct CliConnectorStatus {
 ///   `identities.user.available` is the authorization verdict.
 fn classify_lark_auth_status(stdout: &str) -> (CliConnectorState, Option<String>) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+        // Error verdicts must always carry a non-empty detail: the UI banner
+        // renders off it and "" is falsy in JS (real-device lesson — an empty
+        // detail shows a red badge with no explanation to act on).
         let tail: String = stdout.trim().chars().take(200).collect();
-        return (CliConnectorState::Error, Some(tail));
+        let detail = if tail.is_empty() { "empty output from lark-cli".to_string() } else { tail };
+        return (CliConnectorState::Error, Some(detail));
     };
-    // Typed error document.
+    // Typed error document (`"error": null` from a Go struct counts too —
+    // it still means "not a status document").
     if v.get("error").is_some() {
         let etype = v.pointer("/error/type").and_then(|s| s.as_str()).unwrap_or("");
         let esub = v.pointer("/error/subtype").and_then(|s| s.as_str()).unwrap_or("");
@@ -2748,8 +2753,10 @@ fn classify_lark_auth_status(stdout: &str) -> (CliConnectorState, Option<String>
         let msg = v
             .pointer("/error/message")
             .and_then(|s| s.as_str())
-            .map(str::to_string);
-        return (CliConnectorState::Error, msg);
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| "lark-cli reported an unrecognized error".to_string());
+        return (CliConnectorState::Error, Some(msg));
     }
     // Status document: configured; the user identity decides authorization.
     if let Some(user) = v.pointer("/identities/user") {
@@ -3234,35 +3241,41 @@ fn complete_office_cli_auth(
         timeout,
     )
     .ok_or("authorization polling timed out")?;
-    if !ok {
-        // Error JSON arrives on stderr (see lark_json_output) — pick the
-        // populated stream first.
-        let raw = if stdout.trim().is_empty() { &stderr } else { &stdout };
-        let v = serde_json::from_str::<serde_json::Value>(raw.trim()).ok();
-        // Real-device finding 2026-07-06: when some requested scopes aren't
-        // enabled on the app (we ask --domain all; a fresh hosted app only has
-        // the basics), the CLI COMPLETES the authorization, reports
-        // event:"authorization_complete" with granted/missing lists, and still
-        // exits nonzero. That's a success for the connector — the probe below
-        // is the truth; missing domains are granted incrementally at runtime
-        // by the skill (lark-shared guidance).
-        let auth_complete = v
-            .as_ref()
-            .and_then(|v| v.get("event"))
-            .and_then(|s| s.as_str())
-            == Some("authorization_complete");
-        if !auth_complete {
-            let msg = v
-                .and_then(|v| {
-                    v.pointer("/error/message")
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string)
-                })
-                .unwrap_or_else(|| raw.trim().chars().take(300).collect());
-            return Err(msg);
-        }
-    }
+    classify_complete_auth(ok, &stdout, &stderr)?;
     Ok(probe_lark_status())
+}
+
+/// Pure verdict for `auth login --device-code` output: Ok when the flow
+/// completed, Err(message) otherwise. Real-device finding 2026-07-06: when
+/// some requested scopes aren't enabled on the app (we ask --domain all; a
+/// fresh hosted app only has the basics), the CLI COMPLETES the authorization,
+/// reports event:"authorization_complete" with granted/missing lists on
+/// stderr, and still exits nonzero — that's a success for the connector; the
+/// status probe is the truth, and missing domains are granted incrementally at
+/// runtime by the skill (lark-shared guidance).
+fn classify_complete_auth(exit_ok: bool, stdout: &str, stderr: &str) -> Result<(), String> {
+    if exit_ok {
+        return Ok(());
+    }
+    // Error JSON arrives on stderr (see lark_json_output) — pick the
+    // populated stream first.
+    let raw = if stdout.trim().is_empty() { stderr } else { stdout };
+    let v = serde_json::from_str::<serde_json::Value>(raw.trim()).ok();
+    let auth_complete = v
+        .as_ref()
+        .and_then(|v| v.get("event"))
+        .and_then(|s| s.as_str())
+        == Some("authorization_complete");
+    if auth_complete {
+        return Ok(());
+    }
+    Err(v
+        .and_then(|v| {
+            v.pointer("/error/message")
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| raw.trim().chars().take(300).collect()))
 }
 
 /// Resolve the canonical (user-local) path of a sidecar. After
@@ -4734,6 +4747,18 @@ mod provider_test_tests {
         let (state, detail) = classify_lark_auth_status(r#"{"something":"else"}"#);
         assert_eq!(state, CliConnectorState::Error);
         assert!(detail.is_some());
+
+        // Every Error verdict must carry a NON-EMPTY detail ("" is falsy in
+        // JS and hides the banner): null error object, message-less error,
+        // and fully empty output all get a generic explanation.
+        for raw in [r#"{"ok":false,"error":null}"#, r#"{"ok":false,"error":{"type":"weird"}}"#, ""] {
+            let (state, detail) = classify_lark_auth_status(raw);
+            assert_eq!(state, CliConnectorState::Error, "raw={raw}");
+            assert!(
+                detail.as_deref().is_some_and(|d| !d.trim().is_empty()),
+                "empty detail for raw={raw}"
+            );
+        }
     }
 
     #[test]
@@ -4754,6 +4779,34 @@ mod provider_test_tests {
             r#"{"ok":false}"#
         );
         assert_eq!(lark_json_output(&mk("", "")), "");
+    }
+
+    #[test]
+    fn complete_auth_classification() {
+        // exit 0 → success regardless of output.
+        assert!(classify_complete_auth(true, "", "").is_ok());
+        // Real partial-grant payload (2026-07-06 live run): nonzero exit +
+        // authorization_complete on stderr with granted/missing lists — this
+        // IS success (the status probe decides the final state).
+        assert!(classify_complete_auth(
+            false,
+            "",
+            r#"{"already_granted":[],"event":"authorization_complete","granted":["im:message:recall","contact:user.basic_profile:readonly","auth:user.id:read","offline_access"],"missing":["approval:approval:read","attendance:attendance:read"]}"#,
+        )
+        .is_ok());
+        // Same event on stdout also counts.
+        assert!(classify_complete_auth(false, r#"{"event":"authorization_complete","granted":[]}"#, "").is_ok());
+        // Typed error surfaces its message.
+        let err = classify_complete_auth(
+            false,
+            "",
+            r#"{"ok":false,"error":{"type":"auth","subtype":"expired","message":"device code expired"}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(err, "device code expired");
+        // Garbage output → raw tail, capped.
+        let err = classify_complete_auth(false, "boom not json", "").unwrap_err();
+        assert!(err.contains("boom"));
     }
 
     #[test]

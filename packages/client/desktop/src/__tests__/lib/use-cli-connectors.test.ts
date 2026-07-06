@@ -173,6 +173,32 @@ describe("useCliConnectors", () => {
     expect(result.current.pendingUrls["lark"]).toBeNull()
   })
 
+  it("refresh(id) clears only that connector's error — a sibling's banner survives", async () => {
+    mockInvoke.mockResolvedValueOnce([NOT_INSTALLED])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    // Seed errors on two connectors via failed installs (hook is id-generic).
+    mockInvoke.mockRejectedValueOnce(new Error("lark boom"))
+    await act(async () => {
+      await result.current.install("lark")
+    })
+    mockInvoke.mockRejectedValueOnce(new Error("dingtalk boom"))
+    await act(async () => {
+      await result.current.install("dingtalk")
+    })
+    expect(result.current.errors["lark"]).toContain("lark boom")
+    expect(result.current.errors["dingtalk"]).toContain("dingtalk boom")
+
+    // Per-card refresh (the Retry button path) touches only its own error.
+    mockInvoke.mockResolvedValue([NOT_INSTALLED])
+    await act(async () => {
+      await result.current.refresh("lark")
+    })
+    expect(result.current.errors["lark"]).toBeNull()
+    expect(result.current.errors["dingtalk"]).toContain("dingtalk boom")
+  })
+
   it("refresh clears stale flow errors once the user re-checks", async () => {
     mockInvoke.mockResolvedValueOnce([NOT_INSTALLED])
     const { result } = renderHook(() => useCliConnectors())
@@ -225,6 +251,28 @@ describe("useCliConnectors", () => {
     expect(result.current.statuses["lark"]).toEqual(CONNECTED)
     expect(result.current.phases["lark"]).toBe("idle")
     expect(mockToast.success).toHaveBeenCalledWith("cliConnector.toastConnected")
+  })
+
+  it("authorize that completes without a user identity surfaces an explicit error", async () => {
+    mockInvoke.mockResolvedValueOnce([NOT_AUTHORIZED])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_auth") return { device_code: "dc1", verification_uri: "https://v" }
+      // Rust accepts authorization_complete then probes: user identity absent.
+      if (cmd === "complete_office_cli_auth") return { ...NOT_AUTHORIZED, detail: null }
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    await act(async () => {
+      await result.current.authorize("lark")
+    })
+
+    // No silent snap-back: a generic explanation lands in errors.
+    expect(result.current.errors["lark"]).toBe("cliConnector.authIncomplete")
+    expect(mockToast.success).not.toHaveBeenCalled()
+    expect(result.current.phases["lark"]).toBe("idle")
   })
 
   it("authorize failure (expired/denied) lands in errors, not a fake success", async () => {

@@ -18,10 +18,12 @@ LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1 lark-cli a
 
 | 结果 | 含义 | 处理 |
 |------|------|------|
-| `ok: true` | 已连接 | 直接干活 |
-| `error.subtype: "not_configured"` | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置应用」完成（推荐，UI 有完整引导）；或按 lark-shared 的说明后台代跑 `config init --new` 并把 URL 转给用户 |
-| `error.type: "auth"` | 未授权/登录过期 | 同上，设置页「授权」入口；或代跑 `auth login --no-wait --json` 并转发 verification URL |
+| 状态文档（exit 0，无 `ok` 字段）且 `identities.user.available: true` | 已连接 | 直接干活 |
+| 状态文档且 `identities.user.available: false`（`status:"missing"`） | 已配置但未授权 | 引导用户去「设置 → 连接器 → 办公 CLI」点「授权」；或代跑 `auth login --no-wait --json` 并转发 verification_url |
+| `error.subtype: "not_configured"`（错误 JSON 在 **stderr**，非零退出） | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置应用」完成（推荐，UI 有完整引导）；或按 lark-shared 的说明后台代跑 `config init --new` 并把 URL 转给用户 |
 | 命令不存在 | CLI 未安装 | 引导用户去「设置 → 连接器 → 办公 CLI」一键安装 |
+
+**scope 不足 ≠ 未授权（重要）**：新配置的应用默认只授予基础 scope（用户身份/基础资料等），日历、审批、考勤等业务域**首次用到时才补授**。干活途中遇到某个 API 报缺 scope／权限不足：**不要**引导用户回设置页重新授权（那只会重复授予同样的基础 scope）——按 lark-shared 的说明**增量授权**：`lark-cli auth login --domain <所需域> --no-wait --json`，把 verification_url 转给用户完成即可。
 
 ## 第 1 步：按需加载官方文档（必做）
 

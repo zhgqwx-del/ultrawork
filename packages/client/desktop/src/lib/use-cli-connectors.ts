@@ -200,8 +200,11 @@ export function useCliConnectors(): CliConnectorsApi {
         setPendingUrls((m) => ({ ...m, [id]: null }))
         if (status.state === "connected") {
           toast.success(t("cliConnector.toastConnected"))
-        } else if (status.detail) {
-          setError(id, status.detail)
+        } else {
+          // The device flow "completed" but the probe doesn't see a usable
+          // user identity (denied / user-login scope missing). A silent snap
+          // back to the Authorize button reads as a glitch — say something.
+          setError(id, status.detail || t("cliConnector.authIncomplete"))
         }
       } catch (err) {
         if (generation.current !== gen) return
