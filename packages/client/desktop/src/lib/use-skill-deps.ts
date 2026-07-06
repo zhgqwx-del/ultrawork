@@ -28,6 +28,10 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // svg_to_pptx.py). Neither is PATH-probeable; both come from Rust probe_python_ok.
   // Other pip deps are per-feature and error gracefully in-skill (error_helper.py).
   "ppt-master": ["python3.10+", "python-pptx"],
+  // Official Feishu/Lark CLI (installed via 设置 → 连接器 → 办公 CLI, or any
+  // user install on PATH). The badge only reflects binary presence; auth state
+  // lives in the connector card (use-cli-connectors).
+  "feishu-assistant": ["lark-cli"],
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */

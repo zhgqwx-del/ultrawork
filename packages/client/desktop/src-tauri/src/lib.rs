@@ -1092,7 +1092,7 @@ fn rich_path_base() -> String {
     // (login_shell_path() is None), so add the standard installer / nvm-windows
     // symlink / Volta locations explicitly so `where node` finds a system Node even
     // when it isn't on the GUI-inherited PATH.
-    let extras: Vec<String> = if cfg!(target_os = "windows") {
+    let mut extras: Vec<String> = if cfg!(target_os = "windows") {
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
         let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -1114,6 +1114,12 @@ fn rich_path_base() -> String {
             "/usr/local/bin".to_string(),
         ]
     };
+    // App-managed office CLI installs (~/.ultrawork/office-cli/bin). Added
+    // unconditionally: a nonexistent dir on PATH is harmless, and because
+    // rich_path() is memoized (and sidecars inherit it at spawn), listing the
+    // dir up-front means a mid-session install becomes visible to skill probes
+    // and the opencode sidecar's bash without an app restart.
+    extras.push(office_cli_bin_dir().to_string_lossy().to_string());
     let version_dirs = [
         format!("{home}/.nvm/versions/node"),
         format!("{home}/.local/share/fnm/node-versions"),
@@ -2433,6 +2439,7 @@ struct DepStatus {
 
 const SKILL_DEP_BINS: &[&str] = &[
     "python3", "node", "pandoc", "soffice", "pdftoppm", "git", "markdown-exporter",
+    "lark-cli",
 ];
 
 /// Probe a PATH-list (platform separator) for each bin (pure; testable).
@@ -2485,6 +2492,14 @@ fn skill_dep_path() -> String {
 /// probes must never hang the caller (a stuck interpreter would otherwise pin
 /// the skills page in "checking" forever).
 fn run_probe(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
+    let out = run_probe_capture(cmd, timeout)?;
+    if out.status.success() { Some(out) } else { None }
+}
+
+/// Like [`run_probe`] but returns the output regardless of exit status. Needed
+/// for CLIs that report state via typed exit codes with structured stdout
+/// (lark-cli exits 3 for "not configured" while printing a JSON error object).
+fn run_probe_capture(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -2512,8 +2527,7 @@ fn run_probe(cmd: &mut Command, timeout: Duration) -> Option<std::process::Outpu
         }
     }
     // Probe stdout is a few bytes — no pipe-buffer deadlock risk waiting post-exit.
-    let out = child.wait_with_output().ok()?;
-    if out.status.success() { Some(out) } else { None }
+    child.wait_with_output().ok()
 }
 
 /// macOS ships /usr/bin/python3 as an Xcode CLT shim; EXECUTING it without CLT
@@ -2596,6 +2610,570 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
     deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: probed.clone() });
     deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: probed });
     deps
+}
+
+// ── Office CLI connectors (lark-cli; discussions/027) ──────────────
+//
+// A "CLI connector" is an official, agent-native vendor CLI (Feishu/Lark
+// today; DingTalk / WeCom in later phases) that the Settings page installs,
+// health-checks and authorizes. The CLI keeps its own credentials (OS
+// keychain) — the app never touches tokens. Usage happens through the
+// agent's bash tool (a built-in skill routes to `lark-cli skills read …`),
+// NOT through MCP, so nothing here writes OpenCode `mcp` config.
+
+const LARK_CLI_VERSION: &str = "1.0.65";
+
+/// sha256 digests of the official release archives, copied from the npm
+/// package's checksums.txt for the pinned version (the darwin-arm64 entry was
+/// additionally verified against a live GitHub download on 2026-07-06).
+/// Update together with LARK_CLI_VERSION.
+const LARK_CLI_CHECKSUMS: &[(&str, &str)] = &[
+    ("lark-cli-1.0.65-darwin-amd64.tar.gz", "7d8a4539ade2b1bda46936ceae2a73e42a414e444a75b9e2e0f39294b8e61b07"),
+    ("lark-cli-1.0.65-darwin-arm64.tar.gz", "9135e0412cf6bcb0ce6e6de3308ba878f6f16a887af46c806bdaa17d7d86e768"),
+    ("lark-cli-1.0.65-linux-amd64.tar.gz", "2d8fbd33e79d06efcd7243971d3a4e1a049ad91d04f0ca97214c6730e10c24c8"),
+    ("lark-cli-1.0.65-linux-arm64.tar.gz", "f3f11a2e163b2ea9698ae4c5f923a4fbca28274f44cd0a4689bf7588f229242e"),
+    ("lark-cli-1.0.65-windows-amd64.zip", "6175f8a45fa0039467e785397745665f46a02f6260d36c6cf46f67b597f157d8"),
+    ("lark-cli-1.0.65-windows-arm64.zip", "249bb01c366d64080d91e39cecb79dcd0a47a0fd46b9eab0e16fff17d2068ed2"),
+];
+
+fn office_cli_dir() -> PathBuf {
+    ultrawork_dir().join("office-cli")
+}
+
+fn office_cli_bin_dir() -> PathBuf {
+    office_cli_dir().join("bin")
+}
+
+/// PATH for locating office CLIs: the app-managed dir first, then everything
+/// the skill probes see (rich login-shell PATH + system dirs) so a
+/// user-installed lark-cli (brew / npm -g) is honored too.
+fn office_cli_probe_path() -> String {
+    merge_paths(&office_cli_bin_dir().to_string_lossy(), &skill_dep_path())
+}
+
+fn find_lark_cli() -> Option<String> {
+    probe_bins(&office_cli_probe_path(), &["lark-cli"])
+        .into_iter()
+        .find(|d| d.available)
+        .and_then(|d| d.path)
+}
+
+/// Base lark-cli invocation: notifier `_notice` noise suppressed so JSON
+/// output stays machine-readable (documented in the CLI's lark-shared skill).
+fn lark_cmd(bin: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
+        .env("LARKSUITE_CLI_NO_UPDATE_NOTIFIER", "1")
+        .env("LARKSUITE_CLI_NO_SKILLS_NOTIFIER", "1");
+    cmd
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CliConnectorState {
+    NotInstalled,
+    NotConfigured,
+    NotAuthorized,
+    Connected,
+    Error,
+}
+
+#[derive(Debug, Serialize)]
+struct CliConnectorStatus {
+    id: String,
+    state: CliConnectorState,
+    path: Option<String>,
+    version: Option<String>,
+    /// User-facing detail: identity name when connected, error hint otherwise.
+    detail: Option<String>,
+}
+
+/// Pure classifier for `lark-cli auth status --json` output (any exit code —
+/// the CLI reports state as a typed JSON error + nonzero exit).
+fn classify_lark_auth_status(stdout: &str) -> (CliConnectorState, Option<String>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+        let tail: String = stdout.trim().chars().take(200).collect();
+        return (CliConnectorState::Error, Some(tail));
+    };
+    if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
+        // Success shape per the CLI's lark-shared skill doc; exact fields are
+        // re-verified at real-device acceptance. An explicitly logged-out user
+        // identity on an ok response still means "authorize me".
+        let user_status = v
+            .pointer("/identities/user/status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        if matches!(user_status, "not_logged_in" | "logged_out" | "none") {
+            return (CliConnectorState::NotAuthorized, None);
+        }
+        let name = v
+            .pointer("/identities/user/userName")
+            .and_then(|s| s.as_str())
+            .map(str::to_string);
+        return (CliConnectorState::Connected, name);
+    }
+    let etype = v.pointer("/error/type").and_then(|s| s.as_str()).unwrap_or("");
+    let esub = v.pointer("/error/subtype").and_then(|s| s.as_str()).unwrap_or("");
+    if esub == "not_configured" {
+        return (CliConnectorState::NotConfigured, None);
+    }
+    if etype == "auth" {
+        return (CliConnectorState::NotAuthorized, None);
+    }
+    let msg = v
+        .pointer("/error/message")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
+    (CliConnectorState::Error, msg)
+}
+
+/// "lark-cli version 1.0.65" → "1.0.65".
+fn parse_lark_cli_version(s: &str) -> Option<String> {
+    s.split_whitespace()
+        .last()
+        .filter(|t| t.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(str::to_string)
+}
+
+fn probe_lark_status() -> CliConnectorStatus {
+    let Some(bin) = find_lark_cli() else {
+        return CliConnectorStatus {
+            id: "lark".into(),
+            state: CliConnectorState::NotInstalled,
+            path: None,
+            version: None,
+            detail: None,
+        };
+    };
+    let version = run_probe(&mut lark_cmd(&bin, &["--version"]), Duration::from_secs(5))
+        .and_then(|o| parse_lark_cli_version(&String::from_utf8_lossy(&o.stdout)));
+    let (state, detail) = match run_probe_capture(
+        &mut lark_cmd(&bin, &["auth", "status", "--json"]),
+        Duration::from_secs(5),
+    ) {
+        Some(out) => classify_lark_auth_status(&String::from_utf8_lossy(&out.stdout)),
+        None => (
+            CliConnectorState::Error,
+            Some("lark-cli auth status timed out".into()),
+        ),
+    };
+    CliConnectorStatus { id: "lark".into(), state, path: Some(bin), version, detail }
+}
+
+/// Probe every known office CLI connector (Phase 1: Feishu/Lark only).
+/// `async`: spawns real probe processes off the UI thread.
+#[tauri::command(async)]
+fn check_cli_connectors() -> Vec<CliConnectorStatus> {
+    reap_finished_config_init();
+    vec![probe_lark_status()]
+}
+
+fn lark_cli_archive_name() -> Result<String, String> {
+    // lark-cli uses Go release naming (darwin/linux/windows + amd64/arm64) —
+    // distinct from Node's darwin/win + x64 naming in get_platform_arch().
+    let platform = if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        return Err("Unsupported platform for lark-cli".to_string());
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "amd64"
+    } else {
+        return Err("Unsupported architecture for lark-cli".to_string());
+    };
+    let ext = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
+    Ok(format!("lark-cli-{LARK_CLI_VERSION}-{platform}-{arch}.{ext}"))
+}
+
+/// Download chain mirroring the official npm installer: GitHub Releases
+/// first, the public npmmirror binary proxy as the mainland-China fallback.
+fn lark_cli_download_urls(archive: &str) -> Vec<String> {
+    vec![
+        format!("https://github.com/larksuite/cli/releases/download/v{LARK_CLI_VERSION}/{archive}"),
+        format!("https://registry.npmmirror.com/-/binary/lark-cli/v{LARK_CLI_VERSION}/{archive}"),
+    ]
+}
+
+fn expected_lark_checksum(archive: &str) -> Option<&'static str> {
+    LARK_CLI_CHECKSUMS
+        .iter()
+        .find(|(name, _)| *name == archive)
+        .map(|(_, hash)| *hash)
+}
+
+/// Streamed sha256 of a file as lowercase hex (archives are ~12MB).
+fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    use sha2::Digest;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("open {}: {}", path.display(), e))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| format!("read {}: {}", path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Install (or repair) an office CLI into ~/.ultrawork/office-cli/bin.
+/// Pinned version + pinned sha256; GitHub → npmmirror download chain.
+#[tauri::command(async)]
+fn install_office_cli(id: String) -> Result<CliConnectorStatus, String> {
+    if id != "lark" {
+        return Err(format!("unknown CLI connector: {id}"));
+    }
+    let archive = lark_cli_archive_name()?;
+    let expected = expected_lark_checksum(&archive)
+        .ok_or_else(|| format!("no pinned checksum for {archive}"))?;
+
+    let bin_dir = office_cli_bin_dir();
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("create {}: {}", bin_dir.display(), e))?;
+    let tmp = office_cli_dir().join(".install-tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
+    let archive_path = tmp.join(&archive);
+
+    let mut last_err = String::from("no download source succeeded");
+    let mut downloaded = false;
+    for url in lark_cli_download_urls(&archive) {
+        let mut cmd = Command::new("curl");
+        cmd.args([
+            "-fSL",
+            "--connect-timeout", "10",
+            "--max-time", "180",
+            "-o", &archive_path.to_string_lossy(),
+            &url,
+        ]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                downloaded = true;
+                break;
+            }
+            Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            Err(e) => last_err = format!("failed to run curl: {e}"),
+        }
+    }
+    if !downloaded {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!("Download failed: {last_err}"));
+    }
+
+    let actual = sha256_file(&archive_path)?;
+    if !actual.eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!(
+            "[security] checksum mismatch for {archive}: expected {expected}, got {actual}"
+        ));
+    }
+
+    // Extract in the temp dir. bsdtar (Windows 10+ tar.exe) auto-detects .zip.
+    let tar_flag = if cfg!(target_os = "windows") { "-xf" } else { "-xzf" };
+    let out = Command::new("tar")
+        .args([
+            tar_flag,
+            &archive_path.to_string_lossy(),
+            "-C",
+            &tmp.to_string_lossy(),
+        ])
+        .output()
+        .map_err(|e| format!("failed to run tar: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err("Failed to extract lark-cli archive".to_string());
+    }
+
+    let bin_name = if cfg!(target_os = "windows") { "lark-cli.exe" } else { "lark-cli" };
+    let src = tmp.join(bin_name);
+    let dest = bin_dir.join(bin_name);
+    std::fs::copy(&src, &dest).map_err(|e| format!("failed to install binary: {e}"))?;
+    set_executable(&dest)?;
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    Ok(probe_lark_status())
+}
+
+/// The pending `config init` child, if any. The process stays alive until the
+/// user completes the hosted setup flow in the browser (or it expires), so it
+/// outlives the invoke that spawned it.
+static LARK_INIT_CHILD: OnceLock<Mutex<Option<std::process::Child>>> = OnceLock::new();
+
+fn lark_init_slot() -> &'static Mutex<Option<std::process::Child>> {
+    LARK_INIT_CHILD.get_or_init(|| Mutex::new(None))
+}
+
+/// Reap a completed config-init child (called from the status probe, which the
+/// UI polls while waiting for the hosted flow — a natural reap point).
+fn reap_finished_config_init() {
+    if let Ok(mut slot) = lark_init_slot().lock() {
+        let exited = slot
+            .as_mut()
+            .map(|c| matches!(c.try_wait(), Ok(Some(_)) | Err(_)))
+            .unwrap_or(false);
+        if exited {
+            *slot = None; // try_wait already reaped it
+        }
+    }
+}
+
+/// First `https://` token in a `config init` output line that looks like the
+/// hosted setup URL (it carries the `user_code` pairing parameter). Pure.
+fn find_lark_config_url(line: &str) -> Option<String> {
+    let start = line.find("https://")?;
+    let token: String = line[start..]
+        .chars()
+        .take_while(|c| !c.is_whitespace())
+        .collect();
+    if token.contains("user_code=") { Some(token) } else { None }
+}
+
+fn spawn_line_reader(
+    stream: impl std::io::Read + Send + 'static,
+    tx: std::sync::mpsc::Sender<String>,
+) {
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stream);
+        // Keep draining to EOF even after the receiver is gone — a blocked
+        // pipe would stall the long-lived child mid-flow.
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+}
+
+/// Kick off `lark-cli config init --new` and return the hosted setup URL from
+/// its output. The child keeps running (it completes the local config write
+/// only when the user finishes in the browser); the UI polls
+/// `check_cli_connectors` to observe completion.
+#[tauri::command(async)]
+fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, String> {
+    if id != "lark" {
+        return Err(format!("unknown CLI connector: {id}"));
+    }
+    let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
+
+    // Replace any previous pending init — two concurrent hosted-page flows
+    // would race on the same config file.
+    if let Ok(mut slot) = lark_init_slot().lock() {
+        if let Some(mut old) = slot.take() {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
+    }
+
+    let mut cmd = lark_cmd(&bin, &["config", "init", "--new"]);
+    if let Some(l) = lang.as_deref().filter(|l| !l.is_empty()) {
+        cmd.args(["--lang", l]);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to start lark-cli: {e}"))?;
+
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    if let Some(out) = child.stdout.take() {
+        spawn_line_reader(out, tx.clone());
+    }
+    if let Some(err) = child.stderr.take() {
+        spawn_line_reader(err, tx.clone());
+    }
+    drop(tx);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    let mut tail: Vec<String> = Vec::new();
+    loop {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok(line) => {
+                if let Some(url) = find_lark_config_url(&line) {
+                    if let Ok(mut slot) = lark_init_slot().lock() {
+                        *slot = Some(child);
+                    }
+                    return Ok(url);
+                }
+                // Keep a short non-QR tail for the error message.
+                if !line.trim().is_empty() && !line.contains('█') {
+                    tail.push(line.trim().to_string());
+                    if tail.len() > 5 {
+                        tail.remove(0);
+                    }
+                }
+            }
+            // Disconnected = both streams hit EOF (process exited early).
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(format!(
+        "config init did not produce a setup URL: {}",
+        tail.join(" / ")
+    ))
+}
+
+#[derive(Debug, Serialize)]
+struct CliDeviceLogin {
+    device_code: String,
+    user_code: Option<String>,
+    verification_uri: Option<String>,
+    verification_uri_complete: Option<String>,
+    expires_in: Option<u64>,
+    interval: Option<u64>,
+}
+
+/// Pure parser for `lark-cli auth login --no-wait --json`. Accepts the device
+/// flow fields at the top level or under a `data` key (shape re-verified at
+/// real-device acceptance).
+fn parse_lark_device_login(stdout: &str) -> Result<CliDeviceLogin, String> {
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|_| format!("unparseable auth login output: {}", stdout.trim().chars().take(200).collect::<String>()))?;
+    if v.get("ok").and_then(|b| b.as_bool()) == Some(false) {
+        let msg = v
+            .pointer("/error/message")
+            .and_then(|s| s.as_str())
+            .unwrap_or("auth login failed");
+        return Err(msg.to_string());
+    }
+    let s = |k: &str| -> Option<String> {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .or_else(|| v.pointer(&format!("/data/{k}")).and_then(|x| x.as_str()))
+            .map(str::to_string)
+    };
+    let n = |k: &str| -> Option<u64> {
+        v.get(k)
+            .and_then(|x| x.as_u64())
+            .or_else(|| v.pointer(&format!("/data/{k}")).and_then(|x| x.as_u64()))
+    };
+    Ok(CliDeviceLogin {
+        device_code: s("device_code").ok_or("missing device_code in auth login output")?,
+        user_code: s("user_code"),
+        verification_uri: s("verification_uri"),
+        verification_uri_complete: s("verification_uri_complete"),
+        expires_in: n("expires_in"),
+        interval: n("interval"),
+    })
+}
+
+/// Initiate the OAuth device flow (`auth login --no-wait --json`). Returns the
+/// verification URL + device code; the UI opens the URL, then calls
+/// `complete_office_cli_auth` to poll for the token exchange.
+#[tauri::command(async)]
+fn start_office_cli_auth(id: String) -> Result<CliDeviceLogin, String> {
+    if id != "lark" {
+        return Err(format!("unknown CLI connector: {id}"));
+    }
+    let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
+    let out = run_probe_capture(
+        &mut lark_cmd(&bin, &["auth", "login", "--domain", "all", "--no-wait", "--json"]),
+        Duration::from_secs(30),
+    )
+    .ok_or("lark-cli auth login timed out")?;
+    parse_lark_device_login(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Run to completion with a deadline, draining stdout/stderr on reader threads
+/// so a chatty long-running child can never stall on a full pipe. Returns
+/// (exit_ok, stdout, stderr); None on spawn failure or deadline kill.
+fn run_streaming(cmd: &mut Command, timeout: Duration) -> Option<(bool, String, String)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let read_all = |stream: Option<Box<dyn std::io::Read + Send>>| {
+        stream.map(|mut s| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = s.read_to_string(&mut buf);
+                buf
+            })
+        })
+    };
+    let out_h = read_all(child.stdout.take().map(|s| Box::new(s) as _));
+    let err_h = read_all(child.stderr.take().map(|s| Box::new(s) as _));
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return None,
+        }
+    };
+    let stdout = out_h.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stderr = err_h.and_then(|h| h.join().ok()).unwrap_or_default();
+    Some((status.success(), stdout, stderr))
+}
+
+/// Complete the device flow: blocks while the CLI polls the token endpoint
+/// (`auth login --device-code …`), bounded by the device code's own expiry.
+#[tauri::command(async)]
+fn complete_office_cli_auth(
+    id: String,
+    device_code: String,
+    expires_in: Option<u64>,
+) -> Result<CliConnectorStatus, String> {
+    if id != "lark" {
+        return Err(format!("unknown CLI connector: {id}"));
+    }
+    let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
+    let timeout = Duration::from_secs(expires_in.unwrap_or(300).min(900) + 30);
+    let (ok, stdout, stderr) = run_streaming(
+        &mut lark_cmd(&bin, &["auth", "login", "--device-code", &device_code, "--json"]),
+        timeout,
+    )
+    .ok_or("authorization polling timed out")?;
+    if !ok {
+        let msg = serde_json::from_str::<serde_json::Value>(stdout.trim())
+            .ok()
+            .and_then(|v| {
+                v.pointer("/error/message")
+                    .and_then(|s| s.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| {
+                let raw = if stdout.trim().is_empty() { &stderr } else { &stdout };
+                raw.trim().chars().take(300).collect()
+            });
+        return Err(msg);
+    }
+    Ok(probe_lark_status())
 }
 
 /// Resolve the canonical (user-local) path of a sidecar. After
@@ -2841,6 +3419,11 @@ pub fn run() {
             get_sidecar_path,
             get_sidecar_credentials,
             check_skill_dependencies,
+            check_cli_connectors,
+            install_office_cli,
+            start_office_cli_config,
+            start_office_cli_auth,
+            complete_office_cli_auth,
             refresh_builtin_skills,
             remove_user_skill_override,
             scan_workspace_changes,
@@ -3965,5 +4548,155 @@ mod provider_test_tests {
         assert_eq!(classify_provider_status(403), "auth");
         assert_eq!(classify_provider_status(404), "notfound");
         assert_eq!(classify_provider_status(500), "http");
+    }
+
+    // ── Office CLI connectors (lark-cli) ────────────────────────────
+
+    #[test]
+    fn lark_archive_name_has_pinned_checksum() {
+        // Whatever platform this test runs on, the derived archive name must
+        // resolve to a pinned digest — otherwise install_office_cli can never
+        // succeed on that platform (riscv64 is deliberately unsupported).
+        let archive = lark_cli_archive_name().expect("supported platform");
+        assert!(
+            expected_lark_checksum(&archive).is_some(),
+            "no pinned checksum for {}",
+            archive
+        );
+        assert!(archive.starts_with(&format!("lark-cli-{}-", LARK_CLI_VERSION)));
+    }
+
+    #[test]
+    fn lark_download_urls_pin_version_and_order() {
+        let urls = lark_cli_download_urls("lark-cli-1.0.65-darwin-arm64.tar.gz");
+        assert_eq!(urls.len(), 2);
+        assert!(urls[0].starts_with("https://github.com/larksuite/cli/releases/download/v1.0.65/"));
+        assert!(urls[1].starts_with("https://registry.npmmirror.com/-/binary/lark-cli/v1.0.65/"));
+    }
+
+    #[test]
+    fn lark_config_url_extraction() {
+        // Real output line (2026-07-06 live run): bare URL on its own line.
+        assert_eq!(
+            find_lark_config_url("  https://open.feishu.cn/page/cli?user_code=PTHH-PBKL&lpv=1.0.65&ocv=1.0.65&from=cli"),
+            Some("https://open.feishu.cn/page/cli?user_code=PTHH-PBKL&lpv=1.0.65&ocv=1.0.65&from=cli".to_string())
+        );
+        // Prose around the URL must not leak into the token.
+        assert_eq!(
+            find_lark_config_url("open https://x.cn/cli?user_code=AB-CD now"),
+            Some("https://x.cn/cli?user_code=AB-CD".to_string())
+        );
+        // URLs without the pairing parameter are not the setup URL.
+        assert_eq!(find_lark_config_url("see https://open.feishu.cn/document"), None);
+        // QR-code noise and plain text yield nothing.
+        assert_eq!(find_lark_config_url("████ ▄▄▄▄▄ ████"), None);
+        assert_eq!(find_lark_config_url("等待配置应用..."), None);
+    }
+
+    #[test]
+    fn lark_auth_status_classification() {
+        // Real not-configured output (2026-07-06 live run, exit 3).
+        let (state, _) = classify_lark_auth_status(
+            r#"{"ok":false,"error":{"type":"config","subtype":"not_configured","message":"not configured","hint":"run config init"}}"#,
+        );
+        assert_eq!(state, CliConnectorState::NotConfigured);
+
+        let (state, _) = classify_lark_auth_status(
+            r#"{"ok":false,"error":{"type":"auth","subtype":"user_unauthorized","message":"not logged in"}}"#,
+        );
+        assert_eq!(state, CliConnectorState::NotAuthorized);
+
+        let (state, name) = classify_lark_auth_status(
+            r#"{"ok":true,"identity":"user","identities":{"user":{"status":"logged_in","userName":"张三","tokenStatus":"valid"}}}"#,
+        );
+        assert_eq!(state, CliConnectorState::Connected);
+        assert_eq!(name.as_deref(), Some("张三"));
+
+        // ok:true but the user identity is explicitly logged out.
+        let (state, _) = classify_lark_auth_status(
+            r#"{"ok":true,"identities":{"user":{"status":"not_logged_in"}}}"#,
+        );
+        assert_eq!(state, CliConnectorState::NotAuthorized);
+
+        let (state, detail) = classify_lark_auth_status("segfault: not json");
+        assert_eq!(state, CliConnectorState::Error);
+        assert!(detail.unwrap().contains("segfault"));
+
+        let (state, detail) = classify_lark_auth_status(
+            r#"{"ok":false,"error":{"type":"network","message":"dial timeout"}}"#,
+        );
+        assert_eq!(state, CliConnectorState::Error);
+        assert_eq!(detail.as_deref(), Some("dial timeout"));
+    }
+
+    #[test]
+    fn lark_version_parse() {
+        assert_eq!(parse_lark_cli_version("lark-cli version 1.0.65\n"), Some("1.0.65".to_string()));
+        assert_eq!(parse_lark_cli_version(""), None);
+        assert_eq!(parse_lark_cli_version("command not found"), None);
+    }
+
+    #[test]
+    fn lark_device_login_parse() {
+        // Standard OAuth device-flow fields (json tags confirmed in the binary).
+        let login = parse_lark_device_login(
+            r#"{"ok":true,"device_code":"dc123","user_code":"AB-CD","verification_uri":"https://v","verification_uri_complete":"https://v?u=AB-CD","expires_in":300,"interval":5}"#,
+        )
+        .expect("parses");
+        assert_eq!(login.device_code, "dc123");
+        assert_eq!(login.verification_uri_complete.as_deref(), Some("https://v?u=AB-CD"));
+        assert_eq!(login.expires_in, Some(300));
+
+        // Nested under `data` is also accepted.
+        let login = parse_lark_device_login(
+            r#"{"ok":true,"data":{"device_code":"dc9","interval":1}}"#,
+        )
+        .expect("parses nested");
+        assert_eq!(login.device_code, "dc9");
+        assert_eq!(login.interval, Some(1));
+
+        // Typed error surfaces its message.
+        let err = parse_lark_device_login(
+            r#"{"ok":false,"error":{"type":"config","subtype":"not_configured","message":"not configured"}}"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("not configured"));
+
+        // Missing device_code is an error, not a panic.
+        assert!(parse_lark_device_login(r#"{"ok":true}"#).is_err());
+        assert!(parse_lark_device_login("garbage").is_err());
+    }
+
+    #[test]
+    fn sha256_file_matches_known_digest() {
+        let dir = std::env::temp_dir().join(format!("uw-sha-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("abc.txt");
+        std::fs::write(&f, "abc").unwrap();
+        assert_eq!(
+            sha256_file(&f).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn office_cli_bin_dir_is_on_rich_path_base() {
+        // The managed install dir must be visible to sidecars/probes without a
+        // restart — rich_path_base is the common trunk they all inherit.
+        let base = rich_path_base();
+        let dir = office_cli_bin_dir().to_string_lossy().to_string();
+        assert!(
+            base.split(PATH_LIST_SEP).any(|seg| seg == dir),
+            "office-cli bin dir missing from rich_path_base"
+        );
+    }
+
+    #[test]
+    fn probe_lark_status_never_panics() {
+        // Whatever the host state (installed or not), probing must return a
+        // stable id and some state — the settings card renders directly off it.
+        let status = probe_lark_status();
+        assert_eq!(status.id, "lark");
     }
 }

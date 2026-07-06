@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, Smartphone, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2} from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
@@ -18,6 +18,8 @@ import { isMacOS, isWindows } from "@/lib/platform"
 import { useTheme } from "@/lib/theme-context"
 import { useMCPServers } from "@/lib/use-mcp-servers"
 import { useBrowserMCP } from "@/lib/use-browser-mcp"
+import { useCliConnectors } from "@/lib/use-cli-connectors"
+import { CopyButton } from "@/components/chat/copy-button"
 import { useChannels } from "@/lib/use-channels"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
@@ -510,18 +512,21 @@ function ServicesSection() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("services.title")}</h2>
-            {connectedCount > 0 && (
-              <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                {connectedCount} {t("services.connected")}
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("services.description")}</p>
+      <div>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("services.title")}</h2>
+          {connectedCount > 0 && (
+            <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+              {connectedCount} {t("services.connected")}
+            </span>
+          )}
         </div>
+        <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("services.description")}</p>
+      </div>
+
+      {/* ── Group: MCP ── */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("services.groupMcp")}</h3>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
@@ -610,6 +615,131 @@ function ServicesSection() {
               onRemove={() => handleRemove(name, status.status)}
             />
           ))}
+        </div>
+      )}
+
+      {/* ── Group: Office CLI ── */}
+      <div className="pt-2">
+        <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("services.groupOfficeCli")}</h3>
+        <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("services.groupOfficeCliDesc")}</p>
+      </div>
+      <LarkConnectorCard />
+    </div>
+  )
+}
+
+function LarkConnectorCard() {
+  const { t } = useI18n()
+  const {
+    statuses, checking, phases, errors, pendingUrls,
+    refresh, install, configure, authorize,
+  } = useCliConnectors()
+  const status = statuses["lark"]
+  const phase = phases["lark"] ?? "idle"
+  const flowError = errors["lark"] ?? null
+  const pendingUrl = pendingUrls["lark"] ?? null
+  const state = status?.state ?? "not_installed"
+  const busy = phase !== "idle"
+
+  if (checking) {
+    return (
+      <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] p-4">
+        <Loader2 className="size-5 animate-spin text-[var(--color-fg-muted)]" />
+        <p className="text-sm text-[var(--color-fg-muted)]">{t("cliConnector.checking")}</p>
+      </div>
+    )
+  }
+
+  const stateBadge = {
+    not_installed: { label: t("cliConnector.notInstalled"), cls: "bg-[var(--color-accent)] text-[var(--color-fg-muted)]" },
+    not_configured: { label: t("cliConnector.notConfigured"), cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    not_authorized: { label: t("cliConnector.notAuthorized"), cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    connected: { label: t("cliConnector.connected"), cls: "bg-green-500/10 text-green-600 dark:text-green-400" },
+    error: { label: t("cliConnector.error"), cls: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  }[state]
+
+  // Primary action per probed state; label switches to the in-flight variant.
+  const action =
+    state === "not_installed"
+      ? { label: phase === "installing" ? t("cliConnector.installing") : t("cliConnector.install"), run: () => install("lark"), hint: null }
+      : state === "not_configured"
+        ? { label: phase === "configuring" ? t("cliConnector.configuring") : t("cliConnector.configure"), run: () => configure("lark"), hint: t("cliConnector.configHint") }
+        : state === "not_authorized"
+          ? { label: phase === "authorizing" ? t("cliConnector.authorizing") : t("cliConnector.authorize"), run: () => authorize("lark"), hint: t("cliConnector.authHint") }
+          : state === "error"
+            ? { label: t("cliConnector.retry"), run: () => refresh(), hint: null }
+            : null
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-4">
+      <div className="flex items-start justify-between">
+        <div className="flex items-start gap-3">
+          <div className={cn(
+            "mt-0.5 flex size-8 items-center justify-center rounded-lg",
+            state === "connected" ? "bg-green-500/10" : state === "error" ? "bg-red-500/10" : "bg-blue-500/10",
+          )}>
+            <Building2 className={cn(
+              "size-4",
+              state === "connected" ? "text-green-500" : state === "error" ? "text-red-500" : "text-blue-500",
+            )} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("cliConnector.lark.title")}</h3>
+              <span className={cn("inline-flex items-center rounded-full px-2 py-px text-[10px] font-medium", stateBadge.cls)}>
+                {state === "connected" && <CheckCircle2 className="mr-1 size-3" />}
+                {stateBadge.label}
+              </span>
+              {status?.version && (
+                <span className="text-[10px] text-[var(--color-fg-muted)] opacity-60">
+                  {t("cliConnector.version", { version: status.version })}
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("cliConnector.lark.desc")}</p>
+            {state === "connected" && status?.detail && (
+              <p className="mt-1 flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
+                <CheckCircle2 className="size-3 text-green-500" />
+                {status.detail}
+              </p>
+            )}
+            {action?.hint && !busy && (
+              <p className="mt-1 text-[10px] text-[var(--color-fg-muted)] opacity-80">{action.hint}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => refresh()}
+            disabled={busy}
+            title={t("cliConnector.refresh")}
+          >
+            <RefreshCw className="size-3.5" />
+          </Button>
+          {action && (
+            <Button size="sm" onClick={action.run} disabled={busy}>
+              {busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              {action.label}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Waiting on the browser: surface the link for manual copy (remote/VM cases). */}
+      {busy && pendingUrl && (
+        <div className="mt-3 flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+          <ExternalLink className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate" title={pendingUrl}>{t("cliConnector.openedBrowser")}</span>
+          <CopyButton text={pendingUrl} label={t("cliConnector.copyLink")} iconClassName="size-3" />
+        </div>
+      )}
+
+      {(flowError || (state === "error" && status?.detail)) && (
+        <div className="mt-3 flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="size-3.5 shrink-0" />
+          <span className="flex-1 break-all">{flowError || status?.detail}</span>
         </div>
       )}
     </div>
@@ -2411,6 +2541,7 @@ const DEP_HINTS: Record<string, string> = isWindows
       git: "winget install Git.Git / git-scm.com",
       "markdown-exporter": "pip install md-exporter",
       "python-pptx": "pip install python-pptx",
+      "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
     }
   : isMacOS
     ? {
@@ -2423,6 +2554,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         git: "brew install git / git-scm.com",
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
+        "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
       }
     : {
         python3: "apt/dnf install python3",
@@ -2434,6 +2566,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         git: "apt/dnf install git",
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
+        "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
       }
 
 function DepBadge({
