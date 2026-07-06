@@ -242,6 +242,18 @@
 - **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
 - **不要用 `importOriginal` 部分 mock 大 barrel（如 `@/components/chat`）**：`importOriginal()` 会实例化整个桶文件的真实依赖树（markdown/代码高亮栈），转换耗时数分钟拖垮 worker。要保留个别真实组件时精确单文件导入：`vi.mock("@/components/chat", async () => ({ CopyButton: (await import("@/components/chat/copy-button")).CopyButton, ChatInput: () => null, ... }))`。（同上）
 
+## 14. 办公 CLI 连接器（lark-cli，ADR-043 / discussions/027）
+
+> lark-cli（飞书官方 CLI）的**上游契约全部以真机实拍为准**（2026-07-06，v1.0.65）——其内嵌文档/二进制 strings 推定的形状多处与实际不符，Phase 1 验收共抓 6 个「照文档写必错」。cargo 单测以实拍 payload 锚定；bump lark-cli pin 版本时逐条复核。
+
+- **错误态 JSON 走 stderr + 非零退出；成功态走 stdout + exit 0**。机器读输出必须两路都接（`lark_json_output`：stdout 优先、空则回落 stderr）。只读 stdout 会把 `not_configured` 读成空串误判异常。
+- **`auth status --json` 成功态是状态文档，没有 `ok` 字段**（内嵌 lark-shared 文档说的 `ok:true` 形状不存在）：`{appId, brand, identities:{bot:{status,available,…}, user:{status,available,openId,userName,tokenStatus,scope,expiresAt,…}}, identity}`。**授权判据 = `identities.user.available` 布尔**；未授权时 `status:"missing"/available:false`。错误对象存在（含 `error:null`）才走三态分诊（`not_configured`/`auth`/其余）。
+- **设备流字段实为 `verification_url`**（user_code 内嵌在 URL query），无独立 user_code/interval；实拍 shape=`{device_code, expires_in, hint, verification_url}`。二进制 strings 里的 `verification_uri`/`_complete` json tag 属于其它内部结构体，不是本命令输出。
+- **连接器级授权必须 `--recommend`，绝不能 `--domain all`**：`--domain all` 首次只静默授予 4 个基础 scope，**重复授权时托管页把缺失域路由进「开通申请审核」流**（人工审核、不发 token、授权按钮从此等不到结果）；且审核挂起黏在应用上会挡住后续正常授权（解法=换新应用或等审核）。`--recommend` 免审批 scope 秒过且覆盖极广（docs/base/wiki/im/task/sheets/drive/mail/vc/审批等上百项）；日历等审核域由技能在任务时增量 `auth login --domain/--scope`（可能触发开通审核，agent 按 SKILL.md 如实告知等待、勿重发）。
+- **`auth login --device-code` 部分授予时非零退出但输出 `event:"authorization_complete"`（granted/missing 清单）——这是成功不是失败**（`classify_complete_auth`），最终状态以 auth status 探针为真相。
+- **实现要点（改探针/安装前必读）**：① `~/.ultrawork/office-cli/bin` **领跑** `compute_rich_path`（pin+sha256 校验的二进制必须压过用户 brew/npm 旧装，UI 与 agent bash 才同源；该目录只放自管 CLI，前置无副作用）；② 探针 Error 态 detail **永不为空**（空串是 JS falsy 会压掉 UI 红横幅）；③ `--version` 按二进制路径缓存（配置轮询每 3s 一次、版本不会变）、install 时失效；④ `config init --new` 子进程 spawn 后**立即入 slot**（先取管道）——双击并发时第二次 invoke 才能 kill 前任，清理走 pid 守卫；app 退出在 `shutdown_sidecars` 排空 slot（孤儿会跨启动竞争 CLI 配置文件）；⑤ spawn lark-cli 统一带 `LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1` 静噪；env 有 `OPENCLAW_HOME`/`HERMES_HOME` 时 config init 默认拒绝（要求 config bind）。
+- **CLI 自带 27 个内嵌技能（`lark-cli skills list/read`，构建期嵌入与版本同步）**——这是 feishu-assistant 走薄路由（教 agent 按需 read 而非转译副本）的根据；`doctor`（JSON、恒 exit 0、逐项 checks）是比 auth status 更全的健康探针备用。
+
 ---
 
 > 维护说明：本清单中"已 patch / 已修复"的条目反映的是**写入时**的状态。引用具体文件/函数/flag 前请确认其仍存在（尤其 vendor 升级后）。可疑或过期条目应在"收尾"时清理。

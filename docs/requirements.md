@@ -207,6 +207,7 @@ Monorepo 结构：
 - [x] 知识库 MCP 对 IMA/远程-only 源自动注册修复 ✅ 2026-06-28
 - [x] UI/UX 打磨批次 — 设置页折叠+返回来源页、折叠侧栏拖拽把手、「MCP 连接器」更名、Home 工作区路径指示行等（见 CHANGELOG）✅ 2026-07-01 ~ 07-03
 - [x] BYOK 联网搜索 — websearch 多 provider 复活（Tavily/阿里云 IQS/Exa opt-in）+ 设置页「工具」分区 + qwen `enable_search`（ADR-042）✅ 2026-07-04（真机真 key 验收通过）
+- [x] 办公 CLI 连接器 Phase 1：飞书 lark-cli — 「连接器」分区（MCP/办公 CLI 两组）+ 安装/托管页配置/`--recommend` 设备流授权 + feishu-assistant 薄路由技能（ADR-043）✅ 2026-07-06（真机全流程验收；Phase 2 钉钉 / Phase 3 企微待做）
 
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）

@@ -1,6 +1,6 @@
 # 027 — 办公 CLI 连接器：钉钉 dws / 飞书 lark-cli / 企业微信 wecom-cli 接入方案
 
-> 状态：Phase 1（飞书）已开工（2026-07-06，分支 `feat/office-cli-connectors`）——§6 待验证清单已实测回填，UI 归属/技能形态/安装方式三项已拍板
+> 状态：**Phase 1（飞书）已实现并真机全流程验收**（2026-07-06，分支 `feat/office-cli-connectors`，ADR-043 为决策记录）——§6 待验证清单全部实测回填（含 6 个上游契约坑，SSOT 已固化 gotchas §14）；Phase 2 钉钉 / Phase 3 企微待做（同分支，合入推送待全部阶段完成）
 > 日期：2026-07-06
 > 输入：用户桌面调研文档《钉钉飞书企业微信CLI能力调研.md》（2026-07，三家仓库/认证/平台等关键事实已于本文写作时上网复核）
 > 关联：ADR-041（内置技能 zip 分发）· ADR-040（技能依赖探针 + 引导安装）· ADR-037（跨平台约束）· ADR-036（渐进式工具披露）· gotchas §3（MCP）/ §6（登录 shell PATH）· 本地记忆 `dingtalk-channel-plan.md`（Gateway 钉钉 channel，**与本文正交**：channel=入站消息通道，本文=出站工具能力）
