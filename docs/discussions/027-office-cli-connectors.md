@@ -92,6 +92,7 @@
   - **设备流字段实为 `verification_url`**（user_code 内嵌在 URL query 里），无独立 user_code/interval 字段；实拍 shape=`{device_code, expires_in:600, hint, verification_url}`。二进制 strings 里的 `verification_uri`/`_complete` json tag 属于其它内部结构体，不是本命令输出。
   - **`--domain all` 对新建托管应用必然部分授予**：CLI 完成授权仍非零退出，输出 `{event:"authorization_complete", granted:[...], missing:[...], already_granted:[]}`——**这是成功不是失败**；新应用默认只授基础 scope（basic_profile/auth:user.id/offline_access 等），calendar/approval 等缺失域由 agent 运行时按 lark-shared 指引增量 `auth login --domain X` 补授。
   - agent E2E 实录：`tool_search → skill(feishu-assistant) → bash(lark-cli auth status --json，自带静噪 env)` → 返回真实身份数据，薄路由全链路成立。
+  - **连接器级授权必须用 `--recommend` 而非 `--domain all`（复验发现，review-r5）**：`--domain all` 首次授权只静默授予基础 scope；**重复授权**时托管页会把缺失域路由进「开通申请审核」流（提示"已提交申请，正在审核中"，人工审核、不发 token）——连接器的「授权」按钮必须零摩擦，`--recommend` 只请求免审批 scope 秒过；业务域由技能在任务时增量 `auth login --domain <x>` 补授（可能触发开通审核，属平台正常流程，SKILL.md 已教 agent 如实告知用户等待）。
 
 **lark-cli 其它实测要点（2026-07-06，供实现参考）**：配置落点 `~/.lark-cli/`（config.json + cache/logs；token 在 macOS 走 Keychain，`config keychain-downgrade` 可降级文件存储）；错误输出全线结构化 JSON + 类型化 exit code（not_configured=3）；`--domain` 支持 21 个业务域 + `all`，`--recommend` 只请求免审批 scope；`auth qrcode` 可生成 PNG/ASCII 二维码；`config remove` 清配置与 token。
 

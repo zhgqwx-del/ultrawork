@@ -3204,8 +3204,14 @@ fn start_office_cli_auth(id: String) -> Result<CliDeviceLogin, String> {
         return Err(format!("unknown CLI connector: {id}"));
     }
     let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
+    // --recommend requests only auto-approve scopes. Real-device finding
+    // 2026-07-06: `--domain all` routes the hosted page into a scope-
+    // enablement REVIEW application on re-auth (audit flow, human approval,
+    // no token issued) instead of a plain confirm — connector-level auth must
+    // stay friction-free; missing domains are granted incrementally at task
+    // time by the skill (`auth login --domain <x>`, lark-shared guidance).
     let out = run_probe_capture(
-        &mut lark_cmd(&bin, &["auth", "login", "--domain", "all", "--no-wait", "--json"]),
+        &mut lark_cmd(&bin, &["auth", "login", "--recommend", "--no-wait", "--json"]),
         Duration::from_secs(30),
     )
     .ok_or("lark-cli auth login timed out")?;
