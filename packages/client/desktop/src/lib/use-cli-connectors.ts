@@ -52,7 +52,8 @@ export interface CliConnectorsApi {
   errors: Record<string, string | null>
   /** Last verification/setup URL per connector (surfaced for manual copy). */
   pendingUrls: Record<string, string | null>
-  refresh: () => Promise<void>
+  /** Re-probe all connectors; clears `id`'s flow error (all errors when omitted). */
+  refresh: (id?: string) => Promise<void>
   install: (id: string) => Promise<void>
   configure: (id: string) => Promise<void>
   authorize: (id: string) => Promise<void>
@@ -87,12 +88,13 @@ export function useCliConnectors(): CliConnectorsApi {
     return map
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (id?: string) => {
     try {
       await fetchStatuses()
       // A manual refresh is the user's "re-check now" — a recovered connector
-      // must not keep a stale flow-error banner.
-      setErrors({})
+      // must not keep a stale flow-error banner. Per-card refresh clears only
+      // that card's error so it can't wipe another connector's live banner.
+      setErrors((e) => (id ? { ...e, [id]: null } : {}))
     } catch (err) {
       console.warn("check_cli_connectors unavailable:", err)
     }
@@ -132,6 +134,9 @@ export function useCliConnectors(): CliConnectorsApi {
       const gen = ++generation.current
       try {
         const url = await invoke<string>("start_office_cli_config", { id, lang: language })
+        // A newer flow may have superseded us while the invoke waited for the
+        // URL (its Rust side killed our child) — don't clobber its state.
+        if (generation.current !== gen) return
         setPendingUrls((m) => ({ ...m, [id]: url }))
         await openUrl(url)
         // The `config init` child completes only when the user finishes the
@@ -157,6 +162,10 @@ export function useCliConnectors(): CliConnectorsApi {
           setError(id, t("cliConnector.configTimeout"))
         }
       } catch (err) {
+        // Same guard as authorize(): a superseded invoke's rejection (e.g.
+        // "did not produce a setup URL" after our child was killed by the
+        // successor) must not paint an error over the live flow.
+        if (generation.current !== gen) return
         const msg = err instanceof Error ? err.message : String(err)
         setError(id, msg)
         toast.error(t("cliConnector.toastFailed", { error: msg }))

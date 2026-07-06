@@ -159,6 +159,16 @@ fn port_listener_orphaned(port: u16) -> bool {
 fn shutdown_sidecars() {
     println!("[shutdown] Cleaning up sidecar processes...");
 
+    // A pending `lark-cli config init` (office CLI connector) is not in the
+    // sidecar registry — kill it here so it can't survive app quit and race a
+    // next-launch init on the same CLI config file. Idempotent (slot drained).
+    if let Ok(mut slot) = lark_init_slot().lock() {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
     let entries = match SIDECAR_REGISTRY.lock() {
         Ok(mut reg) => std::mem::take(&mut *reg),
         Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),

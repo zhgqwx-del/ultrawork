@@ -472,7 +472,9 @@ function ServicesSection() {
 
   const onRefresh = async () => {
     setRefreshing(true)
-    try { await refresh() } finally { setRefreshing(false) }
+    // Both hooks feed the section (MCP list + combined connected count) —
+    // refresh them together so neither renders off stale probe data.
+    try { await Promise.all([refresh(), cliApi.refresh()]) } finally { setRefreshing(false) }
   }
 
   const onAdd = async (name: string, config: MCPConfig) => {
@@ -691,7 +693,7 @@ function CliConnectorCard({
       run: () => authorize(id),
       hint: t("cliConnector.authHint"),
     },
-    error: { label: t("cliConnector.retry"), run: () => refresh(), hint: null },
+    error: { label: t("cliConnector.retry"), run: () => refresh(id), hint: null },
     connected: null,
   }[state]
 
@@ -737,7 +739,7 @@ function CliConnectorCard({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => refresh()}
+            onClick={() => refresh(id)}
             disabled={busy}
             title={t("cliConnector.refresh")}
           >
