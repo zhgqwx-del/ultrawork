@@ -135,6 +135,63 @@ describe("useCliConnectors", () => {
     expect(result.current.phases["lark"]).toBe("idle")
   })
 
+  it("configure keeps polling through transient probe errors, then errors out at the deadline", async () => {
+    vi.useFakeTimers()
+    mockInvoke.mockResolvedValueOnce([NOT_CONFIGURED])
+    const { result } = renderHook(() => useCliConnectors())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    const ERRORED: CliConnectorStatus = { ...NOT_CONFIGURED, state: "error", detail: "probe timeout" }
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_config") return "https://open.feishu.cn/page/cli?user_code=AB-CD"
+      if (cmd === "check_cli_connectors") return [ERRORED] // transient probe failure forever
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    let done!: Promise<void>
+    act(() => {
+      done = result.current.configure("lark")
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    // A transient "error" probe is NOT completion — still configuring.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
+    })
+    expect(result.current.phases["lark"]).toBe("configuring")
+
+    // Deadline (10min) passes without progress → explicit error, no silent snap-back.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11 * 60 * 1000)
+      await done
+    })
+    expect(result.current.phases["lark"]).toBe("idle")
+    expect(result.current.errors["lark"]).toBe("cliConnector.configTimeout")
+    expect(result.current.pendingUrls["lark"]).toBeNull()
+  })
+
+  it("refresh clears stale flow errors once the user re-checks", async () => {
+    mockInvoke.mockResolvedValueOnce([NOT_INSTALLED])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    mockInvoke.mockRejectedValueOnce(new Error("boom"))
+    await act(async () => {
+      await result.current.install("lark")
+    })
+    expect(result.current.errors["lark"]).toContain("boom")
+
+    mockInvoke.mockResolvedValue([CONNECTED])
+    await act(async () => {
+      await result.current.refresh()
+    })
+    expect(result.current.errors["lark"]).toBeUndefined()
+    expect(result.current.statuses["lark"]).toEqual(CONNECTED)
+  })
+
   it("authorize runs the device flow: open URL, complete with device code", async () => {
     mockInvoke.mockResolvedValueOnce([NOT_AUTHORIZED])
     const { result } = renderHook(() => useCliConnectors())

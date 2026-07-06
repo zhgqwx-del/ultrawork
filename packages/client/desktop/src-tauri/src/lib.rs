@@ -406,17 +406,25 @@ fn build_provider_test_url(base_url: &str, protocol: &str) -> String {
     }
 }
 
+/// Suppress the console window a child process would otherwise flash on
+/// Windows release builds (`windows_subsystem = "windows"`). No-op elsewhere.
+fn no_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
 /// Run a `curl` probe without popping a console window on Windows (release
 /// builds are `windows_subsystem = "windows"`; a bare `.output()` flashes a
 /// visible console for the probe's lifetime — same fix as `run_probe`).
 fn run_curl_probe(args: &[String]) -> std::io::Result<std::process::Output> {
     let mut cmd = Command::new("curl");
     cmd.args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    no_window(&mut cmd);
     cmd.output()
 }
 
@@ -1072,11 +1080,12 @@ fn login_shell_path() -> Option<String> {
 
 /// Build a rich PATH for spawning sidecars / external agents.
 ///
-/// GUI-launched apps get a minimal PATH (see [`login_shell_path`]). We prefer
-/// the user's real login-shell PATH (covers arbitrary custom install dirs),
-/// then merge in hard-coded Node.js locations as a fallback for environments
-/// where the login shell is unavailable or doesn't export those. Memoized —
-/// the login shell is invoked at most once per process.
+/// GUI-launched apps get a minimal PATH (see [`login_shell_path`]). The
+/// app-managed office-cli dir leads (pinned CLIs must beat stale user
+/// installs), then the user's real login-shell PATH (covers arbitrary custom
+/// install dirs), then hard-coded Node.js locations as a fallback for
+/// environments where the login shell is unavailable or doesn't export those.
+/// Memoized — the login shell is invoked at most once per process.
 fn rich_path() -> String {
     static CACHE: OnceLock<String> = OnceLock::new();
     CACHE.get_or_init(compute_rich_path).clone()
@@ -1092,7 +1101,7 @@ fn rich_path_base() -> String {
     // (login_shell_path() is None), so add the standard installer / nvm-windows
     // symlink / Volta locations explicitly so `where node` finds a system Node even
     // when it isn't on the GUI-inherited PATH.
-    let mut extras: Vec<String> = if cfg!(target_os = "windows") {
+    let extras: Vec<String> = if cfg!(target_os = "windows") {
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
         let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -1114,12 +1123,6 @@ fn rich_path_base() -> String {
             "/usr/local/bin".to_string(),
         ]
     };
-    // App-managed office CLI installs (~/.ultrawork/office-cli/bin). Added
-    // unconditionally: a nonexistent dir on PATH is harmless, and because
-    // rich_path() is memoized (and sidecars inherit it at spawn), listing the
-    // dir up-front means a mid-session install becomes visible to skill probes
-    // and the opencode sidecar's bash without an app restart.
-    extras.push(office_cli_bin_dir().to_string_lossy().to_string());
     let version_dirs = [
         format!("{home}/.nvm/versions/node"),
         format!("{home}/.local/share/fnm/node-versions"),
@@ -1161,10 +1164,18 @@ fn rich_path_base() -> String {
 
 fn compute_rich_path() -> String {
     let base = rich_path_base();
-    match login_shell_path() {
+    let merged = match login_shell_path() {
         Some(login) => merge_paths(&login, &base),
         None => base,
-    }
+    };
+    // App-managed office CLI installs (~/.ultrawork/office-cli/bin) go FIRST:
+    // the dir only ever holds pinned, checksum-verified CLIs, and it must beat
+    // any stale user install (brew / npm -g) so the agent's bash resolves the
+    // same binary the connector card manages. Unconditional — a nonexistent
+    // dir on PATH is harmless, and because rich_path() is memoized (and
+    // sidecars inherit it at spawn), a mid-session install becomes visible
+    // without an app restart.
+    merge_paths(&office_cli_bin_dir().to_string_lossy(), &merged)
 }
 
 /// Detect system Node.js ≥v18 (fallback when embedded is unavailable).
@@ -2499,22 +2510,22 @@ fn run_probe(cmd: &mut Command, timeout: Duration) -> Option<std::process::Outpu
 /// Like [`run_probe`] but returns the output regardless of exit status. Needed
 /// for CLIs that report state via typed exit codes with structured stdout
 /// (lark-cli exits 3 for "not configured" while printing a JSON error object).
+/// stdout/stderr drain on reader threads, so even a chatty or long-running
+/// child (device-flow token polling) can never stall on a full pipe.
 fn run_probe_capture(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    no_window(cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .ok()?;
+    let out_h = child.stdout.take().map(spawn_drain);
+    let err_h = child.stderr.take().map(spawn_drain);
     let deadline = std::time::Instant::now() + timeout;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
@@ -2525,9 +2536,22 @@ fn run_probe_capture(cmd: &mut Command, timeout: Duration) -> Option<std::proces
             }
             Err(_) => return None,
         }
-    }
-    // Probe stdout is a few bytes — no pipe-buffer deadlock risk waiting post-exit.
-    child.wait_with_output().ok()
+    };
+    let stdout = out_h.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stderr = err_h.and_then(|h| h.join().ok()).unwrap_or_default();
+    Some(std::process::Output { status, stdout, stderr })
+}
+
+/// Reader thread draining a child stream to bytes (see run_probe_capture).
+fn spawn_drain(
+    stream: impl std::io::Read + Send + 'static,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut s = stream;
+        let mut buf = Vec::new();
+        let _ = s.read_to_end(&mut buf);
+        buf
+    })
 }
 
 /// macOS ships /usr/bin/python3 as an Xcode CLT shim; EXECUTING it without CLT
@@ -2697,13 +2721,20 @@ fn classify_lark_auth_status(stdout: &str) -> (CliConnectorState, Option<String>
     };
     if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
         // Success shape per the CLI's lark-shared skill doc; exact fields are
-        // re-verified at real-device acceptance. An explicitly logged-out user
-        // identity on an ok response still means "authorize me".
+        // re-verified at real-device acceptance. An explicitly logged-out or
+        // token-expired user identity on an ok response still means
+        // "authorize me" — don't paint the card green over a dead token.
         let user_status = v
             .pointer("/identities/user/status")
             .and_then(|s| s.as_str())
             .unwrap_or("");
-        if matches!(user_status, "not_logged_in" | "logged_out" | "none") {
+        let token_status = v
+            .pointer("/identities/user/tokenStatus")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        if matches!(user_status, "not_logged_in" | "logged_out" | "none")
+            || matches!(token_status, "expired" | "invalid" | "revoked")
+        {
             return (CliConnectorState::NotAuthorized, None);
         }
         let name = v
@@ -2735,6 +2766,19 @@ fn parse_lark_cli_version(s: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Version strings keyed by resolved binary path. The UI polls
+/// check_cli_connectors every 3s during the hosted-config flow; the binary's
+/// version can't change under a stable path except through install_office_cli
+/// (which invalidates the entry), so cache it instead of spawning
+/// `lark-cli --version` on every poll. A user upgrading an external install
+/// mid-session shows a stale version label until restart — cosmetic only.
+static CLI_VERSION_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+    OnceLock::new();
+
+fn cli_version_cache() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    CLI_VERSION_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 fn probe_lark_status() -> CliConnectorStatus {
     let Some(bin) = find_lark_cli() else {
         return CliConnectorStatus {
@@ -2745,8 +2789,15 @@ fn probe_lark_status() -> CliConnectorStatus {
             detail: None,
         };
     };
-    let version = run_probe(&mut lark_cmd(&bin, &["--version"]), Duration::from_secs(5))
-        .and_then(|o| parse_lark_cli_version(&String::from_utf8_lossy(&o.stdout)));
+    let cached = cli_version_cache().lock().ok().and_then(|m| m.get(&bin).cloned());
+    let version = cached.or_else(|| {
+        let v = run_probe(&mut lark_cmd(&bin, &["--version"]), Duration::from_secs(5))
+            .and_then(|o| parse_lark_cli_version(&String::from_utf8_lossy(&o.stdout)));
+        if let (Some(v), Ok(mut m)) = (&v, cli_version_cache().lock()) {
+            m.insert(bin.clone(), v.clone());
+        }
+        v
+    });
     let (state, detail) = match run_probe_capture(
         &mut lark_cmd(&bin, &["auth", "status", "--json"]),
         Duration::from_secs(5),
@@ -2823,6 +2874,97 @@ fn sha256_file(path: &std::path::Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Everything the generic install pipeline needs for one connector. Phase 2/3
+/// (dingtalk / wecom) add a spec, not a copy of the pipeline.
+struct CliInstallSpec {
+    archive: String,
+    urls: Vec<String>,
+    expected_sha256: &'static str,
+    /// Binary name at the archive root (the official npm installer copies
+    /// `tmpDir/<name>` for every platform, confirming the flat layout).
+    bin_name: &'static str,
+}
+
+fn lark_install_spec() -> Result<CliInstallSpec, String> {
+    let archive = lark_cli_archive_name()?;
+    let expected_sha256 = expected_lark_checksum(&archive)
+        .ok_or_else(|| format!("no pinned checksum for {archive}"))?;
+    let urls = lark_cli_download_urls(&archive);
+    let bin_name = if cfg!(target_os = "windows") { "lark-cli.exe" } else { "lark-cli" };
+    Ok(CliInstallSpec { archive, urls, expected_sha256, bin_name })
+}
+
+/// Download → sha256-verify → extract → install one pinned CLI binary into
+/// ~/.ultrawork/office-cli/bin. Returns the installed binary path.
+fn install_pinned_cli(spec: &CliInstallSpec) -> Result<PathBuf, String> {
+    let bin_dir = office_cli_bin_dir();
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("create {}: {}", bin_dir.display(), e))?;
+    let tmp = office_cli_dir().join(".install-tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
+    // Everything below cleans up tmp on both success and failure.
+    let result = (|| {
+        let archive_path = tmp.join(&spec.archive);
+
+        let mut last_err = String::from("no download source succeeded");
+        let mut downloaded = false;
+        for url in &spec.urls {
+            let args: Vec<String> = [
+                "-fSL",
+                "--connect-timeout", "10",
+                "--max-time", "180",
+                "-o", &archive_path.to_string_lossy(),
+                url,
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            match run_curl_probe(&args) {
+                Ok(out) if out.status.success() => {
+                    downloaded = true;
+                    break;
+                }
+                Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                Err(e) => last_err = format!("failed to run curl: {e}"),
+            }
+        }
+        if !downloaded {
+            return Err(format!("Download failed: {last_err}"));
+        }
+
+        let actual = sha256_file(&archive_path)?;
+        if !actual.eq_ignore_ascii_case(spec.expected_sha256) {
+            return Err(format!(
+                "[security] checksum mismatch for {}: expected {}, got {actual}",
+                spec.archive, spec.expected_sha256
+            ));
+        }
+
+        // Extract in the temp dir. bsdtar (Windows 10+ tar.exe) auto-detects .zip.
+        let tar_flag = if cfg!(target_os = "windows") { "-xf" } else { "-xzf" };
+        let mut tar = Command::new("tar");
+        tar.args([
+            tar_flag,
+            &archive_path.to_string_lossy(),
+            "-C",
+            &tmp.to_string_lossy(),
+        ]);
+        no_window(&mut tar);
+        let out = tar.output().map_err(|e| format!("failed to run tar: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("Failed to extract {}", spec.archive));
+        }
+
+        let src = tmp.join(spec.bin_name);
+        let dest = bin_dir.join(spec.bin_name);
+        std::fs::copy(&src, &dest).map_err(|e| format!("failed to install binary: {e}"))?;
+        set_executable(&dest)?;
+        Ok(dest)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
 /// Install (or repair) an office CLI into ~/.ultrawork/office-cli/bin.
 /// Pinned version + pinned sha256; GitHub → npmmirror download chain.
 #[tauri::command(async)]
@@ -2830,78 +2972,11 @@ fn install_office_cli(id: String) -> Result<CliConnectorStatus, String> {
     if id != "lark" {
         return Err(format!("unknown CLI connector: {id}"));
     }
-    let archive = lark_cli_archive_name()?;
-    let expected = expected_lark_checksum(&archive)
-        .ok_or_else(|| format!("no pinned checksum for {archive}"))?;
-
-    let bin_dir = office_cli_bin_dir();
-    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("create {}: {}", bin_dir.display(), e))?;
-    let tmp = office_cli_dir().join(".install-tmp");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
-    let archive_path = tmp.join(&archive);
-
-    let mut last_err = String::from("no download source succeeded");
-    let mut downloaded = false;
-    for url in lark_cli_download_urls(&archive) {
-        let mut cmd = Command::new("curl");
-        cmd.args([
-            "-fSL",
-            "--connect-timeout", "10",
-            "--max-time", "180",
-            "-o", &archive_path.to_string_lossy(),
-            &url,
-        ]);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
-        match cmd.output() {
-            Ok(out) if out.status.success() => {
-                downloaded = true;
-                break;
-            }
-            Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            Err(e) => last_err = format!("failed to run curl: {e}"),
-        }
+    let dest = install_pinned_cli(&lark_install_spec()?)?;
+    // The binary under this path just changed — drop the cached version label.
+    if let Ok(mut m) = cli_version_cache().lock() {
+        m.remove(&dest.to_string_lossy().to_string());
     }
-    if !downloaded {
-        let _ = std::fs::remove_dir_all(&tmp);
-        return Err(format!("Download failed: {last_err}"));
-    }
-
-    let actual = sha256_file(&archive_path)?;
-    if !actual.eq_ignore_ascii_case(expected) {
-        let _ = std::fs::remove_dir_all(&tmp);
-        return Err(format!(
-            "[security] checksum mismatch for {archive}: expected {expected}, got {actual}"
-        ));
-    }
-
-    // Extract in the temp dir. bsdtar (Windows 10+ tar.exe) auto-detects .zip.
-    let tar_flag = if cfg!(target_os = "windows") { "-xf" } else { "-xzf" };
-    let out = Command::new("tar")
-        .args([
-            tar_flag,
-            &archive_path.to_string_lossy(),
-            "-C",
-            &tmp.to_string_lossy(),
-        ])
-        .output()
-        .map_err(|e| format!("failed to run tar: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_dir_all(&tmp);
-        return Err("Failed to extract lark-cli archive".to_string());
-    }
-
-    let bin_name = if cfg!(target_os = "windows") { "lark-cli.exe" } else { "lark-cli" };
-    let src = tmp.join(bin_name);
-    let dest = bin_dir.join(bin_name);
-    std::fs::copy(&src, &dest).map_err(|e| format!("failed to install binary: {e}"))?;
-    set_executable(&dest)?;
-    let _ = std::fs::remove_dir_all(&tmp);
-
     Ok(probe_lark_status())
 }
 
@@ -2965,24 +3040,11 @@ fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, S
     }
     let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
 
-    // Replace any previous pending init — two concurrent hosted-page flows
-    // would race on the same config file.
-    if let Ok(mut slot) = lark_init_slot().lock() {
-        if let Some(mut old) = slot.take() {
-            let _ = old.kill();
-            let _ = old.wait();
-        }
-    }
-
     let mut cmd = lark_cmd(&bin, &["config", "init", "--new"]);
     if let Some(l) = lang.as_deref().filter(|l| !l.is_empty()) {
         cmd.args(["--lang", l]);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    no_window(&mut cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -2999,6 +3061,31 @@ fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, S
     }
     drop(tx);
 
+    // Park the child in the slot IMMEDIATELY (pipes already taken), replacing —
+    // and killing — any previous pending init: two concurrent hosted-page
+    // flows would race on the same config file, and storing early means a
+    // second invoke always finds (and kills) this child rather than both
+    // slipping past an empty slot (double-click race).
+    let child_pid = child.id();
+    if let Ok(mut slot) = lark_init_slot().lock() {
+        if let Some(mut old) = slot.replace(child) {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
+    }
+    // From here on, the child is owned by the slot; clean up via the slot with
+    // a pid guard so we never kill a successor started by a newer invoke.
+    let kill_ours = || {
+        if let Ok(mut slot) = lark_init_slot().lock() {
+            if slot.as_ref().map(std::process::Child::id) == Some(child_pid) {
+                if let Some(mut ours) = slot.take() {
+                    let _ = ours.kill();
+                    let _ = ours.wait();
+                }
+            }
+        }
+    };
+
     let deadline = std::time::Instant::now() + Duration::from_secs(25);
     let mut tail: Vec<String> = Vec::new();
     loop {
@@ -3009,9 +3096,8 @@ fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, S
         match rx.recv_timeout(deadline - now) {
             Ok(line) => {
                 if let Some(url) = find_lark_config_url(&line) {
-                    if let Ok(mut slot) = lark_init_slot().lock() {
-                        *slot = Some(child);
-                    }
+                    // Child stays parked in the slot: it completes the local
+                    // config write only when the user finishes in the browser.
                     return Ok(url);
                 }
                 // Keep a short non-QR tail for the error message.
@@ -3026,8 +3112,7 @@ fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, S
             Err(_) => break,
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    kill_ours();
     Err(format!(
         "config init did not produce a setup URL: {}",
         tail.join(" / ")
@@ -3044,9 +3129,10 @@ struct CliDeviceLogin {
     interval: Option<u64>,
 }
 
-/// Pure parser for `lark-cli auth login --no-wait --json`. Accepts the device
-/// flow fields at the top level or under a `data` key (shape re-verified at
-/// real-device acceptance).
+/// Pure parser for `lark-cli auth login --no-wait --json`. Top-level OAuth
+/// device-flow fields (json tags confirmed in the binary); if real-device
+/// acceptance reveals a different nesting, the missing-device_code error below
+/// fails loudly and the fix is local.
 fn parse_lark_device_login(stdout: &str) -> Result<CliDeviceLogin, String> {
     let v: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|_| format!("unparseable auth login output: {}", stdout.trim().chars().take(200).collect::<String>()))?;
@@ -3057,17 +3143,8 @@ fn parse_lark_device_login(stdout: &str) -> Result<CliDeviceLogin, String> {
             .unwrap_or("auth login failed");
         return Err(msg.to_string());
     }
-    let s = |k: &str| -> Option<String> {
-        v.get(k)
-            .and_then(|x| x.as_str())
-            .or_else(|| v.pointer(&format!("/data/{k}")).and_then(|x| x.as_str()))
-            .map(str::to_string)
-    };
-    let n = |k: &str| -> Option<u64> {
-        v.get(k)
-            .and_then(|x| x.as_u64())
-            .or_else(|| v.pointer(&format!("/data/{k}")).and_then(|x| x.as_u64()))
-    };
+    let s = |k: &str| -> Option<String> { v.get(k).and_then(|x| x.as_str()).map(str::to_string) };
+    let n = |k: &str| -> Option<u64> { v.get(k).and_then(|x| x.as_u64()) };
     Ok(CliDeviceLogin {
         device_code: s("device_code").ok_or("missing device_code in auth login output")?,
         user_code: s("user_code"),
@@ -3095,50 +3172,15 @@ fn start_office_cli_auth(id: String) -> Result<CliDeviceLogin, String> {
     parse_lark_device_login(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Run to completion with a deadline, draining stdout/stderr on reader threads
-/// so a chatty long-running child can never stall on a full pipe. Returns
-/// (exit_ok, stdout, stderr); None on spawn failure or deadline kill.
+/// String-typed convenience over [`run_probe_capture`] for long-running calls
+/// whose output the caller inspects on failure (device-flow token polling).
 fn run_streaming(cmd: &mut Command, timeout: Duration) -> Option<(bool, String, String)> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let mut child = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .ok()?;
-    let read_all = |stream: Option<Box<dyn std::io::Read + Send>>| {
-        stream.map(|mut s| {
-            std::thread::spawn(move || {
-                let mut buf = String::new();
-                let _ = s.read_to_string(&mut buf);
-                buf
-            })
-        })
-    };
-    let out_h = read_all(child.stdout.take().map(|s| Box::new(s) as _));
-    let err_h = read_all(child.stderr.take().map(|s| Box::new(s) as _));
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(_) => return None,
-        }
-    };
-    let stdout = out_h.and_then(|h| h.join().ok()).unwrap_or_default();
-    let stderr = err_h.and_then(|h| h.join().ok()).unwrap_or_default();
-    Some((status.success(), stdout, stderr))
+    let out = run_probe_capture(cmd, timeout)?;
+    Some((
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    ))
 }
 
 /// Complete the device flow: blocks while the CLI polls the token endpoint
@@ -4618,6 +4660,12 @@ mod provider_test_tests {
         );
         assert_eq!(state, CliConnectorState::NotAuthorized);
 
+        // ok:true but the token is dead — never paint the card green.
+        let (state, _) = classify_lark_auth_status(
+            r#"{"ok":true,"identities":{"user":{"status":"logged_in","tokenStatus":"expired"}}}"#,
+        );
+        assert_eq!(state, CliConnectorState::NotAuthorized);
+
         let (state, detail) = classify_lark_auth_status("segfault: not json");
         assert_eq!(state, CliConnectorState::Error);
         assert!(detail.unwrap().contains("segfault"));
@@ -4647,14 +4695,6 @@ mod provider_test_tests {
         assert_eq!(login.verification_uri_complete.as_deref(), Some("https://v?u=AB-CD"));
         assert_eq!(login.expires_in, Some(300));
 
-        // Nested under `data` is also accepted.
-        let login = parse_lark_device_login(
-            r#"{"ok":true,"data":{"device_code":"dc9","interval":1}}"#,
-        )
-        .expect("parses nested");
-        assert_eq!(login.device_code, "dc9");
-        assert_eq!(login.interval, Some(1));
-
         // Typed error surfaces its message.
         let err = parse_lark_device_login(
             r#"{"ok":false,"error":{"type":"config","subtype":"not_configured","message":"not configured"}}"#,
@@ -4681,14 +4721,17 @@ mod provider_test_tests {
     }
 
     #[test]
-    fn office_cli_bin_dir_is_on_rich_path_base() {
-        // The managed install dir must be visible to sidecars/probes without a
-        // restart — rich_path_base is the common trunk they all inherit.
-        let base = rich_path_base();
+    fn office_cli_bin_dir_leads_rich_path() {
+        // The managed install dir must be the FIRST PATH segment sidecars and
+        // probes inherit: it only holds pinned checksum-verified CLIs and has
+        // to beat any stale user install (brew / npm -g) so the agent's bash
+        // resolves the same binary the connector card manages.
+        let path = compute_rich_path();
         let dir = office_cli_bin_dir().to_string_lossy().to_string();
-        assert!(
-            base.split(PATH_LIST_SEP).any(|seg| seg == dir),
-            "office-cli bin dir missing from rich_path_base"
+        assert_eq!(
+            path.split(PATH_LIST_SEP).next(),
+            Some(dir.as_str()),
+            "office-cli bin dir must lead the rich PATH"
         );
     }
 

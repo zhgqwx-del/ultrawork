@@ -53,7 +53,7 @@ const userPpt = join(skillsRoot, "ppt-master")
 const env = { HOME: tmp, XDG_CONFIG_HOME: join(tmp, ".config"), XDG_DATA_HOME: join(tmp, ".local/share") }
 const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
 
-const BUNDLED = ["skill-creator", "skill-installer", "pdf", "markdown-exporter", "doc-edit", "ppt-master"]
+const BUNDLED = ["skill-creator", "skill-installer", "pdf", "markdown-exporter", "doc-edit", "ppt-master", "feishu-assistant"]
 const USER_MARKER = "USER-INSTALLED upstream latest raw copy."
 
 // Post-reconcile shadowed state: full first-boot install from the real bundled
@@ -99,6 +99,7 @@ const DEPS = [
   { name: "markdown-exporter", available: true, path: "/usr/bin/markdown-exporter" },
   { name: "python3.10+", available: true, path: "/usr/local/bin/python3" },
   { name: "python-pptx", available: true, path: "/usr/local/bin/python3" },
+  { name: "lark-cli", available: true, path: "/usr/local/bin/lark-cli" },
 ]
 
 let browser: Browser | undefined

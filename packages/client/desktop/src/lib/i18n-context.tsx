@@ -162,7 +162,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "About",
     "settingsPage.privacy.title": "Data & Privacy",
     "settingsPage.privacy.desc": "Manage your data and privacy settings. Your data is processed locally and never shared without your consent.",
-    "settingsPage.services": "MCP Connectors",
+    "settingsPage.services": "Connectors",
     "settingsPage.tools": "Tools",
     "settingsPage.channels": "Channels",
 
@@ -460,6 +460,7 @@ const translations: Record<Language, Record<string, string>> = {
     "cliConnector.refresh": "Refresh",
     "cliConnector.version": "v{version}",
     "cliConnector.openedBrowser": "Link opened in your browser — finish the flow there, this card updates automatically.",
+    "cliConnector.configTimeout": "Setup wait timed out. If you finished in the browser, hit refresh; otherwise click Configure to start over.",
     "cliConnector.copyLink": "Copy link",
     "cliConnector.toastInstalled": "lark-cli installed",
     "cliConnector.toastConnected": "Feishu / Lark connected",
@@ -907,7 +908,7 @@ const translations: Record<Language, Record<string, string>> = {
     "settingsPage.about": "关于",
     "settingsPage.privacy.title": "数据与隐私",
     "settingsPage.privacy.desc": "管理您的数据和隐私设置。您的数据在本地处理，未经您的同意不会共享。",
-    "settingsPage.services": "MCP 连接器",
+    "settingsPage.services": "连接器",
     "settingsPage.tools": "工具",
     "settingsPage.channels": "渠道",
 
@@ -1201,6 +1202,7 @@ const translations: Record<Language, Record<string, string>> = {
     "cliConnector.refresh": "刷新",
     "cliConnector.version": "v{version}",
     "cliConnector.openedBrowser": "链接已在浏览器打开——在网页完成后，此卡片会自动更新。",
+    "cliConnector.configTimeout": "等待配置超时。如果你已在浏览器完成，点刷新即可；否则请重新点「配置应用」。",
     "cliConnector.copyLink": "复制链接",
     "cliConnector.toastInstalled": "lark-cli 已安装",
     "cliConnector.toastConnected": "飞书 / Lark 已连接",

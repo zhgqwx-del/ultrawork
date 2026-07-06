@@ -449,17 +449,26 @@ function BrowserServiceCard() {
   )
 }
 
+/** Office CLI connectors rendered in the Office CLI group (Phase 1: Feishu). */
+const OFFICE_CLI_CONNECTORS = [
+  { id: "lark", titleKey: "cliConnector.lark.title", descKey: "cliConnector.lark.desc" },
+] as const
+
 function ServicesSection() {
   const { t } = useI18n()
   const {
     statusMap, configMap, loading, error, actionLoading,
     handleToggle, handleAdd, handleRemove, refresh,
   } = useMCPServers()
+  // One hook instance for every CLI connector card — a per-card instance
+  // would fire duplicate probe processes on mount.
+  const cliApi = useCliConnectors()
   const [addMode, setAddMode] = useState<"none" | "manual" | "json">("none")
   const [refreshing, setRefreshing] = useState(false)
 
   const entries = Object.entries(statusMap)
-  const connectedCount = entries.filter(([, s]) => s.status === "connected").length
+  const cliConnectedCount = Object.values(cliApi.statuses).filter((s) => s.state === "connected").length
+  const connectedCount = entries.filter(([, s]) => s.status === "connected").length + cliConnectedCount
 
   const onRefresh = async () => {
     setRefreshing(true)
@@ -623,21 +632,27 @@ function ServicesSection() {
         <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("services.groupOfficeCli")}</h3>
         <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("services.groupOfficeCliDesc")}</p>
       </div>
-      <LarkConnectorCard />
+      {OFFICE_CLI_CONNECTORS.map((c) => (
+        <CliConnectorCard key={c.id} connector={c} api={cliApi} />
+      ))}
     </div>
   )
 }
 
-function LarkConnectorCard() {
+function CliConnectorCard({
+  connector,
+  api,
+}: {
+  connector: (typeof OFFICE_CLI_CONNECTORS)[number]
+  api: ReturnType<typeof useCliConnectors>
+}) {
   const { t } = useI18n()
-  const {
-    statuses, checking, phases, errors, pendingUrls,
-    refresh, install, configure, authorize,
-  } = useCliConnectors()
-  const status = statuses["lark"]
-  const phase = phases["lark"] ?? "idle"
-  const flowError = errors["lark"] ?? null
-  const pendingUrl = pendingUrls["lark"] ?? null
+  const { statuses, checking, phases, errors, pendingUrls, refresh, install, configure, authorize } = api
+  const { id } = connector
+  const status = statuses[id]
+  const phase = phases[id] ?? "idle"
+  const flowError = errors[id] ?? null
+  const pendingUrl = pendingUrls[id] ?? null
   const state = status?.state ?? "not_installed"
   const busy = phase !== "idle"
 
@@ -658,17 +673,27 @@ function LarkConnectorCard() {
     error: { label: t("cliConnector.error"), cls: "bg-red-500/10 text-red-600 dark:text-red-400" },
   }[state]
 
-  // Primary action per probed state; label switches to the in-flight variant.
-  const action =
-    state === "not_installed"
-      ? { label: phase === "installing" ? t("cliConnector.installing") : t("cliConnector.install"), run: () => install("lark"), hint: null }
-      : state === "not_configured"
-        ? { label: phase === "configuring" ? t("cliConnector.configuring") : t("cliConnector.configure"), run: () => configure("lark"), hint: t("cliConnector.configHint") }
-        : state === "not_authorized"
-          ? { label: phase === "authorizing" ? t("cliConnector.authorizing") : t("cliConnector.authorize"), run: () => authorize("lark"), hint: t("cliConnector.authHint") }
-          : state === "error"
-            ? { label: t("cliConnector.retry"), run: () => refresh(), hint: null }
-            : null
+  // Primary action per probed state (same lookup idiom as stateBadge above);
+  // label switches to the in-flight variant.
+  const action = {
+    not_installed: {
+      label: phase === "installing" ? t("cliConnector.installing") : t("cliConnector.install"),
+      run: () => install(id),
+      hint: null as string | null,
+    },
+    not_configured: {
+      label: phase === "configuring" ? t("cliConnector.configuring") : t("cliConnector.configure"),
+      run: () => configure(id),
+      hint: t("cliConnector.configHint"),
+    },
+    not_authorized: {
+      label: phase === "authorizing" ? t("cliConnector.authorizing") : t("cliConnector.authorize"),
+      run: () => authorize(id),
+      hint: t("cliConnector.authHint"),
+    },
+    error: { label: t("cliConnector.retry"), run: () => refresh(), hint: null },
+    connected: null,
+  }[state]
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] p-4">
@@ -685,7 +710,7 @@ function LarkConnectorCard() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("cliConnector.lark.title")}</h3>
+              <h3 className="text-sm font-medium text-[var(--color-fg)]">{t(connector.titleKey)}</h3>
               <span className={cn("inline-flex items-center rounded-full px-2 py-px text-[10px] font-medium", stateBadge.cls)}>
                 {state === "connected" && <CheckCircle2 className="mr-1 size-3" />}
                 {stateBadge.label}
@@ -696,7 +721,7 @@ function LarkConnectorCard() {
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("cliConnector.lark.desc")}</p>
+            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t(connector.descKey)}</p>
             {state === "connected" && status?.detail && (
               <p className="mt-1 flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
                 <CheckCircle2 className="size-3 text-green-500" />
@@ -2541,7 +2566,7 @@ const DEP_HINTS: Record<string, string> = isWindows
       git: "winget install Git.Git / git-scm.com",
       "markdown-exporter": "pip install md-exporter",
       "python-pptx": "pip install python-pptx",
-      "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
+      "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
     }
   : isMacOS
     ? {
@@ -2554,7 +2579,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         git: "brew install git / git-scm.com",
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
-        "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
+        "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
     : {
         python3: "apt/dnf install python3",
@@ -2566,7 +2591,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         git: "apt/dnf install git",
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
-        "lark-cli": "设置 → 连接器 → 办公 CLI（一键安装）",
+        "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
 
 function DepBadge({

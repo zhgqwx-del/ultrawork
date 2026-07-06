@@ -19,7 +19,7 @@ LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1 lark-cli a
 | 结果 | 含义 | 处理 |
 |------|------|------|
 | `ok: true` | 已连接 | 直接干活 |
-| `error.subtype: "not_configured"`（exit 3） | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置」完成（推荐，UI 有完整引导）；或按 `lark-cli skills read lark-shared` 的说明后台代跑 `config init --new` 并把 URL 转给用户 |
+| `error.subtype: "not_configured"` | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置应用」完成（推荐，UI 有完整引导）；或按 lark-shared 的说明后台代跑 `config init --new` 并把 URL 转给用户 |
 | `error.type: "auth"` | 未授权/登录过期 | 同上，设置页「授权」入口；或代跑 `auth login --no-wait --json` 并转发 verification URL |
 | 命令不存在 | CLI 未安装 | 引导用户去「设置 → 连接器 → 办公 CLI」一键安装 |
 
@@ -31,19 +31,13 @@ lark-cli skills read lark-shared     # 共享规则：认证/身份/权限/错�
 lark-cli skills read lark-calendar   # 再按任务域读对应技能（lark-im / lark-docs / lark-task / …）
 ```
 
-命令三层结构（优先级从高到低）：
-1. **`+shortcut`**：高层任务封装（如 `lark-cli calendar +agenda`）——有匹配的优先用
-2. **typed command**：单个 API 方法（`lark-cli mail user_mailbox.messages list …`）
-3. **`lark-cli api GET /open-apis/…`**：raw 逃生舱，仅当前两层没有时
+命令结构、shortcut 优先级、schema 自省、`--as user/bot` 身份选择、错误处理——**权威说明都在 lark-shared 与各域技能里**，读它们，不要凭本文件或记忆推断 CLI 行为。
 
-调用前先 `lark-cli schema <service.resource.method>` 自省参数/类型/scope；`lark-cli <domain> --help` 浏览域内命令。
+## 安全底线（无论是否读过 lark-shared 都必须遵守）
 
-## 输出与安全约定
-
-- **收敛输出省 token**：API 调用加 `--jq <expr>` 过滤 JSON；机器读输出统一带静噪 env（见第 0 步）。
-- **写操作先预览**：任何写操作先 `--dry-run` 看请求，确认无误再真跑。
-- **high-risk-write 必须用户确认**：`--help` 里标 `Risk: high-risk-write` 的命令需要 `--yes`——先向用户复述将发生什么、得到明确同意后才加 `--yes`。
-- **身份**：`--as user`（默认，操作用户自己的数据）vs `--as bot`（应用身份）。查用户日程/文档用 user；细节见 lark-shared。
+- **写操作先 `--dry-run` 预览**，确认无误再真跑。
+- **`Risk: high-risk-write` 命令需要 `--yes`**——先向用户复述将发生什么、得到明确同意后才加。
+- **收敛输出省 token**：API 调用加 `--jq <expr>`；机器读输出带静噪 env（见第 0 步）。
 - URL 字段（`verification_uri` 等）是 opaque string，原样转发给用户，不要改写。
 
 ## 不归本技能管

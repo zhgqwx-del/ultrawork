@@ -90,25 +90,20 @@ export function useCliConnectors(): CliConnectorsApi {
   const refresh = useCallback(async () => {
     try {
       await fetchStatuses()
+      // A manual refresh is the user's "re-check now" — a recovered connector
+      // must not keep a stale flow-error banner.
+      setErrors({})
     } catch (err) {
       console.warn("check_cli_connectors unavailable:", err)
     }
   }, [fetchStatuses])
 
   useEffect(() => {
-    let alive = true
-    invoke<CliConnectorStatus[]>("check_cli_connectors")
-      .then((arr) => {
-        if (alive) setStatuses(Object.fromEntries(arr.map((s) => [s.id, s])))
-      })
-      .catch((err) => console.warn("check_cli_connectors unavailable:", err))
-      .finally(() => {
-        if (alive) setChecking(false)
-      })
+    refresh().finally(() => setChecking(false))
     return () => {
-      alive = false
       generation.current++
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const install = useCallback(
@@ -141,15 +136,25 @@ export function useCliConnectors(): CliConnectorsApi {
         await openUrl(url)
         // The `config init` child completes only when the user finishes the
         // hosted flow in the browser — poll the probe until the state moves.
+        // A transient "error" probe (e.g. one 5s auth-status timeout under
+        // load) is NOT completion; keep polling until real progress.
         const deadline = Date.now() + CONFIG_POLL_TIMEOUT_MS
         while (Date.now() < deadline && generation.current === gen) {
           await new Promise((r) => setTimeout(r, CONFIG_POLL_INTERVAL_MS))
           if (generation.current !== gen) return
           const map = await fetchStatuses()
-          if (map[id] && map[id].state !== "not_configured") {
+          const state = map[id]?.state
+          if (state && state !== "not_configured" && state !== "error") {
             setPendingUrls((m) => ({ ...m, [id]: null }))
             return
           }
+        }
+        // Deadline hit (or flow superseded). Say so — a silent snap-back to
+        // "not configured" reads as data loss; the Rust child may still be
+        // waiting, so a manual refresh later can still pick up completion.
+        if (generation.current === gen) {
+          setPendingUrls((m) => ({ ...m, [id]: null }))
+          setError(id, t("cliConnector.configTimeout"))
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
