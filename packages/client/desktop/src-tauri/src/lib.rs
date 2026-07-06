@@ -2722,50 +2722,69 @@ struct CliConnectorStatus {
     detail: Option<String>,
 }
 
-/// Pure classifier for `lark-cli auth status --json` output (any exit code —
-/// the CLI reports state as a typed JSON error + nonzero exit).
+/// Pure classifier for `lark-cli auth status --json` output. Two real shapes
+/// (device-verified 2026-07-06, v1.0.65):
+/// - typed error document `{ok:false, error:{type,subtype,message,hint}}` on
+///   stderr with a nonzero exit (e.g. not_configured, exit 3);
+/// - status document on stdout with exit 0 once configured — **no `ok` field
+///   at all**: `{appId, brand, identities:{bot:{status,available,…},
+///   user:{status:"missing"|…, available:bool, …}}, identity, note}`.
+///   `identities.user.available` is the authorization verdict.
 fn classify_lark_auth_status(stdout: &str) -> (CliConnectorState, Option<String>) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
         let tail: String = stdout.trim().chars().take(200).collect();
         return (CliConnectorState::Error, Some(tail));
     };
-    if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
-        // Success shape per the CLI's lark-shared skill doc; exact fields are
-        // re-verified at real-device acceptance. An explicitly logged-out or
-        // token-expired user identity on an ok response still means
-        // "authorize me" — don't paint the card green over a dead token.
-        let user_status = v
-            .pointer("/identities/user/status")
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
-        let token_status = v
-            .pointer("/identities/user/tokenStatus")
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
-        if matches!(user_status, "not_logged_in" | "logged_out" | "none")
-            || matches!(token_status, "expired" | "invalid" | "revoked")
-        {
+    // Typed error document.
+    if v.get("error").is_some() {
+        let etype = v.pointer("/error/type").and_then(|s| s.as_str()).unwrap_or("");
+        let esub = v.pointer("/error/subtype").and_then(|s| s.as_str()).unwrap_or("");
+        if esub == "not_configured" {
+            return (CliConnectorState::NotConfigured, None);
+        }
+        if etype == "auth" {
             return (CliConnectorState::NotAuthorized, None);
         }
-        let name = v
-            .pointer("/identities/user/userName")
+        let msg = v
+            .pointer("/error/message")
+            .and_then(|s| s.as_str())
+            .map(str::to_string);
+        return (CliConnectorState::Error, msg);
+    }
+    // Status document: configured; the user identity decides authorization.
+    if let Some(user) = v.pointer("/identities/user") {
+        let available = user.get("available").and_then(|b| b.as_bool()).unwrap_or(false);
+        // Defensive: a dead token must never render a green card even if the
+        // CLI still reports the identity as available.
+        let token_status = user.get("tokenStatus").and_then(|s| s.as_str()).unwrap_or("");
+        if !available || matches!(token_status, "expired" | "invalid" | "revoked") {
+            return (CliConnectorState::NotAuthorized, None);
+        }
+        let name = user
+            .get("userName")
+            .or_else(|| user.get("name"))
             .and_then(|s| s.as_str())
             .map(str::to_string);
         return (CliConnectorState::Connected, name);
     }
-    let etype = v.pointer("/error/type").and_then(|s| s.as_str()).unwrap_or("");
-    let esub = v.pointer("/error/subtype").and_then(|s| s.as_str()).unwrap_or("");
-    if esub == "not_configured" {
-        return (CliConnectorState::NotConfigured, None);
+    // Bare ok:true without identities (shape from the CLI's lark-shared doc).
+    if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
+        return (CliConnectorState::Connected, None);
     }
-    if etype == "auth" {
-        return (CliConnectorState::NotAuthorized, None);
+    (CliConnectorState::Error, Some("unrecognized auth status output".into()))
+}
+
+/// lark-cli prints typed *error* JSON to stderr (unix convention: errors →
+/// stderr even when structured) and success JSON to stdout. Real-device
+/// finding 2026-07-06: probing stdout alone reads "" for the not_configured
+/// state and misclassifies it as Error. Prefer stdout, fall back to stderr.
+fn lark_json_output(out: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.trim().is_empty() {
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    } else {
+        stdout.into_owned()
     }
-    let msg = v
-        .pointer("/error/message")
-        .and_then(|s| s.as_str())
-        .map(str::to_string);
-    (CliConnectorState::Error, msg)
 }
 
 /// "lark-cli version 1.0.65" → "1.0.65".
@@ -2812,7 +2831,7 @@ fn probe_lark_status() -> CliConnectorStatus {
         &mut lark_cmd(&bin, &["auth", "status", "--json"]),
         Duration::from_secs(5),
     ) {
-        Some(out) => classify_lark_auth_status(&String::from_utf8_lossy(&out.stdout)),
+        Some(out) => classify_lark_auth_status(&lark_json_output(&out)),
         None => (
             CliConnectorState::Error,
             Some("lark-cli auth status timed out".into()),
@@ -3158,7 +3177,11 @@ fn parse_lark_device_login(stdout: &str) -> Result<CliDeviceLogin, String> {
     Ok(CliDeviceLogin {
         device_code: s("device_code").ok_or("missing device_code in auth login output")?,
         user_code: s("user_code"),
-        verification_uri: s("verification_uri"),
+        // Real shape (device-verified 2026-07-06, v1.0.65): the field is
+        // `verification_url` and it already embeds the user_code — the
+        // `verification_uri`/`_complete` spellings (json tags of another
+        // struct in the binary) are kept as fallbacks.
+        verification_uri: s("verification_url").or_else(|| s("verification_uri")),
         verification_uri_complete: s("verification_uri_complete"),
         expires_in: n("expires_in"),
         interval: n("interval"),
@@ -3179,7 +3202,7 @@ fn start_office_cli_auth(id: String) -> Result<CliDeviceLogin, String> {
         Duration::from_secs(30),
     )
     .ok_or("lark-cli auth login timed out")?;
-    parse_lark_device_login(&String::from_utf8_lossy(&out.stdout))
+    parse_lark_device_login(&lark_json_output(&out))
 }
 
 /// String-typed convenience over [`run_probe_capture`] for long-running calls
@@ -3212,18 +3235,32 @@ fn complete_office_cli_auth(
     )
     .ok_or("authorization polling timed out")?;
     if !ok {
-        let msg = serde_json::from_str::<serde_json::Value>(stdout.trim())
-            .ok()
-            .and_then(|v| {
-                v.pointer("/error/message")
-                    .and_then(|s| s.as_str())
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| {
-                let raw = if stdout.trim().is_empty() { &stderr } else { &stdout };
-                raw.trim().chars().take(300).collect()
-            });
-        return Err(msg);
+        // Error JSON arrives on stderr (see lark_json_output) — pick the
+        // populated stream first.
+        let raw = if stdout.trim().is_empty() { &stderr } else { &stdout };
+        let v = serde_json::from_str::<serde_json::Value>(raw.trim()).ok();
+        // Real-device finding 2026-07-06: when some requested scopes aren't
+        // enabled on the app (we ask --domain all; a fresh hosted app only has
+        // the basics), the CLI COMPLETES the authorization, reports
+        // event:"authorization_complete" with granted/missing lists, and still
+        // exits nonzero. That's a success for the connector — the probe below
+        // is the truth; missing domains are granted incrementally at runtime
+        // by the skill (lark-shared guidance).
+        let auth_complete = v
+            .as_ref()
+            .and_then(|v| v.get("event"))
+            .and_then(|s| s.as_str())
+            == Some("authorization_complete");
+        if !auth_complete {
+            let msg = v
+                .and_then(|v| {
+                    v.pointer("/error/message")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| raw.trim().chars().take(300).collect());
+            return Err(msg);
+        }
     }
     Ok(probe_lark_status())
 }
@@ -4647,7 +4684,7 @@ mod provider_test_tests {
 
     #[test]
     fn lark_auth_status_classification() {
-        // Real not-configured output (2026-07-06 live run, exit 3).
+        // Real not-configured output (2026-07-06 live run, stderr, exit 3).
         let (state, _) = classify_lark_auth_status(
             r#"{"ok":false,"error":{"type":"config","subtype":"not_configured","message":"not configured","hint":"run config init"}}"#,
         );
@@ -4658,23 +4695,29 @@ mod provider_test_tests {
         );
         assert_eq!(state, CliConnectorState::NotAuthorized);
 
+        // Real configured-but-not-logged-in status document (2026-07-06 live
+        // run, stdout, exit 0 — note: NO `ok` field at all).
+        let (state, _) = classify_lark_auth_status(
+            r#"{"appId":"cli_aac1ebcc423adbc6","brand":"feishu","defaultAs":"auto","identities":{"bot":{"status":"ready","available":true,"message":"Bot identity: ready"},"user":{"status":"missing","available":false,"message":"User identity: missing (no user logged in)","hint":"run: lark-cli auth login --help"}},"identity":"bot","note":"User identity is missing"}"#,
+        );
+        assert_eq!(state, CliConnectorState::NotAuthorized);
+
+        // Authorized status document (user identity available).
         let (state, name) = classify_lark_auth_status(
-            r#"{"ok":true,"identity":"user","identities":{"user":{"status":"logged_in","userName":"张三","tokenStatus":"valid"}}}"#,
+            r#"{"appId":"cli_x","brand":"feishu","identities":{"bot":{"status":"ready","available":true},"user":{"status":"ready","available":true,"userName":"张三"}},"identity":"user"}"#,
         );
         assert_eq!(state, CliConnectorState::Connected);
         assert_eq!(name.as_deref(), Some("张三"));
 
-        // ok:true but the user identity is explicitly logged out.
+        // Available user but dead token — never paint the card green.
         let (state, _) = classify_lark_auth_status(
-            r#"{"ok":true,"identities":{"user":{"status":"not_logged_in"}}}"#,
+            r#"{"identities":{"user":{"status":"ready","available":true,"tokenStatus":"expired"}}}"#,
         );
         assert_eq!(state, CliConnectorState::NotAuthorized);
 
-        // ok:true but the token is dead — never paint the card green.
-        let (state, _) = classify_lark_auth_status(
-            r#"{"ok":true,"identities":{"user":{"status":"logged_in","tokenStatus":"expired"}}}"#,
-        );
-        assert_eq!(state, CliConnectorState::NotAuthorized);
+        // Bare ok:true (lark-shared doc shape, no identities).
+        let (state, _) = classify_lark_auth_status(r#"{"ok":true}"#);
+        assert_eq!(state, CliConnectorState::Connected);
 
         let (state, detail) = classify_lark_auth_status("segfault: not json");
         assert_eq!(state, CliConnectorState::Error);
@@ -4685,6 +4728,32 @@ mod provider_test_tests {
         );
         assert_eq!(state, CliConnectorState::Error);
         assert_eq!(detail.as_deref(), Some("dial timeout"));
+
+        // Unrecognized-but-valid JSON is an explicit error with a detail (an
+        // empty detail would suppress the UI banner — real-device lesson).
+        let (state, detail) = classify_lark_auth_status(r#"{"something":"else"}"#);
+        assert_eq!(state, CliConnectorState::Error);
+        assert!(detail.is_some());
+    }
+
+    #[test]
+    #[cfg(unix)] // ExitStatus::from_raw is unix-only; the fn under test is pure
+    fn lark_json_output_prefers_stdout_falls_back_to_stderr() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mk = |stdout: &str, stderr: &str| std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        };
+        // Success JSON on stdout wins even when stderr has noise.
+        assert_eq!(lark_json_output(&mk(r#"{"ok":true}"#, "notice")), r#"{"ok":true}"#);
+        // Typed error JSON on stderr (real-device finding: not_configured
+        // arrives there with empty stdout) is picked up.
+        assert_eq!(
+            lark_json_output(&mk("  \n", r#"{"ok":false}"#)),
+            r#"{"ok":false}"#
+        );
+        assert_eq!(lark_json_output(&mk("", "")), "");
     }
 
     #[test]
@@ -4696,12 +4765,26 @@ mod provider_test_tests {
 
     #[test]
     fn lark_device_login_parse() {
-        // Standard OAuth device-flow fields (json tags confirmed in the binary).
+        // Real shape (2026-07-06 live run, v1.0.65): verification_url with the
+        // user_code embedded; no separate user_code/interval fields.
+        let login = parse_lark_device_login(
+            r#"{"device_code":"O_sB.xyz","expires_in":600,"hint":"**MUST generate QR code**","verification_url":"https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=F1&user_code=UEJ9-TT8C"}"#,
+        )
+        .expect("parses real shape");
+        assert_eq!(login.device_code, "O_sB.xyz");
+        assert_eq!(
+            login.verification_uri.as_deref(),
+            Some("https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=F1&user_code=UEJ9-TT8C")
+        );
+        assert_eq!(login.expires_in, Some(600));
+
+        // Doc-derived spelling still accepted as fallback.
         let login = parse_lark_device_login(
             r#"{"ok":true,"device_code":"dc123","user_code":"AB-CD","verification_uri":"https://v","verification_uri_complete":"https://v?u=AB-CD","expires_in":300,"interval":5}"#,
         )
         .expect("parses");
         assert_eq!(login.device_code, "dc123");
+        assert_eq!(login.verification_uri.as_deref(), Some("https://v"));
         assert_eq!(login.verification_uri_complete.as_deref(), Some("https://v?u=AB-CD"));
         assert_eq!(login.expires_in, Some(300));
 
