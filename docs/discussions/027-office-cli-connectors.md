@@ -86,7 +86,12 @@
 - [x] **安装机制已摸清（新增结论）**：npm 包只是 wrapper（`run.js` + postinstall），真身是 Go 二进制，从 GitHub Release（fallback npmmirror `/-/binary/lark-cli/v{V}/{archive}`）下载 + npm 包内 `checksums.txt` sha256 校验。**推荐直接下二进制**（Rust 侧 curl + sha256 + 解压到自管目录，复用 `download_node` 先例），不必经内嵌 Node npm——少一层依赖、锁版本天然、双源 fallback 与校验逻辑照抄官方 install.js 即可（§3 安装环节相应修正，属方案偏差、待用户确认）。
 - [ ] wecom `init` 有无非交互配置（flag/env/配置文件直写）；配置文件路径与格式；有无 auth status 等价命令（Phase 3 再验）。
 - [x] ~~UI 归属命名拍板~~ **已拍板（2026-07-06）**：方案 ①——「MCP 连接器」分区更名「连接器」，内分「MCP」/「办公 CLI」两组（见 §2）。**技能形态与安装方式两项方案偏差同日拍板**：薄路由技能 + Rust 直下二进制（见上方两条结论）。
-- [ ] lark 授权成功态输出结构（`auth status --json --verify` 成功字段 / `--device-code` 完成时输出）——真机验收时用用户飞书账号核。
+- [x] ~~lark 授权成功态输出结构~~ **真机验收实拍（2026-07-06，用户账号全流程走通）——四个契约与文档推定全面不符，均已修（review-r3）**：
+  - **错误态 JSON 走 stderr**（stdout 为空）+ 非零退出；成功态走 stdout。机器读输出必须两路都接。
+  - **`auth status` 成功态 = exit 0 状态文档，无 `ok` 字段**：`{appId, brand, defaultAs, identities:{bot:{status,available,message}, user:{status,available,message,openId,userName,tokenStatus,scope,expiresAt,refreshExpiresAt,grantedAt}}, identity}`。未授权时 `user.status:"missing"/available:false`；授权后 `status:"ready"/available:true/tokenStatus:"valid"`。**授权判据 = `identities.user.available` 布尔**。
+  - **设备流字段实为 `verification_url`**（user_code 内嵌在 URL query 里），无独立 user_code/interval 字段；实拍 shape=`{device_code, expires_in:600, hint, verification_url}`。二进制 strings 里的 `verification_uri`/`_complete` json tag 属于其它内部结构体，不是本命令输出。
+  - **`--domain all` 对新建托管应用必然部分授予**：CLI 完成授权仍非零退出，输出 `{event:"authorization_complete", granted:[...], missing:[...], already_granted:[]}`——**这是成功不是失败**；新应用默认只授基础 scope（basic_profile/auth:user.id/offline_access 等），calendar/approval 等缺失域由 agent 运行时按 lark-shared 指引增量 `auth login --domain X` 补授。
+  - agent E2E 实录：`tool_search → skill(feishu-assistant) → bash(lark-cli auth status --json，自带静噪 env)` → 返回真实身份数据，薄路由全链路成立。
 
 **lark-cli 其它实测要点（2026-07-06，供实现参考）**：配置落点 `~/.lark-cli/`（config.json + cache/logs；token 在 macOS 走 Keychain，`config keychain-downgrade` 可降级文件存储）；错误输出全线结构化 JSON + 类型化 exit code（not_configured=3）；`--domain` 支持 21 个业务域 + `all`，`--recommend` 只请求免审批 scope；`auth qrcode` 可生成 PNG/ASCII 二维码；`config remove` 清配置与 token。
 
