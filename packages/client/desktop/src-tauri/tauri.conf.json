@@ -44,6 +44,14 @@
     "resources": {
       "resources/builtin-skills": "skills/builtin"
     },
+    "linux": {
+      "deb": {
+        "depends": ["curl"]
+      },
+      "rpm": {
+        "depends": ["curl", "tar"]
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist"

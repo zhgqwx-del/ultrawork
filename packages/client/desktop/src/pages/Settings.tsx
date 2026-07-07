@@ -450,7 +450,10 @@ function BrowserServiceCard() {
   )
 }
 
-/** Office CLI connectors rendered in the Office CLI group (Phase 1: Feishu). */
+/** Connector-managed CLI deps: installed via 设置 → 连接器 → 办公 CLI, never via terminal. */
+const CONNECTOR_MANAGED_DEPS = new Set(["lark-cli", "dws", "wecom-cli"])
+
+/** Office CLI connectors rendered in the Office CLI group (mirrors Rust CLI_CONNECTORS). */
 const OFFICE_CLI_CONNECTORS = [
   { id: "lark", titleKey: "cliConnector.lark.title", descKey: "cliConnector.lark.desc" },
   { id: "dingtalk", titleKey: "cliConnector.dingtalk.title", descKey: "cliConnector.dingtalk.desc" },
@@ -757,6 +760,22 @@ function CliConnectorCard({
           >
             <RefreshCw className="size-3.5" />
           </Button>
+          {/* Repair/upgrade path: install_office_cli is install-or-repair, but the
+              primary action only offers it when not_installed — without this, an
+              externally-installed stale CLI stuck in `error`, a missing dws skill
+              tree ("重新点安装" per dingtalk-assistant), or a bumped pin on an
+              existing install would have no UI way to reinstall the managed copy. */}
+          {state !== "not_installed" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => install(id)}
+              disabled={busy}
+              title={t("cliConnector.reinstall")}
+            >
+              <Download className="size-3.5" />
+            </Button>
+          )}
           {action && (
             <Button size="sm" onClick={action.run} disabled={busy}>
               {busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
@@ -2224,8 +2243,15 @@ function SkillsSection() {
 
   // Missing skill dependencies: hand off to the AI in a fresh chat, which detects the
   // OS and walks the user through platform-appropriate installs (same pattern as install).
+  // Office-CLI binaries are the exception: the connector card installs them (pinned
+  // version + sha256), so the generic terminal walkthrough (whose convergence criterion
+  // is python/pptx-specific anyway) would both mislead and produce an unpinned copy —
+  // send a prompt that routes the user to the connector card instead.
   const handleDepGuide = (item: SkillItem, missing: string[]) => {
-    const prompt = t("skills.depGuidePrompt", {
+    const promptKey = missing.every((d) => CONNECTOR_MANAGED_DEPS.has(d))
+      ? "skills.depGuidePromptCli"
+      : "skills.depGuidePrompt"
+    const prompt = t(promptKey, {
       name: item.name,
       deps: missing.join(", "),
       location: item.location ?? "",

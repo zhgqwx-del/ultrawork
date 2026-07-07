@@ -20,10 +20,10 @@ LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1 lark-cli a
 |------|------|------|
 | 状态文档（exit 0，无 `ok` 字段）且 `identities.user.available: true` | 已连接 | 直接干活 |
 | 状态文档且 `identities.user.available: false`（`status:"missing"`） | 已配置但未授权 | 引导用户去「设置 → 连接器 → 办公 CLI」点「授权」；或代跑 `auth login --no-wait --json` 并转发 verification_url |
-| `error.subtype: "not_configured"`（错误 JSON 在 **stderr**，非零退出） | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置应用」完成（推荐，UI 有完整引导）；或按 lark-shared 的说明后台代跑 `config init --new` 并把 URL 转给用户 |
+| `error.subtype: "not_configured"`（错误 JSON 在 **stderr**，非零退出） | 未配置应用 | 引导用户去「设置 → 连接器 → 办公 CLI」点「配置应用」完成（UI 托管完整流程）。**不要在 bash 前台代跑 `config init --new`**——它是阻塞子进程（等用户在浏览器完成才退出），会被 bash 超时杀在半途、配置写不落盘（与 dws login 同类失败模式）；确需代跑必须按 lark-shared 的 background 方式 |
 | 命令不存在 | CLI 未安装 | 引导用户去「设置 → 连接器 → 办公 CLI」一键安装 |
 
-**scope 不足 ≠ 未授权（重要）**：新配置的应用默认只授予基础 scope（用户身份/基础资料等），日历、审批、考勤等业务域**首次用到时才补授**。干活途中遇到某个 API 报缺 scope／权限不足：**不要**引导用户回设置页重新授权（那只会重复授予同样的基础 scope）——按 lark-shared 的说明**增量授权**：`lark-cli auth login --domain <所需域> --no-wait --json`，把 verification_url 转给用户完成即可。注意：某些域首次开通可能触发飞书的**开通申请审核**（页面提示"已提交申请，正在审核中"，进度经"开发者小助手"机器人推送）——这是平台正常流程，如实告知用户等审核通过后重试，不要反复重发授权请求。
+**scope 不足 ≠ 未授权（重要）**：新配置的应用默认只授予基础 scope（用户身份/基础资料等），日历、审批、考勤等业务域**首次用到时才补授**。干活途中遇到某个 API 报缺 scope／权限不足：**不要**引导用户回设置页重新授权（那只会重复授予同样的基础 scope）——按 lark-shared 的说明**增量授权**：`lark-cli auth login --domain <所需域> --no-wait --json`（立即返回不阻塞），把 verification_url 转给用户；用户完成授权后**还需用返回的 `device_code` 恢复轮询换 token**：`lark-cli auth login --device-code <device_code> --json`（阻塞至完成，完整流程见 lark-shared）。注意：某些域首次开通可能触发飞书的**开通申请审核**（页面提示"已提交申请，正在审核中"，进度经"开发者小助手"机器人推送）——这是平台正常流程，如实告知用户等审核通过后重试，不要反复重发授权请求。
 
 ## 第 1 步：按需加载官方文档（必做）
 
