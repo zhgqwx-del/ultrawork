@@ -19,6 +19,8 @@
 | `pdf` | openai/skills `.curated/pdf` | Apache-2.0 | python3, pdftoppm(poppler) |
 | `markdown-exporter` | bowenliang123/md_exporter（仅 SKILL.md，按 pip 模式） | Apache-2.0 | markdown-exporter(pip), pandoc |
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
+| `feishu-assistant` | **ultrawork 自写**（薄路由到 lark-cli 内嵌官方技能） | 同仓库 | lark-cli（设置→连接器→办公 CLI 安装） |
+| `dingtalk-assistant` | **ultrawork 自写**（薄路由到连接器 materialize 的 dws 官方 mono 技能） | 同仓库 | dws（设置→连接器→办公 CLI 安装） |
 
 > ⚠️ Anthropic 官方 `docx/pdf/pptx/xlsx` 文档技能是**专有许可、禁止再分发**（`LICENSE.txt` 1467B
 > 即专有，11345B 即 Apache-2.0），**不可内置**。故 PDF 采用 OpenAI 的 Apache 版，Office 读改自写

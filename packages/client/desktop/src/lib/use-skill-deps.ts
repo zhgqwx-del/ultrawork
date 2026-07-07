@@ -32,6 +32,8 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // user install on PATH). The badge only reflects binary presence; auth state
   // lives in the connector card (use-cli-connectors).
   "feishu-assistant": ["lark-cli"],
+  // Official DingTalk CLI — same connector-managed model as lark-cli.
+  "dingtalk-assistant": ["dws"],
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */

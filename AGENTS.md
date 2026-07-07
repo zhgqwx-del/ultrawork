@@ -131,7 +131,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - **办公 CLI 连接器五命令（ADR-043，「Office CLI connectors」代码段）**：`check_cli_connectors`（五态探针，`classify_lark_auth_status`/`lark_json_output`〔stderr 回落〕/版本按路径缓存）、`install_office_cli`（`CliInstallSpec`+`install_pinned_cli`：pin+sha256+双源）、`start_office_cli_config`（托管页 URL 捕获，child 入 slot+pid 守卫，退出时 `shutdown_sidecars` 排空）、`start_office_cli_auth`（`--recommend` 设备流）/`complete_office_cli_auth`（`classify_complete_auth` 部分授予=成功）；`office_cli_bin_dir` 领跑 `compute_rich_path`；上游契约坑 SSOT gotchas §14
 
 **内置技能（`skills/builtin/`，ADR-032 / ADR-040）**
-- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）、`feishu-assistant`（自写，飞书 lark-cli 薄路由，ADR-043）可直接编辑（改完重打 zip）
+- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）、`feishu-assistant`（自写，飞书 lark-cli 薄路由，ADR-043）、`dingtalk-assistant`（自写，钉钉 dws 薄路由——路由到连接器 materialize 的官方 mono 文档，ADR-043）可直接编辑（改完重打 zip）
 - 设置-技能页三区在 `src/pages/Settings.tsx`（SkillsSection/DepBadge〔含「引导安装」handoff〕/INSTALLABLE_SKILLS/平台化 DEP_HINTS）；安装/依赖引导都走 Home `initialInput` 预填
 
 **Gateway（`packages/channel/gateway/src/`）**

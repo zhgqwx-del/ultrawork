@@ -41,6 +41,10 @@ const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
 
 const HOSTED_URL = "https://open.feishu.cn/page/cli?user_code=E2E9-MOCK&lpv=1.0.65&from=cli"
 const VERIFY_URL = "https://accounts.feishu.cn/oauth/v1/device/verify?flow_id=F-e2e&user_code=UEJ9-MOCK"
+const DT_VERIFY_URL = "https://login.dingtalk.com/oauth2/device/verify.htm?user_code=BRPX-MOCK"
+const DT_ADMIN_URL = "https://open-dev.dingtalk.com/fe/old#/developerSettings"
+const DT_NOT_ENABLED_DETAIL =
+  "device authorization failed: CLI data access is not enabled for this organization, please contact admin to enable it\n组织主管理员：张三"
 
 let browser: Browser | undefined
 const checks: string[] = []
@@ -57,16 +61,25 @@ try {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()) })
-  await page.addInitScript(({ ws, pw, hostedUrl, verifyUrl }) => {
-    // Stateful mock of the five office-CLI commands. The test flips
-    // window.__lark.state / reads window.__lark.opened to drive assertions.
+  await page.addInitScript(({ ws, pw, hostedUrl, verifyUrl, dtVerifyUrl, dtAdminUrl, dtDetail }) => {
+    // Stateful mock of the five office-CLI commands, now TWO connectors (the
+    // Phase 2 card state machines differ: dingtalk has no config step but has
+    // the guided not_enabled state). The test flips window.__lark/__dt state
+    // and reads window.__lark.opened (shared opener log) to drive assertions.
     const lark: any = {
       state: "not_installed",
       detail: null as string | null,
       opened: [] as string[],
       completeMode: "connected", // what complete_office_cli_auth resolves to
     }
+    const dt: any = {
+      state: "not_installed",
+      detail: null as string | null,
+      actionUrl: null as string | null,
+      completeMode: "not_enabled", // first authorize hits the org switch
+    }
     ;(window as any).__lark = lark
+    ;(window as any).__dt = dt
     const status = () => ({
       id: "lark",
       state: lark.state,
@@ -74,12 +87,24 @@ try {
       version: lark.state === "not_installed" ? null : "1.0.65",
       detail: lark.detail,
     })
+    const dtStatus = () => ({
+      id: "dingtalk",
+      state: dt.state,
+      path: dt.state === "not_installed" ? null : "/mock/office-cli/bin/dws",
+      version: dt.state === "not_installed" ? null : "1.0.47",
+      detail: dt.detail,
+      action_url: dt.actionUrl,
+    })
     const handlers: Record<string, (a: any) => any> = {
       check_directory_exists: () => true, ensure_default_workspace: () => ws, login_shell_path: () => "",
       scan_workspace_changes: () => [], get_sidecar_credentials: () => ({ username: "opencode", password: pw }),
-      check_cli_connectors: () => [status()],
-      install_office_cli: async () => {
+      check_cli_connectors: () => [status(), dtStatus()],
+      install_office_cli: async ({ id }: { id: string }) => {
         await new Promise((r) => setTimeout(r, 400))
+        if (id === "dingtalk") {
+          dt.state = "not_authorized" // dws has no config step
+          return dtStatus()
+        }
         lark.state = "not_configured"
         return status()
       },
@@ -87,13 +112,23 @@ try {
         await new Promise((r) => setTimeout(r, 200))
         return hostedUrl // the UI polls check_cli_connectors afterwards
       },
-      start_office_cli_auth: async () => ({
-        device_code: "dc-e2e", user_code: null,
-        verification_uri: verifyUrl, verification_uri_complete: null,
-        expires_in: 600, interval: null,
-      }),
-      complete_office_cli_auth: async () => {
+      start_office_cli_auth: async ({ id }: { id: string }) =>
+        id === "dingtalk"
+          ? { device_code: null, user_code: "BRPX-MOCK", verification_uri: dtVerifyUrl, expires_in: 900, interval: 5 }
+          : { device_code: "dc-e2e", user_code: null, verification_uri: verifyUrl, verification_uri_complete: null, expires_in: 600, interval: null },
+      complete_office_cli_auth: async ({ id }: { id: string }) => {
         await new Promise((r) => setTimeout(r, 600))
+        if (id === "dingtalk") {
+          dt.state = dt.completeMode
+          if (dt.state === "not_enabled") {
+            dt.detail = dtDetail
+            dt.actionUrl = dtAdminUrl
+          } else if (dt.state === "connected") {
+            dt.detail = "张三 · 某公司"
+            dt.actionUrl = null
+          }
+          return dtStatus()
+        }
         lark.state = lark.completeMode
         if (lark.state === "connected") lark.detail = "guoqiang"
         return status()
@@ -104,7 +139,7 @@ try {
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: pw }))
     localStorage.setItem("workspace_path", ws)
-  }, { ws, pw: PW, hostedUrl: HOSTED_URL, verifyUrl: VERIFY_URL })
+  }, { ws, pw: PW, hostedUrl: HOSTED_URL, verifyUrl: VERIFY_URL, dtVerifyUrl: DT_VERIFY_URL, dtAdminUrl: DT_ADMIN_URL, dtDetail: DT_NOT_ENABLED_DETAIL })
 
   await page.goto("http://localhost:1420/settings", { waitUntil: "domcontentloaded" })
   await page.waitForTimeout(1500)
@@ -177,8 +212,43 @@ try {
     throw new Error("stale error banner survives recovery (refresh should clear per-id error)")
   checks.push("error state banner + retry-recovers-and-clears-error ✓")
 
+  console.log("=== 8. dingtalk: not_installed → install → not_authorized (NO config step) ===")
+  const dtCard = page.locator("div.rounded-lg", { hasText: /钉钉|DingTalk/ }).last()
+  await dtCard.getByText(/^(Not installed|未安装)$/).waitFor({ timeout: 10000 })
+  await dtCard.getByRole("button", { name: /^(Install|安装)$/ }).click()
+  await dtCard.getByText(/^(Not authorized|未授权)$/).waitFor({ timeout: 10000 })
+  await dtCard.getByText("v1.0.47").waitFor({ timeout: 5000 })
+  if ((await dtCard.getByRole("button", { name: /Configure app|配置应用/ }).count()) !== 0)
+    throw new Error("dingtalk card must never offer a configure step (built-in OAuth client)")
+  checks.push("dingtalk install → not_authorized directly (no config step) ✓")
+
+  console.log("=== 9. dingtalk authorize → org switch off: guided not_enabled banner + admin console link ===")
+  await dtCard.getByRole("button", { name: /^(Authorize|授权)$/ }).click()
+  await dtCard.getByText(/^(Org not enabled|企业未开通)$/).waitFor({ timeout: 15000 })
+  // The verification URL was still opened (user completed the OAuth part).
+  const openedDt = await page.evaluate(() => (window as any).__lark.opened)
+  if (!openedDt.includes(DT_VERIFY_URL)) throw new Error(`opener did not receive dws verify URL: ${JSON.stringify(openedDt)}`)
+  // Amber guidance banner: CLI's own message incl. the super-admin name, NOT a red error.
+  await dtCard.getByText(/组织主管理员：张三/).waitFor({ timeout: 5000 })
+  const consoleBtn = dtCard.getByRole("button", { name: /Admin console|打开管理后台/ })
+  await consoleBtn.waitFor({ timeout: 5000 })
+  await consoleBtn.click()
+  const openedAdmin = await page.evaluate(() => (window as any).__lark.opened)
+  if (openedAdmin[openedAdmin.length - 1] !== DT_ADMIN_URL)
+    throw new Error(`admin console button did not open the console URL: ${JSON.stringify(openedAdmin)}`)
+  checks.push("dingtalk not_enabled: badge + admin-name banner + console deep link ✓")
+
+  console.log("=== 10. admin flips the switch → authorize again → connected; count = 2 ===")
+  await page.evaluate(() => { (window as any).__dt.completeMode = "connected" })
+  await dtCard.getByRole("button", { name: /^(Authorize again|重新授权)$/ }).click()
+  await dtCard.getByText(/^(Connected|已连接)$/).waitFor({ timeout: 15000 })
+  await dtCard.getByText("张三 · 某公司").waitFor({ timeout: 5000 })
+  await page.getByText(/DingTalk connected|钉钉已连接/).first().waitFor({ timeout: 5000 }) // toast
+  await page.getByText(/^2 (connected|已连接)$/).first().waitFor({ timeout: 10000 })
+  checks.push("dingtalk re-authorize → connected + toast; section count reaches 2 ✓")
+
   if (errors.length) console.log(`  (note: ${errors.length} console errors; first: ${errors[0]?.slice(0, 160)})`)
-  verdict = "PASS ✅ — real React UI walks the office-CLI connector card through install → configure → authorize → connected plus error/retry, with opener-URL and count assertions."
+  verdict = "PASS ✅ — real React UI walks BOTH office-CLI connector cards: lark install → configure → authorize → connected + error/retry, dingtalk install → authorize → not_enabled guidance → re-authorize → connected, with opener-URL and count assertions."
 } catch (e) {
   verdict = `FAIL ❌ — ${(e as Error).message}`
 } finally {

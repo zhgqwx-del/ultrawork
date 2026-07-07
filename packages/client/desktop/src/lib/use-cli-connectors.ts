@@ -21,6 +21,8 @@ export type CliConnectorState =
   | "not_installed"
   | "not_configured"
   | "not_authorized"
+  /** Vendor org hasn't enabled CLI access (dws) — guided state, not an error. */
+  | "not_enabled"
   | "connected"
   | "error"
 
@@ -31,10 +33,13 @@ export interface CliConnectorStatus {
   version?: string | null
   /** Identity name when connected; error hint otherwise. */
   detail?: string | null
+  /** Deep link for the state's guided fix (e.g. DingTalk admin console). */
+  action_url?: string | null
 }
 
 interface CliDeviceLogin {
-  device_code: string
+  /** lark: resume handle; dingtalk: absent (the parked child IS the flow). */
+  device_code?: string | null
   user_code?: string | null
   verification_uri?: string | null
   verification_uri_complete?: string | null
@@ -70,9 +75,13 @@ export function useCliConnectors(): CliConnectorsApi {
   const [phases, setPhases] = useState<Record<string, CliConnectorPhase>>({})
   const [errors, setErrors] = useState<Record<string, string | null>>({})
   const [pendingUrls, setPendingUrls] = useState<Record<string, string | null>>({})
-  // Bumped on unmount and whenever a new flow starts, so a stale config poll
-  // loop from a previous flow stops touching state.
-  const generation = useRef(0)
+  // Per-connector flow generation, bumped on unmount and whenever a new flow
+  // for that id starts, so a stale poll loop from a previous flow stops
+  // touching state. Keyed by id (Phase 2): two connectors' concurrent flows
+  // must not cancel each other.
+  const generations = useRef<Record<string, number>>({})
+  const nextGen = (id: string) => (generations.current[id] = (generations.current[id] ?? 0) + 1)
+  const curGen = (id: string) => generations.current[id] ?? 0
 
   const setPhase = useCallback((id: string, phase: CliConnectorPhase) => {
     setPhases((p) => ({ ...p, [id]: phase }))
@@ -103,7 +112,7 @@ export function useCliConnectors(): CliConnectorsApi {
   useEffect(() => {
     refresh().finally(() => setChecking(false))
     return () => {
-      generation.current++
+      for (const id of Object.keys(generations.current)) generations.current[id]++
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -115,7 +124,7 @@ export function useCliConnectors(): CliConnectorsApi {
       try {
         const status = await invoke<CliConnectorStatus>("install_office_cli", { id })
         setStatuses((m) => ({ ...m, [id]: status }))
-        toast.success(t("cliConnector.toastInstalled"))
+        toast.success(t(`cliConnector.${id}.toastInstalled`))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         setError(id, msg)
@@ -131,12 +140,12 @@ export function useCliConnectors(): CliConnectorsApi {
     async (id: string) => {
       setError(id, null)
       setPhase(id, "configuring")
-      const gen = ++generation.current
+      const gen = nextGen(id)
       try {
         const url = await invoke<string>("start_office_cli_config", { id, lang: language })
         // A newer flow may have superseded us while the invoke waited for the
         // URL (its Rust side killed our child) — don't clobber its state.
-        if (generation.current !== gen) return
+        if (curGen(id) !== gen) return
         setPendingUrls((m) => ({ ...m, [id]: url }))
         await openUrl(url)
         // The `config init` child completes only when the user finishes the
@@ -144,9 +153,9 @@ export function useCliConnectors(): CliConnectorsApi {
         // A transient "error" probe (e.g. one 5s auth-status timeout under
         // load) is NOT completion; keep polling until real progress.
         const deadline = Date.now() + CONFIG_POLL_TIMEOUT_MS
-        while (Date.now() < deadline && generation.current === gen) {
+        while (Date.now() < deadline && curGen(id) === gen) {
           await new Promise((r) => setTimeout(r, CONFIG_POLL_INTERVAL_MS))
-          if (generation.current !== gen) return
+          if (curGen(id) !== gen) return
           const map = await fetchStatuses()
           const state = map[id]?.state
           if (state && state !== "not_configured" && state !== "error") {
@@ -157,7 +166,7 @@ export function useCliConnectors(): CliConnectorsApi {
         // Deadline hit (or flow superseded). Say so — a silent snap-back to
         // "not configured" reads as data loss; the Rust child may still be
         // waiting, so a manual refresh later can still pick up completion.
-        if (generation.current === gen) {
+        if (curGen(id) === gen) {
           setPendingUrls((m) => ({ ...m, [id]: null }))
           setError(id, t("cliConnector.configTimeout"))
         }
@@ -165,12 +174,12 @@ export function useCliConnectors(): CliConnectorsApi {
         // Same guard as authorize(): a superseded invoke's rejection (e.g.
         // "did not produce a setup URL" after our child was killed by the
         // successor) must not paint an error over the live flow.
-        if (generation.current !== gen) return
+        if (curGen(id) !== gen) return
         const msg = err instanceof Error ? err.message : String(err)
         setError(id, msg)
         toast.error(t("cliConnector.toastFailed", { error: msg }))
       } finally {
-        if (generation.current === gen) setPhase(id, "idle")
+        if (curGen(id) === gen) setPhase(id, "idle")
       }
     },
     [fetchStatuses, language, setError, setPhase, t],
@@ -180,7 +189,7 @@ export function useCliConnectors(): CliConnectorsApi {
     async (id: string) => {
       setError(id, null)
       setPhase(id, "authorizing")
-      const gen = ++generation.current
+      const gen = nextGen(id)
       try {
         const login = await invoke<CliDeviceLogin>("start_office_cli_auth", { id })
         const url = login.verification_uri_complete || login.verification_uri
@@ -189,17 +198,21 @@ export function useCliConnectors(): CliConnectorsApi {
           await openUrl(url)
         }
         // Blocks while the CLI polls the token endpoint (bounded by the device
-        // code's expiry on the Rust side).
+        // code's expiry on the Rust side). deviceCode is null for dingtalk —
+        // its parked login child IS the flow.
         const status = await invoke<CliConnectorStatus>("complete_office_cli_auth", {
           id,
-          deviceCode: login.device_code,
+          deviceCode: login.device_code ?? null,
           expiresIn: login.expires_in ?? null,
         })
-        if (generation.current !== gen) return
+        if (curGen(id) !== gen) return
         setStatuses((m) => ({ ...m, [id]: status }))
         setPendingUrls((m) => ({ ...m, [id]: null }))
         if (status.state === "connected") {
-          toast.success(t("cliConnector.toastConnected"))
+          toast.success(t(`cliConnector.${id}.toastConnected`))
+        } else if (status.state === "not_enabled") {
+          // Guided state: the card renders the admin-console banner off the
+          // status itself — no flow error on top of it.
         } else {
           // The device flow "completed" but the probe doesn't see a usable
           // user identity (denied / user-login scope missing). A silent snap
@@ -207,12 +220,12 @@ export function useCliConnectors(): CliConnectorsApi {
           setError(id, status.detail || t("cliConnector.authIncomplete"))
         }
       } catch (err) {
-        if (generation.current !== gen) return
+        if (curGen(id) !== gen) return
         const msg = err instanceof Error ? err.message : String(err)
         setError(id, msg)
         toast.error(t("cliConnector.toastFailed", { error: msg }))
       } finally {
-        if (generation.current === gen) setPhase(id, "idle")
+        if (curGen(id) === gen) setPhase(id, "idle")
       }
     },
     [setError, setPhase, t],

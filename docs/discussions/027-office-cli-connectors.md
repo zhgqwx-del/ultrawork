@@ -1,6 +1,6 @@
 # 027 — 办公 CLI 连接器：钉钉 dws / 飞书 lark-cli / 企业微信 wecom-cli 接入方案
 
-> 状态：**Phase 1（飞书）已实现并真机全流程验收**（2026-07-06，分支 `feat/office-cli-connectors`，ADR-043 为决策记录）——§6 待验证清单全部实测回填（含 6 个上游契约坑，SSOT 已固化 gotchas §14）；Phase 2 钉钉 / Phase 3 企微待做（同分支，合入推送待全部阶段完成）
+> 状态：**Phase 1（飞书）+ Phase 2（钉钉）均已实现并真机全流程验收**（飞书 2026-07-06 / 钉钉 2026-07-07，分支 `feat/office-cli-connectors`，ADR-043 为决策记录）——§6 待验证清单全部实测回填（lark 6 坑 + dws 契约多轴与 lark 相反，SSOT 已固化 gotchas §14 两段）；Phase 3 企微待做（同分支，合入推送待全部阶段完成；届时一并做 connector registry / probe 骨架去重 / e2e mock 工厂化三项泛化，见 ADR-043 后果节）
 > 日期：2026-07-06
 > 输入：用户桌面调研文档《钉钉飞书企业微信CLI能力调研.md》（2026-07，三家仓库/认证/平台等关键事实已于本文写作时上网复核）
 > 关联：ADR-041（内置技能 zip 分发）· ADR-040（技能依赖探针 + 引导安装）· ADR-037（跨平台约束）· ADR-036（渐进式工具披露）· gotchas §3（MCP）/ §6（登录 shell PATH）· 本地记忆 `dingtalk-channel-plan.md`（Gateway 钉钉 channel，**与本文正交**：channel=入站消息通道，本文=出站工具能力）
@@ -85,6 +85,32 @@
 - [x] ~~三家自带 Skills 的实际质量与转译工作量~~ **飞书已评估：质量极高，且转译不必要**——27 个技能**内嵌在 CLI 二进制里**（`lark-cli skills list` / `skills read <name>`，构建期嵌入、与 CLI 版本永远同步），含意图路由/身份选择/dry-run 约定/跨技能引用，`lark-shared` 甚至载明了完整 agent 接入流程（background init + URL 提取 + `--no-wait --json` + 字段名）。**内置技能应做成薄路由**：教 agent 先 `skills list`、按域 `skills read`，而非复制 26 份进 `skills/builtin/`（避免与已装 CLI 版本漂移 + 零维护）。钉钉/企微的评估留各自 Phase。
 - [x] **安装机制已摸清（新增结论）**：npm 包只是 wrapper（`run.js` + postinstall），真身是 Go 二进制，从 GitHub Release（fallback npmmirror `/-/binary/lark-cli/v{V}/{archive}`）下载 + npm 包内 `checksums.txt` sha256 校验。**推荐直接下二进制**（Rust 侧 curl + sha256 + 解压到自管目录，复用 `download_node` 先例），不必经内嵌 Node npm——少一层依赖、锁版本天然、双源 fallback 与校验逻辑照抄官方 install.js 即可（§3 安装环节相应修正，属方案偏差、待用户确认）。
 - [ ] wecom `init` 有无非交互配置（flag/env/配置文件直写）；配置文件路径与格式；有无 auth status 等价命令（Phase 3 再验）。
+
+**Phase 2 钉钉 dws Step 0 实测（2026-07-06，v1.0.47 darwin-arm64 本机 + 上网复核）**：
+
+- [x] **仓库归属复核**：真身 = `DingTalk-Real-AI/dingtalk-workspace-cli`（2.3k★，日更活跃）；npm package.json 的 homepage 指向 `open-dingtalk/...` 是 404 陈旧指针，勿信。
+- [x] **安装产物结构（与 lark 结构性不同）**：npm 包（41MB）**内嵌全部 6 平台二进制 + dws-skills.zip**（非 lark 式 wrapper 下载器），postinstall 无网络、无 sha256 校验环节；且会把 mono 技能**强推进 `~/.claude/skills/dws` 等 16 个 agent 目录**（副作用，Rust 直下提取可完全避开）。GitHub Release 有同名 6 平台产物 + `checksums.txt`（D2 模式可原样复刻）。**⚠️ 双源同版本产物字节不同**（darwin 两源 sha256 不同、windows 相同；版本串同 `b63e1b4`，疑签名差异）→ 双源 fallback 必须按源分别 pin sha256（GitHub 按 checksums.txt；npm 源按 tarball 内资产实测值）。
+- [x] **无 config init/建应用环节**：OAuth client 内置（`--client-id/--client-secret` 仅自有应用/ISV 场景覆盖用），装完即 `auth login`——比 lark 少一整个「托管页建应用」流程，连接器少一个状态。
+- [x] **输出契约实拍（未登录态；照文档写必错项加粗）**：
+  - `auth status`（`-f` 默认即 json）未登录 = **exit 0** + stdout `{"success":true,"authenticated":false,"message":"未登录"}`——与 lark（exit 3 + stderr 错误对象）完全相反；成功信封 = `success`/`authenticated` 字段。错误信封 = `{"success":false,"code","message"}`（官方 error-codes.md 载明）。
+  - **`auth login --device` 全部输出走 stderr、人类可读 box、`-f json` 无效**：从 stderr 正则提取 `https://login.dingtalk.com/oauth2/device/verify.htm?user_code=XXXX-XXXX`；900s 过期、5s 轮询；**无 `--no-wait`/`--device-code` 恢复机制 → login 是单个阻塞轮询子进程**，需常驻托管至授权完成（正好接 LARK_INIT_CHILD→HashMap 多槽改造）。默认（不带 `--device`）走 loopback 流（本机 127.0.0.1 回调 + 自动开浏览器，`--no-browser` 可抑制）。
+  - **`doctor` 不是 lark 式 JSON 探针**：stdout 人类可读表格（`-f json` 无效）+ stderr error JSON `{"error":{"category","code","message"}}` + 失败时 exit 5；且含网络连通/版本更新检查（外呼、慢）→ 轮询健康探针应用 `auth status`（快、纯本地、恒 exit 0）。
+  - `profile list` 未登录 = exit 0 + `{"success":true,"profiles":[]}`；多组织 = profile 体系（corpId 一 profile）。
+  - Agent 契约糖：`--yes`（AI agent 模式跳确认）、`--mock`、`--jq`、`--dry-run` 全局可用。
+- [x] **白名单未开通契约（strings 实证 + 官方 README，实拍形态待真机登录）**：错误码 **`cli_not_enabled`**；明文 "CLI data access is not enabled for this organization, please contact admin to enable it / please submit an authorization request in the browser..."；**Apply Now 内置于授权流**（用户选组织后可向管理员发申请卡片，管理员一键批准；CLI 侧 `/api/sendApply?adminStaffId=` → `{"clientId","applySent","selectedAdminId"}`）。管理员开通入口 = **open-dev.dingtalk.com →「CLI 访问管理」→ 开启**。scope 增量补授指引 `run 'dws auth login --scope <x>'`（与 lark 同款路由进技能）。
+- [x] **`--recommend` 存在**（"登录成功后无交互批量授权服务端推荐权限"）→ 连接器级授权策略与 lark D4 对齐（真机验证其语义后定）。
+- [x] **schema 自省登录前基本为空**（仅 3 个本地 helper 条目）：产品 schema 登录后从企业 MCP gateway **服务发现**；官方 SKILL.md 明示「命令可用性因企业服务发现配置而异」→ 技能要教 agent 用 `--help`/`--dry-run` 验证命令存在性（027 §1 表「schema ✅」需按此理解）。
+- [x] **自带 Skills 质量极高且薄路由可行**：mono（235 行主路由 + references/products 22 域 + best_practices + 13 个 python scripts）/ multi 18 个（官方标 EXPERIMENTAL）；**技能源内嵌二进制**（`dws skill setup` 默认取内嵌版、升级二进制即升级 skill，`--source` 可覆盖；`--target` 支持 opencode/claude/.../`.`任意目录）→ dingtalk-assistant 薄路由成立：install 时 `skill setup --mode mono --target <自管目录>` materialize 官方 mono 技能，agent 按需读（与 lark `skills read` 等效，零转译零漂移）。
+- [x] **token 存储**：Keychain（PBKDF2+AES-256-GCM，MAC 地址绑定）+ `auth-token.enc` 文件回退；`~/.dws/`（identity.json/cache/logs）；`auth export/import` 可迁移认证包。
+- [ ] **准入（最关键，待用户确认）**：共创阶段，须企业管理员在 open-dev.dingtalk.com 开通「CLI 访问管理」。用户企业能否开通/用户是否管理员待确认；确认路径 = 管理员登 open-dev.dingtalk.com 找该菜单，或直接真跑 `dws auth login` 走到组织选择页看 Apply Now。
+- [x] **`cli_not_enabled` 实拍报错形态（2026-07-07 真机，用户扫码授权后触发）**：白名单检查是 **CLI 侧、token 交换成功之后**做的（Step 4 "Checking organization CLI auth status"），不是浏览器拦截——即用户能完整走完扫码授权，最后才在 CLI 报错。stderr = 人类可读警告块（含**组织主管理员姓名** + 管理后台直达 URL **`https://open-dev.dingtalk.com/fe/old#/developerSettings`**，注意是**旧版**设置页）+ 结构化 error JSON `{"error":{"category":"auth","code":2,"message":"device authorization failed: CLI data access is not enabled for this organization, please contact admin to enable it"}}`；stdout 空；exit 2。**引导态分类器判据 = stderr JSON `error.category=="auth"` + message 含 "CLI data access is not enabled"**；引导 UI 应展示主管理员姓名（CLI 已给出）+ 旧版设置页直达链接。设备流轮询实测 5s/次、~45s 内完成授权链路。
+- [x] **授权成功态实拍（2026-07-07 真机，管理员在旧版设置页开通开关后全链走通）**：
+  - `auth login --device` 成功 = **exit 0 + stdout JSON** `{"success":true,"message":"登录成功","token_valid":true,"refresh_token_valid":true,"expires_at","refresh_expires_at","corp_id","corp_name","user_id","user_name"}`（人类过程输出恒 stderr，结果 JSON 恒 stdout——与错误态 stderr JSON 对称）。token 有效期 2h、refresh 30 天。
+  - `auth status` 已登录 = exit 0 + `{"success":true,"authenticated":true,"token_valid":true,…同上}`——**连接器探针判据 = `authenticated` 布尔**（比 lark 嵌套 identities 简单）。
+  - `profile list` = `{"success":true,"primaryProfile","currentProfile","profiles":[{corpId,corpName,userId,userName,clientId,status:"active",expiresAt,refreshExpAt,lastLoginAt,lastUsedAt,isPrimary,isCurrent}]}`；内置 OAuth clientId 实拍 `dingmbw5n9ktkkbbjv3g`。
+  - **默认登录即可读业务数据**（`contact user get-self -f json` 直接成功，未要求任何 scope 授权）——scope 模型比 lark 宽松，无「部分授予」概念；缺 scope 时 CLI 指引 `auth login --scope <x>`（strings 实证，实拍待遇到时补）。**`--recommend` 语义未实测**（需再扫码；留待连接器真机验收时实验，决定连接器授权按钮是否带它——与 lark 不同，dws 默认登录已可用，`--recommend` 只是锦上添花而非避审核刚需）。
+  - **schema 自省需登录后 `dws cache refresh` 预热**：刷新前仅 3 个本地条目，刷新后 24 个产品展开（本机实拍 22 成功 1 失败 + 2 个哈希名残留条目）——连接器安装/授权完成后应触发一次 cache refresh；技能文档教 agent schema 为空时先刷缓存。
+  - 白名单开关实操确认：新版 open-dev.dingtalk.com 首页侧栏「基本信息 → CLI访问管理」用户实际未找到，**生效路径 = CLI 报错给出的旧版直达 URL `open-dev.dingtalk.com/fe/old#/developerSettings`**——引导态 UI 直接用这个 URL。
 - [x] ~~UI 归属命名拍板~~ **已拍板（2026-07-06）**：方案 ①——「MCP 连接器」分区更名「连接器」，内分「MCP」/「办公 CLI」两组（见 §2）。**技能形态与安装方式两项方案偏差同日拍板**：薄路由技能 + Rust 直下二进制（见上方两条结论）。
 - [x] ~~lark 授权成功态输出结构~~ **真机验收实拍（2026-07-06，用户账号全流程走通）——四个契约与文档推定全面不符，均已修（review-r3）**：
   - **错误态 JSON 走 stderr**（stdout 为空）+ 非零退出；成功态走 stdout。机器读输出必须两路都接。

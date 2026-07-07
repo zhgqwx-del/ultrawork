@@ -1,6 +1,6 @@
 # ADR-043: 办公 CLI 连接器 — CLI-first 集成范式（Phase 1 飞书 lark-cli）
 
-- 状态：Accepted（✅ Phase 1 已实现并真机全流程验收，2026-07-06；Phase 2 钉钉 / Phase 3 企微待做，同分支）
+- 状态：Accepted（✅ Phase 1 飞书已实现并真机验收 2026-07-06；✅ Phase 2 钉钉已实现并真机验收 2026-07-07；Phase 3 企微待做，同分支）
 - 日期：2026-07-06
 - 关联：[discussions/027](../discussions/027-office-cli-connectors.md)（完整调研 + Step0 实测 + 真机契约回填，SSOT）、ADR-040/041（内置技能依赖探针 / zip 分发）、ADR-036（工具披露——本范式对其零影响）、gotchas §14（lark-cli 上游契约坑 SSOT）
 
@@ -29,5 +29,6 @@ lark-cli 把 27 个官方技能**内嵌在二进制里**（`skills list/read`，
 
 - 与 Gateway 钉钉 channel 规划（入站消息）正交可共存；本范式是 agent→厂商 的出站工具能力。
 - bump lark-cli pin：更新 `LARK_CLI_VERSION` + 6 平台 sha256（npm 包 checksums.txt）+ 逐条复核 gotchas §14 契约 + 重跑真机授权流。
-- Phase 2 钉钉增量：`CliInstallSpec` + 探针分类器 + `OFFICE_CLI_CONNECTORS` 条目 + 技能；新增「白名单未开通」引导态（dws 需企业管理员开通 CLI 访问）。`LARK_INIT_CHILD` 单槽届时改 `HashMap<id, Child>`、hook 的 generation 计数器按 id 拆（027 已记）。
-- 验证资产：cargo 51（实拍 payload 锚定）· desktop vitest 319 · 真浏览器 e2e `office-cli-ui-walkthrough` 7/7（五态卡+双流程+错误恢复，回归套件）· 真机全流程两轮（含 agent 端到端：官方文档按需加载→真调业务域→缺 scope 增量授权续跑）。
+- ~~Phase 2 钉钉增量~~ **已交付（2026-07-07）**：探针分类器（`authenticated` 布尔判据——dws 输出契约与 lark 多轴相反，SSOT gotchas §14 dws 段）+ `OFFICE_CLI_CONNECTORS` 条目 + dingtalk-assistant（第 8 个内置技能，薄路由到 materialize 的官方 mono 文档）+ **第六态 `not_enabled`**（token 交换后 CLI 侧白名单检查 → 管理员姓名 + 旧版设置页深链引导）；泛化债已还：`CLI_CHILD_SLOTS: HashMap<id, PendingCliChild>` + hook generation 按 id 拆。**D2 的落地偏差**：dws 是双工件（二进制 + dws-skills.zip）且 npm 源与 GitHub 源 darwin 字节不同 → 不套 `CliInstallSpec` 而共享 helpers（download_to/verify_sha256/extract_tar），GitHub 逐文件 pin ↔ npm 整 tarball pin；**bump dws pin**：更新 `DWS_CLI_VERSION` + 6 平台 sha256（release checksums.txt）+ `DWS_SKILLS_ZIP_SHA256` + `DWS_NPM_TARBALL_SHA256`，并逐条复核 gotchas §14 dws 契约。
+- Phase 3 企微增量（待做）：先验 `wecom-cli init` 非交互路径（027 §6 待验证项）；届时一并做 connector registry / probe 骨架去重 / e2e mock 工厂化（rule of three，027 已记）。
+- 验证资产：cargo 57（两家实拍 payload 锚定）· desktop vitest 323 · 真浏览器 e2e `office-cli-ui-walkthrough` 10/10（双卡全状态机 + not_enabled 引导 + 重授权，回归套件）· 两家真机全流程 + agent 端到端各一轮（lark：缺 scope 增量授权续跑；dws：白名单开通→授权→官方文档按需加载→真调 contact 域）。

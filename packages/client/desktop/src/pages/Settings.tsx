@@ -36,6 +36,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { MCPStatus, MCPConfig, ChannelStatus, ChannelConfig, DingTalkChannelConfig } from "@agent/api-client"
 import { QRCodeSVG } from "qrcode.react"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 import { APP_VERSION } from "@/lib/app-version"
 
@@ -452,6 +453,7 @@ function BrowserServiceCard() {
 /** Office CLI connectors rendered in the Office CLI group (Phase 1: Feishu). */
 const OFFICE_CLI_CONNECTORS = [
   { id: "lark", titleKey: "cliConnector.lark.title", descKey: "cliConnector.lark.desc" },
+  { id: "dingtalk", titleKey: "cliConnector.dingtalk.title", descKey: "cliConnector.dingtalk.desc" },
 ] as const
 
 function ServicesSection() {
@@ -671,12 +673,14 @@ function CliConnectorCard({
     not_installed: { label: t("cliConnector.notInstalled"), cls: "bg-[var(--color-accent)] text-[var(--color-fg-muted)]" },
     not_configured: { label: t("cliConnector.notConfigured"), cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
     not_authorized: { label: t("cliConnector.notAuthorized"), cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    not_enabled: { label: t("cliConnector.notEnabled"), cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
     connected: { label: t("cliConnector.connected"), cls: "bg-green-500/10 text-green-600 dark:text-green-400" },
     error: { label: t("cliConnector.error"), cls: "bg-red-500/10 text-red-600 dark:text-red-400" },
   }[state]
 
   // Primary action per probed state (same lookup idiom as stateBadge above);
-  // label switches to the in-flight variant.
+  // label switches to the in-flight variant. Hints are per-connector — the
+  // flows differ (lark: hosted app page; dingtalk: no config step at all).
   const action = {
     not_installed: {
       label: phase === "installing" ? t("cliConnector.installing") : t("cliConnector.install"),
@@ -686,12 +690,19 @@ function CliConnectorCard({
     not_configured: {
       label: phase === "configuring" ? t("cliConnector.configuring") : t("cliConnector.configure"),
       run: () => configure(id),
-      hint: t("cliConnector.configHint"),
+      hint: t(`cliConnector.${id}.configHint`),
     },
     not_authorized: {
       label: phase === "authorizing" ? t("cliConnector.authorizing") : t("cliConnector.authorize"),
       run: () => authorize(id),
-      hint: t("cliConnector.authHint"),
+      hint: t(`cliConnector.${id}.authHint`),
+    },
+    // Org admin hasn't enabled CLI access: authorize again after they flip
+    // the switch (the banner below carries the guidance + console link).
+    not_enabled: {
+      label: phase === "authorizing" ? t("cliConnector.authorizing") : t("cliConnector.reauthorize"),
+      run: () => authorize(id),
+      hint: t("cliConnector.notEnabledHint"),
     },
     error: { label: t("cliConnector.retry"), run: () => refresh(id), hint: null },
     connected: null,
@@ -760,6 +771,28 @@ function CliConnectorCard({
           <ExternalLink className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate" title={pendingUrl}>{t("cliConnector.openedBrowser")}</span>
           <CopyButton text={pendingUrl} label={t("cliConnector.copyLink")} iconClassName="size-3" />
+        </div>
+      )}
+
+      {/* Vendor org hasn't enabled CLI access (dws): guided amber banner —
+          who to ask (the CLI names the super admin) + admin-console deep link. */}
+      {state === "not_enabled" && !busy && (
+        <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            {status?.detail && <p className="whitespace-pre-line break-words">{status.detail}</p>}
+          </div>
+          {status?.action_url && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => void openUrl(status.action_url!)}
+            >
+              <ExternalLink className="mr-1 size-3" />
+              {t("cliConnector.openAdminConsole")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -2569,6 +2602,7 @@ const DEP_HINTS: Record<string, string> = isWindows
       "markdown-exporter": "pip install md-exporter",
       "python-pptx": "pip install python-pptx",
       "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+      dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
     }
   : isMacOS
     ? {
@@ -2582,6 +2616,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
     : {
         python3: "apt/dnf install python3",
@@ -2594,6 +2629,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "markdown-exporter": "pip install md-exporter",
         "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
 
 function DepBadge({

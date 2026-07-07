@@ -76,7 +76,7 @@ describe("useCliConnectors", () => {
     expect(mockInvoke).toHaveBeenLastCalledWith("install_office_cli", { id: "lark" })
     expect(result.current.statuses["lark"]).toEqual(NOT_CONFIGURED)
     expect(result.current.phases["lark"]).toBe("idle")
-    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.toastInstalled")
+    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.lark.toastInstalled")
   })
 
   it("install failure surfaces the error and returns to idle", async () => {
@@ -250,7 +250,7 @@ describe("useCliConnectors", () => {
     })
     expect(result.current.statuses["lark"]).toEqual(CONNECTED)
     expect(result.current.phases["lark"]).toBe("idle")
-    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.toastConnected")
+    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.lark.toastConnected")
   })
 
   it("authorize that completes without a user identity surfaces an explicit error", async () => {
@@ -296,5 +296,119 @@ describe("useCliConnectors", () => {
     expect(result.current.phases["lark"]).toBe("idle")
     expect(mockToast.success).not.toHaveBeenCalled()
     expect(result.current.statuses["lark"]).toEqual(NOT_AUTHORIZED)
+  })
+
+  // ── DingTalk (dws) specifics ──
+
+  it("dingtalk authorize passes a null deviceCode (the parked child is the flow)", async () => {
+    const DT_NOT_AUTH: CliConnectorStatus = {
+      id: "dingtalk", state: "not_authorized", path: "/x/dws", version: "1.0.47",
+    }
+    mockInvoke.mockResolvedValueOnce([DT_NOT_AUTH])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_auth") {
+        // Real dws shape: no device_code, verification URL from the stderr box.
+        return {
+          device_code: null,
+          user_code: "BRPX-DJXX",
+          verification_uri:
+            "https://login.dingtalk.com/oauth2/device/verify.htm?user_code=BRPX-DJXX",
+          expires_in: 900,
+          interval: 5,
+        }
+      }
+      if (cmd === "complete_office_cli_auth")
+        return { ...DT_NOT_AUTH, state: "connected", detail: "张三 · 某公司" }
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    await act(async () => {
+      await result.current.authorize("dingtalk")
+    })
+
+    expect(mockOpenUrl).toHaveBeenCalledWith(
+      "https://login.dingtalk.com/oauth2/device/verify.htm?user_code=BRPX-DJXX",
+    )
+    expect(mockInvoke).toHaveBeenLastCalledWith("complete_office_cli_auth", {
+      id: "dingtalk",
+      deviceCode: null,
+      expiresIn: 900,
+    })
+    expect(result.current.statuses["dingtalk"]?.state).toBe("connected")
+    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.dingtalk.toastConnected")
+  })
+
+  it("dingtalk not_enabled completion is a guided status, not a flow error", async () => {
+    const DT_NOT_AUTH: CliConnectorStatus = {
+      id: "dingtalk", state: "not_authorized", path: "/x/dws", version: "1.0.47",
+    }
+    const DT_NOT_ENABLED: CliConnectorStatus = {
+      id: "dingtalk",
+      state: "not_enabled",
+      path: "/x/dws",
+      version: "1.0.47",
+      detail:
+        "device authorization failed: CLI data access is not enabled for this organization, please contact admin to enable it\n组织主管理员：张三",
+      action_url: "https://open-dev.dingtalk.com/fe/old#/developerSettings",
+    }
+    mockInvoke.mockResolvedValueOnce([DT_NOT_AUTH])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_auth")
+        return { device_code: null, verification_uri: "https://v?user_code=X", expires_in: 900 }
+      if (cmd === "complete_office_cli_auth") return DT_NOT_ENABLED
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    await act(async () => {
+      await result.current.authorize("dingtalk")
+    })
+
+    // The card renders the amber guidance banner off the status itself — no
+    // red flow-error on top, no success toast.
+    expect(result.current.statuses["dingtalk"]).toEqual(DT_NOT_ENABLED)
+    expect(result.current.errors["dingtalk"] ?? null).toBeNull()
+    expect(mockToast.success).not.toHaveBeenCalled()
+    expect(result.current.phases["dingtalk"]).toBe("idle")
+  })
+
+  it("per-connector generations: a dingtalk flow does not cancel lark's pending flow", async () => {
+    mockInvoke.mockResolvedValueOnce([NOT_AUTHORIZED])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    let resolveLark: ((v: unknown) => void) | undefined
+    mockInvoke.mockImplementation(async (cmd: unknown, args?: unknown) => {
+      const id = (args as { id?: string } | undefined)?.id
+      if (cmd === "start_office_cli_auth")
+        return { device_code: id === "lark" ? "dc1" : null, verification_uri: "https://v?user_code=X" }
+      if (cmd === "complete_office_cli_auth") {
+        if (id === "lark") return new Promise((r) => { resolveLark = r })
+        return { id: "dingtalk", state: "connected", detail: "钉" }
+      }
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    // Start lark's flow (blocks on complete), then run dingtalk's to the end.
+    let larkFlow!: Promise<void>
+    await act(async () => {
+      larkFlow = result.current.authorize("lark")
+      await result.current.authorize("dingtalk")
+    })
+    expect(result.current.statuses["dingtalk"]?.state).toBe("connected")
+
+    // Lark's flow finishes AFTER dingtalk bumped its own generation — it must
+    // still land (the old global counter would have swallowed it).
+    await act(async () => {
+      resolveLark?.(CONNECTED)
+      await larkFlow
+    })
+    expect(result.current.statuses["lark"]).toEqual(CONNECTED)
+    expect(result.current.phases["lark"]).toBe("idle")
   })
 })
