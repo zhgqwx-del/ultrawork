@@ -31,7 +31,7 @@ ultrawork/
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
 │   │   ├── README.md                  #   ADR 权威索引：模板说明 + 全部决策一览表（编号/标题/状态/日期）★ 找 ADR 从这里进
-│   │   └── 001..041                   #   ADR 正文（Tauri/Sidecar/消息渲染/知识库/ACP 多 agent/connector/orchestrator/内置技能/跨平台/软刷新/zip 分发等）
+│   │   └── 001..043                   #   ADR 正文（Tauri/Sidecar/消息渲染/知识库/ACP 多 agent/connector/orchestrator/内置技能/跨平台/软刷新/zip 分发/BYOK 搜索/办公 CLI 连接器等）
 │   │
 │   ├── discussions/                   # ═══ 讨论层（探索/调研，提案可能演变为 ADR）═══
 │   │   ├── README.md                  #   讨论权威索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」vs「已落地」）★ 找讨论从这里进
@@ -120,8 +120,8 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 13 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 43 (README + 42 ADR) | 架构师/新成员 | 有重大决策时新增 |
-| **讨论层** | `docs/discussions/` | 27 (README + 26) | 架构师 | 探索阶段记录 |
+| **决策层** | `docs/decisions/` | 44 (README + 43 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **讨论层** | `docs/discussions/` | 28 (README + 27) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 14 | 考古/追溯 | 归档时可加 FROZEN 头，之后只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | auto-memory (本地) | 6 | Claude Code | 每次 session |

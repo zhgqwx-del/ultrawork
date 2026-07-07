@@ -207,6 +207,9 @@ Monorepo 结构：
 - [x] 知识库 MCP 对 IMA/远程-only 源自动注册修复 ✅ 2026-06-28
 - [x] UI/UX 打磨批次 — 设置页折叠+返回来源页、折叠侧栏拖拽把手、「MCP 连接器」更名、Home 工作区路径指示行等（见 CHANGELOG）✅ 2026-07-01 ~ 07-03
 - [x] BYOK 联网搜索 — websearch 多 provider 复活（Tavily/阿里云 IQS/Exa opt-in）+ 设置页「工具」分区 + qwen `enable_search`（ADR-042）✅ 2026-07-04（真机真 key 验收通过）
+- [x] 办公 CLI 连接器 Phase 1：飞书 lark-cli — 「连接器」分区（MCP/办公 CLI 两组）+ 安装/托管页配置/`--recommend` 设备流授权 + feishu-assistant 薄路由技能（ADR-043）✅ 2026-07-06（真机全流程验收）
+- [x] 办公 CLI 连接器 Phase 2：钉钉 dws — 双源 pin 安装 + 官方技能 materialize + `authenticated` 探针 + 第六态「白名单未开通」引导（管理员姓名+后台深链）+ dingtalk-assistant 薄路由技能；泛化债还清（child 槽 HashMap 化/hook generation 按 id 拆）（ADR-043）✅ 2026-07-07（真机全流程验收）
+- [x] 办公 CLI 连接器 Phase 3：企业微信 wecom-cli — npm 平台分包单 hash 双源安装（第三种形态）+ `auth show` 纯文本探针（第三种契约）+ QR 扫码 init 托管授权（凭证零接触）+ wecom-assistant 薄路由技能（vendored 官方 9 技能快照 + `--schema` 自省）；三项泛化（`CLI_CONNECTORS` 注册表 / 探针与阻塞流骨架去重 / e2e mock 工厂）（ADR-043）✅ 2026-07-07（真机全流程验收；三家范式收官）
 
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）

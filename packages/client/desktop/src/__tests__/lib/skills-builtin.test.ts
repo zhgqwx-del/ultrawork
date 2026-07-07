@@ -26,10 +26,25 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all six built-in skills", () => {
+  it("covers all nine built-in skills", () => {
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["doc-edit", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer"].sort(),
+      ["dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
     )
+  })
+
+  it("feishu-assistant requires only the lark-cli binary (auth state lives in the connector card)", () => {
+    expect(missingDeps("feishu-assistant", present("lark-cli"))).toEqual([])
+    expect(missingDeps("feishu-assistant", present("python3"))).toEqual(["lark-cli"])
+  })
+
+  it("dingtalk-assistant requires only the dws binary (same connector-managed model)", () => {
+    expect(missingDeps("dingtalk-assistant", present("dws"))).toEqual([])
+    expect(missingDeps("dingtalk-assistant", present("lark-cli"))).toEqual(["dws"])
+  })
+
+  it("wecom-assistant requires only the wecom-cli binary (same connector-managed model)", () => {
+    expect(missingDeps("wecom-assistant", present("wecom-cli"))).toEqual([])
+    expect(missingDeps("wecom-assistant", present("dws"))).toEqual(["wecom-cli"])
   })
 
   it("reports ready when every required tool is present", () => {

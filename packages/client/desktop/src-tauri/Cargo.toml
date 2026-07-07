@@ -28,6 +28,9 @@ dirs = "5"
 getrandom = "0.2"
 base64 = "0.22"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Office CLI connector installs verify release archives against pinned sha256
+# digests (mirrors the upstream npm installer's checksums.txt) before extracting.
+sha2 = "0.10"
 
 # Unix-only: catch SIGINT/SIGTERM/SIGHUP and clean up sidecars on non-graceful
 # exits that RunEvent::Exit doesn't cover. (SIGKILL is uncatchable — that path

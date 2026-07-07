@@ -120,6 +120,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
+- `src/lib/use-cli-connectors.ts` — 办公 CLI 连接器状态机（ADR-043）：五命令 invoke + generation 守卫 + 配置轮询（容忍瞬时 error/10min 超时显式报错）+ `refresh(id)` 按 id 清错；卡片 `CliConnectorCard`（connector prop 泛化）+ `OFFICE_CLI_CONNECTORS` 注册表在 Settings.tsx ServicesSection（「连接器」分区 MCP/办公 CLI 两组）
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
@@ -127,9 +128,10 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
 - `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
 - `check_skill_dependencies`（async；PATH 探测 + `run_python_feature_probe` python 内探针〔python3.10+ 版本门/python-pptx，四防御见 gotchas §10〕，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`/`install_builtin_tree`/`extract_builtin_zip`/`open_builtin_zip`/`clear_staging`/`reconcile_builtin_shadowing`（首启解压 bundle 内 `skills-builtin.zip` → `~/.config/ultrawork/skills/builtin`，解压到 staging+后置写 sentinel+rename 原子交换；zip-slip/symlink/篡改名多重设防；同名用户技能确定性遮蔽 prune / 按前缀选择性解压 restore + `BUILTIN_SKILLS_LOCK`，命令 `refresh_builtin_skills`/`remove_user_skill_override`，ADR-032/040/041）
+- **办公 CLI 连接器五命令（ADR-043，「Office CLI connectors」代码段，Phase 3 起注册表驱动）**：`CLI_CONNECTORS` 注册表（lark/dingtalk/wecom 一行一家：probe/install/start_config/start_auth/complete_auth，`connector_def(id)` 统一分发 + 接线测试）；探针骨架 `CliProbeSpec`+`probe_office_cli`（各家 classifier：`classify_lark_auth_status`/`classify_dws_auth_status`/`classify_wecom_auth_show`，`cli_json_output` stderr 回落，版本按路径缓存）；安装 `CliInstallSpec`（+`bin_subdir`）+`install_pinned_cli`（lark/wecom）与 `install_dingtalk_cli`（双工件专属）；阻塞子进程流骨架 `start_parked_device_flow`（`ParkedFlowSpec`，dws 设备流/wecom QR init）+`complete_parked_cli_auth`（`ParkedCompleteSpec`）；`office_cli_bin_dir` 领跑 `compute_rich_path`；上游契约坑 SSOT gotchas §14（三家三套勿互推）
 
 **内置技能（`skills/builtin/`，ADR-032 / ADR-040）**
-- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）可直接编辑
+- `skill-creator`/`skill-installer`/`pdf`/`markdown-exporter`（上游 Apache-2.0）+ **`ppt-master`**（上游 MIT，pin v2.12.0，PPT 生成：源文档→逐页 SVG→可编辑 PPTX，ADR-040）——由 `scripts/fetch-builtin-skills.ts` 同步+打补丁（支持 sparse clone/按名过滤/post-patch），勿手改；`doc-edit`（自写，Office 读改脚本）、`feishu-assistant`（自写，飞书 lark-cli 薄路由，ADR-043）、`dingtalk-assistant`（自写，钉钉 dws 薄路由——路由到连接器 materialize 的官方 mono 文档，ADR-043）、`wecom-assistant`（自写薄路由 + `references/official/` vendored 官方 9 技能单一 commit 快照〔SKILL.md→INDEX.md 防嵌套误扫，见 `_ORIGIN.md`〕，ADR-043）可直接编辑（改完重打 zip）
 - 设置-技能页三区在 `src/pages/Settings.tsx`（SkillsSection/DepBadge〔含「引导安装」handoff〕/INSTALLABLE_SKILLS/平台化 DEP_HINTS）；安装/依赖引导都走 Home `initialInput` 预填
 
 **Gateway（`packages/channel/gateway/src/`）**
@@ -184,7 +186,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (42 ADRs, 001–042)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (43 ADRs, 001–043)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history
