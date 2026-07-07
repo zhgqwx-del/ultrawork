@@ -242,9 +242,9 @@
 - **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
 - **不要用 `importOriginal` 部分 mock 大 barrel（如 `@/components/chat`）**：`importOriginal()` 会实例化整个桶文件的真实依赖树（markdown/代码高亮栈），转换耗时数分钟拖垮 worker。要保留个别真实组件时精确单文件导入：`vi.mock("@/components/chat", async () => ({ CopyButton: (await import("@/components/chat/copy-button")).CopyButton, ChatInput: () => null, ... }))`。（同上）
 
-## 14. 办公 CLI 连接器（lark-cli + dws，ADR-043 / discussions/027）
+## 14. 办公 CLI 连接器（lark-cli + dws + wecom-cli，ADR-043 / discussions/027）
 
-> 两家官方 CLI 的**上游契约全部以真机实拍为准**（lark-cli v1.0.65 @2026-07-06；dws v1.0.47 @2026-07-07）——内嵌文档/二进制 strings 推定的形状多处与实际不符，且**两家在多条轴上语义相反**，绝不能拿一家的契约推另一家。cargo 单测以实拍 payload 锚定；bump 任一 pin 版本时逐条复核本节。
+> 三家官方 CLI 的**上游契约全部以真机实拍为准**（lark-cli v1.0.65 @2026-07-06；dws v1.0.47 @2026-07-07；wecom-cli v0.1.9 @2026-07-07）——内嵌文档/二进制 strings/源码推定的形状多处与实际不符，且**三家在多条轴上语义互相相反**（探针输出、URL 流向、双源 hash、安装形态各成一套），绝不能拿一家的契约推另一家。cargo 单测以实拍 payload 锚定；bump 任一 pin 版本时逐条复核本节。
 
 ### lark-cli（飞书）
 
@@ -267,6 +267,17 @@
 - **安装双源不是字节等同**：GitHub Release（checksums.txt 六平台）与 npm 包（41MB tarball 内嵌全部产物+dws-skills.zip）的 **darwin 二进制同版本不同 hash**（签名差异；windows 相同）→ 按源分别 pin（GitHub 按 checksums.txt、npm 按整 tarball sha256 传递背书）。**npmmirror `/-/binary/` 不镜像该仓库（404）**，大陆 fallback = npm tarball。**别用 GitHub `/latest`**（上游会把 feature-branch release 标成 latest，实见 2026-07-07）。npm postinstall 会把技能强推 `~/.claude/skills/dws` 等 16 个 agent 目录（Rust 直下避开此副作用）。
 - **官方技能不在二进制里**（与 lark 相反）：`dws-skills.zip` 独立分发（mono 144 文件 + multi 18 技能 EXPERIMENTAL）；`skill setup --target` 只认白名单 agent 名（**文档声称的 `.` 路径写法被拒**，上游 bug v1.0.47）→ 连接器安装时自行解 zip 的 `mono/` 前缀到 `office-cli/skills/dws/`，dingtalk-assistant 教 agent 读该目录（Windows 注意 read 工具不展开 `~`，用 `%USERPROFILE%` 绝对路径）。
 - **agent 首次 read materialize 的官方文档会触发 opencode `external_directory` 权限确认**（工作区外路径，每工作区一次、「总是允许」后免问）；lark 走 `skills read` 子命令（bash）无此问。真机验收实录：`tool_search → skill → bash(auth status) → read(SKILL.md) → read(contact.md) → bash(get-self)` 全链通。
+
+### wecom-cli（企业微信，Phase 3 实拍 2026-07-07，v0.1.9——第三家第三套契约，勿从 lark/dws 互推）
+
+- **探针 = 隐藏命令 `auth show`（`.hide(true)`，help 不列但可调）**：未授权 = exit 0 + stdout **纯文本 `unauthorized`**（非 JSON、非 stderr、非非零——三家三样）；已授权 = exit 0 + stdout pretty JSON `{"create_time":…,"id":"aibk…"}`（**id 是字符串**，真机锚定；分类器容忍数字防上游漂移）。`--auth-status` 变体恒纯文本 `authorized`/`unauthorized`。纯本地读 `bot.enc`、零网络（好探针，但**不验证凭证服务端有效性**）。错误 = anyhow → stderr 人类中文 `Error: <msg>` + exit 1，全 CLI 无结构化错误 JSON（三家最简）。
+- **「授权」= QR 扫码 init，不是 OAuth 设备流**：`init --noninteractive --no-open` 是单阻塞子进程（3s 轮询/300s 过期），**QR 页 URL 走 stdout 裸行**（`work.weixin.qq.com/ai/qc/gen?source=…&scode=…`，按 `scode=` 标记提取；与 dws 的 stderr box 相反），cliclack 装饰框走 stderr；扫码自动创建/绑定机器人、凭证服务端下发 CLI 自存（AES-256-GCM `bot.enc`，密钥 keyring+文件双写）——app 全程零碰凭证，且**无 config init/建应用环节**（比 lark 少一态）。**禁 agent bash 代跑 init**（同 dws login：bash 超时会杀在半途）。**上游 rollback 坑**：init 中途失败（验证凭证不过/网络断）会 `clear_bot_info` **连旧凭证一起清**——好在 UI 已连接态无重授权按钮（授权按钮只在 bot.enc 已缺失的未授权态出现），实际暴露面极小，重扫一次即恢复。
+- **安装 = 第三种形态（npm 平台分包，无 GitHub Release）**：GitHub Releases 实测空数组、无 checksums.txt；真身 = `@wecom/cli-{darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64}`（5 平台、**无 win-arm64**），二进制在 tarball 内 `package/bin/`。**npm ↔ npmmirror 字节相同**（sha256 实测一致，与 dws 双源不同 hash 相反）→ 每平台单 hash、npmmirror 常规镜像即大陆 fallback。Windows 分包也是 `.tgz`（非 zip）——`tar -xf` bsdtar 自动识别 gzip（实证验证）。
+- **能力按企业规模服务端分级，探针不感知**：>10 人企业只下发 文档+待办；≤10 人全量（消息/文档/日程/会议/待办/通讯录，本机企业实测 6 品类 ~47 工具全开）。调用未下发品类 = stderr `当前企业暂不支持授权机器人「××」使用权限` + exit 1——**属技能文档层**（教 agent 如实告知、勿重试勿重授权），不是连接器状态（wecom 四态：not_installed/not_authorized/connected/error，无 not_configured 无 not_enabled）。
+- **工具全动态发现、文档要教 `--schema`**：6 品类静态注册，工具表从企业 MCP gateway `tools/list` 下发（24h 文件缓存，`cache clear` 重刷）；连 `<category> --help` 都要凭证+网络（未 init = `Error: 未找到 MCP 配置缓存`）。**`<method> --help` 拿不到参数定义**（disable_help_flag，只有描述）——参数 JSON Schema 唯一出口 = `<method> --schema`（实拍验证）；`<category>` 裸跑 = clap exit 2 + stderr，列工具用 `<category> --help`（exit 0）。
+- **成功输出是双层信封**：stdout 打完整 JSON-RPC 响应，业务 JSON 是 `result.content[0].text` 里的**字符串**（实拍锚定）——解析剥两层。默认超时 30s、`get_msg_media` 120s（媒体落盘回 `local_path`）。**全 CLI 无 `--dry-run`/`--yes`**（与 lark/dws 都不同）——写操作唯一预览机制 = agent 先向用户复述确认（wecom-assistant 安全底线）。
+- **官方技能无版本化工件** → vendored 单一 commit 快照进 builtin zip（`wecom-assistant/references/official/`，SKILL.md→INDEX.md 改名防 `skills/**/SKILL.md` 嵌套误扫；取舍与维护规则见该目录 `_ORIGIN.md`）。**vendor 快照必须整树单一 commit**：`git checkout <commit> -- dir/` 不删工作树多余文件，两轮审查各抓到一次混合快照——重做快照用 `git archive <commit>` 双向逐文件比对核实。
+- 杂项：`WECOM_CLI_CONFIG_DIR` env 可整体重定向配置目录（测试沙箱友好，lark/dws 均无）；探针 spawn 剥 `WECOM_CLI_LOG_LEVEL`（stdout 精确 sentinel 防日志污染）；CLI 授权的机器人**仅创建者本人可对话**（官方防冒用限制）。
 
 ---
 
