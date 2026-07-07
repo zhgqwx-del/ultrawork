@@ -34,6 +34,8 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   "feishu-assistant": ["lark-cli"],
   // Official DingTalk CLI — same connector-managed model as lark-cli.
   "dingtalk-assistant": ["dws"],
+  // Official WeCom CLI — same connector-managed model.
+  "wecom-assistant": ["wecom-cli"],
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */

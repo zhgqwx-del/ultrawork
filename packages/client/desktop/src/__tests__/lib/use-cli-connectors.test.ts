@@ -377,6 +377,67 @@ describe("useCliConnectors", () => {
     expect(result.current.phases["dingtalk"]).toBe("idle")
   })
 
+  // ── WeCom (wecom-cli) specifics ──
+
+  it("wecom authorize opens the QR-page URL (scode, no device/user code) and lands connected", async () => {
+    const WC_NOT_AUTH: CliConnectorStatus = {
+      id: "wecom", state: "not_authorized", path: "/x/wecom-cli", version: "0.1.9",
+    }
+    mockInvoke.mockResolvedValueOnce([WC_NOT_AUTH])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    const qrUrl = "https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=SotEunMm"
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_auth") {
+        // Real wecom shape: parked init child; URL carries only an opaque scode.
+        return { device_code: null, user_code: null, verification_uri: qrUrl, expires_in: 300, interval: 3 }
+      }
+      if (cmd === "complete_office_cli_auth")
+        return { ...WC_NOT_AUTH, state: "connected", detail: "Bot BOT-mock" }
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    await act(async () => {
+      await result.current.authorize("wecom")
+    })
+
+    expect(mockOpenUrl).toHaveBeenCalledWith(qrUrl)
+    expect(mockInvoke).toHaveBeenLastCalledWith("complete_office_cli_auth", {
+      id: "wecom",
+      deviceCode: null,
+      expiresIn: 300,
+    })
+    expect(result.current.statuses["wecom"]?.state).toBe("connected")
+    expect(result.current.statuses["wecom"]?.detail).toBe("Bot BOT-mock")
+    expect(mockToast.success).toHaveBeenCalledWith("cliConnector.wecom.toastConnected")
+  })
+
+  it("wecom authorize failure (QR expiry) lands in errors with the CLI's message", async () => {
+    const WC_NOT_AUTH: CliConnectorStatus = {
+      id: "wecom", state: "not_authorized", path: "/x/wecom-cli", version: "0.1.9",
+    }
+    mockInvoke.mockResolvedValueOnce([WC_NOT_AUTH])
+    const { result } = renderHook(() => useCliConnectors())
+    await waitFor(() => expect(result.current.checking).toBe(false))
+
+    mockInvoke.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "start_office_cli_auth")
+        return { device_code: null, verification_uri: "https://work.weixin.qq.com/ai/qc/gen?scode=X" }
+      if (cmd === "complete_office_cli_auth") throw new Error("扫码超时（5 分钟），请重试。")
+      throw new Error(`unexpected: ${String(cmd)}`)
+    })
+
+    await act(async () => {
+      await result.current.authorize("wecom")
+    })
+
+    expect(result.current.errors["wecom"]).toContain("扫码超时")
+    expect(result.current.phases["wecom"]).toBe("idle")
+    expect(mockToast.success).not.toHaveBeenCalled()
+    expect(result.current.statuses["wecom"]).toEqual(WC_NOT_AUTH)
+  })
+
   it("per-connector generations: a dingtalk flow does not cancel lark's pending flow", async () => {
     mockInvoke.mockResolvedValueOnce([NOT_AUTHORIZED])
     const { result } = renderHook(() => useCliConnectors())

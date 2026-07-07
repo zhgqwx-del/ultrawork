@@ -454,6 +454,7 @@ function BrowserServiceCard() {
 const OFFICE_CLI_CONNECTORS = [
   { id: "lark", titleKey: "cliConnector.lark.title", descKey: "cliConnector.lark.desc" },
   { id: "dingtalk", titleKey: "cliConnector.dingtalk.title", descKey: "cliConnector.dingtalk.desc" },
+  { id: "wecom", titleKey: "cliConnector.wecom.title", descKey: "cliConnector.wecom.desc" },
 ] as const
 
 function ServicesSection() {
@@ -2603,6 +2604,7 @@ const DEP_HINTS: Record<string, string> = isWindows
       "python-pptx": "pip install python-pptx",
       "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+      "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
     }
   : isMacOS
     ? {
@@ -2617,6 +2619,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
     : {
         python3: "apt/dnf install python3",
@@ -2630,6 +2633,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       }
 
 function DepBadge({

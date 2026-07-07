@@ -2461,7 +2461,7 @@ struct DepStatus {
 
 const SKILL_DEP_BINS: &[&str] = &[
     "python3", "node", "pandoc", "soffice", "pdftoppm", "git", "markdown-exporter",
-    "lark-cli", "dws",
+    "lark-cli", "dws", "wecom-cli",
 ];
 
 /// Probe a PATH-list (platform separator) for each bin (pure; testable).
@@ -2714,6 +2714,32 @@ const DWS_NPM_TARBALL_SHA256: &str =
 /// finding 2026-07-07).
 const DWS_ADMIN_CONSOLE_URL: &str = "https://open-dev.dingtalk.com/fe/old#/developerSettings";
 
+// ── WeCom wecom-cli (Phase 3) ──
+//
+// wecom-cli is a THIRD install shape (real-download verified 2026-07-07): its
+// GitHub repo publishes NO releases at all — the Rust binary ships as npm
+// per-platform packages (@wecom/cli-<platform>, esbuild style), with the
+// binary at package/bin/wecom-cli inside the tarball. registry.npmjs.org and
+// registry.npmmirror.com serve byte-identical tarballs (sha256 verified), so
+// ONE digest per platform covers both sources — unlike dws, whose two sources
+// differ. Its official skills have no versioned artifact either (upstream
+// installs them from repo HEAD) — we vendor a snapshot of the npm gitHead in
+// skills/builtin/wecom-assistant/references/official/ instead (see _ORIGIN.md
+// there; refresh it when bumping this pin).
+const WECOM_CLI_VERSION: &str = "0.1.9";
+
+/// sha256 of the npm platform-package tarballs for the pinned version
+/// (computed from live registry.npmjs.org downloads 2026-07-07 and verified
+/// byte-identical on npmmirror). Keyed by npm platform suffix. wecom-cli has
+/// no Windows arm64 build. Update together with WECOM_CLI_VERSION.
+const WECOM_CLI_TARBALL_CHECKSUMS: &[(&str, &str)] = &[
+    ("darwin-arm64", "050d251cf0bb55591569af467f9d90292edd5538431b9c5572d55cbc71aa2f33"),
+    ("darwin-x64", "031bab15f91ae19b4e741de1918bd5f166a71397424b2ec9b8d2965e62692b57"),
+    ("linux-x64", "c8bfe1d3211b1387e8d9eb1ce6a873551bfe62b6dd6e2706532a4df8934e60b1"),
+    ("linux-arm64", "8d41fa973daca2a55b376ecd8849744a681a4a486090c312bf83ff79137f11a0"),
+    ("win32-x64", "9803e8deab1e5ad6877fc21679a07c562fda0d3b389c4839dfdaf0ea49ef549c"),
+];
+
 fn office_cli_dir() -> PathBuf {
     ultrawork_dir().join("office-cli")
 }
@@ -2868,10 +2894,36 @@ fn cli_version_cache() -> &'static Mutex<std::collections::HashMap<String, Strin
     CLI_VERSION_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
-fn probe_lark_status() -> CliConnectorStatus {
-    let Some(bin) = find_lark_cli() else {
+/// Everything the shared probe skeleton needs for one connector (Phase 3
+/// generalization — rule of three: the lark/dws probe bodies were copies).
+/// The moving parts are data/fn pointers so specs can live in consts and slot
+/// into the CLI_CONNECTORS registry as plain `fn()` wrappers.
+struct CliProbeSpec {
+    id: &'static str,
+    bin: &'static str,
+    /// Base invocation (env noise-suppression etc. lives in the vendor fn).
+    cmd: fn(&str, &[&str]) -> Command,
+    parse_version: fn(&str) -> Option<String>,
+    auth_args: &'static [&'static str],
+    classify: fn(&str) -> (CliConnectorState, Option<String>),
+    /// Deep link for guided states (dws not_enabled → admin console).
+    action_url: fn(CliConnectorState) -> Option<String>,
+}
+
+fn no_action_url(_: CliConnectorState) -> Option<String> {
+    None
+}
+
+/// Shared probe skeleton: locate binary (app-managed dir first), resolve the
+/// version through the per-path cache, run the vendor's auth probe, classify.
+fn probe_office_cli(spec: &CliProbeSpec) -> CliConnectorStatus {
+    let Some(bin) = probe_bins(&office_cli_probe_path(), &[spec.bin])
+        .into_iter()
+        .find(|d| d.available)
+        .and_then(|d| d.path)
+    else {
         return CliConnectorStatus {
-            id: "lark".into(),
+            id: spec.id.into(),
             state: CliConnectorState::NotInstalled,
             path: None,
             version: None,
@@ -2881,24 +2933,39 @@ fn probe_lark_status() -> CliConnectorStatus {
     };
     let cached = cli_version_cache().lock().ok().and_then(|m| m.get(&bin).cloned());
     let version = cached.or_else(|| {
-        let v = run_probe(&mut lark_cmd(&bin, &["--version"]), Duration::from_secs(5))
-            .and_then(|o| parse_lark_cli_version(&String::from_utf8_lossy(&o.stdout)));
+        let v = run_probe(&mut (spec.cmd)(&bin, &["--version"]), Duration::from_secs(5))
+            .and_then(|o| (spec.parse_version)(&String::from_utf8_lossy(&o.stdout)));
         if let (Some(v), Ok(mut m)) = (&v, cli_version_cache().lock()) {
             m.insert(bin.clone(), v.clone());
         }
         v
     });
     let (state, detail) = match run_probe_capture(
-        &mut lark_cmd(&bin, &["auth", "status", "--json"]),
+        &mut (spec.cmd)(&bin, spec.auth_args),
         Duration::from_secs(5),
     ) {
-        Some(out) => classify_lark_auth_status(&cli_json_output(&out)),
+        Some(out) => (spec.classify)(&cli_json_output(&out)),
         None => (
             CliConnectorState::Error,
-            Some("lark-cli auth status timed out".into()),
+            Some(format!("{} auth status timed out", spec.bin)),
         ),
     };
-    CliConnectorStatus { id: "lark".into(), state, path: Some(bin), version, detail, action_url: None }
+    let action_url = (spec.action_url)(state);
+    CliConnectorStatus { id: spec.id.into(), state, path: Some(bin), version, detail, action_url }
+}
+
+const LARK_PROBE_SPEC: CliProbeSpec = CliProbeSpec {
+    id: "lark",
+    bin: "lark-cli",
+    cmd: lark_cmd,
+    parse_version: parse_lark_cli_version,
+    auth_args: &["auth", "status", "--json"],
+    classify: classify_lark_auth_status,
+    action_url: no_action_url,
+};
+
+fn probe_lark_status() -> CliConnectorStatus {
+    probe_office_cli(&LARK_PROBE_SPEC)
 }
 
 // ── dws (DingTalk) probe ──
@@ -3006,62 +3073,125 @@ fn classify_dws_auth_status(raw: &str) -> (CliConnectorState, Option<String>) {
     }
 }
 
+fn dws_action_url(state: CliConnectorState) -> Option<String> {
+    matches!(state, CliConnectorState::NotEnabled).then(|| DWS_ADMIN_CONSOLE_URL.to_string())
+}
+
+const DINGTALK_PROBE_SPEC: CliProbeSpec = CliProbeSpec {
+    id: "dingtalk",
+    bin: "dws",
+    cmd: dws_cmd,
+    parse_version: parse_dws_version,
+    auth_args: &["auth", "status"],
+    classify: classify_dws_auth_status,
+    action_url: dws_action_url,
+};
+
 /// dws never has a "not configured" state: the OAuth client is built into the
 /// binary (no lark-style app binding), so the machine is
 /// not_installed → not_authorized → connected (+ not_enabled / error).
 fn probe_dingtalk_status() -> CliConnectorStatus {
-    let Some(bin) = find_dws_cli() else {
-        return CliConnectorStatus {
-            id: "dingtalk".into(),
-            state: CliConnectorState::NotInstalled,
-            path: None,
-            version: None,
-            detail: None,
-            action_url: None,
-        };
-    };
-    let cached = cli_version_cache().lock().ok().and_then(|m| m.get(&bin).cloned());
-    let version = cached.or_else(|| {
-        let v = run_probe(&mut dws_cmd(&bin, &["--version"]), Duration::from_secs(5))
-            .and_then(|o| parse_dws_version(&String::from_utf8_lossy(&o.stdout)));
-        if let (Some(v), Ok(mut m)) = (&v, cli_version_cache().lock()) {
-            m.insert(bin.clone(), v.clone());
-        }
-        v
-    });
-    let (state, detail) = match run_probe_capture(
-        &mut dws_cmd(&bin, &["auth", "status"]),
-        Duration::from_secs(5),
-    ) {
-        Some(out) => classify_dws_auth_status(&cli_json_output(&out)),
-        None => (
-            CliConnectorState::Error,
-            Some("dws auth status timed out".into()),
-        ),
-    };
-    let action_url =
-        matches!(state, CliConnectorState::NotEnabled).then(|| DWS_ADMIN_CONSOLE_URL.to_string());
-    CliConnectorStatus { id: "dingtalk".into(), state, path: Some(bin), version, detail, action_url }
+    probe_office_cli(&DINGTALK_PROBE_SPEC)
 }
 
-/// Probe every known office CLI connector (Phase 1 lark + Phase 2 dingtalk).
+// ── wecom-cli (WeCom) probe ──
+
+fn find_wecom_cli() -> Option<String> {
+    probe_bins(&office_cli_probe_path(), &["wecom-cli"])
+        .into_iter()
+        .find(|d| d.available)
+        .and_then(|d| d.path)
+}
+
+/// Base wecom-cli invocation. No noise-suppression env needed (no update
+/// notifier in the source; logging is opt-in via WECOM_CLI_LOG_LEVEL).
+fn wecom_cmd(bin: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.args(args);
+    cmd
+}
+
+/// "wecom-cli 0.1.9" → "0.1.9".
+fn parse_wecom_version(s: &str) -> Option<String> {
+    s.split_whitespace()
+        .find(|t| t.contains('.') && t.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(str::to_string)
+}
+
+/// Pure classifier for `wecom-cli auth show` output — a THIRD contract shape
+/// (real-device 2026-07-07, v0.1.9; source-confirmed, do NOT infer from
+/// lark/dws): the unauthorized verdict is the PLAIN TEXT `unauthorized` on
+/// stdout with exit 0 (not JSON, not stderr, not nonzero); the authorized
+/// verdict is a pretty JSON `{id, create_time}` (id = bound bot). `auth show`
+/// only checks the local encrypted credential file — fast, zero network.
+fn classify_wecom_auth_show(raw: &str) -> (CliConnectorState, Option<String>) {
+    let trimmed = raw.trim();
+    if trimmed == "unauthorized" {
+        return (CliConnectorState::NotAuthorized, None);
+    }
+    if trimmed == "authorized" {
+        // `auth show --auth-status` variant; tolerated for forward-compat.
+        return (CliConnectorState::Connected, None);
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        // Error verdicts must carry a non-empty detail — the UI banner renders
+        // off it and "" is falsy in JS (Phase 1 real-device lesson).
+        let tail: String = trimmed.chars().take(200).collect();
+        let detail = if tail.is_empty() { "empty output from wecom-cli".to_string() } else { tail };
+        return (CliConnectorState::Error, Some(detail));
+    };
+    match v.get("id").and_then(|s| s.as_str()).filter(|s| !s.trim().is_empty()) {
+        Some(id) => (CliConnectorState::Connected, Some(format!("Bot {id}"))),
+        None => (
+            CliConnectorState::Error,
+            Some("unrecognized auth show output".into()),
+        ),
+    }
+}
+
+const WECOM_PROBE_SPEC: CliProbeSpec = CliProbeSpec {
+    id: "wecom",
+    bin: "wecom-cli",
+    cmd: wecom_cmd,
+    parse_version: parse_wecom_version,
+    auth_args: &["auth", "show"],
+    classify: classify_wecom_auth_show,
+    action_url: no_action_url,
+};
+
+/// wecom has neither a config step (QR-scan init auto-provisions the bot) nor
+/// a not_enabled gate (no org allowlist; capability tiering by company size is
+/// server-side and surfaces per-category at call time, a skill-layer concern):
+/// not_installed → not_authorized → connected (+ error).
+fn probe_wecom_status() -> CliConnectorStatus {
+    probe_office_cli(&WECOM_PROBE_SPEC)
+}
+
+/// Probe every registered office CLI connector (lark + dingtalk + wecom).
 /// `async`: spawns real probe processes off the UI thread. The probes run in
 /// parallel — the UI polls this every 3s during flows, and one hung CLI must
-/// not stall the other connector's card (each probe is up to 2×5s cold).
+/// not stall the other connectors' cards (each probe is up to 2×5s cold).
 #[tauri::command(async)]
 fn check_cli_connectors() -> Vec<CliConnectorStatus> {
     reap_finished_cli_children();
-    let lark = std::thread::spawn(probe_lark_status);
-    let dingtalk = probe_dingtalk_status();
-    let lark = lark.join().unwrap_or_else(|_| CliConnectorStatus {
-        id: "lark".into(),
-        state: CliConnectorState::Error,
-        path: None,
-        version: None,
-        detail: Some("probe thread panicked".into()),
-        action_url: None,
-    });
-    vec![lark, dingtalk]
+    let handles: Vec<(&'static str, std::thread::JoinHandle<CliConnectorStatus>)> =
+        CLI_CONNECTORS
+            .iter()
+            .map(|def| (def.id, std::thread::spawn(def.probe)))
+            .collect();
+    handles
+        .into_iter()
+        .map(|(id, h)| {
+            h.join().unwrap_or_else(|_| CliConnectorStatus {
+                id: id.into(),
+                state: CliConnectorState::Error,
+                path: None,
+                version: None,
+                detail: Some("probe thread panicked".into()),
+                action_url: None,
+            })
+        })
+        .collect()
 }
 
 fn lark_cli_archive_name() -> Result<String, String> {
@@ -3120,13 +3250,16 @@ fn sha256_file(path: &std::path::Path) -> Result<String, String> {
 }
 
 /// Everything the generic install pipeline needs for one connector. Phase 2/3
-/// (dingtalk / wecom) add a spec, not a copy of the pipeline.
+/// (dingtalk / wecom) add a spec, not a copy of the pipeline (dws opted out —
+/// its dual-artifact + per-source pin model doesn't fit; it shares the helpers).
 struct CliInstallSpec {
     archive: String,
     urls: Vec<String>,
     expected_sha256: &'static str,
-    /// Binary name at the archive root (the official npm installer copies
-    /// `tmpDir/<name>` for every platform, confirming the flat layout).
+    /// Directory of the binary inside the extracted archive, as path segments
+    /// relative to the extraction root. lark: flat root (`&[]`); wecom: npm
+    /// platform-package layout (`&["package", "bin"]`).
+    bin_subdir: &'static [&'static str],
     bin_name: &'static str,
 }
 
@@ -3136,7 +3269,54 @@ fn lark_install_spec() -> Result<CliInstallSpec, String> {
         .ok_or_else(|| format!("no pinned checksum for {archive}"))?;
     let urls = lark_cli_download_urls(&archive);
     let bin_name = if cfg!(target_os = "windows") { "lark-cli.exe" } else { "lark-cli" };
-    Ok(CliInstallSpec { archive, urls, expected_sha256, bin_name })
+    Ok(CliInstallSpec { archive, urls, expected_sha256, bin_subdir: &[], bin_name })
+}
+
+/// npm platform suffix for @wecom/cli-<key> (npm os/cpu naming — "win32"/"x64",
+/// unlike the Go "windows"/"amd64" scheme lark/dws use).
+fn wecom_platform_key() -> Result<&'static str, String> {
+    let key = if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "darwin-arm64"
+        } else {
+            "darwin-x64"
+        }
+    } else if cfg!(target_os = "linux") {
+        if cfg!(target_arch = "aarch64") {
+            "linux-arm64"
+        } else {
+            "linux-x64"
+        }
+    } else if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") {
+            // Upstream publishes no win32-arm64 package (v0.1.9).
+            return Err("wecom-cli has no Windows arm64 build".to_string());
+        }
+        "win32-x64"
+    } else {
+        return Err("Unsupported platform for wecom-cli".to_string());
+    };
+    Ok(key)
+}
+
+/// wecom-cli install source = the npm platform package itself (no GitHub
+/// releases exist). npmmirror serves byte-identical tarballs (verified
+/// 2026-07-07) and is a plain registry mirror — mainland fallback needs no
+/// `/-/binary/` special-casing. npmmirror first (same order as dws's npm leg).
+fn wecom_install_spec() -> Result<CliInstallSpec, String> {
+    let key = wecom_platform_key()?;
+    let archive = format!("cli-{key}-{WECOM_CLI_VERSION}.tgz");
+    let urls = vec![
+        format!("https://registry.npmmirror.com/@wecom/cli-{key}/-/{archive}"),
+        format!("https://registry.npmjs.org/@wecom/cli-{key}/-/{archive}"),
+    ];
+    let expected_sha256 = WECOM_CLI_TARBALL_CHECKSUMS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, hash)| *hash)
+        .ok_or_else(|| format!("no pinned checksum for wecom-cli {key}"))?;
+    let bin_name = if cfg!(target_os = "windows") { "wecom-cli.exe" } else { "wecom-cli" };
+    Ok(CliInstallSpec { archive, urls, expected_sha256, bin_subdir: &["package", "bin"], bin_name })
 }
 
 /// curl one URL to `dest` (10s connect / 180s total). Ok(()) on HTTP success.
@@ -3223,7 +3403,11 @@ fn install_pinned_cli(spec: &CliInstallSpec) -> Result<PathBuf, String> {
         verify_sha256(&archive_path, spec.expected_sha256)?;
         extract_tar(&archive_path, &tmp)?;
 
-        let src = tmp.join(spec.bin_name);
+        let mut src = tmp.clone();
+        for seg in spec.bin_subdir {
+            src = src.join(seg);
+        }
+        let src = src.join(spec.bin_name);
         let dest = bin_dir.join(spec.bin_name);
         std::fs::copy(&src, &dest).map_err(|e| format!("failed to install binary: {e}"))?;
         set_executable(&dest)?;
@@ -3384,25 +3568,76 @@ fn begin_install(id: &str) -> Result<InstallGuard, String> {
     Ok(InstallGuard(id.to_string()))
 }
 
+fn install_lark_cli() -> Result<PathBuf, String> {
+    install_pinned_cli(&lark_install_spec()?)
+}
+
+fn install_wecom_cli() -> Result<PathBuf, String> {
+    install_pinned_cli(&wecom_install_spec()?)
+}
+
+/// One registered office CLI connector: every per-id capability in one row
+/// (Phase 3 generalization — the former per-command `match id` dispatch sites
+/// each grew a copy of the id list; a new connector now adds a row here and
+/// can't compile with a mismatched probe/installer pair).
+struct CliConnectorDef {
+    id: &'static str,
+    probe: fn() -> CliConnectorStatus,
+    install: fn() -> Result<PathBuf, String>,
+    /// Some(_) only for connectors with an app-binding step (lark's hosted
+    /// `config init --new`); dws/wecom bind during their auth flows.
+    start_config: Option<fn(Option<String>) -> Result<String, String>>,
+    start_auth: fn() -> Result<CliDeviceLogin, String>,
+    complete_auth: fn(Option<String>, Option<u64>) -> Result<CliConnectorStatus, String>,
+}
+
+/// Registry order = Settings card order (OFFICE_CLI_CONNECTORS mirrors it).
+const CLI_CONNECTORS: &[CliConnectorDef] = &[
+    CliConnectorDef {
+        id: "lark",
+        probe: probe_lark_status,
+        install: install_lark_cli,
+        start_config: Some(start_lark_config),
+        start_auth: start_lark_auth,
+        complete_auth: complete_lark_auth,
+    },
+    CliConnectorDef {
+        id: "dingtalk",
+        probe: probe_dingtalk_status,
+        install: install_dingtalk_cli,
+        start_config: None,
+        start_auth: start_dingtalk_auth,
+        complete_auth: complete_dingtalk_auth,
+    },
+    CliConnectorDef {
+        id: "wecom",
+        probe: probe_wecom_status,
+        install: install_wecom_cli,
+        start_config: None,
+        start_auth: start_wecom_auth,
+        complete_auth: complete_wecom_auth,
+    },
+];
+
+fn connector_def(id: &str) -> Result<&'static CliConnectorDef, String> {
+    CLI_CONNECTORS
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("unknown CLI connector: {id}"))
+}
+
 /// Install (or repair) an office CLI into ~/.ultrawork/office-cli/bin.
 /// Pinned version + pinned sha256; vendor-specific download chains.
 #[tauri::command(async)]
 fn install_office_cli(id: String) -> Result<CliConnectorStatus, String> {
     let _guard = begin_install(&id)?;
-    // Single dispatch site: installer and probe are bound together so a future
-    // connector can't compile with the wrong post-install probe (review
-    // finding — a `_ =>` probe arm would silently mis-probe a new id).
-    type Probe = fn() -> CliConnectorStatus;
-    let (dest, probe): (PathBuf, Probe) = match id.as_str() {
-        "lark" => (install_pinned_cli(&lark_install_spec()?)?, probe_lark_status),
-        "dingtalk" => (install_dingtalk_cli()?, probe_dingtalk_status),
-        _ => return Err(format!("unknown CLI connector: {id}")),
-    };
+    let def = connector_def(&id)?;
+    let dest = (def.install)()?;
     // The binary under this path just changed — drop the cached version label.
     if let Ok(mut m) = cli_version_cache().lock() {
         m.remove(&dest.to_string_lossy().to_string());
     }
-    Ok(probe())
+    Ok((def.probe)())
 }
 
 /// A pending long-lived office-CLI child, keyed by connector id (one per
@@ -3497,11 +3732,11 @@ fn reap_finished_cli_children() {
     }
 }
 
-/// First `https://` token in an output line that looks like a hosted
-/// pairing/verification URL (it carries the `user_code` parameter). Pure.
-/// Serves both lark `config init` (stdout) and the dws device-flow box
-/// (stderr, `│ https://login.dingtalk.com/oauth2/device/verify.htm?user_code=… │`).
-fn find_user_code_url(line: &str) -> Option<String> {
+/// First `https://` token in an output line that carries `marker` as a query
+/// param — the hosted pairing/verification URL. Pure. Serves lark `config
+/// init` + the dws device-flow box (`user_code=`) and the wecom QR page
+/// (`scode=`).
+fn find_marked_url(line: &str, marker: &str) -> Option<String> {
     let start = line.find("https://")?;
     // URLs are pure ASCII — stopping at any non-ASCII char keeps a
     // box-drawing border glyph (`│`) out of the token even if the CLI ever
@@ -3510,7 +3745,11 @@ fn find_user_code_url(line: &str) -> Option<String> {
         .chars()
         .take_while(|c| !c.is_whitespace() && c.is_ascii())
         .collect();
-    if token.contains("user_code=") { Some(token) } else { None }
+    if token.contains(marker) { Some(token) } else { None }
+}
+
+fn find_user_code_url(line: &str) -> Option<String> {
+    find_marked_url(line, "user_code=")
 }
 
 fn spawn_line_reader(
@@ -3528,20 +3767,24 @@ fn spawn_line_reader(
     });
 }
 
-/// Kick off `lark-cli config init --new` and return the hosted setup URL from
-/// its output. The child keeps running (it completes the local config write
-/// only when the user finishes in the browser); the UI polls
-/// `check_cli_connectors` to observe completion.
+/// Kick off the connector's app-binding flow and return the hosted setup URL.
+/// Only lark has one; dws/wecom bind during their auth flows (built-in OAuth
+/// client / QR-scan init) — the UI never shows not_configured for them, so
+/// reaching the None arm is a wiring bug.
 #[tauri::command(async)]
 fn start_office_cli_config(id: String, lang: Option<String>) -> Result<String, String> {
-    if id == "dingtalk" {
-        // dws has no app-binding step (built-in OAuth client) — the UI never
-        // shows not_configured for it, so this is a wiring bug if reached.
-        return Err("DingTalk needs no app configuration".into());
-    }
-    if id != "lark" {
-        return Err(format!("unknown CLI connector: {id}"));
-    }
+    let def = connector_def(&id)?;
+    let Some(start) = def.start_config else {
+        return Err(format!("{id} needs no app configuration"));
+    };
+    start(lang)
+}
+
+/// `lark-cli config init --new`: returns the hosted setup URL from its output.
+/// The child keeps running (it completes the local config write only when the
+/// user finishes in the browser); the UI polls `check_cli_connectors` to
+/// observe completion.
+fn start_lark_config(lang: Option<String>) -> Result<String, String> {
     let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
 
     let mut cmd = lark_cmd(&bin, &["config", "init", "--new"]);
@@ -3655,30 +3898,38 @@ fn parse_lark_device_login(stdout: &str) -> Result<CliDeviceLogin, String> {
 /// data); the UI opens the URL, then calls `complete_office_cli_auth`.
 #[tauri::command(async)]
 fn start_office_cli_auth(id: String) -> Result<CliDeviceLogin, String> {
-    match id.as_str() {
-        "lark" => start_lark_auth(),
-        "dingtalk" => start_dingtalk_auth(),
-        _ => Err(format!("unknown CLI connector: {id}")),
-    }
+    (connector_def(&id)?.start_auth)()
 }
 
-/// dws device flow. Contract is nothing like lark's (real-device 2026-07-06):
-/// no `--no-wait` — `auth login --device` is ONE blocking child that prints a
-/// human box to STDERR (`-f json` does NOT apply to this flow), polls the
-/// token endpoint every 5s, exchanges the token, and only then checks the
-/// org's CLI-access switch. So: spawn, park in the slot (double-click race:
-/// park first, scrape later), scrape the `user_code=` URL from its output,
-/// and hand the line channel to the slot for `complete_dingtalk_auth`.
-fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
-    let bin = find_dws_cli().ok_or("dws is not installed")?;
-    let mut cmd = dws_cmd(&bin, &["auth", "login", "--device", "--no-browser"]);
+/// Parameters for one hosted blocking-child flow (Phase 3 generalization —
+/// the dws and wecom starters are the same skeleton around different CLIs).
+struct ParkedFlowSpec {
+    /// Connector id — the child slot key.
+    id: &'static str,
+    /// Program label for error messages ("dws" / "wecom-cli").
+    bin_label: &'static str,
+    /// Marker query param that distinguishes the hosted verification URL from
+    /// any other URL in the output (dws: `user_code=`; wecom: `scode=`).
+    url_marker: &'static str,
+    /// Whether the marker's value is a human pairing code worth surfacing
+    /// (dws user_code) or an opaque session token (wecom scode).
+    marker_is_user_code: bool,
+    expires_in: u64,
+    interval: u64,
+}
+
+/// Shared skeleton for CLIs whose auth is ONE blocking child (no
+/// `--no-wait`/resume machinery): spawn, park in the slot (double-click race:
+/// park first, scrape later), scrape the marker URL from merged stdout+stderr,
+/// and hand the line channel to the slot for `complete_parked_cli_auth`.
+fn start_parked_device_flow(mut cmd: Command, spec: &ParkedFlowSpec) -> Result<CliDeviceLogin, String> {
     no_window(&mut cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to start dws: {e}"))?;
+        .map_err(|e| format!("failed to start {}: {e}", spec.bin_label))?;
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     if let Some(out) = child.stdout.take() {
@@ -3690,7 +3941,7 @@ fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
     drop(tx);
 
     let child_pid = child.id();
-    park_cli_child("dingtalk", PendingCliChild { child, lines: None, exited_at: None });
+    park_cli_child(spec.id, PendingCliChild { child, lines: None, exited_at: None });
 
     let deadline = std::time::Instant::now() + Duration::from_secs(25);
     let mut tail: Vec<String> = Vec::new();
@@ -3701,14 +3952,17 @@ fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
         }
         match rx.recv_timeout(deadline - now) {
             Ok(line) => {
-                if let Some(url) = find_user_code_url(&line) {
-                    let user_code = url
-                        .split("user_code=")
-                        .nth(1)
-                        .map(|s| s.split('&').next().unwrap_or(s).to_string());
+                if let Some(url) = find_marked_url(&line, spec.url_marker) {
+                    let user_code = if spec.marker_is_user_code {
+                        url.split(spec.url_marker)
+                            .nth(1)
+                            .map(|s| s.split('&').next().unwrap_or(s).to_string())
+                    } else {
+                        None
+                    };
                     // Hand the channel over for completion parsing — unless a
                     // newer flow superseded us (it killed our child already).
-                    if !attach_cli_child_lines("dingtalk", child_pid, rx) {
+                    if !attach_cli_child_lines(spec.id, child_pid, rx) {
                         return Err("authorization flow superseded".into());
                     }
                     return Ok(CliDeviceLogin {
@@ -3716,10 +3970,10 @@ fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
                         user_code,
                         verification_uri: Some(url),
                         verification_uri_complete: None,
-                        // Real-device: the box says 900s; completion re-bounds
-                        // itself, so a constant is fine here.
-                        expires_in: Some(900),
-                        interval: Some(5),
+                        // The child re-bounds completion itself, so constants
+                        // are fine here (dws box: 900s; wecom QR: 300s).
+                        expires_in: Some(spec.expires_in),
+                        interval: Some(spec.interval),
                     });
                 }
                 if !line.trim().is_empty() && !line.contains('█') {
@@ -3732,11 +3986,53 @@ fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
             Err(_) => break, // both streams EOF (process exited early)
         }
     }
-    kill_parked_cli_child_if_pid("dingtalk", child_pid);
+    kill_parked_cli_child_if_pid(spec.id, child_pid);
     Err(format!(
         "device flow did not produce a verification URL: {}",
         tail.join(" / ")
     ))
+}
+
+/// dws device flow. Contract is nothing like lark's (real-device 2026-07-06):
+/// no `--no-wait` — `auth login --device` is ONE blocking child that prints a
+/// human box to STDERR (`-f json` does NOT apply to this flow), polls the
+/// token endpoint every 5s, exchanges the token, and only then checks the
+/// org's CLI-access switch.
+fn start_dingtalk_auth() -> Result<CliDeviceLogin, String> {
+    let bin = find_dws_cli().ok_or("dws is not installed")?;
+    start_parked_device_flow(
+        dws_cmd(&bin, &["auth", "login", "--device", "--no-browser"]),
+        &ParkedFlowSpec {
+            id: "dingtalk",
+            bin_label: "dws",
+            url_marker: "user_code=",
+            marker_is_user_code: true,
+            // Real-device: the stderr box says 900s / 5s poll.
+            expires_in: 900,
+            interval: 5,
+        },
+    )
+}
+
+/// wecom "auth" = QR-scan bot binding: `init --noninteractive --no-open` is
+/// ONE blocking child that prints the QR-page URL to STDOUT (cliclack frame
+/// noise on stderr — opposite stream from dws, real-device 2026-07-07), polls
+/// every 3s for 300s, then exchanges + verifies + persists the credentials
+/// itself. Scanning auto-provisions the bot — the app never sees a secret.
+fn start_wecom_auth() -> Result<CliDeviceLogin, String> {
+    let bin = find_wecom_cli().ok_or("wecom-cli is not installed")?;
+    start_parked_device_flow(
+        wecom_cmd(&bin, &["init", "--noninteractive", "--no-open"]),
+        &ParkedFlowSpec {
+            id: "wecom",
+            bin_label: "wecom-cli",
+            url_marker: "scode=",
+            marker_is_user_code: false,
+            // Source-pinned: QR_POLL 3s / timeout 300s (v0.1.9 qrcode.rs).
+            expires_in: 300,
+            interval: 3,
+        },
+    )
 }
 
 fn start_lark_auth() -> Result<CliDeviceLogin, String> {
@@ -3768,55 +4064,71 @@ fn run_streaming(cmd: &mut Command, timeout: Duration) -> Option<(bool, String, 
 
 /// Complete the device flow: blocks until authorization finishes, bounded by
 /// the device code's own expiry. lark resumes via `--device-code`; dingtalk
-/// waits on the parked login child.
+/// and wecom wait on their parked children.
 #[tauri::command(async)]
 fn complete_office_cli_auth(
     id: String,
     device_code: Option<String>,
     expires_in: Option<u64>,
 ) -> Result<CliConnectorStatus, String> {
-    match id.as_str() {
-        "lark" => {
-            let device_code = device_code.ok_or("missing device code")?;
-            let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
-            let timeout = Duration::from_secs(expires_in.unwrap_or(300).min(900) + 30);
-            let (ok, stdout, stderr) = run_streaming(
-                &mut lark_cmd(&bin, &["auth", "login", "--device-code", &device_code, "--json"]),
-                timeout,
-            )
-            .ok_or("authorization polling timed out")?;
-            classify_complete_auth(ok, &stdout, &stderr)?;
-            Ok(probe_lark_status())
-        }
-        "dingtalk" => complete_dingtalk_auth(expires_in),
-        _ => Err(format!("unknown CLI connector: {id}")),
-    }
+    (connector_def(&id)?.complete_auth)(device_code, expires_in)
 }
 
-/// Wait for the parked `dws auth login --device` child. Success = exit 0
-/// (stdout JSON `{"success":true,"message":"登录成功",…}`); failure surfaces on
-/// stderr as a human block + pretty-printed error JSON, whose one special case
-/// — the org's CLI-access switch being off — becomes the GUIDED not_enabled
-/// state instead of an error (real-device 2026-07-07).
+fn complete_lark_auth(
+    device_code: Option<String>,
+    expires_in: Option<u64>,
+) -> Result<CliConnectorStatus, String> {
+    let device_code = device_code.ok_or("missing device code")?;
+    let bin = find_lark_cli().ok_or("lark-cli is not installed")?;
+    let timeout = Duration::from_secs(expires_in.unwrap_or(300).min(900) + 30);
+    let (ok, stdout, stderr) = run_streaming(
+        &mut lark_cmd(&bin, &["auth", "login", "--device-code", &device_code, "--json"]),
+        timeout,
+    )
+    .ok_or("authorization polling timed out")?;
+    classify_complete_auth(ok, &stdout, &stderr)?;
+    Ok(probe_lark_status())
+}
+
+/// Parameters for waiting out one parked blocking-child auth flow.
+struct ParkedCompleteSpec {
+    id: &'static str,
+    /// Cap on the caller-provided expiry (mirror of the CLI's own timeout).
+    max_expires: u64,
+    /// Post-success hook (dws: warm the schema cache; wecom: nothing).
+    on_success: fn(),
+    /// Failure verdict over the child's captured output lines. A
+    /// Some(guided_state) verdict becomes a guided status card, not an Err.
+    classify_failure: fn(&[String]) -> (Option<CliConnectorState>, String),
+    /// Deep link attached to a guided verdict (dws: admin console).
+    guided_action_url: Option<&'static str>,
+    probe: fn() -> CliConnectorStatus,
+}
+
+/// Wait for the parked child. Success = exit 0; failure is classified from
+/// the captured output.
 ///
 /// The child stays IN the slot for the whole wait (polled through the lock,
 /// pid-guarded) and is only claimed once it exits: app shutdown drains the
 /// slots and must be able to kill a still-polling login (review finding — an
 /// owned child would survive quit and race the next launch's flow).
-fn complete_dingtalk_auth(expires_in: Option<u64>) -> Result<CliConnectorStatus, String> {
+fn complete_parked_cli_auth(
+    spec: &ParkedCompleteSpec,
+    expires_in: Option<u64>,
+) -> Result<CliConnectorStatus, String> {
     let pid = cli_child_slots()
         .lock()
         .ok()
-        .and_then(|slots| slots.get("dingtalk").map(|p| p.child.id()))
-        .ok_or("no pending DingTalk authorization — click Authorize again")?;
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs(expires_in.unwrap_or(900).min(900) + 30);
+        .and_then(|slots| slots.get(spec.id).map(|p| p.child.id()))
+        .ok_or_else(|| format!("no pending {} authorization — click Authorize again", spec.id))?;
+    let deadline = std::time::Instant::now()
+        + Duration::from_secs(expires_in.unwrap_or(spec.max_expires).min(spec.max_expires) + 30);
     let (status, mut pending) = loop {
         {
             let mut slots = cli_child_slots()
                 .lock()
                 .map_err(|_| "connector state lock poisoned".to_string())?;
-            let Some(p) = slots.get_mut("dingtalk") else {
+            let Some(p) = slots.get_mut(spec.id) else {
                 // Drained by shutdown or killed by a superseding flow.
                 return Err("authorization was cancelled".into());
             };
@@ -3825,15 +4137,15 @@ fn complete_dingtalk_auth(expires_in: Option<u64>) -> Result<CliConnectorStatus,
             }
             match p.child.try_wait() {
                 Ok(Some(st)) => {
-                    let pending = slots.remove("dingtalk").expect("entry checked above");
+                    let pending = slots.remove(spec.id).expect("entry checked above");
                     break (st, pending);
                 }
                 Ok(None) => {}
-                Err(e) => return Err(format!("wait on dws login: {e}")),
+                Err(e) => return Err(format!("wait on {} auth child: {e}", spec.id)),
             }
         }
         if std::time::Instant::now() >= deadline {
-            kill_parked_cli_child_if_pid("dingtalk", pid);
+            kill_parked_cli_child_if_pid(spec.id, pid);
             return Err("authorization polling timed out".into());
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -3849,32 +4161,103 @@ fn complete_dingtalk_auth(expires_in: Option<u64>) -> Result<CliConnectorStatus,
         }
     }
     if status.success() {
-        // Warm the tool cache off-thread so `dws schema` self-introspection is
-        // populated (real-device: 3 stub entries before refresh, 24 products
-        // after). Best-effort, single-flight — repeated re-auth must not pile
-        // up 120s subprocesses.
-        static REFRESH_IN_FLIGHT: std::sync::atomic::AtomicBool =
-            std::sync::atomic::AtomicBool::new(false);
-        if let Some(bin) = find_dws_cli() {
-            if !REFRESH_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                std::thread::spawn(move || {
-                    let _ = run_probe(&mut dws_cmd(&bin, &["cache", "refresh"]), Duration::from_secs(120));
-                    REFRESH_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
-                });
-            }
-        }
-        return Ok(probe_dingtalk_status());
+        (spec.on_success)();
+        return Ok((spec.probe)());
     }
-    match classify_dws_login_failure(&lines) {
-        (Some(CliConnectorState::NotEnabled), detail) => {
-            let mut st = probe_dingtalk_status();
-            st.state = CliConnectorState::NotEnabled;
+    match (spec.classify_failure)(&lines) {
+        (Some(guided), detail) => {
+            let mut st = (spec.probe)();
+            st.state = guided;
             st.detail = Some(detail);
-            st.action_url = Some(DWS_ADMIN_CONSOLE_URL.to_string());
+            st.action_url = spec.guided_action_url.map(str::to_string);
             Ok(st)
         }
-        (_, msg) => Err(msg),
+        (None, msg) => Err(msg),
     }
+}
+
+/// Warm the dws tool cache off-thread so `dws schema` self-introspection is
+/// populated (real-device: 3 stub entries before refresh, 24 products after).
+/// Best-effort, single-flight — repeated re-auth must not pile up 120s
+/// subprocesses.
+fn dws_warm_schema_cache() {
+    static REFRESH_IN_FLIGHT: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if let Some(bin) = find_dws_cli() {
+        if !REFRESH_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            std::thread::spawn(move || {
+                let _ = run_probe(&mut dws_cmd(&bin, &["cache", "refresh"]), Duration::from_secs(120));
+                REFRESH_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+    }
+}
+
+fn no_post_auth() {}
+
+/// Wait for the parked `dws auth login --device` child. Success = exit 0
+/// (stdout JSON `{"success":true,"message":"登录成功",…}`); failure surfaces on
+/// stderr as a human block + pretty-printed error JSON, whose one special case
+/// — the org's CLI-access switch being off — becomes the GUIDED not_enabled
+/// state instead of an error (real-device 2026-07-07).
+fn complete_dingtalk_auth(
+    _device_code: Option<String>,
+    expires_in: Option<u64>,
+) -> Result<CliConnectorStatus, String> {
+    complete_parked_cli_auth(
+        &ParkedCompleteSpec {
+            id: "dingtalk",
+            max_expires: 900,
+            on_success: dws_warm_schema_cache,
+            classify_failure: classify_dws_login_failure,
+            guided_action_url: Some(DWS_ADMIN_CONSOLE_URL),
+            probe: probe_dingtalk_status,
+        },
+        expires_in,
+    )
+}
+
+/// Wait for the parked `wecom-cli init --noninteractive` child. Success =
+/// exit 0 (the CLI verified the credentials against the server and persisted
+/// them itself); failure = anyhow `Error: <中文>` on stderr + exit 1 (QR
+/// expiry after 300s, credential verification failure — both plain errors,
+/// no guided state: wecom has no org allowlist gate).
+fn complete_wecom_auth(
+    _device_code: Option<String>,
+    expires_in: Option<u64>,
+) -> Result<CliConnectorStatus, String> {
+    complete_parked_cli_auth(
+        &ParkedCompleteSpec {
+            id: "wecom",
+            max_expires: 300,
+            on_success: no_post_auth,
+            classify_failure: classify_wecom_init_failure,
+            guided_action_url: None,
+            probe: probe_wecom_status,
+        },
+        expires_in,
+    )
+}
+
+/// Failure verdict for the wecom init child: prefer the terminal anyhow
+/// `Error: <msg>` line; otherwise the last non-noise lines (QR block glyphs
+/// █▀▄ and cliclack frames filtered out). Never a guided state.
+fn classify_wecom_init_failure(lines: &[String]) -> (Option<CliConnectorState>, String) {
+    let kept: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.chars().any(|c| matches!(c, '█' | '▀' | '▄')))
+        .collect();
+    let msg = kept
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("Error:").map(|m| m.trim().to_string()))
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| {
+            let tail = kept[kept.len().saturating_sub(3)..].join(" / ");
+            if tail.is_empty() { "wecom-cli init failed without output".to_string() } else { tail }
+        });
+    (None, msg)
 }
 
 /// Last parseable JSON object in a line-buffered output blob: the dws error
@@ -5685,6 +6068,131 @@ mod provider_test_tests {
         let v = last_json_object(&lines).expect("finds the tail JSON");
         assert_eq!(v.pointer("/error/code").and_then(|n| n.as_u64()), Some(2));
         assert!(last_json_object(&["nope".to_string()]).is_none());
+    }
+
+    // ── wecom-cli (Phase 3) — real-device payloads, v0.1.9 2026-07-07 ──
+
+    #[test]
+    fn wecom_install_spec_pins_platform_tarball() {
+        let spec = wecom_install_spec().expect("supported platform");
+        // Both sources serve the same bytes — one digest, npmmirror first.
+        assert_eq!(spec.urls.len(), 2);
+        assert!(spec.urls[0].starts_with("https://registry.npmmirror.com/@wecom/cli-"));
+        assert!(spec.urls[1].starts_with("https://registry.npmjs.org/@wecom/cli-"));
+        for url in &spec.urls {
+            assert!(url.ends_with(&format!("-{WECOM_CLI_VERSION}.tgz")), "unpinned url: {url}");
+        }
+        assert_eq!(spec.expected_sha256.len(), 64);
+        // npm platform-package layout: binary under package/bin/.
+        assert_eq!(spec.bin_subdir, &["package", "bin"]);
+        assert!(spec.bin_name.starts_with("wecom-cli"));
+    }
+
+    #[test]
+    fn wecom_version_parse() {
+        // Real shape: `wecom-cli --version` → "wecom-cli 0.1.9".
+        assert_eq!(parse_wecom_version("wecom-cli 0.1.9\n"), Some("0.1.9".to_string()));
+        assert_eq!(parse_wecom_version(""), None);
+        assert_eq!(parse_wecom_version("command not found"), None);
+    }
+
+    #[test]
+    fn wecom_auth_show_classification() {
+        // Real unauthorized shape: PLAIN TEXT on stdout, exit 0 — not JSON.
+        let (state, detail) = classify_wecom_auth_show("unauthorized\n");
+        assert_eq!(state, CliConnectorState::NotAuthorized);
+        assert!(detail.is_none());
+
+        // --auth-status variant tolerated.
+        let (state, _) = classify_wecom_auth_show("authorized\n");
+        assert_eq!(state, CliConnectorState::Connected);
+
+        // Authorized shape (source v0.1.9): pretty JSON {id, create_time}.
+        let (state, detail) = classify_wecom_auth_show(
+            "{\n  \"id\": \"BOT-e2e-mock\",\n  \"create_time\": 1779874762\n}\n",
+        );
+        assert_eq!(state, CliConnectorState::Connected);
+        assert_eq!(detail.as_deref(), Some("Bot BOT-e2e-mock"));
+
+        // JSON without an id — never a green card.
+        let (state, detail) = classify_wecom_auth_show(r#"{"create_time": 1}"#);
+        assert_eq!(state, CliConnectorState::Error);
+        assert!(detail.is_some());
+
+        // Garbage / empty: Error with a NON-EMPTY detail (UI banner contract).
+        let (state, detail) = classify_wecom_auth_show("zsh: killed wecom-cli");
+        assert_eq!(state, CliConnectorState::Error);
+        assert!(!detail.unwrap().is_empty());
+        let (state, detail) = classify_wecom_auth_show("   ");
+        assert_eq!(state, CliConnectorState::Error);
+        assert_eq!(detail.as_deref(), Some("empty output from wecom-cli"));
+    }
+
+    #[test]
+    fn wecom_qr_url_extraction() {
+        // Real init stdout line (v0.1.9): bare URL on its own line, scode param.
+        assert_eq!(
+            find_marked_url(
+                "https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=SotEunMmCAFouE-K",
+                "scode=",
+            ),
+            Some(
+                "https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=SotEunMmCAFouE-K"
+                    .to_string()
+            )
+        );
+        // Non-marker URLs and QR/noise lines don't match.
+        assert_eq!(find_marked_url("请打开二维码链接扫码: ", "scode="), None);
+        assert_eq!(find_marked_url("https://work.weixin.qq.com/ai", "scode="), None);
+        assert_eq!(find_marked_url("▀▄█▀▄█▀▄█", "scode="), None);
+        // The dws marker still routes through the same helper.
+        assert_eq!(
+            find_user_code_url("see https://x.cn/verify.htm?user_code=AB-CD ok"),
+            Some("https://x.cn/verify.htm?user_code=AB-CD".to_string())
+        );
+    }
+
+    #[test]
+    fn wecom_init_failure_classification() {
+        // anyhow terminal verdict wins over earlier progress lines.
+        let lines: Vec<String> = vec![
+            "正在获取二维码...".into(),
+            "请打开二维码链接扫码: ".into(),
+            "https://work.weixin.qq.com/ai/qc/gen?source=wecom_cli_external&scode=X".into(),
+            "▀▄█ ▄▀█ █▄▀".into(),
+            "等待扫码中...".into(),
+            "Error: 扫码超时（5 分钟），请重试。".into(),
+        ];
+        let (state, msg) = classify_wecom_init_failure(&lines);
+        assert!(state.is_none(), "wecom has no guided failure state");
+        assert_eq!(msg, "扫码超时（5 分钟），请重试。");
+
+        // No Error: line → last non-noise lines, QR glyphs filtered.
+        let lines: Vec<String> =
+            vec!["┌  企业微信机器人初始化".into(), "▀▄█▀▄█".into(), "初始化失败 ❌".into()];
+        let (_, msg) = classify_wecom_init_failure(&lines);
+        assert!(msg.contains("初始化失败"));
+        assert!(!msg.contains('█'));
+
+        // Empty output still yields a non-empty message.
+        let (_, msg) = classify_wecom_init_failure(&[]);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn cli_connector_registry_integrity() {
+        // Ids unique, non-empty, and aligned with the UI card list.
+        let ids: Vec<&str> = CLI_CONNECTORS.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec!["lark", "dingtalk", "wecom"]);
+        let unique: std::collections::HashSet<&&str> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len());
+        // Only lark has an app-binding step.
+        for def in CLI_CONNECTORS {
+            assert_eq!(def.start_config.is_some(), def.id == "lark", "{}", def.id);
+        }
+        assert!(connector_def("wecom").is_ok());
+        let err = connector_def("nope").err().expect("unknown id must be rejected");
+        assert!(err.contains("unknown CLI connector"));
     }
 
     #[test]
