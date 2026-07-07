@@ -141,7 +141,20 @@ for (const [rel, rawText] of mdTexts) {
   const mapText = mdTexts.get("docs/document-map.md")!
   // 注意：决策/讨论层比对的是目录下**全部** *.md（含 README 与非编号文件），
   // 与检查 1 的 adrFiles（仅 ^\d{3}- 编号文件）语义不同，勿合并。
+  // 计数口径 = git 追踪文件（gitignored 的本地私密文档如 discussions/002 不
+  // 计入——否则本机与 CI checkout 计数不一致，CI docs job 必挂；2026-07-07
+  // 实证）。git 不可用时回退 fs 扫描（行为同旧版）。
   const globCount = async (pattern: string, cwd: string) => {
+    const rel = path.relative(rootDir, cwd).replaceAll(path.sep, "/")
+    try {
+      const proc = Bun.spawnSync(["git", "ls-files", `:(glob)${rel}/${pattern}`], { cwd: rootDir })
+      if (proc.success) {
+        const n = proc.stdout.toString().split("\n").filter(Boolean).length
+        if (n > 0) return n
+      }
+    } catch {
+      // fall through to fs scan
+    }
     let n = 0
     for await (const _ of new Glob(pattern).scan({ cwd })) n++
     return n
