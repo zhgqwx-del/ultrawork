@@ -21,7 +21,7 @@
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
 | `feishu-assistant` | **ultrawork 自写**（薄路由到 lark-cli 内嵌官方技能） | 同仓库 | lark-cli（设置→连接器→办公 CLI 安装） |
 | `dingtalk-assistant` | **ultrawork 自写**（薄路由到连接器 materialize 的 dws 官方 mono 技能） | 同仓库 | dws（设置→连接器→办公 CLI 安装） |
-| `wecom-assistant` | **ultrawork 自写**（薄路由）+ `references/official/` vendored 自 WecomTeam/wecom-cli `skills/`（pin npm 0.1.9 gitHead；SKILL.md→INDEX.md 防嵌套技能扫描，详见其 `_ORIGIN.md`） | 同仓库；vendored 部分 MIT | wecom-cli（设置→连接器→办公 CLI 安装） |
+| `wecom-assistant` | **ultrawork 自写**（薄路由）+ `references/official/` vendored 自 WecomTeam/wecom-cli `skills/`（整树单一 commit 快照；SKILL.md→INDEX.md 防嵌套技能扫描，commit 与取舍详见其 `_ORIGIN.md`） | 同仓库；vendored 部分 MIT | wecom-cli（设置→连接器→办公 CLI 安装） |
 
 > ⚠️ Anthropic 官方 `docx/pdf/pptx/xlsx` 文档技能是**专有许可、禁止再分发**（`LICENSE.txt` 1467B
 > 即专有，11345B 即 Apache-2.0），**不可内置**。故 PDF 采用 OpenAI 的 Apache 版，Office 读改自写

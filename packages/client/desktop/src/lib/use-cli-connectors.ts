@@ -5,11 +5,11 @@ import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n-context"
 
 /**
- * Office CLI connectors (discussions/027, Phase 1: Feishu/Lark).
+ * Office CLI connectors (discussions/027 — lark / dingtalk / wecom).
  *
- * A CLI connector wraps an official vendor CLI (lark-cli) that the agent
- * drives via bash — NOT an MCP server; nothing here touches OpenCode `mcp`
- * config. This hook fronts four Tauri commands:
+ * A CLI connector wraps an official vendor CLI that the agent drives via
+ * bash — NOT an MCP server; nothing here touches OpenCode `mcp` config.
+ * This hook fronts four Tauri commands:
  *   check_cli_connectors      — probe install/config/auth state
  *   install_office_cli        — pinned-version download + sha256 verify
  *   start_office_cli_config   — `config init --new`, returns hosted setup URL
@@ -38,7 +38,7 @@ export interface CliConnectorStatus {
 }
 
 interface CliDeviceLogin {
-  /** lark: resume handle; dingtalk: absent (the parked child IS the flow). */
+  /** lark: resume handle; dingtalk/wecom: absent (the parked child IS the flow). */
   device_code?: string | null
   user_code?: string | null
   verification_uri?: string | null
@@ -198,8 +198,8 @@ export function useCliConnectors(): CliConnectorsApi {
           await openUrl(url)
         }
         // Blocks while the CLI polls the token endpoint (bounded by the device
-        // code's expiry on the Rust side). deviceCode is null for dingtalk —
-        // its parked login child IS the flow.
+        // code's expiry on the Rust side). deviceCode is null for dingtalk and
+        // wecom — their parked auth child IS the flow.
         const status = await invoke<CliConnectorStatus>("complete_office_cli_auth", {
           id,
           deviceCode: login.device_code ?? null,

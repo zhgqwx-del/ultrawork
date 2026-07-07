@@ -1,6 +1,6 @@
 ---
 name: wecom-assistant
-description: Use when the user wants to operate WeCom (企业微信) — docs, smart sheets, online sheets, smart pages, messages, contacts, todos, meetings, schedules — via the official wecom-cli. This skill routes to wecom-cli's official skills vendored under references/official/ (snapshot matching the pinned CLI version) plus CLI self-introspection. Requires the WeCom connector (设置 → 连接器 → 办公 CLI) installed and authorized (QR-scan bot binding). Not for inbound WeCom message channels.
+description: Use when the user wants to operate WeCom (企业微信) — docs, smart sheets, online sheets, smart pages, messages, contacts, todos, meetings, schedules — via the official wecom-cli. Also triggers on doc.weixin.qq.com URLs (`/doc/`, `/sheet/`, `/smartsheet/`, `/smartpage/` — WeCom document links) even when 企业微信 isn't mentioned. This skill routes to wecom-cli's official skills vendored under references/official/ plus CLI self-introspection. Requires the WeCom connector (设置 → 连接器 → 办公 CLI) installed and authorized (QR-scan bot binding). Not for inbound WeCom message channels.
 x-requires: [wecom-cli]
 ---
 
@@ -46,8 +46,8 @@ references/official/wecomcli-schedule/INDEX.md     # 日程（增删改查/参�
 命令的实时真相用 CLI 自省核对（工具表由企业服务端动态下发，需已授权+网络）：
 
 ```bash
-wecom-cli <category>                    # 列出该品类当前可用工具（category: contact/doc/meeting/msg/schedule/todo）
-wecom-cli <category> <method> --help    # 单个工具的参数定义
+wecom-cli <category> --help             # 列出该品类当前可用工具（category: contact/doc/meeting/msg/schedule/todo；exit 0）
+wecom-cli <category> <method> --schema  # 单个工具的参数 JSON Schema（--help 只有描述、不含参数定义）
 ```
 
 工具表有 24h 本地缓存；官方文档说的命令不在列表里时，先 `wecom-cli cache clear` 再查（服务端可能刚变更下发）。

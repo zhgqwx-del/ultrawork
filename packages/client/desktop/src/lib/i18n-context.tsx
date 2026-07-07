@@ -12,7 +12,8 @@ interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | undefined>(undefined)
 
 // Translation dictionary
-const translations: Record<Language, Record<string, string>> = {
+// Exported for tests only (key-completeness assertions over per-id families).
+export const translations: Record<Language, Record<string, string>> = {
   en: {
     // Brand
     "brand.name": "UltraWork",

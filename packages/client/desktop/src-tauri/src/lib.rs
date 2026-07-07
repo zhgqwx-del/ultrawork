@@ -3103,11 +3103,13 @@ fn find_wecom_cli() -> Option<String> {
         .and_then(|d| d.path)
 }
 
-/// Base wecom-cli invocation. No noise-suppression env needed (no update
-/// notifier in the source; logging is opt-in via WECOM_CLI_LOG_LEVEL).
+/// Base wecom-cli invocation. No update notifier in the source, but logging
+/// is opt-in via inherited env (upstream docs: WECOM_CLI_LOG_LEVEL enables
+/// stderr logs) — strip it so probe classification never has to fight log
+/// noise (the unauthorized verdict is an exact-match stdout sentinel).
 fn wecom_cmd(bin: &str, args: &[&str]) -> Command {
     let mut cmd = Command::new(bin);
-    cmd.args(args);
+    cmd.args(args).env_remove("WECOM_CLI_LOG_LEVEL");
     cmd
 }
 
@@ -3140,7 +3142,15 @@ fn classify_wecom_auth_show(raw: &str) -> (CliConnectorState, Option<String>) {
         let detail = if tail.is_empty() { "empty output from wecom-cli".to_string() } else { tail };
         return (CliConnectorState::Error, Some(detail));
     };
-    match v.get("id").and_then(|s| s.as_str()).filter(|s| !s.trim().is_empty()) {
+    // `id` is a string in the v0.1.9 source; tolerate a number too — the
+    // authorized shape is source-derived and only real-device-anchored at
+    // acceptance (sibling `create_time` IS a number).
+    let id = match v.get("id") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Some(s.clone()),
+        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    };
+    match id {
         Some(id) => (CliConnectorState::Connected, Some(format!("Bot {id}"))),
         None => (
             CliConnectorState::Error,
@@ -3275,6 +3285,11 @@ fn lark_install_spec() -> Result<CliInstallSpec, String> {
 /// npm platform suffix for @wecom/cli-<key> (npm os/cpu naming — "win32"/"x64",
 /// unlike the Go "windows"/"amd64" scheme lark/dws use).
 fn wecom_platform_key() -> Result<&'static str, String> {
+    // Explicit arch gate like lark/dws — a silent x64 fallback on an exotic
+    // arch would download a checksum-valid but unrunnable binary.
+    if !cfg!(target_arch = "aarch64") && !cfg!(target_arch = "x86_64") {
+        return Err("Unsupported architecture for wecom-cli".to_string());
+    }
     let key = if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
             "darwin-arm64"
@@ -3976,7 +3991,11 @@ fn start_parked_device_flow(mut cmd: Command, spec: &ParkedFlowSpec) -> Result<C
                         interval: Some(spec.interval),
                     });
                 }
-                if !line.trim().is_empty() && !line.contains('█') {
+                // Keep a short non-QR tail for the error message (wecom's
+                // Dense1x2 QR rows can be pure ▀/▄ without any █).
+                if !line.trim().is_empty()
+                    && !line.chars().any(|c| matches!(c, '█' | '▀' | '▄'))
+                {
                     tail.push(line.trim().to_string());
                     if tail.len() > 5 {
                         tail.remove(0);
@@ -4093,12 +4112,15 @@ fn complete_lark_auth(
 /// Parameters for waiting out one parked blocking-child auth flow.
 struct ParkedCompleteSpec {
     id: &'static str,
+    /// Brand name for user-facing error messages ("DingTalk" / "WeCom").
+    display: &'static str,
     /// Cap on the caller-provided expiry (mirror of the CLI's own timeout).
     max_expires: u64,
     /// Post-success hook (dws: warm the schema cache; wecom: nothing).
     on_success: fn(),
-    /// Failure verdict over the child's captured output lines. A
-    /// Some(guided_state) verdict becomes a guided status card, not an Err.
+    /// Failure verdict over the child's captured output lines. A Some(state)
+    /// verdict becomes a GUIDED status card (not an Err) — return Some ONLY
+    /// for guided states like NotEnabled, never for Error.
     classify_failure: fn(&[String]) -> (Option<CliConnectorState>, String),
     /// Deep link attached to a guided verdict (dws: admin console).
     guided_action_url: Option<&'static str>,
@@ -4120,7 +4142,9 @@ fn complete_parked_cli_auth(
         .lock()
         .ok()
         .and_then(|slots| slots.get(spec.id).map(|p| p.child.id()))
-        .ok_or_else(|| format!("no pending {} authorization — click Authorize again", spec.id))?;
+        .ok_or_else(|| {
+            format!("no pending {} authorization — click Authorize again", spec.display)
+        })?;
     let deadline = std::time::Instant::now()
         + Duration::from_secs(expires_in.unwrap_or(spec.max_expires).min(spec.max_expires) + 30);
     let (status, mut pending) = loop {
@@ -4141,7 +4165,7 @@ fn complete_parked_cli_auth(
                     break (st, pending);
                 }
                 Ok(None) => {}
-                Err(e) => return Err(format!("wait on {} auth child: {e}", spec.id)),
+                Err(e) => return Err(format!("wait on {} auth child: {e}", spec.display)),
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -4207,6 +4231,7 @@ fn complete_dingtalk_auth(
     complete_parked_cli_auth(
         &ParkedCompleteSpec {
             id: "dingtalk",
+            display: "DingTalk",
             max_expires: 900,
             on_success: dws_warm_schema_cache,
             classify_failure: classify_dws_login_failure,
@@ -4229,6 +4254,7 @@ fn complete_wecom_auth(
     complete_parked_cli_auth(
         &ParkedCompleteSpec {
             id: "wecom",
+            display: "WeCom",
             max_expires: 300,
             on_success: no_post_auth,
             classify_failure: classify_wecom_init_failure,
@@ -4241,12 +4267,16 @@ fn complete_wecom_auth(
 
 /// Failure verdict for the wecom init child: prefer the terminal anyhow
 /// `Error: <msg>` line; otherwise the last non-noise lines (QR block glyphs
-/// █▀▄ and cliclack frames filtered out). Never a guided state.
+/// █▀▄ and cliclack frame glyphs filtered out). Never a guided state.
 fn classify_wecom_init_failure(lines: &[String]) -> (Option<CliConnectorState>, String) {
     let kept: Vec<&str> = lines
         .iter()
         .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.chars().any(|c| matches!(c, '█' | '▀' | '▄')))
+        .filter(|l| {
+            !l.is_empty()
+                && !l.chars().any(|c| matches!(c, '█' | '▀' | '▄'))
+                && !l.starts_with(['┌', '│', '└', '├', '╰', '◆', '◇', '●', '○'])
+        })
         .collect();
     let msg = kept
         .iter()
@@ -6074,7 +6104,15 @@ mod provider_test_tests {
 
     #[test]
     fn wecom_install_spec_pins_platform_tarball() {
-        let spec = wecom_install_spec().expect("supported platform");
+        let spec = match wecom_install_spec() {
+            Ok(spec) => spec,
+            // Upstream publishes no win-arm64 package — on a native
+            // aarch64-windows toolchain the Err path IS the contract.
+            Err(e) => {
+                assert!(e.contains("arm64") || e.contains("Unsupported"), "{e}");
+                return;
+            }
+        };
         // Both sources serve the same bytes — one digest, npmmirror first.
         assert_eq!(spec.urls.len(), 2);
         assert!(spec.urls[0].starts_with("https://registry.npmmirror.com/@wecom/cli-"));
@@ -6113,6 +6151,12 @@ mod provider_test_tests {
         );
         assert_eq!(state, CliConnectorState::Connected);
         assert_eq!(detail.as_deref(), Some("Bot BOT-e2e-mock"));
+
+        // A numeric id is tolerated (authorized shape is source-derived until
+        // real-device acceptance; sibling create_time IS a number).
+        let (state, detail) = classify_wecom_auth_show(r#"{"id": 42, "create_time": 1}"#);
+        assert_eq!(state, CliConnectorState::Connected);
+        assert_eq!(detail.as_deref(), Some("Bot 42"));
 
         // JSON without an id — never a green card.
         let (state, detail) = classify_wecom_auth_show(r#"{"create_time": 1}"#);
@@ -6167,12 +6211,12 @@ mod provider_test_tests {
         assert!(state.is_none(), "wecom has no guided failure state");
         assert_eq!(msg, "扫码超时（5 分钟），请重试。");
 
-        // No Error: line → last non-noise lines, QR glyphs filtered.
+        // No Error: line → last non-noise lines; QR glyphs AND cliclack frame
+        // lines both filtered out of the user-facing message.
         let lines: Vec<String> =
             vec!["┌  企业微信机器人初始化".into(), "▀▄█▀▄█".into(), "初始化失败 ❌".into()];
         let (_, msg) = classify_wecom_init_failure(&lines);
-        assert!(msg.contains("初始化失败"));
-        assert!(!msg.contains('█'));
+        assert_eq!(msg, "初始化失败 ❌");
 
         // Empty output still yields a non-empty message.
         let (_, msg) = classify_wecom_init_failure(&[]);
@@ -6190,9 +6234,75 @@ mod provider_test_tests {
         for def in CLI_CONNECTORS {
             assert_eq!(def.start_config.is_some(), def.id == "lark", "{}", def.id);
         }
+        // Row wiring: every probe fn must report ITS row's id (all five fields
+        // share a signature, so a swapped fn pointer compiles fine — this and
+        // the never-panics smoke are what actually catch it).
+        for def in CLI_CONNECTORS {
+            assert_eq!((def.probe)().id, def.id, "swapped probe pointer");
+        }
         assert!(connector_def("wecom").is_ok());
         let err = connector_def("nope").err().expect("unknown id must be rejected");
         assert!(err.contains("unknown CLI connector"));
+    }
+
+    #[test]
+    fn cli_checksum_tables_complete_and_wellformed() {
+        // Platform-key coverage can't be exercised across targets at runtime
+        // (cfg! is compile-time) — lock the tables themselves instead: exact
+        // expected key/file sets (wecom deliberately has NO win32-arm64),
+        // 64-char lowercase hex digests, no duplicates.
+        fn assert_digests(table: &[(&str, &str)]) {
+            let mut seen = std::collections::HashSet::new();
+            for (key, digest) in table {
+                assert_eq!(digest.len(), 64, "{key}");
+                assert!(
+                    digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                    "{key}"
+                );
+                assert!(seen.insert(*key), "duplicate key {key}");
+            }
+        }
+        assert_digests(WECOM_CLI_TARBALL_CHECKSUMS);
+        let wecom_keys: Vec<&str> = WECOM_CLI_TARBALL_CHECKSUMS.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            wecom_keys,
+            vec!["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"],
+        );
+        assert_digests(LARK_CLI_CHECKSUMS);
+        assert_eq!(LARK_CLI_CHECKSUMS.len(), 6);
+        assert_digests(DWS_CLI_CHECKSUMS);
+        assert_eq!(DWS_CLI_CHECKSUMS.len(), 6);
+    }
+
+    #[test]
+    fn find_marked_url_ascii_boundary() {
+        // Contract from the fn's own comment: a box-drawing glyph rendered
+        // FLUSH against the URL must not be swallowed into the token.
+        assert_eq!(
+            find_marked_url("│https://x.cn/v?user_code=AB-CD│", "user_code="),
+            Some("https://x.cn/v?user_code=AB-CD".to_string())
+        );
+        // Empty-string id in auth show JSON is never a green card.
+        let (state, _) = classify_wecom_auth_show(r#"{"id": "", "create_time": 1}"#);
+        assert_eq!(state, CliConnectorState::Error);
+    }
+
+    #[test]
+    fn dws_action_url_only_on_not_enabled() {
+        assert_eq!(
+            dws_action_url(CliConnectorState::NotEnabled).as_deref(),
+            Some(DWS_ADMIN_CONSOLE_URL)
+        );
+        assert_eq!(dws_action_url(CliConnectorState::Connected), None);
+        assert_eq!(dws_action_url(CliConnectorState::Error), None);
+    }
+
+    #[test]
+    fn complete_parked_auth_without_pending_child_errors() {
+        // No parked child in the slot → an immediate, user-actionable error
+        // (brand-cased), not a hang or a probe.
+        let err = complete_wecom_auth(None, Some(1)).err().expect("must fail fast");
+        assert!(err.contains("no pending WeCom authorization"), "{err}");
     }
 
     #[test]

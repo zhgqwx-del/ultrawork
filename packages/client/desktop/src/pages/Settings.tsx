@@ -681,7 +681,7 @@ function CliConnectorCard({
 
   // Primary action per probed state (same lookup idiom as stateBadge above);
   // label switches to the in-flight variant. Hints are per-connector — the
-  // flows differ (lark: hosted app page; dingtalk: no config step at all).
+  // flows differ (lark: hosted app page; dingtalk/wecom: no config step).
   const action = {
     not_installed: {
       label: phase === "installing" ? t("cliConnector.installing") : t("cliConnector.install"),
