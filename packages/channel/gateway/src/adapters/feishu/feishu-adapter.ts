@@ -72,6 +72,12 @@ export class FeishuAdapter implements ChannelAdapter {
     this.errorMsg = undefined;
 
     try {
+      // SDK start() silently no-ops on malformed appIds (logs and returns) —
+      // fail fast with an actionable message instead of a generic timeout.
+      if (!/^cli_[0-9a-fA-F]+$/.test(this.config.appId)) {
+        throw new Error(`Invalid Feishu App ID "${this.config.appId}" (expected cli_…)`);
+      }
+
       const dispatcher = new Lark.EventDispatcher({}).register({
         "im.message.receive_v1": (data) => {
           this.handleReceive(data as ReceiveEvent);
@@ -81,15 +87,46 @@ export class FeishuAdapter implements ChannelAdapter {
       // Close any prior socket before opening a new one (repeated connects
       // would otherwise leak orphan connections — openclaw-lark does the same).
       this.closeWs();
-      this.wsClient = new Lark.WSClient({
-        appId: this.config.appId,
-        appSecret: this.config.appSecret,
-        domain: this.domain(),
-        loggerLevel: Lark.LoggerLevel.warn,
+
+      // start() fires reConnect without awaiting it — connection state only
+      // surfaces via the constructor's onReady/onError callbacks, so wrap
+      // those into the connect() promise (with a timeout backstop).
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error("Feishu connection timed out"));
+          }
+        }, 20_000);
+        this.wsClient = new Lark.WSClient({
+          appId: this.config.appId,
+          appSecret: this.config.appSecret,
+          domain: this.domain(),
+          loggerLevel: Lark.LoggerLevel.warn,
+          onReady: () => {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timer);
+              resolve();
+            }
+          },
+          onError: (err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!settled) {
+              settled = true;
+              clearTimeout(timer);
+              reject(err instanceof Error ? err : new Error(msg));
+            } else {
+              // Post-connect terminal failure (e.g. reconnect exhausted)
+              this.state = "error";
+              this.errorMsg = msg;
+              console.error(`[Feishu] "${this.name}" connection lost:`, msg);
+            }
+          },
+        } as ConstructorParameters<typeof Lark.WSClient>[0]);
+        void this.wsClient.start({ eventDispatcher: dispatcher });
       });
-      // start() resolves once the connection is established and auto-reconnects
-      // afterwards; connection-level failures surface here.
-      await this.wsClient.start({ eventDispatcher: dispatcher });
 
       this.state = "connected";
       this.connectedAt = new Date().toISOString();

@@ -3,7 +3,7 @@
  * (ChannelsSection + ChannelCard + ChannelAddForm + WeChatQRLogin) with brand
  * icons added; QR flow/state machine untouched.
  */
-import { useState, useEffect, useMemo, type ComponentType } from "react"
+import { useState, useEffect, useMemo, useRef, type ComponentType } from "react"
 import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, KeyRound, Loader2, Plus, Radio, RefreshCw, Smartphone, X } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { openUrl } from "@tauri-apps/plugin-opener"
@@ -155,9 +155,15 @@ export function ChannelsSection() {
       {/* QR login (wechat / dingtalk / wecom / feishu) */}
       {(showAdd === "wechat" || showAdd === "dingtalk" || showAdd === "wecom" || showAdd === "feishu") && (
         <ChannelQRLogin
+          key={showAdd}
           type={showAdd}
           onDone={onQRDone}
-          onCancel={() => setShowAdd(false)}
+          onCancel={() => {
+            setShowAdd(false)
+            // A cancel racing an in-flight authorization may land after the
+            // channel was already persisted — refresh so it shows up.
+            refresh()
+          }}
           onManualInput={
             showAdd === "wechat"
               ? undefined
@@ -320,6 +326,9 @@ function ChannelAddForm({
   const [name, setName] = useState("")
   const [values, setValues] = useState<Record<string, string>>({})
   const [autoConnect, setAutoConnect] = useState(true)
+  // Feishu (CN) and Lark (intl) tenants live on different API domains; the
+  // manual form is exactly the path international users fall back to.
+  const [larkDomain, setLarkDomain] = useState(false)
 
   const canSubmit = name.trim() && fields.every((f) => values[f.key]?.trim())
 
@@ -330,6 +339,7 @@ function ChannelAddForm({
       type,
       name: name.trim(),
       ...credentials,
+      ...(type === "feishu" ? { domain: larkDomain ? "lark" : "feishu" } : {}),
       workspaceDir: workspacePath!,
       autoConnect,
     } as unknown as Omit<ChannelConfig, "id">)
@@ -370,6 +380,19 @@ function ChannelAddForm({
             />
           </div>
         ))}
+
+        {type === "feishu" && (
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="larkDomain"
+              checked={larkDomain}
+              onChange={(e) => setLarkDomain(e.target.checked)}
+              className="size-4 rounded border-[var(--color-border)]"
+            />
+            <label htmlFor="larkDomain" className="text-sm text-[var(--color-fg)]">{t("channel.larkDomain")}</label>
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <input
@@ -425,7 +448,9 @@ function ChannelQRLogin({
   const [qrToken, setQrToken] = useState("")
   const [scanStatus, setScanStatus] = useState<string>("pending")
   const [errorMsg, setErrorMsg] = useState("")
-  const [refreshCount, setRefreshCount] = useState(0)
+  // Plain ref, NOT state: a setState here would restart the poll effect and
+  // cancel the in-flight requestQR whose result we are about to consume.
+  const refreshCountRef = useRef(0)
   const MAX_REFRESH = 3
 
   const label = t(`channel.type.${type}`)
@@ -502,25 +527,25 @@ function ChannelQRLogin({
           }
 
           if (resp.status === "expired") {
-            // Auto-refresh QR code
-            if (refreshCount < MAX_REFRESH) {
-              setRefreshCount((c) => c + 1)
+            // Auto-refresh QR code. setQrToken restarts this effect with the
+            // new token — end this loop instead of continuing on the stale
+            // closure token.
+            if (refreshCountRef.current < MAX_REFRESH) {
+              refreshCountRef.current++
               try {
                 const data = await requestQR(type, autoName, workspacePath!)
                 if (cancelled) break
                 setQrUrl(data.qrContent)
                 setBrowserUrl(data.browserUrl)
-                setQrToken(data.token)
                 setScanStatus("pending")
+                setQrToken(data.token)
               } catch {
                 setErrorMsg(t("channel.qr.error"))
-                return
               }
             } else {
               setErrorMsg(t("channel.qr.expired"))
-              return
             }
-            continue
+            return
           }
 
           // For "pending" and "scanned", keep polling the gateway cache
@@ -540,7 +565,7 @@ function ChannelQRLogin({
 
     poll()
     return () => { cancelled = true }
-  }, [qrToken, refreshCount]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [qrToken]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const statusText = scanStatus === "pending"
     ? t("channel.qr.waitingScan")

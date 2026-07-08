@@ -26,13 +26,19 @@ class MockWSClient {
   static failNextStart: Error | null = null
   options: Record<string, unknown>
   dispatcher: MockEventDispatcher | null = null
+  // Mirrors the real SDK: start() fire-and-forgets the connection; outcome
+  // surfaces via the constructor's onReady/onError callbacks.
   start = vi.fn(async ({ eventDispatcher }: { eventDispatcher: MockEventDispatcher }) => {
+    const onReady = this.options.onReady as (() => void) | undefined
+    const onError = this.options.onError as ((err: unknown) => void) | undefined
     if (MockWSClient.failNextStart) {
       const err = MockWSClient.failNextStart
       MockWSClient.failNextStart = null
-      throw err
+      queueMicrotask(() => onError?.(err))
+      return
     }
     this.dispatcher = eventDispatcher
+    queueMicrotask(() => onReady?.())
   })
   close = vi.fn()
   constructor(options: Record<string, unknown>) {

@@ -83,7 +83,16 @@ export class WeComAdapter implements ChannelAdapter {
     });
 
     this.wsClient.on("error", (err) => {
-      console.error(`[WeCom] "${this.name}" ws error:`, err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      // Reconnects exhausted (default 10 attempts) is terminal — a silent
+      // "connected" status over a dead socket would be a lie.
+      const name = err instanceof Error ? err.name : "";
+      const code = (err as { code?: string })?.code;
+      if (name === "WSReconnectExhaustedError" || code === "WS_RECONNECT_EXHAUSTED") {
+        this.state = "error";
+        this.errorMsg = msg;
+      }
+      console.error(`[WeCom] "${this.name}" ws error:`, msg);
     });
   }
 

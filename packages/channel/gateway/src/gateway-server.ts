@@ -144,7 +144,7 @@ export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hon
 
     try {
       await manager.addChannel(config);
-      return c.json(config, 201);
+      return c.json(maskConfig(config), 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to add channel";
       return c.json({ error: msg }, 400);

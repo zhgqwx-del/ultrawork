@@ -80,11 +80,15 @@ export function createDingTalkQRProvider(): QRProvider {
         nonce: init.nonce,
         source: SOURCE,
       });
+      // Undocumented contract — guard against field drift (a missing
+      // `interval` would otherwise propagate NaN into the poll loop).
+      const expiresIn = Number.isFinite(begin.expires_in) ? begin.expires_in : 7200;
+      const interval = Number.isFinite(begin.interval) ? begin.interval : 2;
       return {
         upstreamToken: begin.device_code,
         qrContent: begin.verification_uri_complete,
-        expiresInMs: begin.expires_in * 1000,
-        pollIntervalMs: Math.max(begin.interval * 1000, 2000),
+        expiresInMs: expiresIn * 1000,
+        pollIntervalMs: Math.max(interval * 1000, 2000),
       };
     },
 

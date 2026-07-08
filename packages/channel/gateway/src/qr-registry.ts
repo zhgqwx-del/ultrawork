@@ -95,9 +95,17 @@ function generateChannelId(): string {
   return `ch_${randomBytes(6).toString("hex")}`;
 }
 
+function dedupKey(type: string, request: QRSessionRequest): string {
+  return `${type}\u0000${request.name}\u0000${request.workspaceDir}\u0000${request.autoConnect}`;
+}
+
 export class QRRegistry {
   private providers = new Map<string, QRProvider>();
   private sessions = new Map<string, QRSession>();
+  /** In-flight start() calls — concurrent identical requests (StrictMode
+   * double-mount) must share ONE upstream device flow, so dedup has to cover
+   * the begin network round-trip, not just completed sessions. */
+  private pendingStarts = new Map<string, Promise<QRSessionSnapshot>>();
 
   constructor(private manager: ChannelManager) {}
 
@@ -120,8 +128,28 @@ export class QRRegistry {
     const existing = this.findReusable(type, request);
     if (existing) return this.snapshot(existing.token)!;
 
+    const key = dedupKey(type, request);
+    const inFlight = this.pendingStarts.get(key);
+    if (inFlight) return inFlight;
+
+    const startPromise = this.doStart(provider, type, request).finally(() => {
+      this.pendingStarts.delete(key);
+    });
+    this.pendingStarts.set(key, startPromise);
+    return startPromise;
+  }
+
+  private async doStart(
+    provider: QRProvider,
+    type: string,
+    request: QRSessionRequest,
+  ): Promise<QRSessionSnapshot> {
     const started = await provider.start();
     const now = Date.now();
+    // Undocumented upstream contracts can drift — a non-finite interval or
+    // expiry would otherwise become a NaN hot-loop / never-expiring session.
+    const rawInterval = started.pollIntervalMs ?? provider.pollIntervalMs;
+    const rawExpiry = started.expiresInMs ?? DEFAULT_SESSION_TTL_MS;
     const session: QRSession = {
       token: generateToken(),
       type,
@@ -130,9 +158,9 @@ export class QRRegistry {
       browserUrl: started.browserUrl,
       upstreamToken: started.upstreamToken,
       request,
-      pollIntervalMs: started.pollIntervalMs ?? provider.pollIntervalMs,
+      pollIntervalMs: Number.isFinite(rawInterval) && rawInterval > 0 ? rawInterval : provider.pollIntervalMs,
       createdAt: now,
-      expiresAt: now + (started.expiresInMs ?? DEFAULT_SESSION_TTL_MS),
+      expiresAt: now + (Number.isFinite(rawExpiry) && rawExpiry > 0 ? rawExpiry : DEFAULT_SESSION_TTL_MS),
       cancelled: false,
     };
     this.sessions.set(session.token, session);
@@ -170,6 +198,7 @@ export class QRRegistry {
         !s.cancelled &&
         s.request.name === request.name &&
         s.request.workspaceDir === request.workspaceDir &&
+        s.request.autoConnect === request.autoConnect &&
         now - s.createdAt < DEDUP_WINDOW_MS
       ) {
         return s;
@@ -220,7 +249,11 @@ export class QRRegistry {
         continue;
       }
 
-      if (session.cancelled) return;
+      // A cancel that lands while a poll is in flight must NOT drop an
+      // authorized result — the one-shot secret was already consumed upstream
+      // and the bot already created. Persist it regardless; only the
+      // non-terminal states stop early.
+      if (session.cancelled && result.state !== "authorized") return;
 
       switch (result.state) {
         case "pending":
@@ -237,15 +270,28 @@ export class QRRegistry {
           // One-shot credential: persist BEFORE exposing the state. If
           // persistence fails the secret is already consumed upstream — the
           // only honest outcome is an error the user can retry from scratch.
+          const config = result.buildConfig({ ...session.request, id: generateChannelId() });
           try {
-            const config = result.buildConfig({ ...session.request, id: generateChannelId() });
             await this.manager.addChannel(config);
             session.channelId = config.id;
             this.finish(session, "authorized");
           } catch (err) {
             const msg = err instanceof Error ? err.message : "Failed to persist channel";
-            console.error(`[QR:${session.type}] credential delivered but channel persist failed:`, msg);
-            this.finish(session, "error", msg);
+            // addChannel persists first, then optionally auto-connects. A
+            // connect failure after a successful persist is still a created
+            // channel — reporting it as failure would push the user into
+            // scanning again and minting a duplicate bot upstream.
+            if (this.manager.getConfig(config.id)) {
+              console.warn(`[QR:${session.type}] channel persisted but auto-connect failed:`, msg);
+              session.channelId = config.id;
+              this.finish(session, "authorized");
+            } else {
+              console.error(`[QR:${session.type}] credential delivered but channel persist failed:`, msg);
+              this.finish(session, "error", msg);
+            }
+          }
+          if (session.cancelled) {
+            console.warn(`[QR:${session.type}] session was cancelled mid-authorization; channel ${session.channelId ?? "?"} was still created`);
           }
           return;
         }
@@ -274,7 +320,9 @@ export class QRRegistry {
     const now = Date.now();
     for (const [token, s] of this.sessions) {
       const finishedLongAgo = s.finishedAt !== undefined && now - s.finishedAt > FINISHED_RETENTION_MS;
-      const ancient = now - s.createdAt > DEFAULT_SESSION_TTL_MS + FINISHED_RETENTION_MS;
+      // Respect each session's own deadline (dingtalk device codes live 2h) —
+      // a global age cutoff would kill still-valid flows mid-scan.
+      const ancient = now > s.expiresAt + FINISHED_RETENTION_MS;
       if (finishedLongAgo || ancient) {
         s.cancelled = true;
         this.sessions.delete(token);

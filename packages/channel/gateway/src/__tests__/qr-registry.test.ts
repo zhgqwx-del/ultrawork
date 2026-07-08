@@ -24,7 +24,10 @@ function makeProvider(overrides: Partial<QRProvider> = {}, script: (() => Promis
 function makeManager() {
   return {
     addChannel: vi.fn(async (_config: ChannelConfig) => {}),
-  } as unknown as ChannelManager & { addChannel: ReturnType<typeof vi.fn> }
+    // undefined = config not persisted (registry uses this to distinguish
+    // persist failure from auto-connect failure)
+    getConfig: vi.fn(() => undefined),
+  } as unknown as ChannelManager & { addChannel: ReturnType<typeof vi.fn>; getConfig: ReturnType<typeof vi.fn> }
 }
 
 const REQUEST = { name: "n", workspaceDir: "/ws", autoConnect: true }
@@ -175,5 +178,82 @@ describe("QRRegistry", () => {
 
   it("rejects unknown provider types", async () => {
     await expect(registry.start("nope", REQUEST)).rejects.toThrow(/No QR provider/)
+  })
+
+  // ---- regression locks for the 2026-07-08 review findings ----
+
+  it("dedups CONCURRENT starts across the begin network round-trip (review R1)", async () => {
+    const provider = makeProvider({
+      start: vi.fn(async () => {
+        await new Promise((r) => setTimeout(r, 30)) // simulate network latency
+        return { upstreamToken: "up_c", qrContent: "qr_c" }
+      }),
+    }, [pending])
+    registry.registerProvider(provider)
+    const [a, b] = await Promise.all([registry.start("fake", REQUEST), registry.start("fake", REQUEST)])
+    expect(a.token).toBe(b.token)
+    expect(provider.start).toHaveBeenCalledTimes(1)
+  })
+
+  it("does NOT merge requests that differ only in autoConnect (review R5)", async () => {
+    const provider = makeProvider({}, [pending])
+    registry.registerProvider(provider)
+    const a = await registry.start("fake", REQUEST)
+    const b = await registry.start("fake", { ...REQUEST, autoConnect: false })
+    expect(b.token).not.toBe(a.token)
+  })
+
+  it("still persists a one-shot credential that lands while cancelled (review R3)", async () => {
+    let resolvePoll: ((r: QRPollResult) => void) | null = null
+    const provider = makeProvider({}, [
+      () => new Promise<QRPollResult>((resolve) => { resolvePoll = resolve }),
+    ])
+    registry.registerProvider(provider)
+    const session = await registry.start("fake", REQUEST)
+    await waitFor(() => resolvePoll !== null)
+    // cancel while the authorizing poll is in flight
+    registry.cancel(session.token)
+    resolvePoll!(await authorized())
+    await waitFor(() => manager.addChannel.mock.calls.length === 1)
+  })
+
+  it("treats a persisted-but-connect-failed channel as authorized (review R4)", async () => {
+    manager.addChannel.mockRejectedValueOnce(new Error("WS connect refused"))
+    manager.getConfig.mockImplementation((id: string) => ({ id })) // persisted
+    registry.registerProvider(makeProvider({}, [authorized]))
+    const session = await registry.start("fake", REQUEST)
+    await waitFor(() => registry.getSnapshot(session.token)?.state === "authorized")
+    expect(registry.getSnapshot(session.token)?.channelId).toMatch(/^ch_/)
+  })
+
+  it("never kills a live session before its own deadline via cleanup (review R2)", async () => {
+    const provider = makeProvider({
+      start: vi.fn(async () => ({ upstreamToken: "up_l", qrContent: "qr_l", expiresInMs: 7_200_000 })),
+    }, [pending])
+    registry.registerProvider(provider)
+    const long = await registry.start("fake", REQUEST)
+    // age it past the old global 15-min cutoff; its own deadline is 2h away
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = (registry as any).sessions.get(long.token)
+    internal.createdAt = Date.now() - 16 * 60 * 1000
+    await registry.start("fake", { ...REQUEST, name: "other" }) // triggers cleanup()
+    expect(registry.getSnapshot(long.token)?.state).toBe("pending")
+  })
+
+  it("sanitizes non-finite intervals/expiries from drifting upstream contracts (review R6)", async () => {
+    const provider = makeProvider({
+      start: vi.fn(async () => ({
+        upstreamToken: "up_n",
+        qrContent: "qr_n",
+        expiresInMs: Number.NaN,
+        pollIntervalMs: Number.NaN,
+      })),
+    }, [pending])
+    registry.registerProvider(provider)
+    const session = await registry.start("fake", REQUEST)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = (registry as any).sessions.get(session.token)
+    expect(Number.isFinite(internal.pollIntervalMs)).toBe(true)
+    expect(Number.isFinite(internal.expiresAt)).toBe(true)
   })
 })
