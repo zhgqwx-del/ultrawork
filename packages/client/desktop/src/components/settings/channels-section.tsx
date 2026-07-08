@@ -488,7 +488,13 @@ function ChannelQRLogin({
     const start = async () => {
       try {
         const data = await requestQR(type, autoName, workspacePath)
-        if (cancelled) return
+        if (cancelled) {
+          // Component unmounted / user cancelled while begin was in flight —
+          // tell the gateway to drop this session, else it polls upstream for
+          // the full device-code lifetime (dingtalk: up to 2h) as an orphan.
+          void cancelQR(type, data.token)
+          return
+        }
         setQrUrl(data.qrContent)
         setBrowserUrl(data.browserUrl)
         setQrToken(data.token)
@@ -534,12 +540,15 @@ function ChannelQRLogin({
               refreshCountRef.current++
               try {
                 const data = await requestQR(type, autoName, workspacePath!)
-                if (cancelled) break
+                if (cancelled) { void cancelQR(type, data.token); break }
                 setQrUrl(data.qrContent)
                 setBrowserUrl(data.browserUrl)
                 setScanStatus("pending")
                 setQrToken(data.token)
               } catch {
+                // Clear the (now-expired) QR so the retry-button branch takes
+                // over instead of leaving a dead code on screen.
+                setQrUrl("")
                 setErrorMsg(t("channel.qr.error"))
               }
             } else {

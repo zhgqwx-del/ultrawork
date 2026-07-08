@@ -74,8 +74,10 @@ export class FeishuAdapter implements ChannelAdapter {
     try {
       // SDK start() silently no-ops on malformed appIds (logs and returns) —
       // fail fast with an actionable message instead of a generic timeout.
-      if (!/^cli_[0-9a-fA-F]+$/.test(this.config.appId)) {
-        throw new Error(`Invalid Feishu App ID "${this.config.appId}" (expected cli_…)`);
+      // Match the SDK's exact shape (cli_ + 16 hex) so a truncated/padded id
+      // is caught here rather than dying as a 20s timeout.
+      if (!/^cli_[0-9a-fA-F]{16}$/.test(this.config.appId)) {
+        throw new Error(`Invalid Feishu App ID "${this.config.appId}" (expected cli_ + 16 hex chars)`);
       }
 
       const dispatcher = new Lark.EventDispatcher({}).register({

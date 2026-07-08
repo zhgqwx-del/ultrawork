@@ -116,6 +116,27 @@ describe("WeComAdapter", () => {
     expect(MockWSClient.instances[0].disconnect).toHaveBeenCalled()
   })
 
+  it("treats WSAuthFailureError as terminal (not silent 'connected')", async () => {
+    const adapter = new WeComAdapter(CONFIG, vi.fn())
+    await adapter.connect()
+    expect(adapter.getStatus().state).toBe("connected")
+    const authErr = Object.assign(new Error("Max auth failure attempts exceeded (5)"), {
+      name: "WSAuthFailureError", code: "WS_AUTH_FAILURE_EXHAUSTED",
+    })
+    MockWSClient.instances[0].emit("error", authErr)
+    expect(adapter.getStatus().state).toBe("error")
+    expect(adapter.getStatus().error).toMatch(/auth failure/i)
+  })
+
+  it("treats WSReconnectExhaustedError as terminal but tolerates transient errors", async () => {
+    const adapter = new WeComAdapter(CONFIG, vi.fn())
+    await adapter.connect()
+    MockWSClient.instances[0].emit("error", new Error("ECONNRESET"))
+    expect(adapter.getStatus().state).toBe("connected")
+    MockWSClient.instances[0].emit("error", Object.assign(new Error("reconnect exhausted"), { code: "WS_RECONNECT_EXHAUSTED" }))
+    expect(adapter.getStatus().state).toBe("error")
+  })
+
   it("connect() rejects on authentication failure", async () => {
     const adapter = new WeComAdapter(CONFIG, vi.fn())
     const client = MockWSClient.instances[0]

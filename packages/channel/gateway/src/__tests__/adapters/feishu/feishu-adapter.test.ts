@@ -62,7 +62,7 @@ const CONFIG: FeishuChannelConfig = {
   id: "ch_f1",
   type: "feishu",
   name: "飞书",
-  appId: "cli_1",
+  appId: "cli_aac74e8519391cce",
   appSecret: "sec_1",
   domain: "feishu",
   workspaceDir: "/ws",
@@ -94,7 +94,7 @@ describe("FeishuAdapter", () => {
     await adapter.connect()
     expect(adapter.getStatus().state).toBe("connected")
     const ws = MockWSClient.instances[0]
-    expect(ws.options).toMatchObject({ appId: "cli_1", appSecret: "sec_1", domain: 0 })
+    expect(ws.options).toMatchObject({ appId: "cli_aac74e8519391cce", appSecret: "sec_1", domain: 0 })
     expect(ws.dispatcher?.handlers["im.message.receive_v1"]).toBeTypeOf("function")
   })
 
@@ -155,6 +155,13 @@ describe("FeishuAdapter", () => {
     handlers["im.message.receive_v1"](receiveEvent({ content: JSON.stringify({ text: "  " }) }))
     handlers["im.message.receive_v1"](receiveEvent({ content: "not-json" }))
     expect(onMessage).not.toHaveBeenCalled()
+  })
+
+  it("fails fast on a malformed App ID (hex but not 16 chars) — no 20s timeout", async () => {
+    const adapter = new FeishuAdapter({ ...CONFIG, appId: "cli_abc123" }, vi.fn())
+    await expect(adapter.connect()).rejects.toThrow(/Invalid Feishu App ID/)
+    expect(adapter.getStatus().state).toBe("error")
+    expect(MockWSClient.instances.length).toBe(0)
   })
 
   it("connect failure lands in error state and closes the socket", async () => {

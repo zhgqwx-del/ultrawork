@@ -84,11 +84,17 @@ export class WeComAdapter implements ChannelAdapter {
 
     this.wsClient.on("error", (err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      // Reconnects exhausted (default 10 attempts) is terminal — a silent
-      // "connected" status over a dead socket would be a lie.
+      // Both SDK exhaustion errors are terminal — reconnect give-up AND auth
+      // give-up (credential reset mid-session). A silent "connected" status
+      // over a dead socket would be a lie. Match by name/code (WSAuthFailureError
+      // does NOT carry the "Authentication failed" substring the connect() path
+      // keys on, so it must be caught here too).
       const name = err instanceof Error ? err.name : "";
       const code = (err as { code?: string })?.code;
-      if (name === "WSReconnectExhaustedError" || code === "WS_RECONNECT_EXHAUSTED") {
+      const terminal =
+        name === "WSReconnectExhaustedError" || code === "WS_RECONNECT_EXHAUSTED" ||
+        name === "WSAuthFailureError" || code === "WS_AUTH_FAILURE_EXHAUSTED";
+      if (terminal) {
         this.state = "error";
         this.errorMsg = msg;
       }
