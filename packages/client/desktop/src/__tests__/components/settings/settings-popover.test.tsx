@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }))
@@ -11,15 +11,6 @@ vi.mock("@/lib/config-context", () => ({
 }))
 
 import { SettingsPopover } from "@/components/settings/settings-popover"
-
-// radix relies on pointer-capture APIs that jsdom doesn't implement
-beforeAll(() => {
-  if (!Element.prototype.hasPointerCapture) {
-    Element.prototype.hasPointerCapture = () => false
-    Element.prototype.setPointerCapture = () => {}
-    Element.prototype.releasePointerCapture = () => {}
-  }
-})
 
 function openMenu() {
   render(
