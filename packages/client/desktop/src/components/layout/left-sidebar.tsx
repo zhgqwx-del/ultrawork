@@ -214,7 +214,7 @@ export function LeftSidebar() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoFocus
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-9 pr-3 text-sm text-[var(--sidebar-fg)] placeholder:text-[var(--sidebar-fg-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-9 pr-3 text-[13px] text-[var(--sidebar-fg)] placeholder:text-[var(--sidebar-fg-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
                   />
                 </div>
               </div>
@@ -295,7 +295,7 @@ export function LeftSidebar() {
                     Y
                   </div>
                   <div className="min-w-0 flex-1 text-left">
-                    <p className="truncate text-sm font-medium text-[var(--sidebar-fg)]">
+                    <p className="truncate text-[13px] font-medium text-[var(--sidebar-fg)]">
                       {t("sidebar.user")}
                     </p>
                   </div>
