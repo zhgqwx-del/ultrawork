@@ -240,6 +240,20 @@ describe("QRRegistry", () => {
     expect(registry.getSnapshot(long.token)?.state).toBe("pending")
   })
 
+  it("stopAll() during an in-flight begin does not spawn a live session (review R7)", async () => {
+    let started = 0
+    const provider = makeProvider({
+      start: vi.fn(async () => { started++; await new Promise((r) => setTimeout(r, 40)); return { upstreamToken: "u", qrContent: "q" } }),
+    }, [pending])
+    registry.registerProvider(provider)
+    const startP = registry.start("fake", REQUEST)
+    registry.stopAll()
+    await expect(startP).rejects.toThrow(/stopped/)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((registry as any).sessions.size).toBe(0)
+    expect(started).toBe(1)
+  })
+
   it("sanitizes non-finite intervals/expiries from drifting upstream contracts (review R6)", async () => {
     const provider = makeProvider({
       start: vi.fn(async () => ({

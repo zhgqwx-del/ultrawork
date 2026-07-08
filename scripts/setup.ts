@@ -100,8 +100,44 @@ for (const [label, script] of [
 }
 console.log("  Sidecar binaries ready in src-tauri/binaries/")
 
+// ── Clean stale dev instances (cross-platform 1420-port guard) ─────
+// The Rust reaper handles orphan sidecars on 4096-4099 at app startup, but
+// nothing guards the Vite port (1420): a previous dev instance still alive
+// makes `tauri dev` fail with "Port 1420 is already in use". Mirrors the
+// setup.sh guard for the Windows/Linux `bun run setup --dev` entry point.
+async function cleanupStaleDev(): Promise<void> {
+  const isWin = process.platform === "win32"
+  try {
+    let pids: string[] = []
+    if (isWin) {
+      // netstat: find the PID owning 127.0.0.1:1420 LISTENING
+      const out = await $`netstat -ano -p TCP`.quiet().nothrow().text()
+      pids = out.split(/\r?\n/)
+        .filter((l) => /:1420\s/.test(l) && /LISTENING/i.test(l))
+        .map((l) => l.trim().split(/\s+/).pop() ?? "")
+        .filter((p) => p && p !== "0")
+    } else {
+      if (!Bun.which("lsof")) return
+      const out = await $`lsof -nP -tiTCP:1420 -sTCP:LISTEN`.quiet().nothrow().text()
+      pids = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    }
+    const unique = [...new Set(pids)]
+    if (unique.length === 0) return
+    console.log("  WARNING: a previous dev instance holds port 1420 — cleaning it up first:")
+    for (const pid of unique) {
+      console.log(`    killing pid ${pid}`)
+      if (isWin) await $`taskkill /F /PID ${pid} /T`.quiet().nothrow()
+      else await $`kill ${pid}`.quiet().nothrow()
+    }
+    await Bun.sleep(2000)
+  } catch {
+    // best-effort — never block startup on cleanup
+  }
+}
+
 // ── 6. Dev / Build ─────────────────────────────────────────────────
 if (mode === "--dev") {
+  await cleanupStaleDev()
   console.log("[6/6] Starting dev server...\n")
   console.log("  Frontend:  http://localhost:1420")
   console.log("  OpenCode:  http://localhost:4096")

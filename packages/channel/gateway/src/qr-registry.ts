@@ -106,6 +106,9 @@ export class QRRegistry {
    * double-mount) must share ONE upstream device flow, so dedup has to cover
    * the begin network round-trip, not just completed sessions. */
   private pendingStarts = new Map<string, Promise<QRSessionSnapshot>>();
+  /** Set by stopAll() so a start() whose begin round-trip is still in flight
+   * doesn't register a live session + poll loop after shutdown/teardown. */
+  private stopped = false;
 
   constructor(private manager: ChannelManager) {}
 
@@ -145,6 +148,11 @@ export class QRRegistry {
     request: QRSessionRequest,
   ): Promise<QRSessionSnapshot> {
     const started = await provider.start();
+    if (this.stopped) {
+      // Registry was stopped while begin was in flight — do not register a
+      // live session or spawn a poll loop.
+      throw new Error("QR registry stopped");
+    }
     const now = Date.now();
     // Undocumented upstream contracts can drift — a non-finite interval or
     // expiry would otherwise become a NaN hot-loop / never-expiring session.
@@ -185,6 +193,7 @@ export class QRRegistry {
 
   /** Stop every loop (test teardown / gateway shutdown). */
   stopAll(): void {
+    this.stopped = true;
     for (const session of this.sessions.values()) session.cancelled = true;
     this.sessions.clear();
   }
