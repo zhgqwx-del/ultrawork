@@ -261,3 +261,96 @@ describe("POST /channel/:id/disconnect", () => {
     expect(resp.status).toBe(500)
   })
 })
+
+// ---- QR endpoints (generic, backed by QRRegistry) ----
+
+import { QRRegistry, type QRProvider } from "../qr-registry.js"
+
+function makeQRApp() {
+  const registry = new QRRegistry(manager)
+  const provider: QRProvider = {
+    type: "fake",
+    pollIntervalMs: 60_000, // never actually polls during these tests
+    start: vi.fn(async () => ({ upstreamToken: "up", qrContent: "https://qr.example/x" })),
+    poll: vi.fn(async () => ({ state: "pending" as const })),
+  }
+  registry.registerProvider(provider)
+  return { app: createApp(manager, registry), registry }
+}
+
+describe("QR login routes", () => {
+  it("POST /channel/:type/qrcode starts a session for a registered provider", async () => {
+    const { app: qrApp, registry } = makeQRApp()
+    const resp = await qrApp.fetch(new Request("http://localhost/channel/fake/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ name: "n", workspaceDir: "/ws" }),
+    }))
+    expect(resp.status).toBe(200)
+    const body = await jsonBody(resp)
+    expect(body.token).toMatch(/^qr_/)
+    expect(body.qrContent).toBe("https://qr.example/x")
+
+    const status = await qrApp.fetch(new Request(`http://localhost/channel/fake/qrcode-status?token=${body.token}`))
+    expect(status.status).toBe(200)
+    expect((await jsonBody(status)).status).toBe("pending")
+    registry.stopAll()
+  })
+
+  it("rejects unregistered types and mismatched type/token pairs", async () => {
+    const { app: qrApp, registry } = makeQRApp()
+    const unknown = await qrApp.fetch(new Request("http://localhost/channel/nope/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ name: "n", workspaceDir: "/ws" }),
+    }))
+    expect(unknown.status).toBe(404)
+
+    const start = await qrApp.fetch(new Request("http://localhost/channel/fake/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ name: "n", workspaceDir: "/ws" }),
+    }))
+    const { token } = await jsonBody(start)
+    // token exists but under type "fake" — reading it as another type 404s
+    const cross = await qrApp.fetch(new Request(`http://localhost/channel/other/qrcode-status?token=${token}`))
+    expect(cross.status).toBe(404)
+    registry.stopAll()
+  })
+
+  it("DELETE /channel/:type/qrcode/:token cancels the session", async () => {
+    const { app: qrApp, registry } = makeQRApp()
+    const start = await qrApp.fetch(new Request("http://localhost/channel/fake/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ name: "n", workspaceDir: "/ws" }),
+    }))
+    const { token } = await jsonBody(start)
+    const del = await qrApp.fetch(new Request(`http://localhost/channel/fake/qrcode/${token}`, { method: "DELETE" }))
+    expect(del.status).toBe(200)
+    const after = await qrApp.fetch(new Request(`http://localhost/channel/fake/qrcode-status?token=${token}`))
+    expect(after.status).toBe(404)
+    registry.stopAll()
+  })
+
+  it("returns 404 for QR routes when no registry is wired", async () => {
+    const resp = await fetchApp("/channel/wechat/qrcode", {
+      method: "POST",
+      body: JSON.stringify({ name: "n", workspaceDir: "/ws" }),
+    })
+    expect(resp.status).toBe(404)
+  })
+})
+
+describe("GET /channel secret masking", () => {
+  it("blanks clientSecret and botToken in configs", async () => {
+    const configs: ChannelConfig[] = [
+      { id: "d1", type: "dingtalk", name: "d", clientId: "cid", clientSecret: "SECRET", workspaceDir: "/w", autoConnect: true },
+      { id: "w1", type: "wechat", name: "w", botToken: "TOKEN", ilinkBotId: "b", ilinkUserId: "", baseUrl: "https://x", workspaceDir: "/w", autoConnect: true },
+    ]
+    ;(manager.listConfigs as ReturnType<typeof vi.fn>).mockReturnValue(configs)
+    const resp = await fetchApp("/channel")
+    const body = await jsonBody(resp)
+    expect(body.configs[0].clientSecret).toBe("")
+    expect(body.configs[0].clientId).toBe("cid")
+    expect(body.configs[1].botToken).toBe("")
+    // original objects untouched (masking must copy)
+    expect((configs[0] as { clientSecret: string }).clientSecret).toBe("SECRET")
+  })
+})

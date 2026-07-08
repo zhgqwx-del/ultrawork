@@ -85,6 +85,28 @@
 - 收消息：HTTP 长轮询 `getupdates`（35s），cursor 同步；session 过期 `errcode=-14`。
 - 发消息：`sendmessage` POST，markdown 转纯文本；语音消息用 STT text 当文本输入。
 
+### QR 扫码建渠道骨架（`qr-registry.ts`，ADR-044，契约实拍 2026-07-08）
+
+- **设备流 secret 是一次性交付**：poll SUCCESS 只返回一次 client_secret ⇒ 必须 gateway 后台轮询、**拿到即 addChannel 落盘**，绝不能经前端 HTTP 透传（响应丢失=凭证永久丢失）。取消（DELETE）**不回滚上游**——扫码后上游应用/机器人已真实创建；poll 飞行中被取消时 authorized 结果仍要落盘。
+- **三家注册端点全部不在公开 API 文档里**（只存在于各家官方 CLI/SDK 源码），bump/排障以真机实拍为准；base URL/source 均留了 env 覆盖。
+- 凭证安全：`channels.json` 0600 + `GET /channel`、`POST /channel` 响应均掩码 secret 字段（`clientSecret/botToken/secret/appSecret`）——**前端拿不到渠道 secret，新功能勿依赖**。
+- 三家「渠道」凭证与办公 CLI 连接器（§14）**互不相通**：钉钉渠道=registration 建的新应用（≠dws 内置 OAuth client）；企微渠道=新建专用智能机器人（**严禁复用 CLI 绑定的那只**——CLI bot 有「仅创建者可对话」限制，且共用 `~/.config/wecom/` 会被 init 失败 rollback 连坐）；飞书渠道=新 PersonalAgent 应用（≠lark-cli 绑的 cli_aac1cfd3）。
+
+**钉钉 registration 设备流**（`oapi.dingtalk.com/app/registration/*`，JSON body，真机全链验收 2026-07-08）：
+- init `{source}`→`{nonce(300s)}` → begin `{nonce,source}`→`{device_code(7200s), interval:2, user_code, verification_uri_complete}`（**interval=2s 动态下发，非源码推定的 5s**；QR 内容=verification_uri_complete）→ poll `{device_code}`→`status: WAITING|SUCCESS|FAIL|EXPIRED`。
+- **失败=HTTP 200 + errcode:0 + status:FAIL + fail_reason**（不是 HTTP 错误也不是 errcode≠0）；SUCCESS 载荷=`client_id/client_secret`（实拍：一键创建的应用 clientId 形如 `dingyob…`）。扫码页可「一键创建新机器人」或绑定已有 bot；source 默认 `DING_DWS_CLAW`（自有品牌需钉钉认可）。
+
+**企微 ai/qc 扫码流**（`work.weixin.qq.com/ai/qc/*`，无需预置鉴权，真机全链验收 2026-07-08）：
+- generate `?source=wecom-cli&plat={1|2|3}`→`{data:{scode, auth_url}}` → 3s 轮询 query_result `?scode=`→`{data:{status}}`；success 载荷=`bot_info{botid,secret}`（每次扫码**只能新建** bot，无绑已有路径）。
+- **bogus/过期 scode 的 query 也返回 `{status:"pending"}`——上游无任何过期信号，过期只能本地超时判定**（官方 CLI 用 5min）；仅 `success` 是终态。**扫码 URL（auth_url=/ai/qc/c?s=…）与浏览器打开 URL（/ai/qc/gen?scode=…）是两个不同链接**。
+- 长连接（`@wecom/aibot-node-sdk`→`wss://openws.work.weixin.qq.com`）：**同 botId 仅一条活跃连接**（新连顶旧连=event.disconnected_event，只能落终态 error 别打架）；重连耗尽（默认 10 次）发 `WSReconnectExhaustedError`，不接住就假在线；单会话频控 30 条/分、1000 条/时；24h 回复窗口。
+
+**飞书 registration 设备流**（`accounts.feishu.cn/oauth/v1/app/registration`，**form-encoded**，真机全链验收 2026-07-08）：
+- init `{action:init}`（校验 supported_auth_methods 含 client_secret）→ begin `{action:begin, archetype:PersonalAgent, auth_method:client_secret, request_user_info:open_id}` → poll `{action:poll, device_code}`。
+- **pending/denied 态走 HTTP 4xx + JSON body**（`{error:"authorization_pending"}` 等，**不能按 !resp.ok 判错**）；`slow_down`=轮询间隔 +5s 累积；`user_info.tenant_brand==="lark"` ⇒ **切 accounts.larksuite.com 再 poll 才拿得到凭证**（resolved domain 必须存进 config——WS/发送域名同分叉）。
+- **PersonalAgent 默认权限模板实拍可用**：不带 Addons，扫码建的应用（`cli_aac74e85…`）单聊收发开箱即通（群聊未实拍，或需 `im:message.group_msg`）。
+- **Lark node-sdk `WSClient.start()` 不等连接建立就 resolve**（内部 reConnect 未 await；appId 不匹配 `/^cli_…/` 时**静默返回**）——连接结果只能靠构造参数 `onReady/onError` 回调拿；发消息=`im.v1.message.create`（单聊 receive_id_type=open_id，群聊 chat_id）。
+
 ## 5. Knowledge / IMA（:4098）
 
 - **DB**：`~/.ultrawork/knowledge/kb.db`（SQLite WAL + FTS5 + `_migrations` 版本管理）。

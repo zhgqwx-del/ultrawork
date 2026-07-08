@@ -26,6 +26,8 @@ const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if ses
 const CHANNEL_LABELS: Record<string, string> = {
   dingtalk: "钉钉",
   wechat: "微信",
+  wecom: "企业微信",
+  feishu: "飞书",
 };
 
 interface SessionContext {

@@ -6,7 +6,7 @@
 
 Ultrawork is a desktop-grade AI agent built on OpenCode's server capabilities.
 Desktop App connects to OpenCode Server (sidecar), sends messages, and displays AI responses.
-Channel Gateway bridges IM platforms (DingTalk, WeChat) to the same Agent backend.
+Channel Gateway bridges IM platforms (DingTalk, WeChat, WeCom, Feishu) to the same Agent backend.
 Knowledge Sidecar provides local RAG + third-party (IMA) knowledge sources exposed to the Agent via MCP.
 ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and normalizes their output to the opencode SSE shape (ADR-027 档1, sessions bind one agent each).
 
@@ -51,7 +51,7 @@ ultrawork/
 │   ├── agent/
 │   │   └── acp-client/src/      # ACP Client Sidecar (spawn external agents + turn shaping + permissions)
 │   ├── channel/
-│   │   └── gateway/src/         # Channel Gateway (bridge, DingTalk + WeChat adapters)
+│   │   └── gateway/src/         # Channel Gateway (bridge, DingTalk/WeChat/WeCom/Feishu adapters + qr-registry)
 │   └── knowledge/
 │       └── sidecar/src/         # Knowledge Sidecar (local RAG + IMA adapter + MCP bridge)
 ├── scripts/                     # Build scripts
@@ -106,6 +106,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/session/` — plan-panel（**任务规划**主区：渲 `PlanStep[]`，ADR-038）, progress-panel（导出 `ActivityPanel`=工具调用流水「执行活动」次级区）, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
+- `src/components/brand-icons.tsx` — 微信/企微/钉钉/飞书品牌圆形徽章（CC0/MIT/Apache 素材构建期内联；负形 glyph 结构化白底盘，ADR-044）
+- `src/components/settings/channels-section.tsx` — 消息渠道设置页 section（ChannelQRLogin 泛化扫码流 + type 驱动手动表单，从 Settings.tsx 拆出）
 - `src/components/settings/models-section.tsx` — 模型管理设置页 section（provider 卡片列表 + 配置流程 + **自定义 provider 表单/删除**；取代旧的全局 ModelDialog，由 Settings 页 `models` section 渲染，Home/Session「管理模型」深链至此；含 DashScope 模型行「联网搜索」`enable_search` toggle，ADR-042）
 - `src/components/settings/search-tools-section.tsx` — 设置页「工具」分区（BYOK 联网搜索：Tavily/IQS key 卡 + 测试连接〔Rust `test_search_provider`〕+ 默认服务商 + Exa 高级开关，ADR-042）；外链常量在 `src/lib/external-links.ts`
 - `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes + thoughtLevel select）
@@ -136,7 +138,11 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Gateway（`packages/channel/gateway/src/`）**
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
-- `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, types.ts（ilink 协议类型）
+- `qr-registry.ts` — 扫码建渠道骨架（后台轮询 + 凭证到达即落盘 + 统一状态枚举 + 并发去重，ADR-044；接入模式 conventions §14）
+- `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, qr-provider.ts（ilink 扫码）
+- `adapters/dingtalk/` — dingtalk-adapter.ts（Stream 模式）, token-manager.ts, qr-provider.ts（registration 设备流）
+- `adapters/wecom/` — wecom-adapter.ts（`@wecom/aibot-node-sdk` 智能机器人长连接）, qr-provider.ts（ai/qc 扫码流）
+- `adapters/feishu/` — feishu-adapter.ts（`@larksuiteoapi/node-sdk` WSClient 事件长连接，onReady/onError 语义）, qr-provider.ts（PersonalAgent 注册流，飞书/Lark 双域）
 
 **Connector（`packages/core/connector/src/`，ADR-030）**
 - `connector.ts` — 注册表 + 按会话绑定派发 + 双形态 subscribe（global / per-session 双流合并）+ deleteSession 三清
@@ -186,7 +192,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (43 ADRs, 001–043)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (44 ADRs, 001–044)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

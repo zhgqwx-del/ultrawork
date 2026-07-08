@@ -325,3 +325,20 @@ ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。
 run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env `ORCHESTRATOR_DATA_DIR` 可覆盖）；sidecar 重启 running run → `interrupted`（不自动续跑）；delegate 记录不持久化（重启 = shim 工具错误）。产物文件：`<workspace>/.ultrawork/runs/<runId>/`；worktree：`<xdgData>/ultrawork/worktrees/<runId>/<stepId>`（env `ULTRAWORK_WORKTREES_DIR` 可覆盖，成功即删失败保留）。详见 ADR-031 / `gotchas.md` §9。
 
 
+
+## Channel Gateway 端点（:4097，ADR-044）
+
+无认证（仅监听 127.0.0.1 + CORS 白名单）。**响应中的渠道 config 一律掩码 secret 字段**（`clientSecret`/`botToken`/`secret`/`appSecret` 置空）。
+
+| 端点 | 说明 |
+|------|------|
+| `GET /channel/health` | 健康检查 |
+| `GET /channel` | `{channels: ChannelStatus[], configs: ChannelConfig[]}`（configs 掩码） |
+| `POST /channel` | 手动添加渠道（`type: dingtalk\|wechat\|wecom\|feishu` + 各自凭证字段；feishu 可带 `domain: "feishu"\|"lark"`）；201 回显掩码 config |
+| `DELETE /channel/:id` | 删除渠道 |
+| `POST /channel/:id/connect` / `POST /channel/:id/disconnect` | 连接/断开 |
+| `POST /channel/:type/qrcode` | 发起扫码会话（body `{name, workspaceDir, autoConnect?}`）→ `{token, qrContent, browserUrl?}`；未注册 QR 的 type 返回 404 |
+| `GET /channel/:type/qrcode-status?token=` | 读缓存会话快照 → `{status: pending\|scanned\|authorized\|expired\|denied\|error, channelId?, error?}`（gateway 后台轮询上游，authorized 时渠道已落盘） |
+| `DELETE /channel/:type/qrcode/:token` | 取消会话（停后台轮询；**不回滚上游已建应用**） |
+
+上游契约（三家扫码流字段/坑）见 `docs/gotchas.md` §4；接入新渠道的模式见 `docs/conventions.md` §14。

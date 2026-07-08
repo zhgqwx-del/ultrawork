@@ -5,8 +5,8 @@ import type {
   ChannelStatus,
   ChannelConfig,
   ChannelListResponse,
-  WeChatQRCodeResponse,
-  WeChatQRStatusResponse,
+  ChannelQRStartResponse,
+  ChannelQRStatusResponse,
 } from "@agent/api-client"
 
 const GATEWAY_BASE = import.meta.env.DEV
@@ -151,11 +151,12 @@ export function useChannels() {
     [t],
   )
 
-  // ---- WeChat QR Code Login ----
+  // ---- QR Code Login (any provider type; gateway polls upstream and
+  // caches state — these calls only start sessions / read the cache) ----
 
-  const requestWeChatQR = useCallback(
-    async (name: string, workspaceDir: string, autoConnect = true) => {
-      const data = await gatewayFetch<WeChatQRCodeResponse>("/wechat/qrcode", {
+  const requestChannelQR = useCallback(
+    async (type: string, name: string, workspaceDir: string, autoConnect = true) => {
+      const data = await gatewayFetch<ChannelQRStartResponse>(`/${type}/qrcode`, {
         method: "POST",
         body: JSON.stringify({ name, workspaceDir, autoConnect }),
       })
@@ -164,12 +165,22 @@ export function useChannels() {
     [],
   )
 
-  const pollWeChatQRStatus = useCallback(
-    async (token: string) => {
-      const data = await gatewayFetch<WeChatQRStatusResponse>(
-        `/wechat/qrcode-status?token=${encodeURIComponent(token)}`,
+  const pollChannelQRStatus = useCallback(
+    async (type: string, token: string) => {
+      const data = await gatewayFetch<ChannelQRStatusResponse>(
+        `/${type}/qrcode-status?token=${encodeURIComponent(token)}`,
       )
       return data
+    },
+    [],
+  )
+
+  const cancelChannelQR = useCallback(
+    async (type: string, token: string) => {
+      // best-effort — the gateway session TTL cleans up regardless
+      await gatewayFetch<{ ok: boolean }>(`/${type}/qrcode/${encodeURIComponent(token)}`, {
+        method: "DELETE",
+      }).catch(() => {})
     },
     [],
   )
@@ -185,7 +196,8 @@ export function useChannels() {
     handleConnect,
     handleDisconnect,
     refresh: fetchChannels,
-    requestWeChatQR,
-    pollWeChatQRStatus,
+    requestChannelQR,
+    pollChannelQRStatus,
+    cancelChannelQR,
   }
 }

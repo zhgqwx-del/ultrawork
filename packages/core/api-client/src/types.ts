@@ -563,23 +563,49 @@ export interface WeChatChannelConfig extends ChannelConfigBase {
   baseUrl: string
 }
 
-export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig
+export interface WeComChannelConfig extends ChannelConfigBase {
+  type: "wecom"
+  botId: string
+  secret: string
+}
+
+export interface FeishuChannelConfig extends ChannelConfigBase {
+  type: "feishu"
+  appId: string
+  appSecret: string
+  domain: "feishu" | "lark"
+}
+
+export type ChannelConfig =
+  | DingTalkChannelConfig
+  | WeChatChannelConfig
+  | WeComChannelConfig
+  | FeishuChannelConfig
 
 export interface ChannelListResponse {
   channels: ChannelStatus[]
   configs: ChannelConfig[]
 }
 
-// --- WeChat QR login types ---
+// --- Channel QR login types (mirrors gateway qr-registry.ts) ---
 
-export interface WeChatQRCodeResponse {
-  qrcodeUrl: string
-  qrcodeImgContent: string
+export type ChannelQRState =
+  | "pending"    // waiting for scan
+  | "scanned"    // scanned, awaiting in-app confirmation
+  | "authorized" // credentials delivered, channel created
+  | "expired"
+  | "denied"
+  | "error"
+
+export interface ChannelQRStartResponse {
   token: string
+  qrContent: string
+  /** Desktop-browser alternative when it differs from the QR content */
+  browserUrl?: string
 }
 
-export interface WeChatQRStatusResponse {
-  status: "wait" | "scaned" | "confirmed" | "expired"
+export interface ChannelQRStatusResponse {
+  status: ChannelQRState
   channelId?: string
   error?: string
 }
