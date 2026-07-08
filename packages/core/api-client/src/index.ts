@@ -60,6 +60,7 @@ export type {
   ChannelStatus,
   DingTalkChannelConfig,
   WeChatChannelConfig,
+  WeComChannelConfig,
   ChannelConfig,
   ChannelListResponse,
   ChannelQRState,

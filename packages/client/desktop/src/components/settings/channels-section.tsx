@@ -14,13 +14,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { DingTalkIcon, WeChatIcon } from "@/components/brand-icons"
+import { DingTalkIcon, WeChatIcon, WeComIcon } from "@/components/brand-icons"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
 import { useChannels } from "@/lib/use-channels"
 import { useWorkspace } from "@/lib/workspace-context"
 import { cn } from "@/lib/utils"
-import type { ChannelStatus, ChannelConfig, DingTalkChannelConfig } from "@agent/api-client"
+import type { ChannelStatus, ChannelConfig } from "@agent/api-client"
 
 /** Brand icon per channel type. New channel types (feishu/wecom, discussion
  * 028 B2/B3) must land here together with their `channel.type.*` i18n keys —
@@ -28,6 +28,22 @@ import type { ChannelStatus, ChannelConfig, DingTalkChannelConfig } from "@agent
 const CHANNEL_TYPE_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   wechat: WeChatIcon,
   dingtalk: DingTalkIcon,
+  wecom: WeComIcon,
+}
+
+/** Channel types whose QR flow has a credentials-form fallback (device flows). */
+type ManualFormType = "dingtalk" | "wecom"
+
+/** Field sets for the manual credentials form, per channel type. */
+const MANUAL_FORM_FIELDS: Record<ManualFormType, { key: string; labelKey: string; placeholderKey: string; password?: boolean }[]> = {
+  dingtalk: [
+    { key: "clientId", labelKey: "channel.clientId", placeholderKey: "channel.clientIdPlaceholder" },
+    { key: "clientSecret", labelKey: "channel.clientSecret", placeholderKey: "channel.clientSecretPlaceholder", password: true },
+  ],
+  wecom: [
+    { key: "botId", labelKey: "channel.botId", placeholderKey: "channel.botIdPlaceholder" },
+    { key: "secret", labelKey: "channel.secret", placeholderKey: "channel.secretPlaceholder", password: true },
+  ],
 }
 
 export function ChannelsSection() {
@@ -37,9 +53,9 @@ export function ChannelsSection() {
     handleAdd, handleRemove, handleConnect, handleDisconnect, refresh,
     requestChannelQR, pollChannelQRStatus, cancelChannelQR,
   } = useChannels()
-  // "dingtalk"/"wechat" open the QR flow; "dingtalk-manual" is the
-  // clientId/Secret form fallback (mirrors the device-flow manual path).
-  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "dingtalk-manual" | "wechat">(false)
+  // Plain type opens the QR flow; "<type>-manual" is the credentials-form
+  // fallback (mirrors the device-flow manual path).
+  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "dingtalk-manual" | "wechat" | "wecom" | "wecom-manual">(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const connectedCount = channels.filter((c) => c.state === "connected").length
@@ -108,27 +124,36 @@ export function ChannelsSection() {
                 <WeChatIcon className="mr-2 size-4" />
                 {t("channel.type.wechat")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowAdd("wecom")}>
+                <WeComIcon className="mr-2 size-4" />
+                {t("channel.type.wecom")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* Manual DingTalk form (fallback from the QR flow) */}
-      {showAdd === "dingtalk-manual" && (
+      {/* Manual credentials form (fallback from the device-flow QR) */}
+      {(showAdd === "dingtalk-manual" || showAdd === "wecom-manual") && (
         <ChannelAddForm
+          type={showAdd === "dingtalk-manual" ? "dingtalk" : "wecom"}
           onAdd={onAdd}
           onCancel={() => setShowAdd(false)}
           loading={actionLoading === "__add__"}
         />
       )}
 
-      {/* QR login (wechat / dingtalk) */}
-      {(showAdd === "wechat" || showAdd === "dingtalk") && (
+      {/* QR login (wechat / dingtalk / wecom) */}
+      {(showAdd === "wechat" || showAdd === "dingtalk" || showAdd === "wecom") && (
         <ChannelQRLogin
           type={showAdd}
           onDone={onQRDone}
           onCancel={() => setShowAdd(false)}
-          onManualInput={showAdd === "dingtalk" ? () => setShowAdd("dingtalk-manual") : undefined}
+          onManualInput={
+            showAdd === "wechat"
+              ? undefined
+              : (() => { const flow = `${showAdd}-manual` as "dingtalk-manual" | "wecom-manual"; return () => setShowAdd(flow) })()
+          }
           requestQR={(type, name, workspaceDir) => requestChannelQR(type, name, workspaceDir)}
           pollStatus={pollChannelQRStatus}
           cancelQR={cancelChannelQR}
@@ -269,41 +294,44 @@ function ChannelCard({
 }
 
 function ChannelAddForm({
+  type,
   onAdd,
   onCancel,
   loading,
 }: {
+  type: ManualFormType
   onAdd: (config: Omit<ChannelConfig, "id">) => Promise<void>
   onCancel: () => void
   loading: boolean
 }) {
   const { t } = useI18n()
   const { workspacePath } = useWorkspace()
+  const fields = MANUAL_FORM_FIELDS[type]
+  const BrandIcon = CHANNEL_TYPE_ICONS[type]
   const [name, setName] = useState("")
-  const [clientId, setClientId] = useState("")
-  const [clientSecret, setClientSecret] = useState("")
+  const [values, setValues] = useState<Record<string, string>>({})
   const [autoConnect, setAutoConnect] = useState(true)
 
-  const canSubmit = name.trim() && clientId.trim() && clientSecret.trim()
+  const canSubmit = name.trim() && fields.every((f) => values[f.key]?.trim())
 
   const handleSubmit = () => {
     if (!canSubmit) return
+    const credentials = Object.fromEntries(fields.map((f) => [f.key, values[f.key].trim()]))
     onAdd({
-      type: "dingtalk",
+      type,
       name: name.trim(),
-      clientId: clientId.trim(),
-      clientSecret: clientSecret.trim(),
+      ...credentials,
       workspaceDir: workspacePath!,
       autoConnect,
-    } as Omit<DingTalkChannelConfig, "id">)
+    } as unknown as Omit<ChannelConfig, "id">)
   }
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <DingTalkIcon className="size-4" />
-          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.addChannel")} — {t("channel.type.dingtalk")}</h3>
+          {BrandIcon && <BrandIcon className="size-4" />}
+          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.addChannel")} — {t(`channel.type.${type}`)}</h3>
         </div>
         <button onClick={onCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
           <X className="size-4" />
@@ -321,26 +349,18 @@ function ChannelAddForm({
           />
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-[var(--color-fg)]">{t("channel.clientId")}</label>
-          <input
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder={t("channel.clientIdPlaceholder")}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-[var(--color-fg)]">{t("channel.clientSecret")}</label>
-          <input
-            type="password"
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={t("channel.clientSecretPlaceholder")}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-          />
-        </div>
+        {fields.map((field) => (
+          <div key={field.key} className="space-y-2">
+            <label className="text-sm font-medium text-[var(--color-fg)]">{t(field.labelKey)}</label>
+            <input
+              type={field.password ? "password" : "text"}
+              value={values[field.key] ?? ""}
+              onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+              placeholder={t(field.placeholderKey)}
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+            />
+          </div>
+        ))}
 
         <div className="flex items-center gap-2">
           <input
@@ -379,12 +399,12 @@ function ChannelQRLogin({
   cancelQR,
   existingChannels,
 }: {
-  type: "wechat" | "dingtalk"
+  type: "wechat" | "dingtalk" | "wecom"
   onDone: () => void
   onCancel: () => void
   /** Present for flows with a credentials-form fallback (device flows). */
   onManualInput?: () => void
-  requestQR: (type: string, name: string, workspaceDir: string) => Promise<{ qrContent: string; token: string }>
+  requestQR: (type: string, name: string, workspaceDir: string) => Promise<{ qrContent: string; token: string; browserUrl?: string }>
   pollStatus: (type: string, token: string) => Promise<{ status: string; channelId?: string; error?: string }>
   cancelQR: (type: string, token: string) => Promise<void>
   existingChannels: { id: string; type: string; name: string }[]
@@ -392,6 +412,7 @@ function ChannelQRLogin({
   const { t } = useI18n()
   const { workspacePath } = useWorkspace()
   const [qrUrl, setQrUrl] = useState("")
+  const [browserUrl, setBrowserUrl] = useState<string | undefined>(undefined)
   const [qrToken, setQrToken] = useState("")
   const [scanStatus, setScanStatus] = useState<string>("pending")
   const [errorMsg, setErrorMsg] = useState("")
@@ -435,6 +456,7 @@ function ChannelQRLogin({
         const data = await requestQR(type, autoName, workspacePath)
         if (cancelled) return
         setQrUrl(data.qrContent)
+        setBrowserUrl(data.browserUrl)
         setQrToken(data.token)
         setScanStatus("pending")
       } catch (err) {
@@ -478,6 +500,7 @@ function ChannelQRLogin({
                 const data = await requestQR(type, autoName, workspacePath!)
                 if (cancelled) break
                 setQrUrl(data.qrContent)
+                setBrowserUrl(data.browserUrl)
                 setQrToken(data.token)
                 setScanStatus("pending")
               } catch {
@@ -543,6 +566,7 @@ function ChannelQRLogin({
                 if (!workspacePath) return
                 requestQR(type, autoName, workspacePath).then((data) => {
                   setQrUrl(data.qrContent)
+                  setBrowserUrl(data.browserUrl)
                   setQrToken(data.token)
                   setScanStatus("pending")
                 }).catch((err) => {
@@ -589,7 +613,7 @@ function ChannelQRLogin({
 
         <div className="flex items-center gap-2">
           {isDeviceFlow && qrUrl && (
-            <Button variant="outline" size="sm" onClick={() => { void openUrl(qrUrl) }}>
+            <Button variant="outline" size="sm" onClick={() => { void openUrl(browserUrl ?? qrUrl) }}>
               <ExternalLink className="mr-1.5 size-3.5" />
               {t("channel.qr.openInBrowser")}
             </Button>

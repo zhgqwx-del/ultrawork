@@ -16,6 +16,7 @@
   "dependencies": {
     "@agent/api-client": "workspace:*",
     "@agent/connector": "workspace:*",
+    "@wecom/aibot-node-sdk": "^1.0.7",
     "dingtalk-stream": "^2.1.4",
     "hono": "^4.12.23"
   },

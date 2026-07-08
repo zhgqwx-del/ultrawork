@@ -563,7 +563,13 @@ export interface WeChatChannelConfig extends ChannelConfigBase {
   baseUrl: string
 }
 
-export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig
+export interface WeComChannelConfig extends ChannelConfigBase {
+  type: "wecom"
+  botId: string
+  secret: string
+}
+
+export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig | WeComChannelConfig
 
 export interface ChannelListResponse {
   channels: ChannelStatus[]
@@ -583,6 +589,8 @@ export type ChannelQRState =
 export interface ChannelQRStartResponse {
   token: string
   qrContent: string
+  /** Desktop-browser alternative when it differs from the QR content */
+  browserUrl?: string
 }
 
 export interface ChannelQRStatusResponse {

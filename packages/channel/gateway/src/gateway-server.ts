@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
-import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig } from "./types.js";
+import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig, WeComChannelConfig } from "./types.js";
 import type { QRRegistry } from "./qr-registry.js";
 
 function generateId(): string {
@@ -11,7 +11,7 @@ function generateId(): string {
 
 /** Secret fields per channel type, stripped from API responses (D2: the
  * frontend only needs name/type/workspaceDir — credentials stay server-side). */
-const SECRET_FIELDS = ["clientSecret", "botToken"] as const;
+const SECRET_FIELDS = ["clientSecret", "botToken", "secret"] as const;
 
 function maskConfig(config: ChannelConfig): ChannelConfig {
   const masked = { ...config } as Record<string, unknown>;
@@ -87,6 +87,23 @@ export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hon
         workspaceDir: workspaceDir.trim(),
         autoConnect: body.autoConnect !== false,
       } satisfies DingTalkChannelConfig;
+    } else if (type === "wecom") {
+      const { botId, secret } = body as Record<string, string>;
+      if (!botId || typeof botId !== "string" || !botId.trim()) {
+        return c.json({ error: "Missing required field: botId" }, 400);
+      }
+      if (!secret || typeof secret !== "string" || !secret.trim()) {
+        return c.json({ error: "Missing required field: secret" }, 400);
+      }
+      config = {
+        id,
+        type: "wecom",
+        name: name.trim(),
+        botId: botId.trim(),
+        secret: secret.trim(),
+        workspaceDir: workspaceDir.trim(),
+        autoConnect: body.autoConnect !== false,
+      } satisfies WeComChannelConfig;
     } else if (type === "wechat") {
       const { botToken, ilinkBotId, ilinkUserId, baseUrl } = body as Record<string, string>;
       if (!botToken || !ilinkBotId || !baseUrl) {
@@ -190,7 +207,7 @@ export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hon
         workspaceDir: workspaceDir.trim(),
         autoConnect: body.autoConnect !== false,
       });
-      return c.json({ token: session.token, qrContent: session.qrContent });
+      return c.json({ token: session.token, qrContent: session.qrContent, browserUrl: session.browserUrl });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to start QR session";
       console.error(`[QR:${type}]`, msg);

@@ -45,8 +45,16 @@ export interface QRProvider {
   /** Minimum delay between upstream polls (device flows mandate one). */
   readonly pollIntervalMs: number;
   /** May return a per-session pollIntervalMs override — device flows hand the
-   * mandated interval back in the begin/start response. */
-  start(): Promise<{ upstreamToken: string; qrContent: string; expiresInMs?: number; pollIntervalMs?: number }>;
+   * mandated interval back in the begin/start response. `browserUrl` is an
+   * optional desktop-browser alternative when it differs from the QR content
+   * (wecom: QR = auth_url, browser = the /ai/qc/gen landing page). */
+  start(): Promise<{
+    upstreamToken: string;
+    qrContent: string;
+    browserUrl?: string;
+    expiresInMs?: number;
+    pollIntervalMs?: number;
+  }>;
   /** Poll upstream once. Throw for transient failures (registry retries). */
   poll(upstreamToken: string): Promise<QRPollResult>;
 }
@@ -56,6 +64,7 @@ export interface QRSessionSnapshot {
   type: string;
   state: QRSessionState;
   qrContent: string;
+  browserUrl?: string;
   channelId?: string;
   error?: string;
 }
@@ -118,6 +127,7 @@ export class QRRegistry {
       type,
       state: "pending",
       qrContent: started.qrContent,
+      browserUrl: started.browserUrl,
       upstreamToken: started.upstreamToken,
       request,
       pollIntervalMs: started.pollIntervalMs ?? provider.pollIntervalMs,
@@ -176,6 +186,7 @@ export class QRRegistry {
       type: s.type,
       state: s.state,
       qrContent: s.qrContent,
+      browserUrl: s.browserUrl,
       channelId: s.channelId,
       error: s.error,
     };

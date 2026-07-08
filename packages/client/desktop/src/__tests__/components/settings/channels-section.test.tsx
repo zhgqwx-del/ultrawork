@@ -56,13 +56,17 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
     expect(screen.getByText(/ws$/)).toBeInTheDocument()
   })
 
-  it("offers dingtalk and wechat entries (with brand icons) in the add dropdown", async () => {
+  it("offers dingtalk, wechat and wecom entries (with brand icons) in the add dropdown", async () => {
     render(<ChannelsSection />)
     const trigger = screen.getByText("channel.addChannel")
     fireEvent.pointerDown(trigger, { button: 0 })
     fireEvent.pointerUp(trigger, { button: 0 })
     const items = await screen.findAllByRole("menuitem")
-    expect(items.map((i) => i.textContent)).toEqual(["channel.type.dingtalk", "channel.type.wechat"])
+    expect(items.map((i) => i.textContent)).toEqual([
+      "channel.type.dingtalk",
+      "channel.type.wechat",
+      "channel.type.wecom",
+    ])
     for (const item of items) {
       expect(item.querySelector("svg[data-brand]")).not.toBeNull()
     }
@@ -86,6 +90,24 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
     fireEvent.click(screen.getByText("channel.qr.manualInput"))
     expect(await screen.findByText("channel.clientId")).toBeInTheDocument()
     expect(mockApi.cancelChannelQR).toHaveBeenCalledWith("dingtalk", "qr_1")
+  })
+
+  it("wecom opens the QR flow with manual fallback to the botId/secret form", async () => {
+    render(<ChannelsSection />)
+    const trigger = screen.getByText("channel.addChannel")
+    fireEvent.pointerDown(trigger, { button: 0 })
+    fireEvent.pointerUp(trigger, { button: 0 })
+    const items = await screen.findAllByRole("menuitem")
+    fireEvent.click(items[2]) // wecom
+
+    expect(await screen.findByText("channel.qr.scanTitle")).toBeInTheDocument()
+    expect(mockApi.requestChannelQR).toHaveBeenCalledWith("wecom", expect.any(String), "/tmp/ws")
+
+    fireEvent.click(screen.getByText("channel.qr.manualInput"))
+    // wecom manual form asks for botId/secret, not dingtalk's clientId
+    expect(await screen.findByText("channel.botId")).toBeInTheDocument()
+    expect(screen.getByText("channel.secret")).toBeInTheDocument()
+    expect(screen.queryByText("channel.clientId")).toBeNull()
   })
 
   it("wechat QR flow has no browser/manual escape hatches (app-only QR)", async () => {

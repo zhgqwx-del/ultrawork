@@ -45,7 +45,13 @@ export interface WeChatChannelConfig extends ChannelConfigBase {
   baseUrl: string;
 }
 
-export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig;
+export interface WeComChannelConfig extends ChannelConfigBase {
+  type: "wecom";
+  botId: string;
+  secret: string;
+}
+
+export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig | WeComChannelConfig;
 
 export interface ChannelsStore {
   channels: ChannelConfig[];
