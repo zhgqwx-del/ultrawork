@@ -46,8 +46,8 @@
   --color-ring: #2563eb;
 
   /* Chat answer body font size — the single knob for the reading column.
-     13px = 紧凑 (matches Cursor/Linear/JVS density camp); 14px = 舒适. */
-  --chat-body-size: 13px;
+     14px = 舒适 (default); 13px = 紧凑 (Cursor/Linear/JVS density camp). */
+  --chat-body-size: 14px;
 }
 
 /* Dark mode colors */
