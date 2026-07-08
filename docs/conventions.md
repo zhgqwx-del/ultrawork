@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-03 -->
+<!-- last-synced: 2026-07-08 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -385,3 +385,28 @@ setTimeout(() => fetchSources(), 500)
 ### 已知平台边界（非 bug，刻意降级）
 - **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：三平台均已支持（ADR-037 后续移植）。Windows 走 node `.zip`（`node.exe` 在根 + `node_modules/npm` 无 `lib/`）、`tar -xf` 解压（Win10+ bsdtar）、`resolve_npm_cli`/`embedded_node_bin` 平台分支、Chrome 清理用 PowerShell WMI 命令行匹配 + `taskkill /F /T`。**代码层三平台编译通过，但 Windows 上 Browser MCP 的运行时（真装 + 真起浏览器）需在真 Windows 机器实测**——CI 覆盖不到浏览器自动化运行时。前置：Windows 需 `tar.exe`（Win10 1803+ 自带）+ `curl`（Win10+ 自带）。
 - **渐进式工具披露内置工具 id 集**：与平台无关，但 vendor bump 时仍需复核（见 MEMORY Pending Issues）。
+
+## 14. 消息渠道 QR 扫码接入（`qr-registry.ts`，ADR-044）
+
+新渠道要支持「扫码即绑定」，只需实现 `QRProvider` 三件套并注册（`packages/channel/gateway/src/index.ts`）：
+
+```ts
+export function createXxxQRProvider(): QRProvider {
+  return {
+    type: "xxx",
+    pollIntervalMs: 3000,            // 兜底；start() 可返回 per-session 覆盖（设备流会下发 interval）
+    async start() {                  // 发起上游流程
+      return { upstreamToken, qrContent, browserUrl?, expiresInMs?, pollIntervalMs? }
+    },
+    async poll(upstreamToken) {      // 轮询一次；瞬时错误直接 throw（registry 三连败才判 error）
+      // → { state: "pending" | "scanned" | "expired" }
+      // → { state: "denied", error? }
+      // → { state: "authorized", buildConfig: (base) => ChannelConfig }  // 凭证在闭包里
+    },
+  }
+}
+```
+
+骨架承包的事（provider 不要重复做）：后台轮询循环、**authorized 即 addChannel 落盘**（一次性 secret 安全）、统一状态枚举、并发/重复请求去重（in-flight promise + 15s 窗口，键含 autoConnect）、本地过期（尊重 expiresInMs）、取消端点、NaN 消毒、persist-成功-但-autoConnect-失败仍算 authorized。
+
+配套固定动作清单（每加一家）：gateway `types.ts` config 类型 + adapter 工厂注册 → api-client `types.ts` 镜像同步 → 前端 `channels-section.tsx`（下拉项 + `CHANNEL_TYPE_ICONS` + `MANUAL_FORM_FIELDS` 手动兜底字段）→ `brand-icons.tsx` 品牌徽章 → i18n `channel.type.*` 等键（en/zh 成对）→ `bridge.ts` `CHANNEL_LABELS` → `bun run build:gateway` → `docs/api-reference.md`。前端 QR 组件（`ChannelQRLogin`）与手动表单已泛化，按 type 透传即可。上游契约坑（三家互不相通）见 gotchas §4。
