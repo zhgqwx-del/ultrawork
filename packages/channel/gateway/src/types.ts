@@ -51,7 +51,19 @@ export interface WeComChannelConfig extends ChannelConfigBase {
   secret: string;
 }
 
-export type ChannelConfig = DingTalkChannelConfig | WeChatChannelConfig | WeComChannelConfig;
+export interface FeishuChannelConfig extends ChannelConfigBase {
+  type: "feishu";
+  appId: string;
+  appSecret: string;
+  /** Feishu (CN) vs Lark (intl) tenants live on different API domains */
+  domain: "feishu" | "lark";
+}
+
+export type ChannelConfig =
+  | DingTalkChannelConfig
+  | WeChatChannelConfig
+  | WeComChannelConfig
+  | FeishuChannelConfig;
 
 export interface ChannelsStore {
   channels: ChannelConfig[];

@@ -7,6 +7,7 @@ import { createDingTalkQRProvider } from "./adapters/dingtalk/qr-provider.js";
 import { createWeChatAdapter, qrApi } from "./adapters/wechat/index.js";
 import { createWeChatQRProvider } from "./adapters/wechat/qr-provider.js";
 import { createWeComAdapter, createWeComQRProvider } from "./adapters/wecom/index.js";
+import { createFeishuAdapter, createFeishuQRProvider } from "./adapters/feishu/index.js";
 
 const GATEWAY_PORT = 4097;
 
@@ -21,6 +22,7 @@ async function main() {
   manager.registerFactory("dingtalk", createDingTalkAdapter);
   manager.registerFactory("wechat", createWeChatAdapter);
   manager.registerFactory("wecom", createWeComAdapter);
+  manager.registerFactory("feishu", createFeishuAdapter);
 
   // Wire bridge as message handler (catch to prevent unhandled rejection)
   manager.setMessageHandler((msg) => {
@@ -37,6 +39,7 @@ async function main() {
   qrRegistry.registerProvider(createWeChatQRProvider(qrApi));
   qrRegistry.registerProvider(createDingTalkQRProvider());
   qrRegistry.registerProvider(createWeComQRProvider());
+  qrRegistry.registerProvider(createFeishuQRProvider());
 
   const app = createApp(manager, qrRegistry);
 

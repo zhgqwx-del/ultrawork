@@ -56,7 +56,7 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
     expect(screen.getByText(/ws$/)).toBeInTheDocument()
   })
 
-  it("offers dingtalk, wechat and wecom entries (with brand icons) in the add dropdown", async () => {
+  it("offers all four channel entries (with brand icons) in the add dropdown", async () => {
     render(<ChannelsSection />)
     const trigger = screen.getByText("channel.addChannel")
     fireEvent.pointerDown(trigger, { button: 0 })
@@ -66,6 +66,7 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
       "channel.type.dingtalk",
       "channel.type.wechat",
       "channel.type.wecom",
+      "channel.type.feishu",
     ])
     for (const item of items) {
       expect(item.querySelector("svg[data-brand]")).not.toBeNull()

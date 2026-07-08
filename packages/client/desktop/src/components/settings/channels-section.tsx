@@ -14,7 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { DingTalkIcon, WeChatIcon, WeComIcon } from "@/components/brand-icons"
+import { DingTalkIcon, FeishuIcon, WeChatIcon, WeComIcon } from "@/components/brand-icons"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
 import { useChannels } from "@/lib/use-channels"
@@ -29,10 +29,11 @@ const CHANNEL_TYPE_ICONS: Record<string, ComponentType<{ className?: string }>> 
   wechat: WeChatIcon,
   dingtalk: DingTalkIcon,
   wecom: WeComIcon,
+  feishu: FeishuIcon,
 }
 
 /** Channel types whose QR flow has a credentials-form fallback (device flows). */
-type ManualFormType = "dingtalk" | "wecom"
+type ManualFormType = "dingtalk" | "wecom" | "feishu"
 
 /** Field sets for the manual credentials form, per channel type. */
 const MANUAL_FORM_FIELDS: Record<ManualFormType, { key: string; labelKey: string; placeholderKey: string; password?: boolean }[]> = {
@@ -43,6 +44,10 @@ const MANUAL_FORM_FIELDS: Record<ManualFormType, { key: string; labelKey: string
   wecom: [
     { key: "botId", labelKey: "channel.botId", placeholderKey: "channel.botIdPlaceholder" },
     { key: "secret", labelKey: "channel.secret", placeholderKey: "channel.secretPlaceholder", password: true },
+  ],
+  feishu: [
+    { key: "appId", labelKey: "channel.appId", placeholderKey: "channel.appIdPlaceholder" },
+    { key: "appSecret", labelKey: "channel.appSecret", placeholderKey: "channel.appSecretPlaceholder", password: true },
   ],
 }
 
@@ -55,7 +60,7 @@ export function ChannelsSection() {
   } = useChannels()
   // Plain type opens the QR flow; "<type>-manual" is the credentials-form
   // fallback (mirrors the device-flow manual path).
-  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "dingtalk-manual" | "wechat" | "wecom" | "wecom-manual">(false)
+  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "dingtalk-manual" | "wechat" | "wecom" | "wecom-manual" | "feishu" | "feishu-manual">(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const connectedCount = channels.filter((c) => c.state === "connected").length
@@ -128,23 +133,27 @@ export function ChannelsSection() {
                 <WeComIcon className="mr-2 size-4" />
                 {t("channel.type.wecom")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowAdd("feishu")}>
+                <FeishuIcon className="mr-2 size-4" />
+                {t("channel.type.feishu")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
       {/* Manual credentials form (fallback from the device-flow QR) */}
-      {(showAdd === "dingtalk-manual" || showAdd === "wecom-manual") && (
+      {(showAdd === "dingtalk-manual" || showAdd === "wecom-manual" || showAdd === "feishu-manual") && (
         <ChannelAddForm
-          type={showAdd === "dingtalk-manual" ? "dingtalk" : "wecom"}
+          type={showAdd.replace("-manual", "") as ManualFormType}
           onAdd={onAdd}
           onCancel={() => setShowAdd(false)}
           loading={actionLoading === "__add__"}
         />
       )}
 
-      {/* QR login (wechat / dingtalk / wecom) */}
-      {(showAdd === "wechat" || showAdd === "dingtalk" || showAdd === "wecom") && (
+      {/* QR login (wechat / dingtalk / wecom / feishu) */}
+      {(showAdd === "wechat" || showAdd === "dingtalk" || showAdd === "wecom" || showAdd === "feishu") && (
         <ChannelQRLogin
           type={showAdd}
           onDone={onQRDone}
@@ -152,7 +161,7 @@ export function ChannelsSection() {
           onManualInput={
             showAdd === "wechat"
               ? undefined
-              : (() => { const flow = `${showAdd}-manual` as "dingtalk-manual" | "wecom-manual"; return () => setShowAdd(flow) })()
+              : (() => { const flow = `${showAdd}-manual` as "dingtalk-manual" | "wecom-manual" | "feishu-manual"; return () => setShowAdd(flow) })()
           }
           requestQR={(type, name, workspaceDir) => requestChannelQR(type, name, workspaceDir)}
           pollStatus={pollChannelQRStatus}
@@ -399,7 +408,7 @@ function ChannelQRLogin({
   cancelQR,
   existingChannels,
 }: {
-  type: "wechat" | "dingtalk" | "wecom"
+  type: "wechat" | "dingtalk" | "wecom" | "feishu"
   onDone: () => void
   onCancel: () => void
   /** Present for flows with a credentials-form fallback (device flows). */

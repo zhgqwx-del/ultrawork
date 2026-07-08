@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
-import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig, WeComChannelConfig } from "./types.js";
+import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig, WeComChannelConfig, FeishuChannelConfig } from "./types.js";
 import type { QRRegistry } from "./qr-registry.js";
 
 function generateId(): string {
@@ -11,7 +11,7 @@ function generateId(): string {
 
 /** Secret fields per channel type, stripped from API responses (D2: the
  * frontend only needs name/type/workspaceDir — credentials stay server-side). */
-const SECRET_FIELDS = ["clientSecret", "botToken", "secret"] as const;
+const SECRET_FIELDS = ["clientSecret", "botToken", "secret", "appSecret"] as const;
 
 function maskConfig(config: ChannelConfig): ChannelConfig {
   const masked = { ...config } as Record<string, unknown>;
@@ -104,6 +104,24 @@ export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hon
         workspaceDir: workspaceDir.trim(),
         autoConnect: body.autoConnect !== false,
       } satisfies WeComChannelConfig;
+    } else if (type === "feishu") {
+      const { appId, appSecret, domain } = body as Record<string, string>;
+      if (!appId || typeof appId !== "string" || !appId.trim()) {
+        return c.json({ error: "Missing required field: appId" }, 400);
+      }
+      if (!appSecret || typeof appSecret !== "string" || !appSecret.trim()) {
+        return c.json({ error: "Missing required field: appSecret" }, 400);
+      }
+      config = {
+        id,
+        type: "feishu",
+        name: name.trim(),
+        appId: appId.trim(),
+        appSecret: appSecret.trim(),
+        domain: domain === "lark" ? "lark" : "feishu",
+        workspaceDir: workspaceDir.trim(),
+        autoConnect: body.autoConnect !== false,
+      } satisfies FeishuChannelConfig;
     } else if (type === "wechat") {
       const { botToken, ilinkBotId, ilinkUserId, baseUrl } = body as Record<string, string>;
       if (!botToken || !ilinkBotId || !baseUrl) {
