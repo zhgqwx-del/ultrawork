@@ -1,8 +1,10 @@
 import { ChannelManager } from "./channel-manager.js";
 import { Bridge } from "./bridge.js";
 import { createApp } from "./gateway-server.js";
+import { QRRegistry } from "./qr-registry.js";
 import { createDingTalkAdapter } from "./adapters/dingtalk/index.js";
-import { createWeChatAdapter } from "./adapters/wechat/index.js";
+import { createWeChatAdapter, qrApi } from "./adapters/wechat/index.js";
+import { createWeChatQRProvider } from "./adapters/wechat/qr-provider.js";
 
 const GATEWAY_PORT = 4097;
 
@@ -27,7 +29,11 @@ async function main() {
   // Load configs + auto-connect
   await manager.init();
 
-  const app = createApp(manager);
+  // QR login providers (shared background-poll skeleton, discussion 028 §4.1)
+  const qrRegistry = new QRRegistry(manager);
+  qrRegistry.registerProvider(createWeChatQRProvider(qrApi));
+
+  const app = createApp(manager, qrRegistry);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -43,6 +49,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("Shutting down...");
+    qrRegistry.stopAll();
     await manager.shutdown();
     await bridge.shutdown();
     server.stop();

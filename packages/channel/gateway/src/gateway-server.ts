@@ -3,35 +3,25 @@ import { cors } from "hono/cors";
 import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
 import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig } from "./types.js";
-import { qrApi } from "./adapters/wechat/index.js";
+import type { QRRegistry } from "./qr-registry.js";
 
 function generateId(): string {
   return `ch_${randomBytes(6).toString("hex")}`;
 }
 
-/** Pending QR login sessions (qrcodeToken → pending config info) */
-interface PendingQR {
-  token: string;
-  name: string;
-  workspaceDir: string;
-  autoConnect: boolean;
-  createdAt: number;
-}
+/** Secret fields per channel type, stripped from API responses (D2: the
+ * frontend only needs name/type/workspaceDir — credentials stay server-side). */
+const SECRET_FIELDS = ["clientSecret", "botToken"] as const;
 
-const pendingQRSessions = new Map<string, PendingQR>();
-const PENDING_QR_TTL_MS = 5 * 60 * 1000; // 5 min
-
-/** Clean up stale pending QR sessions */
-function cleanupPendingQR(): void {
-  const now = Date.now();
-  for (const [token, session] of pendingQRSessions) {
-    if (now - session.createdAt > PENDING_QR_TTL_MS) {
-      pendingQRSessions.delete(token);
-    }
+function maskConfig(config: ChannelConfig): ChannelConfig {
+  const masked = { ...config } as Record<string, unknown>;
+  for (const field of SECRET_FIELDS) {
+    if (field in masked) masked[field] = "";
   }
+  return masked as unknown as ChannelConfig;
 }
 
-export function createApp(manager: ChannelManager): Hono {
+export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hono {
   const app = new Hono();
 
   // Allow cross-origin requests from Tauri webview and dev server only
@@ -50,10 +40,10 @@ export function createApp(manager: ChannelManager): Hono {
   // Health check
   app.get("/channel/health", (c) => c.json({ status: "ok" }));
 
-  // List all channels with status
+  // List all channels with status (configs are secret-masked)
   app.get("/channel", (c) => {
     const statuses = manager.listStatus();
-    const configs = manager.listConfigs();
+    const configs = manager.listConfigs().map(maskConfig);
     return c.json({ channels: statuses, configs });
   });
 
@@ -167,10 +157,18 @@ export function createApp(manager: ChannelManager): Hono {
     }
   });
 
-  // ---- WeChat QR Code Login Flow ----
+  // ---- QR Code Login Flow (any registered provider; see qr-registry.ts) ----
+  // The registry polls upstream in the background and persists credentials
+  // the moment they arrive; these routes only start sessions and read the
+  // cached snapshot — safe for one-shot device-flow secrets.
 
-  /** Request a QR code for WeChat login */
-  app.post("/channel/wechat/qrcode", async (c) => {
+  /** Start a QR session for a channel type */
+  app.post("/channel/:type/qrcode", async (c) => {
+    const type = c.req.param("type");
+    if (!qrRegistry?.hasProvider(type)) {
+      return c.json({ error: `No QR login flow for channel type: ${type}` }, 404);
+    }
+
     let body: Record<string, unknown>;
     try {
       body = await c.req.json();
@@ -187,83 +185,45 @@ export function createApp(manager: ChannelManager): Hono {
     }
 
     try {
-      cleanupPendingQR();
-      const qrResp = await qrApi.getQRCode();
-
-      // Store pending session
-      pendingQRSessions.set(qrResp.qrcode, {
-        token: qrResp.qrcode,
+      const session = await qrRegistry.start(type, {
         name: name.trim(),
         workspaceDir: workspaceDir.trim(),
         autoConnect: body.autoConnect !== false,
-        createdAt: Date.now(),
       });
-
-      return c.json({
-        qrcodeUrl: qrResp.qrcode,
-        qrcodeImgContent: qrResp.qrcode_img_content || "",
-        token: qrResp.qrcode,
-      });
+      return c.json({ token: session.token, qrContent: session.qrContent });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to get QR code";
-      console.error("[WeChat QR]", msg);
+      const msg = err instanceof Error ? err.message : "Failed to start QR session";
+      console.error(`[QR:${type}]`, msg);
       return c.json({ error: msg }, 500);
     }
   });
 
-  /** Poll QR code scan status */
-  app.get("/channel/wechat/qrcode-status", async (c) => {
+  /** Read the cached QR session state */
+  app.get("/channel/:type/qrcode-status", (c) => {
     const token = c.req.query("token");
     if (!token) {
       return c.json({ error: "Missing query param: token" }, 400);
     }
-
-    const pending = pendingQRSessions.get(token);
-    if (!pending) {
+    const snapshot = qrRegistry?.getSnapshot(token);
+    if (!snapshot || snapshot.type !== c.req.param("type")) {
       return c.json({ error: "QR session not found or expired" }, 404);
     }
+    return c.json({
+      status: snapshot.state,
+      channelId: snapshot.channelId,
+      error: snapshot.error,
+    });
+  });
 
-    try {
-      const status = await qrApi.getQRCodeStatus(token);
-
-      if (status.status === "confirmed") {
-        // Create channel config from confirmed credentials
-        const id = generateId();
-        const config: WeChatChannelConfig = {
-          id,
-          type: "wechat",
-          name: pending.name,
-          botToken: status.bot_token,
-          ilinkBotId: status.ilink_bot_id,
-          ilinkUserId: status.ilink_user_id || "",
-          baseUrl: status.baseurl || "https://ilinkai.weixin.qq.com",
-          workspaceDir: pending.workspaceDir,
-          autoConnect: pending.autoConnect,
-        };
-
-        await manager.addChannel(config);
-        pendingQRSessions.delete(token);
-
-        return c.json({
-          status: "confirmed",
-          channelId: id,
-        });
-      }
-
-      if (status.status === "expired") {
-        pendingQRSessions.delete(token);
-      }
-
-      return c.json({ status: status.status });
-    } catch (err) {
-      // Timeout from long-poll is normal → return "wait"
-      if (err instanceof Error && err.name === "AbortError") {
-        return c.json({ status: "wait" });
-      }
-      const msg = err instanceof Error ? err.message : "Failed to check status";
-      console.error("[WeChat QR Status]", msg);
-      return c.json({ error: msg }, 500);
+  /** Cancel a QR session (stops the background poll loop) */
+  app.delete("/channel/:type/qrcode/:token", (c) => {
+    const token = c.req.param("token");
+    const snapshot = qrRegistry?.getSnapshot(token);
+    if (!snapshot || snapshot.type !== c.req.param("type")) {
+      return c.json({ error: "QR session not found or expired" }, 404);
     }
+    qrRegistry!.cancel(token);
+    return c.json({ ok: true });
   });
 
   return app;

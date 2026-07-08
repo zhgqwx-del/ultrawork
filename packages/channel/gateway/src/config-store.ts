@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { readFile, writeFile, mkdir, chmod } from "fs/promises";
 import { dirname } from "path";
 import { join } from "path";
 import { homedir } from "os";
@@ -27,7 +27,10 @@ export async function loadConfigs(): Promise<ChannelConfig[]> {
 
 async function saveStore(store: ChannelsStore): Promise<void> {
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), "utf-8");
+  // Owner-only (D2): the store holds channel secrets. `mode` only applies on
+  // create, so chmod tightens files written before this policy existed.
+  await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), { encoding: "utf-8", mode: 0o600 });
+  await chmod(CONFIG_PATH, 0o600).catch(() => {});
 }
 
 export async function addConfig(config: ChannelConfig): Promise<void> {

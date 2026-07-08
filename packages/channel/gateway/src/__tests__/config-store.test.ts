@@ -5,6 +5,7 @@ vi.mock("fs/promises", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   mkdir: vi.fn(),
+  chmod: vi.fn(async () => {}),
 }))
 
 import { readFile, writeFile, mkdir } from "fs/promises"
@@ -67,13 +68,13 @@ describe("loadConfigs", () => {
 })
 
 describe("addConfig", () => {
-  it("adds config to empty store", async () => {
+  it("adds config to empty store (owner-only file mode)", async () => {
     mockReadFile.mockResolvedValue(JSON.stringify({ channels: [] }))
     await addConfig(sampleConfig)
     expect(mockWriteFile).toHaveBeenCalledWith(
       expect.stringContaining("channels.json"),
       expect.stringContaining(sampleConfig.id),
-      "utf-8",
+      { encoding: "utf-8", mode: 0o600 },
     )
   })
 

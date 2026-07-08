@@ -26,8 +26,9 @@ const mockApi = {
   handleConnect: vi.fn(),
   handleDisconnect: vi.fn(),
   refresh: vi.fn(),
-  requestWeChatQR: vi.fn(),
-  pollWeChatQRStatus: vi.fn(),
+  requestChannelQR: vi.fn(),
+  pollChannelQRStatus: vi.fn(),
+  cancelChannelQR: vi.fn(),
 }
 vi.mock("@/lib/use-channels", () => ({
   useChannels: () => mockApi,

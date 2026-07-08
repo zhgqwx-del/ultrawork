@@ -570,16 +570,23 @@ export interface ChannelListResponse {
   configs: ChannelConfig[]
 }
 
-// --- WeChat QR login types ---
+// --- Channel QR login types (mirrors gateway qr-registry.ts) ---
 
-export interface WeChatQRCodeResponse {
-  qrcodeUrl: string
-  qrcodeImgContent: string
+export type ChannelQRState =
+  | "pending"    // waiting for scan
+  | "scanned"    // scanned, awaiting in-app confirmation
+  | "authorized" // credentials delivered, channel created
+  | "expired"
+  | "denied"
+  | "error"
+
+export interface ChannelQRStartResponse {
   token: string
+  qrContent: string
 }
 
-export interface WeChatQRStatusResponse {
-  status: "wait" | "scaned" | "confirmed" | "expired"
+export interface ChannelQRStatusResponse {
+  status: ChannelQRState
   channelId?: string
   error?: string
 }

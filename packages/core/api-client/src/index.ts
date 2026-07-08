@@ -62,7 +62,8 @@ export type {
   WeChatChannelConfig,
   ChannelConfig,
   ChannelListResponse,
-  WeChatQRCodeResponse,
-  WeChatQRStatusResponse,
+  ChannelQRState,
+  ChannelQRStartResponse,
+  ChannelQRStatusResponse,
   PaginatedMessagesResponse,
 } from "./types"
