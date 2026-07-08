@@ -44,7 +44,9 @@ export interface QRProvider {
   readonly type: string;
   /** Minimum delay between upstream polls (device flows mandate one). */
   readonly pollIntervalMs: number;
-  start(): Promise<{ upstreamToken: string; qrContent: string; expiresInMs?: number }>;
+  /** May return a per-session pollIntervalMs override — device flows hand the
+   * mandated interval back in the begin/start response. */
+  start(): Promise<{ upstreamToken: string; qrContent: string; expiresInMs?: number; pollIntervalMs?: number }>;
   /** Poll upstream once. Throw for transient failures (registry retries). */
   poll(upstreamToken: string): Promise<QRPollResult>;
 }
@@ -61,6 +63,7 @@ export interface QRSessionSnapshot {
 interface QRSession extends QRSessionSnapshot {
   upstreamToken: string;
   request: QRSessionRequest;
+  pollIntervalMs: number;
   createdAt: number;
   expiresAt: number;
   finishedAt?: number;
@@ -117,6 +120,7 @@ export class QRRegistry {
       qrContent: started.qrContent,
       upstreamToken: started.upstreamToken,
       request,
+      pollIntervalMs: started.pollIntervalMs ?? provider.pollIntervalMs,
       createdAt: now,
       expiresAt: now + (started.expiresInMs ?? DEFAULT_SESSION_TTL_MS),
       cancelled: false,
@@ -201,7 +205,7 @@ export class QRRegistry {
           this.finish(session, "error", err instanceof Error ? err.message : "QR poll failed");
           return;
         }
-        await this.sleep(session, provider.pollIntervalMs);
+        await this.sleep(session, session.pollIntervalMs);
         continue;
       }
 
@@ -236,7 +240,7 @@ export class QRRegistry {
         }
       }
 
-      await this.sleep(session, provider.pollIntervalMs);
+      await this.sleep(session, session.pollIntervalMs);
     }
   }
 

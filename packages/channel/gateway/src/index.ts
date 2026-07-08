@@ -3,6 +3,7 @@ import { Bridge } from "./bridge.js";
 import { createApp } from "./gateway-server.js";
 import { QRRegistry } from "./qr-registry.js";
 import { createDingTalkAdapter } from "./adapters/dingtalk/index.js";
+import { createDingTalkQRProvider } from "./adapters/dingtalk/qr-provider.js";
 import { createWeChatAdapter, qrApi } from "./adapters/wechat/index.js";
 import { createWeChatQRProvider } from "./adapters/wechat/qr-provider.js";
 
@@ -32,6 +33,7 @@ async function main() {
   // QR login providers (shared background-poll skeleton, discussion 028 §4.1)
   const qrRegistry = new QRRegistry(manager);
   qrRegistry.registerProvider(createWeChatQRProvider(qrApi));
+  qrRegistry.registerProvider(createDingTalkQRProvider());
 
   const app = createApp(manager, qrRegistry);
 

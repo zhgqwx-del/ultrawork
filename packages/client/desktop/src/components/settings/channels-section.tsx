@@ -4,8 +4,9 @@
  * icons added; QR flow/state machine untouched.
  */
 import { useState, useEffect, useMemo, type ComponentType } from "react"
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Plus, Radio, RefreshCw, Smartphone, X } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, KeyRound, Loader2, Plus, Radio, RefreshCw, Smartphone, X } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -36,7 +37,9 @@ export function ChannelsSection() {
     handleAdd, handleRemove, handleConnect, handleDisconnect, refresh,
     requestChannelQR, pollChannelQRStatus, cancelChannelQR,
   } = useChannels()
-  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "wechat">(false)
+  // "dingtalk"/"wechat" open the QR flow; "dingtalk-manual" is the
+  // clientId/Secret form fallback (mirrors the device-flow manual path).
+  const [showAdd, setShowAdd] = useState<false | "dingtalk" | "dingtalk-manual" | "wechat">(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const connectedCount = channels.filter((c) => c.state === "connected").length
@@ -55,13 +58,13 @@ export function ChannelsSection() {
     }
   }
 
-  const onWeChatDone = () => {
+  const onQRDone = () => {
     setShowAdd(false)
-    // WeChat's auto-connect runs in the background after addChannel resolves
-    // (the adapter starts a long-poll loop and reports "connecting" until the
-    // first poll succeeds). One refresh would catch the "connecting" snapshot
-    // and the UI would stay stale. Schedule a few more refreshes to catch the
-    // state flip whenever it lands (typically within ~10s on a healthy link).
+    // Auto-connect runs in the background after addChannel resolves (the
+    // adapter reports "connecting" until its first poll/handshake succeeds).
+    // One refresh would catch the "connecting" snapshot and the UI would stay
+    // stale. Schedule a few more refreshes to catch the state flip whenever
+    // it lands (typically within ~10s on a healthy link).
     refresh()
     for (const delay of [2000, 5000, 10000, 20000, 35000]) {
       setTimeout(() => { refresh() }, delay)
@@ -110,8 +113,8 @@ export function ChannelsSection() {
         </div>
       </div>
 
-      {/* Add DingTalk form */}
-      {showAdd === "dingtalk" && (
+      {/* Manual DingTalk form (fallback from the QR flow) */}
+      {showAdd === "dingtalk-manual" && (
         <ChannelAddForm
           onAdd={onAdd}
           onCancel={() => setShowAdd(false)}
@@ -119,14 +122,16 @@ export function ChannelsSection() {
         />
       )}
 
-      {/* WeChat QR login */}
-      {showAdd === "wechat" && (
-        <WeChatQRLogin
-          onDone={onWeChatDone}
+      {/* QR login (wechat / dingtalk) */}
+      {(showAdd === "wechat" || showAdd === "dingtalk") && (
+        <ChannelQRLogin
+          type={showAdd}
+          onDone={onQRDone}
           onCancel={() => setShowAdd(false)}
-          requestQR={(name, workspaceDir) => requestChannelQR("wechat", name, workspaceDir)}
-          pollStatus={(token) => pollChannelQRStatus("wechat", token)}
-          cancelQR={(token) => cancelChannelQR("wechat", token)}
+          onManualInput={showAdd === "dingtalk" ? () => setShowAdd("dingtalk-manual") : undefined}
+          requestQR={(type, name, workspaceDir) => requestChannelQR(type, name, workspaceDir)}
+          pollStatus={pollChannelQRStatus}
+          cancelQR={cancelChannelQR}
           existingChannels={channels}
         />
       )}
@@ -360,23 +365,28 @@ function ChannelAddForm({
   )
 }
 
-/** WeChat QR code login flow component.
+/** QR login flow component (wechat / dingtalk / future providers).
  * States come from the gateway's cached QR session snapshot (qr-registry.ts):
  * pending → scanned → authorized, or expired/denied/error. The gateway does
  * the upstream polling; this component only reads the cache. */
-function WeChatQRLogin({
+function ChannelQRLogin({
+  type,
   onDone,
   onCancel,
+  onManualInput,
   requestQR,
   pollStatus,
   cancelQR,
   existingChannels,
 }: {
+  type: "wechat" | "dingtalk"
   onDone: () => void
   onCancel: () => void
-  requestQR: (name: string, workspaceDir: string) => Promise<{ qrContent: string; token: string }>
-  pollStatus: (token: string) => Promise<{ status: string; channelId?: string; error?: string }>
-  cancelQR: (token: string) => Promise<void>
+  /** Present for flows with a credentials-form fallback (device flows). */
+  onManualInput?: () => void
+  requestQR: (type: string, name: string, workspaceDir: string) => Promise<{ qrContent: string; token: string }>
+  pollStatus: (type: string, token: string) => Promise<{ status: string; channelId?: string; error?: string }>
+  cancelQR: (type: string, token: string) => Promise<void>
   existingChannels: { id: string; type: string; name: string }[]
 }) {
   const { t } = useI18n()
@@ -388,10 +398,16 @@ function WeChatQRLogin({
   const [refreshCount, setRefreshCount] = useState(0)
   const MAX_REFRESH = 3
 
+  const label = t(`channel.type.${type}`)
+  const BrandIcon = CHANNEL_TYPE_ICONS[type]
+  // Device flows: the QR page is a regular web page (scannable or openable in
+  // a browser) and auto-creates the bot app. The ilink wechat QR is app-only.
+  const isDeviceFlow = type !== "wechat"
+
   // Cancel the gateway-side session when the user closes the flow (stops the
   // background poll loop; sessions also expire on their own via TTL).
   const abandonSession = (token: string, status: string) => {
-    if (token && status !== "authorized") void cancelQR(token)
+    if (token && status !== "authorized") void cancelQR(type, token)
   }
   const handleCancel = () => {
     abandonSession(qrToken, scanStatus)
@@ -400,16 +416,15 @@ function WeChatQRLogin({
 
   // Auto-generate channel name
   const autoName = useMemo(() => {
-    const base = t("channel.type.wechat")
-    const wechatNames = new Set(
-      existingChannels.filter((c) => c.type === "wechat").map((c) => c.name),
+    const existingNames = new Set(
+      existingChannels.filter((c) => c.type === type).map((c) => c.name),
     )
-    if (!wechatNames.has(base)) return base
+    if (!existingNames.has(label)) return label
     for (let i = 2; ; i++) {
-      const candidate = `${base}-${i}`
-      if (!wechatNames.has(candidate)) return candidate
+      const candidate = `${label}-${i}`
+      if (!existingNames.has(candidate)) return candidate
     }
-  }, [existingChannels, t])
+  }, [existingChannels, type, label])
 
   // Auto-start QR flow on mount
   useEffect(() => {
@@ -417,22 +432,22 @@ function WeChatQRLogin({
     let cancelled = false
     const start = async () => {
       try {
-        const data = await requestQR(autoName, workspacePath)
+        const data = await requestQR(type, autoName, workspacePath)
         if (cancelled) return
         setQrUrl(data.qrContent)
         setQrToken(data.token)
         setScanStatus("pending")
       } catch (err) {
         if (cancelled) return
-        setErrorMsg(t("channel.wechat.error"))
-        console.error("WeChat QR request failed:", err)
+        setErrorMsg(t("channel.qr.error"))
+        console.error(`${type} QR request failed:`, err)
       }
     }
     start()
     return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll for scan status
+  // Poll the gateway's cached session state
   useEffect(() => {
     if (!qrToken) return
 
@@ -440,7 +455,7 @@ function WeChatQRLogin({
     const poll = async () => {
       while (!cancelled) {
         try {
-          const resp = await pollStatus(qrToken)
+          const resp = await pollStatus(type, qrToken)
           if (cancelled) break
           setScanStatus(resp.status)
 
@@ -451,7 +466,7 @@ function WeChatQRLogin({
           }
 
           if (resp.status === "denied" || resp.status === "error") {
-            setErrorMsg(resp.error || t("channel.wechat.error"))
+            setErrorMsg(resp.error || t("channel.qr.error"))
             return
           }
 
@@ -460,17 +475,17 @@ function WeChatQRLogin({
             if (refreshCount < MAX_REFRESH) {
               setRefreshCount((c) => c + 1)
               try {
-                const data = await requestQR(autoName, workspacePath!)
+                const data = await requestQR(type, autoName, workspacePath!)
                 if (cancelled) break
                 setQrUrl(data.qrContent)
                 setQrToken(data.token)
                 setScanStatus("pending")
               } catch {
-                setErrorMsg(t("channel.wechat.error"))
+                setErrorMsg(t("channel.qr.error"))
                 return
               }
             } else {
-              setErrorMsg(t("channel.wechat.expired"))
+              setErrorMsg(t("channel.qr.expired"))
               return
             }
             continue
@@ -482,7 +497,7 @@ function WeChatQRLogin({
           if (cancelled) break
           // 404 = session already cleaned up on the gateway → treat as expired
           if (err instanceof Error && err.message.includes("404")) {
-            setErrorMsg(t("channel.wechat.expired"))
+            setErrorMsg(t("channel.qr.expired"))
             return
           }
           // Network error — wait and retry
@@ -496,20 +511,19 @@ function WeChatQRLogin({
   }, [qrToken, refreshCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const statusText = scanStatus === "pending"
-    ? t("channel.wechat.waitingScan")
+    ? t("channel.qr.waitingScan")
     : scanStatus === "scanned"
-    ? t("channel.wechat.scanned")
+    ? t("channel.qr.scanned")
     : scanStatus === "authorized"
-    ? t("channel.wechat.confirmed")
+    ? t("channel.qr.confirmed")
     : ""
 
-  // QR code display (direct, no name step)
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <WeChatIcon className="size-4" />
-          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.wechat.scanQR")}</h3>
+          {BrandIcon && <BrandIcon className="size-4" />}
+          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("channel.qr.scanTitle", { label })}</h3>
         </div>
         <button onClick={handleCancel} className="rounded p-1 text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]">
           <X className="size-4" />
@@ -527,13 +541,13 @@ function WeChatQRLogin({
               <Button variant="outline" size="sm" onClick={() => {
                 setErrorMsg("")
                 if (!workspacePath) return
-                requestQR(autoName, workspacePath).then((data) => {
+                requestQR(type, autoName, workspacePath).then((data) => {
                   setQrUrl(data.qrContent)
                   setQrToken(data.token)
                   setScanStatus("pending")
                 }).catch((err) => {
-                  setErrorMsg(t("channel.wechat.error"))
-                  console.error("WeChat QR retry failed:", err)
+                  setErrorMsg(t("channel.qr.error"))
+                  console.error(`${type} QR retry failed:`, err)
                 })
               }}>
                 <RefreshCw className="mr-1.5 size-3.5" />
@@ -565,13 +579,34 @@ function WeChatQRLogin({
           </span>
         </div>
 
+        {isDeviceFlow && !errorMsg && (
+          <p className="text-xs text-[var(--color-fg-muted)]">{t("channel.qr.autoCreateHint", { label })}</p>
+        )}
+
         {errorMsg && (
           <p className="text-xs text-red-500">{errorMsg}</p>
         )}
 
-        <Button variant="outline" size="sm" onClick={handleCancel}>
-          {t("button.cancel")}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isDeviceFlow && qrUrl && (
+            <Button variant="outline" size="sm" onClick={() => { void openUrl(qrUrl) }}>
+              <ExternalLink className="mr-1.5 size-3.5" />
+              {t("channel.qr.openInBrowser")}
+            </Button>
+          )}
+          {onManualInput && (
+            <Button variant="outline" size="sm" onClick={() => {
+              abandonSession(qrToken, scanStatus)
+              onManualInput()
+            }}>
+              <KeyRound className="mr-1.5 size-3.5" />
+              {t("channel.qr.manualInput")}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={handleCancel}>
+            {t("button.cancel")}
+          </Button>
+        </div>
       </div>
     </div>
   )
