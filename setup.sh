@@ -109,9 +109,40 @@ echo "  Sidecar binaries ready in src-tauri/binaries/"
 
 # ── 6. Dev or Build ─────────────────────────
 
+# Clean stale dev instances before starting a new one. The Rust reaper already
+# handles orphan sidecars on 4096-4099 at app startup, but nothing guards the
+# Vite port (1420): a previous dev instance still alive (or its detached vite)
+# makes the new `tauri dev` fail with "Port 1420 is already in use".
+cleanup_stale_dev() {
+  command -v lsof &>/dev/null || return 0
+  local vite_pids app_pids stale
+  vite_pids="$(lsof -nP -tiTCP:1420 -sTCP:LISTEN 2>/dev/null || true)"
+  app_pids="$(pgrep -f "$ROOT_DIR/packages/client/desktop/src-tauri/target/debug/ultrawork" 2>/dev/null || true)"
+  stale="$(printf '%s\n%s\n' "$vite_pids" "$app_pids" | sort -u | grep -v '^$' || true)"
+  [ -z "$stale" ] && return 0
+
+  echo "  WARNING: a previous dev instance is still running — cleaning it up first:"
+  for pid in $stale; do
+    echo "    killing pid $pid ($(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || echo '?'))"
+    kill "$pid" 2>/dev/null || true
+  done
+  # Graceful TERM lets the app's shutdown hook clean its own sidecars; escalate
+  # only if something still holds the port after a short grace period.
+  sleep 2
+  local left
+  left="$(lsof -nP -tiTCP:1420 -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -n "$left" ]; then
+    echo "    port 1420 still held, force-killing: $left"
+    kill -9 $left 2>/dev/null || true
+    sleep 1
+  fi
+  echo "  Stale dev instance cleaned."
+}
+
 case "$MODE" in
   --dev)
     echo "[6/6] Starting dev server..."
+    cleanup_stale_dev
     echo ""
     echo "  Frontend:  http://localhost:1420"
     echo "  OpenCode:  http://localhost:4096"
