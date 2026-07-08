@@ -4,7 +4,7 @@
 //   · left sidebar  = 256px (w-64)      · right sidebar = 288px (w-72)
 //   · chat body     = 14px (.chat-md)   · chat leading  ≈ 21.7px (14 × 1.55)
 //   · markdown h2   = 16px (text-base)  · reading column max-width = 860px
-//   · session row   = 13px
+//   · session row   = 13px    · sidebar search input = 13px  · footer user = 13px
 // Also screenshots the live app to scratchpad for eyeball review.
 //
 //   cd packages/client/desktop && bun run --bun e2e/ui-density-walkthrough.e2e.ts
@@ -93,12 +93,20 @@ try {
   await page.screenshot({ path: SHOT })
   console.log(`[shot] ${SHOT}`)
 
+  // Reveal the sidebar search input (2nd action button) so its font is
+  // measurable — part of the 13px chrome consistency check.
+  await page.locator("aside").first().locator("nav button").nth(1).click().catch(() => {})
+  await page.waitForTimeout(400)
+
   const m = await page.evaluate(() => {
     const cs = (el: Element | null) => (el ? getComputedStyle(el) : null)
     const asides = [...document.querySelectorAll("aside")]
+    const left = asides[0] ?? null
     const chat = document.querySelector(".chat-md")
     const h2 = document.querySelector(".chat-md h2")
     const sessRow = document.querySelector('aside [class*="cursor-pointer"]')
+    const searchInput = left?.querySelector('input[type="text"]') ?? null
+    const footerUser = left?.querySelector('button[aria-label="User settings"] p') ?? null
     let colMaxW: string | null = null
     for (const d of document.querySelectorAll("div")) {
       if (getComputedStyle(d).maxWidth === "860px") { colMaxW = "860px"; break }
@@ -111,6 +119,8 @@ try {
       chatLH: cs(chat)?.lineHeight ?? null,
       h2Font: cs(h2)?.fontSize ?? null,
       sessFont: cs(sessRow)?.fontSize ?? null,
+      searchFont: cs(searchInput)?.fontSize ?? null,
+      footerFont: cs(footerUser)?.fontSize ?? null,
       colMaxW,
       activityOpen: /执行活动|Activity/.test(bodyText),
       workspaceOpen: /工作区|Workspace/.test(bodyText),
@@ -126,6 +136,8 @@ try {
     ["markdown h2 = 16px", m.h2Font === "16px"],
     ["reading column max-width = 860px", m.colMaxW === "860px"],
     ["session row = 13px", m.sessFont === "13px"],
+    ["sidebar search input = 13px", m.searchFont === "13px"],
+    ["sidebar footer username = 13px", m.footerFont === "13px"],
     ["right panel Activity section present", m.activityOpen],
     ["right panel Workspace section present", m.workspaceOpen],
   ]
