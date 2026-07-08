@@ -33,13 +33,13 @@ const MARKDOWN_COMPONENTS: Components = {
       </CodeBlock>
     )
   },
-  p: ({ children }) => <p className="mb-4 last:mb-0 text-[var(--color-fg)]">{children}</p>,
-  ul: ({ children }) => <ul className="mb-4 ml-6 list-disc text-[var(--color-fg)]">{children}</ul>,
-  ol: ({ children }) => <ol className="mb-4 ml-6 list-decimal text-[var(--color-fg)]">{children}</ol>,
-  li: ({ children }) => <li className="mb-1 text-[var(--color-fg)]">{children}</li>,
-  h1: ({ children }) => <h1 className="mb-4 text-2xl font-bold text-[var(--color-fg)]">{children}</h1>,
-  h2: ({ children }) => <h2 className="mb-3 text-xl font-bold text-[var(--color-fg)]">{children}</h2>,
-  h3: ({ children }) => <h3 className="mb-2 text-lg font-semibold text-[var(--color-fg)]">{children}</h3>,
+  p: ({ children }) => <p className="mb-2.5 last:mb-0 text-[var(--color-fg)]">{children}</p>,
+  ul: ({ children }) => <ul className="mb-2.5 ml-5 list-disc text-[var(--color-fg)]">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2.5 ml-5 list-decimal text-[var(--color-fg)]">{children}</ol>,
+  li: ({ children }) => <li className="mb-0.5 text-[var(--color-fg)]">{children}</li>,
+  h1: ({ children }) => <h1 className="mt-5 mb-2.5 first:mt-0 text-lg font-bold text-[var(--color-fg)]">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-5 mb-2 first:mt-0 text-base font-semibold text-[var(--color-fg)]">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-4 mb-1.5 first:mt-0 text-sm font-semibold text-[var(--color-fg)]">{children}</h3>,
   blockquote: ({ children }) => (
     <blockquote className="border-l-4 border-[var(--color-border)] pl-4 italic text-[var(--color-fg-muted)]">
       {children}
@@ -74,7 +74,7 @@ const REMARK_PLUGINS = [remarkGfm]
 
 export const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert">
+    <div className="chat-md prose prose-sm max-w-none dark:prose-invert">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {text}
       </ReactMarkdown>

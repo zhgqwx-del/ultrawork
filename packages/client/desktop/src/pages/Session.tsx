@@ -203,7 +203,7 @@ export function SessionPage() {
           ref={scrollContainerRef}
           className={cn("relative flex flex-1 justify-center overflow-x-hidden overflow-y-auto scrollbar-soft")}
         >
-          <div ref={contentRef} className="w-full max-w-[800px] px-6 pt-4 pb-24">
+          <div ref={contentRef} className="w-full max-w-[860px] px-6 pt-4 pb-24">
             <MessageList
               messages={messages}
               isLoading={loading && !sending}
@@ -256,7 +256,7 @@ export function SessionPage() {
               onReply={replyPermission}
             />
           ) : (
-            <div className="w-full max-w-[800px] px-4 py-3">
+            <div className="w-full max-w-[860px] px-4 py-3">
               <ChatInput
                 value={input}
                 onChange={setInput}
@@ -316,7 +316,7 @@ export function SessionPage() {
 
       {/* Right Sidebar */}
       {rightOpen && (
-        <aside className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
+        <aside className="flex w-72 shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)]">
           <div onMouseDown={handleDrag} className="h-9 shrink-0" />
           <div className="flex-1 overflow-y-auto p-3 pt-0 scrollbar-soft">
             {planSteps.length > 0 && (
@@ -324,10 +324,10 @@ export function SessionPage() {
                 <PlanPanel steps={planSteps} active={isAgentActive} />
               </RightSidebarSection>
             )}
-            <RightSidebarSection title={t("session.rightSidebar.activity")}>
+            <RightSidebarSection title={t("session.rightSidebar.activity")} defaultOpen>
               <ActivityPanel messages={allMessages} />
             </RightSidebarSection>
-            <RightSidebarSection title={t("session.rightSidebar.workspace")}>
+            <RightSidebarSection title={t("session.rightSidebar.workspace")} defaultOpen>
               <WorkspacePanel directory={workspaceDir} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
             </RightSidebarSection>
             <RightSidebarSection title={t("session.rightSidebar.artifacts")}>
@@ -364,7 +364,7 @@ function RightSidebarSection({ title, placeholder, children, defaultOpen = false
     <div className="border-b border-[var(--color-border)] last:border-b-0">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 py-3 text-sm font-medium text-[var(--color-fg)] hover:text-[var(--color-fg)]"
+        className="flex w-full items-center gap-2 py-3 text-[13px] font-medium text-[var(--color-fg)] hover:text-[var(--color-fg)]"
       >
         {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
         {title}

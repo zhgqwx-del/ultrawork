@@ -149,7 +149,7 @@ export function LeftSidebar() {
       <aside
         className={cn(
           "flex h-full shrink-0 flex-col bg-[var(--sidebar-bg)] transition-all duration-300",
-          effectiveOpen ? "w-72" : isMacOS ? "w-[68px]" : "w-12"
+          effectiveOpen ? "w-64" : isMacOS ? "w-[68px]" : "w-12"
         )}
       >
         {effectiveOpen ? (
@@ -443,23 +443,22 @@ function SessionItem({
     }
   }
 
-  // Status icon based on actual session activity state
+  // Status icon: only the *running* spinner earns a permanent left slot — a
+  // completed check / idle bubble on every row just squeezed the title without
+  // adding information (mainstream agent sidebars show titles flush-left). When
+  // idle we render nothing, so the title starts at the row edge.
   const StatusIcon = () => {
     if (isRunning) {
       return <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
     }
-    // Has meaningful content (updated significantly after creation) = completed
-    if (session.time.updated - session.time.created > 5000) {
-      return <Check className="size-3.5 shrink-0 text-green-500" />
-    }
-    return <MessageSquare className="size-3.5 shrink-0" />
+    return null
   }
 
   if (isEditing) {
     return (
       <div
         className={cn(
-          "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
+          "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-[13px]",
           isActive
             ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
             : "bg-[var(--sidebar-accent-hover)] text-[var(--sidebar-fg)]"
@@ -506,7 +505,7 @@ function SessionItem({
     <div
       onClick={onNavigate}
       className={cn(
-        "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-150",
+        "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[13px] transition-all duration-150",
         isActive
           ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
           : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent-hover)] hover:text-[var(--sidebar-fg)]",

@@ -102,7 +102,7 @@ export function DelegateDock({ workspacePath, sessionId }: { workspacePath: stri
   }
 
   return (
-    <div className="w-full max-w-[800px] px-4 pt-2">
+    <div className="w-full max-w-[860px] px-4 pt-2">
       <div className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
         {active.map((record) => (
           <div key={record.id} className="flex items-center gap-2 text-xs">
