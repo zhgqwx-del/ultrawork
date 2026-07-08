@@ -23,7 +23,7 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
   const label = permissionLabels[request.permission] || request.permission
 
   return (
-    <div className="mx-auto w-full max-w-[800px] px-4 py-3">
+    <div className="mx-auto w-full max-w-[860px] px-4 py-3">
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         {/* Header */}
         <div className="mb-3 flex items-center gap-2">

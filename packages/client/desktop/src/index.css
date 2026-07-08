@@ -44,6 +44,10 @@
 
   /* Ring */
   --color-ring: #2563eb;
+
+  /* Chat answer body font size — the single knob for the reading column.
+     13px = 紧凑 (matches Cursor/Linear/JVS density camp); 14px = 舒适. */
+  --chat-body-size: 13px;
 }
 
 /* Dark mode colors */
@@ -152,6 +156,15 @@ body {
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Chat answer reading column: tighter than prose-sm defaults (line-height
+   1.71 → 1.55) and driven by the --chat-body-size knob. Element margins/heading
+   scale are set on the component map in message-parts.tsx; this governs the base
+   size + leading the whole column inherits. */
+.chat-md {
+  font-size: var(--chat-body-size);
+  line-height: 1.55;
 }
 
 /* Indeterminate progress bar animation */

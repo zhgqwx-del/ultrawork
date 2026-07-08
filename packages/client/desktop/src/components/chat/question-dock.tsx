@@ -66,7 +66,7 @@ export function QuestionDock({ request, onReply, onReject }: QuestionDockProps) 
   const hasSelection = answers[currentIndex].length > 0 || customInputs[currentIndex].trim().length > 0
 
   return (
-    <div className="mx-auto w-full max-w-[800px] px-4 py-3">
+    <div className="mx-auto w-full max-w-[860px] px-4 py-3">
       <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
         {/* Header */}
         <div className="mb-3 flex items-center gap-2">

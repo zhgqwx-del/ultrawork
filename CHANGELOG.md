@@ -12,6 +12,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **渠道/连接器品牌 icon + Settings 拆分（2026-07-08，同分支）**：新增 `brand-icons.tsx` 四家品牌圆形徽章（素材=simple-icons CC0 / 腾讯 TDesign MIT / Remix Apache-2.0 / 字节 Semi MIT，构建期内联零外链；负形 glyph 结构化强制白底盘保 dark mode），接入渠道卡/添加下拉/空态/QR 头部/办公 CLI 三卡（替换 `Building2`）等六落点；About 页脚加第三方商标指示性使用声明（en/zh）。`ChannelsSection` 从 Settings.tsx 拆出 `components/settings/channels-section.tsx`（逐字节验证零逻辑漂移）。
 - **setup.sh dev 启动前清理 1420 残留实例（2026-07-08）**：上一个 dev 实例存活时重跑 `./setup.sh --dev` 不再报 "Port 1420 already in use"——启动前扫 1420 监听者 + 本仓库 debug app 进程，先 TERM（触发 app 自身 sidecar 清理钩子）再 -9 兜底。
 
+### Changed
+- **UI 密度走查：会话页布局收紧 + 正文排版对齐生产力工具阵营（2026-07-08，分支 `feat/ui-density-pass`）**：对标 JVS/竞品 + 调研主流桌面 agent（ChatGPT/Claude/Perplexity/Cursor/Cline/Cherry Studio/Linear/Raycast/Notion）后的六项收紧——① 左栏 `w-72`→`w-64`(288→256)、右栏 `w-80`→`w-72`(320→288)；② 右栏「执行活动/工作区」改**默认展开**（原全折叠致 320px 面板空置）；③ 正文列 800→**860** + 外壳留白收薄（`rounded-2xl`→`xl`、`my-2 mr-2`→`1.5`），连带三个同槽 dock（permission/question/delegate）800→860 保持左缘对齐；④ 会话项**去掉常驻状态图标**（完成绿勾/空态消息气泡），仅执行中保留转圈，标题一律贴左（主流 agent 侧栏惯例）；⑤ Chrome 字号（侧栏会话行 + 右栏分区头）14→**13px**；⑥ 正文阅读列引入 `--chat-body-size` 单一旋钮（默认 **13px**=紧凑/生产力工具阵营，14px=舒适）+ `.chat-md` 行高 1.71→**1.55**，markdown 标题层级下调（h2 20→16px、h1 24→18px、列表/段落间距收紧）。字体族本就是三平台系统栈（未改）。**诊断修正记录**：初判"正文别缩"基于消费级聊天（ChatGPT/Claude 15-16px），实测参考产品正文行距 ~24px vs 本项目 ~37px（逻辑 px）后修正到密度阵营的 13px。**验证**：desktop 单测 339/339 · 全仓 typecheck 8/8 · 多角度复审修 1 真实缺陷（dock 宽度未同步）· 新增真机走查 `e2e/ui-density-walkthrough.e2e.ts`（真 opencode+Vite+Chrome，9/9 断言：computed 13px/20.15px 行高/16px h2/256+288 侧栏/860 列）· 亮暗双主题渲染 · 纯 renderer 改动三平台零风险。
+
 ## [0.2.0] - 2026-07-07
 
 > v0.1.0 首发后约 4 个月的开发累积（原 `[Unreleased]` 整段切版）。核心主线：Agent OS 多 agent（ACP/connector/orchestrator/Team）、知识库 RAG、内置技能体系（打包→遮蔽→zip 分发）、渐进式工具披露、跨平台 mac/win/linux、Provider 全局化+软刷新、任务规划面板、大量稳定性修复（idle 看门狗/会话切换一致性/回合终态判定）。
