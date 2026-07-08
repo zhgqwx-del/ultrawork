@@ -2,7 +2,7 @@
 // (2026-07-08): mock-llm-markdown → real opencode → Vite → headless Chrome, then
 // assert the REAL computed styles of the shipped components (not a mock DOM):
 //   · left sidebar  = 256px (w-64)      · right sidebar = 288px (w-72)
-//   · chat body     = 13px (.chat-md)   · chat leading  ≈ 20px (13 × 1.55)
+//   · chat body     = 14px (.chat-md)   · chat leading  ≈ 21.7px (14 × 1.55)
 //   · markdown h2   = 16px (text-base)  · reading column max-width = 860px
 //   · session row   = 13px
 // Also screenshots the live app to scratchpad for eyeball review.
@@ -121,8 +121,8 @@ try {
   const checks: Array<[string, boolean]> = [
     ["left sidebar = 256px", m.leftW === 256],
     ["right sidebar = 288px", m.rightW === 288],
-    ["chat body = 13px", m.chatFont === "13px"],
-    ["chat leading ≈ 20px (13×1.55)", !!m.chatLH && m.chatLH.startsWith("20")],
+    ["chat body = 14px", m.chatFont === "14px"],
+    ["chat leading ≈ 21.7px (14×1.55)", !!m.chatLH && m.chatLH.startsWith("21")],
     ["markdown h2 = 16px", m.h2Font === "16px"],
     ["reading column max-width = 860px", m.colMaxW === "860px"],
     ["session row = 13px", m.sessFont === "13px"],
