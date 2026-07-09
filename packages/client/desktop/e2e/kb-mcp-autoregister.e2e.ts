@@ -57,14 +57,15 @@ const checks: string[] = []
 let verdict = "INCOMPLETE"
 try {
   console.log("=== boot knowledge-sidecar + seed IMA source ===")
-  spawn("kb", [KB_SIDECAR], env)
-  await poll("kb-sidecar", async () => (await fetch(`http://127.0.0.1:${KB}/kb/sources`)).ok)
+  // ULTRAWORK_SIDECAR_PASSWORD: the knowledge sidecar now requires Basic auth (029 ④b).
+  spawn("kb", [KB_SIDECAR], { ...env, ULTRAWORK_SIDECAR_PASSWORD: PW })
+  await poll("kb-sidecar", async () => (await fetch(`http://127.0.0.1:${KB}/kb/sources`, { headers: { authorization: auth } })).ok)
   const seed = await fetch(`http://127.0.0.1:${KB}/kb/sources`, {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { "content-type": "application/json", authorization: auth },
     body: JSON.stringify({ type: "ima", name: "Test IMA Notes", config: { module: "notes" } }),
   })
   if (!seed.ok) throw new Error(`seed IMA source failed: ${seed.status} ${await seed.text()}`)
-  const srcList = await (await fetch(`http://127.0.0.1:${KB}/kb/sources`)).json() as { sources: unknown[] }
+  const srcList = await (await fetch(`http://127.0.0.1:${KB}/kb/sources`, { headers: { authorization: auth } })).json() as { sources: unknown[] }
   if (!srcList.sources?.length) throw new Error("seeded source not present in /kb/sources")
   checks.push(`seeded IMA source (no folder, no MCP registration) ✓ (sources=${srcList.sources.length})`)
 
@@ -89,6 +90,9 @@ try {
       // no-op here — the assertion is the RUNTIME registration (POST /mcp), not
       // the persisted file (which the Rust command would write in the app).
       get_sidecar_path: () => kb, write_mcp_config: () => null, read_mcp_config: () => ({}),
+      // The knowledge sidecar requires Basic auth; the renderer reads the credential
+      // from the host at startup (sidecar-auth.ts).
+      get_sidecar_credentials: () => ({ username: "opencode", password: pw }),
     }
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }

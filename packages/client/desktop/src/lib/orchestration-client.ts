@@ -7,6 +7,7 @@
 
 import { createSseTransport } from "@agent/connector"
 import { acpBaseUrl } from "@/lib/sidecar-ports"
+import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
 import type {
   DelegateEvent,
   DelegateRecord,
@@ -29,24 +30,27 @@ async function expectOk<T>(res: Response): Promise<T> {
 export async function createRun(recipe: PipelineRecipe): Promise<OrchestrationRun> {
   const res = await fetch(`${acpBaseUrl()}/orchestration/runs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify({ recipe }),
   })
   return (await expectOk<{ run: OrchestrationRun }>(res)).run
 }
 
 export async function listRuns(): Promise<OrchestrationRun[]> {
-  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ runs: OrchestrationRun[] }>(res)).runs
 }
 
 export async function getRun(runId: string): Promise<OrchestrationRun> {
-  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ run: OrchestrationRun }>(res)).run
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    headers: sidecarAuthHeaders(),
+  })
   await expectOk<{ ok: boolean }>(res)
 }
 
@@ -66,6 +70,7 @@ interface OrchestrationFrame {
 function subscribeOrchestrationEvents<T>(url: string, handler: (event: T) => void): () => void {
   const transport = createSseTransport<OrchestrationFrame>({
     url,
+    headers: sidecarAuthHeaders,
     retry: { baseDelayMs: 1000, maxDelayMs: 30_000 },
     onEvent: (event) => {
       if (event.type === "heartbeat") return
@@ -90,7 +95,7 @@ export function subscribeRunEvents(runId: string, handler: (event: OrchestratorE
 // --- agent-driven delegates (ADR-031 ②, DelegateDock) ---
 
 export async function listDelegates(): Promise<DelegateRecord[]> {
-  const res = await fetch(`${acpBaseUrl()}/orchestration/delegates`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/delegates`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ delegates: DelegateRecord[] }>(res)).delegates
 }
 
@@ -135,7 +140,7 @@ export async function createTeamSession(opts: {
 }): Promise<TeamSessionEntry> {
   const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify(opts),
   })
   return (await expectOk<{ session: TeamSessionEntry }>(res)).session
@@ -143,13 +148,14 @@ export async function createTeamSession(opts: {
 
 export async function listTeamSessions(workspace?: string): Promise<TeamSessionEntry[]> {
   const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
-  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ sessions: TeamSessionEntry[] }>(res)).sessions
 }
 
 export async function deleteTeamSession(id: string): Promise<void> {
   const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: sidecarAuthHeaders(),
   })
   await expectOk<{ ok: boolean }>(res)
 }
@@ -162,7 +168,7 @@ export async function replyAcpPermission(
 ): Promise<void> {
   const res = await fetch(`${acpBaseUrl()}/acp/session/${encodeURIComponent(sessionId)}/permission`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify({ permissionId, reply }),
   })
   await expectOk<{ ok: boolean }>(res)

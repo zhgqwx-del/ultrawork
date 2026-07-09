@@ -26,8 +26,15 @@ export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Res
 
 export interface ShimDeps {
   baseUrl: string
+  /** `Authorization: Basic ...`, absent when running without a host credential. */
+  authHeader?: string
   fetchImpl?: FetchLike
   keepaliveMs?: number
+}
+
+/** Merge the shim's auth header (if any) into a request's headers. */
+function withAuth(deps: ShimDeps, headers: Record<string, string> = {}): Record<string, string> {
+  return deps.authHeader ? { ...headers, Authorization: deps.authHeader } : headers
 }
 
 /**
@@ -65,7 +72,17 @@ export function shimDepsFromEnv(
   // Env wins: the ACP sidecar knows its own port for certain.
   const fromEnv = env.ACP_CLIENT_PORT ? Number(env.ACP_CLIENT_PORT) : undefined
   const port = fromEnv ?? acpPortFromPortsRegistry(readFile) ?? 4099
-  return { baseUrl: `http://127.0.0.1:${port}` }
+
+  // The ACP sidecar requires Basic auth. Whichever process spawned this shim — the
+  // ACP sidecar itself or opencode — was given the credential by the Tauri host and
+  // we inherit it. Absent (standalone run), send nothing and let the server 401.
+  const password = env.ULTRAWORK_SIDECAR_PASSWORD
+  const username = env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode"
+  const authHeader = password
+    ? `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
+    : undefined
+
+  return { baseUrl: `http://127.0.0.1:${port}`, authHeader }
 }
 
 export interface ToolResultShape {
@@ -116,7 +133,7 @@ export async function callDelegate(
   try {
     const response = await doFetch(`${deps.baseUrl}/orchestration/delegate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: withAuth(deps, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         agentId: input.agentId,
         task: input.task,
@@ -157,7 +174,7 @@ export async function callListAgents(deps: ShimDeps, cwd?: string): Promise<Tool
     ? `${deps.baseUrl}/orchestration/agents?workspace=${encodeURIComponent(cwd)}`
     : `${deps.baseUrl}/orchestration/agents`
   try {
-    const response = await doFetch(url)
+    const response = await doFetch(url, { headers: withAuth(deps) })
     const body = (await response.json().catch(() => null)) as { agents?: unknown[] } | null
     if (!response.ok || !body?.agents) {
       return textResult(`list_agents failed (HTTP ${response.status})`, true)

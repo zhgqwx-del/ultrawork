@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
+import { basicAuth } from "hono/basic-auth"
 import { streamSSE } from "hono/streaming"
 import { basename } from "node:path"
 import type { Indexer } from "./indexer"
@@ -16,7 +17,18 @@ export interface AppDeps {
   watcher?: FileWatcher
 }
 
-export function createApp(deps: AppDeps): Hono {
+/** Per-install credentials the Tauri host generates and hands to every sidecar. */
+export interface SidecarAuth {
+  username: string
+  password: string
+}
+
+/**
+ * `auth` is required rather than optional so a caller must state its intent.
+ * `null` means "no authentication" and is only for unit tests — a loopback port
+ * is not a security boundary, any local process can reach it (ADR-028 / 029 §9).
+ */
+export function createApp(deps: AppDeps, auth: SidecarAuth | null): Hono {
   const { indexer, search, store, watcher } = deps
   const app = new Hono()
 
@@ -42,6 +54,14 @@ export function createApp(deps: AppDeps): Hono {
       ],
     }),
   )
+
+  // After cors(): hono's cors middleware answers the preflight OPTIONS itself and
+  // never calls next(), so the browser's unauthenticated preflight is not rejected.
+  // Health is behind auth too — `prepare_port` treats a healthy responder as its own
+  // sidecar and reuses it, so answering /kb/health must prove the credential.
+  if (auth) {
+    app.use("/*", basicAuth({ username: auth.username, password: auth.password }))
+  }
 
   // Health check
   app.get("/kb/health", (c) => c.json({ status: "ok" }))

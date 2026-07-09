@@ -5,6 +5,7 @@ import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
 import { knowledgeBaseUrl } from "@/lib/sidecar-ports"
+import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
 import { createSseTransport, type SseTransport } from "@agent/connector"
 
 const MCP_NAME = "knowledge-base"
@@ -67,8 +68,8 @@ interface KBProgressEvent {
 
 async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${knowledgeBaseUrl()}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders(), ...options?.headers },
   })
   if (!resp.ok) {
     const body = await resp.text().catch(() => "")
@@ -135,6 +136,7 @@ export function useKnowledgeBase() {
 
     const transport = createSseTransport<KBProgressEvent>({
       url: `${knowledgeBaseUrl()}/sources/events`,
+      headers: sidecarAuthHeaders,
       retry: { baseDelayMs: 5000, maxDelayMs: 5000 },
       onEvent: (event, eventName) => {
         applyStatus(event)

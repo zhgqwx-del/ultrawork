@@ -50,12 +50,25 @@ export interface ACPSidecarSession {
 }
 
 export class ACPHttpClient {
-  constructor(private baseUrl: string = ACP_DEFAULT_BASE_URL) {}
+  /**
+   * `headers` is evaluated per request so the credential can be resolved after
+   * this client is constructed (the desktop startup gate fills it in). The ACP
+   * sidecar requires Basic auth on every route, including /acp/health.
+   */
+  constructor(
+    private baseUrl: string = ACP_DEFAULT_BASE_URL,
+    private headers: () => Record<string, string> = () => ({}),
+  ) {}
+
+  /** Auth headers for the SSE transports, which build their own requests. */
+  authHeaders(): Record<string, string> {
+    return this.headers()
+  }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: { "Content-Type": "application/json", ...this.headers(), ...init?.headers },
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
@@ -66,7 +79,10 @@ export class ACPHttpClient {
 
   async health(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/acp/health`, { signal: AbortSignal.timeout(2000) })
+      const res = await fetch(`${this.baseUrl}/acp/health`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(2000),
+      })
       return res.ok
     } catch {
       return false
@@ -120,9 +136,9 @@ export class ACPHttpClient {
    * events carry `clientSessionId`, so the frontend needs no id translation.
    */
   async ensureSession(agentId: string, cwd: string, clientSessionId: string): Promise<void> {
-    const existing = await fetch(
-      `${this.baseUrl}/acp/session/${encodeURIComponent(clientSessionId)}`,
-    ).catch(() => null)
+    const existing = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(clientSessionId)}`, {
+      headers: this.headers(),
+    }).catch(() => null)
     if (existing?.ok) return
     await this.createSession(agentId, cwd, clientSessionId)
   }
@@ -132,7 +148,9 @@ export class ACPHttpClient {
    * persistence lost) resolve to an empty list.
    */
   async fetchMessages(sessionId: string): Promise<SendMessageResponse[]> {
-    const res = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/messages`)
+    const res = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/messages`, {
+      headers: this.headers(),
+    })
     if (res.status === 404) return []
     if (!res.ok) throw new Error(`ACP request failed: ${res.status}`)
     const body = (await res.json()) as { messages: SendMessageResponse[] }
@@ -145,7 +163,9 @@ export class ACPHttpClient {
    * sidecar resolve to an empty plan (the panel just shows nothing).
    */
   async fetchPlan(sessionId: string): Promise<PlanStep[]> {
-    const res = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/plan`)
+    const res = await fetch(`${this.baseUrl}/acp/session/${encodeURIComponent(sessionId)}/plan`, {
+      headers: this.headers(),
+    })
     if (res.status === 404) return []
     if (!res.ok) throw new Error(`ACP request failed: ${res.status}`)
     const body = (await res.json()) as { entries?: PlanStep[] }

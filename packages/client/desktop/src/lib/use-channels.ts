@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n-context"
 import { gatewayBaseUrl } from "@/lib/sidecar-ports"
+import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
 import type {
   ChannelStatus,
   ChannelConfig,
@@ -12,8 +13,8 @@ import type {
 
 async function gatewayFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${gatewayBaseUrl()}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders(), ...options?.headers },
   })
   if (!resp.ok) {
     const body = await resp.text().catch(() => "")

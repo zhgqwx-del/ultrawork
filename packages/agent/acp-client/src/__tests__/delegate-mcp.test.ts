@@ -212,4 +212,57 @@ describe("delegateShimCommand", () => {
     // may exist, so only assert the bun path itself is never returned.
     expect(delegateShimCommand("/Users/x/.bun/bin/bun")).not.toBe("/Users/x/.bun/bin/bun")
   })
+  // The ACP sidecar requires Basic auth (029 ④b). The shim inherits the credential
+  // from whichever process spawned it — the ACP sidecar, or opencode.
+  describe("auth header", () => {
+    const noRegistry = () => { throw new Error("ENOENT") }
+
+    it("builds a Basic header from the inherited credential", () => {
+      const env = { ULTRAWORK_SIDECAR_PASSWORD: "s3cret" } as NodeJS.ProcessEnv
+      const deps = shimDepsFromEnv(env, noRegistry)
+      expect(deps.authHeader).toBe("Basic " + Buffer.from("opencode:s3cret").toString("base64"))
+    })
+
+    it("honours a non-default username", () => {
+      const env = { ULTRAWORK_SIDECAR_PASSWORD: "s3cret", ULTRAWORK_SIDECAR_USERNAME: "alice" } as NodeJS.ProcessEnv
+      expect(shimDepsFromEnv(env, noRegistry).authHeader).toBe("Basic " + Buffer.from("alice:s3cret").toString("base64"))
+    })
+
+    it("sends no header when no credential was inherited", () => {
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, noRegistry).authHeader).toBeUndefined()
+    })
+
+    it("attaches the header to a delegate call", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init.headers
+        return jsonResponse({ result: { status: "completed", sessionId: "s", deliverable: "d", tokens: {} } })
+      }) as unknown as FetchLike
+      await callDelegate({ baseUrl: "http://127.0.0.1:4099", authHeader: "Basic abc", fetchImpl }, {
+        agentId: "acp:claude", task: "t", cwd: "/w",
+      })
+      expect(captured?.Authorization).toBe("Basic abc")
+    })
+
+    it("attaches the header to a list_agents call", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init?.headers
+        return jsonResponse({ agents: [] })
+      }) as unknown as FetchLike
+      await callListAgents({ baseUrl: "http://127.0.0.1:4099", authHeader: "Basic abc", fetchImpl })
+      expect(captured?.Authorization).toBe("Basic abc")
+    })
+
+    // The negative direction: a shim that always sent some header would pass the above.
+    it("omits Authorization entirely when there is no credential", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init?.headers
+        return jsonResponse({ agents: [] })
+      }) as unknown as FetchLike
+      await callListAgents({ baseUrl: "http://127.0.0.1:4099", fetchImpl })
+      expect(captured?.Authorization).toBeUndefined()
+    })
+  })
 })

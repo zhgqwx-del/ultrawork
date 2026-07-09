@@ -11,6 +11,7 @@ import { SSEProvider } from "./lib/sse-context"
 import { AgentProvider } from "./lib/agent-context"
 import { router } from "./router"
 import { loadSidecarPorts } from "./lib/sidecar-ports"
+import { loadSidecarCredentials } from "./lib/sidecar-auth"
 import "./index.css"
 
 function ThemedToaster() {
@@ -27,11 +28,11 @@ function ThemedToaster() {
   )
 }
 
-// Startup gate: sidecar ports are resolved before the first render, so every
-// base-URL helper downstream stays synchronous and no provider has to model a
-// "ports not known yet" state. `loadSidecarPorts` never rejects — outside Tauri
-// it falls back to the preferred ports — so this cannot wedge the boot.
-loadSidecarPorts().then(() => {
+// Startup gate: sidecar ports AND credentials are resolved before the first
+// render, so every base-URL / auth-header helper downstream stays synchronous and
+// no provider has to model a "not known yet" state. Neither loader rejects —
+// outside Tauri they fall back — so this cannot wedge the boot.
+Promise.all([loadSidecarPorts(), loadSidecarCredentials()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <ConfigProvider>

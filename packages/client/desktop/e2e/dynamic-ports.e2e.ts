@@ -93,8 +93,12 @@ const env = {
   HOME: tmp,
   XDG_CONFIG_HOME: join(tmp, ".config"),
   XDG_DATA_HOME: join(tmp, ".local/share"),
+  // Inbound Basic auth for gateway/knowledge/acp (029 阶段 ④b). The Tauri host
+  // injects this; here we play the host.
+  ULTRAWORK_SIDECAR_PASSWORD: PW,
 }
 const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
+const H = { authorization: auth }
 const opencodeUrl = `http://127.0.0.1:${DYN.opencode}`
 
 async function main() {
@@ -130,7 +134,7 @@ async function main() {
     OPENCODE_BASE_URL: opencodeUrl,
   })
   await poll(
-    async () => (await fetch(`http://127.0.0.1:${DYN.gateway}/channel/health`)).ok,
+    async () => (await fetch(`http://127.0.0.1:${DYN.gateway}/channel/health`, { headers: H })).ok,
     60_000,
     "gateway health",
   )
@@ -140,14 +144,14 @@ async function main() {
   // port and not just a health stub. (Whether the gateway *reaches* opencode is not
   // observable without a live IM account — that link is covered by the
   // getOpencodeBaseUrl unit test in the gateway package.)
-  const channels = await fetch(`http://127.0.0.1:${DYN.gateway}/channel`)
+  const channels = await fetch(`http://127.0.0.1:${DYN.gateway}/channel`, { headers: H })
   if (!channels.ok) throw new Error(`gateway GET /channel → ${channels.status}`)
   ok(`gateway serves GET /channel on ${DYN.gateway}`)
 
   console.log("\n=== 3. knowledge KB_PORT ===")
   spawn([KB], { ...env, KB_PORT: String(DYN.knowledge) })
   await poll(
-    async () => (await fetch(`http://127.0.0.1:${DYN.knowledge}/kb/health`)).ok,
+    async () => (await fetch(`http://127.0.0.1:${DYN.knowledge}/kb/health`, { headers: H })).ok,
     60_000,
     "knowledge health",
   )
@@ -160,8 +164,23 @@ async function main() {
     OPENCODE_SERVER_PASSWORD: PW,
     OPENCODE_BASE_URL: opencodeUrl,
   })
-  await poll(async () => (await fetch(`http://127.0.0.1:${DYN.acp}/acp/health`)).ok, 60_000, "acp health")
+  await poll(async () => (await fetch(`http://127.0.0.1:${DYN.acp}/acp/health`, { headers: H })).ok, 60_000, "acp health")
   ok(`acp answers /acp/health on ${DYN.acp}`)
+
+  console.log("\n=== 4b. every sidecar rejects an unauthenticated request ===")
+  // Both directions: the health checks above already prove the credential is accepted.
+  // Without this, a server that dropped its auth middleware would still pass them all.
+  for (const [name, url] of [
+    ["gateway", `http://127.0.0.1:${DYN.gateway}/channel/health`],
+    ["knowledge", `http://127.0.0.1:${DYN.knowledge}/kb/health`],
+    ["acp", `http://127.0.0.1:${DYN.acp}/acp/health`],
+  ] as const) {
+    const anon = await fetch(url)
+    if (anon.status !== 401) throw new Error(`${name} answered ${anon.status} without credentials, expected 401`)
+    const wrong = await fetch(url, { headers: { authorization: "Basic " + Buffer.from("opencode:wrong").toString("base64") } })
+    if (wrong.status !== 401) throw new Error(`${name} answered ${wrong.status} to a wrong password, expected 401`)
+  }
+  ok("gateway/knowledge/acp all 401 on missing and on wrong credentials")
 
   console.log("\n=== 5. no sidecar fell back to a compile-time port ===")
   for (const port of PREFERRED) {
@@ -173,6 +192,8 @@ async function main() {
 
   console.log("\n=== 6. delegate-mcp finds the ACP port via ports.json (no env) ===")
   // Exactly how opencode spawns it: our binary, `delegate-mcp`, and NO ACP_CLIENT_PORT.
+  // It DOES inherit ULTRAWORK_SIDECAR_PASSWORD (opencode gets it from the host), which
+  // is how it authenticates to the now-protected /orchestration/*.
   const shimEnv: Record<string, string> = { ...env }
   delete (shimEnv as Record<string, string | undefined>).ACP_CLIENT_PORT
   const shim = Bun.spawn([ACP, "delegate-mcp"], {

@@ -15,6 +15,7 @@ import { useConfig } from "./config-context"
 import { useWorkspace } from "./workspace-context"
 import { resolveApiBaseUrl } from "./config"
 import { acpBaseUrl, sidecarPortsVersion, subscribeSidecarPorts } from "./sidecar-ports"
+import { sidecarAuthHeaders } from "./sidecar-auth"
 
 const BINDINGS_STORAGE_KEY = "uw.acp.sessionAgents"
 
@@ -72,7 +73,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         },
       }),
     )
-    c.registerBackend(new ACPBackend({ baseUrl: acpBaseUrl() }))
+    c.registerBackend(new ACPBackend({ baseUrl: acpBaseUrl(), headers: sidecarAuthHeaders }))
     return c
   }, [config.apiBaseUrl, config.apiUsername, config.apiPassword, workspacePath, portsVersion])
 

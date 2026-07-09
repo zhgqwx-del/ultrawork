@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { basicAuth } from "hono/basic-auth";
 import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
 import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig, WeComChannelConfig, FeishuChannelConfig } from "./types.js";
@@ -21,7 +22,22 @@ function maskConfig(config: ChannelConfig): ChannelConfig {
   return masked as unknown as ChannelConfig;
 }
 
-export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hono {
+/** Per-install credentials the Tauri host generates and hands to every sidecar. */
+export interface SidecarAuth {
+  username: string;
+  password: string;
+}
+
+/**
+ * `auth` is required rather than optional so a caller must state its intent.
+ * `null` means "no authentication" and is only for unit tests — a loopback port
+ * is not a security boundary, any local process can reach it (ADR-028 / 029 §9).
+ */
+export function createApp(
+  manager: ChannelManager,
+  qrRegistry: QRRegistry | undefined,
+  auth: SidecarAuth | null,
+): Hono {
   const app = new Hono();
 
   // Allow cross-origin requests from Tauri webview and dev server only
@@ -36,6 +52,14 @@ export function createApp(manager: ChannelManager, qrRegistry?: QRRegistry): Hon
       ],
     }),
   );
+
+  // After cors(): hono's cors middleware answers the preflight OPTIONS itself and
+  // never calls next(), so the browser's unauthenticated preflight is not rejected.
+  // Health is behind auth too — `prepare_port` treats a healthy responder as its own
+  // sidecar and reuses it, so answering /channel/health must prove the credential.
+  if (auth) {
+    app.use("/*", basicAuth({ username: auth.username, password: auth.password }));
+  }
 
   // Health check
   app.get("/channel/health", (c) => c.json({ status: "ok" }));

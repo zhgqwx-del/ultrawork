@@ -26,7 +26,7 @@ let app: ReturnType<typeof createApp>
 beforeEach(() => {
   vi.clearAllMocks()
   manager = createMockManager()
-  app = createApp(manager)
+  app = createApp(manager, undefined, null)
 })
 
 async function fetchApp(path: string, init?: RequestInit) {
@@ -275,7 +275,7 @@ function makeQRApp() {
     poll: vi.fn(async () => ({ state: "pending" as const })),
   }
   registry.registerProvider(provider)
-  return { app: createApp(manager, registry), registry }
+  return { app: createApp(manager, registry, null), registry }
 }
 
 describe("QR login routes", () => {
@@ -352,5 +352,64 @@ describe("GET /channel secret masking", () => {
     expect(body.configs[1].botToken).toBe("")
     // original objects untouched (masking must copy)
     expect((configs[0] as { clientSecret: string }).clientSecret).toBe("SECRET")
+  })
+})
+
+// Inbound Basic auth (029 阶段 ④b). A loopback port is not a boundary — any local
+// process can reach it — so every route, health included, must prove the credential.
+describe("inbound Basic auth", () => {
+  const AUTH = { username: "opencode", password: "s3cret" }
+  const header = (u: string, p: string) => ({ authorization: "Basic " + btoa(`${u}:${p}`) })
+
+  function authedApp() {
+    return createApp(createMockManager(), undefined, AUTH)
+  }
+
+  it("rejects a request with no credentials", async () => {
+    const res = await authedApp().request("/channel/health")
+    expect(res.status).toBe(401)
+  })
+
+  it.each([
+    ["a wrong password", "opencode", "wrong"],
+    ["a wrong username", "mallory", "s3cret"],
+  ])("rejects %s", async (_label, user, pass) => {
+    const res = await authedApp().request("/channel/health", { headers: header(user, pass) })
+    expect(res.status).toBe(401)
+  })
+
+  // The positive direction: without it, an `app.use(() => 401)` would pass the above.
+  it("accepts the correct credentials", async () => {
+    const res = await authedApp().request("/channel/health", { headers: header("opencode", "s3cret") })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: "ok" })
+  })
+
+  it("protects data routes, not just health", async () => {
+    expect((await authedApp().request("/channel")).status).toBe(401)
+    const ok = await authedApp().request("/channel", { headers: header("opencode", "s3cret") })
+    expect(ok.status).toBe(200)
+  })
+
+  // hono's cors() answers the preflight itself and never calls next(), so the
+  // browser's unauthenticated OPTIONS must not be rejected — otherwise every
+  // cross-origin request from the Tauri webview fails before it is even sent.
+  it("lets an unauthenticated CORS preflight through", async () => {
+    const res = await authedApp().request("/channel", {
+      method: "OPTIONS",
+      headers: {
+        origin: "tauri://localhost",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "authorization,content-type",
+      },
+    })
+    expect(res.status).not.toBe(401)
+    expect(res.headers.get("access-control-allow-origin")).toBe("tauri://localhost")
+    expect(res.headers.get("access-control-allow-headers")).toContain("authorization")
+  })
+
+  it("serves everything unauthenticated when auth is null (unit-test mode)", async () => {
+    const res = await createApp(createMockManager(), undefined, null).request("/channel/health")
+    expect(res.status).toBe(200)
   })
 })

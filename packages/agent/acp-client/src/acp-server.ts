@@ -2,20 +2,50 @@
 
 import { Hono } from "hono"
 import { cors } from "hono/cors"
+import { basicAuth } from "hono/basic-auth"
 import { streamSSE } from "hono/streaming"
 import type { ACPManager } from "./acp-manager.js"
 
 const HEARTBEAT_MS = 15_000
 
-export function createServer(manager: ACPManager): Hono {
+/** Per-install credentials the Tauri host generates and hands to every sidecar. */
+export interface SidecarAuth {
+  username: string
+  password: string
+}
+
+/**
+ * `auth` is required rather than optional so a caller must state its intent.
+ * `null` means "no authentication" and is only for unit tests — a loopback port
+ * is not a security boundary, any local process can reach it (ADR-028 / 029 §9).
+ */
+export function createServer(manager: ACPManager, auth: SidecarAuth | null): Hono {
   const app = new Hono()
 
   app.use(
     "*",
     cors({
-      origin: ["tauri://localhost", "https://tauri.localhost", "http://localhost:1420"],
+      // `http://tauri.localhost` is the Windows production fallback the other two
+      // sidecars already allow.
+      origin: [
+        "tauri://localhost",
+        "https://tauri.localhost",
+        "http://tauri.localhost",
+        "http://localhost:1420",
+      ],
     }),
   )
+
+  // After cors(): hono's cors middleware answers the preflight OPTIONS itself and
+  // never calls next(), so the browser's unauthenticated preflight is not rejected.
+  // Health is behind auth too — `prepare_port` treats a healthy responder as its own
+  // sidecar and reuses it, so answering /acp/health must prove the credential.
+  //
+  // This covers /orchestration/* as well: index.ts mounts those routes onto this
+  // same app, and `app.use("*")` matches by path at request time.
+  if (auth) {
+    app.use("*", basicAuth({ username: auth.username, password: auth.password }))
+  }
 
   app.get("/acp/health", (c) =>
     c.json({

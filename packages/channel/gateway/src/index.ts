@@ -1,6 +1,6 @@
 import { ChannelManager } from "./channel-manager.js";
 import { Bridge } from "./bridge.js";
-import { createApp } from "./gateway-server.js";
+import { createApp, type SidecarAuth } from "./gateway-server.js";
 import { QRRegistry } from "./qr-registry.js";
 import { createDingTalkAdapter } from "./adapters/dingtalk/index.js";
 import { createDingTalkQRProvider } from "./adapters/dingtalk/qr-provider.js";
@@ -13,6 +13,22 @@ import { createFeishuAdapter, createFeishuQRProvider } from "./adapters/feishu/i
 // a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
 // — with port 0 the kernel picks and only the server knows.
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT ?? 4097);
+
+/**
+ * Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
+ * per-install random password). Fail fast rather than start unauthenticated:
+ * silently serving an unprotected /channel/* to every local process is worse
+ * than not starting, and the host always sets this.
+ */
+function requireSidecarAuth(name: string): SidecarAuth {
+  const password = process.env.ULTRAWORK_SIDECAR_PASSWORD;
+  if (!password) {
+    throw new Error(
+      `ULTRAWORK_SIDECAR_PASSWORD is not set — the Tauri host must spawn ${name} with this env var`,
+    );
+  }
+  return { username: process.env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode", password };
+}
 
 async function main() {
   console.log("Channel Gateway starting...");
@@ -44,7 +60,7 @@ async function main() {
   qrRegistry.registerProvider(createWeComQRProvider());
   qrRegistry.registerProvider(createFeishuQRProvider());
 
-  const app = createApp(manager, qrRegistry);
+  const app = createApp(manager, qrRegistry, requireSidecarAuth("channel-gateway"));
 
   const server = Bun.serve({
     hostname: "127.0.0.1",

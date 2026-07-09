@@ -5275,6 +5275,7 @@ pub fn run() {
             // actually resolves at runtime.
             let oc_path = rich_path();
             let oc_password = creds.password.clone();
+            let oc_username = creds.username.clone();
             if let Err(e) = start_sidecar(
                 &app.handle().clone(),
                 "opencode-server",
@@ -5287,6 +5288,10 @@ pub fn run() {
                         ("OPENCODE_SERVER_PASSWORD".into(), oc_password.clone()),
                         ("OPENCODE_APP_NAME".into(), OPENCODE_APP_NAME.into()),
                         ("PATH".into(), oc_path.clone()),
+                        // Not for opencode itself — inherited by the delegate-mcp stdio
+                        // shims it spawns, which must authenticate to the ACP sidecar.
+                        ("ULTRAWORK_SIDECAR_USERNAME".into(), oc_username.clone()),
+                        ("ULTRAWORK_SIDECAR_PASSWORD".into(), oc_password.clone()),
                     ]
                 },
             ) {
@@ -5315,17 +5320,21 @@ pub fn run() {
             let gw_handle = app.handle().clone();
             let gw_password = creds.password.clone();
             let gw_opencode_url = opencode_url.clone();
+            let gw_username = creds.username.clone();
+            let gw_auth_header = auth_header.clone();
             std::thread::spawn(move || {
                 if let Err(e) = start_sidecar(
                     &gw_handle,
                     "channel-gateway",
                     GATEWAY_PORT,
                     "/channel/health",
-                    None,
+                    Some(&gw_auth_header),
                     &|_port| vec![],
                     &|port| {
                         vec![
                             ("OPENCODE_SERVER_PASSWORD".into(), gw_password.clone()),
+                            ("ULTRAWORK_SIDECAR_USERNAME".into(), gw_username.clone()),
+                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), gw_password.clone()),
                             ("GATEWAY_PORT".into(), port.to_string()),
                             ("OPENCODE_BASE_URL".into(), gw_opencode_url.clone()),
                         ]
@@ -5342,15 +5351,24 @@ pub fn run() {
 
             // Start Knowledge Sidecar in background (non-critical, don't block UI)
             let kb_handle = app.handle().clone();
+            let kb_username = creds.username.clone();
+            let kb_password = creds.password.clone();
+            let kb_auth_header = auth_header.clone();
             std::thread::spawn(move || {
                 if let Err(e) = start_sidecar(
                     &kb_handle,
                     "knowledge-sidecar",
                     KNOWLEDGE_PORT,
                     "/kb/health",
-                    None,
+                    Some(&kb_auth_header),
                     &|_port| vec![],
-                    &|port| vec![("KB_PORT".into(), port.to_string())],
+                    &|port| {
+                        vec![
+                            ("KB_PORT".into(), port.to_string()),
+                            ("ULTRAWORK_SIDECAR_USERNAME".into(), kb_username.clone()),
+                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), kb_password.clone()),
+                        ]
+                    },
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
                     use tauri::Emitter;
@@ -5367,6 +5385,8 @@ pub fn run() {
             let acp_handle = app.handle().clone();
             let acp_password = creds.password.clone();
             let acp_opencode_url = opencode_url;
+            let acp_username = creds.username.clone();
+            let acp_auth_header = auth_header.clone();
             std::thread::spawn(move || {
                 let acp_path = rich_path();
                 if let Err(e) = start_sidecar(
@@ -5374,7 +5394,7 @@ pub fn run() {
                     "acp-client",
                     ACP_PORT,
                     "/acp/health",
-                    None,
+                    Some(&acp_auth_header),
                     &|_port| vec![],
                     &|port| {
                         vec![
@@ -5382,6 +5402,10 @@ pub fn run() {
                             // In-sidecar orchestrator calls the OpenCode REST API
                             // (same credential channel as channel-gateway).
                             ("OPENCODE_SERVER_PASSWORD".into(), acp_password.clone()),
+                            // Inbound auth for /acp/* and /orchestration/*, and inherited
+                            // by the delegate-mcp shims this sidecar spawns.
+                            ("ULTRAWORK_SIDECAR_USERNAME".into(), acp_username.clone()),
+                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), acp_password.clone()),
                             ("ACP_CLIENT_PORT".into(), port.to_string()),
                             ("OPENCODE_BASE_URL".into(), acp_opencode_url.clone()),
                         ]
@@ -7416,6 +7440,16 @@ mod dynamic_port_tests {
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    /// Ephemeral ports are a shared, kernel-recycled resource: once a test releases
+    /// one, a sibling's `bind(0)` can be handed the same number — the very TOCTOU
+    /// the product code retries around. Tests that need "the port I was just given
+    /// is still free" must not run concurrently with each other.
+    static EPHEMERAL_PORT_TESTS: Mutex<()> = Mutex::new(());
+
+    fn lock_ephemeral() -> std::sync::MutexGuard<'static, ()> {
+        EPHEMERAL_PORT_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     // Fixed ports, below the ephemeral range (49152+), so a sibling test's `bind(0)`
     // can never be handed the same number. One per test, no sharing.
     const PORT_STRANGER_DYNAMIC: u16 = 45_981;
@@ -7454,6 +7488,7 @@ mod dynamic_port_tests {
 
     #[test]
     fn ephemeral_port_hands_back_a_free_port_we_can_bind() {
+        let _guard = lock_ephemeral();
         let port = ephemeral_port().expect("ephemeral port");
         assert!(port >= 1024, "port {port} is privileged");
         // It was released, so we must be able to take it ourselves.
@@ -7463,6 +7498,7 @@ mod dynamic_port_tests {
 
     #[test]
     fn ephemeral_port_does_not_keep_handing_out_the_same_port() {
+        let _guard = lock_ephemeral();
         // Held open, so the kernel cannot re-offer this one.
         let first = ephemeral_port().unwrap();
         let _hold = TcpListener::bind(("127.0.0.1", first)).unwrap();
@@ -7484,6 +7520,7 @@ mod dynamic_port_tests {
     /// failing to boot.
     #[test]
     fn plan_port_falls_back_to_a_dynamic_port_when_a_stranger_holds_the_preferred_one() {
+        let _guard = lock_ephemeral(); // asserts the fallback port is still free
         let _stranger = TcpListener::bind(("127.0.0.1", PORT_STRANGER_DYNAMIC)).unwrap();
 
         let plan = plan_port("opencode-server", PORT_STRANGER_DYNAMIC, "/global/health", None, false)
