@@ -87,8 +87,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # lsof: listening_pids_on_port uses it on unix. ubuntu-latest ships it
+          # today, but the port-lifecycle tests must not rest on the image's whim.
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libssl-dev libgtk-3-dev
+            librsvg2-dev patchelf libssl-dev libgtk-3-dev lsof
       - run: bun install
       # tauri::generate_context! embeds the built frontend at compile time.
       - name: Build frontend
