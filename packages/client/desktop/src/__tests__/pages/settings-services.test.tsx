@@ -66,11 +66,13 @@ describe("ServicesSection connector tabs", () => {
     // MCP body is active: its empty state is visible
     expect(screen.getByText("mcp.noServers")).toBeInTheDocument()
 
-    // Two tab triggers, in registry order (MCP, Office CLI)
+    // Two tab triggers, in registry order (MCP, Office CLI). The trailing digit
+    // is the entry-count badge: no MCP server configured, three office CLIs
+    // ship built-in.
     const tabs = screen.getAllByRole("tab")
     expect(tabs.map((el) => el.textContent)).toEqual([
-      "services.groupMcp",
-      "services.groupOfficeCli",
+      "services.groupMcp0",
+      "services.groupOfficeCli3",
     ])
 
     // Inactive office-cli content is unmounted — MCP state can't leak into it
@@ -155,28 +157,32 @@ describe("ServicesSection connector tabs", () => {
     expect(screen.getByText("mcp.noServers").closest('[role="tabpanel"]')).toHaveAttribute("data-state", "inactive")
   })
 
-  it("shows the combined connected count in the header and a per-tab count badge", () => {
-    // 0 MCP connected + 2 CLI connected
+  // The header pill and the tab badges count DIFFERENT things on purpose: the
+  // pill is connection state, the badges are entry counts (same meaning as the
+  // Skills / Knowledge badges). These two tests pin that split apart.
+  it("header pill counts connections; tab badges count entries, not connections", () => {
+    // 0 MCP connected (1 configured) + 2 CLI connected (of 3 shipped)
+    mcpApi.statusMap = { srvA: { status: "failed" } }
     cliApi.statuses = {
       lark: { state: "connected" },
       dingtalk: { state: "connected" },
     }
-    render(<ServicesSection />)
+    render(<ServicesSection initialTab="office-cli" />)
 
-    // Header pill sums both categories
+    // Header pill sums connections across both categories
     const pill = screen.getByText(/services\.connected/)
     expect(pill.textContent?.replace(/\s+/g, " ").trim()).toBe("2 services.connected")
 
     const [mcpTab, cliTab] = screen.getAllByRole("tab")
-    // MCP has 0 connected → no numeric badge
-    expect(/\d/.test(mcpTab.textContent ?? "")).toBe(false)
-    // Office CLI shows its own count
-    expect(cliTab.textContent).toContain("2")
+    // Badge is the configured-server count (1), NOT the connected count (0)
+    expect(mcpTab.textContent).toContain("1")
+    // Badge is the shipped-CLI count (3), NOT the connected count (2)
+    expect(cliTab.textContent).toContain("3")
   })
 
   it("counts the MCP term too: header sum + MCP tab badge (open on CLI tab to skip MCP cards)", () => {
     // 2 MCP connected + 1 CLI connected; render the CLI tab so MCP cards stay
-    // unmounted while the MCP *tab badge* still reflects its count.
+    // unmounted while the MCP *tab badge* still reflects its entry count.
     mcpApi.statusMap = { srvA: { status: "connected" }, srvB: { status: "connected" } }
     cliApi.statuses = { lark: { state: "connected" } }
     render(<ServicesSection initialTab="office-cli" />)
@@ -186,7 +192,7 @@ describe("ServicesSection connector tabs", () => {
 
     const [mcpTab, cliTab] = screen.getAllByRole("tab")
     expect(mcpTab.textContent).toContain("2")
-    expect(cliTab.textContent).toContain("1")
+    expect(cliTab.textContent).toContain("3")
   })
 
   it("global refresh reloads BOTH MCP and CLI connectors", async () => {

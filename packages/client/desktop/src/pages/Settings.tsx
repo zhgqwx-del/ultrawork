@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, type ComponentType, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2} from "lucide-react"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2, Layers, Plug} from "lucide-react"
+import { TabsContent } from "@/components/ui/tabs"
+import { SectionTabs, type SectionTab } from "@/components/settings/section-tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
 import { ChannelsSection } from "@/components/settings/channels-section"
@@ -41,8 +42,19 @@ import { APP_VERSION } from "@/lib/app-version"
 type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "tools" | "channels" | "knowledge" | "skills" | "about"
 
 // Sub-tabs inside the Connectors (services) section — see CONNECTOR_TABS.
+// The IDs are a runtime array (not just a type) because a deep-link carries a
+// tab id as an untrusted string that has to be validated. Skills and Knowledge
+// have no deep-link, so a bare union suffices there.
 const CONNECTOR_TAB_IDS = ["mcp", "office-cli"] as const
 type ConnectorTabId = (typeof CONNECTOR_TAB_IDS)[number]
+
+// Sub-tabs inside the Skills section — see SKILL_TABS.
+type SkillTabId = "builtin" | "installable" | "custom"
+
+// Sub-tabs inside the Knowledge section — see KNOWLEDGE_TABS. Unlike the other
+// two sections these tabs are overlapping subsets of ONE list ("all" contains
+// every other tab's sources), which is why their panels must never forceMount.
+type KnowledgeTabId = "all" | "local_folder" | "platform" | "custom_api"
 
 type NavItem = { key: SettingsSection; icon: typeof Settings; labelKey: string }
 
@@ -490,9 +502,11 @@ export function ServicesSection({ initialTab }: { initialTab?: string }) {
   // Data-driven tab registry — a future connector category (3rd/4th) is one
   // entry here plus a matching <TabsContent> block below; the header, the
   // combined count, and the global refresh above the tabs stay put.
-  const CONNECTOR_TABS: { id: ConnectorTabId; labelKey: string; icon: typeof Server; count: number }[] = [
-    { id: "mcp", labelKey: "services.groupMcp", icon: Server, count: mcpConnectedCount },
-    { id: "office-cli", labelKey: "services.groupOfficeCli", icon: Building2, count: cliConnectedCount },
+  // Counts are ENTRY counts (configured servers / available CLIs), matching
+  // Skills and Knowledge; the header badge owns the connection state.
+  const CONNECTOR_TABS: readonly SectionTab<ConnectorTabId>[] = [
+    { id: "mcp", labelKey: "services.groupMcp", icon: Server, count: entries.length },
+    { id: "office-cli", labelKey: "services.groupOfficeCli", icon: Building2, count: OFFICE_CLI_CONNECTORS.length },
   ]
   const isTabId = (v: string | undefined): v is ConnectorTabId =>
     (CONNECTOR_TAB_IDS as readonly string[]).includes(v ?? "")
@@ -581,17 +595,7 @@ export function ServicesSection({ initialTab }: { initialTab?: string }) {
         </Button>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as ConnectorTabId)}>
-        <TabsList className="w-full justify-start">
-          {CONNECTOR_TABS.map((tabDef) => (
-            <TabsTrigger key={tabDef.id} value={tabDef.id} className="gap-1.5">
-              <tabDef.icon className="size-3.5" />
-              {t(tabDef.labelKey)}
-              {tabDef.count > 0 && <span className="text-xs opacity-60">{tabDef.count}</span>}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
+      <SectionTabs tabs={CONNECTOR_TABS} value={tab} onValueChange={setTab}>
         {/* ── MCP ──
             forceMount: keep this panel mounted (hidden when inactive) so
             in-flight component-local state survives a tab switch — the browser
@@ -695,7 +699,7 @@ export function ServicesSection({ initialTab }: { initialTab?: string }) {
             <CliConnectorCard key={c.id} connector={c} api={cliApi} />
           ))}
         </TabsContent>
-      </Tabs>
+      </SectionTabs>
     </div>
   )
 }
@@ -1316,9 +1320,7 @@ function JsonImportForm({
   )
 }
 
-type KBFilterType = "all" | "local_folder" | "platform" | "custom_api"
-
-function KnowledgeSection() {
+export function KnowledgeSection() {
   const { t } = useI18n()
   const {
     sources, loading, error, actionLoading,
@@ -1326,7 +1328,7 @@ function KnowledgeSection() {
   } = useKnowledgeBase()
   const [refreshing, setRefreshing] = useState(false)
   const [showAddDialog, setShowAddDialog] = useState(false)
-  const [filter, setFilter] = useState<KBFilterType>("all")
+  const [tab, setTab] = useState<KnowledgeTabId>("all")
 
   const onRefresh = async () => {
     setRefreshing(true)
@@ -1348,19 +1350,47 @@ function KnowledgeSection() {
   const platformCount = sources.filter((s) => s.type === "ima").length
   const apiCount = sources.filter((s) => s.type === "custom_api").length
 
-  // Filter sources
-  const filteredSources = filter === "all"
-    ? sources
-    : filter === "platform"
-      ? sources.filter((s) => s.type === "ima")
-      : sources.filter((s) => s.type === filter)
+  // "platform" is a UI grouping, not a source type — it maps onto the `ima`
+  // type. Every other tab id is the source type verbatim.
+  const sourcesForTab = (id: KnowledgeTabId) =>
+    id === "all"
+      ? sources
+      : id === "platform"
+        ? sources.filter((s) => s.type === "ima")
+        : sources.filter((s) => s.type === id)
 
-  const filterChips: { key: KBFilterType; labelKey: string; count: number }[] = [
-    { key: "all", labelKey: "knowledge.filterAll", count: sources.length },
-    { key: "local_folder", labelKey: "knowledge.filterLocal", count: localCount },
-    { key: "platform", labelKey: "knowledge.filterPlatform", count: platformCount },
-    { key: "custom_api", labelKey: "knowledge.filterApi", count: apiCount },
+  const KNOWLEDGE_TABS: readonly SectionTab<KnowledgeTabId>[] = [
+    { id: "all", labelKey: "knowledge.filterAll", icon: Layers, count: sources.length },
+    { id: "local_folder", labelKey: "knowledge.filterLocal", icon: FolderOpen, count: localCount },
+    { id: "platform", labelKey: "knowledge.filterPlatform", icon: BookOpen, count: platformCount },
+    { id: "custom_api", labelKey: "knowledge.filterApi", icon: Plug, count: apiCount },
   ]
+
+  // One renderer for all four panels — they show the same card, over different
+  // slices of the same list.
+  const renderSources = (list: KBSource[]) =>
+    list.length > 0 ? (
+      <div className="space-y-3">
+        {list.map((source) => (
+          <KnowledgeSourceCard
+            key={source.id}
+            source={source}
+            loading={actionLoading === String(source.id)}
+            onReindex={() => reindexSource(source.id)}
+            onRemove={() => removeSource(source.id)}
+            onTestConnection={() => testConnection(source.id)}
+          />
+        ))}
+      </div>
+    ) : (
+      <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12">
+        <p className="text-sm text-[var(--color-fg-muted)]">{t("knowledge.noSources")}</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowAddDialog(true)}>
+          <Plus className="mr-1.5 size-3.5" />
+          {t("knowledge.addSource")}
+        </Button>
+      </div>
+    )
 
   return (
     <div className="space-y-6">
@@ -1388,34 +1418,6 @@ function KnowledgeSection() {
           </Button>
         </div>
       </div>
-
-      {/* Filter chips — only show when there are sources */}
-      {!loading && !error && sources.length > 0 && (
-        <div className="flex items-center gap-2">
-          {filterChips.map((chip) => (
-            <button
-              key={chip.key}
-              onClick={() => setFilter(chip.key)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                filter === chip.key
-                  ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                  : "border-[var(--color-border)] text-[var(--color-fg-muted)] hover:border-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
-              )}
-            >
-              {t(chip.labelKey)}
-              <span className={cn(
-                "inline-flex size-4.5 items-center justify-center rounded-full text-[10px]",
-                filter === chip.key
-                  ? "bg-[var(--color-primary)]/20"
-                  : "bg-[var(--color-bg-hover)]",
-              )}>
-                {chip.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Loading */}
       {loading && (
@@ -1445,30 +1447,19 @@ function KnowledgeSection() {
         </div>
       )}
 
-      {/* Source cards (filtered) */}
+      {/* Tabs: 全部 / 本地文件夹 / 第三方平台 / 自定义 API.
+          NO forceMount here: a source in "local_folder" also lives in "all", so
+          mounting both panels would render its card twice — two DOM nodes, two
+          copies of KnowledgeSourceCard's indexing-progress timer. Nothing in a
+          panel holds in-flight local state worth preserving across a switch. */}
       {!loading && !error && sources.length > 0 && (
-        filteredSources.length > 0 ? (
-          <div className="space-y-3">
-            {filteredSources.map((source) => (
-              <KnowledgeSourceCard
-                key={source.id}
-                source={source}
-                loading={actionLoading === String(source.id)}
-                onReindex={() => reindexSource(source.id)}
-                onRemove={() => removeSource(source.id)}
-                onTestConnection={() => testConnection(source.id)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12">
-            <p className="text-sm text-[var(--color-fg-muted)]">{t("knowledge.noSources")}</p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowAddDialog(true)}>
-              <Plus className="mr-1.5 size-3.5" />
-              {t("knowledge.addSource")}
-            </Button>
-          </div>
-        )
+        <SectionTabs tabs={KNOWLEDGE_TABS} value={tab} onValueChange={setTab}>
+          {KNOWLEDGE_TABS.map((tabDef) => (
+            <TabsContent key={tabDef.id} value={tabDef.id} className="space-y-3">
+              {renderSources(sourcesForTab(tabDef.id))}
+            </TabsContent>
+          ))}
+        </SectionTabs>
       )}
 
       <AddSourceDialog
@@ -1674,7 +1665,7 @@ function matchesQuery(name: string, description: string, q: string) {
   return name.toLowerCase().includes(s) || description.toLowerCase().includes(s)
 }
 
-function SkillsSection() {
+export function SkillsSection() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const {
@@ -1687,7 +1678,7 @@ function SkillsSection() {
   const [refreshing, setRefreshing] = useState(false)
   const [newPath, setNewPath] = useState("")
   const [newUrl, setNewUrl] = useState("")
-  const [tab, setTab] = useState<"builtin" | "installable" | "custom">("builtin")
+  const [tab, setTab] = useState<SkillTabId>("builtin")
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
   const [restoring, setRestoring] = useState(false)
@@ -1815,6 +1806,12 @@ function SkillsSection() {
     updateSkillsConfig({ urls: skillsConfig.urls.filter((u) => u !== url) })
   }
 
+  const SKILL_TABS: readonly SectionTab<SkillTabId>[] = [
+    { id: "builtin", labelKey: "skills.zone.builtin", icon: Package, count: builtinItems.length + shadowedNames.length },
+    { id: "installable", labelKey: "skills.zone.installable", icon: Download, count: catalogItems.length },
+    { id: "custom", labelKey: "skills.zone.custom", icon: Wrench, count: customItems.length },
+  ]
+
   const tabEmptyHint = (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-10">
       <Search className="size-7 text-[var(--color-fg-muted)]" />
@@ -1885,27 +1882,14 @@ function SkillsSection() {
         </div>
       )}
 
-      {/* Tabs: 内置 / 推荐安装 / 自定义 */}
+      {/* Tabs: 内置 / 推荐安装 / 自定义.
+          Counts reflect the active search filter (the search box sits above the
+          tabs and narrows every category at once) — a zero tells the user the
+          query missed that category, not that the category is empty.
+          No forceMount: every panel's state lives in hoisted hooks, and the
+          install action navigates away from the page entirely. */}
       {!loading && !error && totalCount > 0 && (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList className="w-full justify-start">
-            <TabsTrigger value="builtin" className="gap-1.5">
-              <Package className="size-3.5" />
-              {t("skills.zone.builtin")}
-              <span className="text-xs opacity-60">{builtinItems.length + shadowedNames.length}</span>
-            </TabsTrigger>
-            <TabsTrigger value="installable" className="gap-1.5">
-              <Download className="size-3.5" />
-              {t("skills.zone.installable")}
-              <span className="text-xs opacity-60">{catalogItems.length}</span>
-            </TabsTrigger>
-            <TabsTrigger value="custom" className="gap-1.5">
-              <Wrench className="size-3.5" />
-              {t("skills.zone.custom")}
-              <span className="text-xs opacity-60">{customItems.length}</span>
-            </TabsTrigger>
-          </TabsList>
-
+        <SectionTabs tabs={SKILL_TABS} value={tab} onValueChange={setTab}>
           {/* 内置 */}
           <TabsContent value="builtin" className="space-y-2">
             <p className="text-xs text-[var(--color-fg-muted)]">{t("skills.zone.builtinNote")}</p>
@@ -2009,7 +1993,7 @@ function SkillsSection() {
               </div>
             )}
           </TabsContent>
-        </Tabs>
+        </SectionTabs>
       )}
 
       {/* 来源管理 dialog: paths/urls config (moved out of the bottom flow) */}

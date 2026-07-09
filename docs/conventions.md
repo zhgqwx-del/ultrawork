@@ -246,6 +246,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 - Radix 只给非活动 Content 挂 `data-state="inactive"`，**不自动加 `hidden` 样式**，所以 forceMount 时必须自己补 `data-[state=inactive]:hidden`（→ `display:none`），否则内容会叠着显示。
 - 方案 B：把易失局部态 hoist 到 tab 容器组件（像 `ServicesSection` 的 `useCliConnectors`/`useMCPServers`），则该 tab 无需 forceMount。**判断法**：tab 内组件是否持有不想丢的在途态——有则 forceMount 或 hoist，无（纯派生自 hoisted hook）则放任卸载最省。
 - **测试坑**：forceMount 后非活动内容仍在 DOM，jsdom 无 Tailwind CSS 故 `toBeVisible()` 判不出隐藏——改断言容器 `[role=tabpanel]` 的 `data-state="inactive"`；真隐藏由真浏览器走查（`display:none` / `isVisible()===false`）兜。见 `settings-services.test.tsx` + `e2e/connectors-tabs-ui-walkthrough`。
+- **反向硬约束：tab 面板是「同一列表的重叠子集」时，绝不能 forceMount**（2026-07-09 A/B 实证）。知识库的「全部」tab 与「本地/平台/API」三个 tab 渲染的是同一个 `sources` 数组的重叠切片——同一个 source 同时属于「全部」和它的类型 tab。此时 forceMount 会让**同一张卡片在 DOM 里挂两份**，连带 `KnowledgeSourceCard` 的索引进度 `setTimeout` 也跑两个。判断法与上面正好相反：**tab 内容是异质面板**（连接器 MCP vs 办公 CLI、技能 内置/推荐/自定义）→ 按局部态决定是否 forceMount；**tab 内容是同一数据源的重叠切片**（含「全部」这类 tab）→ 一律放任卸载。Radix 源码保证这是安全的：`TabsContent` 内部是 `children: present && children`，非活动面板的子组件函数体根本不执行（不是「渲染后隐藏」）。
+- 断言这条不变量：`expect(screen.getAllByText(sourceName)).toHaveLength(1)`（RTL 的 `getAllByText` 会匹配 `hidden` 节点，所以 forceMount 造成的重复面板确实会让长度变 2）。见 `settings-knowledge.test.tsx`。
+
+### 设置页 section 子 tab 统一走 `SectionTabs`（2026-07-09）
+三个设置 section（技能 / 连接器 / 知识库）的子 tab 共用 `components/settings/section-tabs.tsx`：数据驱动注册表 `{id, labelKey, icon?, count?}` + Radix 段控。要点：
+- `SectionTabs` **只包 `TabsList`**，`TabsContent` 由调用方自己写——因为 `forceMount` 是**逐面板**的决定（见上两条），不能做成组件级开关。
+- `count` 语义统一为**条目数**（已配置的 MCP server / 内置技能数 / 知识源数），**不是连接状态数**。连接/就绪状态归页头徽章，两个数字不在同一位置抢语义。为 0 也渲染，让空分类自己说出来。
+- 新增一类子 tab = 注册表加一行 + 一个 `TabsContent`。
 
 ## 6. 构建与部署
 
