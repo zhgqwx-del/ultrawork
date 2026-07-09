@@ -46,10 +46,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["curl"]
+        "depends": ["curl", "lsof"]
       },
       "rpm": {
-        "depends": ["curl", "tar"]
+        "depends": ["curl", "tar", "lsof"]
       }
     },
     "macOS": {

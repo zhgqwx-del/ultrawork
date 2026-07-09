@@ -70,23 +70,27 @@ fn parse_lsof_pids(stdout: &str) -> Vec<u32> {
     pids
 }
 
-/// Parse `netstat -ano -p tcp` output, keeping only rows in the LISTENING state
-/// whose *local* address ends with `:port`.
+/// Parse `netstat -ano -p tcp` output, keeping only *listening* rows whose
+/// local address ends with `:port`.
 ///
-/// The LISTENING filter matters: without it a row whose local endpoint merely
+/// The listening filter matters: without it a row whose local endpoint merely
 /// happens to be the ephemeral port `port` (an unrelated process's *outbound*
 /// connection) would be reported — and later killed.
+///
+/// A row counts as listening if the state reads `LISTENING` **or** the foreign
+/// address is the wildcard `0.0.0.0:0`. The second test is the locale-proof
+/// one: it is unclear whether every localized Windows build translates the
+/// state column, but only a listening IPv4 socket has no peer. (`-p tcp` keeps
+/// this to IPv4, so `[::]:0` never appears.)
 fn parse_netstat_listening_pids(stdout: &str, port: u16) -> Vec<u32> {
     let needle = format!(":{}", port);
     let mut pids = Vec::new();
     for line in stdout.lines() {
         // Columns: Proto  LocalAddress  ForeignAddress  State  PID
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 5
-            && cols[0].eq_ignore_ascii_case("TCP")
-            && cols[1].ends_with(&needle)
-            && cols[3].eq_ignore_ascii_case("LISTENING")
-        {
+        let listening =
+            cols.len() >= 5 && (cols[3].eq_ignore_ascii_case("LISTENING") || cols[2] == "0.0.0.0:0");
+        if listening && cols[0].eq_ignore_ascii_case("TCP") && cols[1].ends_with(&needle) {
             if let Ok(pid) = cols[4].parse::<u32>() {
                 if pid != 0 && !pids.contains(&pid) {
                     pids.push(pid);
@@ -136,6 +140,31 @@ fn exe_matches_sidecar(exe: &str, name: &str) -> bool {
     stem == name || stem.starts_with(&format!("{}-", name))
 }
 
+/// Image name from `tasklist /NH /FO CSV` output — the first quoted CSV field.
+///
+/// A no-match answers `INFO: No tasks are running which match ...` (localized,
+/// and never quoted), which yields `None` — the fail-closed answer. The memory
+/// column carries a comma (`"12,345 K"`), so split on the quote, not the comma.
+fn parse_tasklist_image_name(stdout: &str) -> Option<String> {
+    let first = stdout.lines().next()?.trim();
+    let name = first.strip_prefix('"')?.split('"').next()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Bare executable file name from a `/proc/<pid>/exe` link target.
+///
+/// The kernel appends `" (deleted)"` once the on-disk file is replaced or
+/// removed — precisely what an app update or a `tauri dev` rebuild does to a
+/// sidecar that is still running and still holding its port. Strip it, or we
+/// fail to recognise our own process at the very moment we need to reclaim
+/// its port. (`exe_matches_sidecar` cannot rescue the bare-name shape: the
+/// suffix starts with a space, not the `-` a target-triple would bring.)
+fn exe_name_from_proc_link(link: &str) -> Option<String> {
+    let path = link.strip_suffix(" (deleted)").unwrap_or(link);
+    let name = std::path::Path::new(path).file_name()?.to_string_lossy().into_owned();
+    (!name.is_empty()).then_some(name)
+}
+
 /// Bare executable file name of `pid`, if resolvable.
 ///
 /// Three platforms, three sources — none of them interchangeable:
@@ -155,14 +184,10 @@ fn process_exe_name(pid: u32) -> Option<String> {
             .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
             .output()
             .ok()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        // `"knowledge-sidecar.exe","1234","Console","1","12,345 K"`
-        let first = text.lines().next()?.trim();
-        let name = first.strip_prefix('"')?.split('"').next()?;
-        (!name.is_empty()).then(|| name.to_string())
+        parse_tasklist_image_name(&String::from_utf8_lossy(&output.stdout))
     } else if cfg!(target_os = "linux") {
-        let path = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
-        Some(path.file_name()?.to_string_lossy().into_owned())
+        let link = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
+        exe_name_from_proc_link(&link.to_string_lossy())
     } else {
         let output = Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
         let text = String::from_utf8_lossy(&output.stdout);
@@ -200,6 +225,7 @@ fn kill_port_listeners(port: u16, owner: Option<&str>) -> usize {
     for pid in listening_pids_on_port(port) {
         if let Some(name) = owner {
             if !process_is_sidecar(pid, name) {
+                // Second `process_exe_name` call, only on the rare decline path.
                 println!(
                     "Port {} is held by pid {} ({}), which is not an Ultrawork {} — leaving it alone",
                     port,
@@ -5803,9 +5829,90 @@ mod builtin_skills_tests {
     }
 }
 
+/// Port lifecycle. Two paths are deliberately left to real-machine e2e:
+///   - `prepare_port`'s healthy-**orphan** branch, which needs a listener
+///     reparented to pid 1 (double-fork) and then kills it.
+///   - `shutdown_sidecars` phase 2, which mutates the global registry and
+///     kills browser MCP processes.
+/// Everything else below runs against real sockets and real child processes.
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    use std::net::TcpListener;
+
+    /// Re-entry point for the child process spawned by `spawn_fake_sidecar`.
+    /// A no-op during a normal test run (the env var is unset).
+    ///
+    /// Being the test binary itself is the trick: we copy it to a file *named*
+    /// like a sidecar, so the child's executable name is what `process_exe_name`
+    /// reads back. That gives the positive path (recognise and reclaim our own
+    /// process) real coverage on all three platforms, with no built sidecar.
+    #[test]
+    fn fake_sidecar_listener() {
+        let Ok(port) = std::env::var("ULTRAWORK_TEST_FAKE_SIDECAR_PORT") else {
+            return;
+        };
+        let port: u16 = port.parse().expect("port");
+        let _listener = TcpListener::bind(("127.0.0.1", port)).expect("fake sidecar bind");
+        // Hold the port, answer nothing: an Ultrawork sidecar that has hung.
+        std::thread::sleep(Duration::from_secs(60));
+    }
+
+    struct FakeSidecar {
+        child: std::process::Child,
+        port: u16,
+        _dir: PathBuf,
+    }
+
+    impl Drop for FakeSidecar {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self._dir);
+        }
+    }
+
+    /// Fixed ports for the tests that need a child process to bind one. All sit
+    /// *below* the ephemeral range (49152+) so a sibling test's `bind(0)` can
+    /// never be handed the same number — see `prepare_port_accepts_a_free_port`
+    /// for what happens otherwise. One port per test, no sharing.
+    const PORT_RECLAIM: u16 = 45_991;
+    const PORT_KILL_NO_OWNER: u16 = 45_992;
+    const PORT_SPARE_STRANGER: u16 = 45_993;
+
+    /// Spawn a live process whose executable file name is `exe_name`, listening
+    /// on `port` and answering no HTTP at all.
+    fn spawn_fake_sidecar(exe_name: &str, port: u16) -> FakeSidecar {
+        assert!(!is_port_in_use(port), "test port {port} unexpectedly occupied");
+
+        let dir = std::env::temp_dir().join(format!("ultrawork-porttest-{}-{}", std::process::id(), port));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) { format!("{exe_name}.exe") } else { exe_name.to_string() });
+        std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mut child = Command::new(&exe)
+            .args(["lifecycle_tests::fake_sidecar_listener", "--exact", "--nocapture"])
+            .env("ULTRAWORK_TEST_FAKE_SIDECAR_PORT", port.to_string())
+            .spawn()
+            .expect("spawn fake sidecar");
+
+        // Wait for it to actually hold the port — and notice a child that died
+        // (e.g. failed to bind) instead of blocking for the full timeout.
+        let start = std::time::Instant::now();
+        while !is_port_in_use(port) {
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("fake sidecar exited before binding {port}: {status}");
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "fake sidecar never bound {port}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        FakeSidecar { child, port, _dir: dir }
+    }
 
     #[test]
     #[cfg(unix)] // process_ppid uses `ps` and is intentionally None on Windows
@@ -5841,6 +5948,45 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn netstat_parse_survives_a_localized_state_column() {
+        // Should a localized Windows translate the state column, the wildcard
+        // foreign address `0.0.0.0:0` still identifies the listener — and the
+        // innocent outbound connection (row 2) still has a real peer, so it
+        // stays excluded.
+        let out = "\
+  TCP    127.0.0.1:4098         0.0.0.0:0              正在侦听        111
+  TCP    127.0.0.1:4098         93.184.216.34:443      已建立          222
+";
+        assert_eq!(parse_netstat_listening_pids(out, 4098), vec![111]);
+    }
+
+    #[test]
+    fn linux_proc_exe_deleted_suffix_is_stripped() {
+        // `/proc/<pid>/exe` gains " (deleted)" the moment an update overwrites
+        // the binary of a still-running sidecar. That is exactly when we need
+        // to recognise it, so the suffix must never reach the name matcher.
+        assert_eq!(
+            exe_name_from_proc_link("/opt/ultrawork/opencode-server (deleted)").as_deref(),
+            Some("opencode-server")
+        );
+        assert_eq!(
+            exe_name_from_proc_link("/opt/ul/knowledge-sidecar-x86_64-unknown-linux-gnu (deleted)").as_deref(),
+            Some("knowledge-sidecar-x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(exe_name_from_proc_link("/opt/ultrawork/acp-client").as_deref(), Some("acp-client"));
+        assert_eq!(exe_name_from_proc_link("/").as_deref(), None);
+
+        // Round-trip through the real matcher: a deleted-on-disk sidecar is ours.
+        let name = exe_name_from_proc_link("/opt/ultrawork/opencode-server (deleted)").unwrap();
+        assert!(exe_matches_sidecar(&name, "opencode-server"));
+
+        // The bare-name shape is the one that silently broke: `starts_with`
+        // cannot rescue it, because " (deleted)" begins with a space, not '-'.
+        assert!(!exe_matches_sidecar("opencode-server (deleted)", "opencode-server"));
+        assert!(exe_matches_sidecar("opencode-server", "opencode-server"));
+    }
+
+    #[test]
     fn lsof_parse_dedupes_and_ignores_junk() {
         assert_eq!(parse_lsof_pids("812\n812\n\n  913 \nnot-a-pid\n0\n"), vec![812, 913]);
     }
@@ -5853,6 +5999,9 @@ mod lifecycle_tests {
         assert!(exe_matches_sidecar("channel-gateway-universal-apple-darwin", "channel-gateway"));
         assert!(exe_matches_sidecar("knowledge-sidecar.exe", "knowledge-sidecar"));
 
+        // Windows release build: target-triple suffix *and* `.exe`.
+        assert!(exe_matches_sidecar("opencode-server-x86_64-pc-windows-msvc.exe", "opencode-server"));
+
         // Strangers — killing any of these would be the bug.
         assert!(!exe_matches_sidecar("node", "acp-client"));
         assert!(!exe_matches_sidecar("postgres", "knowledge-sidecar"));
@@ -5861,9 +6010,38 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn a_real_listener_is_found_but_never_attributed_to_a_sidecar() {
-        use std::net::TcpListener;
+    fn tasklist_parse_handles_the_comma_in_the_memory_column_and_no_match() {
+        assert_eq!(
+            parse_tasklist_image_name("\"knowledge-sidecar.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n")
+                .as_deref(),
+            Some("knowledge-sidecar.exe")
+        );
+        // No match → unquoted INFO line (localized) → fail closed.
+        assert_eq!(parse_tasklist_image_name("INFO: No tasks are running which match.\r\n"), None);
+        assert_eq!(parse_tasklist_image_name(""), None);
+        assert_eq!(parse_tasklist_image_name("\"\",\"1234\""), None);
+    }
 
+    #[test]
+    fn prepare_port_accepts_a_free_port() {
+        // Happy path: nothing listening → spawn away.
+        //
+        // Deliberately NOT `bind(0)`-then-drop to find a free port: the sibling
+        // tests in this module bind ephemeral ports concurrently, and the kernel
+        // hands the port we just released straight to one of them (observed: 5
+        // failures in 6 runs). Pick a fixed port *below* the ephemeral range
+        // (49152-65535 on macOS/Linux, 49152+ on Windows) so no `bind(0)`
+        // anywhere can collide with it.
+        //
+        // That flake is worth remembering: it is the same bind→close→spawn
+        // TOCTOU window that phase ③ of discussions/029 has to retry around.
+        const PORT: u16 = 45_997;
+        assert!(!is_port_in_use(PORT), "test port {PORT} unexpectedly occupied");
+        assert_eq!(prepare_port("opencode-server", PORT, "/global/health", None), Ok(false));
+    }
+
+    #[test]
+    fn a_real_listener_is_found_but_never_attributed_to_a_sidecar() {
         // Bind an ephemeral port from *this* test process. It is a genuine
         // listener, so it must be discoverable...
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
@@ -5909,9 +6087,70 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn prepare_port_errors_out_rather_than_killing_a_stranger() {
-        use std::net::TcpListener;
+    fn prepare_port_reclaims_our_own_hung_sidecar() {
+        // The positive path: a process that IS one of our sidecars (by exe name)
+        // but no longer answers its health endpoint must be killed and its port
+        // handed back. Without this, `prepare_port` would only ever be able to
+        // refuse — and a hung sidecar would wedge the app shut forever.
+        let fake = spawn_fake_sidecar("knowledge-sidecar", PORT_RECLAIM);
+        let pid = fake.child.id();
+        assert!(process_is_sidecar(pid, "knowledge-sidecar"), "fake sidecar must be attributable");
 
+        let reused = prepare_port("knowledge-sidecar", fake.port, "/kb/health", None)
+            .expect("our own hung sidecar must be reclaimed, not reported as a conflict");
+        assert!(!reused, "a hung sidecar is not reusable");
+        assert!(!is_port_in_use(fake.port), "port must be free after reclaiming");
+    }
+
+    #[test]
+    fn kill_port_listeners_with_no_owner_kills_the_listener() {
+        // The orphan branch passes owner=None (ownership already proven by the
+        // health check). It must still kill exactly the listener.
+        let fake = spawn_fake_sidecar("acp-client", PORT_KILL_NO_OWNER);
+        assert_eq!(kill_port_listeners(fake.port, None), 1);
+        assert!(!is_port_in_use(fake.port));
+    }
+
+    #[test]
+    fn kill_port_listeners_spares_a_listener_it_cannot_attribute() {
+        // Same live listener, wrong owner name → untouched.
+        let fake = spawn_fake_sidecar("knowledge-sidecar", PORT_SPARE_STRANGER);
+        assert_eq!(kill_port_listeners(fake.port, Some("opencode-server")), 0);
+        assert!(is_port_in_use(fake.port), "a listener we cannot attribute must survive");
+    }
+
+    #[test]
+    fn prepare_port_reuses_a_healthy_non_orphan_listener() {
+        // A prior instance's sidecar that is alive and healthy is reused, not killed.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_rx = stop.clone();
+
+        let server = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stop_rx.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            }
+        });
+
+        let reused = prepare_port("knowledge-sidecar", port, "/kb/health", None)
+            .expect("a healthy listener must not be an error");
+        assert!(reused, "healthy non-orphan listener must be reused, not respawned");
+        assert!(is_port_in_use(port), "reuse must not kill the healthy listener");
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = TcpStream::connect(("127.0.0.1", port)); // unblock accept()
+        let _ = server.join();
+    }
+
+    #[test]
+    fn prepare_port_errors_out_rather_than_killing_a_stranger() {
         // This test process plays the stranger: it holds the port and never
         // answers /kb/health. Before this fix, `prepare_port` would have killed
         // it — i.e. cargo test would have killed itself.

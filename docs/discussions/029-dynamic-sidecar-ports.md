@@ -136,7 +136,9 @@ env: { ...process.env, ..., ...mcp.environment }
 2. **dev**（`debug_assertions` 或 `ULTRAWORK_FIXED_PORTS=1`）→ 用 4096-4099 常量。冲突且占用者非我方 → **报错，不杀**。
 3. **prod** → 优先尝试 4096-4099（保留日志可读性与排障便利），被占则 `TcpListener::bind(0)` 取临时端口。**占用者不在我方 pid 记录中就绕开，绝不 kill。**
 
-`bind(0)` 后关闭、再交给子进程 bind，存在众所周知的 TOCTOU 窗口。**无需特殊处理**：`start_sidecar` 本就有 15s 健康轮询，bind 失败会让子进程秒退；套一层"最多重试 3 次、每次换端口"即可。
+`bind(0)` 后关闭、再交给子进程 bind，存在众所周知的 TOCTOU 窗口。**这个窗口不是理论上的**——阶段 ① 写测试时它当场发作：测试里 `bind(0)` 取端口、drop、再让子进程 bind，被并行跑的兄弟测试的 `bind(0)` 抢走，**6 跑 5 挂**（测试侧的规避办法是改用低于临时端口区间 49152+ 的固定端口；产品侧没有这个奢侈）。
+
+所以重试**是必需的，不是保险**：`start_sidecar` 本就有 15s 健康轮询，bind 失败会让子进程秒退；套一层"最多重试 3 次、每次换端口"。配合下面的 `Terminated` 事件，可以秒级察觉 bind 失败而不是干等 15 秒。
 
 顺带建议**不要再丢弃 `spawn()` 返回的 `_rx`**（`lib.rs:288`）——消费 `CommandEvent::Terminated` 就能立刻区分"启动失败"与"启动慢"，不必干等 15 秒（待验证项 §2.1）。
 
@@ -172,7 +174,7 @@ prod 侧反而无 CORS 问题——origin 是 `tauri://localhost`，与端口无
 
 | 阶段 | 内容 | 行为变更 | 依赖 |
 |---|---|---|---|
-| **①** | 修 §3 误杀：`kill_port_process` 只杀我方记录的 pid；`lsof` 匹配收窄为 `-sTCP:LISTEN` | 修 bug | 无（可先行合入） |
+| **①** | ✅ **已完成**（分支 `fix/sidecar-port-kill-scope`）：`lsof` 匹配收窄为 `-sTCP:LISTEN`（两平台）；杀之前用 exe 名验归属，无法归属一律放过；Linux 取进程名改读 `/proc/<pid>/exe` 并剥 `" (deleted)"` 后缀；`lsof` 从隐式依赖转显式（deb/rpm depends + CI）。cargo 83，30 次连跑零 flaky | 修 bug | 无（可先行合入） |
 | **②** | `ports.json` + `get_sidecar_ports()` + renderer 四处解耦 + gateway 读 env + 移除 `opencode.json` 中的 `ACP_CLIENT_PORT`（含迁移） | **零行为变更的纯重构**（仍用固定值） | ① |
 | **③** | prod 动态分配 + `tauri-plugin-single-instance` | 核心变更 | ② |
 | **④** | gateway / knowledge / acp 补入站鉴权（§9） | 安全加固 | **④a 三处 EventSource 迁移**（见 §9.1） |
