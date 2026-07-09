@@ -1,7 +1,7 @@
 import { KnowledgeStore } from "./store"
 import { createTfIdfEmbedder } from "./embedder"
 import { Indexer } from "./indexer"
-import { createApp, type SidecarAuth } from "./kb-server"
+import { createApp, KB_SERVE_IDLE_TIMEOUT, type SidecarAuth } from "./kb-server"
 import { startMcpBridge } from "./mcp-bridge"
 import { createRetriever } from "./retriever"
 import { FileWatcher } from "./watcher"
@@ -70,6 +70,7 @@ async function serve() {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: KB_PORT,
+    idleTimeout: KB_SERVE_IDLE_TIMEOUT,
     fetch: (req) => app.fetch(req),
   })
 

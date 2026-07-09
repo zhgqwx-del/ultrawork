@@ -72,6 +72,15 @@ describe("acp-server inbound Basic auth", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("tauri://localhost")
   })
 
+  // A `WWW-Authenticate` challenge makes a browser run its own credential flow: Chrome
+  // holds the fetch open waiting for a native password dialog (observed in a real
+  // browser). Every client here attaches the header itself.
+  it("answers 401 without a WWW-Authenticate challenge", async () => {
+    const res = await authedApp().request("/acp/health")
+    expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBeNull()
+  })
+
   it("serves everything unauthenticated when auth is null (unit-test mode)", async () => {
     expect((await createServer(manager(), null).request("/acp/health")).status).toBe(200)
   })

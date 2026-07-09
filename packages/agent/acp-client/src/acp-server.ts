@@ -3,6 +3,8 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { basicAuth } from "hono/basic-auth"
+import { HTTPException } from "hono/http-exception"
+import type { MiddlewareHandler } from "hono"
 import { streamSSE } from "hono/streaming"
 import type { ACPManager } from "./acp-manager.js"
 
@@ -12,6 +14,30 @@ const HEARTBEAT_MS = 15_000
 export interface SidecarAuth {
   username: string
   password: string
+}
+
+/**
+ * Basic auth WITHOUT a `WWW-Authenticate` challenge header.
+ *
+ * hono's `basicAuth` answers 401 with `WWW-Authenticate: Basic`, which tells a
+ * browser to run its own credential flow: Chrome holds the fetch open waiting for a
+ * native password dialog rather than resolving it (observed in a real browser), and
+ * the Tauri WebView would pop a system prompt for a port the user never typed. Every
+ * client here is programmatic and attaches the header itself, so a plain 401 is what
+ * we want. hono's timing-safe comparison is still doing the work.
+ */
+function sidecarBasicAuth(auth: SidecarAuth): MiddlewareHandler {
+  const check = basicAuth({ username: auth.username, password: auth.password })
+  return async (c, next) => {
+    try {
+      return await check(c, next)
+    } catch (err) {
+      if (err instanceof HTTPException && err.status === 401) {
+        return c.json({ error: "unauthorized" }, 401)
+      }
+      throw err
+    }
+  }
 }
 
 /**
@@ -44,7 +70,7 @@ export function createServer(manager: ACPManager, auth: SidecarAuth | null): Hon
   // This covers /orchestration/* as well: index.ts mounts those routes onto this
   // same app, and `app.use("*")` matches by path at request time.
   if (auth) {
-    app.use("*", basicAuth({ username: auth.username, password: auth.password }))
+    app.use("*", sidecarBasicAuth(auth))
   }
 
   app.get("/acp/health", (c) =>

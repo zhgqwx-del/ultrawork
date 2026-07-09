@@ -408,6 +408,16 @@ describe("inbound Basic auth", () => {
     expect(res.headers.get("access-control-allow-headers")).toContain("authorization")
   })
 
+  // hono's basicAuth answers 401 with `WWW-Authenticate: Basic`, which makes a browser
+  // run its own credential flow: Chrome holds the fetch open waiting for a native
+  // password dialog instead of resolving it (observed in a real browser), and the Tauri
+  // WebView would pop a system prompt. Every client here attaches the header itself.
+  it("answers 401 without a WWW-Authenticate challenge", async () => {
+    const res = await authedApp().request("/channel/health")
+    expect(res.status).toBe(401)
+    expect(res.headers.get("www-authenticate")).toBeNull()
+  })
+
   it("serves everything unauthenticated when auth is null (unit-test mode)", async () => {
     const res = await createApp(createMockManager(), undefined, null).request("/channel/health")
     expect(res.status).toBe(200)

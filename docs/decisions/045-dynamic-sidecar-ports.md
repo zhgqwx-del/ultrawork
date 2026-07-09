@@ -50,8 +50,12 @@
 3. **落在动态端口上的崩溃孤儿永不回收**——`prepare_port` 只探首选端口，single-instance 也看不见（对手不是另一个实例，是孤儿）→ 新增 `reap_orphaned_sidecars()`：开机若 `ports.json` 尚存（干净退出会删它）即按记录端口逐个归属门控回收。
 4. **`add-source-dialog.tsx` 私藏第二份 `kbFetch`**（硬编码 `:4098` + 不带鉴权），加鉴权后添加知识源全线 401 ⇒ 收敛到唯一的 `lib/kb-client.ts`。
 5. `Settings` 只读端口字段读一次不订阅，端口移动后显示陈旧值 ⇒ 接 `useSyncExternalStore`。
+6. **401 带 `WWW-Authenticate: Basic` 让浏览器接管认证**（hono `basicAuth` 默认行为）：Chrome 对这样的 `fetch` 不 resolve，挂起等原生密码框（写 add-source 真浏览器 e2e 时实测撞到——安全审查此前判断"不会触发"是错的）；Tauri WebView 里会为用户从没输过的端口弹系统密码框 ⇒ 三个 sidecar 统一包 `sidecarBasicAuth()`，401 返回纯 JSON、不带 challenge 头。
+7. **`Bun.serve` 默认 10s `idleTimeout` 掐死 knowledge 的进度 SSE**（保活 sleep 30s，是默认值三倍）：空闲的知识面板每 10s 断连重连。旧的 `EventSource` 自动重连把症状吞了，④a 换成 fetch-reader 后才浮出来 ⇒ `idleTimeout: 0`（ACP sidecar 早已如此）。
 
-补测（每条都做 A/B 反证）：`ports.json` 并发写不撕裂 + 0600 跨 rename 存活、`drop_registry_entry` 不误删兄弟、`reap_recorded_listeners` 不杀空闲端口/不认领陌生人、`watch_sidecar_exit`（Terminated / 流结束 / 输出不误判 / 持续 drain 不卡子进程）、`sidecar-auth.ts` 全套、四类 renderer 调用方确实带 `Authorization`、kb-server 与 acp-server 的 basicAuth（含「后挂载的 `/orchestration/*` 也在鉴权内」）、`sidecar-ports-changed` 真的触发 connector 重建。
+第 ⑥⑦ 两条是**为了给第 ④ 条写真浏览器回归测试**（`e2e/add-source-auth.e2e.ts`：真 Chrome + 真 kb sidecar，观察线上的 `Authorization` 头与响应码）而被撞出来的——纯单测永远发现不了。
+
+补测（每条都做 A/B 反证）：`ports.json` 并发写不撕裂 + 0600 跨 rename 存活、`drop_registry_entry` 不误删兄弟、`reap_recorded_listeners` 不杀空闲端口/不认领陌生人、`watch_sidecar_exit`（Terminated / 流结束 / 输出不误判 / 持续 drain 不卡子进程）、`sidecar-auth.ts` 全套、四类 renderer 调用方确实带 `Authorization`、kb-server 与 acp-server 的 basicAuth（含「后挂载的 `/orchestration/*` 也在鉴权内」）、`sidecar-ports-changed` 真的触发 connector 重建；三个 sidecar 的 401 不带 challenge 头；kb 的 SSE 熬过 Bun 默认 idleTimeout（对照组不设 idleTimeout 必须真的断，否则断言是空的）。
 
 ## 已知边界
 

@@ -1,6 +1,8 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { basicAuth } from "hono/basic-auth"
+import { HTTPException } from "hono/http-exception"
+import type { MiddlewareHandler } from "hono"
 import { streamSSE } from "hono/streaming"
 import { basename } from "node:path"
 import type { Indexer } from "./indexer"
@@ -17,10 +19,42 @@ export interface AppDeps {
   watcher?: FileWatcher
 }
 
+/**
+ * `Bun.serve` closes an idle request after 10s by default, which kills the
+ * `/kb/sources/events` stream: it only writes when indexing progresses, and its
+ * keep-alive sleeps 30s — three times the default. The renderer then reconnects
+ * every 5s, forever. `0` disables the timeout, matching the ACP sidecar.
+ */
+export const KB_SERVE_IDLE_TIMEOUT = 0
+
 /** Per-install credentials the Tauri host generates and hands to every sidecar. */
 export interface SidecarAuth {
   username: string
   password: string
+}
+
+/**
+ * Basic auth WITHOUT a `WWW-Authenticate` challenge header.
+ *
+ * hono's `basicAuth` answers 401 with `WWW-Authenticate: Basic`, which tells a
+ * browser to run its own credential flow: Chrome holds the fetch open waiting for a
+ * native password dialog rather than resolving it (observed in a real browser), and
+ * the Tauri WebView would pop a system prompt for a port the user never typed. Every
+ * client here is programmatic and attaches the header itself, so a plain 401 is what
+ * we want. hono's timing-safe comparison is still doing the work.
+ */
+function sidecarBasicAuth(auth: SidecarAuth): MiddlewareHandler {
+  const check = basicAuth({ username: auth.username, password: auth.password })
+  return async (c, next) => {
+    try {
+      return await check(c, next)
+    } catch (err) {
+      if (err instanceof HTTPException && err.status === 401) {
+        return c.json({ error: "unauthorized" }, 401)
+      }
+      throw err
+    }
+  }
 }
 
 /**
@@ -60,7 +94,7 @@ export function createApp(deps: AppDeps, auth: SidecarAuth | null): Hono {
   // Health is behind auth too — `prepare_port` treats a healthy responder as its own
   // sidecar and reuses it, so answering /kb/health must prove the credential.
   if (auth) {
-    app.use("/*", basicAuth({ username: auth.username, password: auth.password }))
+    app.use("/*", sidecarBasicAuth(auth))
   }
 
   // Health check
