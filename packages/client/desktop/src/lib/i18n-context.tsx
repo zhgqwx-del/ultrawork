@@ -233,11 +233,6 @@ export const translations: Record<Language, Record<string, string>> = {
     "session.rightSidebar.skills": "Skills",
 
     // Settings
-    "settings.title": "Settings",
-    "settings.description": "Configure your application preferences",
-    "settings.connection": "Connection",
-    "settings.general": "General",
-    "settings.about": "About",
 
     // Connection tab
     "connection.apiBaseUrl": "API Base URL",
@@ -1012,11 +1007,6 @@ export const translations: Record<Language, Record<string, string>> = {
     "session.rightSidebar.skills": "技能",
 
     // Settings
-    "settings.title": "设置",
-    "settings.description": "配置您的应用程序偏好",
-    "settings.connection": "连接",
-    "settings.general": "通用",
-    "settings.about": "关于",
 
     // Connection tab
     "connection.apiBaseUrl": "API 基础 URL",

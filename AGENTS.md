@@ -107,6 +107,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
 - `src/components/brand-icons.tsx` — 微信/企微/钉钉/飞书品牌圆形徽章（CC0/MIT/Apache 素材构建期内联；负形 glyph 结构化白底盘，ADR-044）
+- `src/components/settings/section-tabs.tsx` — 设置页 section 子 tab 共享组件（技能/连接器/知识库同款 Radix 段控；数据驱动注册表 `{id, labelKey, icon?, count?}`，count=**条目数**非连接数）。**只包 `TabsList`，`TabsContent` 由调用方写**——`forceMount` 是逐面板决定（重叠子集 tab 禁 forceMount，conventions §5）
 - `src/components/settings/channels-section.tsx` — 消息渠道设置页 section（ChannelQRLogin 泛化扫码流 + type 驱动手动表单，从 Settings.tsx 拆出）
 - `src/components/settings/models-section.tsx` — 模型管理设置页 section（provider 卡片列表 + 配置流程 + **自定义 provider 表单/删除**；取代旧的全局 ModelDialog，由 Settings 页 `models` section 渲染，Home/Session「管理模型」深链至此；含 DashScope 模型行「联网搜索」`enable_search` toggle，ADR-042）
 - `src/components/settings/search-tools-section.tsx` — 设置页「工具」分区（BYOK 联网搜索：Tavily/IQS key 卡 + 测试连接〔Rust `test_search_provider`〕+ 默认服务商 + Exa 高级开关，ADR-042）；外链常量在 `src/lib/external-links.ts`

@@ -166,7 +166,7 @@ try {
   checks.push("custom tab lists the user-installed copy (marker description, real GET /skill) ✓")
 
   // 3. installable tab: ppt-master Installed (user copy), mcp-builder Install
-  await page.getByRole("tab", { name: /Install|推荐安装/ }).first().click()
+  await page.getByRole("tab", { name: /Recommended|推荐安装/ }).first().click()
   await page.waitForTimeout(800)
   const pptEntry = page.locator("div.rounded-lg", { hasText: "ppt-master" }).first()
   if (!/(Installed|已安装)/.test(await pptEntry.innerText())) throw new Error("catalog ppt-master not marked Installed while the user copy exists")
@@ -200,7 +200,7 @@ try {
   checks.push("shadow card gone; normal builtin card back with the upstream description (real rescan) ✓")
 
   // 5. catalog back to Install + self-update hint; prompt mandates --method git
-  await page.getByRole("tab", { name: /Install|推荐安装/ }).first().click()
+  await page.getByRole("tab", { name: /Recommended|推荐安装/ }).first().click()
   await page.waitForTimeout(800)
   const pptEntry2 = page.locator("div.rounded-lg", { hasText: "ppt-master" }).first()
   const entryText = await pptEntry2.innerText()

@@ -37,7 +37,9 @@
     "e2e:websearch-ui": "bun run --bun e2e/websearch-ui-walkthrough.e2e.ts",
     "e2e:channels-ui": "bun run --bun e2e/channels-ui-walkthrough.e2e.ts",
     "e2e:ui-density": "bun run --bun e2e/ui-density-walkthrough.e2e.ts",
-    "e2e:connectors-tabs": "bun run --bun e2e/connectors-tabs-ui-walkthrough.e2e.ts"
+    "e2e:connectors-tabs": "bun run --bun e2e/connectors-tabs-ui-walkthrough.e2e.ts",
+    "e2e:settings-tabs": "bun run --bun e2e/settings-tabs-ui-walkthrough.e2e.ts",
+    "e2e:settings-tabs:webkit": "E2E_ENGINE=webkit bun run --bun e2e/settings-tabs-ui-walkthrough.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",
