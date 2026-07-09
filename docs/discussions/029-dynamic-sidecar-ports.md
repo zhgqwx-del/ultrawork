@@ -1,6 +1,6 @@
 # 029 — Sidecar 端口动态化（dev 固定 / prod 动态）
 
-> 状态：**✅ 已拍板待开工**（2026-07-09 四项全部拍板：D1 prod=优先 4096-4099 冲突回退动态 · D2 引入 `tauri-plugin-single-instance` · D3 `apiBaseUrl` 改 auto 只读 · D4 范围=①②③④ 一整轮全做。源码级尽调完成；四项原始未知已实证收敛；两项留实现期真机验证。下一步进 ADR-045）
+> 状态：**✅ 已实现**（2026-07-09 四阶段全部落地 + 真机验收 → **ADR-045**。①（误杀修复）已单独合入 main；②③④ 在 `feat/dynamic-sidecar-ports`。§10.2 真机验证项：第 1 项（rx 必须持有并消费）已闭环；第 3 项（`Bun.serve({port:0})`）**作废**——Rust 传具体端口，sidecar 从不 bind 0；第 2/4 项（Windows 防火墙 + `netstat` 临时端口段、single-instance 三平台一致性）**仍待真 Windows/Linux 机器实测**）
 > 日期：2026-07-09
 > 输入：用户提出——软件装到用户机器上后，固定端口可能冲突导致启动不起来；希望 dev 保持固定端口便于调试，prod 侧动态分配以规避冲突。
 > 关联：ADR-028（sidecar 凭证）· ADR-037（跨平台）· ADR-031/038（编排层宿主 = ACP sidecar）· gotchas §6（Tauri/进程生命周期）· §3（MCP per-directory）· 本地记忆 `project_sidecar_process_cleanup.md`

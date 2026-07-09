@@ -402,6 +402,11 @@ setTimeout(() => fetchSources(), 500)
 - codesign / lipo / notarytool / strip 仅 macOS：脚本里用 `process.platform === "darwin"` 守卫。`build-release.ts` 非 mac 走「构建 sidecar + `tauri build`」分支，不碰 Apple 签名。
 - Tauri `bundle.targets` 设 `"all"`，由 Tauri 按平台产对应安装包（mac dmg/app、win nsis/msi、linux deb/appimage）。
 
+### 进程与端口（ADR-045）
+- **杀进程前必须验归属**：拿到 pid 后先读它的可执行文件名，与我方 sidecar 名比对（容忍 dev 的 `-<target-triple>` 后缀与 Windows `.exe`）。**无法归属就 fail-closed 放过**——宁可漏回收一个端口，不可误杀用户的编辑器/数据库/隧道。取进程名的三平台差异见 gotchas §12（Linux 必须读 `/proc/<pid>/exe` 并剥 `" (deleted)"`）。
+- **端口不是编译期常量，也不入持久化配置**：宿主启动时决定一次，经 env 下发给直接子进程、经 IPC 下发给 renderer、经 `~/.ultrawork/run/ports.json` 下发给晚加入的孙进程。renderer 侧用**启动 gate**（`main.tsx` 在 `createRoot` 前 `await`）把异步解析收敛到一处，下游 helper 保持同步。
+- **凭证同理**：`sidecar-auth.ts` 与 `sidecar-ports.ts` 同形，同一个 gate 里一起 await。两者的 loader **永不 reject**（内建兜底），否则整个 boot 挂死。
+
 ### 已知平台边界（非 bug，刻意降级）
 - **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：三平台均已支持（ADR-037 后续移植）。Windows 走 node `.zip`（`node.exe` 在根 + `node_modules/npm` 无 `lib/`）、`tar -xf` 解压（Win10+ bsdtar）、`resolve_npm_cli`/`embedded_node_bin` 平台分支、Chrome 清理用 PowerShell WMI 命令行匹配 + `taskkill /F /T`。**代码层三平台编译通过，但 Windows 上 Browser MCP 的运行时（真装 + 真起浏览器）需在真 Windows 机器实测**——CI 覆盖不到浏览器自动化运行时。前置：Windows 需 `tar.exe`（Win10 1803+ 自带）+ `curl`（Win10+ 自带）。
 - **渐进式工具披露内置工具 id 集**：与平台无关，但 vendor bump 时仍需复核（见 MEMORY Pending Issues）。
