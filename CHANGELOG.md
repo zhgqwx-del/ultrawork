@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **端口占用时不再杀掉无关进程（2026-07-09，分支 `fix/sidecar-port-kill-scope`，纯 Rust `lib.rs`）**：`prepare_port` 此前对「端口被占 + 健康检查不过」一律 `kill_port_process(port)`——而 4096-4099 均非 IANA 保留段，占用者完全可能是用户自己的程序。两层缺陷：① **杀之前不验归属**；② Unix 侧用 `lsof -ti :PORT`，而 `lsof -i :PORT` 匹配的是**本地或远端**端口任一命中的 socket，因此连「仅仅连接到该端口的客户端」以及「出站连接恰好抽到该临时端口的进程」都会进待杀名单（已用真实 socket 实证：`lsof -ti :5599` 返回监听者 + 无辜客户端两个 pid）。**修复**：`pids_on_port` → `listening_pids_on_port`，两平台均收窄到 LISTEN 态（Unix `-sTCP:LISTEN`；Windows netstat 增加 `State == LISTENING` 过滤）；新增 `process_exe_name`/`exe_matches_sidecar`/`process_is_sidecar` 归属判定（容忍 bundle 名 `opencode-server`、dev 的 target-triple 后缀名、Windows `.exe`），`kill_port_listeners(port, owner)` 只杀**可证明是自家 sidecar** 的监听进程，无法归属的一律放过（fail-closed：宁可漏回收端口，不可误杀旁观者）；不健康占用者若非我方 → 直接返回可操作的错误而非动刀。孤儿分支（已由健康检查证明归属）与 shutdown 兜底同样走归属门。`SidecarEntry` 增 `name` 字段供 shutdown 阶段验证归属；`port_listener_orphaned` 复用统一的 LISTEN 查询去重。**跨平台**：`process_exe_name` 三平台三套源——Linux 必须读 `/proc/<pid>/exe`，**不能**用 `ps -o comm=`（`TASK_COMM_LEN` 截断到 15 字符，会把 `knowledge-sidecar`〔17〕截成 `knowledge-sidec` → 认不出自家 sidecar → Linux 上永远无法回收陈旧端口）；macOS `ps -o comm=` 给全路径不截断；Windows 走 `tasklist` CSV。**验证**：cargo **74**（基线 67，新增 7）· 零警告 · **A/B 反证两条**：去掉 netstat 的 `LISTENING` 过滤 → 无辜的出站连接 pid 混入待杀名单，测试红；把归属判定退化为旧代码的无条件 kill → `prepare_port` 测试**把 cargo test 进程自己 SIGTERM 掉**（`signal: 15`），即旧行为杀旁观者的完整复现 · 新增 `process_exe_name_is_exact_for_names_past_linux_comm_truncation` 专门在 CI Linux 上守 `comm` 截断回归。铺垫 discussions/029 阶段 ①。
+
 ## [0.2.1] - 2026-07-09
 
 > v0.2.0 之后的打磨批次：消息渠道扫码接入三家收官（钉钉 / 企业微信 / 飞书）+ 品牌 icon 体系，以及一轮集中的 UI 密度走查与设置页 tab 统一。
