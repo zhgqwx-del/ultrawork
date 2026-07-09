@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
+    "e2e:dynamic-ports": "bun run --bun e2e/dynamic-ports.e2e.ts",
     "e2e:mcp-status": "bun run --bun e2e/mcp-status-dynamic.e2e.ts",
     "e2e:kb-autoregister": "bun run --bun e2e/kb-mcp-autoregister.e2e.ts",
     "e2e:kb-restart": "bun run --bun e2e/kb-mcp-restart-persist.e2e.ts",

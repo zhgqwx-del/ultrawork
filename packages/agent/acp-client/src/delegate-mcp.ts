@@ -15,6 +15,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
+import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 const KEEPALIVE_MS = 10_000
 
@@ -27,8 +30,41 @@ export interface ShimDeps {
   keepaliveMs?: number
 }
 
-export function shimDepsFromEnv(env: NodeJS.ProcessEnv = process.env): ShimDeps {
-  const port = Number(env.ACP_CLIENT_PORT ?? 4099)
+/**
+ * Read the ACP sidecar's port from the Tauri host's runtime registry.
+ *
+ * Needed because this shim has two very different parents. When the ACP sidecar
+ * spawns it, it inherits `ACP_CLIENT_PORT` directly. When *opencode* spawns it
+ * (the `orchestrator` MCP entry), there is no such env: opencode cannot be told
+ * the ACP port at its own launch, because the ACP sidecar starts afterwards and
+ * may still move to a different port. The registry is written after each sidecar
+ * is healthy, so by the time a shim runs it holds the truth.
+ *
+ * Deliberately not read from opencode.json: that file is persisted and would go
+ * stale across launches (discussions/029 §4.1 d).
+ */
+export function acpPortFromPortsRegistry(readFile: (p: string) => string): number | undefined {
+  try {
+    const home = homedir()
+    if (!home) return undefined
+    const parsed = JSON.parse(readFile(join(home, ".ultrawork", "run", "ports.json")))
+    const port = parsed?.acp?.port
+    return typeof port === "number" && Number.isInteger(port) && port > 0 && port < 65536
+      ? port
+      : undefined
+  } catch {
+    // No registry (standalone run, host not started yet) — fall through.
+    return undefined
+  }
+}
+
+export function shimDepsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  readFile: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): ShimDeps {
+  // Env wins: the ACP sidecar knows its own port for certain.
+  const fromEnv = env.ACP_CLIENT_PORT ? Number(env.ACP_CLIENT_PORT) : undefined
+  const port = fromEnv ?? acpPortFromPortsRegistry(readFile) ?? 4099
   return { baseUrl: `http://127.0.0.1:${port}` }
 }
 

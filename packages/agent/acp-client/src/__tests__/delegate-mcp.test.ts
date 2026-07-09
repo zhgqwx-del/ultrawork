@@ -14,8 +14,41 @@ function deps(fetchImpl: FetchLike, extra: Partial<ShimDeps> = {}): ShimDeps {
 
 describe("delegate-mcp shim", () => {
   it("resolves the ACP_CLIENT_PORT env into the base URL", () => {
-    expect(shimDepsFromEnv({ ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv).baseUrl).toBe("http://127.0.0.1:5001")
-    expect(shimDepsFromEnv({} as NodeJS.ProcessEnv).baseUrl).toBe("http://127.0.0.1:4099")
+    const noRegistry = () => {
+      throw new Error("ENOENT")
+    }
+    expect(shimDepsFromEnv({ ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv, noRegistry).baseUrl).toBe("http://127.0.0.1:5001")
+    expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, noRegistry).baseUrl).toBe("http://127.0.0.1:4099")
+  })
+
+  // opencode spawns this shim without ACP_CLIENT_PORT — it cannot know the ACP port
+  // at its own launch (the ACP sidecar starts later and may still move). The runtime
+  // registry is the cycle-breaker. See discussions/029 §4.1 (d).
+  describe("ACP port resolution without env", () => {
+    const registry = (body: string) => () => body
+
+    it("reads the port from ~/.ultrawork/run/ports.json", () => {
+      const json = JSON.stringify({ acp: { port: 51237, pid: 42 } })
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, registry(json)).baseUrl).toBe("http://127.0.0.1:51237")
+    })
+
+    it("prefers the env over the registry when both are present", () => {
+      const json = JSON.stringify({ acp: { port: 51237 } })
+      const env = { ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv
+      expect(shimDepsFromEnv(env, registry(json)).baseUrl).toBe("http://127.0.0.1:5001")
+    })
+
+    it.each([
+      ["a missing file", () => { throw new Error("ENOENT") }],
+      ["invalid JSON", registry("not json{{")],
+      ["no acp entry", registry(JSON.stringify({ opencode: { port: 4096 } }))],
+      ["a non-numeric port", registry(JSON.stringify({ acp: { port: "51237" } }))],
+      ["an out-of-range port", registry(JSON.stringify({ acp: { port: 0 } }))],
+    ])("falls back to 4099 on %s", (_label, readFile) => {
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, readFile as (p: string) => string).baseUrl).toBe(
+        "http://127.0.0.1:4099",
+      )
+    })
   })
 
   it("forwards the request and passes the contract JSON through", async () => {

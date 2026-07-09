@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
 
 const invoke = vi.hoisted(() => vi.fn())
+const listen = vi.hoisted(() => vi.fn())
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
+vi.mock("@tauri-apps/api/event", () => ({ listen }))
 
 import {
   PREFERRED_PORTS,
@@ -12,6 +14,8 @@ import {
   loadSidecarPorts,
   opencodeBaseUrl,
   sidecarPorts,
+  sidecarPortsVersion,
+  subscribeSidecarPorts,
 } from "@/lib/sidecar-ports"
 
 const DYNAMIC = { opencode: 51234, gateway: 51235, knowledge: 51236, acp: 51237 }
@@ -19,6 +23,8 @@ const DYNAMIC = { opencode: 51234, gateway: 51235, knowledge: 51236, acp: 51237 
 describe("sidecar-ports", () => {
   beforeEach(() => {
     invoke.mockReset()
+    listen.mockReset()
+    listen.mockResolvedValue(() => {})
     __resetSidecarPortsForTest()
   })
   afterEach(() => {
@@ -83,6 +89,77 @@ describe("sidecar-ports", () => {
       expect(acpBaseUrl()).not.toBe(`http://localhost:${PREFERRED_PORTS.acp}`)
       __resetSidecarPortsForTest()
       expect(acpBaseUrl()).toBe(`http://localhost:${PREFERRED_PORTS.acp}`)
+    })
+  })
+
+  // A sidecar that loses a bind race moves to a new port *after* the startup gate
+  // has already published the old one. The host emits the new set; without this the
+  // renderer keeps calling a port nobody is listening on.
+  describe("sidecar-ports-changed", () => {
+    /** Resolve the handler the module registered with `listen`. */
+    async function armed(): Promise<(event: { payload: unknown }) => void> {
+      invoke.mockResolvedValue(PREFERRED_PORTS)
+      await loadSidecarPorts()
+      expect(listen).toHaveBeenCalledWith("sidecar-ports-changed", expect.any(Function))
+      return listen.mock.calls[0][1]
+    }
+
+    it("adopts new ports, bumps the version, and notifies subscribers", async () => {
+      const emit = await armed()
+      const onChange = vi.fn()
+      subscribeSidecarPorts(onChange)
+
+      emit({ payload: DYNAMIC })
+
+      expect(sidecarPorts()).toEqual(DYNAMIC)
+      expect(acpBaseUrl()).toBe(`http://localhost:${DYNAMIC.acp}`)
+      expect(sidecarPortsVersion()).toBe(1)
+      expect(onChange).toHaveBeenCalledTimes(1)
+    })
+
+    // Re-emitting the same ports must not churn the version: SSEProvider keys its
+    // connector on it, so a spurious bump tears down live SSE streams.
+    it("ignores an event that carries the ports it already has", async () => {
+      const emit = await armed()
+      const onChange = vi.fn()
+      subscribeSidecarPorts(onChange)
+
+      emit({ payload: { ...PREFERRED_PORTS } })
+
+      expect(sidecarPortsVersion()).toBe(0)
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it("ignores a malformed payload rather than corrupting the ports", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {})
+      const emit = await armed()
+      const onChange = vi.fn()
+      subscribeSidecarPorts(onChange)
+
+      emit({ payload: null })
+      emit({ payload: { opencode: 4096 } })
+
+      expect(sidecarPorts()).toEqual(PREFERRED_PORTS)
+      expect(sidecarPortsVersion()).toBe(0)
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it("stops notifying after unsubscribe", async () => {
+      const emit = await armed()
+      const onChange = vi.fn()
+      subscribeSidecarPorts(onChange)()
+
+      emit({ payload: DYNAMIC })
+
+      expect(sidecarPorts()).toEqual(DYNAMIC)
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it("does not reject when the host has no event system (non-Tauri)", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {})
+      invoke.mockResolvedValue(DYNAMIC)
+      listen.mockRejectedValue(new Error("not running in Tauri"))
+      await expect(loadSidecarPorts()).resolves.toEqual(DYNAMIC)
     })
   })
 })

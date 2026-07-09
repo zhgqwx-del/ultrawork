@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
+# A second launch must focus the running window, not boot a rival set of sidecars
+# (dynamic ports removed the accidental lock the fixed ports used to provide).
+tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"

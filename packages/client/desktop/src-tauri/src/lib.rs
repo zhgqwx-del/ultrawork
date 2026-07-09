@@ -66,6 +66,68 @@ fn sidecar_ports() -> SidecarPorts {
     }
 }
 
+/// Record the port a sidecar actually got. Returns false for an unknown name so a
+/// typo surfaces instead of silently writing nowhere.
+fn set_sidecar_port(name: &str, port: u16) -> bool {
+    let Ok(mut p) = SIDECAR_PORTS.lock() else { return false };
+    match name {
+        "opencode-server" => p.opencode = port,
+        "channel-gateway" => p.gateway = port,
+        "knowledge-sidecar" => p.knowledge = port,
+        "acp-client" => p.acp = port,
+        _ => return false,
+    }
+    true
+}
+
+fn env_flag(key: &str) -> bool {
+    std::env::var(key).map(|v| v == "1").unwrap_or(false)
+}
+
+/// Pure core of `fixed_ports`, so the precedence is testable without mutating the
+/// process environment (racy across parallel tests).
+fn fixed_ports_from(force_dynamic: bool, force_fixed: bool, debug_build: bool) -> bool {
+    if force_dynamic {
+        return false;
+    }
+    if force_fixed {
+        return true;
+    }
+    debug_build
+}
+
+/// Dev builds pin 4096-4099. Two hard constraints, not just convenience: the Vite
+/// proxy targets are compile-time (`vite.config.ts`) and Vite starts before we pick
+/// a port, and the sidecars' CORS whitelists name `http://localhost:1420`.
+///
+/// `ULTRAWORK_DYNAMIC_PORTS=1` forces the production path — without it the dynamic
+/// branch would never execute on a developer machine (discussions/029 §5.3).
+/// `ULTRAWORK_FIXED_PORTS=1` pins a production build, for local debugging.
+fn fixed_ports() -> bool {
+    fixed_ports_from(
+        env_flag("ULTRAWORK_DYNAMIC_PORTS"),
+        env_flag("ULTRAWORK_FIXED_PORTS"),
+        cfg!(debug_assertions),
+    )
+}
+
+/// Ask the kernel for a free ephemeral port, then let it go.
+///
+/// The gap between this and the child's own `bind` is a genuine TOCTOU window, not
+/// a theoretical one: while writing the phase-① tests, a sibling test's `bind(0)`
+/// stole the port 5 times out of 6. The caller must therefore be able to retry with
+/// a fresh port — see `start_sidecar`.
+fn ephemeral_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("Failed to reserve an ephemeral port: {}", e))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("Failed to read the reserved port: {}", e))?
+        .port();
+    drop(listener);
+    Ok(port)
+}
+
 #[tauri::command]
 fn get_sidecar_ports() -> SidecarPorts {
     sidecar_ports()
@@ -140,6 +202,28 @@ fn write_ports_json() {
     };
     if let Err(e) = write() {
         eprintln!("[ports] failed to write {}: {}", path.display(), e);
+    }
+}
+
+/// Event emitted when a sidecar lands on a port the renderer has not seen. Only
+/// fires when a port actually changes, so a listener can reconnect unconditionally.
+const PORTS_CHANGED_EVENT: &str = "sidecar-ports-changed";
+
+/// Record a sidecar's port and, if it moved, tell the renderer.
+///
+/// The startup gate reads the ports once before first paint. The three background
+/// sidecars normally settle before the window exists, but a lost bind race can move
+/// one afterwards — the event is what keeps the renderer from talking to a port
+/// nobody is listening on.
+fn publish_sidecar_port<T: tauri::Emitter<tauri::Wry>>(emitter: &T, name: &str, port: u16) {
+    let before = sidecar_ports();
+    if !set_sidecar_port(name, port) {
+        eprintln!("[ports] unknown sidecar name {:?} — port {} not recorded", name, port);
+        return;
+    }
+    let after = sidecar_ports();
+    if before != after {
+        let _ = emitter.emit(PORTS_CHANGED_EVENT, after);
     }
 }
 
@@ -547,14 +631,22 @@ fn prepare_port(
     Ok(false)
 }
 
+/// A spawned sidecar, as the startup loop sees it.
+struct SpawnedSidecar {
+    pid: u32,
+    /// Set once the process has exited. Lets us tell "died on startup" (almost
+    /// always a lost bind race) from "still booting" without waiting out the
+    /// 15s health timeout.
+    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// Spawn a sidecar binary using ShellExt (works with App or AppHandle).
-/// Returns the PID of the spawned process.
 fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     shell_host: &T,
-    name: &str,
-    args: &[&str],
-    env_vars: &[(&str, &str)],
-) -> Result<u32, String> {
+    name: &'static str,
+    args: &[String],
+    env_vars: &[(String, String)],
+) -> Result<SpawnedSidecar, String> {
     let sidecar = shell_host
         .shell()
         .sidecar(name)
@@ -565,64 +657,208 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
         cmd = cmd.env(key, value);
     }
 
-    let (_rx, child) = cmd
+    let (rx, child) = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", name, e))?;
     let pid = child.pid();
     // Dropping CommandChild does not kill the OS process — it continues running.
-    Ok(pid)
+    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx) })
 }
 
-/// Generic sidecar launcher with port probe, stale cleanup, and health reuse.
-/// Registers the sidecar in the global registry for shutdown cleanup.
-fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
-    shell_host: &T,
+/// Drain the command's event stream on a dedicated thread, flipping a flag when the
+/// child exits.
+///
+/// The draining is not optional. The plugin's channel has capacity 1 and its
+/// stdout/stderr readers `block_on(tx.send(..))`, so a receiver that is held but
+/// not read would stall the child's writes — which is exactly why the previous code
+/// dropped the receiver outright. A plain `std::thread` is not inside the async
+/// runtime, so `blocking_recv` here is safe.
+fn watch_sidecar_exit(
     name: &'static str,
+    mut rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
+) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_shell::process::CommandEvent;
+
+    let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = exited.clone();
+    std::thread::spawn(move || {
+        while let Some(event) = rx.blocking_recv() {
+            match event {
+                CommandEvent::Terminated(payload) => {
+                    println!("[sidecar] {} exited with {:?}", name, payload.code);
+                    flag.store(true, Ordering::SeqCst);
+                    break;
+                }
+                CommandEvent::Error(e) => eprintln!("[sidecar] {} error: {}", name, e),
+                // Stdout/Stderr were discarded before this change too; keep draining
+                // them so the child never blocks on a full pipe.
+                _ => {}
+            }
+        }
+        // The sender is gone (or we stopped caring): if we never saw Terminated,
+        // treat the stream ending as an exit so a caller waiting on the flag is
+        // not stuck believing the child is alive.
+        flag.store(true, Ordering::SeqCst);
+    });
+    exited
+}
+
+/// How many ports a sidecar may burn through before we give up. Attempt 1 uses the
+/// preferred port (or the first ephemeral one if that is taken); each retry draws a
+/// fresh ephemeral port.
+const MAX_START_ATTEMPTS: u32 = 3;
+
+/// Outcome of waiting for a freshly-spawned sidecar.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadyOutcome {
+    Ready,
+    /// The child exited before answering. On startup this is nearly always a lost
+    /// bind race, so the caller retries on a different port.
+    Exited,
+    Timeout,
+}
+
+/// Poll for health, bailing out early if the child dies.
+fn await_sidecar_ready(
     port: u16,
     health_path: &str,
     health_auth: Option<&str>,
-    args: &[&str],
-    env_vars: &[(&str, &str)],
-) -> Result<(), String> {
-    let reused = prepare_port(name, port, health_path, health_auth)?;
-    if reused {
-        println!("{} already running on port {} (healthy), reusing", name, port);
-        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-            reg.push(SidecarEntry { name, port, pid: None });
-        }
-        write_ports_json();
-        return Ok(());
-    }
-
-    let pid = spawn_sidecar(shell_host, name, args, env_vars)?;
-    if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-        reg.push(SidecarEntry { name, port, pid: Some(pid) });
-    }
-
-    // Wait for sidecar to become healthy before returning
-    let max_wait = Duration::from_secs(15);
+    exited: &std::sync::atomic::AtomicBool,
+    max_wait: Duration,
+) -> ReadyOutcome {
+    use std::sync::atomic::Ordering;
     let poll_interval = Duration::from_millis(200);
     let start = std::time::Instant::now();
     loop {
         if check_health(port, health_path, health_auth) {
-            println!("{} ready on port {} (pid {})", name, port, pid);
-            write_ports_json();
-            return Ok(());
+            return ReadyOutcome::Ready;
+        }
+        // Ordering matters: a child can bind, answer, and exit. Health is checked
+        // first so a racing exit flag cannot mask a sidecar that did come up.
+        if exited.load(Ordering::SeqCst) {
+            return ReadyOutcome::Exited;
         }
         if start.elapsed() > max_wait {
-            // Kill the unhealthy child and drop it from the registry — otherwise it
-            // would leak as a zombie sidecar until app shutdown.
-            kill_pid(pid);
-            if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-                reg.retain(|e| e.pid != Some(pid));
-            }
-            return Err(format!(
-                "{} spawned (pid {}) on port {} but did not pass health check at {} within {}s",
-                name, pid, port, health_path, max_wait.as_secs()
-            ));
+            return ReadyOutcome::Timeout;
         }
         std::thread::sleep(poll_interval);
     }
+}
+
+/// Decide which port to try. `Reuse` means a healthy instance of ours already owns
+/// it and no spawn is needed.
+#[derive(Debug)]
+enum PortPlan {
+    Reuse(u16),
+    Bind(u16),
+}
+
+/// Pick the port for attempt 1.
+///
+/// dev pins the preferred port and reports a conflict rather than dodging it — a
+/// dev build that silently moved would break the Vite proxy in a way that looks
+/// like a bug in whatever you were working on. Production steps aside instead:
+/// 4096-4099 are not IANA-reserved, and the occupant is the user's program.
+fn plan_port(
+    name: &str,
+    preferred: u16,
+    health_path: &str,
+    health_auth: Option<&str>,
+    fixed: bool,
+) -> Result<PortPlan, String> {
+    match prepare_port(name, preferred, health_path, health_auth) {
+        Ok(true) => Ok(PortPlan::Reuse(preferred)),
+        Ok(false) => Ok(PortPlan::Bind(preferred)),
+        Err(e) if fixed => Err(e),
+        Err(e) => {
+            println!("[ports] {} cannot use preferred port {} ({}); falling back to a dynamic port", name, preferred, e);
+            Ok(PortPlan::Bind(ephemeral_port()?))
+        }
+    }
+}
+
+/// Retry only when the child exited *and* we are free to move. A timeout means the
+/// process is alive but not answering — a new port would not help. A dev build must
+/// not move at all: the Vite proxy targets a compile-time port.
+fn should_retry_on_new_port(outcome: &ReadyOutcome, fixed: bool, attempt: u32) -> bool {
+    *outcome == ReadyOutcome::Exited && !fixed && attempt < MAX_START_ATTEMPTS
+}
+
+/// Generic sidecar launcher with port probe, stale cleanup, health reuse, and — in
+/// production — dynamic port fallback with retry.
+///
+/// `args_for` / `env_for` take the chosen port because a retry changes it: the port
+/// has to be rebuilt into the child's argv and environment, not captured up front.
+fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<tauri::Wry>>(
+    shell_host: &T,
+    name: &'static str,
+    preferred_port: u16,
+    health_path: &str,
+    health_auth: Option<&str>,
+    args_for: &dyn Fn(u16) -> Vec<String>,
+    env_for: &dyn Fn(u16) -> Vec<(String, String)>,
+) -> Result<(), String> {
+    let max_wait = Duration::from_secs(15);
+    let fixed = fixed_ports();
+    let mut last_error = String::new();
+
+    for attempt in 1..=MAX_START_ATTEMPTS {
+        // Attempt 1 may reuse or take the preferred port; a retry always moves.
+        let port = if attempt == 1 {
+            match plan_port(name, preferred_port, health_path, health_auth, fixed)? {
+                PortPlan::Reuse(port) => {
+                    println!("{} already running on port {} (healthy), reusing", name, port);
+                    set_sidecar_port(name, port);
+                    if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+                        reg.push(SidecarEntry { name, port, pid: None });
+                    }
+                    write_ports_json();
+                    return Ok(());
+                }
+                PortPlan::Bind(port) => port,
+            }
+        } else {
+            ephemeral_port()?
+        };
+
+        publish_sidecar_port(shell_host, name, port);
+        let child = spawn_sidecar(shell_host, name, &args_for(port), &env_for(port))?;
+        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+            reg.push(SidecarEntry { name, port, pid: Some(child.pid) });
+        }
+
+        match await_sidecar_ready(port, health_path, health_auth, &child.exited, max_wait) {
+            ReadyOutcome::Ready => {
+                println!("{} ready on port {} (pid {})", name, port, child.pid);
+                write_ports_json();
+                return Ok(());
+            }
+            outcome => {
+                // Drop the dead/hung child from the registry — otherwise it leaks as a
+                // zombie entry until app shutdown. Timeout also kills the process.
+                if outcome == ReadyOutcome::Timeout {
+                    kill_pid(child.pid);
+                }
+                if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+                    reg.retain(|e| e.pid != Some(child.pid));
+                }
+                last_error = match outcome {
+                    ReadyOutcome::Timeout => format!(
+                        "{} spawned (pid {}) on port {} but did not pass health check at {} within {}s",
+                        name, child.pid, port, health_path, max_wait.as_secs()
+                    ),
+                    _ => format!("{} exited immediately on port {} (port taken?)", name, port),
+                };
+
+                if !should_retry_on_new_port(&outcome, fixed, attempt) {
+                    return Err(last_error);
+                }
+                println!("[ports] {}; retrying on a fresh port ({}/{})", last_error, attempt, MAX_START_ATTEMPTS);
+            }
+        }
+    }
+    Err(last_error)
 }
 
 // ── Default workspace ──────────────────────────────────────────────
@@ -4918,6 +5154,22 @@ fn warm_opencode_mcp(port: u16, auth_header: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first (plugin's own requirement).
+        //
+        // Until now the fixed ports were an accidental single-instance lock: a second
+        // launch found healthy sidecars on 4096-4099 and reused them. Dynamic ports
+        // remove that side effect, and a second instance would start its own gateway
+        // (IM long-connections fight over the same account) and its own knowledge
+        // sidecar (two writers on a single-writer SQLite file). Make it explicit
+        // rather than emergent — discussions/029 §6.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -4982,8 +5234,6 @@ pub fn run() {
             // stale mcp.environment port would override the one we inject.
             strip_persisted_sidecar_ports();
 
-            let ports = sidecar_ports();
-
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
             // call the OpenCode HTTP API, and OpenCode itself reads it from env.
@@ -5008,26 +5258,78 @@ pub fn run() {
                 format!("Basic {}", token)
             };
 
+            // OpenCode goes first (critical — blocks until ready). The other three
+            // are started afterwards because two of them need opencode's *final*
+            // port in their env, and with dynamic ports that is not known until it
+            // is actually listening.
+            //
+            // The reverse dependency — opencode's delegate-mcp shim needing the ACP
+            // port — is deliberately NOT resolved through env: it would be a cycle.
+            // The shim reads ~/.ultrawork/run/ports.json at spawn time instead
+            // (delegate-mcp.ts), by which point the ACP sidecar has settled.
+            //
+            // PATH: rich (login-shell) PATH, same as acp-client — skills shell out
+            // to python3/pandoc/… and a Finder-launched app only inherits the
+            // minimal GUI PATH. This also keeps the skill-dependency probes
+            // (skill_dep_path, rich-based) consistent with what skill bash
+            // actually resolves at runtime.
+            let oc_path = rich_path();
+            let oc_password = creds.password.clone();
+            if let Err(e) = start_sidecar(
+                &app.handle().clone(),
+                "opencode-server",
+                OPENCODE_PORT,
+                "/global/health",
+                Some(&auth_header),
+                &|port| vec!["serve".into(), "--port".into(), port.to_string()],
+                &|_port| {
+                    vec![
+                        ("OPENCODE_SERVER_PASSWORD".into(), oc_password.clone()),
+                        ("OPENCODE_APP_NAME".into(), OPENCODE_APP_NAME.into()),
+                        ("PATH".into(), oc_path.clone()),
+                    ]
+                },
+            ) {
+                eprintln!("OpenCode Server startup failed: {}", e);
+                app.dialog()
+                    .message(format!(
+                        "Failed to start OpenCode Server:\n\n{}\n\nThe application may not work correctly.",
+                        e
+                    ))
+                    .kind(MessageDialogKind::Error)
+                    .title("Startup Error")
+                    .blocking_show();
+            } else {
+                // OpenCode is healthy — eagerly trigger MCP InstanceState init in
+                // the background so the first user prompt doesn't pay the per-MCP
+                // spawn/connect cost.
+                warm_opencode_mcp(sidecar_ports().opencode, auth_header.clone());
+            }
+
+            // opencode's port is settled now (even a failed start leaves the
+            // registry consistent), so the two sidecars that call it can be told
+            // where it is.
+            let opencode_url = format!("http://127.0.0.1:{}", sidecar_ports().opencode);
+
             // Start Channel Gateway sidecar in background (non-critical, don't block UI)
             let gw_handle = app.handle().clone();
             let gw_password = creds.password.clone();
+            let gw_opencode_url = opencode_url.clone();
             std::thread::spawn(move || {
-                let gw_port = ports.gateway.to_string();
-                // The gateway is the only sidecar that calls opencode over HTTP,
-                // so it needs opencode's port too, not just its own.
-                let gw_opencode_url = format!("http://127.0.0.1:{}", ports.opencode);
                 if let Err(e) = start_sidecar(
                     &gw_handle,
                     "channel-gateway",
-                    ports.gateway,
+                    GATEWAY_PORT,
                     "/channel/health",
                     None,
-                    &[],
-                    &[
-                        ("OPENCODE_SERVER_PASSWORD", gw_password.as_str()),
-                        ("GATEWAY_PORT", gw_port.as_str()),
-                        ("OPENCODE_BASE_URL", gw_opencode_url.as_str()),
-                    ],
+                    &|_port| vec![],
+                    &|port| {
+                        vec![
+                            ("OPENCODE_SERVER_PASSWORD".into(), gw_password.clone()),
+                            ("GATEWAY_PORT".into(), port.to_string()),
+                            ("OPENCODE_BASE_URL".into(), gw_opencode_url.clone()),
+                        ]
+                    },
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
                     use tauri::Emitter;
@@ -5041,15 +5343,14 @@ pub fn run() {
             // Start Knowledge Sidecar in background (non-critical, don't block UI)
             let kb_handle = app.handle().clone();
             std::thread::spawn(move || {
-                let kb_port = ports.knowledge.to_string();
                 if let Err(e) = start_sidecar(
                     &kb_handle,
                     "knowledge-sidecar",
-                    ports.knowledge,
+                    KNOWLEDGE_PORT,
                     "/kb/health",
                     None,
-                    &[],
-                    &[("KB_PORT", kb_port.as_str())],
+                    &|_port| vec![],
+                    &|port| vec![("KB_PORT".into(), port.to_string())],
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
                     use tauri::Emitter;
@@ -5065,25 +5366,26 @@ pub fn run() {
             // not on the minimal Finder-launch PATH — pass the enriched one.
             let acp_handle = app.handle().clone();
             let acp_password = creds.password.clone();
+            let acp_opencode_url = opencode_url;
             std::thread::spawn(move || {
                 let acp_path = rich_path();
-                let acp_port = ports.acp.to_string();
-                let acp_opencode_url = format!("http://127.0.0.1:{}", ports.opencode);
                 if let Err(e) = start_sidecar(
                     &acp_handle,
                     "acp-client",
-                    ports.acp,
+                    ACP_PORT,
                     "/acp/health",
                     None,
-                    &[],
-                    &[
-                        ("PATH", acp_path.as_str()),
-                        // In-sidecar orchestrator calls the OpenCode REST API
-                        // (same credential channel as channel-gateway).
-                        ("OPENCODE_SERVER_PASSWORD", acp_password.as_str()),
-                        ("ACP_CLIENT_PORT", acp_port.as_str()),
-                        ("OPENCODE_BASE_URL", acp_opencode_url.as_str()),
-                    ],
+                    &|_port| vec![],
+                    &|port| {
+                        vec![
+                            ("PATH".into(), acp_path.clone()),
+                            // In-sidecar orchestrator calls the OpenCode REST API
+                            // (same credential channel as channel-gateway).
+                            ("OPENCODE_SERVER_PASSWORD".into(), acp_password.clone()),
+                            ("ACP_CLIENT_PORT".into(), port.to_string()),
+                            ("OPENCODE_BASE_URL".into(), acp_opencode_url.clone()),
+                        ]
+                    },
                 ) {
                     eprintln!("ACP Client startup failed: {}", e);
                     use tauri::Emitter;
@@ -5093,50 +5395,6 @@ pub fn run() {
                     );
                 }
             });
-
-            // Start OpenCode Server sidecar (critical — blocks until ready).
-            // Credentials and auth_header were loaded at the top of setup().
-            // PATH: rich (login-shell) PATH, same as acp-client — skills shell out
-            // to python3/pandoc/… and a Finder-launched app only inherits the
-            // minimal GUI PATH. This also keeps the skill-dependency probes
-            // (skill_dep_path, rich-based) consistent with what skill bash
-            // actually resolves at runtime.
-            let oc_port = ports.opencode.to_string();
-            let oc_path = rich_path();
-            // ACP_CLIENT_PORT is not for opencode itself — it is inherited by the
-            // stdio MCP shims opencode spawns (delegate-mcp), which call the ACP
-            // sidecar. Passing it here is what lets us keep the port out of the
-            // persisted opencode.json (see strip_persisted_sidecar_ports).
-            let oc_acp_port = ports.acp.to_string();
-            if let Err(e) = start_sidecar(
-                app,
-                "opencode-server",
-                ports.opencode,
-                "/global/health",
-                Some(&auth_header),
-                &["serve", "--port", &oc_port],
-                &[
-                    ("OPENCODE_SERVER_PASSWORD", creds.password.as_str()),
-                    ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
-                    ("PATH", oc_path.as_str()),
-                    ("ACP_CLIENT_PORT", oc_acp_port.as_str()),
-                ],
-            ) {
-                eprintln!("OpenCode Server startup failed: {}", e);
-                app.dialog()
-                    .message(format!(
-                        "Failed to start OpenCode Server:\n\n{}\n\nThe application may not work correctly.",
-                        e
-                    ))
-                    .kind(MessageDialogKind::Error)
-                    .title("Startup Error")
-                    .blocking_show();
-            } else {
-                // OpenCode is healthy — eagerly trigger MCP InstanceState init in
-                // the background so the first user prompt doesn't pay the per-MCP
-                // spawn/connect cost.
-                warm_opencode_mcp(ports.opencode, auth_header.clone());
-            }
 
             Ok(())
         })
@@ -7142,5 +7400,189 @@ mod sidecar_port_registry_tests {
         assert_eq!(strip_persisted_ports_from(&mut root), 2);
         assert!(root["mcp"]["orchestrator"].get("environment").is_none());
         assert_eq!(root["mcp"]["custom"]["environment"]["KEEP"], "1");
+    }
+}
+
+/// Dynamic port allocation (discussions/029 阶段 ③). This whole branch is dead code
+/// on a developer machine — `fixed_ports()` pins 4096-4099 in a debug build — so it
+/// gets unit coverage here and a forced e2e (`ULTRAWORK_DYNAMIC_PORTS=1`).
+///
+/// `fixed_ports()` itself reads the environment, which is process-global and would
+/// race across parallel tests; the policy functions therefore take `fixed` as an
+/// argument and only `fixed_ports_from` is tested for precedence.
+#[cfg(test)]
+mod dynamic_port_tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Fixed ports, below the ephemeral range (49152+), so a sibling test's `bind(0)`
+    // can never be handed the same number. One per test, no sharing.
+    const PORT_STRANGER_DYNAMIC: u16 = 45_981;
+    const PORT_STRANGER_FIXED: u16 = 45_982;
+    const PORT_FREE_PREFERRED: u16 = 45_983;
+    const PORT_READY: u16 = 45_984;
+    const PORT_EXITED: u16 = 45_985;
+    const PORT_TIMEOUT: u16 = 45_986;
+
+    // ── fixed_ports precedence ───────────────────────────────────────
+
+    #[test]
+    fn a_debug_build_pins_the_preferred_ports() {
+        assert!(fixed_ports_from(false, false, true));
+    }
+
+    #[test]
+    fn a_release_build_allows_dynamic_ports() {
+        assert!(!fixed_ports_from(false, false, false));
+    }
+
+    #[test]
+    fn ultrawork_fixed_ports_pins_a_release_build() {
+        assert!(fixed_ports_from(false, true, false));
+    }
+
+    /// Without this the dynamic branch could never be exercised from a dev build,
+    /// which is the whole reason the forced-dynamic e2e can exist.
+    #[test]
+    fn ultrawork_dynamic_ports_overrides_everything() {
+        assert!(!fixed_ports_from(true, false, true));
+        assert!(!fixed_ports_from(true, true, true));
+    }
+
+    // ── ephemeral_port ───────────────────────────────────────────────
+
+    #[test]
+    fn ephemeral_port_hands_back_a_free_port_we_can_bind() {
+        let port = ephemeral_port().expect("ephemeral port");
+        assert!(port >= 1024, "port {port} is privileged");
+        // It was released, so we must be able to take it ourselves.
+        let listener = TcpListener::bind(("127.0.0.1", port)).expect("rebind ephemeral port");
+        drop(listener);
+    }
+
+    #[test]
+    fn ephemeral_port_does_not_keep_handing_out_the_same_port() {
+        // Held open, so the kernel cannot re-offer this one.
+        let first = ephemeral_port().unwrap();
+        let _hold = TcpListener::bind(("127.0.0.1", first)).unwrap();
+        let second = ephemeral_port().unwrap();
+        assert_ne!(first, second);
+    }
+
+    // ── plan_port ────────────────────────────────────────────────────
+
+    #[test]
+    fn plan_port_takes_the_preferred_port_when_it_is_free() {
+        assert!(!is_port_in_use(PORT_FREE_PREFERRED));
+        let plan = plan_port("opencode-server", PORT_FREE_PREFERRED, "/global/health", None, false)
+            .expect("free preferred port");
+        assert!(matches!(plan, PortPlan::Bind(p) if p == PORT_FREE_PREFERRED));
+    }
+
+    /// Production steps aside from a stranger rather than killing it (phase ①) or
+    /// failing to boot.
+    #[test]
+    fn plan_port_falls_back_to_a_dynamic_port_when_a_stranger_holds_the_preferred_one() {
+        let _stranger = TcpListener::bind(("127.0.0.1", PORT_STRANGER_DYNAMIC)).unwrap();
+
+        let plan = plan_port("opencode-server", PORT_STRANGER_DYNAMIC, "/global/health", None, false)
+            .expect("must fall back, not fail");
+        match plan {
+            PortPlan::Bind(port) => {
+                assert_ne!(port, PORT_STRANGER_DYNAMIC, "must not reuse the occupied port");
+                assert!(!is_port_in_use(port), "fallback port should be free");
+            }
+            PortPlan::Reuse(_) => panic!("a stranger's port must never be reused"),
+        }
+        // And the stranger is still alive — phase ①'s guarantee, restated here
+        // because the dynamic path must not quietly regain a licence to kill.
+        assert!(is_port_in_use(PORT_STRANGER_DYNAMIC));
+    }
+
+    /// The opposite direction: a dev build must NOT dodge. Silently moving would
+    /// break the Vite proxy in a way that looks like a bug elsewhere.
+    #[test]
+    fn plan_port_reports_a_conflict_instead_of_dodging_when_ports_are_fixed() {
+        let _stranger = TcpListener::bind(("127.0.0.1", PORT_STRANGER_FIXED)).unwrap();
+
+        let err = plan_port("opencode-server", PORT_STRANGER_FIXED, "/global/health", None, true)
+            .expect_err("fixed ports must surface the conflict");
+        assert!(err.contains(&PORT_STRANGER_FIXED.to_string()), "error should name the port: {err}");
+        assert!(is_port_in_use(PORT_STRANGER_FIXED));
+    }
+
+    // ── await_sidecar_ready ──────────────────────────────────────────
+
+    /// Serve exactly enough HTTP for `check_health` to succeed.
+    fn spawn_health_listener(port: u16) -> std::sync::Arc<AtomicBool> {
+        let listener = TcpListener::bind(("127.0.0.1", port)).expect("health listener");
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stop_rx = stop.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stop_rx.load(Ordering::Relaxed) {
+                    return;
+                }
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            }
+        });
+        stop
+    }
+
+    #[test]
+    fn await_ready_returns_ready_once_the_health_endpoint_answers() {
+        let stop = spawn_health_listener(PORT_READY);
+        let exited = AtomicBool::new(false);
+
+        let outcome = await_sidecar_ready(PORT_READY, "/health", None, &exited, Duration::from_secs(5));
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(outcome, ReadyOutcome::Ready);
+    }
+
+    /// The point of holding the command receiver: a child that dies on startup is
+    /// detected in ~200ms rather than after the 15s health timeout.
+    #[test]
+    fn await_ready_reports_exited_without_waiting_out_the_timeout() {
+        assert!(!is_port_in_use(PORT_EXITED));
+        let exited = AtomicBool::new(true); // child already gone
+
+        let started = std::time::Instant::now();
+        let outcome = await_sidecar_ready(PORT_EXITED, "/health", None, &exited, Duration::from_secs(15));
+
+        assert_eq!(outcome, ReadyOutcome::Exited);
+        assert!(started.elapsed() < Duration::from_secs(2), "should not wait out the 15s timeout");
+    }
+
+    /// A live-but-silent child times out; it must never be reported as Exited, or
+    /// the retry loop would move it to a new port for no reason.
+    #[test]
+    fn await_ready_reports_timeout_for_a_live_child_that_never_answers() {
+        let _silent = TcpListener::bind(("127.0.0.1", PORT_TIMEOUT)).unwrap();
+        let exited = AtomicBool::new(false);
+
+        let outcome = await_sidecar_ready(PORT_TIMEOUT, "/health", None, &exited, Duration::from_millis(400));
+        assert_eq!(outcome, ReadyOutcome::Timeout);
+    }
+
+    // ── retry policy ─────────────────────────────────────────────────
+
+    #[test]
+    fn retry_only_on_an_immediate_exit_and_only_when_free_to_move() {
+        // The one retriable combination.
+        assert!(should_retry_on_new_port(&ReadyOutcome::Exited, false, 1));
+        assert!(should_retry_on_new_port(&ReadyOutcome::Exited, false, MAX_START_ATTEMPTS - 1));
+
+        // A live-but-broken child: a fresh port cannot help.
+        assert!(!should_retry_on_new_port(&ReadyOutcome::Timeout, false, 1));
+        // Dev pins its ports; moving would break the Vite proxy.
+        assert!(!should_retry_on_new_port(&ReadyOutcome::Exited, true, 1));
+        // Bounded: never loop forever burning ports.
+        assert!(!should_retry_on_new_port(&ReadyOutcome::Exited, false, MAX_START_ATTEMPTS));
+        // Ready never retries.
+        assert!(!should_retry_on_new_port(&ReadyOutcome::Ready, false, 1));
     }
 }
