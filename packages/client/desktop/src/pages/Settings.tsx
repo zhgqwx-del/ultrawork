@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ComponentType, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2} from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
@@ -40,6 +40,10 @@ import { APP_VERSION } from "@/lib/app-version"
 
 type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "tools" | "channels" | "knowledge" | "skills" | "about"
 
+// Sub-tabs inside the Connectors (services) section — see CONNECTOR_TABS.
+const CONNECTOR_TAB_IDS = ["mcp", "office-cli"] as const
+type ConnectorTabId = (typeof CONNECTOR_TAB_IDS)[number]
+
 type NavItem = { key: SettingsSection; icon: typeof Settings; labelKey: string }
 
 const NAV_GROUPS: { titleKey: string; items: NavItem[] }[] = [
@@ -77,7 +81,8 @@ const NAV_GROUPS: { titleKey: string; items: NavItem[] }[] = [
 export function SettingsPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const sectionFromState = (location.state as { section?: SettingsSection })?.section
+  const navState = location.state as { section?: SettingsSection; tab?: string } | null
+  const sectionFromState = navState?.section
   const [activeSection, setActiveSection] = useState<SettingsSection>(sectionFromState || "general")
   const { t } = useI18n()
   const { getReturnPath } = useSidebar()
@@ -133,7 +138,7 @@ export function SettingsPage() {
             {activeSection === "privacy" && <PrivacySection />}
             {activeSection === "capabilities" && <CapabilitiesSection />}
             {activeSection === "agents" && <AgentsSection />}
-            {activeSection === "services" && <ServicesSection />}
+            {activeSection === "services" && <ServicesSection initialTab={navState?.tab} />}
             {activeSection === "tools" && <SearchToolsSection />}
             {activeSection === "channels" && <ChannelsSection />}
             {activeSection === "knowledge" && <KnowledgeSection />}
@@ -465,7 +470,7 @@ const CLI_CONNECTOR_ICONS: Record<(typeof OFFICE_CLI_CONNECTORS)[number]["id"], 
   wecom: WeComIcon,
 }
 
-function ServicesSection() {
+export function ServicesSection({ initialTab }: { initialTab?: string }) {
   const { t } = useI18n()
   const {
     statusMap, configMap, loading, error, actionLoading,
@@ -478,8 +483,31 @@ function ServicesSection() {
   const [refreshing, setRefreshing] = useState(false)
 
   const entries = Object.entries(statusMap)
+  const mcpConnectedCount = entries.filter(([, s]) => s.status === "connected").length
   const cliConnectedCount = Object.values(cliApi.statuses).filter((s) => s.state === "connected").length
-  const connectedCount = entries.filter(([, s]) => s.status === "connected").length + cliConnectedCount
+  const connectedCount = mcpConnectedCount + cliConnectedCount
+
+  // Data-driven tab registry — a future connector category (3rd/4th) is one
+  // entry here plus a matching <TabsContent> block below; the header, the
+  // combined count, and the global refresh above the tabs stay put.
+  const CONNECTOR_TABS: { id: ConnectorTabId; labelKey: string; icon: typeof Server; count: number }[] = [
+    { id: "mcp", labelKey: "services.groupMcp", icon: Server, count: mcpConnectedCount },
+    { id: "office-cli", labelKey: "services.groupOfficeCli", icon: Building2, count: cliConnectedCount },
+  ]
+  const isTabId = (v: string | undefined): v is ConnectorTabId =>
+    (CONNECTOR_TAB_IDS as readonly string[]).includes(v ?? "")
+  const [tab, setTab] = useState<ConnectorTabId>(isTabId(initialTab) ? initialTab : "mcp")
+  // A deep-link may retarget the sub-tab while ServicesSection is already
+  // mounted (navigate to /settings with {section:"services", tab}). Fire only
+  // when initialTab actually changes, so a manual tab click within one mount is
+  // not overwritten on unrelated re-renders. (On a full remount the useState
+  // initializer above re-reads initialTab, so returning to Connectors re-honors
+  // the deep-link — intended stickiness, not a within-mount clobber.)
+  useEffect(() => {
+    if (initialTab && (CONNECTOR_TAB_IDS as readonly string[]).includes(initialTab)) {
+      setTab(initialTab as ConnectorTabId)
+    }
+  }, [initialTab])
 
   const onRefresh = async () => {
     setRefreshing(true)
@@ -533,121 +561,141 @@ function ServicesSection() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("services.title")}</h2>
-          {connectedCount > 0 && (
-            <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-              {connectedCount} {t("services.connected")}
-            </span>
-          )}
+      {/* Header — global across all connector categories: title, combined
+          connected count, and refresh (onRefresh reloads both MCP + CLI). */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-[var(--color-fg)]">{t("services.title")}</h2>
+            {connectedCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                {connectedCount} {t("services.connected")}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("services.description")}</p>
         </div>
-        <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{t("services.description")}</p>
+        <Button variant="outline" size="sm" className="shrink-0" onClick={onRefresh} disabled={refreshing}>
+          <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+          {t("workspace.refresh")}
+        </Button>
       </div>
 
-      {/* ── Group: MCP ── */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("services.groupMcp")}</h3>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
-            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
-            {t("workspace.refresh")}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" disabled={addMode !== "none"}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ConnectorTabId)}>
+        <TabsList className="w-full justify-start">
+          {CONNECTOR_TABS.map((tabDef) => (
+            <TabsTrigger key={tabDef.id} value={tabDef.id} className="gap-1.5">
+              <tabDef.icon className="size-3.5" />
+              {t(tabDef.labelKey)}
+              {tabDef.count > 0 && <span className="text-xs opacity-60">{tabDef.count}</span>}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        {/* ── MCP ──
+            forceMount: keep this panel mounted (hidden when inactive) so
+            in-flight component-local state survives a tab switch — the browser
+            MCP install progress (useBrowserMCP) and half-filled add-server /
+            JSON-import forms would otherwise be destroyed on unmount and could
+            let the user re-trigger a running install. The Office-CLI panel needs
+            no forceMount (all its flow state lives in the hoisted cliApi hook). */}
+        <TabsContent value="mcp" forceMount className="space-y-4 data-[state=inactive]:hidden">
+          {/* Add-server toolbar (MCP-only action) */}
+          <div className="flex items-center justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={addMode !== "none"}>
+                  <Plus className="mr-1.5 size-3.5" />
+                  {t("mcp.addServer")}
+                  <ChevronDown className="ml-1.5 size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setAddMode("manual")}>
+                  <Plus className="mr-2 size-4" />
+                  {t("mcp.addManual")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setAddMode("json")}>
+                  <FileJson className="mr-2 size-4" />
+                  {t("mcp.addJsonImport")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Built-in: Browser MCP */}
+          <BrowserServiceCard />
+
+          {/* Add form (manual) */}
+          {addMode === "manual" && (
+            <ServiceAddForm
+              onAdd={onAdd}
+              onCancel={() => setAddMode("none")}
+              loading={actionLoading === "__add__"}
+            />
+          )}
+
+          {/* JSON import form */}
+          {addMode === "json" && (
+            <JsonImportForm
+              onImport={onJsonImport}
+              onCancel={() => setAddMode("none")}
+              loading={jsonImporting}
+            />
+          )}
+
+          {/* Loading / Error */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
+            </div>
+          )}
+
+          {error && !loading && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-500/10 p-4 text-sm text-red-600 dark:border-red-800 dark:text-red-400">
+              <AlertCircle className="size-4 shrink-0" />
+              {t("error.fetchMCP")}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loading && !error && entries.length === 0 && addMode === "none" && (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
+              <Server className="size-10 text-[var(--color-fg-muted)]" />
+              <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("mcp.noServers")}</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setAddMode("manual")}>
                 <Plus className="mr-1.5 size-3.5" />
                 {t("mcp.addServer")}
-                <ChevronDown className="ml-1.5 size-3.5" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setAddMode("manual")}>
-                <Plus className="mr-2 size-4" />
-                {t("mcp.addManual")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setAddMode("json")}>
-                <FileJson className="mr-2 size-4" />
-                {t("mcp.addJsonImport")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+            </div>
+          )}
 
-      {/* Built-in: Browser MCP */}
-      <BrowserServiceCard />
+          {/* Service cards */}
+          {!loading && !error && entries.length > 0 && (
+            <div className="space-y-3">
+              {entries.map(([name, status]) => (
+                <ServiceCard
+                  key={name}
+                  name={name}
+                  status={status}
+                  config={configMap[name]}
+                  loading={actionLoading === name}
+                  onToggle={() => handleToggle(name, status.status)}
+                  onRemove={() => handleRemove(name, status.status)}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
 
-      {/* Add form (manual) */}
-      {addMode === "manual" && (
-        <ServiceAddForm
-          onAdd={onAdd}
-          onCancel={() => setAddMode("none")}
-          loading={actionLoading === "__add__"}
-        />
-      )}
-
-      {/* JSON import form */}
-      {addMode === "json" && (
-        <JsonImportForm
-          onImport={onJsonImport}
-          onCancel={() => setAddMode("none")}
-          loading={jsonImporting}
-        />
-      )}
-
-      {/* Loading / Error */}
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="size-6 animate-spin text-[var(--color-fg-muted)]" />
-        </div>
-      )}
-
-      {error && !loading && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-500/10 p-4 text-sm text-red-600 dark:border-red-800 dark:text-red-400">
-          <AlertCircle className="size-4 shrink-0" />
-          {t("error.fetchMCP")}
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!loading && !error && entries.length === 0 && addMode === "none" && (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-16">
-          <Server className="size-10 text-[var(--color-fg-muted)]" />
-          <p className="mt-3 text-sm text-[var(--color-fg-muted)]">{t("mcp.noServers")}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={() => setAddMode("manual")}>
-            <Plus className="mr-1.5 size-3.5" />
-            {t("mcp.addServer")}
-          </Button>
-        </div>
-      )}
-
-      {/* Service cards */}
-      {!loading && !error && entries.length > 0 && (
-        <div className="space-y-3">
-          {entries.map(([name, status]) => (
-            <ServiceCard
-              key={name}
-              name={name}
-              status={status}
-              config={configMap[name]}
-              loading={actionLoading === name}
-              onToggle={() => handleToggle(name, status.status)}
-              onRemove={() => handleRemove(name, status.status)}
-            />
+        {/* ── Office CLI ── */}
+        <TabsContent value="office-cli" className="space-y-3">
+          <p className="text-xs text-[var(--color-fg-muted)]">{t("services.groupOfficeCliDesc")}</p>
+          {OFFICE_CLI_CONNECTORS.map((c) => (
+            <CliConnectorCard key={c.id} connector={c} api={cliApi} />
           ))}
-        </div>
-      )}
-
-      {/* ── Group: Office CLI ── */}
-      <div className="pt-2">
-        <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t("services.groupOfficeCli")}</h3>
-        <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t("services.groupOfficeCliDesc")}</p>
-      </div>
-      {OFFICE_CLI_CONNECTORS.map((c) => (
-        <CliConnectorCard key={c.id} connector={c} api={cliApi} />
-      ))}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
