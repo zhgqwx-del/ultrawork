@@ -77,8 +77,8 @@ export class ACPBackend implements AgentBackend {
   private global: SharedConnection | null = null
   private lastHealth = false
 
-  constructor(opts?: { baseUrl?: string }) {
-    this.http = new ACPHttpClient(opts?.baseUrl)
+  constructor(opts?: { baseUrl?: string; headers?: () => Record<string, string> }) {
+    this.http = new ACPHttpClient(opts?.baseUrl, opts?.headers)
   }
 
   // --- control surface ---
@@ -171,6 +171,7 @@ export class ACPBackend implements AgentBackend {
     const handlers = new Set<(event: ConnectorEvent) => void>()
     const transport = createSseTransport({
       url: this.http.globalEventsURL(),
+      headers: () => this.http.authHeaders(),
       retry: ACP_SSE_RETRY,
       onEvent: (event) => {
         if (event.type === "heartbeat") return
@@ -194,6 +195,7 @@ export class ACPBackend implements AgentBackend {
     const handlers = new Set<(event: ConnectorEvent) => void>()
     const transport = createSseTransport({
       url: this.http.eventsURL(sessionId),
+      headers: () => this.http.authHeaders(),
       retry: ACP_SSE_RETRY,
       onEvent: (event) => {
         // Transport-level frames are not for consumers (heartbeat keeps the

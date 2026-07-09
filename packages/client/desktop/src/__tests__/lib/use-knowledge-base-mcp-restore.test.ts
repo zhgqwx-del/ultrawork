@@ -29,6 +29,14 @@ vi.mock("@/lib/use-api", () => ({
   useApi: () => mockApi,
 }))
 
+// The hook's SSE now goes through the connector's fetch-reader transport. Stub it:
+// left real it would consume the mocked `fetch`, fail to find a stream body, and
+// leave a pending 5s reconnect behind. This test only exercises MCP auto-restore.
+const mockTransport = { connect: vi.fn().mockResolvedValue(undefined), close: vi.fn(), forceReconnect: vi.fn(), getStatus: () => "open" as const }
+vi.mock("@agent/connector", () => ({
+  createSseTransport: () => mockTransport,
+}))
+
 import { useKnowledgeBase } from "@/lib/use-knowledge-base"
 
 const mockFetch = vi.fn()
@@ -40,15 +48,6 @@ beforeEach(() => {
   mockApi.connectMCP.mockReset()
   mockFetch.mockReset()
   vi.stubGlobal("fetch", mockFetch)
-  // No-op EventSource so the hook's SSE setup doesn't churn (reconnect storm)
-  // in jsdom; this test only exercises the MCP auto-restore path.
-  class NoopEventSource {
-    addEventListener() {}
-    close() {}
-    onerror: ((e?: unknown) => void) | null = null
-  }
-  vi.stubGlobal("EventSource", NoopEventSource)
-
   // Default invoke behaviour for the registration path.
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === "get_sidecar_path") return Promise.resolve("/path/to/knowledge-sidecar")

@@ -506,3 +506,14 @@ packages/knowledge/sidecar/
 - 起 acp-client 二进制：env `ACP_CLIENT_PORT=<非标准>`/`XDG_*`/`ACP_PROMPT_TTFB_TIMEOUT_MS`/`ACP_PROMPT_IDLE_TIMEOUT_MS`/`ACP_PROMPT_TOOL_SILENCE_MAX_MS`（全调短），agents.json 写进隔离 `$XDG_CONFIG_HOME/ultrawork/`。
 - `POST /acp/session` 建会话、`POST /acp/session/:id/prompt`，**断言** 502 + error 文案（`idle for Nms`/`tool silent for Nms`）+ 时间窗 + SSE `session.error`；normal 200。实测 14/14。
 - **坑**：silent agent 的 SDK 解析（放包内）、mock OpenAI 端点别被 Bun 的 socket idle timeout 提前关（`idleTimeout:0`）、prompt 后用回合**跨过**超时阈值才采得到（短回合测不出）。
+
+## 9. 端口 / 进程相关测试的两条硬约束（ADR-045）
+
+**测试里不要 `bind(0)` → drop → 再期望该端口仍空闲。** 临时端口是内核回收再分配的共享资源：一个测试释放后，并行跑的兄弟测试的 `bind(0)` 立刻就能拿到同一个号（实测 6 跑 5 挂）。两条出路：
+
+- 要**确定性占住**一个端口 → 用**低于临时端口区间**的固定端口（macOS/Linux 起点 49152，`sysctl net.inet.ip.portrange.first`），一个测试一个号、不共享。见 `lifecycle_tests` 的 `PORT_RECLAIM` / `dynamic_port_tests` 的 `PORT_STRANGER_DYNAMIC`。
+- 要断言「刚拿到的临时端口仍空闲」→ 只能把这几个测试**串行化**（模块级 `static Mutex` guard，见 `dynamic_port_tests::lock_ephemeral`）。同一个 TOCTOU 窗口在产品侧同样存在，所以那里靠重试而非靠运气。
+
+**断言方向要成对。** 只写否定断言（「不杀陌生人」）的 suite，对「判定函数恒返回 false」这类回归**完全免疫**——判定函数退化成永远说"不是我的"，测试全绿。必须配一条肯定路径（「认得出并回收自家进程」）。收尾时做 A/B 反证：把判定函数分别退化为恒 `true` / 恒 `false`，**两个方向都要有测试变红**；只有一边红说明另一边没覆盖。
+
+同理适用于鉴权：`401 on missing credential` 单独存在时，`app.use(() => 401)` 也能过。必须补 `200 with the correct credential`，以及「预检 OPTIONS 不被 401」。

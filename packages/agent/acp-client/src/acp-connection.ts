@@ -509,6 +509,15 @@ export class ACPConnection {
           args: ["delegate-mcp"],
           env: [
             { name: "ACP_CLIENT_PORT", value: String(process.env.ACP_CLIENT_PORT ?? 4099) },
+            // The shim authenticates back to this sidecar. This env list is passed
+            // verbatim to the agent, which may not forward our own environment, so
+            // name the credential explicitly rather than relying on inheritance.
+            ...(process.env.ULTRAWORK_SIDECAR_PASSWORD
+              ? [
+                  { name: "ULTRAWORK_SIDECAR_PASSWORD", value: process.env.ULTRAWORK_SIDECAR_PASSWORD },
+                  { name: "ULTRAWORK_SIDECAR_USERNAME", value: process.env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode" },
+                ]
+              : []),
             // cwd fallback so the agent may omit `cwd` in delegate calls.
             { name: "ULTRAWORK_DELEGATE_CWD", value: cwd },
             // This (leader) session id → delegate record `ownerSessionId`, so the

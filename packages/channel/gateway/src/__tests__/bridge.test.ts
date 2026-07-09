@@ -34,7 +34,7 @@ vi.mock("../session-store.js", () => ({
 // Mock global fetch for SSE
 const mockFetch = vi.fn()
 
-import { Bridge } from "../bridge.js"
+import { Bridge, getOpencodeBaseUrl } from "../bridge.js"
 import type { IncomingMessage } from "../types.js"
 import { loadSessionMap } from "../session-store.js"
 
@@ -793,5 +793,33 @@ describe("Bridge", () => {
       expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
       await bridge.shutdown()
     })
+  })
+})
+
+// The Tauri host picks opencode's port at launch and injects it here. Reading it
+// lazily (not at import time) is what lets a test — and a retrying host — change it.
+describe("getOpencodeBaseUrl", () => {
+  const original = process.env.OPENCODE_BASE_URL
+  afterEach(() => {
+    if (original === undefined) delete process.env.OPENCODE_BASE_URL
+    else process.env.OPENCODE_BASE_URL = original
+  })
+
+  it("uses the base URL the host injected", () => {
+    process.env.OPENCODE_BASE_URL = "http://127.0.0.1:51234"
+    expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:51234")
+  })
+
+  // The negative direction: a hardcoded return would satisfy the fallback test alone.
+  it("falls back to the preferred port for a standalone run", () => {
+    delete process.env.OPENCODE_BASE_URL
+    expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:4096")
+  })
+
+  it("is read lazily, so a port change after import is picked up", () => {
+    process.env.OPENCODE_BASE_URL = "http://127.0.0.1:1111"
+    expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:1111")
+    process.env.OPENCODE_BASE_URL = "http://127.0.0.1:2222"
+    expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:2222")
   })
 })

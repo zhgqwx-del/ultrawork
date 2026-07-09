@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n-context"
+import { gatewayBaseUrl } from "@/lib/sidecar-ports"
+import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
 import type {
   ChannelStatus,
   ChannelConfig,
@@ -9,14 +11,10 @@ import type {
   ChannelQRStatusResponse,
 } from "@agent/api-client"
 
-const GATEWAY_BASE = import.meta.env.DEV
-  ? "/channel"
-  : "http://localhost:4097/channel"
-
 async function gatewayFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${GATEWAY_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+  const resp = await fetch(`${gatewayBaseUrl()}${path}`, {
     ...options,
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders(), ...options?.headers },
   })
   if (!resp.ok) {
     const body = await resp.text().catch(() => "")

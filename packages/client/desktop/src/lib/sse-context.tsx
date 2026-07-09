@@ -13,6 +13,9 @@ import {
 } from "@agent/connector"
 import { useConfig } from "./config-context"
 import { useWorkspace } from "./workspace-context"
+import { resolveApiBaseUrl } from "./config"
+import { acpBaseUrl, sidecarPortsVersion, subscribeSidecarPorts } from "./sidecar-ports"
+import { sidecarAuthHeaders } from "./sidecar-auth"
 
 const BINDINGS_STORAGE_KEY = "uw.acp.sessionAgents"
 
@@ -48,13 +51,18 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   const handlersRef = useRef<Set<SSEEventHandler>>(new Set())
   const [connected, setConnected] = useState(false)
 
+  // The backends below capture their base URL at construction. A sidecar that
+  // loses a bind race moves to a new port after startup, so treat that as another
+  // reason to rebuild — otherwise the connector keeps talking to a dead port.
+  const portsVersion = useSyncExternalStore(subscribeSidecarPorts, sidecarPortsVersion)
+
   // Same dependency set as the legacy useApi()/SSEClient pair: a new connector
   // (and thus a new ApiClient reference) appears exactly when those did.
   const connector = useMemo(() => {
     const c = new Connector({ bindings: new BindingStore({ cache: localStorageBindingCache }) })
     c.registerBackend(
       new OpenCodeBackend({
-        baseUrl: import.meta.env.DEV ? "" : config.apiBaseUrl,
+        baseUrl: resolveApiBaseUrl(config.apiBaseUrl),
         username: config.apiUsername,
         password: config.apiPassword,
         workingDirectory: workspacePath || undefined,
@@ -65,9 +73,9 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         },
       }),
     )
-    c.registerBackend(new ACPBackend())
+    c.registerBackend(new ACPBackend({ baseUrl: acpBaseUrl(), headers: sidecarAuthHeaders }))
     return c
-  }, [config.apiBaseUrl, config.apiUsername, config.apiPassword, workspacePath])
+  }, [config.apiBaseUrl, config.apiUsername, config.apiPassword, workspacePath, portsVersion])
 
   // Dispose the previous connector (closes its SSE) when a new one replaces it.
   useEffect(() => {

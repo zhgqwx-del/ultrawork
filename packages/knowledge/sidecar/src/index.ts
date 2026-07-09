@@ -1,7 +1,7 @@
 import { KnowledgeStore } from "./store"
 import { createTfIdfEmbedder } from "./embedder"
 import { Indexer } from "./indexer"
-import { createApp } from "./kb-server"
+import { createApp, KB_SERVE_IDLE_TIMEOUT, type SidecarAuth } from "./kb-server"
 import { startMcpBridge } from "./mcp-bridge"
 import { createRetriever } from "./retriever"
 import { FileWatcher } from "./watcher"
@@ -11,7 +11,25 @@ import { IMAAdapter } from "./adapters/ima"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-const KB_PORT = 4098
+// The Tauri host picks the port and injects it; the literal is the fallback for
+// a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
+// — with port 0 the kernel picks and only the server knows.
+const KB_PORT = Number(process.env.KB_PORT ?? 4098)
+
+/**
+ * Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
+ * per-install random password). Fail fast rather than start unauthenticated:
+ * silently serving an unprotected /kb/* to every local process is worse than
+ * not starting, and the host always sets this. Not reached by `mcp-stdio`,
+ * which never opens a port.
+ */
+function requireSidecarAuth(name: string): SidecarAuth {
+  const password = process.env.ULTRAWORK_SIDECAR_PASSWORD
+  if (!password) {
+    throw new Error(`ULTRAWORK_SIDECAR_PASSWORD is not set — the Tauri host must spawn ${name} with this env var`)
+  }
+  return { username: process.env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode", password }
+}
 // os.homedir() resolves USERPROFILE on Windows and HOME on macOS/Linux.
 const DB_DIR = join(homedir(), ".ultrawork", "knowledge")
 const DB_PATH = join(DB_DIR, "kb.db")
@@ -47,11 +65,12 @@ async function serve() {
   // File watcher — auto re-index on changes
   const watcher = new FileWatcher()
 
-  const app = createApp({ indexer, search: retriever, store, watcher })
+  const app = createApp({ indexer, search: retriever, store, watcher }, requireSidecarAuth("knowledge-sidecar"))
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: KB_PORT,
+    idleTimeout: KB_SERVE_IDLE_TIMEOUT,
     fetch: (req) => app.fetch(req),
   })
 

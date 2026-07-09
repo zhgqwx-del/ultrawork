@@ -380,4 +380,63 @@ describe("SseTransport", () => {
       expect(statuses.filter((s) => s === "open")).toHaveLength(2)
     })
   })
+  // Named frames (`event: status`). The knowledge sidecar discriminates a snapshot
+  // from a progress tick this way; opencode/orchestrator send unnamed frames and
+  // must keep seeing `undefined`.
+  describe("event names", () => {
+    function collect(chunks: string[]) {
+      mockFetch.mockResolvedValue({ ok: true, body: createMockStream(chunks) })
+      const seen: Array<[unknown, string | undefined]> = []
+      const transport = track(
+        createSseTransport<Record<string, unknown>>({
+          url: "http://localhost:4098/kb/sources/events",
+          retry: { baseDelayMs: 1000, maxAttempts: 0 },
+          onEvent: (e, name) => seen.push([e, name]),
+        }),
+      )
+      return { transport, seen }
+    }
+
+    it("passes the frame's event name alongside the payload", async () => {
+      const { transport, seen } = collect([
+        `event: status\ndata: {"n":1}\n\n`,
+        `event: indexing\ndata: {"n":2}\n\n`,
+      ])
+      await transport.connect()
+      expect(seen).toEqual([
+        [{ n: 1 }, "status"],
+        [{ n: 2 }, "indexing"],
+      ])
+    })
+
+    it("reports undefined for unnamed frames (opencode, orchestrator)", async () => {
+      const { transport, seen } = collect([`data: {"type":"server.connected","properties":{}}\n\n`])
+      await transport.connect()
+      expect(seen).toEqual([[{ type: "server.connected", properties: {} }, undefined]])
+    })
+
+    // The blank line ends the frame. Without resetting, an unnamed frame following a
+    // named one would inherit the previous name — and the KB hook would silently
+    // suppress a toast, or fire one for a snapshot.
+    it("does not leak an event name into the next frame", async () => {
+      const { transport, seen } = collect([`event: status\ndata: {"n":1}\n\n`, `data: {"n":2}\n\n`])
+      await transport.connect()
+      expect(seen).toEqual([
+        [{ n: 1 }, "status"],
+        [{ n: 2 }, undefined],
+      ])
+    })
+
+    it("handles CRLF line endings", async () => {
+      const { transport, seen } = collect([`event: complete\r\ndata: {"n":1}\r\n\r\n`])
+      await transport.connect()
+      expect(seen).toEqual([[{ n: 1 }, "complete"]])
+    })
+
+    it("applies one event name to a frame split across reads", async () => {
+      const { transport, seen } = collect([`event: complete\ndata: {"n":`, `1}\n\n`])
+      await transport.connect()
+      expect(seen).toEqual([[{ n: 1 }, "complete"]])
+    })
+  })
 })

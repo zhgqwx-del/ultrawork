@@ -76,6 +76,7 @@
 | [044](./044-im-channel-qr-onboarding.md) | 消息渠道扫码接入范式 — 钉钉/企微/飞书三家官方设备流「扫码即建机器人」（端点均未进公开文档，SSOT=gotchas §4 实拍）：gateway `qr-registry` 后台轮询+凭证到达即落盘（一次性 secret 不经前端透传）+统一状态枚举+并发去重；钉钉复用 Stream adapter，企微/飞书新增官方 SDK 长连接 adapter；channels.json 0600+API 掩码（Keychain 刻意不做）；品牌 icon 四家圆形徽章（CC0/MIT/Apache 素材内联，icon 由 type 派生不入模型）；发送者限制本轮刻意不做（known issue） | 2026-07-08 | Accepted (✅ 三家真机验收) |
 
 > ADR-027 的探索过程见 [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性）与 [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）。阶段0-1 已按 B2「参考重写」在 `feat/agent-os-phase0` 分支落地（旧 `feat/acp-support` MVP 弃用）；实测坑点固化在 [gotchas §8](../gotchas.md)。
+| [045](./045-dynamic-sidecar-ports.md) | Sidecar 端口动态化 — dev 钉死 4096-4099（Vite 代理 target + CORS 白名单皆编译期常量，冲突**报错不绕行**）/ prod 优先固定、被占且占用者非我方则 `bind(0)` 回退且**绝不 kill**；`~/.ultrawork/run/ports.json` 运行时注册表（0600）+ `get_sidecar_ports()` IPC + renderer 启动 gate；固定端口过去是**事实上的单实例锁**，故并入 `tauri-plugin-single-instance`；`apiBaseUrl` 改 `"auto"`（端口不入持久化）；三 sidecar 补入站 Basic auth（前置=三处裸 `EventSource` 迁 fetch-reader，规范不支持自定义头）；顺带修「端口被占时误杀无关进程」现网缺陷 | 2026-07-09 | Accepted (✅ 真机验收) |
 
 ## 新增 ADR
 

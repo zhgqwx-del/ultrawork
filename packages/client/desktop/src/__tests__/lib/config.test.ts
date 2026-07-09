@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { ConfigStorage, DEFAULT_CONFIG, type AppConfig } from "@/lib/config"
+import {
+  AUTO_API_BASE_URL,
+  ConfigStorage,
+  DEFAULT_CONFIG,
+  isAutoApiBaseUrl,
+  resolveApiBaseUrl,
+  type AppConfig,
+} from "@/lib/config"
 
 describe("ConfigStorage", () => {
   beforeEach(() => {
@@ -16,9 +23,51 @@ describe("ConfigStorage", () => {
       expect(DEFAULT_CONFIG.language).toBe("en")
     })
 
-    it("apiBaseUrl is empty in DEV mode", () => {
-      // import.meta.env.DEV is true in test setup
-      expect(DEFAULT_CONFIG.apiBaseUrl).toBe("")
+    it("apiBaseUrl defaults to auto — a port is never persisted", () => {
+      expect(DEFAULT_CONFIG.apiBaseUrl).toBe(AUTO_API_BASE_URL)
+      expect(isAutoApiBaseUrl(DEFAULT_CONFIG.apiBaseUrl)).toBe(true)
+    })
+  })
+
+  // import.meta.env.DEV is true in test setup, so every resolution goes through
+  // the Vite proxy (relative URL) — including an explicit override.
+  describe("resolveApiBaseUrl (DEV)", () => {
+    it("resolves auto to the relative proxy path", () => {
+      expect(resolveApiBaseUrl(AUTO_API_BASE_URL)).toBe("")
+    })
+
+    it("ignores an explicit override — the proxy target is baked into vite.config", () => {
+      expect(resolveApiBaseUrl("http://192.168.1.5:4096")).toBe("")
+    })
+  })
+
+  describe("apiBaseUrl migration", () => {
+    const load = (apiBaseUrl: unknown) => {
+      localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl }))
+      return ConfigStorage.load().apiBaseUrl
+    }
+
+    it.each([
+      ["", "the old DEV default (Vite proxy)"],
+      ["http://localhost:4096", "the old prod default"],
+      ["http://127.0.0.1:4096", "the loopback spelling of the old prod default"],
+      ["http://localhost:4096/", "a trailing slash"],
+    ])("migrates %j to auto — %s", (stored) => {
+      expect(load(stored)).toBe(AUTO_API_BASE_URL)
+    })
+
+    it("migrates a missing field to auto", () => {
+      expect(load(undefined)).toBe(AUTO_API_BASE_URL)
+    })
+
+    // The negative direction: a migration that rewrote everything would pass the
+    // assertions above while silently discarding a user's remote server.
+    it.each([
+      "http://192.168.1.5:4096",
+      "https://opencode.example.com",
+      "http://localhost:9999",
+    ])("preserves the deliberate override %j", (stored) => {
+      expect(load(stored)).toBe(stored)
     })
   })
 

@@ -124,11 +124,14 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/use-cli-connectors.ts` — 办公 CLI 连接器状态机（ADR-043）：五命令 invoke + generation 守卫 + 配置轮询（容忍瞬时 error/10min 超时显式报错）+ `refresh(id)` 按 id 清错；卡片 `CliConnectorCard`（connector prop 泛化）+ `OFFICE_CLI_CONNECTORS` 注册表在 Settings.tsx ServicesSection（「连接器」分区 MCP/办公 CLI 两组）
+- `src/lib/kb-client.ts` — **knowledge sidecar 的唯一 HTTP client**（ADR-045）：`kbFetch` / `kbEventsUrl`，自带 `knowledgeBaseUrl()` + `sidecarAuthHeaders()`。`add-source-dialog.tsx` 曾私藏第二份（硬编码 `:4098` + 无鉴权）导致加鉴权后添加知识源全线 401 —— **新增调用方一律复用它，不要另起 `fetch`**
+- `src/lib/sidecar-ports.ts` / `src/lib/sidecar-auth.ts` — **sidecar 端口与凭证的运行时解析（ADR-045）**：`main.tsx` 的启动 gate 在 `createRoot` 前一并 await，下游 `opencodeBaseUrl()`/`gatewayBaseUrl()`/`knowledgeBaseUrl()`/`acpBaseUrl()`/`sidecarAuthHeaders()` 全同步；两个 loader 永不 reject（校验返回值形状而非只 catch）。端口变更走 `sidecar-ports-changed` 事件 → `subscribeSidecarPorts` → SSEProvider 重建 connector
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
-- `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
+- `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`get_sidecar_ports`（运行时端口注册表，ADR-045）、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
 - **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
+- **端口生命周期（ADR-045，`lib.rs`）**：`SidecarPorts` 运行时注册表（唯一事实源）+ `~/.ultrawork/run/ports.json`（0600，孙进程读它）；`plan_port`（dev 冲突报错 / prod `bind(0)` 回退，**绝不 kill**）→ `spawn_sidecar`（`watch_sidecar_exit` 专用线程 drain rx 拿 `Terminated`）→ `await_sidecar_ready` → 最多 3 次换端口重试；`strip_persisted_sidecar_ports` 开机剥除 `opencode.json` 里的 stale 端口；`tauri-plugin-single-instance` 顶替「固定端口=事实上的单实例锁」
 - `scan_workspace_changes(dir, sinceMs)`（walk 目录取 mtime≥基线的文件，产物识别用，ADR-033）、`read_file_bytes(path)`（scope-free `std::fs::read`+`ipc::Response`，PDF 预览取字节用）
 - `check_skill_dependencies`（async；PATH 探测 + `run_python_feature_probe` python 内探针〔python3.10+ 版本门/python-pptx，四防御见 gotchas §10〕，复用 rich_path）；`ensure_builtin_skills`/`find_builtin_source`/`builtin_needs_refresh`/`install_builtin_tree`/`extract_builtin_zip`/`open_builtin_zip`/`clear_staging`/`reconcile_builtin_shadowing`（首启解压 bundle 内 `skills-builtin.zip` → `~/.config/ultrawork/skills/builtin`，解压到 staging+后置写 sentinel+rename 原子交换；zip-slip/symlink/篡改名多重设防；同名用户技能确定性遮蔽 prune / 按前缀选择性解压 restore + `BUILTIN_SKILLS_LOCK`，命令 `refresh_builtin_skills`/`remove_user_skill_override`，ADR-032/040/041）
 - **办公 CLI 连接器五命令（ADR-043，「Office CLI connectors」代码段，Phase 3 起注册表驱动）**：`CLI_CONNECTORS` 注册表（lark/dingtalk/wecom 一行一家：probe/install/start_config/start_auth/complete_auth，`connector_def(id)` 统一分发 + 接线测试）；探针骨架 `CliProbeSpec`+`probe_office_cli`（各家 classifier：`classify_lark_auth_status`/`classify_dws_auth_status`/`classify_wecom_auth_show`，`cli_json_output` stderr 回落，版本按路径缓存）；安装 `CliInstallSpec`（+`bin_subdir`）+`install_pinned_cli`（lark/wecom）与 `install_dingtalk_cli`（双工件专属）；阻塞子进程流骨架 `start_parked_device_flow`（`ParkedFlowSpec`，dws 设备流/wecom QR init）+`complete_parked_cli_auth`（`ParkedCompleteSpec`）；`office_cli_bin_dir` 领跑 `compute_rich_path`；上游契约坑 SSOT gotchas §14（三家三套勿互推）
@@ -193,7 +196,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (44 ADRs, 001–044)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (45 ADRs, 001–044)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

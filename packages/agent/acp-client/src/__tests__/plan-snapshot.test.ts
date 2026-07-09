@@ -90,7 +90,7 @@ describe("ACP plan snapshot (ADR-038)", () => {
     await withTmpDataDir(async () => {
       const SID = "ses_plan_http"
       const manager = new ACPManager([CONFIG])
-      const app = createServer(manager)
+      const app = createServer(manager, null)
       try {
         manager.subscribe(SID, (e) => {
           if (e.type === "permission.asked") {

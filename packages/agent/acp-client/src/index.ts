@@ -16,9 +16,19 @@ async function startServer(): Promise<void> {
 
   const ACP_PORT = Number(process.env.ACP_CLIENT_PORT ?? 4099)
 
+  // Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
+  // per-install random password). Fail fast rather than start unauthenticated:
+  // /orchestration/* can spawn agents, so an unprotected port is worse than not
+  // starting. Not reached by `delegate-mcp`, which never opens a port.
+  const password = process.env.ULTRAWORK_SIDECAR_PASSWORD
+  if (!password) {
+    throw new Error("ULTRAWORK_SIDECAR_PASSWORD is not set — the Tauri host must spawn acp-client with this env var")
+  }
+  const auth = { username: process.env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode", password }
+
   const configs = loadAgentConfigs()
   const manager = new ACPManager(configs)
-  const app = createServer(manager)
+  const app = createServer(manager, auth)
 
   // Orchestration layer (ADR-031): hosted here so runs survive WebView reloads.
   // Interrupted runs are marked, never auto-resumed.

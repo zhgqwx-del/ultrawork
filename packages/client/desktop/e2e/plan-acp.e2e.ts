@@ -40,7 +40,7 @@ async function poll(label: string, fn: () => Promise<boolean>, ms = 60000) {
 // Read the session SSE and auto-answer the mock's permission so the turn (and
 // thus the plan frames) proceeds.
 async function answerPermissions(signal: AbortSignal) {
-  const res = await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/events`, { signal })
+  const res = await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/events`, { headers: { authorization: auth }, signal })
   const reader = res.body!.getReader(); const dec = new TextDecoder(); let buf = ""
   while (!signal.aborted) {
     const { done, value } = await reader.read(); if (done) break
@@ -52,7 +52,7 @@ async function answerPermissions(signal: AbortSignal) {
         const ev = JSON.parse(line.slice(5).trim())
         if (ev.type === "permission.asked") {
           await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/permission`, {
-            method: "POST", headers: { "content-type": "application/json" },
+            method: "POST", headers: { "content-type": "application/json", authorization: auth },
             body: JSON.stringify({ permissionId: ev.properties.id, reply: "once" }),
           })
         }
@@ -78,24 +78,24 @@ let verdict = "INCOMPLETE"
 const ac = new AbortController()
 try {
   console.log("=== start acp sidecar + opencode + vite ===")
-  spawn([ACP], { ...env, ACP_CLIENT_PORT: String(ACP_PORT) })
-  await poll("acp sidecar", async () => (await fetch(`http://127.0.0.1:${ACP_PORT}/acp/health`)).ok)
+  spawn([ACP], { ...env, ACP_CLIENT_PORT: String(ACP_PORT), ULTRAWORK_SIDECAR_PASSWORD: PW })
+  await poll("acp sidecar", async () => (await fetch(`http://127.0.0.1:${ACP_PORT}/acp/health`, { headers: { authorization: auth } })).ok)
   spawn([OPENCODE, "serve", "--port", String(OC)], { ...env, OPENCODE_SERVER_PASSWORD: PW, OPENCODE_APP_NAME: "ultrawork" })
   await poll("opencode", async () => (await fetch(`http://127.0.0.1:${OC}/global/health`, { headers: { authorization: auth } })).ok)
 
   console.log("=== create ACP session + run a turn via sidecar HTTP ===")
   const mk = await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session`, {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { "content-type": "application/json", authorization: auth },
     body: JSON.stringify({ agentId: "mock", cwd: ws, clientSessionId: SID }),
   })
   if (!mk.ok) throw new Error(`create session failed: ${mk.status}`)
   void answerPermissions(ac.signal).catch(() => {})
   // Fire the prompt (blocks until turn end); we don't need to await it.
   void fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/prompt`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "list the files" }),
+    method: "POST", headers: { "content-type": "application/json", authorization: auth }, body: JSON.stringify({ text: "list the files" }),
   }).catch(() => {})
   await poll("acp plan folded", async () => {
-    const r = await (await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/plan`)).json()
+    const r = await (await fetch(`http://127.0.0.1:${ACP_PORT}/acp/session/${SID}/plan`, { headers: { authorization: auth } })).json()
     return Array.isArray(r.entries) && r.entries.length === EXPECTED.length
   }, 40000)
 
@@ -106,7 +106,7 @@ try {
   const page = await browser.newPage()
   page.on("pageerror", (e) => console.log("[pageerror]", e.message))
   await page.addInitScript(({ ws, pw }) => {
-    const handlers: Record<string, (a: any) => any> = { check_directory_exists: () => true, ensure_default_workspace: () => ws, login_shell_path: () => "", scan_workspace_changes: () => [] }
+    const handlers: Record<string, (a: any) => any> = { check_directory_exists: () => true, ensure_default_workspace: () => ws, login_shell_path: () => "", scan_workspace_changes: () => [], get_sidecar_credentials: () => ({ username: "opencode", password: pw }) }
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: pw }))

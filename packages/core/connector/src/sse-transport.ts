@@ -29,7 +29,11 @@ export interface SseRetryPolicy {
   maxAttempts?: number
 }
 
-export interface SseTransportOptions {
+/**
+ * `T` is the JSON shape carried on `data:`. Defaults to the opencode-derived
+ * ConnectorEvent; the knowledge and orchestration streams carry their own shapes.
+ */
+export interface SseTransportOptions<T = ConnectorEvent> {
   /** Absolute URL, or relative path for browser dev mode (Vite proxy). */
   url: string
   /** Lazily evaluated per connection attempt (gateway reads env at call time). */
@@ -42,7 +46,13 @@ export interface SseTransportOptions {
    */
   heartbeatTimeoutMs?: number
   heartbeatReconnectBudget?: number
-  onEvent: (event: ConnectorEvent) => void
+  /**
+   * `eventName` is the frame's `event:` field, absent on unnamed frames. The
+   * knowledge stream discriminates on it (`status` vs `indexing`/`complete`/
+   * `error`); opencode and the orchestrator put their discriminator inside the
+   * payload and ignore it.
+   */
+  onEvent: (event: T, eventName?: string) => void
   onStatusChange?: (status: TransportStatus) => void
 }
 
@@ -57,7 +67,7 @@ export interface SseTransport {
 
 const DEFAULT_HEARTBEAT_BUDGET = 3
 
-class FetchSseTransport implements SseTransport {
+class FetchSseTransport<T> implements SseTransport {
   private abortController: AbortController | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempts = 0
@@ -66,7 +76,7 @@ class FetchSseTransport implements SseTransport {
   private status: TransportStatus = "idle"
   private shouldReconnect = true
 
-  constructor(private opts: SseTransportOptions) {}
+  constructor(private opts: SseTransportOptions<T>) {}
 
   getStatus(): TransportStatus {
     return this.status
@@ -119,12 +129,12 @@ class FetchSseTransport implements SseTransport {
     }
   }
 
-  private handleEvent(event: ConnectorEvent): void {
+  private handleEvent(event: T, eventName?: string): void {
     // Any event proves liveness: reset watchdog + budget (sse-context.tsx:28-45 semantics)
     this.heartbeatReconnects = 0
     this.armWatchdog()
     if (this.status === "stalled") this.setStatus("open")
-    this.opts.onEvent(event)
+    this.opts.onEvent(event, eventName)
   }
 
   private armWatchdog(): void {
@@ -174,6 +184,9 @@ class FetchSseTransport implements SseTransport {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
+      // The `event:` line precedes its `data:` line and applies until the frame
+      // ends (blank line). Streams that never send one see `undefined`.
+      let eventName: string | undefined
 
       while (true) {
         const { done, value } = await reader.read()
@@ -186,11 +199,20 @@ class FetchSseTransport implements SseTransport {
         const lines = buffer.split("\n")
         buffer = lines.pop() || ""
 
-        for (const line of lines) {
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine
+          if (line === "") {
+            eventName = undefined // frame boundary
+            continue
+          }
+          if (line.startsWith("event: ")) {
+            eventName = line.slice(7)
+            continue
+          }
           if (!line.startsWith("data: ")) continue
           try {
-            const data: ConnectorEvent = JSON.parse(line.slice(6))
-            this.handleEvent(data)
+            const data: T = JSON.parse(line.slice(6))
+            this.handleEvent(data, eventName)
           } catch (err) {
             console.error("Failed to parse SSE event:", err, line)
           }
@@ -238,6 +260,6 @@ class FetchSseTransport implements SseTransport {
   }
 }
 
-export function createSseTransport(opts: SseTransportOptions): SseTransport {
-  return new FetchSseTransport(opts)
+export function createSseTransport<T = ConnectorEvent>(opts: SseTransportOptions<T>): SseTransport {
+  return new FetchSseTransport<T>(opts)
 }

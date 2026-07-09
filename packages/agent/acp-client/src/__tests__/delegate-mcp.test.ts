@@ -14,8 +14,41 @@ function deps(fetchImpl: FetchLike, extra: Partial<ShimDeps> = {}): ShimDeps {
 
 describe("delegate-mcp shim", () => {
   it("resolves the ACP_CLIENT_PORT env into the base URL", () => {
-    expect(shimDepsFromEnv({ ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv).baseUrl).toBe("http://127.0.0.1:5001")
-    expect(shimDepsFromEnv({} as NodeJS.ProcessEnv).baseUrl).toBe("http://127.0.0.1:4099")
+    const noRegistry = () => {
+      throw new Error("ENOENT")
+    }
+    expect(shimDepsFromEnv({ ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv, noRegistry).baseUrl).toBe("http://127.0.0.1:5001")
+    expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, noRegistry).baseUrl).toBe("http://127.0.0.1:4099")
+  })
+
+  // opencode spawns this shim without ACP_CLIENT_PORT — it cannot know the ACP port
+  // at its own launch (the ACP sidecar starts later and may still move). The runtime
+  // registry is the cycle-breaker. See discussions/029 §4.1 (d).
+  describe("ACP port resolution without env", () => {
+    const registry = (body: string) => () => body
+
+    it("reads the port from ~/.ultrawork/run/ports.json", () => {
+      const json = JSON.stringify({ acp: { port: 51237, pid: 42 } })
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, registry(json)).baseUrl).toBe("http://127.0.0.1:51237")
+    })
+
+    it("prefers the env over the registry when both are present", () => {
+      const json = JSON.stringify({ acp: { port: 51237 } })
+      const env = { ACP_CLIENT_PORT: "5001" } as NodeJS.ProcessEnv
+      expect(shimDepsFromEnv(env, registry(json)).baseUrl).toBe("http://127.0.0.1:5001")
+    })
+
+    it.each([
+      ["a missing file", () => { throw new Error("ENOENT") }],
+      ["invalid JSON", registry("not json{{")],
+      ["no acp entry", registry(JSON.stringify({ opencode: { port: 4096 } }))],
+      ["a non-numeric port", registry(JSON.stringify({ acp: { port: "51237" } }))],
+      ["an out-of-range port", registry(JSON.stringify({ acp: { port: 0 } }))],
+    ])("falls back to 4099 on %s", (_label, readFile) => {
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, readFile as (p: string) => string).baseUrl).toBe(
+        "http://127.0.0.1:4099",
+      )
+    })
   })
 
   it("forwards the request and passes the contract JSON through", async () => {
@@ -178,5 +211,58 @@ describe("delegateShimCommand", () => {
     // The fallback checks ~/.ultrawork/sidecars/acp-client; on dev machines it
     // may exist, so only assert the bun path itself is never returned.
     expect(delegateShimCommand("/Users/x/.bun/bin/bun")).not.toBe("/Users/x/.bun/bin/bun")
+  })
+  // The ACP sidecar requires Basic auth (029 ④b). The shim inherits the credential
+  // from whichever process spawned it — the ACP sidecar, or opencode.
+  describe("auth header", () => {
+    const noRegistry = () => { throw new Error("ENOENT") }
+
+    it("builds a Basic header from the inherited credential", () => {
+      const env = { ULTRAWORK_SIDECAR_PASSWORD: "s3cret" } as NodeJS.ProcessEnv
+      const deps = shimDepsFromEnv(env, noRegistry)
+      expect(deps.authHeader).toBe("Basic " + Buffer.from("opencode:s3cret").toString("base64"))
+    })
+
+    it("honours a non-default username", () => {
+      const env = { ULTRAWORK_SIDECAR_PASSWORD: "s3cret", ULTRAWORK_SIDECAR_USERNAME: "alice" } as NodeJS.ProcessEnv
+      expect(shimDepsFromEnv(env, noRegistry).authHeader).toBe("Basic " + Buffer.from("alice:s3cret").toString("base64"))
+    })
+
+    it("sends no header when no credential was inherited", () => {
+      expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, noRegistry).authHeader).toBeUndefined()
+    })
+
+    it("attaches the header to a delegate call", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init.headers
+        return jsonResponse({ result: { status: "completed", sessionId: "s", deliverable: "d", tokens: {} } })
+      }) as unknown as FetchLike
+      await callDelegate({ baseUrl: "http://127.0.0.1:4099", authHeader: "Basic abc", fetchImpl }, {
+        agentId: "acp:claude", task: "t", cwd: "/w",
+      })
+      expect(captured?.Authorization).toBe("Basic abc")
+    })
+
+    it("attaches the header to a list_agents call", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init?.headers
+        return jsonResponse({ agents: [] })
+      }) as unknown as FetchLike
+      await callListAgents({ baseUrl: "http://127.0.0.1:4099", authHeader: "Basic abc", fetchImpl })
+      expect(captured?.Authorization).toBe("Basic abc")
+    })
+
+    // The negative direction: a shim that always sent some header would pass the above.
+    it("omits Authorization entirely when there is no credential", async () => {
+      let captured: Record<string, string> | undefined
+      const fetchImpl = (async (_url: any, init: any) => {
+        captured = init?.headers
+        return jsonResponse({ agents: [] })
+      }) as unknown as FetchLike
+      await callListAgents({ baseUrl: "http://127.0.0.1:4099", fetchImpl })
+      expect(captured?.Authorization).toBeUndefined()
+    })
   })
 })

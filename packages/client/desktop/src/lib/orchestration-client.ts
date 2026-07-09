@@ -1,8 +1,13 @@
-// Thin client for the in-sidecar orchestrator (:4099 /orchestration/*).
-// Plain fetch + native EventSource — the ACP sidecar needs no auth headers,
-// so the sse-transport machinery would be dead weight here.
+// Thin client for the in-sidecar orchestrator (ACP sidecar, /orchestration/*).
+//
+// The SSE streams use the connector's fetch-reader transport, not EventSource:
+// EventSource has no way to send an Authorization header, which the ACP sidecar
+// is about to require. It also gives us the retry/backoff these two streams never
+// had (EventSource's own reconnect was the only thing covering a dropped stream).
 
-import { ACP_DEFAULT_BASE_URL } from "@agent/connector"
+import { createSseTransport } from "@agent/connector"
+import { acpBaseUrl } from "@/lib/sidecar-ports"
+import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
 import type {
   DelegateEvent,
   DelegateRecord,
@@ -14,8 +19,6 @@ import type {
 
 export type { DelegateEvent, DelegateRecord }
 
-const BASE = ACP_DEFAULT_BASE_URL
-
 async function expectOk<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null
@@ -25,27 +28,57 @@ async function expectOk<T>(res: Response): Promise<T> {
 }
 
 export async function createRun(recipe: PipelineRecipe): Promise<OrchestrationRun> {
-  const res = await fetch(`${BASE}/orchestration/runs`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify({ recipe }),
   })
   return (await expectOk<{ run: OrchestrationRun }>(res)).run
 }
 
 export async function listRuns(): Promise<OrchestrationRun[]> {
-  const res = await fetch(`${BASE}/orchestration/runs`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ runs: OrchestrationRun[] }>(res)).runs
 }
 
 export async function getRun(runId: string): Promise<OrchestrationRun> {
-  const res = await fetch(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ run: OrchestrationRun }>(res)).run
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  const res = await fetch(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    headers: sidecarAuthHeaders(),
+  })
   await expectOk<{ ok: boolean }>(res)
+}
+
+/** Both orchestration streams carry unnamed `data:` frames with a `type` field. */
+interface OrchestrationFrame {
+  type: string
+  properties: unknown
+}
+
+/**
+ * Shared subscribe: connect, drop heartbeats, hand the rest to the caller.
+ *
+ * Retry forever with capped backoff. These streams outlive a sidecar restart —
+ * the ACP sidecar is the orchestrator's host, and a run keeps executing there
+ * while the WebView is reconnecting.
+ */
+function subscribeOrchestrationEvents<T>(url: string, handler: (event: T) => void): () => void {
+  const transport = createSseTransport<OrchestrationFrame>({
+    url,
+    headers: sidecarAuthHeaders,
+    retry: { baseDelayMs: 1000, maxDelayMs: 30_000 },
+    onEvent: (event) => {
+      if (event.type === "heartbeat") return
+      handler(event as T)
+    },
+  })
+  void transport.connect()
+  return () => transport.close()
 }
 
 /**
@@ -53,39 +86,22 @@ export async function cancelRun(runId: string): Promise<void> {
  * caller needs no separate initial fetch to avoid missed events.
  */
 export function subscribeRunEvents(runId: string, handler: (event: OrchestratorEvent) => void): () => void {
-  const source = new EventSource(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}/events`)
-  source.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data) as { type: string; properties: unknown }
-      if (event.type === "heartbeat") return
-      handler(event as OrchestratorEvent)
-    } catch {
-      // malformed frame — skip
-    }
-  }
-  return () => source.close()
+  return subscribeOrchestrationEvents(
+    `${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/events`,
+    handler,
+  )
 }
 
 // --- agent-driven delegates (ADR-031 ②, DelegateDock) ---
 
 export async function listDelegates(): Promise<DelegateRecord[]> {
-  const res = await fetch(`${BASE}/orchestration/delegates`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/delegates`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ delegates: DelegateRecord[] }>(res)).delegates
 }
 
 /** Global delegate SSE. First frame is a delegate.snapshot — no initial fetch needed. */
 export function subscribeDelegateEvents(handler: (event: DelegateEvent) => void): () => void {
-  const source = new EventSource(`${BASE}/orchestration/delegates/events`)
-  source.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data) as { type: string; properties: unknown }
-      if (event.type === "heartbeat") return
-      handler(event as DelegateEvent)
-    } catch {
-      // malformed frame — skip
-    }
-  }
-  return () => source.close()
+  return subscribeOrchestrationEvents(`${acpBaseUrl()}/orchestration/delegates/events`, handler)
 }
 
 /**
@@ -122,9 +138,9 @@ export async function createTeamSession(opts: {
   systemPrompt?: string
   title?: string
 }): Promise<TeamSessionEntry> {
-  const res = await fetch(`${BASE}/orchestration/team/sessions`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify(opts),
   })
   return (await expectOk<{ session: TeamSessionEntry }>(res)).session
@@ -132,13 +148,14 @@ export async function createTeamSession(opts: {
 
 export async function listTeamSessions(workspace?: string): Promise<TeamSessionEntry[]> {
   const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
-  const res = await fetch(`${BASE}/orchestration/team/sessions${query}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`, { headers: sidecarAuthHeaders() })
   return (await expectOk<{ sessions: TeamSessionEntry[] }>(res)).sessions
 }
 
 export async function deleteTeamSession(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: sidecarAuthHeaders(),
   })
   await expectOk<{ ok: boolean }>(res)
 }
@@ -149,9 +166,9 @@ export async function replyAcpPermission(
   permissionId: string,
   reply: "once" | "always" | "reject",
 ): Promise<void> {
-  const res = await fetch(`${BASE}/acp/session/${encodeURIComponent(sessionId)}/permission`, {
+  const res = await fetch(`${acpBaseUrl()}/acp/session/${encodeURIComponent(sessionId)}/permission`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
     body: JSON.stringify({ permissionId, reply }),
   })
   await expectOk<{ ok: boolean }>(res)
