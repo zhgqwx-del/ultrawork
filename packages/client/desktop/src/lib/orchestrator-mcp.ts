@@ -11,7 +11,6 @@ import { invoke } from "@tauri-apps/api/core"
 import type { ApiClient } from "@agent/api-client"
 
 const MCP_NAME = "orchestrator"
-const ACP_PORT = "4099"
 // Tool-call timeout for the delegate MCP entry. Doubles as the connect
 // timeout in this vendor (mcp.timeout ?? CONNECT_TIMEOUT), so keep it
 // moderate — the shim's progress notifications are the real long-task
@@ -31,11 +30,14 @@ export async function ensureOrchestratorMcp(api: ApiClient): Promise<void> {
     if (configs && configs[MCP_NAME]) return
 
     const sidecarPath = await invoke<string>("get_sidecar_path", { name: "acp-client" })
+    // No ACP_CLIENT_PORT here: this config is persisted to opencode.json and
+    // outlives the launch that wrote it. opencode merges `mcp.environment` LAST
+    // when spawning the shim, so a stale port here would beat the correct one it
+    // otherwise inherits from opencode's own env (which the Tauri host sets).
     const mcpConfig = {
       type: "local" as const,
       command: [sidecarPath, "delegate-mcp"],
       enabled: true,
-      environment: { ACP_CLIENT_PORT: ACP_PORT },
       timeout: TOOL_TIMEOUT_MS,
     }
     await invoke("write_mcp_config", { name: MCP_NAME, config: mcpConfig })

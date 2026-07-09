@@ -4,8 +4,8 @@ import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
+import { knowledgeBaseUrl } from "@/lib/sidecar-ports"
 
-const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
 const MCP_NAME = "knowledge-base"
 
 type KBApi = ReturnType<typeof useApi>
@@ -54,7 +54,7 @@ export interface KBSource {
 }
 
 async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${KB_BASE}${path}`, {
+  const resp = await fetch(`${knowledgeBaseUrl()}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   })
@@ -95,9 +95,7 @@ export function useKnowledgeBase() {
   const connectSSE = useCallback(() => {
     if (eventSourceRef.current) return
 
-    const sseUrl = import.meta.env.DEV
-      ? "/kb/sources/events"
-      : "http://localhost:4098/kb/sources/events"
+    const sseUrl = `${knowledgeBaseUrl()}/sources/events`
 
     try {
       const es = new EventSource(sseUrl)

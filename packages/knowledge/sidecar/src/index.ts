@@ -11,7 +11,10 @@ import { IMAAdapter } from "./adapters/ima"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-const KB_PORT = 4098
+// The Tauri host picks the port and injects it; the literal is the fallback for
+// a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
+// — with port 0 the kernel picks and only the server knows.
+const KB_PORT = Number(process.env.KB_PORT ?? 4098)
 // os.homedir() resolves USERPROFILE on Windows and HOME on macOS/Linux.
 const DB_DIR = join(homedir(), ".ultrawork", "knowledge")
 const DB_PATH = join(DB_DIR, "kb.db")

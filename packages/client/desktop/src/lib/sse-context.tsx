@@ -13,6 +13,8 @@ import {
 } from "@agent/connector"
 import { useConfig } from "./config-context"
 import { useWorkspace } from "./workspace-context"
+import { resolveApiBaseUrl } from "./config"
+import { acpBaseUrl } from "./sidecar-ports"
 
 const BINDINGS_STORAGE_KEY = "uw.acp.sessionAgents"
 
@@ -54,7 +56,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     const c = new Connector({ bindings: new BindingStore({ cache: localStorageBindingCache }) })
     c.registerBackend(
       new OpenCodeBackend({
-        baseUrl: import.meta.env.DEV ? "" : config.apiBaseUrl,
+        baseUrl: resolveApiBaseUrl(config.apiBaseUrl),
         username: config.apiUsername,
         password: config.apiPassword,
         workingDirectory: workspacePath || undefined,
@@ -65,7 +67,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         },
       }),
     )
-    c.registerBackend(new ACPBackend())
+    c.registerBackend(new ACPBackend({ baseUrl: acpBaseUrl() }))
     return c
   }, [config.apiBaseUrl, config.apiUsername, config.apiPassword, workspacePath])
 

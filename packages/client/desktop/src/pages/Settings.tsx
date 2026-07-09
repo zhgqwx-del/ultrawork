@@ -15,6 +15,8 @@ import { AddSourceDialog } from "@/components/knowledge/add-source-dialog"
 import { TopBar } from "@/components/layout/top-bar"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useConfig } from "@/lib/config-context"
+import { isAutoApiBaseUrl, resolveApiBaseUrl } from "@/lib/config"
+import { sidecarPorts } from "@/lib/sidecar-ports"
 import { useI18n } from "@/lib/i18n-context"
 import { isMacOS, isWindows } from "@/lib/platform"
 import { useTheme } from "@/lib/theme-context"
@@ -245,6 +247,12 @@ function CapabilitiesSection() {
     setFormData(config)
   }, [config])
 
+  // In auto mode the port is picked per launch, so the field shows where opencode
+  // actually landed and is not editable. (Dev still routes through the Vite proxy —
+  // `resolveApiBaseUrl` returns "" there — but the port shown is the real one.)
+  const autoApiBaseUrl = isAutoApiBaseUrl(formData.apiBaseUrl)
+  const displayApiBaseUrl = `http://localhost:${sidecarPorts().opencode}`
+
   const handleSave = () => {
     updateConfig(formData)
   }
@@ -253,7 +261,7 @@ function CapabilitiesSection() {
     setTestingConnection(true)
     setConnectionStatus("idle")
     try {
-      const url = `${formData.apiBaseUrl}/global/health`
+      const url = `${resolveApiBaseUrl(formData.apiBaseUrl)}/global/health`
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -284,11 +292,18 @@ function CapabilitiesSection() {
           <label className="text-sm font-medium text-[var(--color-fg)]">{t("connection.apiBaseUrl")}</label>
           <input
             type="text"
-            value={formData.apiBaseUrl}
+            value={autoApiBaseUrl ? displayApiBaseUrl : formData.apiBaseUrl}
             onChange={(e) => setFormData({ ...formData, apiBaseUrl: e.target.value })}
             placeholder={t("connection.apiBaseUrl.placeholder")}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+            readOnly={autoApiBaseUrl}
+            aria-readonly={autoApiBaseUrl}
+            className={`w-full rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] ${
+              autoApiBaseUrl ? "cursor-default bg-[var(--color-bg-subtle)]" : "bg-[var(--color-bg)]"
+            }`}
           />
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            {autoApiBaseUrl ? t("connection.apiBaseUrl.auto") : t("connection.apiBaseUrl.description")}
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -2273,7 +2288,6 @@ function SettingsSkillCard({ item, depBadge }: { item: SkillItem; depBadge?: Rea
 
 function AboutSection() {
   const { t } = useI18n()
-  const { config } = useConfig()
 
   const LINKS = [
     { icon: Globe, labelKey: "about.website", href: "https://ultrawork.ai" },
@@ -2318,7 +2332,7 @@ function AboutSection() {
         <InfoRow label={t("about.author")} value="UltraWork Team" href="https://ultrawork.ai" />
         <InfoRow label={t("about.copyright")} value={t("about.copyrightValue")} />
         <InfoRow label={t("about.license")} value={t("about.licenseValue")} href="https://ultrawork.ai/license" />
-        <InfoRow label={t("about.opencode")} value={config.apiBaseUrl || "localhost:4096"} />
+        <InfoRow label={t("about.opencode")} value={`localhost:${sidecarPorts().opencode}`} />
       </div>
 
       {/* Quick links */}

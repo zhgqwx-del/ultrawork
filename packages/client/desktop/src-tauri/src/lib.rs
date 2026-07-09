@@ -8,6 +8,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+// Preferred ports. Today every build binds exactly these; a later phase may let
+// a production build fall back to an ephemeral port when one is taken. Nothing
+// outside `sidecar_ports()` should read them — the runtime registry below is the
+// single source of truth for "which port is <sidecar> actually on".
 const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
 const KNOWLEDGE_PORT: u16 = 4098;
@@ -23,6 +27,132 @@ struct SidecarEntry {
 }
 
 static SIDECAR_REGISTRY: Mutex<Vec<SidecarEntry>> = Mutex::new(Vec::new());
+
+// ── Sidecar port registry (runtime source of truth) ──────────────────
+//
+// Ports are decided once at startup and handed to every consumer from here:
+// direct children get them via env, the renderer via `get_sidecar_ports()`, and
+// grandchildren (opencode's stdio MCP shims) inherit their parent's env. The
+// on-disk `ports.json` is a *mirror* for crash self-heal and external tooling —
+// never a channel the renderer reads.
+//
+// Persisted config (opencode.json) must never contain a port: it outlives the
+// process that chose it. See `strip_persisted_sidecar_ports`.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SidecarPorts {
+    opencode: u16,
+    gateway: u16,
+    knowledge: u16,
+    acp: u16,
+}
+
+impl SidecarPorts {
+    const PREFERRED: Self = Self {
+        opencode: OPENCODE_PORT,
+        gateway: GATEWAY_PORT,
+        knowledge: KNOWLEDGE_PORT,
+        acp: ACP_PORT,
+    };
+}
+
+static SIDECAR_PORTS: Mutex<SidecarPorts> = Mutex::new(SidecarPorts::PREFERRED);
+
+/// Snapshot of the ports the sidecars are (or will be) listening on.
+fn sidecar_ports() -> SidecarPorts {
+    match SIDECAR_PORTS.lock() {
+        Ok(p) => *p,
+        Err(poisoned) => *poisoned.into_inner(),
+    }
+}
+
+#[tauri::command]
+fn get_sidecar_ports() -> SidecarPorts {
+    sidecar_ports()
+}
+
+/// Runtime-transient state, sibling of `~/.ultrawork/sidecars/`. Deliberately
+/// NOT `~/.config/ultrawork/` — that dir is shared with opencode's xdg-basedir
+/// lookup and holds durable config, and a stale port file there would look like
+/// configuration rather than the leftover of a crashed process.
+fn run_dir() -> PathBuf {
+    ultrawork_dir().join("run")
+}
+
+fn ports_json_path() -> PathBuf {
+    run_dir().join("ports.json")
+}
+
+/// Pure core of `write_ports_json`: pair each port with the pid we spawned for it,
+/// so a later launch can tell "our own crashed sidecar" from "a stranger".
+fn ports_json_doc(ports: &SidecarPorts, pid_of: impl Fn(&str) -> Option<u32>) -> serde_json::Value {
+    let entry = |port: u16, name: &str| serde_json::json!({ "port": port, "pid": pid_of(name) });
+    serde_json::json!({
+        "opencode": entry(ports.opencode, "opencode-server"),
+        "gateway": entry(ports.gateway, "channel-gateway"),
+        "knowledge": entry(ports.knowledge, "knowledge-sidecar"),
+        "acp": entry(ports.acp, "acp-client"),
+    })
+}
+
+/// Mirror the port registry to `~/.ultrawork/run/ports.json` (0600). Best-effort:
+/// a failure here degrades self-heal, never startup.
+fn write_ports_json() {
+    let ports = sidecar_ports();
+    let doc = ports_json_doc(&ports, |name| {
+        let reg = SIDECAR_REGISTRY.lock().ok()?;
+        reg.iter().find(|e| e.name == name).and_then(|e| e.pid)
+    });
+
+    let dir = run_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("[ports] failed to create {}: {}", dir.display(), e);
+        return;
+    }
+    let path = ports_json_path();
+    let json = match serde_json::to_string_pretty(&doc) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[ports] failed to serialize: {}", e);
+            return;
+        }
+    };
+
+    // 0600 from creation, same reasoning as sidecar-auth.json: no window where a
+    // freshly-created file sits at the umask default.
+    let write = || -> std::io::Result<()> {
+        if cfg!(unix) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&path)?;
+                f.write_all(json.as_bytes())?;
+                return Ok(());
+            }
+        }
+        // Windows: inherit the user-only ACL of the parent profile dir.
+        std::fs::write(&path, &json)
+    };
+    if let Err(e) = write() {
+        eprintln!("[ports] failed to write {}: {}", path.display(), e);
+    }
+}
+
+/// Drop the port mirror on clean exit. Its absence is what tells the next launch
+/// "the previous instance shut down properly".
+fn remove_ports_json() {
+    let path = ports_json_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            eprintln!("[ports] failed to remove {}: {}", path.display(), e);
+        }
+    }
+}
 
 fn is_port_in_use(port: u16) -> bool {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -324,6 +454,8 @@ fn shutdown_sidecars() {
     // Also clean up browser MCP processes (Chrome/Playwright)
     kill_browser_mcp_processes();
 
+    remove_ports_json();
+
     println!("[shutdown] Sidecar cleanup complete.");
 }
 
@@ -458,6 +590,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
         if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
             reg.push(SidecarEntry { name, port, pid: None });
         }
+        write_ports_json();
         return Ok(());
     }
 
@@ -473,6 +606,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     loop {
         if check_health(port, health_path, health_auth) {
             println!("{} ready on port {} (pid {})", name, port, pid);
+            write_ports_json();
             return Ok(());
         }
         if start.elapsed() > max_wait {
@@ -4579,6 +4713,53 @@ fn canonicalize_sidecar_mcp_paths() {
     }
 }
 
+/// Port env vars that older builds baked into `opencode.json`'s MCP entries.
+/// opencode merges `{...process.env, ...mcp.environment}` when spawning a local
+/// MCP (vendor `mcp/index.ts`), so `mcp.environment` *overrides* the env we hand
+/// the parent — a stale `"4099"` here would outrank the port we actually chose.
+const PERSISTED_PORT_ENV_KEYS: &[&str] = &["ACP_CLIENT_PORT"];
+
+/// Pure core of `strip_persisted_sidecar_ports`. Returns how many keys it dropped.
+///
+/// Only the keys in `PERSISTED_PORT_ENV_KEYS` are touched; any other user-set
+/// environment entry is left alone, and an `environment` map emptied by this
+/// migration is dropped entirely so the config reads clean.
+fn strip_persisted_ports_from(root: &mut serde_json::Value) -> usize {
+    let Some(mcp) = root.get_mut("mcp").and_then(|m| m.as_object_mut()) else {
+        return 0;
+    };
+    let mut dropped = 0;
+    for (name, cfg) in mcp.iter_mut() {
+        let Some(cfg_obj) = cfg.as_object_mut() else { continue };
+        let Some(env) = cfg_obj.get_mut("environment").and_then(|e| e.as_object_mut()) else {
+            continue;
+        };
+        for &key in PERSISTED_PORT_ENV_KEYS {
+            if env.remove(key).is_some() {
+                println!("[sidecar-mcp] migrate: dropped stale {} from mcp.{}", key, name);
+                dropped += 1;
+            }
+        }
+        if env.is_empty() {
+            cfg_obj.remove("environment");
+        }
+    }
+    dropped
+}
+
+/// Remove baked-in ports from persisted MCP entries. The shim inherits the
+/// correct port from its opencode parent's env, so dropping the key is the fix
+/// (not rewriting it to today's value — that would just re-stale tomorrow).
+fn strip_persisted_sidecar_ports() {
+    let result = modify_global_opencode_json(|root| {
+        strip_persisted_ports_from(root);
+        Ok(())
+    });
+    if let Err(e) = result {
+        eprintln!("[sidecar-mcp] failed to strip persisted ports: {}", e);
+    }
+}
+
 fn read_global_opencode_json() -> Result<serde_json::Value, String> {
     let path = global_opencode_json_path();
     let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
@@ -4761,6 +4942,7 @@ pub fn run() {
             get_global_config_dir,
             get_sidecar_path,
             get_sidecar_credentials,
+            get_sidecar_ports,
             check_skill_dependencies,
             check_cli_connectors,
             install_office_cli,
@@ -4795,6 +4977,13 @@ pub fn run() {
             // app-bundle paths in pre-existing configs).
             canonicalize_sidecar_mcp_paths();
 
+            // Stage 2b: drop ports that older builds baked into opencode.json.
+            // Must run before opencode starts: it reads the file at boot, and a
+            // stale mcp.environment port would override the one we inject.
+            strip_persisted_sidecar_ports();
+
+            let ports = sidecar_ports();
+
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
             // call the OpenCode HTTP API, and OpenCode itself reads it from env.
@@ -4823,14 +5012,22 @@ pub fn run() {
             let gw_handle = app.handle().clone();
             let gw_password = creds.password.clone();
             std::thread::spawn(move || {
+                let gw_port = ports.gateway.to_string();
+                // The gateway is the only sidecar that calls opencode over HTTP,
+                // so it needs opencode's port too, not just its own.
+                let gw_opencode_url = format!("http://127.0.0.1:{}", ports.opencode);
                 if let Err(e) = start_sidecar(
                     &gw_handle,
                     "channel-gateway",
-                    GATEWAY_PORT,
+                    ports.gateway,
                     "/channel/health",
                     None,
                     &[],
-                    &[("OPENCODE_SERVER_PASSWORD", gw_password.as_str())],
+                    &[
+                        ("OPENCODE_SERVER_PASSWORD", gw_password.as_str()),
+                        ("GATEWAY_PORT", gw_port.as_str()),
+                        ("OPENCODE_BASE_URL", gw_opencode_url.as_str()),
+                    ],
                 ) {
                     eprintln!("Channel Gateway startup failed: {}", e);
                     use tauri::Emitter;
@@ -4844,14 +5041,15 @@ pub fn run() {
             // Start Knowledge Sidecar in background (non-critical, don't block UI)
             let kb_handle = app.handle().clone();
             std::thread::spawn(move || {
+                let kb_port = ports.knowledge.to_string();
                 if let Err(e) = start_sidecar(
                     &kb_handle,
                     "knowledge-sidecar",
-                    KNOWLEDGE_PORT,
+                    ports.knowledge,
                     "/kb/health",
                     None,
                     &[],
-                    &[],
+                    &[("KB_PORT", kb_port.as_str())],
                 ) {
                     eprintln!("Knowledge Sidecar startup failed: {}", e);
                     use tauri::Emitter;
@@ -4869,10 +5067,12 @@ pub fn run() {
             let acp_password = creds.password.clone();
             std::thread::spawn(move || {
                 let acp_path = rich_path();
+                let acp_port = ports.acp.to_string();
+                let acp_opencode_url = format!("http://127.0.0.1:{}", ports.opencode);
                 if let Err(e) = start_sidecar(
                     &acp_handle,
                     "acp-client",
-                    ACP_PORT,
+                    ports.acp,
                     "/acp/health",
                     None,
                     &[],
@@ -4881,6 +5081,8 @@ pub fn run() {
                         // In-sidecar orchestrator calls the OpenCode REST API
                         // (same credential channel as channel-gateway).
                         ("OPENCODE_SERVER_PASSWORD", acp_password.as_str()),
+                        ("ACP_CLIENT_PORT", acp_port.as_str()),
+                        ("OPENCODE_BASE_URL", acp_opencode_url.as_str()),
                     ],
                 ) {
                     eprintln!("ACP Client startup failed: {}", e);
@@ -4899,12 +5101,17 @@ pub fn run() {
             // minimal GUI PATH. This also keeps the skill-dependency probes
             // (skill_dep_path, rich-based) consistent with what skill bash
             // actually resolves at runtime.
-            let oc_port = OPENCODE_PORT.to_string();
+            let oc_port = ports.opencode.to_string();
             let oc_path = rich_path();
+            // ACP_CLIENT_PORT is not for opencode itself — it is inherited by the
+            // stdio MCP shims opencode spawns (delegate-mcp), which call the ACP
+            // sidecar. Passing it here is what lets us keep the port out of the
+            // persisted opencode.json (see strip_persisted_sidecar_ports).
+            let oc_acp_port = ports.acp.to_string();
             if let Err(e) = start_sidecar(
                 app,
                 "opencode-server",
-                OPENCODE_PORT,
+                ports.opencode,
                 "/global/health",
                 Some(&auth_header),
                 &["serve", "--port", &oc_port],
@@ -4912,6 +5119,7 @@ pub fn run() {
                     ("OPENCODE_SERVER_PASSWORD", creds.password.as_str()),
                     ("OPENCODE_APP_NAME", OPENCODE_APP_NAME),
                     ("PATH", oc_path.as_str()),
+                    ("ACP_CLIENT_PORT", oc_acp_port.as_str()),
                 ],
             ) {
                 eprintln!("OpenCode Server startup failed: {}", e);
@@ -4927,7 +5135,7 @@ pub fn run() {
                 // OpenCode is healthy — eagerly trigger MCP InstanceState init in
                 // the background so the first user prompt doesn't pay the per-MCP
                 // spawn/connect cost.
-                warm_opencode_mcp(OPENCODE_PORT, auth_header.clone());
+                warm_opencode_mcp(ports.opencode, auth_header.clone());
             }
 
             Ok(())
@@ -6799,5 +7007,140 @@ mod provider_test_tests {
         // stable id and some state — the settings card renders directly off it.
         let status = probe_lark_status();
         assert_eq!(status.id, "lark");
+    }
+}
+
+#[cfg(test)]
+mod sidecar_port_registry_tests {
+    use super::*;
+
+    // ── ports.json mirror ────────────────────────────────────────────
+
+    #[test]
+    fn ports_json_pairs_each_port_with_the_pid_we_spawned() {
+        let ports = SidecarPorts { opencode: 51234, gateway: 51235, knowledge: 51236, acp: 51237 };
+        let doc = ports_json_doc(&ports, |name| match name {
+            "opencode-server" => Some(101),
+            "channel-gateway" => Some(102),
+            "knowledge-sidecar" => Some(103),
+            "acp-client" => Some(104),
+            _ => None,
+        });
+
+        assert_eq!(doc["opencode"]["port"], 51234);
+        assert_eq!(doc["opencode"]["pid"], 101);
+        assert_eq!(doc["gateway"]["port"], 51235);
+        assert_eq!(doc["gateway"]["pid"], 102);
+        assert_eq!(doc["knowledge"]["port"], 51236);
+        assert_eq!(doc["knowledge"]["pid"], 103);
+        assert_eq!(doc["acp"]["port"], 51237);
+        assert_eq!(doc["acp"]["pid"], 104);
+    }
+
+    /// A reused (not spawned) sidecar has no pid of ours. It must serialize as an
+    /// explicit null rather than borrow a sibling's pid — a wrong pid here would
+    /// make the next launch's ownership check point at an unrelated process.
+    #[test]
+    fn ports_json_records_a_null_pid_for_a_reused_sidecar() {
+        let doc = ports_json_doc(&SidecarPorts::PREFERRED, |name| {
+            (name == "opencode-server").then_some(999)
+        });
+        assert_eq!(doc["opencode"]["pid"], 999);
+        assert!(doc["gateway"]["pid"].is_null());
+        assert!(doc["knowledge"]["pid"].is_null());
+        assert!(doc["acp"]["pid"].is_null());
+    }
+
+    #[test]
+    fn preferred_ports_are_the_historical_4096_4099() {
+        // The renderer mirrors these in sidecar-ports.ts; drifting apart would make
+        // a non-Tauri fallback point at the wrong sidecar.
+        let p = SidecarPorts::PREFERRED;
+        assert_eq!((p.opencode, p.gateway, p.knowledge, p.acp), (4096, 4097, 4098, 4099));
+    }
+
+    #[test]
+    fn sidecar_ports_serialize_with_the_field_names_the_renderer_reads() {
+        let json = serde_json::to_value(SidecarPorts::PREFERRED).unwrap();
+        assert_eq!(json["opencode"], 4096);
+        assert_eq!(json["gateway"], 4097);
+        assert_eq!(json["knowledge"], 4098);
+        assert_eq!(json["acp"], 4099);
+    }
+
+    // ── opencode.json port migration ─────────────────────────────────
+
+    fn json(s: &str) -> serde_json::Value {
+        serde_json::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn migration_drops_a_stale_acp_port_and_the_emptied_environment_map() {
+        let mut root = json(
+            r#"{"mcp":{"orchestrator":{"type":"local","enabled":true,
+                "environment":{"ACP_CLIENT_PORT":"4099"}}}}"#,
+        );
+        assert_eq!(strip_persisted_ports_from(&mut root), 1);
+
+        let entry = &root["mcp"]["orchestrator"];
+        assert!(entry.get("environment").is_none(), "emptied environment map should be removed");
+        // Everything else about the entry survives.
+        assert_eq!(entry["type"], "local");
+        assert_eq!(entry["enabled"], true);
+    }
+
+    /// The positive direction alone would pass for a migration that nuked every
+    /// `environment` map. User-set vars must survive, and the map with them.
+    #[test]
+    fn migration_preserves_unrelated_environment_vars() {
+        let mut root = json(
+            r#"{"mcp":{"orchestrator":{"environment":{
+                "ACP_CLIENT_PORT":"4099","ULTRAWORK_DELEGATE_CWD":"/tmp/x","MY_TOKEN":"abc"}}}}"#,
+        );
+        assert_eq!(strip_persisted_ports_from(&mut root), 1);
+
+        let env = &root["mcp"]["orchestrator"]["environment"];
+        assert!(env.get("ACP_CLIENT_PORT").is_none());
+        assert_eq!(env["ULTRAWORK_DELEGATE_CWD"], "/tmp/x");
+        assert_eq!(env["MY_TOKEN"], "abc");
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_reports_nothing_dropped_on_a_clean_config() {
+        let mut root = json(
+            r#"{"mcp":{"orchestrator":{"type":"local","environment":{"ACP_CLIENT_PORT":"4099"}},
+                "knowledge-base":{"type":"local"}}}"#,
+        );
+        assert_eq!(strip_persisted_ports_from(&mut root), 1);
+        let after_first = root.clone();
+        assert_eq!(strip_persisted_ports_from(&mut root), 0, "second pass must be a no-op");
+        assert_eq!(root, after_first);
+    }
+
+    #[test]
+    fn migration_tolerates_configs_without_mcp_or_environment() {
+        let mut empty = json("{}");
+        assert_eq!(strip_persisted_ports_from(&mut empty), 0);
+
+        let mut no_env = json(r#"{"mcp":{"knowledge-base":{"type":"local","command":["kb"]}}}"#);
+        assert_eq!(strip_persisted_ports_from(&mut no_env), 0);
+        assert_eq!(no_env["mcp"]["knowledge-base"]["command"][0], "kb");
+
+        // `mcp` present but not an object, and an entry that is not an object.
+        let mut odd = json(r#"{"mcp":[1,2]}"#);
+        assert_eq!(strip_persisted_ports_from(&mut odd), 0);
+        let mut odd2 = json(r#"{"mcp":{"x":"not-an-object"}}"#);
+        assert_eq!(strip_persisted_ports_from(&mut odd2), 0);
+    }
+
+    #[test]
+    fn migration_strips_the_port_from_every_entry_that_carries_it() {
+        let mut root = json(
+            r#"{"mcp":{"orchestrator":{"environment":{"ACP_CLIENT_PORT":"4099"}},
+                "custom":{"environment":{"ACP_CLIENT_PORT":"5000","KEEP":"1"}}}}"#,
+        );
+        assert_eq!(strip_persisted_ports_from(&mut root), 2);
+        assert!(root["mcp"]["orchestrator"].get("environment").is_none());
+        assert_eq!(root["mcp"]["custom"]["environment"]["KEEP"], "1");
     }
 }

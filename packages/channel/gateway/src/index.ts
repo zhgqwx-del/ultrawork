@@ -9,7 +9,10 @@ import { createWeChatQRProvider } from "./adapters/wechat/qr-provider.js";
 import { createWeComAdapter, createWeComQRProvider } from "./adapters/wecom/index.js";
 import { createFeishuAdapter, createFeishuQRProvider } from "./adapters/feishu/index.js";
 
-const GATEWAY_PORT = 4097;
+// The Tauri host picks the port and injects it; the literal is the fallback for
+// a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
+// — with port 0 the kernel picks and only the server knows.
+const GATEWAY_PORT = Number(process.env.GATEWAY_PORT ?? 4097);
 
 async function main() {
   console.log("Channel Gateway starting...");

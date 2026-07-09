@@ -3,7 +3,13 @@ import type { ApiClient, MessagePart } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
 import { loadSessionMap, saveSessionMap } from "./session-store.js";
 
-const OPENCODE_BASE_URL = "http://127.0.0.1:4096";
+// Base URL is injected by the Tauri host alongside the password — opencode's
+// port is chosen at startup, not compile time. The fallback keeps a standalone
+// gateway (tests, `bun run` against a hand-started opencode) working.
+// Lazy, same as the password: tests may set the env after importing this module.
+export function getOpencodeBaseUrl(): string {
+  return process.env.OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
+}
 
 // Password is injected by the Tauri host (lib.rs spawns channel-gateway with
 // OPENCODE_SERVER_PASSWORD set to the per-install random credential). Lazy
@@ -88,7 +94,7 @@ export class Bridge {
     let backend = this.backends.get(workspaceDir);
     if (!backend) {
       backend = new OpenCodeBackend({
-        baseUrl: OPENCODE_BASE_URL,
+        baseUrl: getOpencodeBaseUrl(),
         username: "opencode",
         password: getOpencodePassword(),
         workingDirectory: workspaceDir,

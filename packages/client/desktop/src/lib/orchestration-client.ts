@@ -1,8 +1,8 @@
-// Thin client for the in-sidecar orchestrator (:4099 /orchestration/*).
+// Thin client for the in-sidecar orchestrator (ACP sidecar, /orchestration/*).
 // Plain fetch + native EventSource — the ACP sidecar needs no auth headers,
 // so the sse-transport machinery would be dead weight here.
 
-import { ACP_DEFAULT_BASE_URL } from "@agent/connector"
+import { acpBaseUrl } from "@/lib/sidecar-ports"
 import type {
   DelegateEvent,
   DelegateRecord,
@@ -14,8 +14,6 @@ import type {
 
 export type { DelegateEvent, DelegateRecord }
 
-const BASE = ACP_DEFAULT_BASE_URL
-
 async function expectOk<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null
@@ -25,7 +23,7 @@ async function expectOk<T>(res: Response): Promise<T> {
 }
 
 export async function createRun(recipe: PipelineRecipe): Promise<OrchestrationRun> {
-  const res = await fetch(`${BASE}/orchestration/runs`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ recipe }),
@@ -34,17 +32,17 @@ export async function createRun(recipe: PipelineRecipe): Promise<OrchestrationRu
 }
 
 export async function listRuns(): Promise<OrchestrationRun[]> {
-  const res = await fetch(`${BASE}/orchestration/runs`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs`)
   return (await expectOk<{ runs: OrchestrationRun[] }>(res)).runs
 }
 
 export async function getRun(runId: string): Promise<OrchestrationRun> {
-  const res = await fetch(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}`)
   return (await expectOk<{ run: OrchestrationRun }>(res)).run
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  const res = await fetch(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })
+  const res = await fetch(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" })
   await expectOk<{ ok: boolean }>(res)
 }
 
@@ -53,7 +51,7 @@ export async function cancelRun(runId: string): Promise<void> {
  * caller needs no separate initial fetch to avoid missed events.
  */
 export function subscribeRunEvents(runId: string, handler: (event: OrchestratorEvent) => void): () => void {
-  const source = new EventSource(`${BASE}/orchestration/runs/${encodeURIComponent(runId)}/events`)
+  const source = new EventSource(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/events`)
   source.onmessage = (message) => {
     try {
       const event = JSON.parse(message.data) as { type: string; properties: unknown }
@@ -69,13 +67,13 @@ export function subscribeRunEvents(runId: string, handler: (event: OrchestratorE
 // --- agent-driven delegates (ADR-031 ②, DelegateDock) ---
 
 export async function listDelegates(): Promise<DelegateRecord[]> {
-  const res = await fetch(`${BASE}/orchestration/delegates`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/delegates`)
   return (await expectOk<{ delegates: DelegateRecord[] }>(res)).delegates
 }
 
 /** Global delegate SSE. First frame is a delegate.snapshot — no initial fetch needed. */
 export function subscribeDelegateEvents(handler: (event: DelegateEvent) => void): () => void {
-  const source = new EventSource(`${BASE}/orchestration/delegates/events`)
+  const source = new EventSource(`${acpBaseUrl()}/orchestration/delegates/events`)
   source.onmessage = (message) => {
     try {
       const event = JSON.parse(message.data) as { type: string; properties: unknown }
@@ -122,7 +120,7 @@ export async function createTeamSession(opts: {
   systemPrompt?: string
   title?: string
 }): Promise<TeamSessionEntry> {
-  const res = await fetch(`${BASE}/orchestration/team/sessions`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(opts),
@@ -132,12 +130,12 @@ export async function createTeamSession(opts: {
 
 export async function listTeamSessions(workspace?: string): Promise<TeamSessionEntry[]> {
   const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
-  const res = await fetch(`${BASE}/orchestration/team/sessions${query}`)
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`)
   return (await expectOk<{ sessions: TeamSessionEntry[] }>(res)).sessions
 }
 
 export async function deleteTeamSession(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
   })
   await expectOk<{ ok: boolean }>(res)
@@ -149,7 +147,7 @@ export async function replyAcpPermission(
   permissionId: string,
   reply: "once" | "always" | "reject",
 ): Promise<void> {
-  const res = await fetch(`${BASE}/acp/session/${encodeURIComponent(sessionId)}/permission`, {
+  const res = await fetch(`${acpBaseUrl()}/acp/session/${encodeURIComponent(sessionId)}/permission`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ permissionId, reply }),

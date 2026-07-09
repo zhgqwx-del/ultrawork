@@ -1,9 +1,14 @@
-// HTTP client for the ACP Client Sidecar (:4099) — the former desktop
-// agent-router.ts, function-for-function. Always absolute (no Vite proxy
-// entry for :4099): the sidecar allows the dev/Tauri origins via CORS.
+// HTTP client for the ACP Client Sidecar — the former desktop agent-router.ts,
+// function-for-function. Always absolute (no Vite proxy entry for the ACP port):
+// the sidecar allows the dev/Tauri origins via CORS.
 
 import type { SendMessageResponse, PlanStep } from "@agent/api-client"
 
+/**
+ * Fallback only. This package has no way to ask the Tauri host which port the
+ * sidecar bound, so hosts that can — the desktop renderer — pass `baseUrl`
+ * explicitly (`sidecar-ports.ts`). Keep in sync with the Rust preferred port.
+ */
 export const ACP_DEFAULT_BASE_URL = "http://localhost:4099"
 
 export interface ACPAgentInfo {

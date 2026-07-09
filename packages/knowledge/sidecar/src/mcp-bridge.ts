@@ -8,8 +8,6 @@ import type { Indexer } from "./indexer"
 import type { KnowledgeStore } from "./store"
 import { getAdapter } from "./adapters/registry"
 
-const KB_BASE = "http://localhost:4098"
-
 interface McpBridgeDeps {
   search: (options: SearchOptions) => SearchResult[]
   indexer: Indexer
@@ -17,12 +15,14 @@ interface McpBridgeDeps {
 }
 
 /**
- * Start MCP server in stdio mode.
- * Can operate in two modes:
- * - "direct": search/indexer/store injected directly (same process)
- * - "proxy": fetch from HTTP API (separate process, used by compiled binary)
+ * Start the MCP server in stdio mode, querying the store in-process.
+ *
+ * There used to be a second "proxy" mode that reached the sidecar over HTTP on a
+ * hardcoded port. It was unreachable — `mcp-stdio` has always constructed the
+ * deps itself — and a baked-in port is exactly what the runtime port registry
+ * exists to eliminate. Removed rather than parameterised (discussions/029 §10.1).
  */
-export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
+export async function startMcpBridge(deps: McpBridgeDeps): Promise<void> {
   console.error("[mcp-bridge] Starting MCP stdio bridge...")
 
   const server = new McpServer({
@@ -45,113 +45,76 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
         let allResults: AdapterSearchResult[] = []
         let sourceSummary = ""
 
-        if (deps) {
-          // Direct mode — search across all enabled sources
-          const ksSources = deps.store.listKnowledgeSources()
-          const enabledSources = ksSources.filter((ks) => {
-            if (ks.enabled !== 1) return false
-            if (source_ids && source_ids.length > 0) return source_ids.includes(ks.id)
-            return true
-          })
+        // Search across all enabled sources
+        const ksSources = deps.store.listKnowledgeSources()
+        const enabledSources = ksSources.filter((ks) => {
+          if (ks.enabled !== 1) return false
+          if (source_ids && source_ids.length > 0) return source_ids.includes(ks.id)
+          return true
+        })
 
-          // Search each source via its adapter
-          const searchErrors: string[] = []
-          const searchPromises = enabledSources.map(async (ks) => {
-            const config = JSON.parse(ks.config_json)
+        // Search each source via its adapter
+        const searchErrors: string[] = []
+        const searchPromises = enabledSources.map(async (ks) => {
+          const config = JSON.parse(ks.config_json)
 
-            if (ks.type === "local_folder") {
-              // Use existing retriever for local folders
-              const results = deps.search({ query, limit: maxResults })
-              const folderPath = config.folderPath as string
-              const folderName = folderPath ? basename(folderPath) : folderPath
-              return results
-                .filter((r) => r.folderPath === folderPath)
-                .slice(0, maxResults)
-                .map((r): AdapterSearchResult => ({
-                  content: r.parentContent ?? r.content,
-                  score: r.score,
-                  title: r.filePath,
-                  sourceId: ks.id,
-                  sourceLabel: `Local: ${folderName}`,
-                  metadata: {
-                    filePath: r.filePath,
-                    startLine: r.startLine,
-                    endLine: r.endLine,
-                    parentStartLine: r.parentStartLine,
-                    parentEndLine: r.parentEndLine,
-                  },
-                }))
-            }
-
-            // Remote adapter
-            const adapter = getAdapter(ks.type)
-            if (!adapter) return []
-            try {
-              const results = await adapter.search(query, config, { limit: maxResults })
-              return results.map((r) => ({ ...r, sourceId: ks.id }))
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err)
-              console.error(`[mcp-bridge] Adapter ${ks.type} search error:`, err)
-              searchErrors.push(`${ks.name} (${ks.type}): ${msg}`)
-              return []
-            }
-          })
-
-          const resultArrays = await Promise.all(searchPromises)
-          allResults = resultArrays.flat()
-
-          // Source summary
-          if (enabledSources.length > 0) {
-            sourceSummary = "\n\nSearched knowledge sources:\n" +
-              enabledSources.map((s) => {
-                const config = JSON.parse(s.config_json)
-                if (s.type === "local_folder") {
-                  const folderSources = deps.indexer.listFolders()
-                  const status = folderSources.find((f) => f.folderPath === config.folderPath)
-                  return `- [Local] ${s.name} (${status?.indexedFiles ?? "?"} files)`
-                }
-                return `- [${s.type.toUpperCase()}] ${s.name} (${s.status})`
-              }).join("\n")
-            if (searchErrors.length > 0) {
-              sourceSummary += "\n\nSearch errors:\n" +
-                searchErrors.map((e) => `- ${e}`).join("\n")
-            }
-          }
-        } else {
-          // Proxy mode — fetch from HTTP API (includes both local + remote results)
-          const resp = await fetch(`${KB_BASE}/kb/search`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query, limit: maxResults }),
-          })
-          if (!resp.ok) throw new Error(`KB API ${resp.status}`)
-          const data = await resp.json() as { results: SearchResult[]; remoteResults?: AdapterSearchResult[] }
-
-          // Local results
-          allResults = (data.results ?? []).map((r): AdapterSearchResult => ({
-            content: r.parentContent ?? r.content,
-            score: r.score,
-            title: r.filePath,
-            sourceId: 0,
-            sourceLabel: `Local: ${r.folderPath ? basename(r.folderPath) : ""}`,
-            metadata: { filePath: r.filePath, startLine: r.startLine, endLine: r.endLine },
-          }))
-
-          // Remote results (IMA etc.)
-          if (data.remoteResults && data.remoteResults.length > 0) {
-            allResults.push(...data.remoteResults)
+          if (ks.type === "local_folder") {
+            // Use existing retriever for local folders
+            const results = deps.search({ query, limit: maxResults })
+            const folderPath = config.folderPath as string
+            const folderName = folderPath ? basename(folderPath) : folderPath
+            return results
+              .filter((r) => r.folderPath === folderPath)
+              .slice(0, maxResults)
+              .map((r): AdapterSearchResult => ({
+                content: r.parentContent ?? r.content,
+                score: r.score,
+                title: r.filePath,
+                sourceId: ks.id,
+                sourceLabel: `Local: ${folderName}`,
+                metadata: {
+                  filePath: r.filePath,
+                  startLine: r.startLine,
+                  endLine: r.endLine,
+                  parentStartLine: r.parentStartLine,
+                  parentEndLine: r.parentEndLine,
+                },
+              }))
           }
 
+          // Remote adapter
+          const adapter = getAdapter(ks.type)
+          if (!adapter) return []
           try {
-            const srcResp = await fetch(`${KB_BASE}/kb/sources`)
-            if (srcResp.ok) {
-              const srcData = await srcResp.json() as { sources: { name: string; type: string; status: string }[] }
-              if (srcData.sources.length > 0) {
-                sourceSummary = "\n\nSearched knowledge sources:\n" +
-                  srcData.sources.map((s) => `- [${s.type}] ${s.name} (${s.status})`).join("\n")
+            const results = await adapter.search(query, config, { limit: maxResults })
+            return results.map((r) => ({ ...r, sourceId: ks.id }))
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.error(`[mcp-bridge] Adapter ${ks.type} search error:`, err)
+            searchErrors.push(`${ks.name} (${ks.type}): ${msg}`)
+            return []
+          }
+        })
+
+        const resultArrays = await Promise.all(searchPromises)
+        allResults = resultArrays.flat()
+
+        // Source summary
+        if (enabledSources.length > 0) {
+          sourceSummary = "\n\nSearched knowledge sources:\n" +
+            enabledSources.map((s) => {
+              const config = JSON.parse(s.config_json)
+              if (s.type === "local_folder") {
+                const folderSources = deps.indexer.listFolders()
+                const status = folderSources.find((f) => f.folderPath === config.folderPath)
+                return `- [Local] ${s.name} (${status?.indexedFiles ?? "?"} files)`
               }
-            }
-          } catch { /* ignore */ }
+              return `- [${s.type.toUpperCase()}] ${s.name} (${s.status})`
+            }).join("\n")
+          if (searchErrors.length > 0) {
+            sourceSummary += "\n\nSearch errors:\n" +
+              searchErrors.map((e) => `- ${e}`).join("\n")
+          }
         }
 
         // Sort by score and take top-K
@@ -187,39 +150,22 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
     async () => {
       console.error("[mcp-bridge] knowledge_list_sources called")
       try {
-        if (deps) {
-          const ksSources = deps.store.listKnowledgeSources()
-          if (ksSources.length === 0) {
-            return { content: [{ type: "text" as const, text: "No knowledge sources are currently configured." }] }
-          }
-
-          const lines = ksSources.map((ks) => {
-            const config = JSON.parse(ks.config_json)
-            const enabled = ks.enabled === 1 ? "✓" : "✗"
-            if (ks.type === "local_folder") {
-              const folderStatus = deps.indexer.listFolders().find((f) => f.folderPath === config.folderPath)
-              return `- ${enabled} [id=${ks.id}] **${ks.name}** [Local Folder] ${config.folderPath} — ${folderStatus?.indexedFiles ?? "?"} files (${ks.status})`
-            }
-            return `- ${enabled} [id=${ks.id}] **${ks.name}** [${ks.type.toUpperCase()}] — ${ks.status}${ks.error_message ? ` (${ks.error_message})` : ""}`
-          })
-
-          return { content: [{ type: "text" as const, text: lines.join("\n") }] }
-        }
-
-        // Proxy mode
-        const resp = await fetch(`${KB_BASE}/kb/sources`)
-        if (!resp.ok) throw new Error(`KB API ${resp.status}`)
-        const data = await resp.json() as { sources: { name: string; type: string; status: string; enabled: boolean }[] }
-
-        if (!data.sources || data.sources.length === 0) {
+        const ksSources = deps.store.listKnowledgeSources()
+        if (ksSources.length === 0) {
           return { content: [{ type: "text" as const, text: "No knowledge sources are currently configured." }] }
         }
 
-        const text = data.sources
-          .map((s: any) => `- ${s.enabled ? "✓" : "✗"} [id=${s.id}] **${s.name}** [${s.type}] (${s.status})`)
-          .join("\n")
+        const lines = ksSources.map((ks) => {
+          const config = JSON.parse(ks.config_json)
+          const enabled = ks.enabled === 1 ? "✓" : "✗"
+          if (ks.type === "local_folder") {
+            const folderStatus = deps.indexer.listFolders().find((f) => f.folderPath === config.folderPath)
+            return `- ${enabled} [id=${ks.id}] **${ks.name}** [Local Folder] ${config.folderPath} — ${folderStatus?.indexedFiles ?? "?"} files (${ks.status})`
+          }
+          return `- ${enabled} [id=${ks.id}] **${ks.name}** [${ks.type.toUpperCase()}] — ${ks.status}${ks.error_message ? ` (${ks.error_message})` : ""}`
+        })
 
-        return { content: [{ type: "text" as const, text }] }
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] }
       } catch (err) {
         return {
           content: [{ type: "text" as const, text: `Failed to list knowledge sources: ${err instanceof Error ? err.message : String(err)}` }],
@@ -241,25 +187,7 @@ export async function startMcpBridge(deps?: McpBridgeDeps): Promise<void> {
     async ({ content, title, note_id, source_id }) => {
       console.error(`[mcp-bridge] knowledge_save_note called: note_id=${note_id ?? "new"}, source_id=${source_id ?? "auto"}, ${content.length} chars`)
       try {
-        if (!deps) {
-          // Proxy mode — call HTTP API
-          const resp = await fetch(`${KB_BASE}/kb/notes/${note_id ? "append" : "create"}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content, title, note_id, source_id }),
-          })
-          if (!resp.ok) {
-            const body = await resp.text().catch(() => "")
-            throw new Error(`KB API ${resp.status}: ${body}`)
-          }
-          const data = await resp.json() as { noteId: string }
-          const action = note_id ? "appended to" : "created"
-          return {
-            content: [{ type: "text" as const, text: `Note ${action} successfully (note_id: ${data.noteId})` }],
-          }
-        }
-
-        // Direct mode — find the IMA Notes source and call adapter
+        // Find the IMA Notes source and call its adapter
         const ksSources = deps.store.listKnowledgeSources()
         const notesSource = ksSources.find((ks) => {
           if (ks.type !== "ima" || ks.enabled !== 1) return false
