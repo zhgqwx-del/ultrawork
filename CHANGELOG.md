@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-09
+
+> v0.2.0 之后的打磨批次：消息渠道扫码接入三家收官（钉钉 / 企业微信 / 飞书）+ 品牌 icon 体系，以及一轮集中的 UI 密度走查与设置页 tab 统一。
+
 ### Added
 - **消息渠道扫码接入三家收官：钉钉 + 企业微信 + 飞书（2026-07-08，ADR-044 / discussions/028，三家真机全链验收）**：对标竞品「扫码即自动创建机器人」——① gateway 新增 `qr-registry.ts` 扫码会话骨架（后台轮询 + **一次性凭证到达即落盘**〔不经前端透传〕+ 统一状态枚举 pending/scanned/authorized/expired/denied/error + 并发/StrictMode 去重 + 取消端点 + NaN 消毒），微信 ilink 一并迁入；端点泛化 `POST/GET/DELETE /channel/:type/qrcode*`。② 钉钉走官方 registration 设备流（复用现有 Stream adapter）；企微新增智能机器人长连接 adapter（官方 `@wecom/aibot-node-sdk`，ai/qc 扫码流）；飞书新增 WSClient 事件长连接 adapter（官方 `@larksuiteoapi/node-sdk`，PersonalAgent 注册流 + 飞书/Lark 双域自动切换）——三家注册端点均未进公开文档，实拍契约 SSOT=gotchas §4。③ 手动兜底表单泛化（type 驱动字段，飞书含 Lark 国际版选择）+「在浏览器中打开」。④ 三路对抗审查 14 项确认缺陷全修（并发去重打穿/取消窗口丢一次性凭证/15min 斩杀活跃会话/飞书 SDK start() 假 resolve/expired 刷新级联失效等，多数带可运行实证）+ 6 回归测试锁。⑤ 凭证安全（D2）：channels.json 0600 + GET/POST 响应掩码 secret。已知边界：发送者无限制（D4 刻意，后续 allowlist）、飞书群聊/非管理员扫码未实拍。
 - **渠道/连接器品牌 icon + Settings 拆分（2026-07-08，同分支）**：新增 `brand-icons.tsx` 四家品牌圆形徽章（素材=simple-icons CC0 / 腾讯 TDesign MIT / Remix Apache-2.0 / 字节 Semi MIT，构建期内联零外链；负形 glyph 结构化强制白底盘保 dark mode），接入渠道卡/添加下拉/空态/QR 头部/办公 CLI 三卡（替换 `Building2`）等六落点；About 页脚加第三方商标指示性使用声明（en/zh）。`ChannelsSection` 从 Settings.tsx 拆出 `components/settings/channels-section.tsx`（逐字节验证零逻辑漂移）。
