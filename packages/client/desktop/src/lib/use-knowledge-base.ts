@@ -5,6 +5,7 @@ import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
 import { knowledgeBaseUrl } from "@/lib/sidecar-ports"
+import { createSseTransport, type SseTransport } from "@agent/connector"
 
 const MCP_NAME = "knowledge-base"
 
@@ -53,6 +54,17 @@ export interface KBSource {
   folderPath?: string
 }
 
+/** Payload of a `/kb/sources/events` frame (any event name). */
+interface KBProgressEvent {
+  folderPath: string
+  status: string
+  totalFiles: number
+  indexedFiles: number
+  skippedFiles: number
+  currentFile?: string
+  error?: string
+}
+
 async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${knowledgeBaseUrl()}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -75,8 +87,7 @@ export function useKnowledgeBase() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const api = useApi()
   const { t } = useI18n()
-  const eventSourceRef = useRef<EventSource | null>(null)
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const transportRef = useRef<SseTransport | null>(null)
 
   const fetchSources = useCallback(async () => {
     try {
@@ -91,94 +102,63 @@ export function useKnowledgeBase() {
     }
   }, [])
 
-  // SSE connection for real-time progress updates (local folders)
+  // SSE connection for real-time progress updates (local folders).
+  //
+  // fetch-reader, not EventSource: EventSource has no way to send an Authorization
+  // header, which the knowledge sidecar is about to require. Retry is a flat 5s
+  // forever, matching the hand-rolled reconnect this replaced.
   const connectSSE = useCallback(() => {
-    if (eventSourceRef.current) return
+    if (transportRef.current) return
 
-    const sseUrl = `${knowledgeBaseUrl()}/sources/events`
-
-    try {
-      const es = new EventSource(sseUrl)
-      eventSourceRef.current = es
-
-      // Update local folder sources from SSE events
-      const handleStatusSync = (e: MessageEvent) => {
-        try {
-          const event = JSON.parse(e.data) as {
-            folderPath: string
-            status: string
-            totalFiles: number
-            indexedFiles: number
-            skippedFiles: number
-            currentFile?: string
-            error?: string
-          }
-          setSources((prev) =>
-            prev.map((s) =>
-              s.type === "local_folder" && s.folderPath === event.folderPath
-                ? {
-                    ...s,
-                    status: event.status as KBSource["status"],
-                    totalFiles: event.totalFiles,
-                    indexedFiles: event.indexedFiles,
-                    skippedFiles: event.skippedFiles,
-                    currentFile: event.currentFile,
-                    error: event.error,
-                  }
-                : s,
-            ),
-          )
-        } catch { /* ignore parse errors */ }
-      }
-
-      const handleProgressEvent = (e: MessageEvent) => {
-        try {
-          const event = JSON.parse(e.data) as {
-            folderPath: string
-            status: string
-            indexedFiles: number
-          }
-          handleStatusSync(e)
-
-          if (event.status === "complete") {
-            toast.success(
-              t("knowledge.indexComplete")
-                .replace("{files}", String(event.indexedFiles))
-                .replace("{folder}", pathBasename(event.folderPath)),
-            )
-          } else if (event.status === "error") {
-            toast.error(t("knowledge.indexFailed"))
-          }
-        } catch { /* ignore parse errors */ }
-      }
-
-      es.addEventListener("status", handleStatusSync)
-      es.addEventListener("indexing", handleProgressEvent)
-      es.addEventListener("complete", handleProgressEvent)
-      es.addEventListener("error", handleProgressEvent)
-
-      es.onerror = () => {
-        es.close()
-        eventSourceRef.current = null
-        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectTimerRef.current = null
-          connectSSE()
-        }, 5000)
-      }
-    } catch {
-      // SSE not available
+    // The sidecar names its frames: `status` is a full snapshot of a source, while
+    // `indexing`/`complete`/`error` are progress ticks. Only the ticks may toast —
+    // a snapshot of an already-failed source would otherwise re-toast on every
+    // reconnect. The name is the only thing distinguishing them; both carry the
+    // source's own `status` field in the payload.
+    const applyStatus = (event: KBProgressEvent) => {
+      setSources((prev) =>
+        prev.map((s) =>
+          s.type === "local_folder" && s.folderPath === event.folderPath
+            ? {
+                ...s,
+                status: event.status as KBSource["status"],
+                totalFiles: event.totalFiles,
+                indexedFiles: event.indexedFiles,
+                skippedFiles: event.skippedFiles,
+                currentFile: event.currentFile,
+                error: event.error,
+              }
+            : s,
+        ),
+      )
     }
+
+    const transport = createSseTransport<KBProgressEvent>({
+      url: `${knowledgeBaseUrl()}/sources/events`,
+      retry: { baseDelayMs: 5000, maxDelayMs: 5000 },
+      onEvent: (event, eventName) => {
+        applyStatus(event)
+        if (eventName === "status") return // snapshot, never a toast
+        if (event.status === "complete") {
+          toast.success(
+            t("knowledge.indexComplete")
+              .replace("{files}", String(event.indexedFiles))
+              .replace("{folder}", pathBasename(event.folderPath)),
+          )
+        } else if (event.status === "error") {
+          toast.error(t("knowledge.indexFailed"))
+        }
+      },
+    })
+    transportRef.current = transport
+    // connect() resolves when the stream ends; the transport reconnects itself.
+    void transport.connect()
   }, [t])
 
   const disconnectSSE = useCallback(() => {
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current)
-      reconnectTimerRef.current = null
-    }
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close()
-      eventSourceRef.current = null
+    if (transportRef.current) {
+      transportRef.current.close()
+      transportRef.current = null
     }
   }, [])
 

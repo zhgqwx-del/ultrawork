@@ -1,7 +1,11 @@
 // Thin client for the in-sidecar orchestrator (ACP sidecar, /orchestration/*).
-// Plain fetch + native EventSource — the ACP sidecar needs no auth headers,
-// so the sse-transport machinery would be dead weight here.
+//
+// The SSE streams use the connector's fetch-reader transport, not EventSource:
+// EventSource has no way to send an Authorization header, which the ACP sidecar
+// is about to require. It also gives us the retry/backoff these two streams never
+// had (EventSource's own reconnect was the only thing covering a dropped stream).
 
+import { createSseTransport } from "@agent/connector"
 import { acpBaseUrl } from "@/lib/sidecar-ports"
 import type {
   DelegateEvent,
@@ -46,22 +50,41 @@ export async function cancelRun(runId: string): Promise<void> {
   await expectOk<{ ok: boolean }>(res)
 }
 
+/** Both orchestration streams carry unnamed `data:` frames with a `type` field. */
+interface OrchestrationFrame {
+  type: string
+  properties: unknown
+}
+
+/**
+ * Shared subscribe: connect, drop heartbeats, hand the rest to the caller.
+ *
+ * Retry forever with capped backoff. These streams outlive a sidecar restart —
+ * the ACP sidecar is the orchestrator's host, and a run keeps executing there
+ * while the WebView is reconnecting.
+ */
+function subscribeOrchestrationEvents<T>(url: string, handler: (event: T) => void): () => void {
+  const transport = createSseTransport<OrchestrationFrame>({
+    url,
+    retry: { baseDelayMs: 1000, maxDelayMs: 30_000 },
+    onEvent: (event) => {
+      if (event.type === "heartbeat") return
+      handler(event as T)
+    },
+  })
+  void transport.connect()
+  return () => transport.close()
+}
+
 /**
  * Per-run SSE. The first frame is always a full run.updated snapshot, so the
  * caller needs no separate initial fetch to avoid missed events.
  */
 export function subscribeRunEvents(runId: string, handler: (event: OrchestratorEvent) => void): () => void {
-  const source = new EventSource(`${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/events`)
-  source.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data) as { type: string; properties: unknown }
-      if (event.type === "heartbeat") return
-      handler(event as OrchestratorEvent)
-    } catch {
-      // malformed frame — skip
-    }
-  }
-  return () => source.close()
+  return subscribeOrchestrationEvents(
+    `${acpBaseUrl()}/orchestration/runs/${encodeURIComponent(runId)}/events`,
+    handler,
+  )
 }
 
 // --- agent-driven delegates (ADR-031 ②, DelegateDock) ---
@@ -73,17 +96,7 @@ export async function listDelegates(): Promise<DelegateRecord[]> {
 
 /** Global delegate SSE. First frame is a delegate.snapshot — no initial fetch needed. */
 export function subscribeDelegateEvents(handler: (event: DelegateEvent) => void): () => void {
-  const source = new EventSource(`${acpBaseUrl()}/orchestration/delegates/events`)
-  source.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data) as { type: string; properties: unknown }
-      if (event.type === "heartbeat") return
-      handler(event as DelegateEvent)
-    } catch {
-      // malformed frame — skip
-    }
-  }
-  return () => source.close()
+  return subscribeOrchestrationEvents(`${acpBaseUrl()}/orchestration/delegates/events`, handler)
 }
 
 /**
