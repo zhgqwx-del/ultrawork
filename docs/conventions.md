@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-08 -->
+<!-- last-synced: 2026-07-09 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -234,6 +234,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 ```
 - **坑：Radix Select 禁止空串 `value=""`**（会抛运行时错）。原生 select 用 `<option value="">默认</option>` 表「无覆盖」的，迁移时改用哨兵值（如 `"__default__"`），在 `onValueChange` 里翻译回 `undefined`。
 - 药丸/内联触发器：给 `SelectTrigger` 覆盖 `h-auto w-auto rounded-full ... [&>svg]:size-3` 即可保留原视觉（见 `pipeline-tab.tsx` agent 选择器）。
+
+### Radix Tabs：非活动 `TabsContent` 默认**卸载**——持有在途局部态的 tab 要 `forceMount`（2026-07-09 复审实证）
+`@radix-ui/react-tabs` 的 `TabsContent` 在非活动时**整块卸载**（不是隐藏）。若某个 tab 里有**组件局部 state**（未 hoist 的 `useState`/安装进度/半填表单/粘贴的文本），切走再切回会**销毁并重置**这些态——用户切个 tab 回来东西没了，甚至能重复触发在跑的动作（如安装）。两种解法：
+```tsx
+// 方案 A（推荐，最省）：keep-alive——挂载保活 + 非活动时 CSS 隐藏
+<TabsContent value="mcp" forceMount className="data-[state=inactive]:hidden">
+  {/* BrowserServiceCard 安装进度 / ServiceAddForm 已填字段等局部态跨 tab 往返存活 */}
+</TabsContent>
+```
+- Radix 只给非活动 Content 挂 `data-state="inactive"`，**不自动加 `hidden` 样式**，所以 forceMount 时必须自己补 `data-[state=inactive]:hidden`（→ `display:none`），否则内容会叠着显示。
+- 方案 B：把易失局部态 hoist 到 tab 容器组件（像 `ServicesSection` 的 `useCliConnectors`/`useMCPServers`），则该 tab 无需 forceMount。**判断法**：tab 内组件是否持有不想丢的在途态——有则 forceMount 或 hoist，无（纯派生自 hoisted hook）则放任卸载最省。
+- **测试坑**：forceMount 后非活动内容仍在 DOM，jsdom 无 Tailwind CSS 故 `toBeVisible()` 判不出隐藏——改断言容器 `[role=tabpanel]` 的 `data-state="inactive"`；真隐藏由真浏览器走查（`display:none` / `isVisible()===false`）兜。见 `settings-services.test.tsx` + `e2e/connectors-tabs-ui-walkthrough`。
 
 ## 6. 构建与部署
 

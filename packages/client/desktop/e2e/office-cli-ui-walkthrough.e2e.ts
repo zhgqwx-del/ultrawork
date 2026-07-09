@@ -155,15 +155,27 @@ try {
   await page.goto("http://localhost:1420/settings", { waitUntil: "domcontentloaded" })
   await page.waitForTimeout(1500)
 
-  console.log("=== 1. nav label says 连接器 (not MCP 连接器); groups MCP + 办公 CLI render ===")
+  console.log("=== 1. nav label says 连接器 (not MCP 连接器); MCP + 办公 CLI render as tabs; CLI cards gated behind their tab ===")
   const navLabel = page.locator("nav").getByText(/^(Connectors|连接器)$/)
   await navLabel.first().waitFor({ timeout: 10000 })
   if ((await page.locator("nav").getByText(/^MCP (Connectors|连接器)$/).count()) !== 0)
     throw new Error("nav still shows the old MCP-qualified label")
   await navLabel.first().click()
-  await page.getByText(/^(Office CLI|办公 CLI)$/).waitFor({ timeout: 10000 })
-  await page.locator("h3").getByText(/^MCP$/).waitFor({ timeout: 5000 })
-  checks.push("nav 连接器 + MCP/办公 CLI two groups ✓")
+  // The two connector categories now render as tabs (MCP active by default,
+  // 办公 CLI second). The office-CLI cards live behind their tab.
+  const mcpTab = page.getByRole("tab", { name: /^MCP/ })
+  const cliTab = page.getByRole("tab", { name: /(Office CLI|办公 CLI)/ })
+  await mcpTab.waitFor({ timeout: 10000 })
+  await cliTab.waitFor({ timeout: 5000 })
+  if ((await page.getByText(/飞书 \/ Lark|Feishu \/ Lark/).count()) !== 0)
+    throw new Error("office CLI cards must stay behind the 办公 CLI tab, not render on the default MCP tab")
+  await cliTab.click()
+  await page.getByText(/飞书 \/ Lark|Feishu \/ Lark/).first().waitFor({ timeout: 10000 })
+  // The MCP panel is forceMount-kept (state survives tab switches) but must be
+  // visually hidden on the CLI tab (data-[state=inactive]:hidden → display:none).
+  if (await page.getByText(/^(Browser Control|浏览器控制)$/).isVisible())
+    throw new Error("MCP panel must be hidden (not just unmounted) while the 办公 CLI tab is active")
+  checks.push("nav 连接器 + MCP/办公 CLI two tabs; CLI cards gated + MCP panel hidden on CLI tab ✓")
 
   console.log("=== 2. not_installed: card shows 未安装 + 安装 button ===")
   const larkCard = page.locator("div.rounded-lg", { hasText: /飞书 \/ Lark|Feishu \/ Lark/ }).last()
