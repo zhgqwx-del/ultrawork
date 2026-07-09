@@ -10,23 +10,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/lib/i18n-context"
 import { toast } from "sonner"
+import { kbFetch } from "@/lib/kb-client"
 
-const KB_BASE = import.meta.env.DEV ? "/kb" : "http://localhost:4098/kb"
 const IMA_CREDENTIAL_URL = "https://ima.qq.com/agent-interface"
-
-async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${KB_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  })
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "")
-    throw new Error(`KB ${resp.status}: ${body}`)
-  }
-  const text = await resp.text()
-  if (!text) return undefined as T
-  return JSON.parse(text) as T
-}
 
 interface RemoteBase {
   id: string

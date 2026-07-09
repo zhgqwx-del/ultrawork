@@ -41,8 +41,20 @@
 - `mcp-bridge.ts` 的 proxy 死分支（硬编码 `:4098`）直接删除，不参数化——`mcp-stdio` 只走 direct 模式。
 - **真机验证覆盖**（discussions/029 §10.2）：① rx 必须持有并消费——已闭环；③ `Bun.serve({port:0})` 回读——**作废**（Rust 传具体端口，sidecar 从不 bind 0）；② Windows 防火墙/`netstat` 临时端口段解析、④ single-instance 三平台一致性（Linux 需 DBus）——**仍待真 Windows/Linux 机器实测**，CI 只保证编译与单测。
 
+## 实现后对抗审查修正（2026-07-09，五路 review）
+
+初版实现通过全部测试与真机验收后，五路对抗审查（Rust 并发 / 跨平台 / 安全 / renderer / 测试完备性）仍抓到 5 个真缺陷，均已修复并补测：
+
+1. **`ports.json` 就地 `truncate`+`write`，三线程并发写会写坏**（且启动后无人重写 ⇒ 整个 session 永久损坏；`delegate-mcp` 解析失败后静默回退到没人监听的 4099）→ 改 tmp + `rename` 原子写 + `PORTS_JSON_LOCK` 串行化 + 一次性快照 `(port, pid)`。
+2. **重试清理 `retain(pid != dead_pid)` 存在 pid 复用危险**（秒退子进程的 pid 可能已被兄弟 sidecar 的活进程复用 ⇒ 删掉活兄弟的注册表条目 ⇒ 泄漏进程）→ 按 `(name, pid)` 双匹配（`drop_registry_entry`）。
+3. **落在动态端口上的崩溃孤儿永不回收**——`prepare_port` 只探首选端口，single-instance 也看不见（对手不是另一个实例，是孤儿）→ 新增 `reap_orphaned_sidecars()`：开机若 `ports.json` 尚存（干净退出会删它）即按记录端口逐个归属门控回收。
+4. **`add-source-dialog.tsx` 私藏第二份 `kbFetch`**（硬编码 `:4098` + 不带鉴权），加鉴权后添加知识源全线 401 ⇒ 收敛到唯一的 `lib/kb-client.ts`。
+5. `Settings` 只读端口字段读一次不订阅，端口移动后显示陈旧值 ⇒ 接 `useSyncExternalStore`。
+
+补测（每条都做 A/B 反证）：`ports.json` 并发写不撕裂 + 0600 跨 rename 存活、`drop_registry_entry` 不误删兄弟、`reap_recorded_listeners` 不杀空闲端口/不认领陌生人、`watch_sidecar_exit`（Terminated / 流结束 / 输出不误判 / 持续 drain 不卡子进程）、`sidecar-auth.ts` 全套、四类 renderer 调用方确实带 `Authorization`、kb-server 与 acp-server 的 basicAuth（含「后挂载的 `/orchestration/*` 也在鉴权内」）、`sidecar-ports-changed` 真的触发 connector 重建。
+
 ## 已知边界
 
 - 三个后台 sidecar 若在启动 gate 之后才因抢占改端口，靠 `sidecar-ports-changed` 事件通知 renderer 重建 connector；opencode 因同步阻塞启动，其端口在 renderer 读取前必然已定。
 - 单实例插件在 Linux 依赖 DBus，未实测。
-- 鉴权只做认证不做授权：任何持有凭证的本机进程可调用全部路由（凭证文件 0600）。
+- **鉴权只做认证不做授权，且只挡得住「非本用户」的进程**：凭证是 0600 文件，任何以**同一用户**身份运行的本机进程都能读到它并伪造 `Authorization`。真正抬高的门槛是「随手写死地址来打」和跨用户访问，不是同用户沙箱逃逸。同一凭证也复用为 opencode 的密码，并随 `delegate-mcp` 的 env 交给第三方 ACP agent 进程（claude/gemini）——在同用户前提下不扩大暴露面（agent 本就能读那个文件），但「sidecar 专用凭证与 opencode 凭证分离」是后续可做的加固。

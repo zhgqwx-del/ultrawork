@@ -4,8 +4,8 @@ import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { pathBasename } from "@/lib/path-utils"
-import { knowledgeBaseUrl } from "@/lib/sidecar-ports"
 import { sidecarAuthHeaders } from "@/lib/sidecar-auth"
+import { kbFetch, kbEventsUrl } from "@/lib/kb-client"
 import { createSseTransport, type SseTransport } from "@agent/connector"
 
 const MCP_NAME = "knowledge-base"
@@ -66,21 +66,6 @@ interface KBProgressEvent {
   error?: string
 }
 
-async function kbFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${knowledgeBaseUrl()}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...sidecarAuthHeaders(), ...options?.headers },
-  })
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "")
-    throw new Error(`KB ${resp.status}: ${body}`)
-  }
-  if (resp.status === 204) return undefined as T
-  const text = await resp.text()
-  if (!text) return undefined as T
-  return JSON.parse(text) as T
-}
-
 export function useKnowledgeBase() {
   const [sources, setSources] = useState<KBSource[]>([])
   const [loading, setLoading] = useState(true)
@@ -135,7 +120,7 @@ export function useKnowledgeBase() {
     }
 
     const transport = createSseTransport<KBProgressEvent>({
-      url: `${knowledgeBaseUrl()}/sources/events`,
+      url: kbEventsUrl(),
       headers: sidecarAuthHeaders,
       retry: { baseDelayMs: 5000, maxDelayMs: 5000 },
       onEvent: (event, eventName) => {

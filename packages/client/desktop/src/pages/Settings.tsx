@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ComponentType, type ReactNode } from "react"
+import { useState, useEffect, useRef, useSyncExternalStore, type ComponentType, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2, Layers, Plug} from "lucide-react"
@@ -16,7 +16,7 @@ import { TopBar } from "@/components/layout/top-bar"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useConfig } from "@/lib/config-context"
 import { isAutoApiBaseUrl, resolveApiBaseUrl } from "@/lib/config"
-import { sidecarPorts } from "@/lib/sidecar-ports"
+import { sidecarPorts, sidecarPortsVersion, subscribeSidecarPorts } from "@/lib/sidecar-ports"
 import { useI18n } from "@/lib/i18n-context"
 import { isMacOS, isWindows } from "@/lib/platform"
 import { useTheme } from "@/lib/theme-context"
@@ -250,6 +250,9 @@ function CapabilitiesSection() {
   // In auto mode the port is picked per launch, so the field shows where opencode
   // actually landed and is not editable. (Dev still routes through the Vite proxy —
   // `resolveApiBaseUrl` returns "" there — but the port shown is the real one.)
+  // Subscribe rather than read once: a sidecar that loses a bind race moves, and a
+  // read-only field showing a port nobody is listening on is worse than no field.
+  useSyncExternalStore(subscribeSidecarPorts, sidecarPortsVersion)
   const autoApiBaseUrl = isAutoApiBaseUrl(formData.apiBaseUrl)
   const displayApiBaseUrl = `http://localhost:${sidecarPorts().opencode}`
 

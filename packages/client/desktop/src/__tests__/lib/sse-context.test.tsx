@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor, act } from "@testing-library/react"
 import { SSEProvider, useConnector, useSSEConnected } from "@/lib/sse-context"
+import { PREFERRED_PORTS, __emitSidecarPortsForTest, __resetSidecarPortsForTest } from "@/lib/sidecar-ports"
 
 // Mutable holders so the mocked hooks can change between rerenders
 const holder = {
@@ -41,6 +42,7 @@ describe("SSEProvider (ConnectorProvider)", () => {
     // body would lock on the second reader.
     mockFetch.mockImplementation(async () => ({ ok: true, body: openStream() }))
     holder.workspacePath = null
+    __resetSidecarPortsForTest()
   })
 
   it("provides a connector but does NOT connect SSE when no workspace is selected", () => {
@@ -94,6 +96,33 @@ describe("SSEProvider (ConnectorProvider)", () => {
     await waitFor(() => {
       const urls = mockFetch.mock.calls.slice(callsForW1).map((c) => c[0] as string)
       expect(urls.some((u) => u.includes(encodeURIComponent("/w2")))).toBe(true)
+    })
+  })
+  // A sidecar that loses a bind race moves to a new port AFTER the startup gate has
+  // published the old one. The host emits `sidecar-ports-changed`; without the
+  // `portsVersion` dep in the connector's useMemo the ACP backend keeps its old base
+  // URL and talks to a port nobody is listening on — and every existing test here
+  // stays green, because they only ever change the workspace.
+  it("rebuilds the connector against the new ACP port when the host moves it", async () => {
+    holder.workspacePath = "/w1"
+    render(
+      <SSEProvider>
+        <Probe />
+      </SSEProvider>,
+    )
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+    const before = mockFetch.mock.calls.map((c) => c[0] as string)
+    expect(before.some((u) => u.includes(`localhost:${PREFERRED_PORTS.acp}/acp/global/events`))).toBe(true)
+    const callsBefore = mockFetch.mock.calls.length
+
+    // The host reports a new ACP port.
+    await act(async () => {
+      __emitSidecarPortsForTest({ ...PREFERRED_PORTS, acp: 51237 })
+    })
+
+    await waitFor(() => {
+      const after = mockFetch.mock.calls.slice(callsBefore).map((c) => c[0] as string)
+      expect(after.some((u) => u.includes("localhost:51237/acp/global/events"))).toBe(true)
     })
   })
 })

@@ -94,6 +94,14 @@ export function sidecarPortsVersion(): number {
   return version
 }
 
+/** Adopt a new port set, notifying subscribers only when something actually moved. */
+function applySidecarPorts(next: SidecarPorts): void {
+  if (PORT_KEYS.every((k) => ports[k] === next[k])) return
+  ports = next
+  version += 1
+  subscribers.forEach((fn) => fn())
+}
+
 /** Wire the host event to the local store. Called once, from `loadSidecarPorts`. */
 async function watchSidecarPorts(): Promise<void> {
   try {
@@ -102,10 +110,7 @@ async function watchSidecarPorts(): Promise<void> {
         console.warn("Ignoring malformed sidecar-ports-changed payload:", event.payload)
         return
       }
-      if (PORT_KEYS.every((k) => ports[k] === (event.payload as SidecarPorts)[k])) return
-      ports = event.payload
-      version += 1
-      subscribers.forEach((fn) => fn())
+      applySidecarPorts(event.payload)
     })
   } catch (err) {
     // Not running under Tauri — ports can never change, so there is nothing to watch.
@@ -138,4 +143,9 @@ export function __resetSidecarPortsForTest(next: SidecarPorts = PREFERRED_PORTS)
   ports = next
   version = 0
   subscribers.clear()
+}
+
+/** Test seam: drive the store exactly as a `sidecar-ports-changed` event would. */
+export function __emitSidecarPortsForTest(next: SidecarPorts): void {
+  applySidecarPorts(next)
 }

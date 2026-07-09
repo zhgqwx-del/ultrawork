@@ -28,13 +28,24 @@ struct SidecarEntry {
 
 static SIDECAR_REGISTRY: Mutex<Vec<SidecarEntry>> = Mutex::new(Vec::new());
 
+/// Remove the entry a failed start left behind.
+///
+/// Matches on name **and** pid, never pid alone: a child that exited on startup has
+/// already released its pid, and the OS can hand it straight to a sibling sidecar's
+/// freshly-spawned child. Dropping by pid alone would then delete that live sibling's
+/// entry, so `shutdown_sidecars` would never kill it — a leaked process outliving the app.
+fn drop_registry_entry(reg: &mut Vec<SidecarEntry>, name: &str, pid: u32) {
+    reg.retain(|e| !(e.name == name && e.pid == Some(pid)));
+}
+
 // ── Sidecar port registry (runtime source of truth) ──────────────────
 //
 // Ports are decided once at startup and handed to every consumer from here:
 // direct children get them via env, the renderer via `get_sidecar_ports()`, and
 // grandchildren (opencode's stdio MCP shims) inherit their parent's env. The
-// on-disk `ports.json` is a *mirror* for crash self-heal and external tooling —
-// never a channel the renderer reads.
+// on-disk `ports.json` is read by two parties: `delegate-mcp` (an opencode-spawned
+// grandchild, which cannot be told the ACP port via env) and the next launch's
+// `reap_orphaned_sidecars`. It is never a channel the renderer reads.
 //
 // Persisted config (opencode.json) must never contain a port: it outlives the
 // process that chose it. See `strip_persisted_sidecar_ports`.
@@ -157,13 +168,74 @@ fn ports_json_doc(ports: &SidecarPorts, pid_of: impl Fn(&str) -> Option<u32>) ->
     })
 }
 
+/// Serializes writers so the last one to finish leaves a complete document, and so
+/// the (port, pid) snapshot below cannot interleave with another writer's.
+static PORTS_JSON_LOCK: Mutex<()> = Mutex::new(());
+/// Makes each writer's temp filename unique without consulting a clock.
+static PORTS_JSON_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Write `json` to `path` atomically, 0600 from creation.
+///
+/// Atomic because three sidecar threads race to publish. An in-place
+/// `truncate`+`write` lets one writer blank the file while another is mid-write,
+/// and the damage is permanent for the session — nothing rewrites `ports.json`
+/// after startup. The reader that matters is `delegate-mcp`, which resolves the ACP
+/// port from here: on a `JSON.parse` failure it silently falls back to the preferred
+/// port, and in dynamic-port mode that port belongs to nobody, so every delegation
+/// for the rest of the session fails. `rename(2)` is atomic on one filesystem and
+/// both files live in `run_dir()`. Same shape as `write_global_opencode_json`.
+fn write_ports_json_at(path: &std::path::Path, json: &str) -> std::io::Result<()> {
+    use std::sync::atomic::Ordering;
+    let seq = PORTS_JSON_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), seq));
+
+    // 0600 from creation, same reasoning as sidecar-auth.json: no window where a
+    // freshly-created file sits at the umask default. The mode survives the rename.
+    let write_tmp = || -> std::io::Result<()> {
+        if cfg!(unix) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&tmp)?;
+                f.write_all(json.as_bytes())?;
+                return Ok(());
+            }
+        }
+        // Windows: inherit the user-only ACL of the parent profile dir.
+        std::fs::write(&tmp, json)
+    };
+    if let Err(e) = write_tmp() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    // Rust's fs::rename replaces an existing destination on Windows too.
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// Mirror the port registry to `~/.ultrawork/run/ports.json` (0600). Best-effort:
 /// a failure here degrades self-heal, never startup.
 fn write_ports_json() {
+    let _guard = PORTS_JSON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // One snapshot of each source, taken together: pairing a port read now against a
+    // pid read later can attribute a pid to a port it never owned (a sidecar mid-retry
+    // changes both).
     let ports = sidecar_ports();
+    let pids: Vec<(&'static str, Option<u32>)> = match SIDECAR_REGISTRY.lock() {
+        Ok(reg) => reg.iter().map(|e| (e.name, e.pid)).collect(),
+        Err(poisoned) => poisoned.into_inner().iter().map(|e| (e.name, e.pid)).collect(),
+    };
     let doc = ports_json_doc(&ports, |name| {
-        let reg = SIDECAR_REGISTRY.lock().ok()?;
-        reg.iter().find(|e| e.name == name).and_then(|e| e.pid)
+        pids.iter().find(|(n, _)| *n == name).and_then(|(_, pid)| *pid)
     });
 
     let dir = run_dir();
@@ -179,28 +251,7 @@ fn write_ports_json() {
             return;
         }
     };
-
-    // 0600 from creation, same reasoning as sidecar-auth.json: no window where a
-    // freshly-created file sits at the umask default.
-    let write = || -> std::io::Result<()> {
-        if cfg!(unix) {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                let mut f = std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .mode(0o600)
-                    .open(&path)?;
-                f.write_all(json.as_bytes())?;
-                return Ok(());
-            }
-        }
-        // Windows: inherit the user-only ACL of the parent profile dir.
-        std::fs::write(&path, &json)
-    };
-    if let Err(e) = write() {
+    if let Err(e) = write_ports_json_at(&path, &json) {
         eprintln!("[ports] failed to write {}: {}", path.display(), e);
     }
 }
@@ -225,6 +276,84 @@ fn publish_sidecar_port<T: tauri::Emitter<tauri::Wry>>(emitter: &T, name: &str, 
     if before != after {
         let _ = emitter.emit(PORTS_CHANGED_EVENT, after);
     }
+}
+
+/// `ports.json` key → sidecar binary name.
+const PORTS_JSON_SIDECARS: &[(&str, &str)] = &[
+    ("opencode", "opencode-server"),
+    ("gateway", "channel-gateway"),
+    ("knowledge", "knowledge-sidecar"),
+    ("acp", "acp-client"),
+];
+
+/// Pure core of `reap_orphaned_sidecars`: the (sidecar name, port) pairs recorded by
+/// the previous instance. Unparseable or out-of-range entries are skipped, never guessed.
+fn ports_json_listeners(doc: &serde_json::Value) -> Vec<(&'static str, u16)> {
+    PORTS_JSON_SIDECARS
+        .iter()
+        .filter_map(|(key, name)| {
+            let port = doc.get(key)?.get("port")?.as_u64()?;
+            if port == 0 || port > u16::MAX as u64 {
+                return None;
+            }
+            Some((*name, port as u16))
+        })
+        .collect()
+}
+
+/// Kill sidecars left behind by an instance that died without cleaning up.
+///
+/// `prepare_port` only ever probes the *preferred* port, so it heals an orphan on
+/// 4096-4099 but is blind to one that took a dynamic port. Without this, a prod
+/// instance that fell back to an ephemeral port and was then SIGKILLed would leave a
+/// live `channel-gateway` (fighting the next launch over the same IM long-connection)
+/// and a live `knowledge-sidecar` (a second writer on a single-writer SQLite file) —
+/// exactly the harm single-instance exists to prevent, which single-instance cannot
+/// see because the rival is not another *instance*, it is an orphan.
+///
+/// The file's mere existence is the signal: a clean exit removes it. Each kill is
+/// ownership-gated by `kill_port_listeners(.., Some(name))`, which spares anything it
+/// cannot prove is ours — a stranger may well have taken the recorded port since.
+fn reap_orphaned_sidecars() {
+    let path = ports_json_path();
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return; // Clean exit removed it — nothing to reap.
+    };
+    println!("[ports] {} survived the previous run — reaping orphaned sidecars", path.display());
+
+    match serde_json::from_str::<serde_json::Value>(&content) {
+        Ok(doc) => {
+            reap_recorded_listeners(&doc, is_port_in_use, |name, port| kill_port_listeners(port, Some(name)));
+        }
+        Err(e) => eprintln!("[ports] {} is unreadable ({}) — cannot reap orphans", path.display(), e),
+    }
+    remove_ports_json();
+}
+
+/// Pure core of `reap_orphaned_sidecars`: decide what to kill. Returns the sidecars
+/// it actually reclaimed.
+///
+/// Never kills a port nobody is listening on, and `kill` is expected to be
+/// ownership-gated (`kill_port_listeners(.., Some(name))`) — the port a dead instance
+/// recorded may since have been taken by an unrelated program.
+fn reap_recorded_listeners(
+    doc: &serde_json::Value,
+    in_use: impl Fn(u16) -> bool,
+    kill: impl Fn(&str, u16) -> usize,
+) -> Vec<(&'static str, u16)> {
+    let mut reaped = Vec::new();
+    for (name, port) in ports_json_listeners(doc) {
+        if !in_use(port) {
+            continue;
+        }
+        if kill(name, port) > 0 {
+            println!("[ports] reaped orphaned {} on port {}", name, port);
+            reaped.push((name, port));
+        } else {
+            println!("[ports] port {} is held by something that is not an Ultrawork {} — left alone", port, name);
+        }
+    }
+    reaped
 }
 
 /// Drop the port mirror on clean exit. Its absence is what tells the next launch
@@ -841,7 +970,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
                     kill_pid(child.pid);
                 }
                 if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-                    reg.retain(|e| e.pid != Some(child.pid));
+                    drop_registry_entry(&mut reg, name, child.pid);
                 }
                 last_error = match outcome {
                     ReadyOutcome::Timeout => format!(
@@ -5234,6 +5363,11 @@ pub fn run() {
             // stale mcp.environment port would override the one we inject.
             strip_persisted_sidecar_ports();
 
+            // Stage 2c: a surviving ports.json means the previous instance died without
+            // cleaning up. Kill whatever of ours is still holding those ports before we
+            // pick new ones — `prepare_port` only looks at the preferred four.
+            reap_orphaned_sidecars();
+
             // Load (or first-time generate) the per-install sidecar credentials before
             // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
             // call the OpenCode HTTP API, and OpenCode itself reads it from env.
@@ -7621,5 +7755,342 @@ mod dynamic_port_tests {
         assert!(!should_retry_on_new_port(&ReadyOutcome::Exited, false, MAX_START_ATTEMPTS));
         // Ready never retries.
         assert!(!should_retry_on_new_port(&ReadyOutcome::Ready, false, 1));
+    }
+}
+
+/// Defects found by adversarial review of the phase-③ diff. Each test here fails
+/// against the pre-fix implementation (see the A/B notes in the commit message).
+#[cfg(test)]
+mod ports_json_durability_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("uw-portsjson-{}-{}", std::process::id(), tag));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Three sidecar threads publish concurrently. An in-place truncate+write lets one
+    /// blank the file while another is mid-write; nothing rewrites ports.json after
+    /// startup, so a reader (delegate-mcp) is left with permanently invalid JSON.
+    #[test]
+    fn concurrent_writers_never_expose_a_partial_document() {
+        let dir = temp_dir("concurrent");
+        let path = dir.join("ports.json");
+
+        // Documents of very different lengths, so a torn write is easy to spot.
+        let docs: Vec<String> = (0..3)
+            .map(|i| {
+                let filler = "x".repeat(4096 * (i + 1));
+                serde_json::to_string_pretty(&serde_json::json!({ "n": i, "filler": filler })).unwrap()
+            })
+            .collect();
+        // Seed so the reader always has something to read.
+        write_ports_json_at(&path, &docs[0]).unwrap();
+
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let bad = std::sync::Arc::new(AtomicBool::new(false));
+
+        let reader = {
+            let (path, stop, bad) = (path.clone(), stop.clone(), bad.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        if serde_json::from_str::<serde_json::Value>(&text).is_err() {
+                            bad.store(true, Ordering::Relaxed);
+                            return;
+                        }
+                    }
+                }
+            })
+        };
+
+        let writers: Vec<_> = docs
+            .iter()
+            .cloned()
+            .map(|doc| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        write_ports_json_at(&path, &doc).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        assert!(!bad.load(Ordering::Relaxed), "a reader saw a partially-written ports.json");
+        // And no temp files leaked.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "leaked temp files: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_replaces_an_existing_file_and_keeps_it_owner_only() {
+        let dir = temp_dir("replace");
+        let path = dir.join("ports.json");
+        write_ports_json_at(&path, "{\"a\":1}").unwrap();
+        write_ports_json_at(&path, "{\"b\":2}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"b\":2}");
+
+        if cfg!(unix) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "ports.json must stay owner-only across the rename");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── ports.json → orphan reaping ──────────────────────────────────
+
+    #[test]
+    fn ports_json_listeners_reads_every_sidecar() {
+        let doc = serde_json::json!({
+            "opencode": { "port": 51234, "pid": 1 },
+            "gateway": { "port": 51235, "pid": null },
+            "knowledge": { "port": 51236, "pid": 3 },
+            "acp": { "port": 51237, "pid": 4 },
+        });
+        assert_eq!(
+            ports_json_listeners(&doc),
+            vec![
+                ("opencode-server", 51234),
+                ("channel-gateway", 51235),
+                ("knowledge-sidecar", 51236),
+                ("acp-client", 51237),
+            ]
+        );
+    }
+
+    /// The negative direction: a parser that guessed a default on bad input would
+    /// hand `kill_port_listeners` a port the previous instance never owned.
+    #[test]
+    fn ports_json_listeners_skips_garbage_rather_than_guessing() {
+        assert!(ports_json_listeners(&serde_json::json!({})).is_empty());
+        assert!(ports_json_listeners(&serde_json::json!({ "acp": {} })).is_empty());
+        assert!(ports_json_listeners(&serde_json::json!({ "acp": { "port": "4099" } })).is_empty());
+        assert!(ports_json_listeners(&serde_json::json!({ "acp": { "port": 0 } })).is_empty());
+        assert!(ports_json_listeners(&serde_json::json!({ "acp": { "port": 70000 } })).is_empty());
+
+        // A partially-valid document yields exactly the valid entries.
+        let doc = serde_json::json!({ "opencode": { "port": 51234 }, "acp": { "port": 0 } });
+        assert_eq!(ports_json_listeners(&doc), vec![("opencode-server", 51234)]);
+    }
+}
+
+#[cfg(test)]
+mod registry_cleanup_tests {
+    use super::*;
+
+    fn entry(name: &'static str, port: u16, pid: u32) -> SidecarEntry {
+        SidecarEntry { name, port, pid: Some(pid) }
+    }
+
+    #[test]
+    fn drops_the_failed_child_of_this_sidecar() {
+        let mut reg = vec![entry("acp-client", 4099, 100)];
+        drop_registry_entry(&mut reg, "acp-client", 100);
+        assert!(reg.is_empty());
+    }
+
+    /// The defect this exists for: the exited child's pid is free, so the OS may have
+    /// reissued it to a sibling's live child. Dropping by pid alone would delete that
+    /// sibling's entry and leak its process past `shutdown_sidecars`.
+    #[test]
+    fn spares_a_live_sibling_that_reused_the_dead_childs_pid() {
+        let mut reg = vec![entry("channel-gateway", 4097, 100)];
+        drop_registry_entry(&mut reg, "acp-client", 100); // acp's child died with pid 100
+        assert_eq!(reg.len(), 1, "the gateway's live entry must survive");
+        assert_eq!(reg[0].name, "channel-gateway");
+    }
+
+    #[test]
+    fn leaves_the_same_sidecars_other_attempt_alone() {
+        // A retry pushed a new entry; only the failed pid is removed.
+        let mut reg = vec![entry("acp-client", 4099, 100), entry("acp-client", 51234, 101)];
+        drop_registry_entry(&mut reg, "acp-client", 100);
+        assert_eq!(reg.len(), 1);
+        assert_eq!(reg[0].pid, Some(101));
+    }
+
+    #[test]
+    fn ignores_reused_entries_which_have_no_pid_of_ours() {
+        let mut reg = vec![SidecarEntry { name: "acp-client", port: 4099, pid: None }];
+        drop_registry_entry(&mut reg, "acp-client", 100);
+        assert_eq!(reg.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod orphan_reap_tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    fn doc() -> serde_json::Value {
+        serde_json::json!({
+            "opencode":  { "port": 51234, "pid": 1 },
+            "gateway":   { "port": 51235, "pid": 2 },
+            "knowledge": { "port": 51236, "pid": 3 },
+            "acp":       { "port": 51237, "pid": 4 },
+        })
+    }
+
+    #[test]
+    fn reaps_every_recorded_port_that_is_still_held() {
+        let killed: StdMutex<Vec<(String, u16)>> = StdMutex::new(Vec::new());
+        let reaped = reap_recorded_listeners(&doc(), |_| true, |name, port| {
+            killed.lock().unwrap().push((name.to_string(), port));
+            1
+        });
+        assert_eq!(reaped.len(), 4);
+        assert_eq!(killed.lock().unwrap().len(), 4);
+        // Each sidecar is reclaimed under its OWN name — passing the wrong name to the
+        // ownership check would make it spare our process and kill nothing.
+        assert_eq!(
+            killed.lock().unwrap().as_slice(),
+            &[
+                ("opencode-server".to_string(), 51234),
+                ("channel-gateway".to_string(), 51235),
+                ("knowledge-sidecar".to_string(), 51236),
+                ("acp-client".to_string(), 51237),
+            ]
+        );
+    }
+
+    /// The most important negative: a recorded port that nobody holds must not even be
+    /// probed for killing. The previous instance's ports are freely reusable by now.
+    #[test]
+    fn never_kills_a_port_that_is_free() {
+        let calls = StdMutex::new(0usize);
+        let reaped = reap_recorded_listeners(&doc(), |_| false, |_, _| {
+            *calls.lock().unwrap() += 1;
+            1
+        });
+        assert!(reaped.is_empty());
+        assert_eq!(*calls.lock().unwrap(), 0, "kill must never be attempted on a free port");
+    }
+
+    /// The port is held, but by a stranger: `kill_port_listeners` reports 0 killed
+    /// (fail-closed) and we must record nothing.
+    #[test]
+    fn reports_nothing_reaped_when_the_holder_is_not_ours() {
+        let reaped = reap_recorded_listeners(&doc(), |_| true, |_, _| 0);
+        assert!(reaped.is_empty());
+    }
+
+    #[test]
+    fn skips_garbage_entries_without_killing() {
+        let bad = serde_json::json!({ "acp": { "port": 0 }, "gateway": { "port": "x" } });
+        let calls = StdMutex::new(0usize);
+        let reaped = reap_recorded_listeners(&bad, |_| true, |_, _| {
+            *calls.lock().unwrap() += 1;
+            1
+        });
+        assert!(reaped.is_empty());
+        assert_eq!(*calls.lock().unwrap(), 0);
+    }
+}
+
+/// `watch_sidecar_exit` is the mechanism the whole retry path hangs on: it flips the
+/// flag that lets `await_sidecar_ready` return `Exited` in ~200ms instead of waiting
+/// out the 15s health timeout. Without these, degrading it to "never set the flag"
+/// leaves every other test green while the retry silently dies.
+#[cfg(test)]
+mod sidecar_exit_watch_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
+
+    fn wait_for(flag: &std::sync::atomic::AtomicBool, want: bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if flag.load(Ordering::SeqCst) == want {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        flag.load(Ordering::SeqCst) == want
+    }
+
+    #[test]
+    fn flags_exit_on_terminated() {
+        let (tx, rx) = tauri::async_runtime::channel(1);
+        let exited = watch_sidecar_exit("acp-client", rx);
+        assert!(!exited.load(Ordering::SeqCst));
+
+        tauri::async_runtime::block_on(async {
+            tx.send(CommandEvent::Terminated(TerminatedPayload { code: Some(1), signal: None }))
+                .await
+                .unwrap();
+        });
+        assert!(wait_for(&exited, true), "Terminated must flip the exit flag");
+    }
+
+    /// The stream ending without Terminated (all senders dropped) also means the child
+    /// is gone; a watcher that kept reporting "alive" would hang the startup poll.
+    #[test]
+    fn flags_exit_when_the_event_stream_ends() {
+        let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(1);
+        let exited = watch_sidecar_exit("channel-gateway", rx);
+        drop(tx);
+        assert!(wait_for(&exited, true), "stream end must flip the exit flag");
+    }
+
+    /// The negative direction: ordinary output must NOT be mistaken for an exit, or
+    /// every chatty sidecar would be retried onto a new port on its first log line.
+    #[test]
+    fn stdout_and_stderr_do_not_flag_an_exit() {
+        let (tx, rx) = tauri::async_runtime::channel(1);
+        let exited = watch_sidecar_exit("knowledge-sidecar", rx);
+
+        tauri::async_runtime::block_on(async {
+            tx.send(CommandEvent::Stdout(b"listening on 127.0.0.1:4098\n".to_vec())).await.unwrap();
+            tx.send(CommandEvent::Stderr(b"a warning\n".to_vec())).await.unwrap();
+            tx.send(CommandEvent::Error("transient".into())).await.unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(!exited.load(Ordering::SeqCst), "output must not be read as an exit");
+
+        // ...and the watcher is still live: a real exit afterwards is still seen.
+        tauri::async_runtime::block_on(async {
+            tx.send(CommandEvent::Terminated(TerminatedPayload { code: Some(0), signal: None }))
+                .await
+                .unwrap();
+        });
+        assert!(wait_for(&exited, true));
+    }
+
+    /// A held-but-undrained receiver stalls the child (plugin channel capacity is 1 and
+    /// its readers `block_on(tx.send(..))`). Prove the watcher keeps draining: many more
+    /// events than the channel can hold must all be accepted without deadlock.
+    #[test]
+    fn keeps_draining_so_a_chatty_child_never_blocks() {
+        let (tx, rx) = tauri::async_runtime::channel(1);
+        let exited = watch_sidecar_exit("opencode-server", rx);
+
+        tauri::async_runtime::block_on(async {
+            for i in 0..200 {
+                tx.send(CommandEvent::Stdout(format!("line {i}\n").into_bytes()))
+                    .await
+                    .expect("watcher must keep draining");
+            }
+        });
+        assert!(!exited.load(Ordering::SeqCst));
+        drop(tx);
+        assert!(wait_for(&exited, true));
     }
 }
