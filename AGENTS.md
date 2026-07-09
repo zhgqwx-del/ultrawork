@@ -124,6 +124,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-session-scroll.ts` — 滚动管理（markAuto/isAuto + ResizeObserver）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/use-cli-connectors.ts` — 办公 CLI 连接器状态机（ADR-043）：五命令 invoke + generation 守卫 + 配置轮询（容忍瞬时 error/10min 超时显式报错）+ `refresh(id)` 按 id 清错；卡片 `CliConnectorCard`（connector prop 泛化）+ `OFFICE_CLI_CONNECTORS` 注册表在 Settings.tsx ServicesSection（「连接器」分区 MCP/办公 CLI 两组）
+- `src/lib/kb-client.ts` — **knowledge sidecar 的唯一 HTTP client**（ADR-045）：`kbFetch` / `kbEventsUrl`，自带 `knowledgeBaseUrl()` + `sidecarAuthHeaders()`。`add-source-dialog.tsx` 曾私藏第二份（硬编码 `:4098` + 无鉴权）导致加鉴权后添加知识源全线 401 —— **新增调用方一律复用它，不要另起 `fetch`**
 - `src/lib/sidecar-ports.ts` / `src/lib/sidecar-auth.ts` — **sidecar 端口与凭证的运行时解析（ADR-045）**：`main.tsx` 的启动 gate 在 `createRoot` 前一并 await，下游 `opencodeBaseUrl()`/`gatewayBaseUrl()`/`knowledgeBaseUrl()`/`acpBaseUrl()`/`sidecarAuthHeaders()` 全同步；两个 loader 永不 reject（校验返回值形状而非只 catch）。端口变更走 `sidecar-ports-changed` 事件 → `subscribeSidecarPorts` → SSEProvider 重建 connector
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
