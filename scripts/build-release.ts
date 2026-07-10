@@ -12,6 +12,10 @@ const skipNotarize = args.has("--skip-notarize")
 const verbose = args.has("--verbose")
 const nativeOnly = args.has("--native")     // dev escape hatch: skip cross-compile
 const unsigned  = args.has("--unsigned")    // ad-hoc sign only; produces app that runs locally but fails Gatekeeper for redistribution
+// Companion to TAURI_BUNDLER_DMG_IGNORE_CI=false (see Step 2): downgrades the
+// DMG layout check to a warning so a release can ship while upstream's Finder
+// automation is broken. Ugly on purpose — it lets a mislaid DMG out the door.
+const allowBadDmgLayout = args.has("--allow-bad-dmg-layout")
 
 // ── Built-in skills zip (bundle.resources 携带物) ──────────────────
 // beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
@@ -140,23 +144,63 @@ if (isMacOS && !nativeOnly && !skipSidecar) {
 
 // ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY when set) ──
 console.log("\n🔨 Running tauri build...")
-const tauriEnv = unsigned
-  ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "APPLE_SIGNING_IDENTITY"))
-  : { ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity! }
+// TAURI_BUNDLER_DMG_IGNORE_CI: when `CI=true`, tauri-bundler passes
+// `--skip-jenkins` to bundle_dmg, which skips the AppleScript that positions
+// the icons and writes .DS_Store. Finder then falls back to sorting by name,
+// putting `Applications` LEFT of `Ultrawork.app` — the reverse of the
+// drag-right convention. Opting out makes the AppleScript run on CI too; if
+// Finder is unreachable there, bundle_dmg exits 64 and the build fails loudly
+// rather than shipping a mislaid DMG.
+//
+// Overridable because driving Finder from a runner is not something upstream
+// supports — GitHub's macOS image regressed once already (tauri-action#1091:
+// AppleEvent timed out -1712), and the fix landed image-side. During such a
+// window, `TAURI_BUNDLER_DMG_IGNORE_CI=false` plus `--allow-bad-dmg-layout`
+// gets a release out; both are required, so no single flag silently ships a
+// name-sorted DMG.
+const tauriEnv = {
+  ...(unsigned
+    ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "APPLE_SIGNING_IDENTITY"))
+    : { ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity! }),
+  TAURI_BUNDLER_DMG_IGNORE_CI: process.env.TAURI_BUNDLER_DMG_IGNORE_CI ?? "true",
+}
 await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget}`
   .env(tauriEnv)
   .quiet(!verbose)
 
 // ── Locate build outputs ──────────────────────────────────────────
+// Match this build's DMG by name. tauri stamps the version into the filename
+// and never prunes older ones, so a bumped version in a dirty tree leaves
+// several here — and `dmgPath` feeds verification, notarization *and* staple.
+// Taking the first glob hit would happily verify and ship a stale DMG.
+const tauriConf = await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()
 const bundleDir = path.join(tauriDir, "target", tauriTarget, "release/bundle")
-const appPath = path.join(bundleDir, "macos/Ultrawork.app")
+const appPath = path.join(bundleDir, "macos", `${tauriConf.productName}.app`)
+const dmgPrefix = `${tauriConf.productName}_${tauriConf.version}_`
 const dmgGlob = new Bun.Glob("*.dmg")
-const dmgFiles = Array.from(dmgGlob.scanSync(path.join(bundleDir, "dmg")))
+const dmgFiles = Array.from(dmgGlob.scanSync(path.join(bundleDir, "dmg"))).filter((f) =>
+  path.basename(f).startsWith(dmgPrefix),
+)
+if (dmgFiles.length > 1) {
+  console.error(`❌ ${dmgFiles.length} DMGs match ${dmgPrefix}*: ${dmgFiles.join(", ")}`)
+  console.error("   Cannot tell which one this build produced. Clean bundle/dmg/ and rebuild.")
+  process.exit(1)
+}
 const dmgPath = dmgFiles.length > 0 ? path.join(bundleDir, "dmg", dmgFiles[0]) : null
 
 console.log(`\n✅ Build complete`)
 console.log(`   .app: ${appPath}`)
 if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
+
+// Guard the install-window layout before spending minutes on notarization.
+if (dmgPath) {
+  console.log("\n🔍 Verifying DMG icon layout...")
+  const check = await $`bun run --bun ${path.join(rootDir, "scripts/verify-dmg-layout.ts")} ${dmgPath}`.nothrow()
+  if (check.exitCode !== 0) {
+    if (!allowBadDmgLayout) process.exit(check.exitCode)
+    console.warn("⚠️  --allow-bad-dmg-layout: shipping a DMG whose install window is mislaid.")
+  }
+}
 
 // ── Step 3: Verify code signing (or ad-hoc sign for --unsigned) ───
 if (unsigned) {

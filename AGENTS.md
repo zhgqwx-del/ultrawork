@@ -183,6 +183,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **构建 / 打包 / CI（跨平台 mac/win/linux，ADR-037）**
 - `scripts/build-{opencode,gateway,knowledge,acp}.ts` — sidecar 编译（已支持全 target triple；产物 `<name>-<triple>[.exe]`，Tauri externalBin 自动解析；codesign/chmod 仅 darwin 守卫）
 - `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包；开头显式跑 pack-builtin-skills（双保险）
+- `scripts/verify-dmg-layout.ts` — 发布守卫：断言 DMG 安装窗口里 app 图标在 Applications 左边（解析 `.DS_Store` 的 Iloc 记录）；公证前跑；`--self-test` 版本跨平台、进 CI 合并门禁（gotchas §7）
 - `scripts/pack-builtin-skills.ts` — **内置技能构建期打包**（松散树→`skills-builtin.zip`+外置 sentinel，按内容 hash 惰性；fflate 保 unix exec bit；产物在 `src-tauri/resources/builtin-skills/`，gitignore、`.gitkeep` 保 `generate_context!` 编译；beforeDevCommand/beforeBuildCommand 自动跑，ADR-041）；e2e 侧共享 helper `packages/client/desktop/e2e/builtin-zip-helper.ts`
 - `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
 - `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）
