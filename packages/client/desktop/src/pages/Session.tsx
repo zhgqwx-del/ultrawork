@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { useParams, useLocation, useNavigate } from "react-router-dom"
 import { TopBar } from "@/components/layout/top-bar"
 import { handleDrag } from "@/components/layout/drag-region"
@@ -21,7 +21,7 @@ import { useTeamSessions } from "@/lib/team-sessions-context"
 import { buildLeaderSystemPrompt } from "@/lib/team-leader-prompt"
 import { isACPAgentId } from "@agent/connector"
 import { cn } from "@/lib/utils"
-import { PanelRight, ChevronDown, ChevronRight, Crown } from "lucide-react"
+import { PanelRight, ChevronDown, ChevronRight, Crown, ArrowDown } from "lucide-react"
 import { PlanPanel, ActivityPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview, TeamHeader } from "@/components/session"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
@@ -35,9 +35,6 @@ export function SessionPage() {
   const { currentModel, setModel } = useModel()
   const { rightOpen, toggleRight } = useSidebar()
   const { workspacePath } = useWorkspace()
-
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
 
   const [input, setInput] = useState("")
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
@@ -131,12 +128,9 @@ export function SessionPage() {
   } = useSessionPermission(id, isAgentActive)
 
   // --- Scroll management hook ---
-  const { scrollToBottom } = useSessionScroll({
-    scrollContainerRef,
-    contentRef,
+  const { scrollRef, contentRef, isAtBottom, forceScrollToBottom, jumpToBottom } = useSessionScroll({
     onScrollNearTop,
     sessionId: id,
-    messages,
   })
 
   // --- Reset local UI state on session change ---
@@ -156,7 +150,7 @@ export function SessionPage() {
     sendMessage(input.trim(), currentModel)
     setInput("")
     // Force scroll to bottom after sending, even if user was viewing history
-    scrollToBottom(true)
+    forceScrollToBottom()
   }
 
   const handleArtifactClick = useCallback((artifact: Artifact) => {
@@ -198,34 +192,50 @@ export function SessionPage() {
         {/* Team members bar (018 议题 B) */}
         {teamEntry && <TeamHeader entry={teamEntry} />}
 
-        {/* Messages Area */}
-        <div
-          ref={scrollContainerRef}
-          className={cn("relative flex flex-1 justify-center overflow-x-hidden overflow-y-auto scrollbar-soft")}
-        >
-          <div ref={contentRef} className="w-full max-w-[860px] px-6 pt-4 pb-24">
-            <MessageList
-              messages={messages}
-              isLoading={loading && !sending}
-              streamingMessageId={streamingMessageId}
-              sessionActive={isAgentActive}
-              stoppedAtMessageId={stoppedAtMessageId}
-              onArtifactClick={handleArtifactClick}
-              showLoadEarlier={turnStart > 0 || hasMore}
-              historyLoading={historyLoading}
-              onLoadEarlier={loadEarlierMessages}
-            />
-            {teamEntry && messages.length === 0 && !loading && (
-              <p className="py-10 text-center text-sm text-[var(--color-fg-muted)]">{t("team.emptyHint")}</p>
-            )}
-            {isAgentActive && !stopped && (
-              <ExecutionStatus
-                state="working"
-                onStop={stopGeneration}
+        {/* Messages Area.
+            The scroll container is deliberately NOT a flex container: contentRef must
+            be free to grow with its children so its ResizeObserver keeps firing. As a
+            stretched flex item it would stay pinned at the container's inner height and
+            auto-scroll would silently stop self-correcting. See useSessionScroll. */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft"
+          >
+            <div ref={contentRef as React.Ref<HTMLDivElement>} className="mx-auto w-full max-w-[860px] px-6 pt-4 pb-24">
+              <MessageList
+                messages={messages}
+                isLoading={loading && !sending}
+                streamingMessageId={streamingMessageId}
+                sessionActive={isAgentActive}
+                stoppedAtMessageId={stoppedAtMessageId}
+                onArtifactClick={handleArtifactClick}
+                showLoadEarlier={turnStart > 0 || hasMore}
+                historyLoading={historyLoading}
+                onLoadEarlier={loadEarlierMessages}
               />
-            )}
-            {/* Scroll anchor removed — useSessionScroll uses ResizeObserver */}
+              {teamEntry && messages.length === 0 && !loading && (
+                <p className="py-10 text-center text-sm text-[var(--color-fg-muted)]">{t("team.emptyHint")}</p>
+              )}
+              {isAgentActive && !stopped && (
+                <ExecutionStatus
+                  state="working"
+                  onStop={stopGeneration}
+                />
+              )}
+            </div>
           </div>
+
+          {!isAtBottom && messages.length > 0 && (
+            <button
+              onClick={jumpToBottom}
+              aria-label={t("aria.scrollToBottom")}
+              title={t("aria.scrollToBottom")}
+              className="absolute bottom-4 left-1/2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg-muted)] shadow-md transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+            >
+              <ArrowDown className="size-4" />
+            </button>
+          )}
         </div>
 
         {/* Active delegates + relayed child permissions (ADR-031 ②). Scoping

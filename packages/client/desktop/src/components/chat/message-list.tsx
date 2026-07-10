@@ -55,11 +55,12 @@ export function isTurnStreaming(opts: {
   return containsStreaming || (isLastGroup && !isTurnTerminal(lastInfo) && sessionActive)
 }
 
-// Stable style object — created once to avoid breaking React shallow comparison on every render.
-const CONTENT_VISIBILITY_STYLE: React.CSSProperties = {
-  contentVisibility: 'auto',
-  containIntrinsicSize: 'auto 500px',
-}
+// NOTE: turns deliberately carry NO `content-visibility: auto`.
+// A skipped subtree reports its `contain-intrinsic-size` instead of its real height,
+// so `scrollHeight` under-reports and "scroll to the bottom" lands nowhere near it.
+// The transcript is already windowed to TURN_INIT turns (use-session-messages) and
+// every turn is memoised (turnPropsEqual), so the layout cost this saved was small
+// and the correctness cost was not. See ADR-047 / gotchas.md.
 
 interface MessageListProps {
   messages: SendMessageResponse[]
@@ -131,7 +132,7 @@ export function MessageList({
             .map((part) => part.text)
             .join("\n\n")
           return (
-            <div key={message.info.id || index} style={CONTENT_VISIBILITY_STYLE}>
+            <div key={message.info.id || index}>
               <UserMessage content={content} />
               {isStopped && <ExecutionStatus state="stopped" />}
             </div>
@@ -150,12 +151,8 @@ export function MessageList({
         })
         const turnKey = turnMessages[0]?.info.id || `turn-${index}`
 
-        // content-visibility: auto lets the browser skip layout/paint for off-screen turns.
-        // The streaming turn is excluded so its content renders in real time.
-        const contentVisibilityStyle = isStreaming ? undefined : CONTENT_VISIBILITY_STYLE
-
         return (
-          <div key={turnKey} style={contentVisibilityStyle}>
+          <div key={turnKey}>
             <AssistantTurn
               messages={turnMessages}
               isStreaming={isStreaming}

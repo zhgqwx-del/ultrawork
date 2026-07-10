@@ -785,6 +785,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "workspace.openInFinder": "Open in Finder",
     "aria.attachment": "Add attachment",
     "aria.sendMessage": "Send message",
+    "aria.scrollToBottom": "Scroll to bottom",
     "aria.stopGenerating": "Stop generating",
     "aria.toggleSidebar": "Toggle right sidebar",
 
@@ -1558,6 +1559,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "workspace.openInFinder": "在 Finder 中打开",
     "aria.attachment": "添加附件",
     "aria.sendMessage": "发送消息",
+    "aria.scrollToBottom": "回到底部",
     "aria.stopGenerating": "停止生成",
     "aria.toggleSidebar": "切换右侧边栏",
 
