@@ -200,6 +200,7 @@ export function SessionPage() {
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={scrollRef}
+            data-transcript-scroll
             className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-soft"
           >
             <div ref={contentRef as React.Ref<HTMLDivElement>} className="mx-auto w-full max-w-[860px] px-6 pt-4 pb-24">

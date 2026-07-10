@@ -326,3 +326,16 @@
 ---
 
 > 维护说明：本清单中"已 patch / 已修复"的条目反映的是**写入时**的状态。引用具体文件/函数/flag 前请确认其仍存在（尤其 vendor 升级后）。可疑或过期条目应在"收尾"时清理。
+
+## 15. 会话转录区滚动（`use-session-scroll.ts` + `Session.tsx`，ADR-047，2026-07-10）
+
+> 三条根因全部由**真机逐帧采样**坐实，不是推断。jsdom 没有布局引擎，desktop 的 423 个 vitest **一条都测不到本节**——回归靠 `e2e/session-scroll.e2e.ts`，且**必须两个引擎都跑**（`E2E_ENGINE=webkit`）。
+
+- **`contentRef` 绝不能是被 stretch 的 flex item，否则它的 ResizeObserver 静默失效**：单行 flex 容器高度确定时，flex line 交叉尺寸 = 容器内高，`align-items: stretch` 把 item 钉死在那个高度，子元素只是溢出它。实测塞进 6021px 消息，`contentRef` 高度恒为 616px（= `clientHeight`），RO **全程只触发 1 次**（挂载那次）。ADR-021 Phase 4 的「智能滚动」因此从落地起就没运行过。滚动容器用 `block` + 内容层 `mx-auto`，别用 `flex justify-center`。症状很隐蔽：流式期间靠 `[messages]` effect 每 token 滚一次，看起来一切正常；只有在动画停止后发生异步撑高（图片/字体/代码块/工具结果）时才永久卡死。
+- **转录区内绝不能出现 `content-visibility: auto`**：`contain-intrinsic-size` 的 `auto` 关键字是「记住上次渲染尺寸」，元素**首次**被加上 CV 时**没有记忆值**，只能用 fallback 长度（MDN / csswg-drafts#7807）。原代码在 `isStreaming` 翻假那一帧给刚完成的 turn 挂 CV，于是一个真实 1700px 的 turn 被压成 500px，`scrollHeight` 2327→658，`scrollTop = scrollHeight` 滚到的「底部」其实是顶部（`658-616=42`）。**谎言只存在一帧**，但那一帧正好是唯一的滚动触发点。换 `use-stick-to-bottom` 也救不了（Δ≈1050px，且它把随之而来的 scrollTop 钳制误判成用户上滚而主动 escape）。
+- **`use-stick-to-bottom` 不要设 `resize: "instant"`**：那会让它在每个增长帧硬写 `scrollTop`，**用户物理上无法在流式期间拖离底部**。用库默认的弹簧。它的 `isAtBottom` 容差是 70px，完成后 Δbottom 可残留 ≤70px——被转录区底部的 `pb-24`（96px）吸收，视觉无影响。
+- **`use-stick-to-bottom` 的 `handleScroll` 会吞掉与 resize 同 tick 的滚动事件**（`if (state.resizeDifference || …) return`）。流式期间 RO 一直在响，所以**单次 `scrollTop -= N` 的瞬移会被无视**。真实用户拖滚动条是连续多个 scroll 事件，总有一个落在安静窗口。写 e2e 时必须模拟多帧拖拽，否则会误判成「库不让用户逃逸」。
+- **escaped 检测必须按位置判定，不能只监听 `wheel`**：原自研 hook 只在 `wheel && deltaY < 0` 时置 escaped，拖滚动条 / PageUp / Home / 触摸拖拽一律漏检 → 把正在看历史的用户强行拽回底部。Claude Code、Gemini、Cursor 桌面版都被开过这个 issue。
+- **WebKit 在折叠大块内容时会自己保住阅读位置，不需要手动 anchoring**：一度以为 WebKit 无 scroll anchoring（webkit.org #171099）需手动补偿，A/B 反证推翻——禁用补偿后 WebKit 折叠帧位移仍是 0px。沙箱里观察到的 817px「跳动」实为**贴近底部时的钳制**。唯一真会跳的是「折叠后转录区短于视口」的退化场景，此时 `scrollTop` 必然钳到 0，无解也无需解。
+- **`macOS 最低版本 10.15`，而 `content-visibility` 要 Safari 18 / macOS 15**：macOS ≤14 的用户既碰不到上面的 CV bug，也从来没享受到 ADR-021 那次 CV 优化。给任何 CSS 性能优化下结论前先查 WKWebView 支持面。
+- **一个 step 先输出文本、随后又发起工具调用时，那段文本会被 `buildTurnModel` 从「答案」重新归类为「过程 narration」并塌成一行**（`assistant-turn.tsx` `lastIsAnswerStep`，ADR-029 有意取舍）。实测可在一帧之内蒸发 4628px。写涉及转录区高度的 e2e 时要预期到这种中途大幅收缩，别把它当成滚动 bug。

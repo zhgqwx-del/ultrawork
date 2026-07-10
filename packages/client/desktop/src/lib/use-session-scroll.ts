@@ -35,9 +35,11 @@ interface UseSessionScrollOptions {
  * still growing — comes from use-stick-to-bottom.
  */
 export function useSessionScroll({ onScrollNearTop, sessionId }: UseSessionScrollOptions) {
+  // `resize` stays on the library's spring. Forcing it to "instant" makes the hook
+  // write scrollTop on every growth frame, which overwrites a scroll the user just
+  // performed — they physically cannot drag away from the bottom mid-stream.
   const { scrollRef, contentRef, scrollToBottom, isAtBottom, escapedFromLock } = useStickToBottom({
     initial: "instant",
-    resize: "instant",
   })
 
   // `scrollRef` is a ref callback; mirror the element into state so the backfill
