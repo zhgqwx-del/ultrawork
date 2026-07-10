@@ -77,6 +77,7 @@
 
 > ADR-027 的探索过程见 [discussions/013](../discussions/013-agent-os-acp-multi-backend.md)（架构可行性）与 [discussions/014](../discussions/014-stage1-acp-normalization-plan.md)（阶段1 实现方案）。阶段0-1 已按 B2「参考重写」在 `feat/agent-os-phase0` 分支落地（旧 `feat/acp-support` MVP 弃用）；实测坑点固化在 [gotchas §8](../gotchas.md)。
 | [045](./045-dynamic-sidecar-ports.md) | Sidecar 端口动态化 — dev 钉死 4096-4099（Vite 代理 target + CORS 白名单皆编译期常量，冲突**报错不绕行**）/ prod 优先固定、被占且占用者非我方则 `bind(0)` 回退且**绝不 kill**；`~/.ultrawork/run/ports.json` 运行时注册表（0600）+ `get_sidecar_ports()` IPC + renderer 启动 gate；固定端口过去是**事实上的单实例锁**，故并入 `tauri-plugin-single-instance`；`apiBaseUrl` 改 `"auto"`（端口不入持久化）；三 sidecar 补入站 Basic auth（前置=三处裸 `EventSource` 迁 fetch-reader，规范不支持自定义头）；顺带修「端口被占时误杀无关进程」现网缺陷 | 2026-07-09 | Accepted (✅ 真机验收) |
+| [046](./046-windows-webview2-runtime.md) | Windows WebView2 运行时依赖 — 双安装包（`embedBootstrapper` 主包 + `offlineInstaller` 变体，安装期零网络）+ 恢复 MSI（embed 一种）+ 首启 `tauri::webview_version()` 自检（免 winreg、Builder 前拦截、缺失弹 rfd 引导微软官网）+ 最低 Win10 1803+；`embedBootstrapper` 消除默认 `downloadBootstrapper` 的安装期明文 HTTP 下载执行（NSISdl 零 TLS + 忽略 scheme 连 :80）；「国内下载源」经许可 2(b)(iii) + 七镜像站皆无证伪→改为内置；已知代价=构建期下载无哈希 pin + 安装包未签名（供应链面待跟进）；双包因 nsis 产物名写死需中间改名 + fail-closed 体积断言 | 2026-07-10 | Accepted (✅ 已实现 + CI 实证，Windows 真机待验) |
 
 ## 新增 ADR
 

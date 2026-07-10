@@ -1,6 +1,6 @@
 # 030 — Windows WebView2 运行时依赖（缺失场景 / 分发形态 / 国内网络）
 
-> 状态：**✅ 已拍板待开工**（2026-07-10 三项决策已定：D1=双包 · D2=恢复 MSI · D3=最低 Win10 1803+ → 待正式化为 ADR-046）
+> 状态：**✅ 已实现 + CI 实证**（2026-07-10，正式化为 **ADR-046**；D1=双包 · D2=恢复 MSI · D3=最低 Win10 1803+ 全部落地，分支 `feat/windows-webview2-runtime`。Windows 真机验收待做 → §12）
 > 日期：2026-07-10
 > 输入：用户提出——Windows 下安装/运行是否依赖 WebView2？客户机器上操作系统或浏览器版本较旧、没有 WebView2 会怎样？能否在安装流程里检测并下载安装（注意国内下载源）？装完是否要重启？同类桌面 agent 软件（hermes agent / qoderwork / manus ai / claude cowork）怎么做？
 > 关联：ADR-037（跨平台三平台约束）· ADR-041（内置技能 zip 分发，MSI 禁用理由的来源）· ADR-045（动态端口，Windows 真机验证欠账可合并）· discussions/009（Tauri vs Electron）· gotchas §6（Tauri/桌面壳）· §12（跨平台）
