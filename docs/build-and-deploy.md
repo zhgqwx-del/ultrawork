@@ -18,7 +18,7 @@
 |---|---|
 | **全部** | **Bun**（bun.sh）、**Rust**（rustup / cargo）、**Git** |
 | **macOS** | Xcode CLT：`xcode-select --install`。Apple Silicon 要出 Universal 包另需 `rustup target add x86_64-apple-darwin`（`setup` 会自动加）。签名/公证细节见 §二–§三 |
-| **Windows** | ① **Visual Studio Build Tools 2022**（勾「使用 C++ 的桌面开发」——含 MSVC 链接器 + `rc.exe`，**winres 嵌图标必需，缺了打包失败**）② **WebView2 Runtime**（Win10 1803+/Win11 内置，否则装 Evergreen）③ NSIS/WiX 由 Tauri 自动下载，无需手装 |
+| **Windows** | ① **Visual Studio Build Tools 2022**（勾「使用 C++ 的桌面开发」——含 MSVC 链接器 + `rc.exe`，**winres 嵌图标必需，缺了打包失败**）② **WebView2 Runtime**（**最低支持 Win10 1803+**〔ADR-046 D3〕，Win10 1803+/Win11 内置；构建机需能访问微软 fwlink——`embedBootstrapper`/`offlineInstaller` 在构建期从微软拉 bootstrapper/runtime，**国内网络易触发 `WebView2 URL prefix mismatch`**，逃生口=预置安装器到 `%LOCALAPPDATA%\tauri`，见 gotchas §12）③ NSIS/WiX 由 Tauri 自动下载，无需手装 |
 | **Linux**（Debian/Ubuntu） | `sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libgtk-3-dev` |
 
 ### 0.2 开发模式（dev）
@@ -50,7 +50,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | 平台 | 命令 | 产出 |
 |---|---|---|
 | **macOS** | `bun run release`（需 `APPLE_SIGNING_IDENTITY` 等做签名/公证，见 §三）<br>`bun run release --unsigned`（免签，本地用，Universal） | `.dmg` + `.app`（Universal） |
-| **Windows** | `bun run release`（= 编 sidecar + `tauri build`，不碰 Apple 签名） | `*-setup.exe`(NSIS；MSI 未启用——当年 WiX v3 被 1.2 万文件资源树打挂，2026-07-03 起资源已收敛为单 zip〔ADR-041〕，复活待 CI 实证后再加回 targets，见 gotchas §12) |
+| **Windows** | `bun run release`（= 编 sidecar + `tauri build` **跑两次**出双包，不碰 Apple 签名） | 三件（ADR-046）：`*-setup.exe`（NSIS embed，~129MB，默认，装机联网拉 runtime）+ `*-offline-setup.exe`（NSIS offline，~324MB，安装期零网络，给国内/内网）+ `*_en-US.msi`（embed，~188MB，企业部署）。MSI 已恢复（ADR-041 zip 化后 WiX v3 前提消失，CI 实证）；offline MSI 刻意不出（太大） |
 | **Linux** | `bun run release` | `.deb` + `.rpm`（AppImage 暂跳过，CI 上 linuxdeploy/FUSE 不稳，见 ADR-037） |
 
 > **A vs B**：A/`tauri:build` = 当前架构、不签名、快（日常本地验证）；B/`release` 在 mac 上是 Universal 双架构 + 可签名公证（对外分发），win/linux 上两者基本一样。`--force-build` 可强制全重编 sidecar（默认 hash 增量缓存，重跑很快）。
@@ -62,7 +62,7 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 | `tauri:build` / `setup --build`（无 `--target`） | `packages/client/desktop/src-tauri/target/release/bundle/` |
 | `release`（带 `--target`，mac 为 `universal-apple-darwin`） | `…/target/<triple>/release/bundle/` |
 
-子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe`（MSI 未启用，见上表）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
+子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe` + `nsis/*-offline-setup.exe` + `msi/*_en-US.msi`（ADR-046 双包 + MSI）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
 
 ### 0.5 在其他平台验证打包（干净环境完备步骤）
 
@@ -81,7 +81,7 @@ cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-m
 # 一路过到 winres 因缺宿主 llvm-rc 停 = 正常；前面依赖/代码/codegen 全过即说明 Rust 侧 OK
 ```
 
-**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg/nsis/deb/rpm + 自动创建 GitHub Release 发布页；workflow_dispatch 仅出 artifact）。
+**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg / nsis〔含 offline〕/ msi / deb / rpm + 自动创建 GitHub Release 发布页；workflow_dispatch 仅出 artifact）。
 
 ---
 

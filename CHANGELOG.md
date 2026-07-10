@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Windows 出双安装包（embed + offline）并恢复 MSI（2026-07-10，ADR-046 / discussions/030，分支 `feat/windows-webview2-runtime`）**：此前从未配置 `bundle.windows`，吃的是 Tauri 默认 `downloadBootstrapper`——安装时联网下载 WebView2 bootstrapper 再执行，缺网/慢网/无 runtime 的机器体验差（且下载走 NSISdl 明文 HTTP，见 Fixed）。现在 Windows 产出**三个安装器**：① `*-setup.exe`（`embedBootstrapper`，129MB，内嵌 1.8MB bootstrapper，默认，装机时联网拉 ~176MB runtime）；② `*-offline-setup.exe`（`offlineInstaller`，324MB 实测，内嵌完整 runtime，**安装期零网络**，给国内/内网/受控机器）；③ `*_en-US.msi`（embed 一种，恢复 D2，企业 SCCM/Intune 部署）。`build-release.ts` 抽 `buildWindowsInstallers()`：embed+msi 先构建（可靠的先落地），offline 后构建，因 tauri-bundler 把 NSIS 产物名写死（`{product}_{ver}_{arch}-setup.exe`）故用 `.embed-stash` 临时改名让两包共存；offline 失败翻译成指向预置逃生口的可读提示；末尾 **fail-closed 断言** offline 比 embed 大 ≥100MB（`webviewInstallMode` 配错不会报错、只会静默退回默认——同 v0.2.2 DMG 布局那类静默降级）。`release.yml` 缓存 `%LOCALAPPDATA%\tauri`（NSIS 工具链；WebView2 因 tauri 按版本 GUID 分目录 + `actions/cache` 精确命中不再保存，事实上不缓存）。**恢复 MSI**：`build-release.ts` 禁用 MSI 的理由（WiX v3 `light.exe` 挂在 ppt-master 12k 文件资源树，2026-07-02）已随 ADR-041 zip 化失效——`chore/msi-probe` 分支 workflow_dispatch 实证 `--bundles nsis msi` 全绿、产出 187.6MB msi（比 NSIS 胖 58MB，故 offline MSI 不出）。**CI 实证**：三轮 release workflow_dispatch 全绿，Windows job 打印 `📏 ...129.2MB / 324.4MB (+195.2MB) · WebView2 offline runtime ✓`，下载 artifact 开包验证三产物齐全、bootstrapper（1,688,792B，与微软 CDN 实测字节一致）确被嵌入。
+- **Windows 首启 WebView2 运行时自检（2026-07-10，ADR-046，`src-tauri/src/webview_runtime.rs`）**：安装器管不到「装完之后用户/组策略卸了 WebView2」（clash-verge-rev#1150 形态）。缺 runtime 时 `tauri::Builder::run` 会在创建 webview 时 abort，而 release 构建 `windows_subsystem = "windows"` 无控制台，panic 打给一个不存在的 console → 表现为「双击没反应」。因此在 `main()` 里、`tauri::Builder` **之前**用 `tauri::webview_version()`（Windows 上即微软文档的 `GetAvailableCoreWebView2BrowserVersionString`，`Err` = 无 runtime；**免 winreg 依赖**，三平台都能编译）检测，缺失则弹 rfd 对话框引导到微软官网下载页（微软官方推荐的兜底之一）。`rfd` 作 windows-only 依赖 `default-features = false`（否则拖进 17 个 Linux crate，Cargo.lock 只 +1 行）。
+
+### Changed
+- **正式声明最低支持 Windows 10 1803+（2026-07-10，ADR-046 / D3）**：放弃 Windows 7/8.1——其 WebView2 运行时冻结在 `109.0.1518.140`，2023-10-10 起停止安全更新。Win10 1803（2018-04）起微软通过 Edge 更新自动投递 Evergreen runtime，Win11 全预装。
+
+### Fixed
+- **Windows 默认安装模式在明文 HTTP 上下载并执行 WebView2 bootstrapper（2026-07-10，ADR-046，改 `tauri.conf.json` 为 `embedBootstrapper`）**：Tauri 默认 `downloadBootstrapper` 在 NSIS 侧由 `NSISdl.dll` 实现，而该插件**零 TLS 能力**（导入表只有 WSOCK32、字符串 `GET %s HTTP/1.0`），`httpget.cpp:337` 的 `do_parse_url` 忽略 URL scheme 一律连 :80。实测微软 fwlink `http://go.microsoft.com/fwlink/p/?LinkId=2124703` 会 301 到 `https://msedge.sf.dl.delivery.mp.microsoft.com/...`，而该 CDN 在明文 80 端口照样返回真实 PE（`MZ`，1,688,792B）→ 于是安装期变成「明文下载一个 exe + 零哈希/签名校验 + `ExecWait` 执行」。因 Win11 预装 WebView2 这段代码在多数机器上不执行，故一直未被发现；敌意网络（公共 WiFi、被投毒的路由）可替换该 exe 获得用户级代码执行（`installMode=CurrentUser`）。改 `embedBootstrapper` 后 bootstrapper 由安装包内释放，明文下载执行链路整个消失。**已知代价**（记入 ADR-046 待跟进）：embed/offline 把下载搬到构建期，tauri-bundler 用不校验哈希的 `download()` 拉包；且 Windows 安装包尚未代码签名——两者叠加是「构建机污染→全体用户」的供应链面，待 Windows 代码签名一并处理。
+
 ## [0.2.2] - 2026-07-10
 
 > 装机可靠性批次：sidecar 端口在用户机器上被占时不再启动失败、也不再误杀无关进程（改为动态分配 + 归属门控回收），三个 sidecar 补上入站鉴权；并修复 CI 打出的 macOS DMG 安装窗口图标左右颠倒 —— `v0.2.1` 及更早的 Release DMG 里 `Applications` 误排在左侧。

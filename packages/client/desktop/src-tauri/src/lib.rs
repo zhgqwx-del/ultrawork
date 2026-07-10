@@ -8,6 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+mod webview_runtime;
+pub use webview_runtime::ensure_webview_runtime;
+
 // Preferred ports. Today every build binds exactly these; a later phase may let
 // a production build fall back to an ephemeral port when one is taken. Nothing
 // outside `sidecar_ports()` should read them — the runtime registry below is the

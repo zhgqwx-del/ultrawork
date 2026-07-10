@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-09 -->
+<!-- last-synced: 2026-07-10 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -407,6 +407,10 @@ setTimeout(() => fetchSources(), 500)
 - **端口不是编译期常量，也不入持久化配置**：宿主启动时决定一次，经 env 下发给直接子进程、经 IPC 下发给 renderer、经 `~/.ultrawork/run/ports.json` 下发给晚加入的孙进程。renderer 侧用**启动 gate**（`main.tsx` 在 `createRoot` 前 `await`）把异步解析收敛到一处，下游 helper 保持同步。
 - **凭证同理**：`sidecar-auth.ts` 与 `sidecar-ports.ts` 同形，同一个 gate 里一起 await。两者的 loader **永不 reject**（内建兜底），否则整个 boot 挂死。
 - **同一个 sidecar 只能有一个 HTTP client 模块**：`add-source-dialog.tsx` 曾私藏一份 `kbFetch`（硬编码 `:4098`、不带鉴权）。端口动态化 + 加鉴权时只改了 `use-knowledge-base.ts` 那份，添加知识源全线 401。现已收敛到 `lib/kb-client.ts`。新增 sidecar 调用方一律复用既有 client，不要另起 `fetch`。
+
+### Windows 运行时依赖检测（ADR-046）
+- **检测系统 WebView2 用 `tauri::webview_version()`，不新增 `winreg`**：该函数是独立自由函数、**不需要 `AppHandle`、可在 `tauri::Builder` 之前调用**（Windows 上即微软文档的 `GetAvailableCoreWebView2BrowserVersionString`，`Err` = 无 runtime；mac/Linux 返回 WebKit 版本）。因为它三平台都能编译，检测逻辑正好用运行时 `cfg!(target_os = "windows")` 分支而非 `#[cfg]` 属性（合 §跨平台的运行时分支偏好），只有「缺失即引导」那段（依赖 `rfd` / `explorer.exe`，Windows-only）才用 `#[cfg(windows)]`。落点见 `src-tauri/src/webview_runtime.rs`：`runtime_missing()`（纯查询，供测试）与 `ensure_webview_runtime()`（缺失弹框 + `exit(1)`）拆开，后者绝不能进单测（会杀测试进程）。
+- **进程早期弹原生对话框用 `rfd`，不用 `tauri-plugin-dialog`**：后者的 API 要 `AppHandle`，而 WebView2 自检发生在 Builder 之前、还没有 handle。`rfd` 是该插件的底座、已在依赖树，作 windows-only 依赖时务必 `default-features = false`（默认 features 是 Linux 专用的 xdg-portal/wayland/async-std，会平白拖进十几个 crate）。注意 `common-controls-v6` 由 `tauri-plugin-dialog` 全局 union 强制打开（Cargo feature 无法在下游关掉），故 rfd 实走 `TaskDialogIndirect`——用 `MessageButtons::YesNo`（两条后端都成立），别用需要该 feature 的自定义按钮。
 
 ### 已知平台边界（非 bug，刻意降级）
 - **嵌入式 Node 下载 + Browser MCP + Chrome 清理**：三平台均已支持（ADR-037 后续移植）。Windows 走 node `.zip`（`node.exe` 在根 + `node_modules/npm` 无 `lib/`）、`tar -xf` 解压（Win10+ bsdtar）、`resolve_npm_cli`/`embedded_node_bin` 平台分支、Chrome 清理用 PowerShell WMI 命令行匹配 + `taskkill /F /T`。**代码层三平台编译通过，但 Windows 上 Browser MCP 的运行时（真装 + 真起浏览器）需在真 Windows 机器实测**——CI 覆盖不到浏览器自动化运行时。前置：Windows 需 `tar.exe`（Win10 1803+ 自带）+ `curl`（Win10+ 自带）。

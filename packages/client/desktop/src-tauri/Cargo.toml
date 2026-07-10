@@ -35,6 +35,18 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 # digests (mirrors the upstream npm installer's checksums.txt) before extracting.
 sha2 = "0.10"
 
+# Windows-only: the WebView2 preflight (src/webview_runtime.rs) must warn the user
+# before `tauri::Builder` exists, so it cannot use tauri-plugin-dialog (needs an
+# AppHandle). rfd is already in the tree as that plugin's backend — same version,
+# no new transitive deps.
+#
+# default-features would drag in rfd's Linux story (xdg-portal → ashpd, wayland,
+# async-std) for a dependency that only ever builds on Windows. The Windows
+# backend needs none of it. `common-controls-v6` stays off too — hence Yes/No
+# buttons rather than custom labels (see webview_runtime.rs).
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "0.16", default-features = false }
+
 # Unix-only: catch SIGINT/SIGTERM/SIGHUP and clean up sidecars on non-graceful
 # exits that RunEvent::Exit doesn't cover. (SIGKILL is uncatchable — that path
 # is handled by prepare_port's startup self-heal.) Windows has no POSIX signals;

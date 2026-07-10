@@ -129,6 +129,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
+- **WebView2 首启自检（ADR-046，`src-tauri/src/webview_runtime.rs`）**：`ensure_webview_runtime()` 在 `main.rs` 里、`run()` 之前调用；`runtime_missing()` = `cfg!(target_os="windows") && tauri::webview_version().is_err()`（免 winreg），缺失弹 `rfd` 引导框到微软下载页再 `exit(1)`。Windows 装机走 `embedBootstrapper`（消除默认 `downloadBootstrapper` 的安装期明文 HTTP 下载执行）；`build-release.ts` 的 `buildWindowsInstallers()` 出双包（embed `-setup.exe` + `-offline-setup.exe`）+ MSI（embed 一种）。
 - `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`get_sidecar_ports`（运行时端口注册表，ADR-045）、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
 - **跨平台 helper（ADR-037）**：`PATH_LIST_SEP`（`;`win/`:`unix 常量）、`pids_on_port`（lsof/netstat）+`kill_pid`（kill/taskkill）、`install_signal_handlers` `#[cfg(unix)]`+no-op；进程/端口/信号清理在 Windows 走等价命令或安全短路
 - **端口生命周期（ADR-045，`lib.rs`）**：`SidecarPorts` 运行时注册表（唯一事实源）+ `~/.ultrawork/run/ports.json`（0600，孙进程读它）；`plan_port`（dev 冲突报错 / prod `bind(0)` 回退，**绝不 kill**）→ `spawn_sidecar`（`watch_sidecar_exit` 专用线程 drain rx 拿 `Terminated`）→ `await_sidecar_ready` → 最多 3 次换端口重试；`strip_persisted_sidecar_ports` 开机剥除 `opencode.json` 里的 stale 端口；`tauri-plugin-single-instance` 顶替「固定端口=事实上的单实例锁」
@@ -197,7 +198,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (45 ADRs, 001–044)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (46 ADRs, 001–046)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history
