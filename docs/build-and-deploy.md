@@ -255,6 +255,24 @@ bun run release -- --unsigned
 | `--native` | 只编译当前架构（不出 Universal）。CI 调试用 |
 | `--verbose` | 显示底层 tauri/cargo 输出 |
 
+### 4.3.1 DMG 安装窗口布局
+
+DMG 里图标的摆放（`Ultrawork.app` 在左、`Applications` 在右）存在 `.DS_Store` 中，由 `bundle_dmg` 驱动 Finder 的 AppleScript 写入。tauri-bundler 见到 `CI=true` 会跳过这段脚本，导致 Finder 按文件名排序、`Applications` 跑到左边；`build-release.ts` 因此设置 `TAURI_BUNDLER_DMG_IGNORE_CI=true`，并在公证前跑 `scripts/verify-dmg-layout.ts` 断言布局。详见 [`gotchas.md §7`](./gotchas.md)。
+
+单独校验任意 DMG（校验器 fail-closed：解析不出坐标 = 报错，不会静默放过）：
+
+```bash
+bun run --bun scripts/verify-dmg-layout.ts path/to/Ultrawork.dmg
+```
+
+真正的校验需要一个已构建的 DMG，只在发版时才跑；`--self-test`（CI 三平台每次 PR 都跑）补上这个盲区——它验解析器，并断言 `build-release.ts` 仍然默认开启该 env、仍然调用校验：
+
+```bash
+bun run --bun scripts/verify-dmg-layout.ts --self-test
+```
+
+**应急逃生阀**：若 GitHub runner 的 Finder 自动化再次回归（[tauri-action#1091](https://github.com/tauri-apps/tauri-action/issues/1091)：`AppleEvent timed out -1712`），用 `TAURI_BUNDLER_DMG_IGNORE_CI=false` + `--allow-bad-dmg-layout` 放行一次发布——两个都要给，任一单独给都不会静默出坏包。代价是该 DMG 图标按名排序。
+
 ### 4.4 产物位置
 
 ```

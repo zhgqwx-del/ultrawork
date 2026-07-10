@@ -65,6 +65,13 @@ jobs:
         if: runner.os != 'Windows'
         run: bun run --bun turbo run test --continue
 
+      # The real DMG layout check needs a built DMG, so it only ever runs at
+      # release time. This exercises its parser and asserts build-release.ts
+      # still opts out of tauri-bundler's CI behaviour — without it, deleting
+      # that opt-out is a green merge and a mislaid installer at the next tag.
+      - name: DMG layout guard (self-test)
+        run: bun run --bun scripts/verify-dmg-layout.ts --self-test
+
   # ── Rust: compile (all #[cfg] branches for the host OS) + cargo test ─
   rust:
     name: rust (${{ matrix.os }})
