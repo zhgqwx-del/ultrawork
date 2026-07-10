@@ -130,5 +130,5 @@ ADR-021 Phase 4 引入的「智能滚动」核心机制，从 `ac9f7e4e` 落地�
 - **正向**：完成后正确贴底；用户上滚不再被拽回（含键盘/滚动条/触摸）；流式中选中文本不会被抽走；任何异步撑高（图片、字体、代码块、工具结果）都能自愈；多了「回到底部」按钮。
 - **代价**：新增依赖 `use-stick-to-bottom@1.1.6`（~5KB）；失去 CV 的屏外跳过（对 15 个窗口化 turn 而言可忽略，且在 macOS ≤14 上本就不存在）。
 - **约束**：`contentRef` **永远不能**是被 stretch 的 flex item；转录区内**永远不能**出现 `content-visibility: auto`。两条都写进了 `use-session-scroll.ts` 的文档注释和 `gotchas.md §15`，并由 e2e case B / C 守住。
-- **另行走查过、无缺陷的集成路径**（两引擎各一遍）：右侧栏开合与窗口缩放都不会把已上滚的用户拉到底；贴底状态下滚动容器变高（dock 消失 / 窗口放大）不会被误判成用户上滚而脱锁。「加载更早」的批量 prepend 未验证——但新旧实现在这条路径上行为一致（都靠浏览器默认 `overflow-anchor: auto`，WebKit 两版都没有），不是本次引入的风险。
+- **另行走查过、无缺陷的集成路径**（两引擎各一遍）：右侧栏开合与窗口缩放都不会把已上滚的用户拉到底；贴底状态下滚动容器变高（dock 消失 / 窗口放大）不会被误判成用户上滚而脱锁。近顶回填（`onScrollNearTop` → `backfillTurns`）实测正常触发：18 轮会话滚到顶后 `scrollHeight` 3856 → 4548（+692px）。**唯一残留的 UX 瑕疵是 prepend 后视口会下移**（WebKit 无 scroll anchoring，Chromium 有）——这是既存行为，新旧实现一致（旧代码在上滚态把 `overflow-anchor` 设成 `auto`，而 WebKit 根本不实现该属性），非本次引入。
 - **未做**：长会话性能对照（去 CV 后用 `scripts/test-long-session.ts` 跑 100 轮）。窗口化仍在，预期无可测退化，但未实测。
