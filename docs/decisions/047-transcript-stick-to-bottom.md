@@ -93,6 +93,14 @@ ADR-021 Phase 4 引入的「智能滚动」核心机制，从 `ac9f7e4e` 落地�
 
 单独立项。它和「完成时折叠执行流」冲突更狠：提问钉在顶部、下方内容突然缩掉几千像素，会留下更难看的空洞。ChatGPT 没有执行流折叠这个东西。
 
+### D5b — 会话切换要临时把 `resize` 钉成 `instant`
+
+库的 `initial` 动画**只作用于内容观察器看到的第一次 resize**。`SessionPage` 跨 `/session/:id` 复用（react-router 不重挂载），所以会话切换拿不到 `initial`——历史内容以普通增长的形式涌入，视图会**可见地弹簧滚动到底**（实测 `scrollTop` 经过 75 个取值，0 → 3514）。
+
+库每次 resize 都重读 `optionsRef.current`，所以修法是：会话变更后的 800ms 内把 `resize` 钉成 `"instant"`，之后交还弹簧。**不能一直钉着 instant**——见 D3 的第一个坑。实测修复后 `scrollTop` 只经过 2-3 个取值。
+
+由 e2e case F 守住。
+
 ### D6 — 不为执行流折叠做手动 scroll anchoring
 
 一度实现了（WebKit 不实现 scroll anchoring，webkit.org #171099）。**A/B 反证推翻了它**：禁用补偿后，WebKit 上折叠帧的阅读位置位移仍然是 0px，`scrollTop` 照样自己减去收缩量。隔离沙箱里观察到的 817px「跳动」其实是**贴近底部时的钳制**，不是缺少 anchoring——我把两者混为一谈了。代码删除。
@@ -111,7 +119,7 @@ ADR-021 Phase 4 引入的「智能滚动」核心机制，从 `ac9f7e4e` 落地�
 | contentRef 上 RO 触发 | 1 次 | 120+ 次 |
 | contentRef 高度取值 | 恒 616px | 120+ 个不同值 |
 
-**`e2e/session-scroll.e2e.ts`（`bun run --bun e2e/session-scroll.e2e.ts`，`E2E_ENGINE=webkit` 切引擎）**：A 完成贴底 / B RO 存活 / C 无 CV / D 拖滚动条不被拽回 + 按钮出现 + 点击回底 / E 折叠不跳动。**两个引擎都要跑**——Chromium 的原生 scroll anchoring 会独自吸收折叠，E 在它上面是空跑。
+**`e2e/session-scroll.e2e.ts`（`bun run --bun e2e/session-scroll.e2e.ts`，`E2E_ENGINE=webkit` 切引擎）**：A 完成贴底 / B RO 存活 / C 无 CV / D 拖滚动条不被拽回 + 按钮出现 + 点击回底 / E 折叠不跳动 / F 会话切换瞬间贴底。**两个引擎都要跑**——Chromium 的原生 scroll anchoring 会独自吸收折叠，E 在它上面是空跑。
 
 **e2e 里刻意不静默降级**：E 的前置（执行流够高 + 折叠后转录区仍溢出）不满足时打 `SKIP ⚠️` 而不是 PASS。这个场景无法用真模型稳定构造——一个先输出文本、随后又发起工具调用的 step，其文本会被 `buildTurnModel` 从「答案」重新归类为「过程 narration」（ADR-029 的有意取舍），可能一帧之内蒸发掉 4628px，把停好的阅读位置冲到底部附近。
 
@@ -122,4 +130,5 @@ ADR-021 Phase 4 引入的「智能滚动」核心机制，从 `ac9f7e4e` 落地�
 - **正向**：完成后正确贴底；用户上滚不再被拽回（含键盘/滚动条/触摸）；流式中选中文本不会被抽走；任何异步撑高（图片、字体、代码块、工具结果）都能自愈；多了「回到底部」按钮。
 - **代价**：新增依赖 `use-stick-to-bottom@1.1.6`（~5KB）；失去 CV 的屏外跳过（对 15 个窗口化 turn 而言可忽略，且在 macOS ≤14 上本就不存在）。
 - **约束**：`contentRef` **永远不能**是被 stretch 的 flex item；转录区内**永远不能**出现 `content-visibility: auto`。两条都写进了 `use-session-scroll.ts` 的文档注释和 `gotchas.md §15`，并由 e2e case B / C 守住。
+- **另行走查过、无缺陷的集成路径**（两引擎各一遍）：右侧栏开合与窗口缩放都不会把已上滚的用户拉到底；贴底状态下滚动容器变高（dock 消失 / 窗口放大）不会被误判成用户上滚而脱锁。「加载更早」的批量 prepend 未验证——但新旧实现在这条路径上行为一致（都靠浏览器默认 `overflow-anchor: auto`，WebKit 两版都没有），不是本次引入的风险。
 - **未做**：长会话性能对照（去 CV 后用 `scripts/test-long-session.ts` 跑 100 轮）。窗口化仍在，预期无可测退化，但未实测。

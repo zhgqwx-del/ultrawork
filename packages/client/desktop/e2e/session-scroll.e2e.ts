@@ -8,9 +8,10 @@
 //   C. no content-visibility anywhere in the list    (belt & braces for A)
 //   D. a scrollbar drag (NO wheel event) escapes the lock, shows the jump button,
 //      and is not yanked back — the homegrown wheel-only detector failed this
-//   E. the ExecutionFlow auto-collapse does not shift a scrolled-up reader's
-//      viewport (WebKit implements no scroll anchoring; measured 817px without
-//      the manual compensation in execution-flow.tsx)
+//   E. the ExecutionFlow auto-collapse does not shift a scrolled-up reader's viewport
+//   F. switching sessions lands at the bottom INSTANTLY, not via a visible spring
+//      (the library's `initial` animation only covers the very first resize its content
+//      observer sees, and SessionPage is reused across /session/:id changes)
 //
 //   cd packages/client/desktop && bun run --bun e2e/session-scroll.e2e.ts
 //   E2E_ENGINE=webkit bun run --bun e2e/session-scroll.e2e.ts   <- the macOS engine
@@ -299,6 +300,26 @@ try {
     if (clamped) skip("D3 点「回到底部」后回到底部", "折叠后转录区短于视口，按钮本就不该出现")
     else check("D3 点「回到底部」后回到底部", false, "折叠后按钮消失 —— 视图被拉回底部，逃逸态没保住")
   }
+  // ---------- F: 会话切换（客户端路由，SessionPage 不重挂载）----------
+  console.log("=== run 3: 从短会话切回长会话，应瞬间贴底而非弹簧滚动 ===")
+  await page.goto(`http://localhost:1420/session/${sid2}`, { waitUntil: "domcontentloaded" })
+  await page.waitForTimeout(2500)
+  await page.evaluate(PROBE)
+  await page.evaluate((id) => {
+    history.pushState({}, "", `/session/${id}`)
+    window.dispatchEvent(new PopStateEvent("popstate"))
+  }, sid1)
+  const traj = await page.evaluate(() => new Promise<number[]>((res) => {
+    const sc = document.querySelector("[data-transcript-scroll]") as HTMLElement
+    const seen: number[] = []; const t0 = performance.now()
+    const tick = () => { seen.push(Math.round(sc.scrollTop)); performance.now() - t0 < 2000 ? requestAnimationFrame(tick) : res(seen) }
+    requestAnimationFrame(tick)
+  }))
+  await page.waitForTimeout(500)
+  const dSwitch = await page.evaluate(() => (window as any).__p.d())
+  const steps = new Set(traj).size
+  check("F1 切换会话后贴底", dSwitch < 100, `Δbottom = ${dSwitch}px`)
+  check("F2 切换是瞬间到底而非弹簧动画", steps <= 5, `scrollTop 经过 ${steps} 个不同取值（弹簧会有几十个；修复前实测 75 个）`)
 } catch (e) {
   results.push(`ERROR: ${(e as Error).message}`)
 } finally {

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useStickToBottom } from "use-stick-to-bottom"
 
 const TOP_THRESHOLD = 200 // px from top to trigger backfill
+/** How long a session change keeps snapping to the bottom instantly (history load window). */
+const SETTLE_MS = 800
 
 interface UseSessionScrollOptions {
   /** Called when the user scrolls near the top (history backfill) */
@@ -35,11 +37,20 @@ interface UseSessionScrollOptions {
  * still growing — comes from use-stick-to-bottom.
  */
 export function useSessionScroll({ onScrollNearTop, sessionId }: UseSessionScrollOptions) {
-  // `resize` stays on the library's spring. Forcing it to "instant" makes the hook
-  // write scrollTop on every growth frame, which overwrites a scroll the user just
-  // performed — they physically cannot drag away from the bottom mid-stream.
+  // Opening a session must land at the bottom instantly; streaming must follow with a
+  // spring. Those are the library's `initial` and `resize` animations — but `initial`
+  // only applies to the FIRST resize the content observer ever sees, and SessionPage is
+  // reused across `/session/:id` changes, so a session switch never gets it: the history
+  // pours in as ordinary growth and the view visibly spring-scrolls down (measured: 75
+  // scroll positions from 0 to 3514). Options are read fresh on every resize, so pin
+  // `resize` to "instant" for a beat after the session changes, then hand it back to the
+  // spring. Do NOT leave it on "instant": that writes scrollTop on every growth frame and
+  // the user physically cannot drag away from the bottom mid-stream.
+  const [settling, setSettling] = useState(false)
+
   const { scrollRef, contentRef, scrollToBottom, isAtBottom, escapedFromLock } = useStickToBottom({
     initial: "instant",
+    resize: settling ? "instant" : undefined,
   })
 
   // `scrollRef` is a ref callback; mirror the element into state so the backfill
@@ -54,9 +65,14 @@ export function useSessionScroll({ onScrollNearTop, sessionId }: UseSessionScrol
   )
 
   // --- Reset on session change: land at the bottom instantly, drop any escape ---
+  // The history arrives asynchronously after this runs, so `settling` has to outlive the
+  // effect: it keeps the growth that follows on the instant animation too.
   useEffect(() => {
     if (!sessionId) return
+    setSettling(true)
     scrollToBottom({ animation: "instant", ignoreEscapes: true })
+    const done = setTimeout(() => setSettling(false), SETTLE_MS)
+    return () => clearTimeout(done)
   }, [sessionId, scrollToBottom])
 
   // --- Near-top detection (history backfill), fires once per entry into the zone ---
