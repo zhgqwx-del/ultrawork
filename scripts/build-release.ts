@@ -74,39 +74,69 @@ async function buildWindowsInstallers(
     (await listExes()).filter((f) => f.endsWith("-setup.exe") && !f.endsWith(OFFLINE_SUFFIX))
 
   // Stale outputs from an earlier local `bun run release` would make the
-  // "exactly one" check below ambiguous, and a leftover offline exe could survive
+  // "exactly one" checks below ambiguous, and a leftover offline exe could survive
   // a failed rebuild and be published. CI starts clean; developers do not.
+  const embedStashSuffix = ".embed-stash"
   for (const stale of await listExes()) {
-    if (stale.endsWith(".exe")) await fs.rm(path.join(nsisDir, stale))
+    if (stale.endsWith(".exe") || stale.endsWith(embedStashSuffix)) {
+      await fs.rm(path.join(nsisDir, stale))
+    }
   }
 
-  // Offline goes first. tauri-bundler hardcodes the output name as
-  // `{product}_{version}_{arch}-setup.exe` (nsis/mod.rs), so the second NSIS build
-  // silently overwrites the first — renaming in between is the only way to keep both.
+  // Embed + MSI first. These are the primary installers and the reliable build:
+  // no network beyond the tiny bootstrapper fetch. Surfacing a broken config or a
+  // WiX failure here — before the ~13-minute offline build — keeps the fragile
+  // step from being a prerequisite for the reliable one. tauri-bundler hardcodes
+  // the NSIS output as `{product}_{version}_{arch}-setup.exe` (nsis/mod.rs), which
+  // is exactly the name we want to ship, so stash it out of the way before the
+  // offline build reuses that name, then restore it.
+  console.log("\n🔨 tauri build — default (embedded bootstrapper) + MSI...")
+  await tauriBuild(["--bundles", "nsis", "msi"])
+  const embedList = await defaultSetupExes()
+  if (embedList.length !== 1) {
+    throw new Error(
+      `expected exactly one *-setup.exe after the embed build, found ${embedList.length}: ${embedList.join(", ")}`,
+    )
+  }
+  const embedName = embedList[0]
+  await fs.rename(path.join(nsisDir, embedName), path.join(nsisDir, embedName + embedStashSuffix))
+
+  // Offline second. tauri-bundler fetches ~176MB from Microsoft at bundle time and
+  // asserts the fwlink redirects to a hardcoded CDN prefix, so it can fail on
+  // networks that resolve to a different edge — discussions/030 §9.3-A. Translate
+  // that opaque failure into a pointer to the pre-seed escape hatch. Fatal on
+  // purpose: a release is expected to carry all three installers or fail loudly.
   const offlineConfig = JSON.stringify({
     bundle: { windows: { webviewInstallMode: { type: "offlineInstaller", silent: true } } },
   })
   console.log("\n🔨 tauri build — offline WebView2 variant...")
-  await tauriBuild(["--bundles", "nsis", "--config", offlineConfig])
-
-  const produced = await defaultSetupExes()
-  if (produced.length !== 1) {
+  try {
+    await tauriBuild(["--bundles", "nsis", "--config", offlineConfig])
+  } catch (e) {
     throw new Error(
-      `expected exactly one *-setup.exe after the offline build, found ${produced.length}: ${produced.join(", ")}`,
+      `offline WebView2 build failed. If the log shows "WebView2 URL prefix mismatch", ` +
+        `tauri-bundler's fwlink resolved to an unexpected CDN host (common on CN networks). ` +
+        `Pre-seed %LOCALAPPDATA%\\tauri with the runtime installer to skip the download ` +
+        `(discussions/030 §9.3-A).\n${e}`,
     )
   }
-  const offlineName = produced[0].replace(/-setup\.exe$/, OFFLINE_SUFFIX)
-  await fs.rename(path.join(nsisDir, produced[0]), path.join(nsisDir, offlineName))
+  const offlineList = await defaultSetupExes()
+  if (offlineList.length !== 1) {
+    throw new Error(
+      `expected exactly one *-setup.exe after the offline build, found ${offlineList.length}: ${offlineList.join(", ")}`,
+    )
+  }
+  const offlineName = offlineList[0].replace(/-setup\.exe$/, OFFLINE_SUFFIX)
+  await fs.rename(path.join(nsisDir, offlineList[0]), path.join(nsisDir, offlineName))
   console.log(`   → ${offlineName}`)
 
-  console.log("\n🔨 tauri build — default (embedded bootstrapper) + MSI...")
-  await tauriBuild(["--bundles", "nsis", "msi"])
+  // Restore the embed installer to its canonical name.
+  await fs.rename(path.join(nsisDir, embedName + embedStashSuffix), path.join(nsisDir, embedName))
 
   // A wrong `webviewInstallMode` does not fail the build — it silently falls back,
   // and the only visible symptom is a smaller installer. v0.2.2 shipped a broken
   // DMG layout for exactly this class of reason, so assert rather than trust.
   const offlineBytes = (await fs.stat(path.join(nsisDir, offlineName))).size
-  const embedName = produced[0]
   const embedBytes = (await fs.stat(path.join(nsisDir, embedName))).size
   const delta = offlineBytes - embedBytes
   const mb = (n: number) => (n / 1024 / 1024).toFixed(1)

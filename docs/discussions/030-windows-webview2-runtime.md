@@ -184,7 +184,7 @@ WebView2 Runtime 的 License Terms（关键三条）：
 
 ### 6.4 真正的国内瓶颈：GitHub Releases 本身
 
-我们的安装包已经 127MB，从 GitHub Releases 下载在国内本来就痛苦；offline 变体 254MB 只会更痛苦。
+我们的安装包已经 127MB，从 GitHub Releases 下载在国内本来就痛苦；offline 变体 324MB 只会更痛苦。
 
 **但我们自己的安装包是我们自己的产物，托管到国内对象存储 / CDN 100% 合规。** 这件事的收益大于折腾 WebView2 的源。属分发渠道议题，本讨论只记录，不展开。
 
@@ -228,11 +228,13 @@ Electron 自带 Chromium，**根本没有这个问题**。所以拿它们做参�
 | 模式 | 增量 | 我们的 setup.exe | 安装期联网 | 备注 |
 |---|---|---|---|---|
 | `downloadBootstrapper`（现状） | +0 | 127MB | **需要**（且明文，§3） | 默认值 |
-| `embedBootstrapper` | +1.8MB | ~129MB | **需要**（bootstrapper 拉 176MB） | 修掉 §3，不解 §4 |
-| `offlineInstaller` | +~127MB | ~254MB | **不需要** | 解 §3 + §4 |
-| `fixedVersion` | +~180MB | ~307MB | 不需要 | 无安全更新，见 §10 |
+| `embedBootstrapper` | +1.8MB | **129.2MB**（实测） | **需要**（bootstrapper 拉 176MB） | 修掉 §3，不解 §4 |
+| `offlineInstaller` | **+195MB**（实测） | **324.4MB**（实测） | **不需要** | 解 §3 + §4 |
+| `fixedVersion` | +~180MB（文档估） | ~307MB | 不需要 | 无安全更新，见 §10 |
 
-**+1.8MB 对我们是白送。+127MB 也只是回到 DMG 的量级。** 这个不对称是本方案的核心依据。
+> embed / offline 两行是 2026-07-10 CI 实测（下载 artifact 量得）；offline 实际比文档说的 +127MB 大得多（**+195MB**，NSIS 对 176MB 的 runtime 再压也有限），断言阈值 100MB 以巨大余量通过。fixedVersion 未实测。
+
+**+1.8MB 对我们是白送。+195MB 也只是把包做到 DMG（228MB）之上一截。** 这个不对称是本方案的核心依据。
 
 ---
 
@@ -251,7 +253,7 @@ Electron 自带 Chromium，**根本没有这个问题**。所以拿它们做参�
 
 **P1 —— 解决国内 + 企业**
 
-3. **CI 增出 offline 变体**：`Ultrawork_x.y.z_x64-offline-setup.exe`（`offlineInstaller`，~254MB，安装期零网络）。
+3. **CI 增出 offline 变体**：`Ultrawork_x.y.z_x64-offline-setup.exe`（`offlineInstaller`，~324MB，安装期零网络）。
    - 实现：Windows 上跑两次 `tauri build --bundles nsis`，第二次用 `--config` 覆盖 `webviewInstallMode`。cargo 有缓存，主要开销是重新打包。
    - `release.yml` 的 artifact / release assets 两处 glob 需加该文件名。
 4. **恢复 MSI**（D2）。先在 CI 上验证 §9.2 的假设。
@@ -277,7 +279,7 @@ Electron 自带 Chromium，**根本没有这个问题**。所以拿它们做参�
 > Ultrawork_0.2.2_x64_en-US.msi    187.61 MB
 > ```
 >
-> 假设成立，D2 落地。**顺带一个未预料的数据点：MSI 比 NSIS 胖 58MB**（同样载荷，WiX cabinet 的压缩率明显不如 NSIS 的 LZMA）。这加固了 §9.3-C 的决定——offline MSI 会来到 ~310MB 量级，不值得。
+> 假设成立，D2 落地。**顺带一个未预料的数据点：MSI 比 NSIS 胖 58MB**（同样载荷，WiX cabinet 的压缩率明显不如 NSIS 的 LZMA）。这加固了 §9.3-C 的决定——offline MSI 会到 ~380MB 量级（embed MSI 已 187.6MB），不值得。
 >
 > 注：`upload-artifact` 是 `if-no-files-found: warn`，所以「job 绿」不等于「出了 msi」，上面的体积是下载 artifact 开包量到的。
 
@@ -393,7 +395,7 @@ tauri-2.10.3/src/lib.rs:206   pub use tauri_runtime_wry::webview_version;
 
 | 编号 | 决策 | 结论 |
 |---|---|---|
-| **D1** | 单包 offline 一刀切 vs 双包？ | **双包**——主包 `embedBootstrapper`（~129MB）+ `-offline-setup.exe`（`offlineInstaller`，~254MB）。与 Clash Verge Rev / pot-desktop 范式一致 |
+| **D1** | 单包 offline 一刀切 vs 双包？ | **双包**——主包 `embedBootstrapper`（~129MB）+ `-offline-setup.exe`（`offlineInstaller`，~324MB）。与 Clash Verge Rev / pot-desktop 范式一致 |
 | **D2** | 是否恢复 MSI？ | **恢复**，前置验证见 §9.2（ADR-041 之后 WiX 失败理由大概率已消失） |
 | **D3** | 最低 Windows 版本？ | **Windows 10 1803+**，明确放弃 Win7/8.1 |
 

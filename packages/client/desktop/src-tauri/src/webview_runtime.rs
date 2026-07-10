@@ -40,9 +40,12 @@ pub fn ensure_webview_runtime() {
         const WEBVIEW2_DOWNLOAD_URL: &str =
             "https://developer.microsoft.com/en-us/microsoft-edge/webview2/consumer/";
 
-        // Custom button labels need rfd's `common-controls-v6` feature, which we
-        // do not control (rfd arrives via tauri-plugin-dialog): without it,
-        // `OkCancelCustom` silently degrades to a plain OK/Cancel. Yes/No always works.
+        // tauri-plugin-dialog pulls rfd with `common-controls-v6` on, and Cargo
+        // features union across the tree, so this dialog goes through
+        // TaskDialogIndirect (which relies on the Common-Controls v6 assembly in
+        // Tauri's default app manifest) rather than a bare MessageBoxW. Custom
+        // button labels would need that same feature; YesNo renders correctly on
+        // both backends, so use it and sidestep the coupling.
         let go_download = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
             .set_title("缺少 Microsoft Edge WebView2 运行时")
