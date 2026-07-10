@@ -43,6 +43,84 @@ const sidecarTargets = (() => {
   return ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 })()
 
+// ── Windows: two NSIS installers + one MSI (discussions/030 D1/D2) ─
+//
+//   *-setup.exe          embeds the 1.8MB WebView2 bootstrapper, which downloads
+//                        the ~176MB runtime at install time. The default.
+//   *-offline-setup.exe  carries the whole runtime; installs with no network.
+//                        For China / air-gapped / locked-down machines.
+//   *_en-US.msi          embed flavour only — enterprise deploys via SCCM/Intune
+//                        usually pre-provision WebView2, and stuffing 127MB of
+//                        runtime through WiX's cabinet is a risk for no gain.
+//
+// `offlineInstaller` needs no `path`: tauri-bundler downloads the runtime itself
+// at bundle time and caches it under %LOCALAPPDATA%\tauri. That download resolves
+// a Microsoft fwlink and then asserts the redirect target starts with a hardcoded
+// CDN prefix, so it can fail on networks that land on a different edge — see
+// discussions/030 §9.3-A for the pre-seed escape hatch.
+const WEBVIEW2_OFFLINE_MIN_DELTA = 100 * 1024 * 1024
+
+const OFFLINE_SUFFIX = "-offline-setup.exe"
+
+async function buildWindowsInstallers(
+  tauriBuild: (extra: string[]) => Promise<unknown>,
+  nsisDir: string,
+) {
+  const fs = await import("fs/promises")
+  const listExes = async (): Promise<string[]> => fs.readdir(nsisDir).catch(() => [])
+  // `-offline-setup.exe` also ends in `-setup.exe`, so the default installer has to
+  // be identified by exclusion.
+  const defaultSetupExes = async () =>
+    (await listExes()).filter((f) => f.endsWith("-setup.exe") && !f.endsWith(OFFLINE_SUFFIX))
+
+  // Stale outputs from an earlier local `bun run release` would make the
+  // "exactly one" check below ambiguous, and a leftover offline exe could survive
+  // a failed rebuild and be published. CI starts clean; developers do not.
+  for (const stale of await listExes()) {
+    if (stale.endsWith(".exe")) await fs.rm(path.join(nsisDir, stale))
+  }
+
+  // Offline goes first. tauri-bundler hardcodes the output name as
+  // `{product}_{version}_{arch}-setup.exe` (nsis/mod.rs), so the second NSIS build
+  // silently overwrites the first — renaming in between is the only way to keep both.
+  const offlineConfig = JSON.stringify({
+    bundle: { windows: { webviewInstallMode: { type: "offlineInstaller", silent: true } } },
+  })
+  console.log("\n🔨 tauri build — offline WebView2 variant...")
+  await tauriBuild(["--bundles", "nsis", "--config", offlineConfig])
+
+  const produced = await defaultSetupExes()
+  if (produced.length !== 1) {
+    throw new Error(
+      `expected exactly one *-setup.exe after the offline build, found ${produced.length}: ${produced.join(", ")}`,
+    )
+  }
+  const offlineName = produced[0].replace(/-setup\.exe$/, OFFLINE_SUFFIX)
+  await fs.rename(path.join(nsisDir, produced[0]), path.join(nsisDir, offlineName))
+  console.log(`   → ${offlineName}`)
+
+  console.log("\n🔨 tauri build — default (embedded bootstrapper) + MSI...")
+  await tauriBuild(["--bundles", "nsis", "msi"])
+
+  // A wrong `webviewInstallMode` does not fail the build — it silently falls back,
+  // and the only visible symptom is a smaller installer. v0.2.2 shipped a broken
+  // DMG layout for exactly this class of reason, so assert rather than trust.
+  const offlineBytes = (await fs.stat(path.join(nsisDir, offlineName))).size
+  const embedName = produced[0]
+  const embedBytes = (await fs.stat(path.join(nsisDir, embedName))).size
+  const delta = offlineBytes - embedBytes
+  const mb = (n: number) => (n / 1024 / 1024).toFixed(1)
+  console.log(`\n📏 ${embedName}: ${mb(embedBytes)} MB`)
+  console.log(`   ${offlineName}: ${mb(offlineBytes)} MB  (+${mb(delta)} MB)`)
+  if (delta < WEBVIEW2_OFFLINE_MIN_DELTA) {
+    throw new Error(
+      `offline installer is only ${mb(delta)} MB larger than the default one; ` +
+        `the bundled WebView2 runtime (~127MB) is missing — webviewInstallMode likely did not apply`,
+    )
+  }
+  console.log("   WebView2 offline runtime ✓")
+}
+
 // ── Non-macOS release path ────────────────────────────────────────
 // Windows/Linux have no Apple signing/notarization pipeline. Build the
 // current-platform sidecars + run `tauri build`, which emits the platform's
@@ -59,20 +137,20 @@ if (!isMacOS) {
     await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
     await $`bun run ${path.join(rootDir, "scripts/build-acp.ts")} --target ${target}`.quiet(!verbose)
   }
-  // Linux: restrict to deb+rpm. AppImage's linuxdeploy needs FUSE/GStreamer
-  // plumbing that's fragile on CI runners; deb/rpm cover the install story.
-  // Windows: NSIS only. WiX v3 (MSI) light.exe fails outright on the
-  // ppt-master resource tree (12k files / deep icon paths, CI-proven
-  // 2026-07-02: "failed to run ...WixTools314\light.exe"); NSIS packs the
-  // same tree fine and *-setup.exe is the primary installer anyway.
-  const bundles =
-    process.platform === "linux" ? ["--bundles", "deb", "rpm"]
-    : process.platform === "win32" ? ["--bundles", "nsis"]
-    : []
-  console.log("\n🔨 Running tauri build...")
-  await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${target} ${bundles}`
-    .quiet(!verbose)
   const bundleDir = path.join(tauriDir, "target", target, "release/bundle")
+  const desktopDir = path.join(rootDir, "packages/client/desktop")
+  const tauriBuild = (extra: string[]) =>
+    $`cd ${desktopDir} && bun run --bun tauri build --target ${target} ${extra}`.quiet(!verbose)
+
+  if (process.platform === "win32") {
+    await buildWindowsInstallers(tauriBuild, path.join(bundleDir, "nsis"))
+  } else {
+    // Linux: restrict to deb+rpm. AppImage's linuxdeploy needs FUSE/GStreamer
+    // plumbing that's fragile on CI runners; deb/rpm cover the install story.
+    console.log("\n🔨 Running tauri build...")
+    await tauriBuild(["--bundles", "deb", "rpm"])
+  }
+
   console.log(`\n🎉 Release build complete! Installers under:`)
   console.log(`   ${bundleDir}`)
   process.exit(0)

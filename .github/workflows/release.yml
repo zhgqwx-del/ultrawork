@@ -72,6 +72,19 @@ jobs:
             bun run release --unsigned
           fi
 
+      # tauri-bundler fetches the NSIS toolchain and — for the offline installer —
+      # the ~176MB WebView2 runtime into this directory, keyed only on the file
+      # existing. Caching it saves the download and, more importantly, insulates the
+      # build from `WebView2 URL prefix mismatch`: the bundler asserts Microsoft's
+      # fwlink redirects to a hardcoded CDN host, which is geo-balanced.
+      # See discussions/030 §9.3-A.
+      - name: Cache Tauri bundler tools (NSIS + WebView2 runtime)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-nsis3.11-webview2
+
       # Windows / Linux: build-release.ts builds sidecars + `tauri build`.
       # APPIMAGE_EXTRACT_AND_RUN: linuxdeploy/appimagetool need FUSE, which GitHub
       # Actions runners lack — extract-and-run avoids FUSE (ignored on Windows).

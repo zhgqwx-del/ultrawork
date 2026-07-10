@@ -270,7 +270,16 @@ Electron 自带 Chromium，**根本没有这个问题**。所以拿它们做参�
 
 **该理由大概率已失效**：ADR-041（2026-07-03）把 builtin-skills 从 12k 松散文件改成**单个 zip**，Resources 降到 4 个文件 / 10MB。注释的日期（07-02）恰好在 ADR-041 之前一天。
 
-验证方法：CI 上把 `--bundles nsis` 改成 `--bundles nsis msi` 跑一次 `workflow_dispatch`。若通过则恢复 MSI；若仍失败，抓 `light.exe` 的真实错误再判。
+> **✅ 已实证（2026-07-10）**：在一次性分支 `chore/msi-probe` 上把 `--bundles nsis` 改成 `nsis msi`，`workflow_dispatch` 跑 release.yml，**Windows job 全绿且真的产出了 MSI**：
+>
+> ```
+> Ultrawork_0.2.2_x64-setup.exe    129.18 MB
+> Ultrawork_0.2.2_x64_en-US.msi    187.61 MB
+> ```
+>
+> 假设成立，D2 落地。**顺带一个未预料的数据点：MSI 比 NSIS 胖 58MB**（同样载荷，WiX cabinet 的压缩率明显不如 NSIS 的 LZMA）。这加固了 §9.3-C 的决定——offline MSI 会来到 ~310MB 量级，不值得。
+>
+> 注：`upload-artifact` 是 `if-no-files-found: warn`，所以「job 绿」不等于「出了 msi」，上面的体积是下载 artifact 开包量到的。
 
 **MSI 的 WebView2 连带约束**：MSI 侧 `downloadBootstrapper` 走 PowerShell `Invoke-WebRequest`，官方明说在 Win7 上不工作。我们既然统一改 `embedBootstrapper`，MSI 与 NSIS 行为一致（都走 CustomAction / ExecWait 跑包内 exe），无额外风险。
 
