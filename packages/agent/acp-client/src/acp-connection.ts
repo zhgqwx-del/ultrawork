@@ -200,7 +200,13 @@ export class ACPConnection {
   /** Idle-guard state per in-flight prompt: last activity + running tools + TTFB flag. */
   private promptActivity = new Map<
     string,
-    { last: number; activeTools: Set<string>; pendingTools: Set<string>; sawFirst: boolean }
+    {
+      last: number
+      activeTools: Set<string>
+      pendingTools: Set<string>
+      settledTools: Set<string>
+      sawFirst: boolean
+    }
   >()
   private pendingRequests = new Set<PendingRequest>()
   private updateChain: Promise<void> = Promise.resolve()
@@ -405,6 +411,7 @@ export class ACPConnection {
       last: Date.now(),
       activeTools: new Set<string>(),
       pendingTools: new Set<string>(),
+      settledTools: new Set<string>(),
       sawFirst: false,
     }
     this.promptActivity.set(sessionId, activity)
@@ -674,16 +681,25 @@ export class ACPConnection {
               activity.pendingTools.delete(u.toolCallId)
               activity.activeTools.add(u.toolCallId)
             } else if (u.status === "completed" || u.status === "failed") {
+              activity.settledTools.add(u.toolCallId)
               activity.pendingTools.delete(u.toolCallId)
               activity.activeTools.delete(u.toolCallId)
               // Post-tool the agent re-enters a cold first-content window (it
               // may re-read a large context before answering), so restore the
               // longer TTFB budget until it speaks again.
               if (activity.activeTools.size === 0 && activity.pendingTools.size === 0) activity.sawFirst = false
-            } else {
-              // `pending`, or a first `tool_call` frame with no status at all
-              // (the SDK allows omitting it): the agent has announced the tool
-              // and is now streaming its arguments in silence (ADR-049).
+            } else if (!activity.settledTools.has(u.toolCallId)) {
+              // `pending`, or a frame with no status at all (the SDK allows
+              // omitting it): the agent has announced the tool and is now
+              // streaming its arguments in silence (ADR-049).
+              //
+              // The `settled` check is load-bearing: the claude adapter also
+              // sends STATUSLESS `tool_call_update` frames *after* a tool
+              // finishes (the PostToolUse Edit/Write diff, and terminal-output
+              // meta for Bash). Without it, such a frame would resurrect a
+              // finished tool into pendingTools, where nothing ever removes it —
+              // and the watchdog would spend the rest of the turn stuck on the
+              // 10-minute tool-silence bar, blind to a real mid-turn stall.
               activity.pendingTools.add(u.toolCallId)
             }
           }

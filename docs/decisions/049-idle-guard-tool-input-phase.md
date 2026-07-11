@@ -67,6 +67,8 @@
 
 **修法对称**：新增 `pendingTools` 集合——`tool_call` 的 `pending`（或**省略 status** 的首帧，SDK 允许）入集、`in_progress` 转入 `activeTools`、`completed`/`failed` 两集合都清；`inTool` 判据改为 `activeTools ∪ pendingTools` 非空 ⇒ 该窗口自动复用**已有的** `ACP_PROMPT_TOOL_SILENCE_MAX_MS`（默认已是 600s）。**不引入新常量**，两条后端路径四相位语义完全一致。
 
+**一个 code review 抓出来的自伤缺陷（已修）**：adapter 还会在工具**完成之后**发**不带 status** 的 `tool_call_update`（PostToolUse 的 Edit/Write diff、Bash 的 terminal-output meta，见 `acp-agent.js:3346/3457`）。最初的写法把「任何非 in_progress/completed/failed 的帧」都塞进 `pendingTools` ⇒ 这类帧会把**已结束的工具复活**进 pending 集合、而**再无任何路径删它** ⇒ 此后整个回合 `inTool` 恒真、看门狗**永久停在 600s 杠**上，对真正的流中停顿彻底失明（改动前的代码不可能泄漏——它只在 `in_progress` 加、只在终态删，是本次改动引入的）。修法=加 `settledTools` 集合，终态后不再复活。回归用例 + A/B 反证：撤掉守卫后该用例耗时 5021ms（等满 5000ms 工具静默杠而非 100ms idle 杠），泄漏直接被量出来。
+
 **排查中的一处自我纠错**：我最初用 `/acp/global/events` 观测，据此以为「权限请求从未发生」。实际上**全局流只广播 `session.status`**（`acp-manager.ts:327`），`permission.asked` 与消息 part 都走 `/acp/session/:id/events` —— 我的 harness 一直没在听，于是 agent 在等一个没人回的权限，把「回合卡在 pending 20 分钟」的假象算到了缺陷头上。改订阅 + 自动放行后，上表的 A/B 才是干净的。
 
 ## 备选与权衡

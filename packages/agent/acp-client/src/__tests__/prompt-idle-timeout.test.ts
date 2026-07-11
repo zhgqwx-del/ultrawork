@@ -222,6 +222,26 @@ describe("ACP idle guard — tool argument streaming (ADR-049)", () => {
     await expect(p).resolves.toBe("end_turn")
   })
 
+  // The claude adapter also emits STATUSLESS tool_call_update frames AFTER a tool
+  // finishes (PostToolUse Edit/Write diff; terminal-output meta for Bash). Such a
+  // frame must not resurrect the finished tool into pendingTools — nothing would
+  // ever remove it, and the watchdog would spend the rest of the turn stuck on the
+  // 10-minute tool-silence bar instead of the 30s idle bar.
+  it("a statusless tool_call_update after completion does not resurrect the tool", async () => {
+    process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "100"
+    process.env.ACP_PROMPT_TTFB_TIMEOUT_MS = "100"
+    process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS = "5000"
+    const { conn, update } = makeConn(never)
+    const p = (conn as unknown as { prompt(s: string, t: string): Promise<string> }).prompt(SID, "hi")
+    await update({ sessionUpdate: "tool_call", toolCallId: "t1", status: "pending" })
+    await update({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "in_progress" })
+    await update({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" })
+    // PostToolUse diff / terminal-output frame — no status field at all.
+    await update({ sessionUpdate: "tool_call_update", toolCallId: "t1" })
+    // The agent then goes silent: this MUST still be caught by the short bar.
+    await expect(p).rejects.toThrow(/idle for 100ms|idle for 100ms/)
+  })
+
   it("re-arms the short idle bar once the tool completes", async () => {
     process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "100"
     process.env.ACP_PROMPT_TTFB_TIMEOUT_MS = "100"
