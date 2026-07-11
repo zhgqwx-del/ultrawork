@@ -13,6 +13,7 @@
     "tauri:build": "bun run --bun tauri build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e:scroll": "bun run --bun e2e/session-scroll.e2e.ts",
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
     "e2e:add-source-auth": "bun run --bun e2e/add-source-auth.e2e.ts",
@@ -94,7 +95,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",

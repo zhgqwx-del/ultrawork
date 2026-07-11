@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **会话回复完成后停在半空，没有贴底（ADR-047）**：真机逐帧采样定位到三条互相独立的根因——① `content-visibility: auto` 在 `isStreaming` 翻假那一帧落到刚完成的 turn 上，首次应用没有 remembered size 只能用 `contain-intrinsic-size` 的 500px fallback，`scrollHeight` 从 2327 塌到 658，`scrollTop = scrollHeight` 滚到的「底部」其实接近顶部；② `contentRef` 是 `display:flex` 容器里被 stretch 的 flex item，高度恒等于容器内高，它的 ResizeObserver 从 ADR-021 Phase 4 落地起就只触发过 1 次；③ 完成路径没有任何补正，`useStableStreaming` 在 +600ms 的重排不改 `messages` 也不触发 RO。修法：移除 content-visibility、滚动容器改 block + 内容层 `mx-auto`、`use-session-scroll.ts` 换用 `use-stick-to-bottom`。实测完成后 Δbottom 1619px → 1px，RO 触发 1 → 120+ 次。
+- **切换会话时视图会可见地「弹簧滚动」到底**：`use-stick-to-bottom` 的 `initial` 动画只作用于内容观察器看到的第一次 resize，而 `SessionPage` 跨 `/session/:id` 复用不重挂载，历史内容以普通增长涌入 → 走 `resize` 弹簧分支（实测 `scrollTop` 经过 75 个取值，0→3514）。修法：会话变更后 800ms 内把 `resize` 临时钉成 `instant`。修复后只经过 2-3 个取值。
+- **用户上滚看历史时被强行拽回底部**：原 escaped 检测只监听 `wheel && deltaY < 0`，拖滚动条 / PageUp / Home / 触摸拖拽一律漏检。改为按位置判定（随 `use-stick-to-bottom`）。流式期间选中文本也不再被自动滚动抽走。
+- **回复完成后最后一条消息与输入框之间留白过大**：内容层底部 `pb-24`（96px）是既存值（2026-07-08 UI 密度走查引入），修复前贴底是坏的、这段留白从未真正出现在视口底部，贴底修好后第一次暴露。间隔在流式态与完成态恒定。收窄为 `pb-8`（32px）。纯视觉调整，不触及滚动机制。
+
+### Added
+
+- 会话转录区「回到底部」浮动按钮：离开底部时出现，点击平滑回底并重新贴底。此前 `useSessionScroll` 返回了 `userScrolled` 却无人消费。
+- `e2e/session-scroll.e2e.ts`（`bun run --bun e2e/session-scroll.e2e.ts`，`E2E_ENGINE=webkit` 切引擎）：贴底 / RO 存活 / 无 content-visibility / 拖滚动条不被拽回 / 回底按钮 / 折叠不跳动。**两个引擎都要跑**——Chromium 的原生 scroll anchoring 会独自吸收折叠，相关用例在它上面是空跑。前置条件不满足时打 `SKIP ⚠️` 而非静默 PASS。
+
+### Changed
+
+- `packages/client/desktop` 新增依赖 `use-stick-to-bottom@1.1.6`（~5KB，Vercel AI Elements / ElevenLabs UI 同款）；`use-session-scroll.ts` 从 175 行自研启发式缩到 ~95 行包装层。
+- **移除转录区的 `content-visibility: auto`，长会话实测零性能退化**：30 轮会话全展开（60 turn 塞进 DOM，绕过 `TURN_INIT=15` 窗口化）同 DOM A/B，两引擎：滚动扫掠零掉帧，强制同步布局 WebKit 0.45ms / Chromium 0.29ms，去 CV 与有 CV 无可测差异（有 CV 反而略贵）。窗口化 + 逐 turn memo 已足够，CV 那层的性能收益在实测中不存在。
+
 ## [0.2.3] - 2026-07-10
 
 > Windows 装机可靠性批次：修掉默认安装模式在明文 HTTP 上下载并执行 WebView2 bootstrapper 的问题；Windows 改出双安装包（embed 主包 + offline 零网络变体，供国内/内网）+ 恢复 MSI（企业部署）+ 首启 WebView2 自检；正式声明最低支持 Windows 10 1803+。
