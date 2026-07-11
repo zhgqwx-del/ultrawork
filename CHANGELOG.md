@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-11
+
+> 会话转录区贴底滚动修复批次（ADR-047）：回复完成后不再停在半空、切会话不再弹簧滚动、上滚看历史不再被拽回底部，并新增「回到底部」按钮。转录区移除 `content-visibility: auto`（长会话实测零性能退化）。
+
 ### Fixed
 
 - **会话回复完成后停在半空，没有贴底（ADR-047）**：真机逐帧采样定位到三条互相独立的根因——① `content-visibility: auto` 在 `isStreaming` 翻假那一帧落到刚完成的 turn 上，首次应用没有 remembered size 只能用 `contain-intrinsic-size` 的 500px fallback，`scrollHeight` 从 2327 塌到 658，`scrollTop = scrollHeight` 滚到的「底部」其实接近顶部；② `contentRef` 是 `display:flex` 容器里被 stretch 的 flex item，高度恒等于容器内高，它的 ResizeObserver 从 ADR-021 Phase 4 落地起就只触发过 1 次；③ 完成路径没有任何补正，`useStableStreaming` 在 +600ms 的重排不改 `messages` 也不触发 RO。修法：移除 content-visibility、滚动容器改 block + 内容层 `mx-auto`、`use-session-scroll.ts` 换用 `use-stick-to-bottom`。实测完成后 Δbottom 1619px → 1px，RO 触发 1 → 120+ 次。
