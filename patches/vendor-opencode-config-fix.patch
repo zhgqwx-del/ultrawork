@@ -923,10 +923,10 @@ index 16b9e559f..41e8fb3cd 100644
        "/dispose",
        describeRoute({
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
-index dc89db409..31cb5666e 100644
+index dc89db409..505bc0a52 100644
 --- a/packages/opencode/src/session/llm.ts
 +++ b/packages/opencode/src/session/llm.ts
-@@ -22,6 +22,80 @@ export namespace LLM {
+@@ -22,6 +22,128 @@ export namespace LLM {
    const log = Log.create({ service: "llm" })
    export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
  
@@ -946,16 +946,41 @@ index dc89db409..31cb5666e 100644
 +  // moment the FIRST result landed, killing siblings still executing). The id
 +  // field on fullStream tool events is `toolCallId`.
 +  //
-+  // Two-tier: before the first token a long budget tolerates prefill / cold
-+  // start / a reasoning model thinking silently (TTFB); once tokens are
-+  // flowing the gap collapses to sub-second, so a much shorter idle catches a
-+  // mid-stream stall (the observed qwen case: reasoning streamed, then the
-+  // answer block opened and wedged) without waiting out the whole TTFB budget.
++  // Four phases (ADR-049 added the third):
++  //
++  //   1. before the first token       -> TTFB budget (prefill / cold start /
++  //                                      a reasoning model thinking silently)
++  //   2. streaming text or reasoning  -> short idle bar (chunks are sub-second
++  //                                      here, so a stall shows up fast)
++  //   3. streaming a TOOL'S ARGUMENTS -> long backstop (see below)
++  //   4. a tool is executing          -> disarmed
++  //
++  // Phase 3 is why this guard was killing legitimate turns: qwen/DashScope has
++  // a BUFFERED mode for tool arguments — it emits the function name plus a few
++  // dozen bytes of argument prefix, then generates the entire argument body
++  // server-side and flushes it in ONE chunk. Measured (direct SSE probe, no
++  // idle timeout): 37-65s of total silence, 12/12 runs, and 12/12 recovered
++  // and finished normally. The old code had no phase for this window — the id
++  // only enters `inflightTools` at `tool-call`, which is precisely the event
++  // that never arrives during the stall — so it measured a legitimate 40-60s
++  // window with the 30s bar and killed the turn every time.
++  //
++  // The backstop is deliberately huge rather than "measured max x N": a stall
++  // and a server buffering arguments are INDISTINGUISHABLE on the wire (both
++  // are zero bytes), and argument size does not predict silence (62k-char
++  // arguments streamed incrementally with 8s gaps; 8k-char ones buffered for
++  // 48s). Killing a legitimate 200s argument generation loses the user's work;
++  // waiting out a real hang is merely slow, and the user can always hit stop.
++  // The guard's one hard requirement — never leave the session lock wedged
++  // forever (ADR-034) — is still met. 600s mirrors the ACP side's tool-silence
++  // ceiling (ACP_PROMPT_TOOL_SILENCE_MAX_MS), keeping both backends symmetric.
++  //
 +  // Each opencode step is a fresh streamText/idleGuard, so a multi-step turn's
 +  // post-tool first token already re-enters TTFB naturally; env-overridable so
 +  // ops can tune without recompiling the sidecar.
 +  const STREAM_TTFB_TIMEOUT_MS = Number(process.env.OPENCODE_STREAM_TTFB_TIMEOUT_MS ?? 90_000)
 +  const STREAM_IDLE_TIMEOUT_MS = Number(process.env.OPENCODE_STREAM_IDLE_TIMEOUT_MS ?? 30_000)
++  const STREAM_TOOL_INPUT_TIMEOUT_MS = Number(process.env.OPENCODE_STREAM_TOOL_INPUT_TIMEOUT_MS ?? 600_000)
 +
 +  async function* idleGuard<T extends { type: string }>(
 +    source: AsyncIterable<T>,
@@ -963,11 +988,19 @@ index dc89db409..31cb5666e 100644
 +  ): AsyncGenerator<T> {
 +    const it = source[Symbol.asyncIterator]()
 +    const inflightTools = new Set<string>()
++    // Tool calls whose name has been announced but whose arguments are still
++    // streaming: `tool-input-start.id` is the same value as the later
++    // `tool-call.toolCallId` (processor.ts keys its tool parts off both).
++    const pendingInputs = new Set<string>()
 +    let sawFirstToken = false
 +    try {
 +      while (true) {
 +        let timer: ReturnType<typeof setTimeout> | undefined
-+        const limit = sawFirstToken ? STREAM_IDLE_TIMEOUT_MS : STREAM_TTFB_TIMEOUT_MS
++        const limit = pendingInputs.size
++          ? STREAM_TOOL_INPUT_TIMEOUT_MS
++          : sawFirstToken
++            ? STREAM_IDLE_TIMEOUT_MS
++            : STREAM_TTFB_TIMEOUT_MS
 +        const idle = new Promise<never>((_, reject) => {
 +          if (inflightTools.size === 0)
 +            timer = setTimeout(() => reject(new Error(`LLM stream idle for ${limit}ms`)), limit)
@@ -982,17 +1015,32 @@ index dc89db409..31cb5666e 100644
 +          if (timer) clearTimeout(timer)
 +        }
 +        if (res.done) return
-+        const ev = res.value as { type: string; toolCallId?: string }
++        const ev = res.value as { type: string; id?: string; toolCallId?: string }
 +        // First real token (content delta) switches to the shorter idle bar.
 +        if (ev.type === "text-delta" || ev.type === "reasoning-delta") sawFirstToken = true
-+        if (ev.type === "tool-call") {
-+          if (ev.toolCallId) inflightTools.add(ev.toolCallId)
++        if (ev.type === "tool-input-start") {
++          if (ev.id) pendingInputs.add(ev.id)
++        } else if (ev.type === "tool-call") {
++          if (ev.toolCallId) {
++            pendingInputs.delete(ev.toolCallId)
++            inflightTools.add(ev.toolCallId)
++          }
 +        } else if (ev.type === "tool-result" || ev.type === "tool-error") {
-+          if (ev.toolCallId) inflightTools.delete(ev.toolCallId)
++          if (ev.toolCallId) {
++            // tool-error can land without a preceding tool-call (a repaired /
++            // invalid call), so clear both sets or the id leaks and every
++            // later gap in this stream silently gets the 600s bar.
++            pendingInputs.delete(ev.toolCallId)
++            inflightTools.delete(ev.toolCallId)
++          }
 +          // Defensive (today each step is its own stream, so this is moot): if
 +          // a future AI SDK emits a post-tool generation in the same stream,
 +          // restore the TTFB budget for that next first token.
 +          if (inflightTools.size === 0) sawFirstToken = false
++        } else if (ev.type === "finish-step") {
++          // Backstop against any id we never saw resolve: a step boundary means
++          // no argument stream is outstanding.
++          pendingInputs.clear()
 +        }
 +        yield res.value
 +      }
@@ -1007,7 +1055,7 @@ index dc89db409..31cb5666e 100644
    export type StreamInput = {
      user: MessageV2.User
      sessionID: string
-@@ -63,8 +137,13 @@ export namespace LLM {
+@@ -63,8 +185,13 @@ export namespace LLM {
  
                  const result = yield* Effect.promise(() => LLM.stream({ ...input, abort: ctrl.signal }))
  
@@ -1023,7 +1071,7 @@ index dc89db409..31cb5666e 100644
                  )
                }),
              ),
-@@ -289,6 +368,11 @@ export namespace LLM {
+@@ -289,6 +416,11 @@ export namespace LLM {
        providerOptions: ProviderTransform.providerOptions(input.model, params.options),
        activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
        tools,

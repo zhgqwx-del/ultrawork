@@ -71,6 +71,17 @@ const promptIdleCheckMs = () => Number(process.env.ACP_PROMPT_IDLE_CHECK_MS ?? 1
 // `in_progress`, the tool itself is wedged (e.g. the documented gemini
 // interactive-shell hang, §8) or its completion frame omitted a status (the
 // SDK allows it) and never cleared activeTools. Either way, break the turn.
+//
+// ADR-049: the same relaxed window also covers a tool_call that is still
+// `pending` — announced but not yet executing. That is the window in which the
+// agent is STREAMING THE TOOL'S ARGUMENTS, and the claude adapter emits nothing
+// at all while it does (`case "input_json_delta": break` — it only sends
+// `tool_call{status:"pending"}` at content_block_start and the filled-in
+// `tool_call_update` once the block closes). Writing a large file therefore goes
+// minutes without a single session/update, and the 30s idle bar killed the turn
+// every time — reproduced against the real claude agent: the turn died with a
+// `pending` tool part whose input was still `{}`. Counting pending tools as
+// "in tool" is what makes the ACP guard symmetric with the opencode one.
 const promptToolSilenceMaxMs = () => Number(process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS ?? 600_000)
 
 // GUI-launched processes (the packaged Tauri app) inherit a minimal PATH that
@@ -187,7 +198,16 @@ export class ACPConnection {
   private permSeq = 0
   private activePrompts = new Set<string>()
   /** Idle-guard state per in-flight prompt: last activity + running tools + TTFB flag. */
-  private promptActivity = new Map<string, { last: number; activeTools: Set<string>; sawFirst: boolean }>()
+  private promptActivity = new Map<
+    string,
+    {
+      last: number
+      activeTools: Set<string>
+      pendingTools: Set<string>
+      settledTools: Set<string>
+      sawFirst: boolean
+    }
+  >()
   private pendingRequests = new Set<PendingRequest>()
   private updateChain: Promise<void> = Promise.resolve()
   private closing = false
@@ -387,7 +407,13 @@ export class ACPConnection {
     const wireText = opts?.systemPrefix ? `${opts.systemPrefix}\n\n${text}` : text
     shaper.startTurn(text)
     this.activePrompts.add(sessionId)
-    const activity = { last: Date.now(), activeTools: new Set<string>(), sawFirst: false }
+    const activity = {
+      last: Date.now(),
+      activeTools: new Set<string>(),
+      pendingTools: new Set<string>(),
+      settledTools: new Set<string>(),
+      sawFirst: false,
+    }
     this.promptActivity.set(sessionId, activity)
     let idleTimer: ReturnType<typeof setInterval> | undefined
     try {
@@ -407,8 +433,11 @@ export class ACPConnection {
       const toolSilenceMaxMs = promptToolSilenceMaxMs()
       const idlePromise = new Promise<never>((_, reject) => {
         idleTimer = setInterval(() => {
-          const inTool = activity.activeTools.size > 0
-          // tool running → tool-silence cap; else first-update-yet → TTFB; else idle.
+          // "In tool" spans BOTH the argument-streaming window (pending, silent
+          // by design — ADR-049) and execution (in_progress).
+          const inTool = activity.activeTools.size > 0 || activity.pendingTools.size > 0
+          // tool running or its args still streaming → tool-silence cap;
+          // else first-update-yet → TTFB; else idle.
           const limit = inTool ? toolSilenceMaxMs : activity.sawFirst ? idleTimeoutMs : ttfbTimeoutMs
           if (Date.now() - activity.last > limit) {
             if (idleTimer) clearInterval(idleTimer)
@@ -647,13 +676,31 @@ export class ACPConnection {
           if (u.sessionUpdate === "agent_message_chunk" || u.sessionUpdate === "agent_thought_chunk") {
             activity.sawFirst = true
           } else if (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") {
-            if (u.status === "in_progress") activity.activeTools.add(u.toolCallId)
-            else if (u.status === "completed" || u.status === "failed") {
+            if (u.status === "in_progress") {
+              // Arguments are complete; the tool is actually running now.
+              activity.pendingTools.delete(u.toolCallId)
+              activity.activeTools.add(u.toolCallId)
+            } else if (u.status === "completed" || u.status === "failed") {
+              activity.settledTools.add(u.toolCallId)
+              activity.pendingTools.delete(u.toolCallId)
               activity.activeTools.delete(u.toolCallId)
               // Post-tool the agent re-enters a cold first-content window (it
               // may re-read a large context before answering), so restore the
               // longer TTFB budget until it speaks again.
-              if (activity.activeTools.size === 0) activity.sawFirst = false
+              if (activity.activeTools.size === 0 && activity.pendingTools.size === 0) activity.sawFirst = false
+            } else if (!activity.settledTools.has(u.toolCallId)) {
+              // `pending`, or a frame with no status at all (the SDK allows
+              // omitting it): the agent has announced the tool and is now
+              // streaming its arguments in silence (ADR-049).
+              //
+              // The `settled` check is load-bearing: the claude adapter also
+              // sends STATUSLESS `tool_call_update` frames *after* a tool
+              // finishes (the PostToolUse Edit/Write diff, and terminal-output
+              // meta for Bash). Without it, such a frame would resurrect a
+              // finished tool into pendingTools, where nothing ever removes it —
+              // and the watchdog would spend the rest of the turn stuck on the
+              // 10-minute tool-silence bar, blind to a real mid-turn stall.
+              activity.pendingTools.add(u.toolCallId)
             }
           }
         }
