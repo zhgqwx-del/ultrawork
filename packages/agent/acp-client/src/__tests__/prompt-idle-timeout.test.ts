@@ -175,6 +175,68 @@ describe("ACP prompt idle guard", () => {
   })
 })
 
+// ADR-049: the window between `tool_call{status:"pending"}` (the agent has
+// announced a tool) and `in_progress` (it starts executing) is when the agent is
+// STREAMING THE TOOL'S ARGUMENTS — and the claude adapter emits no session/update
+// at all while it does. A large Write therefore goes minutes without a frame, and
+// the 30s idle bar killed the turn (reproduced against the real claude agent: the
+// turn died on a `pending` tool part whose input was still `{}`). Pending tools
+// must be excused just like running ones.
+describe("ACP idle guard — tool argument streaming (ADR-049)", () => {
+  it("does not kill a turn silent past the idle bar while a tool_call is pending", async () => {
+    process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "80"
+    process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS = "5000"
+    let resolveTurn!: (v: { stopReason: string }) => void
+    const { conn, update } = makeConn(() => new Promise((r) => (resolveTurn = r)))
+    const p = (conn as unknown as { prompt(s: string, t: string): Promise<string> }).prompt(SID, "hi")
+    // Agent speaks (sawFirst = true → the short idle bar would now apply)…
+    await update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "writing" } })
+    // …announces the tool, then goes silent while streaming its arguments.
+    await update({ sessionUpdate: "tool_call", toolCallId: "t1", status: "pending" })
+    await tick(300) // >> idle bar (80ms), << tool-silence cap (5000ms)
+    resolveTurn({ stopReason: "end_turn" })
+    await expect(p).resolves.toBe("end_turn")
+  })
+
+  it("still breaks a turn wedged past the tool-silence cap while pending", async () => {
+    process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "80"
+    process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS = "200"
+    const { conn, update, wasCancelled } = makeConn(never)
+    const p = (conn as unknown as { prompt(s: string, t: string): Promise<string> }).prompt(SID, "hi")
+    await update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "writing" } })
+    await update({ sessionUpdate: "tool_call", toolCallId: "t1", status: "pending" })
+    await expect(p).rejects.toThrow(/tool silent for 200ms/)
+    expect(wasCancelled()).toBe(true)
+  })
+
+  it("a first tool_call frame with no status at all is treated as pending", async () => {
+    process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "80"
+    process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS = "5000"
+    let resolveTurn!: (v: { stopReason: string }) => void
+    const { conn, update } = makeConn(() => new Promise((r) => (resolveTurn = r)))
+    const p = (conn as unknown as { prompt(s: string, t: string): Promise<string> }).prompt(SID, "hi")
+    await update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } })
+    await update({ sessionUpdate: "tool_call", toolCallId: "t1" }) // status omitted (SDK allows it)
+    await tick(300)
+    resolveTurn({ stopReason: "end_turn" })
+    await expect(p).resolves.toBe("end_turn")
+  })
+
+  it("re-arms the short idle bar once the tool completes", async () => {
+    process.env.ACP_PROMPT_IDLE_TIMEOUT_MS = "100"
+    process.env.ACP_PROMPT_TTFB_TIMEOUT_MS = "100"
+    process.env.ACP_PROMPT_TOOL_SILENCE_MAX_MS = "5000"
+    const { conn, update } = makeConn(never)
+    const p = (conn as unknown as { prompt(s: string, t: string): Promise<string> }).prompt(SID, "hi")
+    await update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } })
+    await update({ sessionUpdate: "tool_call", toolCallId: "t1", status: "pending" })
+    await update({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "in_progress" })
+    await update({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" })
+    // Both sets are empty again → a silent agent must be caught, not excused.
+    await expect(p).rejects.toThrow(/idle for 100ms/)
+  })
+})
+
 describe("TurnShaper seal (no zombie content after a turn ends)", () => {
   it("drops session/update frames after failTurn until the next startTurn", () => {
     const events: unknown[] = []

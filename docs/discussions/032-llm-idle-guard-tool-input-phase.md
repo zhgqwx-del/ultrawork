@@ -1,10 +1,10 @@
 # 032 — 回复中途报错 `LLM stream idle for 30000ms`：idle 看门狗漏掉「工具参数生成」相位
 
-> 状态：**📋 根因已实证确认，方案已拍板，待实施**（2026-07-11 拍板：工具参数相位用 600s 兜底杠，与 ACP 侧 `ACP_PROMPT_TOOL_SILENCE_MAX_MS` 对称）
+> 状态：**✅ 已落地（ADR-049）**（2026-07-11：工具参数相位给 600s 兜底杠；opencode + ACP **两条后端路径都有同源缺陷、已一并修复**）
 > 日期：2026-07-11
 > 输入：用户三张真机截图（2026-07-09 一张、2026-07-11 两张）——AI 回复中途报 `回合出错: LLM stream idle for 30000ms`，最后一个工具显示 `0ms` + `Tool execution aborted`
 > 关联：ADR-034（LLM 流式 idle 看门狗，本文**证伪其一条核心假设**）· ADR-042（BYOK 联网搜索 / `enable_search`，本文**排除**其嫌疑）· gotchas §1（opencode/llm.ts）
-> 范围：opencode 后端 `session/llm.ts` 的 `idleGuard`。**不含** ACP 侧看门狗（其 `inTool` 语义不同，见 §7 遗留）。
+> 范围：opencode 后端 `session/llm.ts` 的 `idleGuard`，以及 ACP 侧 `acp-connection.ts` 的看门狗（起初以为不含，实测发现同源缺陷 —— 见 §7 R4）。
 
 ---
 
@@ -201,7 +201,7 @@ tool-input-start { id, toolName }  →  tool-input-delta { id, delta }
 | R1 | 缓冲模式的**触发条件未知** | 服务端行为，无法从客户端观测。600s 兜底杠使其无关紧要，但若日后 DashScope 把憋参时间拉得更长，仍需调 env。 |
 | R2 | **真挂死的用户体感变差** | 从「30s 报错」变成「最长干等 600s」。缓解：用户随时可点「停止」。这是 §6.1 取舍的自觉代价。 |
 | R3 | `Tool execution aborted` + `0ms` 的**显示语义误导** | `cleanup()` 把墓碑写成「执行被中断」，且抹掉真实 `time.start`。本次排查一度被它带偏。属既存问题，可另议。 |
-| R4 | **ACP 侧是否有同类相位缺失，未验证** | ACP 的 `inTool` 判据是 `activeTools` 非空，语义与本文不同；claude/gemini 在「组装大工具参数」时是否也会静默 >30s，**没有实测**，不猜。列为观察项。 |
+| R4 | ~~ACP 侧未验证~~ → **已实测，同源缺陷，已一并修复** | 真 Claude agent A/B：未修复的二进制 34s 死于 `ACP turn idle for 30000ms`（工具停在 `pending`、`input={}`），修复后 61.9s 正常收尾（参数流式期间静默 **52.3s**）。根因同构：claude adapter 对 `input_json_delta` 是 `break`，参数窗口零帧；我们只在 `in_progress` 撤防。修法=`pendingTools` 集合复用已有的 600s 工具静默上限。详见 ADR-049 §ACP。**排查中一处自我纠错**：最初只订阅 `/acp/global/events`（只广播 `session.status`），看不到 `permission.asked`，导致 agent 干等无人回复的权限，我一度把这个 harness 假象当成缺陷表现。 |
 | R5 | 其他 provider 是否有缓冲模式 | 未测。但 600s 是**放宽**方向，对其他 provider 只会更安全，无回归风险。 |
 
 ---

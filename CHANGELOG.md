@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - **AI 回复到一半报 `LLM stream idle for 30000ms`、任务越复杂越必挂**（ADR-049）：idle 看门狗漏掉了「模型正在流式吐工具参数」这个相位。工具的 id 只在 `tool-call` 事件到达时才进入「工具在飞」豁免集合，而停流恰恰发生在 `tool-call` 之前 —— 于是看门狗用最紧的 30s 杠，去量一个 qwen/DashScope 正常需要 40~60 秒的窗口。直连 SSE 探针实测：该 provider 在吐工具参数时有一种**缓冲模式**（先报函数名 + 几十字节前缀，然后把整段参数在服务端憋完、一次性 flush），静默 37~65 秒，12/12 复现、且**每一次都会自行恢复并正常收尾** —— 也就是说 provider 没有任何问题，被杀掉的全是合法回合，参数越大（大脚本、大文件）越必然撞穿 30s。修法：给该相位单独一条 600s 兜底杠（与 ACP 侧的工具静默上限对称），文本相位 30s / 首字 90s 不变。**顺带澄清一个误导性显示**：报错前那个 `0ms` + `Tool execution aborted` 的工具，其实**从未执行过** —— 那是回合失败时 `cleanup()` 给未完成工具打的墓碑，且会把 `time.start` 重写成当前时刻（故显示 0ms）。
+- **同一缺陷也存在于 ACP 后端（Claude/Gemini），一并修复**（ADR-049）：Claude 的 ACP adapter 在流式吐工具参数期间**不发任何 `session/update`**（`input_json_delta` 被直接丢弃），只在开头发一个 `status: "pending"` 的 `tool_call`；而我们的看门狗只在 `in_progress` 时才撤防 —— 于是「让 Claude 写一个大文件」必然在 30 秒被杀。真机 A/B 实测：修复前 34s 死于 `ACP turn idle for 30000ms`（工具停在 `pending`、参数为空），修复后 61.9s 正常收尾（期间有一段 **52.3 秒**的合法静默）。修法与 opencode 侧对称：把 `pending` 的工具也算作「在飞」，复用已有的 10 分钟工具静默上限，不新增常量。
 
 - **委派子 agent 的权限请求会在全屏预览切换时永久消失**：`DelegateDock` 自己持有 SSE 订阅与待答权限，而全屏预览会把它在「会话列」与「底部栏」之间 re-parent —— React 视作卸载 + 重建。**而 delegate 的 SSE 只重放 delegates 列表，从不重放待答的权限请求**，于是子 agent 一直阻塞到 sidecar 超时，界面上无任何线索。订阅提升为 Session 级 `useDelegateRows`，dock 退化为纯渲染。
 - **新建会话第一轮产出的产物，未读徽标恒为 0**（这功能的旗舰场景）：「已读」集合要等 fs 扫描 settle 才播种，而扫描只在 agent 空闲时跑 —— 整个第一轮都不 settle，等它 settle 时，这一轮刚产出的文件已在列表里，被一并播成「已经看过」。改为：全新会话无历史产物可播，不必等扫描。

@@ -54,6 +54,21 @@
 
 ⇒ `tool-input-start` 入集；`tool-call` 出集**并**转入 `inflightTools`；**防泄漏**：`tool-result` / `tool-error` 也删（覆盖 `experimental_repairToolCall` 把工具名改写成 `invalid` 等异常路径），`finish-step` 清空整个集合。泄漏的后果不是崩，而是 guard 在该 stream 剩余时间里一直用最松的杠（看门狗部分失效），故必须堵死。
 
+### ACP 侧（同源同形，同一批修复）
+
+**实测坐实**（真 Claude agent + 真 acp-client 二进制，权限自动放行）：让 Claude 一次 Write 写一个 300 行 python 文件——
+
+| 二进制 | 结果 |
+|---|---|
+| 未修复 | ❌ HTTP 502 `ACP turn idle for 30000ms`，34s 死在 `tool:pending` 且 `input={}` |
+| 已修复 | ✅ HTTP 200，61.9s 正常收尾；日志显示参数流式期间 **gap 52.3s 零 `session/update`** |
+
+**根因同构**：claude adapter（`@agentclientprotocol/claude-agent-acp`）对 `input_json_delta` 是 `case "input_json_delta": break` —— **参数流式期间一个 `session/update` 都不发**；它只在 `content_block_start` 发 `tool_call{status:"pending"}`、在 block 收口后发填好 `rawInput` 的 `tool_call_update`。而我们的看门狗只在 **`in_progress`** 时才把工具计入 `activeTools` 撤防（`acp-connection.ts`）⇒ 整个参数窗口用 30s idle 杠去量 ⇒ 必然误杀，写的文件越大越必挂。
+
+**修法对称**：新增 `pendingTools` 集合——`tool_call` 的 `pending`（或**省略 status** 的首帧，SDK 允许）入集、`in_progress` 转入 `activeTools`、`completed`/`failed` 两集合都清；`inTool` 判据改为 `activeTools ∪ pendingTools` 非空 ⇒ 该窗口自动复用**已有的** `ACP_PROMPT_TOOL_SILENCE_MAX_MS`（默认已是 600s）。**不引入新常量**，两条后端路径四相位语义完全一致。
+
+**排查中的一处自我纠错**：我最初用 `/acp/global/events` 观测，据此以为「权限请求从未发生」。实际上**全局流只广播 `session.status`**（`acp-manager.ts:327`），`permission.asked` 与消息 part 都走 `/acp/session/:id/events` —— 我的 harness 一直没在听，于是 agent 在等一个没人回的权限，把「回合卡在 pending 20 分钟」的假象算到了缺陷头上。改订阅 + 自动放行后，上表的 A/B 才是干净的。
+
 ## 备选与权衡
 
 - **工具参数相位完全撤防**（像工具执行那样）：弃用。参数相位真挂死时会永久挂起，正是 ADR-034 要治的死锁。600s 是「保守但有限」的中间态。
@@ -63,6 +78,7 @@
 
 ## 验证
 
+- **ACP 侧**：acp-client 单测 **141**（+4：pending 期间静默不误杀 / 静默跨过 600s 杠仍报 `tool silent` / 首帧省略 status 也按 pending 处理 / 工具完成后短杠重新武装）+ **A/B 反证**（撤掉 pending 判据 → 3/4 新用例变红）+ 真 Claude agent 端到端 A/B（上表）。
 - **Headless 真实二进制**（沿用 ADR-034 配方，`testing.md §8`）：mock OpenAI-compatible provider 新增 `/toolstall` 模式（发工具名 + 几十字节参数前缀 → 静默**跨过旧的 idle 杠** → flush 完整参数 + finish），env 缩小常量以免测试跑太久。断言：① 该回合**不再被杀**、工具正常执行、`finish=stop`；② 静默超过**新的工具参数杠**时**仍然**落 `LLM stream idle` 错误终态（看门狗没被改废）；③ 原有 idle / TTFB / normal 三态不回归。
 - **A/B 反证**：删掉 `pendingInputs` 分支，① 必须变红（防止写出「注释里有 env 名就能过」的假守卫）。
 - **真机验收**：qwen3.7-max + 原始复现场景（「生成一个 pdf，内容随意」）连跑 5 次不再出现 `LLM stream idle for 30000ms`；停流期间点「停止」，会话立刻解锁。
@@ -71,7 +87,6 @@
 
 - **缓冲模式的触发条件未知**（服务端行为，客户端观测不到）。600s 兜底杠使其无关紧要；若日后 DashScope 把憋参时间拉更长，env 可调。
 - **真挂死的用户体感变差**：从「30s 报错」变成「最长干等 600s」。缓解=「停止」按钮。这是上述取舍的自觉代价。
-- **ACP 侧是否有同类相位缺失，未验证**：其 `inTool` 判据是 `activeTools` 非空，语义与本文不同；claude/gemini 组装大工具参数时是否也静默 >30s **没有实测**，列为观察项。
 - **其他 provider 是否也有缓冲模式**：未测。但 600s 是**放宽**方向，对其他 provider 只会更安全，无回归风险。
 - `Tool execution aborted` + `0ms` 的**显示语义误导**（`cleanup()` 抹掉真实 `time.start`）：既存问题，本次不改。
 
