@@ -507,6 +507,16 @@ packages/knowledge/sidecar/
 - `POST /acp/session` 建会话、`POST /acp/session/:id/prompt`，**断言** 502 + error 文案（`idle for Nms`/`tool silent for Nms`）+ 时间窗 + SSE `session.error`；normal 200。实测 14/14。
 - **坑**：silent agent 的 SDK 解析（放包内）、mock OpenAI 端点别被 Bun 的 socket idle timeout 提前关（`idleTimeout:0`）、prompt 后用回合**跨过**超时阈值才采得到（短回合测不出）。
 
+### 8.1 工具参数相位（ADR-049 追加）
+
+复用上面的 opencode 侧 harness，新增一个 mock 模式复刻 **DashScope 缓冲模式**：发 content chunk（让 `sawFirstToken` 置真）→ 发 `tool_calls[0].function.name` + 几十字节参数前缀 → **静默 N 秒** → 一次性 flush 剩余参数 + `finish_reason:"tool_calls"`。env 缩短三个常量（如 `IDLE=2s / TOOL_INPUT=6s / TTFB=8s`）。**四条断言**：① 静默 4s（> idle 杠、< 工具参数杠）⇒ 回合**不再被杀**、工具正常执行、正常收尾；② 静默 8.5s（> 工具参数杠）⇒ **仍**落 `LLM stream idle for 6000ms`（证明看门狗没被改废）；③ 文本相位静默 ⇒ 仍报 `idle for 2000ms`（ADR-034 不回归）；④ 正常流不误杀。实测 4/4。
+
+**踩过的四个坑**（都会让测试假绿/假红）：
+1. **`OPENCODE_APP_NAME` 不设 ⇒ 沙箱配置读不到**：`global/index.ts` 的目录名取自该 env（缺省 `opencode`），而生产是 `ultrawork`。配置写进 `<XDG_CONFIG_HOME>/ultrawork/` 但 sidecar 去 `<XDG_CONFIG_HOME>/opencode/` 找 → provider 不存在 → prompt 静悄悄没反应（**mock 零请求**是这个症状的指纹）。
+2. **标题识别不能用宽松匹配**：`body.includes("title")` 会命中**工具 schema 里的 `title` 字段** ⇒ 主回合请求也走进「快速正常回答」旁路 ⇒ 四个模式全部秒「完成」、全绿但什么都没测。必须用严格签名 `body.includes("Generate a title")`。
+3. **tool part 在「工具执行的那一步」，不在最后一条 assistant 消息**：opencode 每个 step 一条 assistant 消息，最后一条是工具结果回灌后的收尾步（无 tool part）。断言必须**跨全部 assistant 消息**找。
+4. **`scripts/build-opencode.ts` 的新鲜度检查看不到裸的 vendor 源码改动**（它 hash 的是 submodule HEAD + **patch 文件** + 脚本自身）。做 A/B 反证时若只改源码不重生成 patch，会打印 `up-to-date, skipping build` 并**继续跑旧二进制**（表现为「撤掉修复后测试依然全绿」）。**A/B 必须加 `--force`**。
+
 ## 9. 端口 / 进程相关测试的两条硬约束（ADR-045）
 
 **测试里不要 `bind(0)` → drop → 再期望该端口仍空闲。** 临时端口是内核回收再分配的共享资源：一个测试释放后，并行跑的兄弟测试的 `bind(0)` 立刻就能拿到同一个号（实测 6 跑 5 挂）。两条出路：
