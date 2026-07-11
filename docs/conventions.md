@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-10 -->
+<!-- last-synced: 2026-07-11 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -440,3 +440,46 @@ export function createXxxQRProvider(): QRProvider {
 骨架承包的事（provider 不要重复做）：后台轮询循环、**authorized 即 addChannel 落盘**（一次性 secret 安全）、统一状态枚举、并发/重复请求去重（in-flight promise + 15s 窗口，键含 autoConnect）、本地过期（尊重 expiresInMs）、取消端点、NaN 消毒、persist-成功-但-autoConnect-失败仍算 authorized。
 
 配套固定动作清单（每加一家）：gateway `types.ts` config 类型 + adapter 工厂注册 → api-client `types.ts` 镜像同步 → 前端 `channels-section.tsx`（下拉项 + `CHANNEL_TYPE_ICONS` + `MANUAL_FORM_FIELDS` 手动兜底字段）→ `brand-icons.tsx` 品牌徽章 → i18n `channel.type.*` 等键（en/zh 成对）→ `bridge.ts` `CHANNEL_LABELS` → `bun run build:gateway` → `docs/api-reference.md`。前端 QR 组件（`ChannelQRLogin`）与手动表单已泛化，按 type 透传即可。上游契约坑（三家互不相通）见 gotchas §4。
+
+## 15. 会随布局移动的组件，状态必须提升（ADR-048）
+
+**规则**：只要一个组件可能被 **re-parent**（在两个互斥分支之间条件渲染、被 portal 搬家、随布局模式切换位置），它就**不能持有不可重建的状态**。React 把「移到另一棵子树」当作卸载 + 重建，state 全清。
+
+判断「可否重建」的关键是**数据源能否重放**：
+
+| 数据源 | 能重建吗 | 结论 |
+|--------|---------|------|
+| props / 受控值 | ✅ 父级持有 | 留在组件里没问题 |
+| 会重发快照的订阅 | ✅ 重新订阅即可 | 一般可以 |
+| **只推增量、不重放的订阅** | ❌ **永久丢失** | **必须提升** |
+| 用户填到一半的表单 | ❌ 用户得重来 | 必须提升，或别让它 re-parent |
+
+实例（都是真踩过的）：
+- `useDelegateRows`（Session 级）—— delegate SSE 的 snapshot **只重放 delegates，不重放待答权限**（gotchas §9）。状态放 `DelegateDock` 里时，全屏预览一切换，子 agent 的权限请求就永久消失、阻塞到超时。
+- `useSessionArtifacts` / `useArtifactUnread`（Session 级）—— 侧栏关闭时面板根本没挂载，但徽标和预览导航仍需要产物。
+- 反例：`QuestionDock` 的答题进度仍在组件内 —— 所以设计上**不让它 re-parent**（全屏态它留在原处）。
+
+```tsx
+// ✅ 订阅在 Session 级，组件纯渲染 —— 怎么搬家都不丢
+const delegateRows = useDelegateRows(id, workspacePath)
+...
+<DelegateDock rows={delegateRows} />
+```
+
+## 16. 「异步结果是否就绪」用**渲染期派生**，不要用独立 state（ADR-048）
+
+一个由 effect 重置的 `settled: boolean`，**可能在同一次 commit 里被别的 hook 的 effect 读到旧值**（effect 按 hook 声明顺序 flush，重置的那个还没轮到跑）。消费者于是拿着上一个会话/上一个 baseline 的「已就绪」去做决策，且因为常有 `if (alreadyDid) return` 之类的守卫，**这个错误永久生效、不会自愈**。
+
+```ts
+// ❌ 独立 state + effect 重置：可被同一 commit 里的其他 effect 读到陈旧的 true
+const [settled, setSettled] = useState(false)
+useEffect(() => { setSettled(false) }, [directory, baseline])   // 可能还没跑
+useEffect(() => { scan().then(() => setSettled(true)) }, [...])
+
+// ✅ 派生：与 render 一起重算，不可能陈旧
+const scanKey = `${directory ?? ""}|${baseline}`
+const [scanned, setScanned] = useState<{ key: string; hits: Hit[] } | null>(null)
+const settled = nothingToScan || scanned?.key === scanKey
+```
+
+同一把钥匙还顺手解决了「切会话后短暂显示上个会话的结果」：消费时只认 `scanned.key === scanKey` 的那一份，陈旧结果**在结构上**被忽略，而不是靠一个赛跑的 effect 去清。

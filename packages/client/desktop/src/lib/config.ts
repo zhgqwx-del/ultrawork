@@ -15,6 +15,13 @@ export interface AppConfig {
   apiUsername?: string
   theme: "light" | "dark" | "system"
   language: "en" | "zh"
+  /**
+   * Auto-reveal the right sidebar the first time a turn produces a task plan
+   * (ADR-048 D1). The kill switch every auto-behaviour needs — and turning it off
+   * leaves the manual entry point (the TopBar toggle) and the artifact badge
+   * intact, it only stops the panel from opening itself.
+   */
+  planAutoReveal: boolean
 }
 
 /**
@@ -51,6 +58,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   apiUsername: "",
   theme: "system",
   language: detectDefaultLanguage(),
+  planAutoReveal: true,
 }
 
 const CONFIG_STORAGE_KEY = "ultrawork-config"

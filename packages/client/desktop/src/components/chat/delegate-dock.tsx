@@ -1,105 +1,28 @@
 // Active-delegates dock (ADR-031 ②): the delegate tool call is BLOCKING, so
 // while it runs the transcript card has no sessionId yet — a child session's
-// permission.asked would hang invisibly. This dock subscribes to the global
-// delegate SSE (snapshot-first), filters to the current workspace, and lets
-// the user answer relayed permissions inline + watch live delegate activity.
+// permission.asked would hang invisibly. This dock shows relayed child
+// permissions inline + live delegate activity.
 // Renders nothing when there is no activity (zero footprint for non-users).
+//
+// PURE RENDERER (ADR-048). The SSE subscription and the pending-permission state
+// live in `useDelegateRows` at session level, because the maximized preview
+// re-parents this dock (chat column ⇄ bottom bar) and React treats a move between
+// branches as unmount + remount. Owning the state here meant a remount silently
+// dropped every pending permission: the delegate SSE replays a snapshot of the
+// DELEGATES but never re-sends pending permission requests, so a child agent that
+// had asked for permission would block until its sidecar timed out — nothing on
+// screen, nothing to click.
 
-import { useEffect, useMemo, useState } from "react"
-import { toast } from "sonner"
 import { Bot, Loader2, ShieldQuestion } from "lucide-react"
-import { isACPAgentId } from "@agent/connector"
-import type { PermissionRequest } from "@agent/api-client"
 import { Button } from "@/components/ui/button"
-import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
-import {
-  replyAcpPermission,
-  subscribeDelegateEvents,
-  type DelegateRecord,
-} from "@/lib/orchestration-client"
+import type { DelegateRows } from "@/lib/use-delegate-rows"
 
-interface PendingDelegatePermission {
-  delegateId: string
-  sessionId: string
-  request: PermissionRequest
-}
-
-export function DelegateDock({ workspacePath, sessionId }: { workspacePath: string | null; sessionId?: string }) {
+export function DelegateDock({ rows }: { rows: DelegateRows }) {
   const { t } = useI18n()
-  const api = useApi()
-  const [delegates, setDelegates] = useState<Map<string, DelegateRecord>>(new Map())
-  const [permissions, setPermissions] = useState<PendingDelegatePermission[]>([])
-
-  useEffect(() => {
-    return subscribeDelegateEvents((event) => {
-      if (event.type === "delegate.snapshot") {
-        setDelegates(new Map(event.properties.delegates.map((d) => [d.id, d])))
-      } else if (event.type === "delegate.updated") {
-        const record = event.properties.delegate
-        setDelegates((prev) => new Map(prev).set(record.id, record))
-        if (record.status !== "running") {
-          // A settled delegate's permissions are moot (sidecar auto-cancels).
-          setPermissions((prev) => prev.filter((p) => p.delegateId !== record.id))
-        }
-      } else if (event.type === "delegate.permission") {
-        const inner = event.properties.event as { type: string; properties: unknown }
-        if (inner.type === "permission.asked") {
-          const request = inner.properties as PermissionRequest
-          setPermissions((prev) => {
-            if (prev.some((p) => p.request.id === request.id)) return prev
-            return [
-              ...prev,
-              {
-                delegateId: event.properties.delegateId,
-                sessionId: event.properties.sessionId,
-                request,
-              },
-            ]
-          })
-        } else if (inner.type === "permission.replied") {
-          const props = inner.properties as { requestID?: string; id?: string }
-          const replied = props.requestID ?? props.id
-          setPermissions((prev) => prev.filter((p) => p.request.id !== replied))
-        }
-      }
-    })
-  }, [])
-
-  // A delegate belongs to THIS session when its owner (leader) session matches —
-  // scopes the dock per-session so two teams in one workspace never cross-show
-  // (discussions/022). Delegates without an ownerSessionId (a future backend that
-  // can't supply it) fall back to the original workspace scope.
-  const belongs = (d: DelegateRecord) =>
-    d.ownerSessionId ? d.ownerSessionId === sessionId : (!workspacePath || d.workspace === workspacePath)
-  const active = useMemo(
-    () => [...delegates.values()].filter((d) => d.status === "running" && belongs(d)),
-    [delegates, sessionId, workspacePath],
-  )
-  const visiblePermissions = useMemo(
-    () =>
-      permissions.filter((p) => {
-        const record = delegates.get(p.delegateId)
-        return record ? belongs(record) : false
-      }),
-    [permissions, delegates, sessionId, workspacePath],
-  )
+  const { active, permissions: visiblePermissions, reply } = rows
 
   if (active.length === 0 && visiblePermissions.length === 0) return null
-
-  const reply = async (pending: PendingDelegatePermission, choice: "once" | "always" | "reject") => {
-    const record = delegates.get(pending.delegateId)
-    try {
-      if (record && isACPAgentId(record.agentId)) {
-        await replyAcpPermission(pending.sessionId, pending.request.id, choice)
-      } else {
-        await api.replyPermission(pending.request.id, choice)
-      }
-      setPermissions((prev) => prev.filter((p) => p.request.id !== pending.request.id))
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
 
   return (
     <div className="w-full max-w-[860px] px-4 pt-2">

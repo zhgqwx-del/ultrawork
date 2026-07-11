@@ -1,6 +1,5 @@
-import { useMemo, useState, useEffect } from "react"
+import { useState } from "react"
 import { FileDiff, ChevronRight } from "lucide-react"
-import { invoke } from "@tauri-apps/api/core"
 import type { SendMessageResponse, FilePart, PatchPart, ToolPart } from "@agent/api-client"
 import type { Artifact } from "./artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
@@ -9,11 +8,10 @@ import { pathBasename, isAbsolutePath } from "@/lib/path-utils"
 import { FileIcon } from "@/components/ui/file-icon"
 
 interface ArtifactsPanelProps {
-  messages: SendMessageResponse[]
-  /** Workspace root directory — used to convert absolute tool paths to relative */
-  directory?: string
-  /** True while the agent is sending/streaming — defers the workspace scan to idle */
-  active?: boolean
+  /** True outputs, front and centre. From `useSessionArtifacts`. */
+  deliverables: Artifact[]
+  /** Scripts/config the agent wrote on the way — demoted into a collapsed group. */
+  working: Artifact[]
   onArtifactClick?: (artifact: Artifact) => void
   selectedPath?: string
 }
@@ -315,58 +313,18 @@ function ArtifactRow({
   )
 }
 
-export function ArtifactsPanel({ messages, directory, active, onArtifactClick, selectedPath }: ArtifactsPanelProps) {
+/**
+ * Pure renderer (ADR-048 D5). The derivation it used to own — tool extraction,
+ * the idle workspace scan, turn-window attribution, deliverable/working split —
+ * now lives in `useSessionArtifacts` at the Session level, because the unread
+ * badge and the preview's prev/next navigation need artifacts even while this
+ * panel is unmounted (sidebar closed).
+ */
+export function ArtifactsPanel({ deliverables, working, onArtifactClick, selectedPath }: ArtifactsPanelProps) {
   const { t } = useI18n()
-  const toolArtifacts = useMemo(() => extractArtifacts(messages, directory), [messages, directory])
-
-  // Baseline = the session's earliest message time. Files modified at/after it
-  // were produced during this session; scanning since 0 would surface every
-  // pre-existing file, so we skip the scan when no baseline is known.
-  const baseline = useMemo(() => {
-    let min = Infinity
-    for (const m of messages) {
-      const created = m.info?.time?.created
-      if (typeof created === "number" && created > 0 && created < min) min = created
-    }
-    return Number.isFinite(min) ? min : 0
-  }, [messages])
-
-  const [scanned, setScanned] = useState<ScanHit[]>([])
-  // Drop scanned hits when the session identity changes (directory or baseline).
-  // SessionPage isn't keyed, so without this a same-workspace session switch would
-  // briefly show the previous session's hits until the next idle re-scan.
-  useEffect(() => {
-    setScanned([])
-  }, [directory, baseline])
-  useEffect(() => {
-    // Only scan when the agent is idle (no churn mid-turn) and a baseline exists.
-    if (active || !directory || !baseline) return
-    let cancelled = false
-    invoke<ScanHit[]>("scan_workspace_changes", { dir: directory, sinceMs: baseline })
-      .then((hits) => {
-        if (!cancelled) setScanned(hits)
-      })
-      .catch(() => {
-        // Non-Tauri env (tests/web) or fs error — fall back to tool-derived only.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [active, directory, baseline, messages.length])
-
-  // Attribute scanned files to THIS session by its turn windows, so sessions
-  // sharing a workspace don't show each other's outputs (mtime baseline alone
-  // can't tell them apart).
-  const windows = useMemo(() => sessionTurnWindows(messages, active), [messages, active])
-  const scannedPaths = useMemo(() => filterScanByWindows(scanned, windows), [scanned, windows])
-  const artifacts = useMemo(
-    () => mergeScannedPaths(toolArtifacts, scannedPaths, directory),
-    [toolArtifacts, scannedPaths, directory]
-  )
-  const { deliverables, working } = useMemo(() => classifyArtifacts(artifacts), [artifacts])
   const [workingOpen, setWorkingOpen] = useState(false)
 
-  if (artifacts.length === 0) {
+  if (deliverables.length === 0 && working.length === 0) {
     return <p className="py-2 text-xs text-[var(--color-fg-muted)]">{t("message.noArtifacts")}</p>
   }
 
@@ -375,7 +333,7 @@ export function ArtifactsPanel({ messages, directory, active, onArtifactClick, s
   const showGroupLabel = working.length > 0
 
   return (
-    <div className="space-y-1">
+    <div data-testid="artifacts-panel" className="space-y-1">
       {showGroupLabel && (
         <div className="px-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
           {t("artifact.groupDeliverables")}

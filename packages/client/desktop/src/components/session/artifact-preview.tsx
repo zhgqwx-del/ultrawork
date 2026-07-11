@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { X, FileDiff, Copy, Check, FolderOpen, ExternalLink } from "lucide-react"
+import { X, FileDiff, Copy, Check, FolderOpen, ExternalLink, ChevronLeft, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -26,6 +26,23 @@ interface ArtifactPreviewProps {
   /** Workspace root directory — used to resolve relative paths to absolute for system operations */
   directory?: string
   onClose: () => void
+  /**
+   * Prev/next through the session's artifact list (ADR-048 D3). Opening a preview
+   * collapses the right sidebar, which is where the artifact list lives — without
+   * navigation here, browsing several artifacts would mean closing and reopening
+   * the sidebar once per file. Omitted (→ controls hidden) when the previewed file
+   * isn't in the list, e.g. one picked from the workspace file tree.
+   */
+  nav?: {
+    /** 0-based position of this artifact within the list. */
+    index: number
+    total: number
+    onPrev: () => void
+    onNext: () => void
+  }
+  /** Half ⇄ full width toggle. Omitted → the control is hidden. */
+  maximized?: boolean
+  onToggleMaximized?: () => void
 }
 
 const IMAGE_EXTS = /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i
@@ -133,7 +150,7 @@ function BinaryFileCard({
   )
 }
 
-export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPreviewProps) {
+export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, onToggleMaximized }: ArtifactPreviewProps) {
   const api = useApi()
   const { t } = useI18n()
   const { resolvedTheme } = useTheme()
@@ -228,14 +245,17 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
     invoke("open_file_with_system", { path: absPath }).catch((e) => console.error("[ArtifactPreview] openPath failed:", e))
   }, [absPath])
 
-  // Escape key to close preview (skip if another handler already consumed the event)
+  // Escape steps back one level rather than jumping straight out: maximized →
+  // half → closed. (Skip if another handler already consumed the event.)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) onClose()
+      if (e.key !== "Escape" || e.defaultPrevented) return
+      if (maximized && onToggleMaximized) onToggleMaximized()
+      else onClose()
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [onClose])
+  }, [onClose, maximized, onToggleMaximized])
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--color-bg)]">
@@ -245,6 +265,34 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--color-fg)]" title={artifact.path}>
           {basename(artifact.path)}
         </span>
+
+        {/* Prev/next through the session's artifacts — the sidebar list is
+            collapsed while the preview is up, so this is the only way to browse. */}
+        {nav && nav.total > 1 && (
+          <div className="flex shrink-0 items-center gap-0.5 text-xs text-[var(--color-fg-muted)]">
+            <button
+              onClick={nav.onPrev}
+              disabled={nav.index === 0}
+              aria-label={t("artifact.prev")}
+              title={t("artifact.prev")}
+              className="flex items-center justify-center rounded p-1 hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:pointer-events-none disabled:opacity-30"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <span className="tabular-nums" aria-live="polite">
+              {nav.index + 1} / {nav.total}
+            </span>
+            <button
+              onClick={nav.onNext}
+              disabled={nav.index >= nav.total - 1}
+              aria-label={t("artifact.next")}
+              title={t("artifact.next")}
+              className="flex items-center justify-center rounded p-1 hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:pointer-events-none disabled:opacity-30"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        )}
 
         {/* Open with system app — for PDFs (Preview.app, etc.) */}
         {pdf && (
@@ -286,6 +334,19 @@ export function ArtifactPreview({ artifact, directory, onClose }: ArtifactPrevie
             className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
           >
             {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+          </button>
+        )}
+        {/* Half ⇄ full. Full hides the transcript but keeps the composer, so the
+            user can keep talking while reading (ADR-048 D4). */}
+        {onToggleMaximized && (
+          <button
+            onClick={onToggleMaximized}
+            data-testid="preview-maximize"
+            aria-label={maximized ? t("artifact.restore") : t("artifact.maximize")}
+            title={maximized ? t("artifact.restore") : t("artifact.maximize")}
+            className="flex items-center justify-center rounded p-1 text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+          >
+            {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </button>
         )}
         <button

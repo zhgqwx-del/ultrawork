@@ -75,6 +75,38 @@ export function useSessionScroll({ onScrollNearTop, sessionId }: UseSessionScrol
     return () => clearTimeout(done)
   }, [sessionId, scrollToBottom])
 
+  // --- Keep the bottom pinned when the VIEWPORT shrinks (not just when content grows) ---
+  //
+  // use-stick-to-bottom only observes the CONTENT element (useStickToBottom.js: its
+  // ResizeObserver is attached in the `contentRef` callback). So it reacts to the
+  // transcript getting taller — but it is blind to the scroll CONTAINER getting
+  // shorter. When something below the transcript appears and steals height (the
+  // composer coming back as the preview leaves `full`, a permission dock opening,
+  // the delegate dock appearing mid-turn), the content is unchanged and no content
+  // resize fires: the view is simply left stranded that many pixels above the
+  // bottom, permanently. Measured: exactly the composer's ~100px, and it never
+  // converged.
+  //
+  // Only correct when the user was actually pinned — someone reading history must
+  // not be yanked down just because a dock opened.
+  const atBottomRef = useRef(true)
+  atBottomRef.current = isAtBottom
+  useEffect(() => {
+    if (!scrollEl) return
+    let prevHeight = scrollEl.clientHeight
+    const ro = new ResizeObserver(() => {
+      const height = scrollEl.clientHeight
+      if (height === prevHeight) return
+      const shrank = height < prevHeight
+      prevHeight = height
+      if (shrank && atBottomRef.current) {
+        scrollToBottom({ animation: "instant" })
+      }
+    })
+    ro.observe(scrollEl)
+    return () => ro.disconnect()
+  }, [scrollEl, scrollToBottom])
+
   // --- Near-top detection (history backfill), fires once per entry into the zone ---
   const firedRef = useRef(false)
   const onNearTopRef = useRef(onScrollNearTop)

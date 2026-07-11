@@ -1,7 +1,11 @@
 # ADR-009: 产物预览 50/50 分屏
-**状态**: Accepted
+**状态**: Partially Superseded by [ADR-048](./048-preview-sidebar-layout-and-awareness.md)（2026-07-11）
 **日期**: 2026-03-05
 **关联轮次**: Round 7
+
+> ⚠️ **本 ADR 的布局假设已被 ADR-048 推翻。** 下方「预览(w-1/2) | Chat(w-1/2) | Sidebar(w-80)」的三栏并排假设**从来就算不平**（三者宽度和 = 100% + sidebar 宽，溢出全由唯一可收缩的 chat 独吞）。ADR-048 改为**预览与右侧栏互斥** + `half`/`full` 双态。
+>
+> 仍然有效的部分：预览的**类型支持与渲染方式**（CodeMirror / Markdown / 图片 data URI / Diff）、Escape 关闭（`!e.defaultPrevented`）、文件树与产物列表统一入口、以及「否决 Modal / 底部 Panel / 新窗口」这三条替代方案的论证。
 
 ## 背景
 
