@@ -38,7 +38,7 @@
 | [006](./006-model-management.md) | 模型管理独立 Dialog | Round 4 | Accepted |
 | [007](./007-workspace-isolation.md) | 工作区目录隔离 | Round 5 | Accepted |
 | [008](./008-sse-global-polling-fallback.md) | SSE 全局化 + 轮询兜底 | Round 5 | Accepted |
-| [009](./009-artifact-preview-split.md) | 产物预览 50/50 分屏 | Round 7 | Accepted |
+| [009](./009-artifact-preview-split.md) | 产物预览 50/50 分屏 | Round 7 | Partially Superseded by [048](./048-preview-sidebar-layout-and-awareness.md)（布局假设被推翻；预览类型/渲染/Escape/入口仍有效） |
 | [010](./010-shared-hook-pattern.md) | 共享 Hook 提取模式 | Round 10 | Accepted |
 | [011](./011-mcp-localstorage-persistence.md) | MCP 状态 localStorage 持久化 | Round 11 | Superseded (→ opencode.json, Issue#18) |
 | [012](./012-optimistic-message-active-tracking.md) | 乐观消息 + 活跃状态追踪 | Round 12 | Accepted |
@@ -79,6 +79,7 @@
 | [045](./045-dynamic-sidecar-ports.md) | Sidecar 端口动态化 — dev 钉死 4096-4099（Vite 代理 target + CORS 白名单皆编译期常量，冲突**报错不绕行**）/ prod 优先固定、被占且占用者非我方则 `bind(0)` 回退且**绝不 kill**；`~/.ultrawork/run/ports.json` 运行时注册表（0600）+ `get_sidecar_ports()` IPC + renderer 启动 gate；固定端口过去是**事实上的单实例锁**，故并入 `tauri-plugin-single-instance`；`apiBaseUrl` 改 `"auto"`（端口不入持久化）；三 sidecar 补入站 Basic auth（前置=三处裸 `EventSource` 迁 fetch-reader，规范不支持自定义头）；顺带修「端口被占时误杀无关进程」现网缺陷 | 2026-07-09 | Accepted (✅ 真机验收) |
 | [046](./046-windows-webview2-runtime.md) | Windows WebView2 运行时依赖 — 双安装包（`embedBootstrapper` 主包 + `offlineInstaller` 变体，安装期零网络）+ 恢复 MSI（embed 一种）+ 首启 `tauri::webview_version()` 自检（免 winreg、Builder 前拦截、缺失弹 rfd 引导微软官网）+ 最低 Win10 1803+；`embedBootstrapper` 消除默认 `downloadBootstrapper` 的安装期明文 HTTP 下载执行（NSISdl 零 TLS + 忽略 scheme 连 :80）；「国内下载源」经许可 2(b)(iii) + 七镜像站皆无证伪→改为内置；已知代价=构建期下载无哈希 pin + 安装包未签名（供应链面待跟进）；双包因 nsis 产物名写死需中间改名 + fail-closed 体积断言 | 2026-07-10 | Accepted (✅ 已实现 + CI 实证，Windows 真机待验) |
 | [047](./047-transcript-stick-to-bottom.md) | 会话转录区贴底滚动 — 三条实测根因：`content-visibility: auto` 首次应用无 remembered size 致 `scrollHeight` 单帧撒谎（滚到假底≈顶部）、`contentRef` 作为被 stretch 的 flex item 令其 ResizeObserver 从 ADR-021 Phase 4 起从未触发、完成路径无补正；修法=移除 CV + 滚动容器改 block + 换用 `use-stick-to-bottom`（顺带修好只认 `wheel` 的 escaped 检测、补「回到底部」按钮）；A/B 反证否掉了手动 scroll anchoring 补偿（WebKit 自己保得住位置，沙箱里的 817px 实为贴底钳制）；实测 Δbottom 1619px → 1px | 2026-07-10 | Accepted (✅ 已实现 + 两引擎 e2e 实证) |
+| [048](./048-preview-sidebar-layout-and-awareness.md) | 产物预览与右侧栏互斥（half/full 双态）+ 产物/规划分级通知 — 两个根因：① 右侧栏默认关且 `setRightOpen` **全仓无调用者**（无任何代码路径能程序化打开它）+ 产物 section 默认收起 + fs 扫描仅空闲跑，三层遮挡致产物/规划到达时用户**全程无感**；② 预览(`w-1/2`)+右侧栏(`w-72`)+chat(`w-1/2`) 三者并排 = **100%+288px 溢出**，因只有 chat 带 `min-w-0` 故全由它独吞（1440px 窗口下 chat 仅剩 ~300px，860px 正文列崩塌）——**ADR-009 的三栏假设从来就算不平**；决策=`previewMode: closed\|half\|full` 状态机收进 SidebarContext（预览与右侧栏互斥，三者永不并排 → 溢出账从结构上消失）+ 分级通知（规划首次自动展开一次 · 产物只打徽标 · 手动关闭永久压过自动 · kill switch）+ 预览内置产物导航（Claude/Canvas 的「预览取代侧栏」**不能照搬**：它们侧栏里没有产物列表）+ full 态保留输入框（Canvas 式）+ 产物派生提升到 Session 级；已知代价=fs 扫描变「永远每回合一次」（**实测 91ms/次**，含 node_modules 的 monorepo，异步不阻塞 → 可接受）· `full` 态若用 `display:none` 会让 ADR-047 的 RO 停摆故改用**零宽**（两引擎 e2e 实测往返后 Δbottom=1px） | 2026-07-11 | Accepted (✅ 已实现 + 两引擎 e2e 实证) |
 
 ## 新增 ADR
 

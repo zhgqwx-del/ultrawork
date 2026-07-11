@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-10 -->
+<!-- last-synced: 2026-07-11 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -42,6 +42,8 @@
 - **阿里云 IQS key ≠ 百炼 DashScope key，且新建 IQS key 约 5 分钟后才生效（2026-07-04，ADR-042）**：IQS（信息查询服务「通晓」）的 API-Key 在 IQS 控制台单独创建（`https://iqs.console.aliyun.com/api-keys`），拿 DashScope key 调 `cloud-iqs.aliyuncs.com` 必 401；新 key 5 分钟内也 401——测试连接失败先等再判配错（UI 提示已带这句）。计费：试用 1000 次仅 15 天，之后按次；`engineType:"Generic"` 计费 ~3.5× LiteAdvanced；`contents.summary` 是付费增值项（我们不启用，免费 `snippet` 够用）。
 - **qwen `enable_search` 只在「模型级」options 生效，且来源列表会被 AI SDK 丢弃（2026-07-04，ADR-042 实测链路）**：`provider.<id>.models.<modelId>.options.enable_search` 经 mergeDeep→providerOptions→spread 进请求体**顶层**（provider 级 options 是错误位置，进 SDK 构造器被丢弃）；流式路径下阿里返回的 `search_info.search_results` 引用来源被 AI SDK strict delta schema 丢弃 → 只有答案质量提升、**无来源展示**（要展示需 vendor `metadataExtractor` patch，未做）。**别把 `enable_search` 写给非 DashScope host**——严格的 OpenAI 兼容网关对未知 body 键直接 400（UI 的 DashScope-like 启发式与"读残留才发显式 false"都是为此）。
 - **hook 注入的工具，execute 必须返回 opencode 工具结果形状 `{output,title,metadata}`，不能返回裸字符串（2026-06-26，ADR-036 渐进式工具披露 e2e 踩坑）**：通过 `experimental.chat.tools.transform` 钩子往 `tools` map 注入的 AI-SDK 工具（如 `tool_search`），其 execute 返回值经 `session/processor.ts:223` 读 **`value.output.output`** 落 `part.state.output`。若 execute 返回裸 `string`，`value.output.output` 为 `undefined` → `part.state.output` 为空 → **下一步 `toModelMessages` replay 时报 `Invalid prompt: messages do not match ModelMessage[] schema`，拖垮整个多步回合**。opencode 自己的内置/MCP 工具都返回 `{output,title,metadata,attachments?}`，照抄即可。**这类工具的状态不能跨步 evict**（若加 TTL/回落淘汰，绝不能淘汰 message 历史里仍有 tool-call 的工具，否则同样悬空 → schema 错）。
+
+- **`permission` 不配置 = 全部放行，不会弹授权框**（2026-07-11 实测）。`opencode.json` 的 `permission.{bash,edit,webfetch}` 全是 optional，缺省即 allow。**验证权限相关 UI（PermissionDock / 委派子权限中继）时必须显式配 `"permission": {"bash": "ask"}` 并重启 sidecar**，否则请求根本不会产生，会误判成「dock 坏了」。
 
 ## 2. OpenCode Server 运行时限制
 
@@ -219,6 +221,9 @@
 - **opencode 会话的 model 是会话粘滞的**（018 走查实测）：首轮 prompt 未显式传 model 时按 server config 默认解析并**固化到该会话**，后续轮不传 model 也沿用首轮的——server config 改了默认 model 只影响新会话。无 git 的目录放 `opencode.json` 不会被当 project config 拾取（project root 探测依赖 git），workspace 级默认 model 对临时测试目录无效，须走 server 级 `PATCH /config`。
 - **worktree 隔离的输入产物要复制进 worktree**（`worktree.ts stageInputs`）：子 agent cwd 沙箱在 worktree 里，引用主 workspace 绝对路径会触发跨目录读权限弹窗（claude）；产物完成后拷回主 run 目录、worktree 成功即删失败保留（`step.worktreePath` 暴露）。
 
+- **`delegate.snapshot` 只重放 delegates，不重放待答的权限请求**（ADR-048 实测，2026-07-11）。新订阅者拿到的首帧里没有任何 pending permission，所以**任何持有该状态的组件一旦卸载重挂，那条权限行就永久消失** —— 子 agent 会一直阻塞到 sidecar 超时，界面上无任何线索。
+  → 因此 `useDelegateRows` 必须挂在 **Session 级**（组件之上），`DelegateDock` 退化为纯渲染。布局变化（如全屏预览把 dock 从会话列 re-parent 到底部栏）在 React 里等于卸载 + 重建，state 放组件里必丢。
+
 ## 10. 内置技能（built-in skills，`skills/builtin/` + Settings 技能页）
 
 - **Anthropic 官方 docx/pdf/pptx/xlsx 文档技能是专有许可、禁止再分发**（`anthropics/skills` 各目录 `LICENSE.txt`）——**不能打包进 ultrawork**。判定捷径：**LICENSE.txt 1467B ≈ 专有 / 11345B ≈ Apache-2.0**。故 PDF 用 OpenAI 的 Apache 版（`openai/skills/.curated/pdf`），Office 读改自写 `doc-edit`（python-docx/openpyxl/python-pptx），生成用 `markdown-exporter`（md_exporter）。新增内置技能前**先核对该目录 LICENSE 是 Apache-2.0/MIT 等可再分发许可**。
@@ -286,6 +291,9 @@
 - **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
 - **不要用 `importOriginal` 部分 mock 大 barrel（如 `@/components/chat`）**：`importOriginal()` 会实例化整个桶文件的真实依赖树（markdown/代码高亮栈），转换耗时数分钟拖垮 worker。要保留个别真实组件时精确单文件导入：`vi.mock("@/components/chat", async () => ({ CopyButton: (await import("@/components/chat/copy-button")).CopyButton, ChatInput: () => null, ... }))`。（同上）
 
+- **e2e 的工作区不能建在系统 tmpdir**（ADR-048 踩坑）。macOS 的 `tmpdir()` 是 `/var/folders/…`，而产物识别的 `TEMP_PATH_RE`（`artifacts-panel.tsx`）**刻意把它当临时路径过滤掉** —— agent 在那里写的文件永远进不了产物列表，测试会莫名其妙地「没有产物」。把沙箱 HOME 留在 tmp，但**工作区放到 `homedir()` 下的临时目录**。
+- **产物行的选择器要限定在 `[data-testid="artifacts-panel"]` 内**。「执行活动」面板排在产物区之上、同样默认展开、且会列出同一个文件的绝对路径 —— 无限定的文本匹配会点到那一行惰性文本上，表现为「点了没反应」。
+
 ## 14. 办公 CLI 连接器（lark-cli + dws + wecom-cli，ADR-043 / discussions/027）
 
 > 三家官方 CLI 的**上游契约全部以真机实拍为准**（lark-cli v1.0.65 @2026-07-06；dws v1.0.47 @2026-07-07；wecom-cli v0.1.9 @2026-07-07）——内嵌文档/二进制 strings/源码推定的形状多处与实际不符，且**三家在多条轴上语义互相相反**（探针输出、URL 流向、双源 hash、安装形态各成一套），绝不能拿一家的契约推另一家。cargo 单测以实拍 payload 锚定；bump 任一 pin 版本时逐条复核本节。
@@ -340,3 +348,19 @@
 - **WebKit 在折叠大块内容时会自己保住阅读位置，不需要手动 anchoring**：一度以为 WebKit 无 scroll anchoring（webkit.org #171099）需手动补偿，A/B 反证推翻——禁用补偿后 WebKit 折叠帧位移仍是 0px。沙箱里观察到的 817px「跳动」实为**贴近底部时的钳制**。唯一真会跳的是「折叠后转录区短于视口」的退化场景，此时 `scrollTop` 必然钳到 0，无解也无需解。
 - **`macOS 最低版本 10.15`，而 `content-visibility` 要 Safari 18 / macOS 15**：macOS ≤14 的用户既碰不到上面的 CV bug，也从来没享受到 ADR-021 那次 CV 优化。给任何 CSS 性能优化下结论前先查 WKWebView 支持面。
 - **一个 step 先输出文本、随后又发起工具调用时，那段文本会被 `buildTurnModel` 从「答案」重新归类为「过程 narration」并塌成一行**（`assistant-turn.tsx` `lastIsAnswerStep`，ADR-029 有意取舍）。实测可在一帧之内蒸发 4628px。写涉及转录区高度的 e2e 时要预期到这种中途大幅收缩，别把它当成滚动 bug。
+
+### `use-stick-to-bottom` 只观察**内容层**，不观察**滚动容器**（ADR-048 实测，2026-07-11）
+
+库的 `ResizeObserver` 挂在 `contentRef` 回调里（`useStickToBottom.js`），所以它只知道「转录区变高了」，**对「滚动容器变矮了」一无所知**：内容高度没变，只是视口短了，视图就被永久晾在离底 N px 处，且**永不收敛**。
+
+触发它的都是日常动作：输入框重新出现（退出全屏预览）、权限/提问 dock 打开、委派 dock 中途冒出。实测差值恰好等于那个元素的高度（100px）。
+
+修法在 `use-session-scroll.ts`：**额外挂一个观察滚动容器的 RO** —— 容器变矮且此前贴底时 `scrollToBottom({animation:"instant"})`。用 ref 读 `isAtBottom`：容器变矮那一刻库还没重算，读到的正是变矮前的值，而这正是需要的。
+
+> ⚠️ 这个洞一直存在，只是被偶然掩盖：全屏预览的早期版本把 chat 列收成 `w-0`，退出时宽度 0→N 的剧变**顺带**触发了内容层 RO 把位置修回来。后来为消除重排改成宽度恒定，救场消失，洞才暴露。**不要指望宽度变化替你兜底。**
+
+### 隐藏子树里的「持续贴底」不可靠，且两引擎不一致（ADR-048 实测）
+
+全屏预览期间 chat 列是 `visibility:hidden`（布局盒仍在）。**WebKit 上 agent 回复会让隐藏的视图漂离底部约 122px**；Chromium 有原生 scroll anchoring，表现不同。
+
+所以**不要建立在「隐藏期间会一直贴底」这个前提上**。正确语义是：**进入隐藏前若贴底，退出时就贴底** —— 在进入那一刻用 ref 快照 `isAtBottom`（不能放进 effect 依赖，否则隐藏期间的漂移会把快照污染掉），退出时按快照 `forceScrollToBottom()`。

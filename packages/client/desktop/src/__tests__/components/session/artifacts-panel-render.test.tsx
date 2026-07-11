@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react"
 import { ArtifactsPanel } from "@/components/session/artifacts-panel"
+import { useSessionArtifacts } from "@/lib/use-session-artifacts"
 import type { SendMessageResponse } from "@agent/api-client"
 
 const invokeMock = vi.fn()
@@ -14,6 +15,17 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: any[]) => invokeMock(
 vi.mock("@/lib/i18n-context", () => ({ useI18n: () => ({ t: (k: string) => k, language: "en", setLanguage: () => {} }) }))
 
 const WORKING_LABEL = "artifact.groupWorking"
+
+/**
+ * The derivation (tool extraction + idle fs scan + turn-window attribution +
+ * deliverable/working split) lives in `useSessionArtifacts` and the panel is a
+ * pure renderer (ADR-048 D5), so drive both together — that's the pairing the
+ * Session page actually mounts, and it keeps these walkthroughs end-to-end.
+ */
+function Panel(props: { messages: SendMessageResponse[]; directory?: string; active?: boolean }) {
+  const { deliverables, working } = useSessionArtifacts(props.messages, props.directory, props.active)
+  return <ArtifactsPanel deliverables={deliverables} working={working} />
+}
 
 function userMsg(created: number): SendMessageResponse {
   return { info: { id: `u${created}`, sessionID: "s", role: "user", time: { created } }, parts: [] } as SendMessageResponse
@@ -35,7 +47,7 @@ describe("ArtifactsPanel — UX walkthrough", () => {
     const WS = "/ws"
     invokeMock.mockResolvedValue([hit(`${WS}/report.pdf`, 1500)]) // bash side-effect during turn 1
     render(
-      <ArtifactsPanel
+      <Panel
         messages={[
           userMsg(1000),
           assistant([writeTool(`${WS}/gen.py`)], 1100, 2000), // turn 1: wrote a script
@@ -59,7 +71,7 @@ describe("ArtifactsPanel — UX walkthrough", () => {
       hit(`${WS}/mine.csv`, 1500), // written during my turn → keep
       hit(`${WS}/other-session.pdf`, 9_000_000), // written long after my turn → another session → drop
     ])
-    render(<ArtifactsPanel messages={[userMsg(1000), assistant([], 1100, 2000)]} directory={WS} active={false} />)
+    render(<Panel messages={[userMsg(1000), assistant([], 1100, 2000)]} directory={WS} active={false} />)
 
     await waitFor(() => expect(screen.getByText("mine.csv")).toBeTruthy())
     expect(screen.queryByText("other-session.pdf")).toBeNull()
@@ -69,7 +81,7 @@ describe("ArtifactsPanel — UX walkthrough", () => {
     const WS = "/ws"
     invokeMock.mockResolvedValue([])
     render(
-      <ArtifactsPanel
+      <Panel
         messages={[userMsg(1000), assistant([writeTool(`${WS}/a.pdf`), writeTool(`${WS}/b.py`)], 1100, 2000)]}
         directory={WS}
         active={false}
@@ -87,12 +99,12 @@ describe("ArtifactsPanel — UX walkthrough", () => {
       .mockResolvedValueOnce([hit("/wsA/out_A.csv", 1500)])
       .mockResolvedValueOnce([hit("/wsB/out_B.csv", 2500)])
     const { rerender } = render(
-      <ArtifactsPanel messages={[userMsg(1000), assistant([], 1100, 2000)]} directory="/wsA" active={false} />,
+      <Panel messages={[userMsg(1000), assistant([], 1100, 2000)]} directory="/wsA" active={false} />,
     )
     await waitFor(() => expect(screen.getByText("out_A.csv")).toBeTruthy())
 
     // Same component instance (SessionPage isn't keyed) → different session/workspace.
-    rerender(<ArtifactsPanel messages={[userMsg(2200), assistant([], 2300, 3000)]} directory="/wsB" active={false} />)
+    rerender(<Panel messages={[userMsg(2200), assistant([], 2300, 3000)]} directory="/wsB" active={false} />)
     await waitFor(() => expect(screen.getByText("out_B.csv")).toBeTruthy())
     expect(screen.queryByText("out_A.csv")).toBeNull() // no stale leak
   })
@@ -108,7 +120,7 @@ describe("ArtifactsPanel — UX walkthrough", () => {
       state: { status: "completed", input: { agentId: "acp:x", task: "t" }, output: JSON.stringify({ artifacts }) },
     })
     render(
-      <ArtifactsPanel
+      <Panel
         messages={[
           userMsg(1000),
           assistant([delegate([`${WS}/gen_alpha.py`, `${WS}/alpha.csv`]), delegate([`${WS}/gen_beta.py`, `${WS}/beta.csv`])], 1100, 2000),
@@ -132,7 +144,7 @@ describe("ArtifactsPanel — UX walkthrough", () => {
 
   it("does not scan while the agent is active (defers to idle)", async () => {
     invokeMock.mockResolvedValue([])
-    render(<ArtifactsPanel messages={[userMsg(1000), assistant([], 1100)]} directory="/ws" active={true} />)
+    render(<Panel messages={[userMsg(1000), assistant([], 1100)]} directory="/ws" active={true} />)
     await Promise.resolve() // let effects flush
     expect(invokeMock).not.toHaveBeenCalled()
   })

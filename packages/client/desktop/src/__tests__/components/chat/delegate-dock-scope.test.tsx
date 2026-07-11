@@ -17,6 +17,14 @@ vi.mock("@/lib/orchestration-client", () => ({
 }))
 
 import { DelegateDock } from "@/components/chat/delegate-dock"
+import { useDelegateRows } from "@/lib/use-delegate-rows"
+
+// The subscription lives in useDelegateRows now (ADR-048: the dock gets re-parented
+// by the maximized preview, and owning state there dropped pending child
+// permissions on remount). Drive the pair together — that's what SessionPage mounts.
+function Dock({ workspacePath, sessionId }: { workspacePath: string | null; sessionId?: string }) {
+  return <DelegateDock rows={useDelegateRows(sessionId, workspacePath)} />
+}
 
 function rec(id: string, owner: string | undefined, task: string, workspace = "/ws"): DelegateRecord {
   return { id, agentId: "acp:claude", task, workspace, status: "running", ownerSessionId: owner, startedAt: 1 }
@@ -27,7 +35,7 @@ beforeEach(() => { captured = null })
 
 describe("DelegateDock — owner-session scoping (discussions/022)", () => {
   it("shows only delegates owned by THIS session; hides another team's in the same workspace", () => {
-    const { container } = render(<DelegateDock workspacePath="/ws" sessionId="ses_A" />)
+    const { container } = render(<Dock workspacePath="/ws" sessionId="ses_A" />)
     act(() => captured!(snapshot([rec("d1", "ses_A", "MINE"), rec("d2", "ses_B", "THEIRS")])))
     const text = container.textContent ?? ""
     expect(text).toContain("MINE")
@@ -35,7 +43,7 @@ describe("DelegateDock — owner-session scoping (discussions/022)", () => {
   })
 
   it("falls back to workspace scope for delegates without an ownerSessionId", () => {
-    const { container } = render(<DelegateDock workspacePath="/ws" sessionId="ses_A" />)
+    const { container } = render(<Dock workspacePath="/ws" sessionId="ses_A" />)
     act(() => captured!(snapshot([rec("d3", undefined, "LEGACY", "/ws"), rec("d4", undefined, "OTHERWS", "/other")])))
     const text = container.textContent ?? ""
     expect(text).toContain("LEGACY")

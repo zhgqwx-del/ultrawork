@@ -217,6 +217,22 @@ function GeneralSection() {
         </div>
         <p className="text-xs text-[var(--color-fg-muted)]">{t("general.language.description")}</p>
       </div>
+
+      {/* Auto-reveal the side panel on the session's first task plan (ADR-048 D1).
+          Every auto-behaviour needs a kill switch; turning this off leaves the
+          manual toggle and the artifact badge working. */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
+          <input
+            type="checkbox"
+            checked={config.planAutoReveal}
+            onChange={(e) => updateConfig({ planAutoReveal: e.target.checked })}
+            className="size-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+          />
+          {t("settings.planAutoReveal")}
+        </label>
+        <p className="text-xs text-[var(--color-fg-muted)]">{t("settings.planAutoRevealHint")}</p>
+      </div>
     </div>
   )
 }
