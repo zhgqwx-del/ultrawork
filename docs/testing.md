@@ -517,6 +517,12 @@ packages/knowledge/sidecar/
 3. **tool part 在「工具执行的那一步」，不在最后一条 assistant 消息**：opencode 每个 step 一条 assistant 消息，最后一条是工具结果回灌后的收尾步（无 tool part）。断言必须**跨全部 assistant 消息**找。
 4. **`scripts/build-opencode.ts` 的新鲜度检查看不到裸的 vendor 源码改动**（它 hash 的是 submodule HEAD + **patch 文件** + 脚本自身）。做 A/B 反证时若只改源码不重生成 patch，会打印 `up-to-date, skipping build` 并**继续跑旧二进制**（表现为「撤掉修复后测试依然全绿」）。**A/B 必须加 `--force`**。
 
+### 8.2 真渲染层 e2e：`e2e/idle-guard-toolinput.e2e.ts`（ADR-049）
+
+真实 opencode 二进制 + 真 qwen3.7-max + 真 composer（Chrome / WebKit 双引擎，隔离 HOME/XDG 沙箱）。断言：① 转录区不出现 `LLM stream idle` 报错；② 回合正常收尾；③ **静默窗口内 UI 不假完成**（停止按钮仍在——后端不杀了，但前端若自己把回合判死同样是故障）。
+
+**停流是 provider 行为，无法强制**：脚本会量出本轮的最长静默，**< 30s 时断言 ③ 直接 SKIP 而不是假绿**（那一轮 DashScope 走了流式模式、根本没触发缺陷场景）。实测：Chrome 撞上 32s 停流 3/3 PASS；WebKit 第一轮只静默 28s → 如实 SKIP，重跑撞上 30s → 3/3 PASS。
+
 ## 9. 端口 / 进程相关测试的两条硬约束（ADR-045）
 
 **测试里不要 `bind(0)` → drop → 再期望该端口仍空闲。** 临时端口是内核回收再分配的共享资源：一个测试释放后，并行跑的兄弟测试的 `bind(0)` 立刻就能拿到同一个号（实测 6 跑 5 挂）。两条出路：
