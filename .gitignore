@@ -63,3 +63,6 @@ opencode.json
 
 # Commercialization docs (sensitive business strategy)
 docs/discussions/002-commercialization.md
+
+# e2e 走查截图（本地产物，不入库）
+packages/client/desktop/e2e/*.png
