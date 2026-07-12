@@ -24,6 +24,7 @@ function getOpencodePassword(): string {
   return pw;
 }
 const MAX_REPLY_LENGTH = 20_000; // Safe limit for messaging platforms (DingTalk, WeChat, etc.)
+const EMPTY_REPLY_NOTICE = "✅ 处理完成，但本轮没有产生文本回复。";
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
 const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if session stuck
@@ -44,6 +45,18 @@ interface SessionContext {
   channelType: string;
   /** Accumulated text per partID (handles multiple text parts) */
   textParts: Map<string, string>;
+  /**
+   * IDs of assistant messages in this turn. opencode broadcasts part.updated for
+   * the *user's* parts too (prompt.ts) — including synthetic ones it injects —
+   * so a part is only ours if its messageID is in here.
+   */
+  assistantMessageIds: Set<string>;
+  /**
+   * partIDs known to be assistant text. The delta event carries no part type and
+   * reasoning-delta uses the same `field: "text"` as text-delta (processor.ts),
+   * so deltas can only be attributed via the type learned from part.updated.
+   */
+  textPartIds: Set<string>;
   /** Callback to reply to the originating message */
   reply: (content: string) => Promise<void>;
   /** Optional: typing indicator callback */
@@ -191,6 +204,8 @@ export class Bridge {
       senderName: msg.senderName,
       channelType: msg.channelType,
       textParts: new Map(),
+      assistantMessageIds: new Set(),
+      textPartIds: new Set(),
       reply: msg.reply,
       onTyping: msg.onTyping,
     };
@@ -262,7 +277,7 @@ export class Bridge {
   }
 
   /** Flush accumulated text and send reply, then clean up */
-  private flushAndReply(sessionId: string): void {
+  private flushAndReply(sessionId: string, notifyEmpty = true): void {
     const ctx = this.activeContexts.get(sessionId);
     if (!ctx) return;
 
@@ -278,6 +293,14 @@ export class Bridge {
 
       ctx.reply(truncated).catch((err) => {
         console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+      });
+    } else if (notifyEmpty) {
+      // Before the reasoning/user-echo filters landed, textParts always held at
+      // least the echoed prompt, so an empty flush was impossible. Now a turn
+      // that only produced reasoning or tool calls really can end up with no
+      // text — staying silent would read as the bot ignoring the user.
+      ctx.reply(EMPTY_REPLY_NOTICE).catch((err) => {
+        console.error(`[Bridge] Empty-reply notice failed for ${ctx.chatId}:`, err);
       });
     }
 
@@ -324,6 +347,9 @@ export class Bridge {
 
   private handleSSEEvent(event: { type: string; properties: any }): void {
     switch (event.type) {
+      case "message.updated":
+        this.onMessageUpdated(event.properties.info);
+        break;
       case "message.part.updated":
         this.onPartUpdated(event.properties.part);
         break;
@@ -351,17 +377,35 @@ export class Bridge {
     }
   }
 
+  /** Track which messages are the assistant's, so user/synthetic parts can be dropped */
+  private onMessageUpdated(info: {
+    id: string;
+    sessionID: string;
+    role: string;
+  }): void {
+    if (info?.role !== "assistant") return;
+    const ctx = this.activeContexts.get(info.sessionID);
+    if (!ctx) return;
+    ctx.assistantMessageIds.add(info.id);
+  }
+
   /** Accumulate assistant text from full part updates */
   private onPartUpdated(part: MessagePart): void {
-    if (part.type !== "text") return;
     const ctx = this.activeContexts.get(part.sessionID);
     if (!ctx) return;
-    const partId = (part as any).id ?? "__default__";
-    const text = (part as any).content ?? (part as any).text ?? "";
-    ctx.textParts.set(partId, text);
 
-    // Reset idle timer — agent is still producing output
+    // Any part activity means the agent is alive — reasoning and tool parts
+    // included. This must happen before the content filters below: a long
+    // thinking block or a slow tool produces no text parts for minutes, and
+    // letting the idle fallback fire there would force-send a partial reply.
     this.startIdleTimer(ctx.sessionId);
+
+    if (!ctx.assistantMessageIds.has(part.messageID)) return;
+    if (part.type !== "text") return;
+
+    const text = (part as any).content ?? (part as any).text ?? "";
+    ctx.textPartIds.add(part.id);
+    ctx.textParts.set(part.id, text);
   }
 
   /** Accumulate assistant text from delta (incremental append) */
@@ -373,13 +417,17 @@ export class Bridge {
   }): void {
     const ctx = this.activeContexts.get(props.sessionID);
     if (!ctx) return;
-    if (props.field === "content" || props.field === "text") {
-      const existing = ctx.textParts.get(props.partID) ?? "";
-      ctx.textParts.set(props.partID, existing + props.delta);
 
-      // Reset idle timer — agent is still producing output
-      this.startIdleTimer(ctx.sessionId);
-    }
+    this.startIdleTimer(ctx.sessionId);
+
+    if (props.field !== "content" && props.field !== "text") return;
+    // The delta event carries no type and reasoning-delta also arrives as
+    // `field: "text"` — only a partID already seen as an assistant text part
+    // may be appended to, or the model's chain of thought lands in the chat.
+    if (!ctx.textPartIds.has(props.partID)) return;
+
+    const existing = ctx.textParts.get(props.partID) ?? "";
+    ctx.textParts.set(props.partID, existing + props.delta);
   }
 
   /** Session went idle → send accumulated reply */
@@ -499,9 +547,10 @@ export class Bridge {
   }
 
   async shutdown(): Promise<void> {
-    // Flush any pending replies before shutting down
+    // Flush any pending replies before shutting down. No empty-turn notice here —
+    // the gateway is going down, and "no text this turn" is not news worth sending.
     for (const sessionId of [...this.activeContexts.keys()]) {
-      this.flushAndReply(sessionId);
+      this.flushAndReply(sessionId, false);
     }
 
     // Close all SSE connections and backend resources

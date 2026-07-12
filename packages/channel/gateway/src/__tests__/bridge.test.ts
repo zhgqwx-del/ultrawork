@@ -38,6 +38,25 @@ import { Bridge, getOpencodeBaseUrl } from "../bridge.js"
 import type { IncomingMessage } from "../types.js"
 import { loadSessionMap } from "../session-store.js"
 
+/**
+ * opencode announces a message before any of its parts (prompt.ts creates the
+ * assistant message via updateMessage, then the processor emits parts). The
+ * bridge relies on that ordering to tell assistant output from the user's own
+ * echoed parts, so tests must reproduce it.
+ */
+function emitAssistantMessage(
+  handleSSE: (e: unknown) => void,
+  { sessionID = "sess-1", id = "m1" }: { sessionID?: string; id?: string } = {},
+): void {
+  handleSSE({
+    type: "message.updated",
+    properties: { info: { id, sessionID, role: "assistant" } },
+  })
+}
+
+const ACK = "⏳ 收到，正在处理"
+const EMPTY_NOTICE = "✅ 处理完成，但本轮没有产生文本回复。"
+
 function createMessage(overrides?: Partial<IncomingMessage>): IncomingMessage {
   return {
     chatId: "user-1",
@@ -182,6 +201,7 @@ describe("Bridge", () => {
 
       // Access private method for testing
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
@@ -189,6 +209,7 @@ describe("Bridge", () => {
           part: {
             type: "text",
             sessionID: "sess-1",
+            messageID: "m1",
             id: "p1",
             content: "Hello world",
           },
@@ -211,6 +232,15 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      // text-start: the full part announces the type; deltas carry none
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" },
+        },
+      })
 
       handleSSE({
         type: "message.part.delta",
@@ -247,18 +277,19 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: "Part 1" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Part 1" },
         },
       })
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p2", content: "Part 2" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p2", content: "Part 2" },
         },
       })
 
@@ -277,11 +308,12 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "tool-call", sessionID: "sess-1", id: "t1" },
+          part: { type: "tool-call", sessionID: "sess-1", messageID: "m1", id: "t1" },
         },
       })
 
@@ -290,9 +322,138 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only the instant ack, no AI reply for empty text
+      // Ack + empty-turn notice: a tool-only turn produced no text to send
+      expect(msg.reply).toHaveBeenCalledTimes(2)
+      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
+      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
+      await bridge.shutdown()
+    })
+
+    it("never forwards reasoning to the channel", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      // reasoning-start, then reasoning-delta — which opencode emits with the
+      // SAME `field: "text"` as real text deltas (processor.ts). Attribution can
+      // only come from the part type learned here.
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "reasoning", sessionID: "sess-1", messageID: "m1", id: "r1", text: "" },
+        },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "r1", field: "text", delta: "The user greeted me. I should…" },
+      })
+
+      // Real answer
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" } },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "p1", field: "text", delta: "你好！" },
+      })
+
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      expect(msg.reply).toHaveBeenCalledWith("你好！")
+      expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("The user greeted me"))
+      await bridge.shutdown()
+    })
+
+    it("never echoes the user's own parts back (including synthetic ones)", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+
+      // opencode broadcasts the user's parts too — same type "text", different
+      // message. It also injects synthetic user parts mid-turn.
+      handleSSE({
+        type: "message.updated",
+        properties: { info: { id: "m0", sessionID: "sess-1", role: "user" } },
+      })
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m0", id: "u1", content: "你好" } },
+      })
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "text",
+            sessionID: "sess-1",
+            messageID: "m0",
+            id: "u2",
+            synthetic: true,
+            content: "Summarize the task tool output above and continue with your task.",
+          },
+        },
+      })
+
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "你好！有什么可以帮你的？" } },
+      })
+
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      expect(msg.reply).toHaveBeenCalledWith("你好！有什么可以帮你的？")
+      await bridge.shutdown()
+    })
+
+    it("keeps the turn alive while only reasoning streams (no premature force-send)", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "reasoning", sessionID: "sess-1", messageID: "m1", id: "r1", text: "" } },
+      })
+
+      // A long think: reasoning deltas keep arriving, no text parts at all.
+      // These are dropped from the reply, but they must still count as activity —
+      // otherwise the 180s idle fallback force-sends an empty turn mid-thought.
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(120_000)
+        handleSSE({
+          type: "message.part.delta",
+          properties: { sessionID: "sess-1", partID: "r1", field: "text", delta: "thinking…" },
+        })
+      }
+
+      // 10 minutes of pure reasoning — still no reply beyond the ack
       expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      expect(msg.reply).toHaveBeenCalledWith(ACK)
+
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Done." } },
+      })
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      expect(msg.reply).toHaveBeenCalledWith("Done.")
       await bridge.shutdown()
     })
 
@@ -312,7 +473,7 @@ describe("Bridge", () => {
   })
 
   describe("handleSSEEvent — session.status idle", () => {
-    it("does not reply when text is empty", async () => {
+    it("sends an empty-turn notice when the turn produced no text", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
@@ -323,9 +484,10 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only instant ack, no AI content reply
-      expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      // Silence would read as the bot ignoring the user — say something instead
+      expect(msg.reply).toHaveBeenCalledTimes(2)
+      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
+      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
       await bridge.shutdown()
     })
 
@@ -386,12 +548,13 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
       const longText = "x".repeat(25_000)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: longText },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: longText },
         },
       })
 
@@ -692,12 +855,13 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       // Accumulate some text first
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: "Partial response" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Partial response" },
         },
       })
 
@@ -746,6 +910,11 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" } },
+      })
 
       handleSSE({
         type: "message.part.delta",
@@ -766,13 +935,15 @@ describe("Bridge", () => {
       await bridge.shutdown()
     })
 
-    it("ignores non-text field deltas", async () => {
+    it("ignores deltas for parts never seen as assistant text", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
+      // Non-text field, and an unknown partID: neither may reach the chat
       handleSSE({
         type: "message.part.delta",
         properties: {
@@ -782,15 +953,24 @@ describe("Bridge", () => {
           delta: "read",
         },
       })
+      handleSSE({
+        type: "message.part.delta",
+        properties: {
+          sessionID: "sess-1",
+          partID: "unknown-part",
+          field: "text",
+          delta: "orphan delta",
+        },
+      })
 
       handleSSE({
         type: "session.status",
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only instant ack, no AI content reply (toolName delta ignored)
-      expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      expect(msg.reply).toHaveBeenCalledTimes(2)
+      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
+      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
       await bridge.shutdown()
     })
   })
