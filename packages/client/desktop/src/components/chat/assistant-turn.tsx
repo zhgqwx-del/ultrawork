@@ -269,7 +269,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   }
 
   return (
-    <div className="group py-3">
+    <div className="group py-3" data-testid="assistant-turn">
       {model.visibleProcessCount > 0 && (
         <ExecutionFlow
           parts={model.process}
