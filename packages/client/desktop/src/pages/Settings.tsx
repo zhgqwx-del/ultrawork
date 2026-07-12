@@ -234,6 +234,33 @@ function GeneralSection() {
         </label>
         <p className="text-xs text-[var(--color-fg-muted)]">{t("settings.planAutoRevealHint")}</p>
       </div>
+
+      {/* Notifications (ADR-053). All three fire under the same condition: the window
+          is unfocused, OR it is focused on a different session. */}
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium text-[var(--color-fg)]">{t("settings.notify")}</h3>
+          <p className="text-xs text-[var(--color-fg-muted)]">{t("settings.notifyHint")}</p>
+        </div>
+        {([
+          { key: "notifySound", label: "settings.notifySound", hint: "settings.notifySoundHint" },
+          { key: "notifySystem", label: "settings.notifySystem", hint: "settings.notifySystemHint" },
+          { key: "notifyFlash", label: "settings.notifyFlash", hint: "settings.notifyFlashHint" },
+        ] as const).map((row) => (
+          <div key={row.key} className="space-y-1">
+            <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
+              <input
+                type="checkbox"
+                checked={config[row.key]}
+                onChange={(e) => updateConfig({ [row.key]: e.target.checked })}
+                className="size-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+              />
+              {t(row.label)}
+            </label>
+            <p className="pl-6 text-xs text-[var(--color-fg-muted)]">{t(row.hint)}</p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **回合完成 / 需要交互时的桌面提醒（ADR-053，discussions/036）**：提示音（内存合成两声和弦，**零音频资源**）+ 系统通知（`tauri-plugin-notification`）+ 图标提醒（Dock 弹跳 / Windows 闪任务栏）；设置 → 偏好三个独立开关，默认全开。
+  - 门控口径：**窗口未聚焦 OR 当前看的不是那个会话**（比"仅未聚焦"更宽——在会话 A 干活时后台会话 B 完成也必须告知）。
+  - **in-flight 白名单**：只提醒本 app 内发起过 prompt 的会话 ⇒ IM 渠道消息、委派子会话、后端自发会话天然静默。
+  - **「agent 需要你」按 in-flight 会话逐个订阅 per-session 流**——ACP 后端的 `permission.asked`/`question.asked` 根本不上全局流，只挂全局流会对 Claude/Gemini 家族完全失聪（而这是唯一"不响应就整个任务作废"的事件）。
+  - 风暴节流（`permission: ask` 时 agent 每个 bash 问一次）：每会话在未处理期间只提醒一次，**窗口聚焦 / 用户回答 / 回合结束**三路重置。
+
+### Fixed
+
+- `session.error` 在 opencode 里**不是终态**（上下文溢出触发自动压缩时也发、回合继续跑）——通知层不再当场报"失败"，改为记住错误、有后续输出则清除、只有带着错误走到 idle 才报失败（此前会误报失败**并把真正的完成通知吃掉**）。
+
 ## [0.2.5] - 2026-07-12
 
 > 「让人看得见」批次：产物不再藏在右侧栏（ADR-048/052）· AI 回复里的链接终于能点（ADR-052）· IM 渠道会话不再让人翻半天（ADR-051）· IM 回复不再夹带思考过程、agent 能反问了（ADR-050）· 长时间工具调用不再被误判成挂死（ADR-049）· 回复结束后正确贴底（ADR-047）。

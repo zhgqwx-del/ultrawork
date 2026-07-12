@@ -6,6 +6,10 @@ import { ChannelSessionsProvider } from "@/lib/channel-sessions-context"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useWorkspace } from "@/lib/workspace-context"
 import { DragRegion } from "@/components/layout/drag-region"
+// Lives INSIDE SessionsProvider (it needs session titles) and stays mounted for the whole
+// app — a session that finishes while the user is on Settings, or on another session, still
+// has to reach them.
+import { Notifications } from "@/lib/notifications/notifications"
 
 /**
  * Root layout - wraps all pages with shared sidebar context and sidebar UI.
@@ -32,6 +36,7 @@ export function RootLayout() {
     <TeamSessionsProvider>
     <ChannelSessionsProvider>
     <SessionsProvider>
+      <Notifications />
       <SidebarProvider>
         <div className="flex h-screen overflow-hidden bg-[var(--sidebar-bg)]">
           <LeftSidebar />

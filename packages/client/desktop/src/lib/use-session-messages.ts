@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
+import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { SSEEvent } from "@agent/connector"
 
@@ -720,6 +721,9 @@ export function useSessionMessages(
     setStoppedAtMessageId(stoppedId)
 
     if (sessionId) {
+      // The user pressed Stop: the idle that follows is the one thing they already
+      // know about. Announcing it would be telling them what they just did.
+      forgetLocallyPrompted(sessionId)
       const lastUserMsg = [...currentMsgs].reverse().find(
         (m) => m.info.role === "user" && !m.info.id.startsWith("temp-")
       )
@@ -748,6 +752,10 @@ export function useSessionMessages(
     if (!sessionId || !text.trim() || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
     sendingRef.current = true
     markSessionActive(sessionId)
+    // The desktop user started this turn ⇒ they are owed a notification when it ends.
+    // The turns we do NOT register (IM channel messages, delegate children) are exactly
+    // the ones that must stay silent — discussions/036 §2.3.
+    markLocallyPrompted(sessionId)
 
     const wasStopped = stoppedRef.current
     const prevFrozenIds = wasStopped ? new Set(frozenMessageIdsRef.current) : null
@@ -778,6 +786,9 @@ export function useSessionMessages(
       sendingRef.current = false
       setSending(false)
       markSessionIdle(sessionId)
+      // The composer already told them (toast below) and they are clearly at the
+      // keyboard — don't also chime at them.
+      forgetLocallyPrompted(sessionId)
       if (wasStopped) {
         setStopped(true)
         stoppedRef.current = true

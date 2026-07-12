@@ -10,6 +10,7 @@ import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace-context"
 import { useTeamSessions } from "@/lib/team-sessions-context"
 import { buildLeaderSystemPrompt, type TeamMember } from "@/lib/team-leader-prompt"
+import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
 import { ensureOrchestratorMcp } from "@/lib/orchestrator-mcp"
 import { createTeamSession } from "@/lib/orchestration-client"
 import { OPENCODE_DEFAULT_AGENT_ID, isACPAgentId } from "@agent/connector"
@@ -107,12 +108,19 @@ export function HomePage() {
       // Navigate immediately for instant UX; the prompt call is fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
+      // A new session's FIRST turn is started here, not through the composer's
+      // sendMessage — so the notification allowlist has to be told here too, or the
+      // most common path of all (ask something from Home, walk away) never notifies.
+      markLocallyPrompted(session.id)
       // Dispatched by the binding frozen above (ACP backends lazily create the
       // agent-side session in the workspace directory before prompting).
       connector
         .prompt(session.id, text, { model: currentModel || undefined, directory: session.directory })
         .catch((err) => {
           console.error("Failed to send message:", err)
+          // No turn ever ran, so no idle will ever arrive to consume the entry — it would
+          // sit there and arm a false "completed" on the next idle this session sees.
+          forgetLocallyPrompted(session.id)
           toast.error(t("error.sendMessage"))
         })
     } catch (err) {
@@ -160,6 +168,7 @@ export function HomePage() {
       if (!isOpencodeLeader) bindSessionAgent(entry.id, agentId)
       setInput("")
       navigate(`/session/${entry.id}`, { state: { sending: true, messageText: text } })
+      markLocallyPrompted(entry.id)
       connector
         .prompt(
           entry.id,
@@ -175,6 +184,7 @@ export function HomePage() {
         )
         .catch((err) => {
           console.error("Failed to send message:", err)
+          forgetLocallyPrompted(entry.id)
           toast.error(t("error.sendMessage"))
         })
     } catch (err) {

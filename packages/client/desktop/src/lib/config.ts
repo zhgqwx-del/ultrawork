@@ -22,6 +22,16 @@ export interface AppConfig {
    * intact, it only stops the panel from opening itself.
    */
   planAutoReveal: boolean
+  /**
+   * Notifications for "your turn finished" / "the agent needs you" (ADR-053).
+   *
+   * All three are gated on the same condition — the window is unfocused, OR it is
+   * focused on some OTHER session — so none of them can fire while the user is
+   * watching the very session that finished.
+   */
+  notifySound: boolean
+  notifySystem: boolean
+  notifyFlash: boolean
 }
 
 /**
@@ -59,6 +69,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   theme: "system",
   language: detectDefaultLanguage(),
   planAutoReveal: true,
+  notifySound: true,
+  notifySystem: true,
+  notifyFlash: true,
 }
 
 const CONFIG_STORAGE_KEY = "ultrawork-config"

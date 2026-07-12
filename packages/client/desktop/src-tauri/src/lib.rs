@@ -5370,6 +5370,18 @@ fn warm_opencode_mcp(port: u16, auth_header: String) {
     });
 }
 
+/// Diagnostic sink for the renderer.
+///
+/// The webview console is invisible in `tauri dev` (gotchas §7 — Tauri does not forward
+/// it), and the notification effects are unobservable by construction (a banner, a chime,
+/// a bouncing dock). Under `VITE_NOTIFY_TRACE=1` the notification layer narrates its
+/// decisions through here — the only thing that makes a packaged-app run auditable
+/// (ADR-053). Inert unless something calls it.
+#[tauri::command]
+fn probe_log(msg: String) {
+    println!("[PROBE][web] {msg}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -5393,6 +5405,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard())
         .invoke_handler(tauri::generate_handler![
             ensure_default_workspace,
@@ -5427,6 +5440,7 @@ pub fn run() {
             read_file_bytes,
             test_provider_connection,
             test_search_provider,
+            probe_log,
         ])
         .setup(|app| {
             // Stage 0: catch catchable termination signals so sidecars are
