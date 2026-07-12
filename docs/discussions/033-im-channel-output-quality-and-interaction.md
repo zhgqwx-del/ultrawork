@@ -213,9 +213,29 @@ ctx 被 `flushAndReply` 删除之后才到达的 permission，两个 handler 都
 
 ---
 
-## 6. 待拍板
+## 6. 拍板结果
 
-1. **P2 的钉钉流式要不要做？**（唯一按帧计费的渠道）建议做成配置开关、默认关、降级到 P1 分段。
-2. **permission 默认策略**：保持"IM 全放行"（方便但危险），还是改"ask + 只读工具白名单（read/grep/glob/list）自动放行"？倾向后者，但这是**行为变更**，会影响现有 IM 用户体验。
-3. ~~本轮做到哪~~ → **已定：P0+P1 一个分支，P2 单独立项 + 单独 ADR**（2026-07-11）。
+1. ~~本轮做到哪~~ → **P0+P1 一个分支，P2 单独立项 + 单独 ADR**（2026-07-11）。
+2. **ack 延迟保持 2.5s**（2026-07-12）。实测首个可见输出到达时间 A=4.9s / B=5.0s / C=3.8s，2.5s 意味着常规问答**仍会先收到一条 ack**；提到 6s 才能让它在常规问答里消失，但慢回合前 6 秒将完全无反馈。权衡后保持 2.5s。
+3. **permission 暂不做，记为 known issue，留到 P2**（2026-07-12）。理由与一个硬约束：
+
+   **约束（源码核验）**：permission 只在规则为 `ask` 时才产生 `permission.asked` 事件 —— 若不让 opencode 对 IM 会话产生 ask，危险工具会**直接执行**，gateway 连拦截点都没有。而**现有 REST 没有 per-session 权限入口**：
+   - `PATCH /session/:id` 只接受 `title` / `time.archived`（`server/routes/session.ts:263-278`）；
+   - `prompt` 的 `tools` 参数虽会落成 session 级 permission ruleset（`session/prompt.ts:1313-1318`），但只映射 `allow`/`deny` 两种 action —— **唯独没有 `ask`**（`Ruleset` schema 本身是支持 ask 的）。
+
+   ⇒ 要给 IM 会话单独上锁，只有两条路：**A. vendor patch**（扩展 `PATCH /session/:id` 接受 permission ruleset，只影响 IM、桌面零感知，代价是 patch + 重编 opencode + bump 时重做）；**B. 改全局 config**（零 patch，但桌面端也会跟着弹 Permission Dock，每次 bash 都要点确认）。
+
+   **决定走 P2**：真要「问」用户，就需要 `Allow once / Allow always / Deny` 三按钮，而那正是 P2 要改 `ChannelAdapter`（引入消息句柄 + 交互能力）才能做的事 —— 与其现在用编号列表凑合、P2 再重做一遍，不如合并。
+
+   **P2 落地时的白名单方案（已定，本地只读七项自动放行）**：
+
+   | 自动放行（本地只读） | 必须问 |
+   |---|---|
+   | `read` `glob` `grep` `list` `codesearch` `lsp` `todowrite` | `bash` `edit` `external_directory` `webfetch` `websearch` `skill` `task` `doom_loop` |
+
+   `webfetch` 不放行的理由：它能打任意 URL（内网 SSRF 面）。`websearch` 一并要问（外部内容进上下文 = prompt injection 面）。
+
+   **在此之前，known issue 依旧成立**：任何能给机器人发消息的 IM 成员，都能让 agent 无确认地执行 bash/edit（ADR-044 决策 5 已记）。
+
+4. **P2 的钉钉流式要不要做？**（唯一按帧计费的渠道）建议做成配置开关、默认关、降级到 P1 分段。**待定**。
 </content>
