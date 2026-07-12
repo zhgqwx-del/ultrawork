@@ -27,18 +27,40 @@ vi.mock("@agent/api-client", () => ({
   })),
 }))
 
-// Mock session-store to avoid disk I/O in tests
-vi.mock("../session-store.js", () => ({
-  loadSessionMap: vi.fn(async () => new Map()),
-  saveSessionMap: vi.fn(async () => {}),
-}))
+// Real SessionStore logic (keying, v1 fallback), disk I/O stubbed out. Tests seed
+// a pre-existing mapping by pushing onto `storeSeed.entries` before bridge.init().
+const storeSeed = vi.hoisted(() => ({ entries: [] as any[] }))
+vi.mock("../session-store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../session-store.js")>()
+  class MemSessionStore extends actual.SessionStore {
+    async load(): Promise<void> {
+      for (const entry of storeSeed.entries) this.set(entry)
+    }
+    async save(): Promise<void> {}
+  }
+  return { ...actual, SessionStore: MemSessionStore }
+})
 
 // Mock global fetch for SSE
 const mockFetch = vi.fn()
 
 import { Bridge, getOpencodeBaseUrl } from "../bridge.js"
 import type { IncomingMessage } from "../types.js"
-import { loadSessionMap } from "../session-store.js"
+import type { ChannelSessionEntry } from "../session-store.js"
+
+/** Seed a persisted mapping as if it had been restored from disk on init(). */
+function seedSession(overrides: Partial<ChannelSessionEntry> & { sessionId: string }): void {
+  storeSeed.entries.push({
+    chatId: "user-1",
+    channelType: "dingtalk",
+    senderId: "sender-1",
+    senderName: "Sender",
+    workspaceDir: "/workspace",
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+    ...overrides,
+  })
+}
 
 /**
  * opencode announces a message before any of its parts (prompt.ts creates the
@@ -74,6 +96,7 @@ function createMessage(overrides?: Partial<IncomingMessage>): IncomingMessage {
 }
 
 beforeEach(() => {
+  storeSeed.entries = []
   vi.clearAllMocks()
   vi.useFakeTimers()
   vi.stubGlobal("fetch", mockFetch)
@@ -103,6 +126,8 @@ beforeEach(() => {
 afterEach(async () => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs() // restoreAllMocks does NOT undo stubEnv — a leaked
+  // ULTRAWORK_CHANNEL_IDLE_ROTATE_MS silently disables rotation in later tests
 })
 
 describe("Bridge", () => {
@@ -987,6 +1012,46 @@ describe("Bridge", () => {
       await bridge.shutdown()
     })
 
+    it("counts answering a question as activity (P1 idle clock)", async () => {
+      // Answering returns early — it never reaches startTurn, where the activity
+      // stamp used to live. A user can sit inside one question for many minutes
+      // (QUESTION_TIMEOUT_MS is 30min); if that does not count as activity, idle
+      // rotation would swap the session out from under the exchange it is waiting on.
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+
+      const store = (bridge as any).store
+      const before = store.get("dingtalk", "user-1").lastActiveAt
+      expect(before).toBeGreaterThan(0)
+
+      askQuestion(bridge)
+      await vi.advanceTimersByTimeAsync(60_000) // user thinks it over
+      await bridge.handleMessage(createMessage({ text: "1" })) // the answer
+
+      expect(store.get("dingtalk", "user-1").lastActiveAt).toBeGreaterThan(before)
+      await bridge.shutdown()
+    })
+
+    it("does not let a bystander's chatter refresh the activity clock", async () => {
+      // The bystander is turned away without answering; treating that as activity
+      // would let anyone in a group keep a stale session alive indefinitely.
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      const store = (bridge as any).store
+      const before = store.get("dingtalk", "user-1").lastActiveAt
+      await vi.advanceTimersByTimeAsync(60_000)
+      await bridge.handleMessage(
+        createMessage({ senderId: "someone-else", senderName: "Bystander", text: "在干嘛" }),
+      )
+
+      const after = store.get("dingtalk", "user-1")
+      expect(after.lastActiveAt).toBe(before) // turned away → clock must not move
+      expect(after.senderName).toBe("Sender") // nor may they take over the identity
+      await bridge.shutdown()
+    })
+
     it("does not re-ask a question the poll still lists after it was answered", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
@@ -1179,7 +1244,7 @@ describe("Bridge", () => {
       expect((bridge as any).sseSubscriptions.size).toBe(0)
       expect((bridge as any).pollTimers.size).toBe(0)
       expect((bridge as any).activeContexts.size).toBe(0)
-      expect((bridge as any).sessionMap.size).toBe(0)
+      expect((bridge as any).store.size).toBe(0)
       expect((bridge as any).backends.size).toBe(0)
       expect((bridge as any).queues.size).toBe(0)
     })
@@ -1188,9 +1253,7 @@ describe("Bridge", () => {
   describe("stale session recovery", () => {
     it("recreates session when cached session is stale (getSession 404)", async () => {
       // Pre-populate session map with a stale mapping
-      vi.mocked(loadSessionMap).mockResolvedValueOnce(
-        new Map([["user-1", "stale-sess"]])
-      )
+      seedSession({ sessionId: "stale-sess" })
       // getSession rejects for stale session, then succeeds for new
       mockGetSession
         .mockRejectedValueOnce(new Error("API request failed: 404 Not Found"))
@@ -1221,9 +1284,7 @@ describe("Bridge", () => {
     })
 
     it("does not retry on non-404 getSession errors (e.g. 500)", async () => {
-      vi.mocked(loadSessionMap).mockResolvedValueOnce(
-        new Map([["user-1", "existing-sess"]])
-      )
+      seedSession({ sessionId: "existing-sess" })
       mockGetSession.mockRejectedValueOnce(
         new Error("API request failed: 500 Internal Server Error")
       )
@@ -1445,5 +1506,218 @@ describe("getOpencodeBaseUrl", () => {
     expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:1111")
     process.env.OPENCODE_BASE_URL = "http://127.0.0.1:2222"
     expect(getOpencodeBaseUrl()).toBe("http://127.0.0.1:2222")
+  })
+})
+
+describe("idle rotation (ADR-051)", () => {
+  const HOUR = 3600_000
+
+  /** Drive the session to a settled, idle state so activeContexts is empty. */
+  async function settleTurn(bridge: Bridge, sessionID = "sess-1") {
+    const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+    handleSSE({
+      type: "session.status",
+      properties: { sessionID, status: { type: "idle" } },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it("reuses the session when the chat has been idle less than the threshold", async () => {
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage({ text: "first" }))
+    await settleTurn(bridge)
+
+    await vi.advanceTimersByTimeAsync(59 * 60_000) // 59min — under the 60min default
+    await bridge.handleMessage(createMessage({ text: "second" }))
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1)
+    await bridge.shutdown()
+  })
+
+  it("starts a fresh session once the chat has been idle past the threshold", async () => {
+    mockCreateSession
+      .mockResolvedValueOnce({ id: "sess-1" })
+      .mockResolvedValueOnce({ id: "sess-2" })
+
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage({ text: "first" }))
+    await settleTurn(bridge)
+
+    await vi.advanceTimersByTimeAsync(HOUR + 60_000) // 61min
+    const later = createMessage({ text: "改一下刚才那个方案" })
+    await bridge.handleMessage(later)
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(2)
+    expect(mockPromptAsync).toHaveBeenLastCalledWith(
+      "sess-2",
+      "改一下刚才那个方案",
+      expect.anything(),
+    )
+    await bridge.shutdown()
+  })
+
+  it("TELLS the user the context was cut, and keeps a way back", async () => {
+    // A silent cut is the whole risk of rotation: the user says "改一下刚才那个" and
+    // gets an agent with no idea what 刚才 was. Rotation must announce itself.
+    mockCreateSession
+      .mockResolvedValueOnce({ id: "sess-1" })
+      .mockResolvedValueOnce({ id: "sess-2" })
+
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage())
+    await settleTurn(bridge)
+
+    await vi.advanceTimersByTimeAsync(HOUR + 60_000)
+    const later = createMessage({ text: "继续" })
+    await bridge.handleMessage(later)
+
+    const notice = (later.reply as ReturnType<typeof vi.fn>).mock.calls
+      .map(([t]) => t)
+      .find((t) => typeof t === "string" && t.includes("新会话"))
+    expect(notice).toBeDefined()
+    expect(notice).toContain("/resume")
+
+    // The retired session is remembered, not deleted.
+    expect((bridge as any).store.get("dingtalk", "user-1").prevSessionId).toBe("sess-1")
+    await bridge.shutdown()
+  })
+
+  it("NEVER rotates while a turn is still in flight", async () => {
+    // THE guardrail (Hermes ships the same rule: never auto-reset a session with
+    // work in flight). With a short threshold, a user who follows up while the agent
+    // is still working would otherwise rotate the session out from under the running
+    // turn — its remaining output would be dropped on the floor as "not ours", and
+    // ADR-050's ctx-reuse path would be defeated.
+    //
+    // A/B-verified: deleting the activeContexts check in shouldRotate turns this red.
+    vi.stubEnv("ULTRAWORK_CHANNEL_IDLE_ROTATE_MS", "60000") // 1min
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage({ text: "跑个长任务" }))
+    // Deliberately do NOT settle the turn — the context stays in flight.
+
+    await vi.advanceTimersByTimeAsync(90_000) // 90s: past the 1min threshold,
+    // but still under IDLE_TIMEOUT_MS (180s), so the turn's context is alive.
+    await bridge.handleMessage(createMessage({ text: "顺便改下标题" }))
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1) // no rotation
+    expect(mockPromptAsync).toHaveBeenLastCalledWith(
+      "sess-1",
+      "顺便改下标题",
+      expect.anything(),
+    )
+    await bridge.shutdown()
+  })
+
+  it("a message answering a question is never treated as a rotation trigger", async () => {
+    // Not the shouldRotate guardrail — this one is protected a step earlier: the
+    // pendingQuestion branch consumes the message as the ANSWER and returns before
+    // rotation is ever considered. Worth pinning anyway: if that early return were
+    // ever reordered below the rotation check, a slow answer (QUESTION_TIMEOUT_MS
+    // allows 30min of thinking) would land on a question that no longer exists.
+    vi.stubEnv("ULTRAWORK_CHANNEL_IDLE_ROTATE_MS", "60000") // 1min
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage())
+
+    const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+    handleSSE({
+      type: "question.asked",
+      properties: {
+        id: "q-1",
+        sessionID: "sess-1",
+        questions: [
+          { id: "q1", question: "选哪个方案？", options: ["A 方案", "B 方案"] },
+        ],
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000) // 5min of thinking — way past 1min
+    await bridge.handleMessage(createMessage({ text: "1" })) // the answer
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1) // no rotation
+    expect(mockReplyQuestion).toHaveBeenCalled() // answer reached the question
+    await bridge.shutdown()
+  })
+
+  it("is disabled by setting the threshold to 0", async () => {
+    vi.stubEnv("ULTRAWORK_CHANNEL_IDLE_ROTATE_MS", "0")
+    const bridge = new Bridge()
+    await bridge.handleMessage(createMessage({ text: "first" }))
+    await settleTurn(bridge)
+
+    await vi.advanceTimersByTimeAsync(30 * 24 * HOUR) // a month
+    await bridge.handleMessage(createMessage({ text: "second" }))
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1)
+    await bridge.shutdown()
+  })
+
+  describe("/resume", () => {
+    async function rotate(bridge: Bridge) {
+      await bridge.handleMessage(createMessage({ text: "first" }))
+      await settleTurn(bridge)
+      await vi.advanceTimersByTimeAsync(HOUR + 60_000)
+      await bridge.handleMessage(createMessage({ text: "second" }))
+      await settleTurn(bridge, "sess-2")
+    }
+
+    it("swaps back to the rotated-away session", async () => {
+      mockCreateSession
+        .mockResolvedValueOnce({ id: "sess-1" })
+        .mockResolvedValueOnce({ id: "sess-2" })
+
+      const bridge = new Bridge()
+      await rotate(bridge)
+
+      const resume = createMessage({ text: "/resume" })
+      await bridge.handleMessage(resume)
+
+      const store = (bridge as any).store.get("dingtalk", "user-1")
+      expect(store.sessionId).toBe("sess-1") // back on the old one
+      expect(store.prevSessionId).toBe("sess-2") // symmetric — can toggle back
+
+      // And the next prompt goes to the resumed session, not a new one.
+      await bridge.handleMessage(createMessage({ text: "接着上面的" }))
+      expect(mockPromptAsync).toHaveBeenLastCalledWith(
+        "sess-1",
+        "接着上面的",
+        expect.anything(),
+      )
+      await bridge.shutdown()
+    })
+
+    it("says so when there is nothing to resume", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      await settleTurn(bridge)
+
+      const resume = createMessage({ text: "/resume" })
+      await bridge.handleMessage(resume)
+
+      expect(resume.reply).toHaveBeenCalledWith(expect.stringContaining("没有可恢复"))
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1) // /resume is not a prompt
+      await bridge.shutdown()
+    })
+
+    it("refuses to resume a session that no longer exists on the server", async () => {
+      // Deleted from the desktop in the meantime. Without the check the next prompt
+      // would 404 and silently mint yet another session, leaving the user certain
+      // /resume had worked.
+      mockCreateSession
+        .mockResolvedValueOnce({ id: "sess-1" })
+        .mockResolvedValueOnce({ id: "sess-2" })
+
+      const bridge = new Bridge()
+      await rotate(bridge)
+
+      mockGetSession.mockRejectedValueOnce(new Error("API request failed: 404 Not Found"))
+      const resume = createMessage({ text: "/resume" })
+      await bridge.handleMessage(resume)
+
+      expect(resume.reply).toHaveBeenCalledWith(expect.stringContaining("已不存在"))
+      const store = (bridge as any).store.get("dingtalk", "user-1")
+      expect(store.sessionId).toBe("sess-2") // stayed put
+      expect(store.prevSessionId).toBeUndefined() // dead pointer cleared
+      await bridge.shutdown()
+    })
   })
 })

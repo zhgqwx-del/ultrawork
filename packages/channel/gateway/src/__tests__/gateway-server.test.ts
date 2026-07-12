@@ -43,7 +43,10 @@ describe("GET /channel/health", () => {
     const resp = await fetchApp("/channel/health")
     expect(resp.status).toBe(200)
     const body = await jsonBody(resp)
-    expect(body).toEqual({ status: "ok" })
+    // idleRotateMs is deliberately part of the health payload: Tauri does not
+    // forward sidecar stdout, so this is the ONLY way to see which rotation
+    // threshold a running gateway actually picked up from the environment.
+    expect(body).toEqual({ status: "ok", idleRotateMs: expect.any(Number) })
   })
 })
 
@@ -382,7 +385,7 @@ describe("inbound Basic auth", () => {
   it("accepts the correct credentials", async () => {
     const res = await authedApp().request("/channel/health", { headers: header("opencode", "s3cret") })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ status: "ok" })
+    expect(await res.json()).toEqual({ status: "ok", idleRotateMs: expect.any(Number) })
   })
 
   it("protects data routes, not just health", async () => {

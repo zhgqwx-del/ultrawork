@@ -1,7 +1,11 @@
 import { OpenCodeBackend, UNLIMITED_SSE_RETRY, type Unsubscribe } from "@agent/connector";
 import type { ApiClient, MessagePart, QuestionInfo } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
-import { loadSessionMap, saveSessionMap } from "./session-store.js";
+import {
+  SessionStore,
+  sessionKey,
+  type ChannelSessionEntry,
+} from "./session-store.js";
 import {
   parseAnswer,
   renderQuestions,
@@ -45,6 +49,30 @@ const QUESTION_TIMEOUT_MS = 1_800_000; // 30 min — then auto-reject and tell t
 // produce the first one — otherwise it just duplicates a reply that is moments away.
 const ACK_DELAY_MS = 2_500;
 const ACK_TEXT = "⏳ 收到，正在处理";
+
+/**
+ * Idle rotation (ADR-051). An IM chat has no threads, so nothing ever marks the
+ * end of a task: without this, one WeChat conversation reuses a single opencode
+ * session forever, and last month's debugging noise keeps getting re-fed into
+ * today's prompt (cc-connect calls this "context drift" and defaults to 30min;
+ * OpenClaw defaults to 60min and gives DMs 240min).
+ *
+ * 60min by default: our agents run long tasks, and a user who submits one, walks
+ * away for half an hour and comes back to ask a follow-up is doing something
+ * completely normal — 30min would cut that conversation in half.
+ *
+ * Set to 0 to disable. The clock is `lastActiveAt`, which only messages we ACT on
+ * bump (see touchSession) — polls, acks and turned-away bystanders must not, or a
+ * chat would never fall idle.
+ */
+const DEFAULT_IDLE_ROTATE_MS = 60 * 60_000;
+
+export function getIdleRotateMs(): number {
+  const raw = process.env.ULTRAWORK_CHANNEL_IDLE_ROTATE_MS;
+  if (raw === undefined) return DEFAULT_IDLE_ROTATE_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_IDLE_ROTATE_MS;
+}
 
 /** Channel type → display label mapping */
 const CHANNEL_LABELS: Record<string, string> = {
@@ -124,11 +152,11 @@ interface PendingQuestion {
  * - Idle timeout fallback in case SSE misses the idle event
  */
 export class Bridge {
-  /** chatId → OpenCode sessionId */
-  private sessionMap = new Map<string, string>();
+  /** (channelType, chatId) → OpenCode session + metadata, persisted */
+  private store = new SessionStore();
   /** sessionId → active context for current turn */
   private activeContexts = new Map<string, SessionContext>();
-  /** chatId → sequential promise chain */
+  /** sessionKey(channelType, chatId) → sequential promise chain */
   private queues = new Map<string, Promise<void>>();
   /** Per-workspace OpenCode backend (ApiClient + global SSE, via @agent/connector) */
   private backends = new Map<string, OpenCodeBackend>();
@@ -139,17 +167,129 @@ export class Bridge {
 
   /** Restore persisted session mappings from disk */
   async init(): Promise<void> {
-    this.sessionMap = await loadSessionMap();
-    if (this.sessionMap.size > 0) {
-      console.log(`[Bridge] Restored ${this.sessionMap.size} session mappings`);
+    await this.store.load();
+    if (this.store.size > 0) {
+      console.log(`[Bridge] Restored ${this.store.size} session mappings`);
     }
+    // Print the policy that is actually in force. The threshold comes from the env,
+    // which reaches this process only if the Tauri host passed it through — without
+    // this line, "rotation didn't fire" and "the env never arrived" look identical.
+    const rotate = getIdleRotateMs();
+    console.log(
+      `[Bridge] Idle rotation: ${rotate > 0 ? `${Math.round(rotate / 60_000)}min (${rotate}ms)` : "DISABLED"}`,
+    );
   }
 
   /** Persist session map to disk (fire-and-forget) */
   private persistSessionMap(): void {
-    saveSessionMap(this.sessionMap).catch((err) => {
+    this.store.save().catch((err) => {
       console.error("[Bridge] Failed to persist session map:", err);
     });
+  }
+
+  /** Channel sessions with metadata — read by the desktop sidebar (badge + unread). */
+  listChannelSessions(): ChannelSessionEntry[] {
+    return this.store.list();
+  }
+
+  /**
+   * Retire the idle session so the next prompt starts clean, and TELL the user.
+   *
+   * The old session is not deleted — it stays in the desktop sidebar, and
+   * `prevSessionId` keeps it one `/resume` away. Nothing is carried across:
+   * OpenClaw is explicit that a reset starts empty and that continuity is what
+   * compaction is for, and cc-connect does the same (old sessions stay reachable
+   * via /list + /switch). Auto-summarising into the new session would quietly
+   * re-import the very drift the rotation exists to shed.
+   */
+  /**
+   * Swap the chat back to the session it rotated away from. The swap is symmetric —
+   * the session being left becomes the new `prevSessionId` — so /resume toggles and
+   * a user who resumes by mistake can get back without losing anything.
+   */
+  private async resumeSession(msg: IncomingMessage): Promise<void> {
+    const entry = this.store.get(msg.channelType, msg.chatId);
+    const target = entry?.prevSessionId;
+    if (!entry || !target) {
+      await msg.reply("ℹ️ 没有可恢复的上一个会话。").catch(() => {});
+      return;
+    }
+
+    // The old session may have been deleted from the desktop in the meantime.
+    // Verify before switching, or the next prompt would 404 and silently mint yet
+    // another session — leaving the user certain /resume had worked.
+    try {
+      await this.getClient(entry.workspaceDir || msg.workspaceDir).getSession(target);
+    } catch {
+      this.store.set({ ...entry, prevSessionId: undefined });
+      this.persistSessionMap();
+      await msg.reply("⚠️ 上一个会话已不存在（可能已在桌面端删除），无法恢复。").catch(() => {});
+      return;
+    }
+
+    // Don't strand a turn that is still running on the session we are leaving.
+    if (this.activeContexts.has(entry.sessionId)) {
+      await msg.reply("⏳ 当前会话还在处理中，请等它结束后再 /resume。").catch(() => {});
+      return;
+    }
+
+    this.store.set({
+      ...entry,
+      sessionId: target,
+      prevSessionId: entry.sessionId,
+      lastActiveAt: Date.now(),
+    });
+    this.persistSessionMap();
+    console.log(`[Bridge] Resumed ${target} for chat ${msg.chatId}`);
+    await msg
+      .reply("↩️ 已切回上一个会话，可以接着之前的上下文继续。\n再次回复 /resume 可切换回来。")
+      .catch(() => {});
+  }
+
+  private async announceRotation(
+    msg: IncomingMessage,
+    entry: ChannelSessionEntry,
+    idleMs: number,
+  ): Promise<void> {
+    console.log(
+      `[Bridge] Rotating ${entry.sessionId} for chat ${msg.chatId} ` +
+        `(idle ${Math.round(idleMs / 60_000)}min)`,
+    );
+    await msg
+      .reply(
+        "🆕 已闲置较久，为你开启新会话（上文不再延续）。\n回复 /resume 可切回上一个会话。",
+      )
+      .catch(() => {});
+  }
+
+  /**
+   * Mark this chat active. Only messages we actually ACT on call this — acks,
+   * polls and other system chatter must not, or a chat would never go idle (P1).
+   * Nor does a bystander whose message we turned away during someone else's
+   * pending question: it never reached the agent, and letting it count would let
+   * anyone in a group keep a dead session alive forever.
+   *
+   * Deliberately does not touch senderId/senderName: in a group everyone shares one
+   * chatId, and re-writing them per message would make the sidebar badge name
+   * whoever spoke last rather than the person the session belongs to. Identity is
+   * set once, when the session is created.
+   *
+   * No-op before the session exists — startTurn writes the first entry.
+   */
+  private touchSession(msg: IncomingMessage): void {
+    const entry = this.store.get(msg.channelType, msg.chatId);
+    if (!entry) return;
+    this.store.set({
+      ...entry,
+      chatId: msg.chatId,
+      channelType: msg.channelType,
+      // A migrated v1 entry carries no workspace; backfill it on first sight.
+      workspaceDir: entry.workspaceDir || msg.workspaceDir,
+      senderId: entry.senderId || msg.senderId,
+      senderName: entry.senderName || msg.senderName,
+      lastActiveAt: Date.now(),
+    });
+    this.persistSessionMap();
   }
 
   /** Get or create the OpenCode backend for a workspace directory */
@@ -174,6 +314,28 @@ export class Bridge {
     return this.getBackend(workspaceDir).api;
   }
 
+  /**
+   * Should this chat's next message start a FRESH session?
+   *
+   * Must be asked BEFORE touchSession stamps lastActiveAt — afterwards the chat
+   * always looks active and nothing would ever rotate.
+   *
+   * The in-flight guard is the one that matters. A pending question blocks inside
+   * tool execution: the session stays busy and emits NOTHING at all until it is
+   * answered (ADR-050 measured 195s of total silence against a real opencode
+   * server), and QUESTION_TIMEOUT_MS lets that run 30 minutes. Rotating on a
+   * lastActiveAt that old would swap the session out from under the exchange the
+   * agent is blocked on — the user answers, and the answer lands on a question that
+   * no longer exists. Hermes ships the same rule: never auto-reset a session with
+   * work in flight.
+   */
+  private shouldRotate(entry: ChannelSessionEntry): boolean {
+    const threshold = getIdleRotateMs();
+    if (threshold <= 0) return false; // disabled
+    if (this.activeContexts.has(entry.sessionId)) return false; // turn / question in flight
+    return Date.now() - entry.lastActiveAt >= threshold;
+  }
+
   /** Enqueue a task per chatId to prevent concurrent prompts */
   private enqueue(chatId: string, fn: () => Promise<void>): Promise<void> {
     const prev = this.queues.get(chatId) ?? Promise.resolve();
@@ -189,16 +351,20 @@ export class Bridge {
 
   /** Process an incoming message from a channel adapter */
   async handleMessage(msg: IncomingMessage): Promise<void> {
-    await this.enqueue(msg.chatId, () => this.processMessage(msg));
+    // Serialize per (channel, chat) — not per chatId. Two channels whose user-id
+    // spaces collide would otherwise block each other's turns.
+    await this.enqueue(sessionKey(msg.channelType, msg.chatId), () =>
+      this.processMessage(msg),
+    );
   }
 
   private async processMessage(msg: IncomingMessage): Promise<void> {
     // Handle /new command — reset session for this chat
     if (msg.text.trim() === "/new") {
-      const oldSessionId = this.sessionMap.get(msg.chatId);
-      if (oldSessionId) {
+      const old = this.store.get(msg.channelType, msg.chatId);
+      if (old) {
         // Clean up any active context for the old session
-        const oldCtx = this.activeContexts.get(oldSessionId);
+        const oldCtx = this.activeContexts.get(old.sessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
           this.clearAck(oldCtx);
@@ -208,19 +374,27 @@ export class Bridge {
               this.getClient(oldCtx.workspaceDir).rejectQuestion(pending.id),
             );
           }
-          this.activeContexts.delete(oldSessionId);
+          this.activeContexts.delete(old.sessionId);
         }
       }
-      this.sessionMap.delete(msg.chatId);
+      this.store.delete(msg.channelType, msg.chatId);
       this.persistSessionMap();
       await msg.reply("✅ 已重置对话，下条消息将开启新会话").catch(() => {});
+      return;
+    }
+
+    // /resume — go back to the session idle rotation retired. This is the escape
+    // hatch that makes rotation safe to ship: without it, "改一下刚才那个方案" after
+    // an overnight gap reaches an agent with no idea what 刚才 was, and no way back.
+    if (msg.text.trim() === "/resume") {
+      await this.resumeSession(msg);
       return;
     }
 
     // If the agent is blocked on a question, this message is the answer — not a
     // new prompt. opencode keeps the session busy while a question is pending,
     // so sending it as a prompt would just come back as BusyError.
-    const activeSessionId = this.sessionMap.get(msg.chatId);
+    const activeSessionId = this.store.get(msg.channelType, msg.chatId)?.sessionId;
     const activeCtx = activeSessionId
       ? this.activeContexts.get(activeSessionId)
       : undefined;
@@ -233,10 +407,30 @@ export class Bridge {
             `⏳ 正在等待 ${activeCtx.senderName} 回答上一个问题，稍后再来。`,
           )
           .catch(() => {});
-        return;
+        return; // turned away — NOT activity, see touchSession
       }
+      // Answering never reaches startTurn, so the stamp has to happen here too. A
+      // user can sit inside one question for many minutes (QUESTION_TIMEOUT_MS is
+      // 30min); if that did not count as activity, idle rotation (P1) would swap the
+      // session out from under the very exchange it is blocked on.
+      this.touchSession(msg);
       await this.answerPendingQuestion(activeCtx, msg);
       return;
+    }
+
+    // Decide rotation BEFORE touchSession — it is about to stamp lastActiveAt, and
+    // after that this chat can never look idle again.
+    const entry = this.store.get(msg.channelType, msg.chatId);
+    const idleMs = entry ? Date.now() - entry.lastActiveAt : 0;
+    const rotating = entry ? this.shouldRotate(entry) : false;
+
+    this.touchSession(msg);
+
+    if (rotating && entry) {
+      // Say so. The whole risk of rotation is a silent context cut: the user comes
+      // back the next morning, says "改一下刚才那个方案", and gets an agent with no
+      // idea what 刚才 was. Tell them, and give them a way back.
+      await this.announceRotation(msg, entry, idleMs);
     }
 
     // Hold the ack briefly. Blocks now stream out as the agent produces them, so
@@ -252,9 +446,14 @@ export class Bridge {
     // "still working" 2.5s later and never hear anything again.
     let ackOwned = false;
     try {
-      await this.startTurn(msg, ackTimer, () => {
-        ackOwned = true;
-      });
+      await this.startTurn(
+        msg,
+        ackTimer,
+        () => {
+          ackOwned = true;
+        },
+        rotating ? entry?.sessionId : undefined,
+      );
     } finally {
       if (!ackOwned) clearTimeout(ackTimer);
     }
@@ -265,11 +464,18 @@ export class Bridge {
     msg: IncomingMessage,
     ackTimer: ReturnType<typeof setTimeout>,
     onAckOwned: () => void,
+    /** Set when this chat rotated: the session being retired, kept for /resume. */
+    rotatedFrom?: string,
   ): Promise<void> {
     const client = this.getClient(msg.workspaceDir);
 
     // Get or create session for this chat
-    let sessionId = this.sessionMap.get(msg.chatId);
+    const existing = this.store.get(msg.channelType, msg.chatId);
+    // Rotating: drop the binding so the branch below mints a fresh session. The
+    // retired one is NOT deleted — it stays in the desktop sidebar and one /resume
+    // away. The store is only rewritten once the new session actually exists, so a
+    // failed createSession leaves the chat on its old session rather than stranded.
+    let sessionId = rotatedFrom ? undefined : existing?.sessionId;
     if (sessionId) {
       // Validate that the cached session still exists on the server
       try {
@@ -294,10 +500,27 @@ export class Bridge {
         sessionId = undefined;
       }
     }
+
     if (!sessionId) {
       const session = await client.createSession({});
       sessionId = session.id;
-      this.sessionMap.set(msg.chatId, sessionId);
+      const now = Date.now();
+      this.store.set({
+        sessionId,
+        chatId: msg.chatId,
+        channelType: msg.channelType,
+        // Whoever opened the session owns it. In a group this is deliberately NOT
+        // re-written by later speakers (see touchSession) — the badge names the
+        // session's owner, matching the "[钉钉·张三]" prefix patched into the title.
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        workspaceDir: msg.workspaceDir,
+        createdAt: now,
+        lastActiveAt: now,
+        // Only a rotation leaves a way back. A session replaced because the old one
+        // 404'd server-side has nothing to resume TO.
+        prevSessionId: rotatedFrom,
+      });
       this.persistSessionMap();
       console.log(
         `[Bridge] Created session ${sessionId} for chat ${msg.chatId}`,
@@ -880,10 +1103,10 @@ export class Bridge {
     this.pollTimers.clear();
 
     // Persist session map before clearing
-    await saveSessionMap(this.sessionMap).catch(() => {});
+    await this.store.save().catch(() => {});
 
     this.activeContexts.clear();
-    this.sessionMap.clear();
+    this.store = new SessionStore();
     this.backends.clear();
     this.queues.clear();
   }

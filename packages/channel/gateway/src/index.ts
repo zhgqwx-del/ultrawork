@@ -60,7 +60,7 @@ async function main() {
   qrRegistry.registerProvider(createWeComQRProvider());
   qrRegistry.registerProvider(createFeishuQRProvider());
 
-  const app = createApp(manager, qrRegistry, requireSidecarAuth("channel-gateway"));
+  const app = createApp(manager, qrRegistry, requireSidecarAuth("channel-gateway"), bridge);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",

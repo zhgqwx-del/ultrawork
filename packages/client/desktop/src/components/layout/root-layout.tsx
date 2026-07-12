@@ -2,6 +2,7 @@ import { Outlet, Navigate } from "react-router-dom"
 import { SidebarProvider, LeftSidebar } from "@/components/layout"
 import { SessionsProvider } from "@/lib/sessions-context"
 import { TeamSessionsProvider } from "@/lib/team-sessions-context"
+import { ChannelSessionsProvider } from "@/lib/channel-sessions-context"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useWorkspace } from "@/lib/workspace-context"
 import { DragRegion } from "@/components/layout/drag-region"
@@ -29,6 +30,7 @@ export function RootLayout() {
 
   return (
     <TeamSessionsProvider>
+    <ChannelSessionsProvider>
     <SessionsProvider>
       <SidebarProvider>
         <div className="flex h-screen overflow-hidden bg-[var(--sidebar-bg)]">
@@ -43,6 +45,7 @@ export function RootLayout() {
         </div>
       </SidebarProvider>
     </SessionsProvider>
+    </ChannelSessionsProvider>
     </TeamSessionsProvider>
   )
 }

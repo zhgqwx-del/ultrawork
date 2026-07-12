@@ -332,7 +332,8 @@ run 持久化：`~/.local/share/ultrawork/orchestrator-runs/<runId>.json`（env 
 
 | 端点 | 说明 |
 |------|------|
-| `GET /channel/health` | 健康检查 |
+| `GET /channel/health` | 健康检查。返回 `{status, idleRotateMs}` —— Tauri 不转发 sidecar 日志，这是唯一能确认运行中的 gateway 实际用哪个轮转阈值的办法（ADR-051） |
+| `GET /channel/sessions` | 渠道会话注册表 `{sessions: ChannelSessionEntry[]}`，供桌面端侧边栏渲染渠道徽标（ADR-051）。gateway 不可达时前端降级为空列表、badge-less 继续工作 |
 | `GET /channel` | `{channels: ChannelStatus[], configs: ChannelConfig[]}`（configs 掩码） |
 | `POST /channel` | 手动添加渠道（`type: dingtalk\|wechat\|wecom\|feishu` + 各自凭证字段；feishu 可带 `domain: "feishu"\|"lark"`）；201 回显掩码 config |
 | `DELETE /channel/:id` | 删除渠道 |

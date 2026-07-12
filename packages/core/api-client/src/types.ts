@@ -587,6 +587,26 @@ export interface ChannelListResponse {
   configs: ChannelConfig[]
 }
 
+// --- Channel-owned sessions (mirrors gateway session-store.ts ChannelSessionEntry) ---
+
+/** An IM chat's binding to an opencode session. Powers the sidebar's channel badge. */
+export interface ChannelSessionEntry {
+  sessionId: string
+  chatId: string
+  /** dingtalk | wechat | wecom | feishu */
+  channelType: string
+  senderId: string
+  senderName: string
+  workspaceDir: string
+  createdAt: number
+  lastActiveAt: number
+  prevSessionId?: string
+}
+
+export interface ChannelSessionsResponse {
+  sessions: ChannelSessionEntry[]
+}
+
 // --- Channel QR login types (mirrors gateway qr-registry.ts) ---
 
 export type ChannelQRState =

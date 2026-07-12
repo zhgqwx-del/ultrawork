@@ -31,6 +31,7 @@ import { RightSidebarSection } from "@/components/session/right-sidebar-section"
 import { UnreadBadge } from "@/components/ui/unread-badge"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
+import { useMarkReadWhileOpen } from "@/lib/use-unread"
 
 export function SessionPage() {
   const { id } = useParams()
@@ -47,6 +48,11 @@ export function SessionPage() {
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
 
   const session = sessions.find(s => s.id === id)
+
+  // The session you are looking at is, by definition, read. Re-marks on every
+  // time.updated bump — including the local one useSessions stamps when a turn
+  // goes idle — so an open session can never flag itself unread.
+  useMarkReadWhileOpen(id, session?.time.updated)
 
   // Team session (018 统一交互): identity comes from the sidecar registry.
   const { entryOf } = useTeamSessions()

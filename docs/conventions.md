@@ -483,3 +483,17 @@ const settled = nothingToScan || scanned?.key === scanKey
 ```
 
 同一把钥匙还顺手解决了「切会话后短暂显示上个会话的结果」：消费时只认 `scanned.key === scanKey` 的那一份，陈旧结果**在结构上**被忽略，而不是靠一个赛跑的 effect 去清。
+
+### 补充：列表顺序也算「派生数据」（ADR-051）
+
+同一条规则的另一个实例。侧边栏会话顺序**不放进 state**、不在 SSE handler 里维护，而是渲染期从 `time.updated` 算出来：
+
+```tsx
+// left-sidebar.tsx
+const orderedSessions = useMemo(() => orderSessions(filteredSessions, frozen), [filteredSessions, frozen])
+const sessionGroups = groupSessionsByDate(orderedSessions, t, frozen)
+```
+
+反面教材就在同一份代码里：`use-sessions.ts` 收到 SSE `session.updated` 时做的是**原地替换**（`next[idx] = {...}`，索引不动），于是 IM 消息把 `time.updated` 顶新了，会话在列表里**纹丝不动** —— 这正是 ADR-051 要修的 bug。顺序是数据的纯函数，就让它是。
+
+**配套**：如果排序和分组读的是同一个 key（这里是 `time.updated`），就把那个 key 做成**必填参数**而不是给默认值 —— 默认值会让调用方静默丢掉它，而单测因为直接传参会**保持全绿**。让 tsc 抓。
