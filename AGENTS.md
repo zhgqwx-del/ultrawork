@@ -102,7 +102,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 > main 分支文件。（旧 `feat/acp-support` 分支已被 `feat/agent-os-phase0` 的参考重写取代，ADR-027 B2。）
 
 **Desktop — chat / session 组件**
-- `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts
+- `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts, **turn-artifacts**（每轮回复下方的产物卡片，ADR-052）
 - `src/components/session/` — plan-panel（**任务规划**主区：渲 `PlanStep[]`，ADR-038）, progress-panel（导出 `ActivityPanel`=工具调用流水「执行活动」次级区）, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）, mcp-panel, skills-panel
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）
 - `src/components/layout/drag-region.tsx` — handleDrag() + DragRegion 透明拖拽条
@@ -122,7 +122,9 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
 - `src/lib/use-session-scroll.ts` — 贴底滚动（`use-stick-to-bottom`，ADR-047）+ **观察滚动容器的 RO**（ADR-048：库只观察内容层，容器变矮时不补正，gotchas §15）
-- `src/lib/use-session-artifacts.ts` — 产物派生（工具提取 + 空闲 fs 扫描 + 回合窗归属 + deliverable/working 分类），Session 级常驻；`settled` 为**渲染期派生**（conventions §16）
+- `src/lib/use-session-artifacts.ts` — 产物派生（工具提取 + 空闲 fs 扫描 + 回合窗归属 + deliverable/working 分类），Session 级常驻；`settled` 为**渲染期派生**（conventions §16）；`byTurn` 为**派生表**（流式期间不重算、按 sessionID 分键，ADR-052）
+- `src/lib/turn-artifacts.ts` — **产物→轮次归属表**（last-wins；窗口带 `anchorId` = `groupIntoTurns` 的 `turnKey`，幽灵窗丢弃；**SSOT `extractArtifacts` 一个字不改**，conventions §17，ADR-052）
+- `src/lib/external-url.ts` + `src/components/ui/markdown-link.tsx` — **所有外链的唯一出口**（协议白名单 + 全 app 唯一的 markdown `<a>` 渲染器）；Rust 侧 `navigation_guard` 兜底（`lib.rs`）。gotchas §6，ADR-052
 - `src/lib/use-artifact-unread.ts` — 未读徽标：按**产物路径集合**判定（非计数）+ 按会话记忆、跨切换存活（ADR-048 D1）
 - `src/lib/use-delegate-rows.ts` — delegate SSE 订阅 + 待答子权限，**Session 级**（ADR-048：dock 会被 re-parent，SSE 不重放 pending permission，conventions §15 / gotchas §9）
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
@@ -203,7 +205,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (51 ADRs, 001–051)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (52 ADRs, 001–051)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

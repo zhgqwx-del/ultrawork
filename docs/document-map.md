@@ -120,7 +120,7 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 13 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 52 (README + 51 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **决策层** | `docs/decisions/` | 53 (README + 52 ADR) | 架构师/新成员 | 有重大决策时新增 |
 | **讨论层** | `docs/discussions/` | 35 (README + 34) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 14 | 考古/追溯 | 归档时可加 FROZEN 头，之后只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
