@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-11 -->
+<!-- last-synced: 2026-07-12 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -47,6 +47,12 @@
 - **qwen `enable_search` 只在「模型级」options 生效，且来源列表会被 AI SDK 丢弃（2026-07-04，ADR-042 实测链路）**：`provider.<id>.models.<modelId>.options.enable_search` 经 mergeDeep→providerOptions→spread 进请求体**顶层**（provider 级 options 是错误位置，进 SDK 构造器被丢弃）；流式路径下阿里返回的 `search_info.search_results` 引用来源被 AI SDK strict delta schema 丢弃 → 只有答案质量提升、**无来源展示**（要展示需 vendor `metadataExtractor` patch，未做）。**别把 `enable_search` 写给非 DashScope host**——严格的 OpenAI 兼容网关对未知 body 键直接 400（UI 的 DashScope-like 启发式与"读残留才发显式 false"都是为此）。
 - **hook 注入的工具，execute 必须返回 opencode 工具结果形状 `{output,title,metadata}`，不能返回裸字符串（2026-06-26，ADR-036 渐进式工具披露 e2e 踩坑）**：通过 `experimental.chat.tools.transform` 钩子往 `tools` map 注入的 AI-SDK 工具（如 `tool_search`），其 execute 返回值经 `session/processor.ts:223` 读 **`value.output.output`** 落 `part.state.output`。若 execute 返回裸 `string`，`value.output.output` 为 `undefined` → `part.state.output` 为空 → **下一步 `toModelMessages` replay 时报 `Invalid prompt: messages do not match ModelMessage[] schema`，拖垮整个多步回合**。opencode 自己的内置/MCP 工具都返回 `{output,title,metadata,attachments?}`，照抄即可。**这类工具的状态不能跨步 evict**（若加 TTL/回落淘汰，绝不能淘汰 message 历史里仍有 tool-call 的工具，否则同样悬空 → schema 错）。
 
+- **`message.part.delta` 事件不带 part 类型，且 reasoning 与正文用的是同一个 `field: "text"`（2026-07-12，ADR-050 实测）**：delta 的 schema 只有 `{sessionID, messageID, partID, field, delta}`（`message-v2.ts:486`），而 processor 对 `reasoning-delta`（`processor.ts:139`）和 `text-delta`（`:335`）**逐字相同地**发 `field: "text"`。⇒ **只按 field 名过滤，永远分不开思考过程和正文**。唯一可行的归属方式：由 `message.part.updated` 的全量事件学习 `partID → type`（`text-start` 发 `type:"text"`、`reasoning-start` 发 `type:"reasoning"`），delta 只对白名单里的 partID 累加。gateway 曾因此把模型的英文 CoT 逐字发到 IM 上。
+- **opencode 会把「用户自己」的消息片段也广播成 `message.part.updated`，且包含它注入的 synthetic part（2026-07-12，ADR-050）**：`prompt.ts:1300` 无条件 `updatePart(part)`，`session/index.ts:483` 广播时不分 user/assistant。⇒ **凡是消费 part 事件的下游，必须按 `part.messageID` 判断归属**（订阅 `message.updated` 记下 `info.role === "assistant"` 的 messageID；它一定早于自己的 part，`prompt.ts:565`）。只看 `part.type === "text"` 会把用户原话当成回复内容。plan 模式提示、`"Summarize the task tool output above…"` 等 synthetic user part 同理。
+- **`text-end` 会重写一个已经发布过的 text part，使它变短（2026-07-12，ADR-050 实测）**：`processor.ts` 的 `text-end` 分支做 `text = text.trimEnd()` 再经 `experimental.text.complete` 插件，然后**再发一次 `updatePart`**。⇒ **任何对「拼接后的全文」取绝对下标的消费者都会错位**：前面的 part 变短，后面的 part 整体左移，下标没跟着动就会吃掉后一段的开头（gateway 的分块器实测把 `SECOND` 吃成 `COND`）。要按「已消费文本 + 公共前缀」对齐，不能存 offset。
+- **question 阻塞在工具执行内部 ⇒ session 全程 `busy` 且零事件（2026-07-12，ADR-050 真二进制实测 195 秒）**：`Question.ask` 在 `tool/question.ts:12` 里 await Deferred，`idle` 只在 Runner 排空（`prompt.ts:124`）或 error（`processor.ts:429`）时才发。⇒ 待答期间**没有 status、没有 part、什么都没有**。凡是把"静默"当作"卡住"的兜底机制（idle 看门狗、轮询寿命）在这里都会误杀，必须显式豁免。
+- **turn 进行中再调 `prompt_async` 会返回 204 并排队，不是 BusyError（2026-07-12 实测，推翻了一个看起来很合理的推断）**：Runner 有队列语义。⇒ **不要为"并发 prompt"写拒绝逻辑**；真正的坑在消费侧——若你为每条消息新建一个上下文并覆盖旧的，在飞那一轮剩余的 part 会因 messageID 不在新集合里而被整个丢弃。
+- **没有 per-session 的 `ask` 入口（2026-07-12，ADR-050 源码核验）**：`PATCH /session/:id` 只接受 `title` / `time.archived`（`server/routes/session.ts:263`）；`prompt` 的 `tools` 参数虽会落成 session 级 permission ruleset（`prompt.ts:1313`），但只映射 `allow`/`deny` ——**唯独没有 `ask`**（`Ruleset` schema 本身支持）。⇒ 想只给某类会话（如 IM）上锁而不动全局 config，**绕不开 vendor patch**。
 - **`permission` 不配置 = 全部放行，不会弹授权框**（2026-07-11 实测）。`opencode.json` 的 `permission.{bash,edit,webfetch}` 全是 optional，缺省即 allow。**验证权限相关 UI（PermissionDock / 委派子权限中继）时必须显式配 `"permission": {"bash": "ask"}` 并重启 sidecar**，否则请求根本不会产生，会误判成「dock 坏了」。
 
 ## 2. OpenCode Server 运行时限制
@@ -113,6 +119,12 @@
 - **PersonalAgent 默认权限模板实拍可用**：不带 Addons，扫码建的应用（`cli_aac74e85…`）单聊收发开箱即通（群聊未实拍，或需 `im:message.group_msg`）。
 - **Lark node-sdk `WSClient.start()` 不等连接建立就 resolve**（内部 reConnect 未 await；appId 不匹配 `/^cli_…/` 时**静默返回**）——连接结果只能靠构造参数 `onReady/onError` 回调拿；发消息=`im.v1.message.create`（单聊 receive_id_type=open_id，群聊 chat_id）。
 
+**IM 渠道的出站约束（2026-07-12，ADR-050 / discussions/033）**：
+- **四家都不能编辑已发消息**：`ChannelAdapter` 只有 `sendMessage(chatId, content)`，**不返回消息句柄**。⇒ 「流式」在这里只能是「写完一段发一条新消息」。**腾讯官方自己的微信 bot 也是这么做的**（`@tencent-weixin/openclaw-weixin` 的 capabilities 明写 `blockStreaming: true`，攒够 200 字符或空闲 3 秒发一条），不是我们的凑合。
+- **群聊的 chatId 是 `group:{conversationId}` —— 整个群共用一个 chatId、一个 session**。⇒ 任何「等待某人回复」的状态都必须记住 senderId，否则群里任何人的下一句话都会被当成那个人的回答。
+- **分段发送必须带频控预算**：四个 adapter 的发送路径**零节流**，而企微单会话 **30 条/分、1000 条/时**，钉钉群机器人 20 条/分。切太碎会被限流吞掉（我们封顶每轮 6 个中间块）。
+- **真流式是可行的，但四家四套**（未实施，见 discussions/033 §2.2）：飞书 CardKit 卡片实体（普通自建应用即可，免费，单卡 10 次/秒）· 企微智能机器人 `msgtype: "stream"`（**我们的 wecom adapter 已经在 aibot 长连接上，只是没调这个 API**）· 钉钉 AI 卡片 `PUT /v1.0/card/streaming`（**每帧算一次付费 API 调用**，单帧 ≤1KB）· 微信 iLink **协议层无 edit 端点，不存在绕过办法**。
+
 ## 5. Knowledge / IMA（:4098）
 
 - **DB**：`~/.ultrawork/knowledge/kb.db`（SQLite WAL + FTS5 + `_migrations` 版本管理）。
@@ -169,6 +181,9 @@
 - **在 CI 上驱动 Finder 是上游明确不支持的路径**：tauri 维护者原话是 DMG 脚本「本来就不该在 CI 工作」，能跑通反而是意外。GitHub 的 macOS 镜像因此炸过一次（[tauri-action#1091](https://github.com/tauri-apps/tauri-action/issues/1091)，`AppleEvent timed out (-1712)`，卡 2 分钟后失败，镜像侧修复）；自托管 runner 无 GUI 会话拿不到 Automation 授权，会报 `-1743 Not authorised to send Apple events`。故 `TAURI_BUNDLER_DMG_IGNORE_CI` 做成可 env 覆盖，配 `--allow-bad-dmg-layout` 才能放行一次带瑕疵的发布——**两个开关缺一不可**，防止单个 flag 静默出坏包。若此类回归反复发生，长期解是构建后注入预制 `.DS_Store`（必须在 `stapler staple` **之前**做，否则作废公证票据）。
 - **源码 grep 型守卫要先剥注释**：`verify-dmg-layout.ts --self-test` 断言 `build-release.ts` 仍设置 `TAURI_BUNDLER_DMG_IGNORE_CI`。最初用 `includes("TAURI_BUNDLER_DMG_IGNORE_CI")`，而**注释里就提到了这个名字**——删掉真正那行代码后守卫依然全绿（A/B 反证抓到）。现在先滤掉整行注释，再用 `/TAURI_BUNDLER_DMG_IGNORE_CI:[^\n]*"true"/` 锁住「默认开启」而非仅仅「名字出现」。
 - **直接 `bun build --compile` 的产物在 macOS arm64 会被 SIGKILL（exit 137）**：bun 产出的二进制完全无签名（`codesign -dv` 报 not signed），且 `codesign -s -` 直接签会报 "invalid or unsupported format"——必须先 `codesign --remove-signature` 再 ad-hoc 签。**官方构建脚本（`scripts/build-acp.ts` 等）已包含这两步**，本地验证编译产物请走 `bun run --bun scripts/build-*.ts`，不要直接跑包内 `bun run build` 的 dist 产物。
+
+- **`bun build --compile` 后，中文字面量不以明文形式存在于二进制里（2026-07-12 踩坑）**：`strings` 只提 ASCII，而 `grep -a` 连 UTF-8 / UTF-16LE 原字节也搜不到（源码被编成字节码）。⇒ **「中文串搜不到」不能证明代码没进包**。要验证某次改动确实进了 sidecar 二进制，**用 ASCII 的日志串做探针**（如新增的 `console.log` 文案），并同时确认旧代码的串已消失。
+- **sidecar 的构建新鲜度 hash 必须覆盖它 bundle 进去的每一个 workspace 依赖（2026-07-12，A/B 实证）**：`build-gateway.ts` 曾只喂 `api-client`、漏了 `@agent/connector` —— 只改 connector 的那次构建会被判 `up-to-date, skipping build`，**客户机器上装到旧逻辑且无任何提示**。新增依赖时同步更新 `computeSourceHash` 的 extraDirs。
 
 ## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
 
