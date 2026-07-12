@@ -50,18 +50,25 @@ await $`mkdir -p ${tauriBinDir}`
 const outFile = path.join(tauriBinDir, `channel-gateway-${tauriTarget}${suffix}`)
 const hashFile = path.join(tauriBinDir, `.channel-gateway-${tauriTarget}.hash`)
 
-// Check if rebuild is needed.
-// Gateway depends on @agent/api-client (workspace:*), so include its source too.
+// Check if rebuild is needed. The gateway bundles its workspace deps
+// (@agent/api-client, @agent/connector) into the binary, so a change in either
+// one changes the output — they must be part of the freshness hash or a build
+// that only touched them would be judged up-to-date and ship stale logic.
 const apiClientDir = path.join(rootDir, "packages/core/api-client")
+const connectorDir = path.join(rootDir, "packages/core/connector")
 const currentHash = await computeSourceHash(
   gatewayDir,
   ["src/**/*.ts"],
   [
     path.join(gatewayDir, "package.json"),
     path.join(apiClientDir, "package.json"),
+    path.join(connectorDir, "package.json"),
     path.join(rootDir, "bun.lock"),
   ],
-  [{ dir: apiClientDir, globs: ["src/**/*.ts"] }],
+  [
+    { dir: apiClientDir, globs: ["src/**/*.ts"] },
+    { dir: connectorDir, globs: ["src/**/*.ts"] },
+  ],
 )
 
 if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {

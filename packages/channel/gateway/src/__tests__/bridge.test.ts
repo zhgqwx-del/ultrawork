@@ -5,6 +5,7 @@ const mockCreateSession = vi.fn()
 const mockPromptAsync = vi.fn()
 const mockReplyPermission = vi.fn()
 const mockRejectQuestion = vi.fn()
+const mockReplyQuestion = vi.fn()
 const mockListPermissions = vi.fn()
 const mockListQuestions = vi.fn()
 const mockGetConfig = vi.fn()
@@ -17,6 +18,7 @@ vi.mock("@agent/api-client", () => ({
     promptAsync: mockPromptAsync,
     replyPermission: mockReplyPermission,
     rejectQuestion: mockRejectQuestion,
+    replyQuestion: mockReplyQuestion,
     listPermissions: mockListPermissions,
     listQuestions: mockListQuestions,
     getConfig: mockGetConfig,
@@ -37,6 +39,25 @@ const mockFetch = vi.fn()
 import { Bridge, getOpencodeBaseUrl } from "../bridge.js"
 import type { IncomingMessage } from "../types.js"
 import { loadSessionMap } from "../session-store.js"
+
+/**
+ * opencode announces a message before any of its parts (prompt.ts creates the
+ * assistant message via updateMessage, then the processor emits parts). The
+ * bridge relies on that ordering to tell assistant output from the user's own
+ * echoed parts, so tests must reproduce it.
+ */
+function emitAssistantMessage(
+  handleSSE: (e: unknown) => void,
+  { sessionID = "sess-1", id = "m1" }: { sessionID?: string; id?: string } = {},
+): void {
+  handleSSE({
+    type: "message.updated",
+    properties: { info: { id, sessionID, role: "assistant" } },
+  })
+}
+
+const ACK = "⏳ 收到，正在处理"
+const EMPTY_NOTICE = "✅ 处理完成，但本轮没有产生文本回复。"
 
 function createMessage(overrides?: Partial<IncomingMessage>): IncomingMessage {
   return {
@@ -61,6 +82,7 @@ beforeEach(() => {
   mockPromptAsync.mockResolvedValue(undefined)
   mockReplyPermission.mockResolvedValue(undefined)
   mockRejectQuestion.mockResolvedValue(undefined)
+  mockReplyQuestion.mockResolvedValue(undefined)
   mockListPermissions.mockResolvedValue([])
   mockListQuestions.mockResolvedValue([])
   mockGetConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
@@ -131,6 +153,7 @@ describe("Bridge", () => {
 
       await bridge.handleMessage(msg)
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(
         expect.stringContaining("Error"),
       )
@@ -182,6 +205,7 @@ describe("Bridge", () => {
 
       // Access private method for testing
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
@@ -189,6 +213,7 @@ describe("Bridge", () => {
           part: {
             type: "text",
             sessionID: "sess-1",
+            messageID: "m1",
             id: "p1",
             content: "Hello world",
           },
@@ -201,6 +226,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Hello world")
       await bridge.shutdown()
     })
@@ -211,6 +237,15 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      // text-start: the full part announces the type; deltas carry none
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" },
+        },
+      })
 
       handleSSE({
         type: "message.part.delta",
@@ -237,6 +272,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Hello world")
       await bridge.shutdown()
     })
@@ -247,18 +283,19 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: "Part 1" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Part 1" },
         },
       })
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p2", content: "Part 2" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p2", content: "Part 2" },
         },
       })
 
@@ -267,6 +304,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Part 1\n\nPart 2")
       await bridge.shutdown()
     })
@@ -277,11 +315,12 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "tool-call", sessionID: "sess-1", id: "t1" },
+          part: { type: "tool-call", sessionID: "sess-1", messageID: "m1", id: "t1" },
         },
       })
 
@@ -290,9 +329,146 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only the instant ack, no AI reply for empty text
+      // The notice is the only thing sent: it cancels the not-yet-due ack
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
+      await bridge.shutdown()
+    })
+
+    it("never forwards reasoning to the channel", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      // reasoning-start, then reasoning-delta — which opencode emits with the
+      // SAME `field: "text"` as real text deltas (processor.ts). Attribution can
+      // only come from the part type learned here.
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "reasoning", sessionID: "sess-1", messageID: "m1", id: "r1", text: "" },
+        },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "r1", field: "text", delta: "The user greeted me. I should…" },
+      })
+
+      // Real answer
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" } },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "p1", field: "text", delta: "你好！" },
+      })
+
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith("你好！")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("The user greeted me"))
+      await bridge.shutdown()
+    })
+
+    it("never echoes the user's own parts back (including synthetic ones)", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+
+      // opencode broadcasts the user's parts too — same type "text", different
+      // message. It also injects synthetic user parts mid-turn.
+      handleSSE({
+        type: "message.updated",
+        properties: { info: { id: "m0", sessionID: "sess-1", role: "user" } },
+      })
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m0", id: "u1", content: "你好" } },
+      })
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "text",
+            sessionID: "sess-1",
+            messageID: "m0",
+            id: "u2",
+            synthetic: true,
+            content: "Summarize the task tool output above and continue with your task.",
+          },
+        },
+      })
+
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "你好！有什么可以帮你的？" } },
+      })
+
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith("你好！有什么可以帮你的？")
+      await bridge.shutdown()
+    })
+
+    it("keeps the turn alive while only reasoning streams (no premature force-send)", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "reasoning", sessionID: "sess-1", messageID: "m1", id: "r1", text: "" } },
+      })
+
+      // A long think: reasoning deltas keep arriving, no text parts at all.
+      // These are dropped from the reply, but they must still count as activity —
+      // otherwise the 180s idle fallback force-sends an empty turn mid-thought.
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(120_000)
+        handleSSE({
+          type: "message.part.delta",
+          properties: { sessionID: "sess-1", partID: "r1", field: "text", delta: "thinking…" },
+        })
+      }
+
+      // 10 minutes of pure reasoning: the user got the ack (the turn stayed
+      // silent long enough to deserve one) and nothing else.
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(ACK)
+
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Done." } },
+      })
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith("Done.")
       await bridge.shutdown()
     })
 
@@ -311,8 +487,151 @@ describe("Bridge", () => {
     })
   })
 
+  describe("progressive delivery + ack", () => {
+    const LONG = "段落一".repeat(100) // > 200 chars
+
+    function streamText(bridge: Bridge, text: string, partId = "p1") {
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: partId, content: text },
+        },
+      })
+    }
+
+    it("sends a finished block before the turn ends", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      streamText(bridge, `${LONG}\n\n还在写后面的部分`)
+
+      // The block goes out immediately — the user is not left staring at nothing
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(LONG)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("还在写"))
+      await bridge.shutdown()
+    })
+
+    it("sends only the un-streamed remainder at the end", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      streamText(bridge, `${LONG}\n\n收尾`)
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.map(([t]) => t)
+      expect(sent).toEqual([LONG, "收尾"]) // the streamed block is not repeated
+      await bridge.shutdown()
+    })
+
+    it("skips the ack when the answer arrives quickly", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      streamText(bridge, "秒回")
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      // Even past the point the ack was due it must not arrive: the answer beat
+      // it, and a trailing "still working" would be nonsense.
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith("秒回")
+      await bridge.shutdown()
+    })
+
+    it("still acks when the agent stays silent", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      await vi.advanceTimersByTimeAsync(2_500)
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(ACK)
+      await bridge.shutdown()
+    })
+
+    it("cancels the ack once a block goes out", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      await vi.advanceTimersByTimeAsync(2_000) // ack still pending
+      streamText(bridge, `${LONG}\n\n继续`)
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalledWith(ACK)
+      await bridge.shutdown()
+    })
+
+    it("caps a streamed block at the platform limit, not just the final reply", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      // One huge paragraph is a legitimate block. Before the cap moved into
+      // send(), streamed blocks bypassed truncation entirely and went out at
+      // full length — over every channel's message limit.
+      streamText(bridge, `${"长".repeat(25_000)}\n\n尾巴`)
+
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+      expect(sent.length).toBeLessThanOrEqual(20_000 + "\n\n...(truncated)".length)
+      expect(sent).toContain("...(truncated)")
+      await bridge.shutdown()
+    })
+
+    it("does not interleave blocks with a question on screen", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      handleSSE({
+        type: "question.asked",
+        properties: {
+          id: "q-1",
+          sessionID: "sess-1",
+          questions: [
+            { question: "A 还是 B？", header: "选择", options: [{ label: "A", description: "" }] },
+          ],
+        },
+      })
+
+      streamText(bridge, `${LONG}\n\n后续`)
+
+      // Pushing text under a pending question would bury it — hold the block
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalledWith(LONG)
+      await bridge.shutdown()
+    })
+  })
+
   describe("handleSSEEvent — session.status idle", () => {
-    it("does not reply when text is empty", async () => {
+    it("sends an empty-turn notice when the turn produced no text", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
@@ -323,9 +642,11 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only instant ack, no AI content reply
+      // Silence would read as the bot ignoring the user — say something instead
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
 
@@ -348,9 +669,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "running" } },
       })
 
-      // Only instant ack, no AI content reply (not idle yet)
-      expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      // Nothing sent: the turn is still running and the ack is not due yet
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
 
@@ -386,12 +707,13 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
       const longText = "x".repeat(25_000)
 
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: longText },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: longText },
         },
       })
 
@@ -400,8 +722,8 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // calls[0] = instant ack, calls[1] = AI reply (truncated)
-      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[1][0]
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(replyArg.length).toBeLessThan(25_000)
       expect(replyArg).toContain("...(truncated)")
       await bridge.shutdown()
@@ -439,20 +761,290 @@ describe("Bridge", () => {
     })
   })
 
-  describe("handleSSEEvent — question auto-reject", () => {
-    it("auto-rejects question", async () => {
+  describe("handleSSEEvent — question", () => {
+    const QUESTIONS = [
+      {
+        question: "用 A 方案还是 B 方案？",
+        header: "方案选择",
+        options: [
+          { label: "A 方案", description: "第一种" },
+          { label: "B 方案", description: "第二种" },
+        ],
+      },
+    ]
+
+    function askQuestion(bridge: Bridge, id = "q-1") {
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "question.asked",
+        properties: { id, sessionID: "sess-1", questions: QUESTIONS },
+      })
+    }
+
+    it("asks the user instead of rejecting", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+
+      expect(mockRejectQuestion).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenLastCalledWith(expect.stringContaining("1. A 方案"))
+      await bridge.shutdown()
+    })
+
+    it("routes the next message into the question rather than a new prompt", async () => {
+      const bridge = new Bridge()
+      const first = createMessage({ text: "帮我改造这个模块" })
+      await bridge.handleMessage(first)
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1)
+
+      askQuestion(bridge)
+
+      const answer = createMessage({ text: "2" })
+      await bridge.handleMessage(answer)
+
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["B 方案"]])
+      // The session is busy inside the blocked tool — a prompt here would 409
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1)
+      await bridge.shutdown()
+    })
+
+    it("re-asks on an unparsable answer and stays pending", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      // Two picks for a single-choice question. (A bare number is NOT unparsable:
+      // it is a valid typed answer when it names no option.)
+      const bad = createMessage({ text: "1,2" })
+      await bridge.handleMessage(bad)
+
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1) // no fall-through
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(bad.reply).toHaveBeenCalledWith(expect.stringContaining("只能选一个"))
+
+      // Still waiting: a valid answer now goes through
+      const good = createMessage({ text: "1" })
+      await bridge.handleMessage(good)
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["A 方案"]])
+      await bridge.shutdown()
+    })
+
+    it("only accepts the answer from the person the agent asked", async () => {
+      const bridge = new Bridge()
+      // A group chat: one chatId, many senders
+      const asker = createMessage({ chatId: "group:g1", senderId: "alice", senderName: "Alice" })
+      await bridge.handleMessage(asker)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "question.asked",
+        properties: { id: "q-1", sessionID: "sess-1", questions: QUESTIONS },
+      })
+
+      // Someone else in the group says something unrelated — it is NOT an answer
+      const bystander = createMessage({
+        chatId: "group:g1",
+        senderId: "bob",
+        senderName: "Bob",
+        text: "1",
+      })
+      await bridge.handleMessage(bystander)
+
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1) // and no BusyError-bound prompt
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(bystander.reply).toHaveBeenCalledWith(expect.stringContaining("Alice"))
+
+      // Alice's answer still works
+      await bridge.handleMessage(
+        createMessage({ chatId: "group:g1", senderId: "alice", senderName: "Alice", text: "2" }),
+      )
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["B 方案"]])
+      await bridge.shutdown()
+    })
+
+    it("lets the user skip", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      await bridge.handleMessage(createMessage({ text: "/skip" }))
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      await bridge.shutdown()
+    })
+
+    it("suspends the idle fallback while waiting for the user", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "先说一句" } },
+      })
 
+      askQuestion(bridge)
+      await vi.advanceTimersByTimeAsync(0)
+
+      // The lead-in ships WITH the question, not after the thing it introduces
+      expect(msg.reply).toHaveBeenCalledWith("先说一句")
+      const settled = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.length
+
+      // A blocked question emits nothing for as long as the user takes to read
+      // it. The 3-min idle fallback must not fire and tear the turn down.
+      await vi.advanceTimersByTimeAsync(600_000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect((msg.reply as ReturnType<typeof vi.fn>).mock.calls.length).toBe(settled)
+      expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
+      expect((bridge as any).activeContexts.get("sess-1").pendingQuestion).toBeDefined()
+      await bridge.shutdown()
+    })
+
+    it("rejects and tells the user when a question goes unanswered too long", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      askQuestion(bridge)
+
+      await vi.advanceTimersByTimeAsync(1_800_001)
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(expect.stringContaining("超时"))
+      await bridge.shutdown()
+    })
+
+    it("asks once when SSE and the poll deliver the same question", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+      askQuestion(bridge) // duplicate delivery
+      await vi.advanceTimersByTimeAsync(0)
+
+      const questionMessages = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([text]) => typeof text === "string" && text.includes("1. A 方案"),
+      )
+      expect(questionMessages).toHaveLength(1)
+      await bridge.shutdown()
+    })
+
+    it("declines a question with nothing renderable", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
       handleSSE({
         type: "question.asked",
-        properties: { id: "q-1", sessionID: "sess-1" },
+        properties: { id: "q-1", sessionID: "sess-1", questions: [] },
       })
 
       expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      await bridge.shutdown()
+    })
+
+    it("keeps the running turn alive when the user adds a remark after answering", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage({ text: "干活" })
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      askQuestion(bridge)
+      await bridge.handleMessage(createMessage({ text: "1" })) // answer
+
+      // "回答 + 补一句" is the most natural thing to do here. opencode queues the
+      // second prompt (prompt_async returns 204 mid-turn), so the context must
+      // survive: a replacement would have empty assistantMessageIds and the
+      // running turn's remaining output would be discarded as "not ours".
+      const remark = createMessage({ text: "顺便改下标题" })
+      await bridge.handleMessage(remark)
+
+      const ctx = (bridge as any).activeContexts.get("sess-1")
+      expect(ctx).toBeDefined()
+      expect(ctx.assistantMessageIds.has("m1")).toBe(true) // turn 1 still recognised
+
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "选了 A 方案" } },
+      })
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      // Delivered through the newest message's reply closure — same chat either way
+      expect(remark.reply).toHaveBeenCalledWith("选了 A 方案")
+      await bridge.shutdown()
+    })
+
+    it("does not re-ask a question the poll still lists after it was answered", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+      await bridge.handleMessage(createMessage({ text: "1" }))
+      await vi.advanceTimersByTimeAsync(0)
+
+      // listQuestions() can be computed server-side before our reply lands, so it
+      // still lists q-1. Re-asking would strand the user's next message on a
+      // request opencode has already resolved.
+      mockListQuestions.mockResolvedValueOnce([
+        { id: "q-1", sessionID: "sess-1", questions: QUESTIONS },
+      ])
+      await vi.advanceTimersByTimeAsync(3_100)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const asked = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([t]) => typeof t === "string" && t.includes("1. A 方案"),
+      )
+      expect(asked).toHaveLength(1)
+      expect((bridge as any).activeContexts.get("sess-1")?.pendingQuestion).toBeUndefined()
+      await bridge.shutdown()
+    })
+
+    it("a stray part during a pending question must not re-arm the idle fallback", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      askQuestion(bridge)
+      await vi.advanceTimersByTimeAsync(0)
+      const settled = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.length
+
+      // opencode happens to emit nothing while a question blocks — today. A
+      // parallel tool in the same step, an SSE replay after a reconnect, or a
+      // vendor bump could each land one part here. If that re-armed the idle
+      // fallback, 3 minutes later it would reject the question the user is
+      // reading, force-send a half reply and delete the context.
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p9", content: "" } },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "p9", field: "text", delta: "偷跑的内容" },
+      })
+
+      await vi.advanceTimersByTimeAsync(600_000)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect((msg.reply as ReturnType<typeof vi.fn>).mock.calls.length).toBe(settled)
+      expect(mockRejectQuestion).not.toHaveBeenCalled()
+      const ctx = (bridge as any).activeContexts.get("sess-1")
+      expect(ctx?.pendingQuestion).toBeDefined()
       await bridge.shutdown()
     })
 
@@ -462,10 +1054,21 @@ describe("Bridge", () => {
 
       handleSSE({
         type: "question.asked",
-        properties: { id: "q-1", sessionID: "unknown" },
+        properties: { id: "q-1", sessionID: "unknown", questions: QUESTIONS },
       })
 
       expect(mockRejectQuestion).not.toHaveBeenCalled()
+      await bridge.shutdown()
+    })
+
+    it("does not leave the agent blocked when the turn ends or is reset", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      await bridge.handleMessage(createMessage({ text: "/new" }))
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
       await bridge.shutdown()
     })
   })
@@ -678,6 +1281,7 @@ describe("Bridge", () => {
       })
 
       // Should reply with error (in addition to the instant ack)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(
         expect.stringContaining("error")
       )
@@ -692,12 +1296,13 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
       // Accumulate some text first
       handleSSE({
         type: "message.part.updated",
         properties: {
-          part: { type: "text", sessionID: "sess-1", id: "p1", content: "Partial response" },
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "Partial response" },
         },
       })
 
@@ -711,6 +1316,7 @@ describe("Bridge", () => {
       })
 
       // Should flush the partial response, not send error message
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Partial response")
       await bridge.shutdown()
     })
@@ -733,8 +1339,8 @@ describe("Bridge", () => {
 
       // Should not affect the active session
       expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
-      // Only the instant ack reply
-      expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
   })
@@ -746,6 +1352,11 @@ describe("Bridge", () => {
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "" } },
+      })
 
       handleSSE({
         type: "message.part.delta",
@@ -762,17 +1373,20 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("hi")
       await bridge.shutdown()
     })
 
-    it("ignores non-text field deltas", async () => {
+    it("ignores deltas for parts never seen as assistant text", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
 
+      // Non-text field, and an unknown partID: neither may reach the chat
       handleSSE({
         type: "message.part.delta",
         properties: {
@@ -782,15 +1396,25 @@ describe("Bridge", () => {
           delta: "read",
         },
       })
+      handleSSE({
+        type: "message.part.delta",
+        properties: {
+          sessionID: "sess-1",
+          partID: "unknown-part",
+          field: "text",
+          delta: "orphan delta",
+        },
+      })
 
       handleSSE({
         type: "session.status",
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Only instant ack, no AI content reply (toolName delta ignored)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
   })

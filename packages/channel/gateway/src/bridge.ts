@@ -1,7 +1,13 @@
 import { OpenCodeBackend, UNLIMITED_SSE_RETRY, type Unsubscribe } from "@agent/connector";
-import type { ApiClient, MessagePart } from "@agent/api-client";
+import type { ApiClient, MessagePart, QuestionInfo } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
 import { loadSessionMap, saveSessionMap } from "./session-store.js";
+import {
+  parseAnswer,
+  renderQuestions,
+  QUESTION_SKIP_COMMAND,
+} from "./question-prompt.js";
+import { BlockChunker } from "./block-chunker.js";
 
 // Base URL is injected by the Tauri host alongside the password — opencode's
 // port is chosen at startup, not compile time. The fallback keeps a standalone
@@ -24,9 +30,21 @@ function getOpencodePassword(): string {
   return pw;
 }
 const MAX_REPLY_LENGTH = 20_000; // Safe limit for messaging platforms (DingTalk, WeChat, etc.)
+const EMPTY_REPLY_NOTICE = "✅ 处理完成，但本轮没有产生文本回复。";
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
 const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if session stuck
+// A question blocks inside tool execution, so the session stays busy and emits
+// nothing at all until it is answered (verified against a real opencode server:
+// 195s of silence, zero events). Every other timer here treats silence as a
+// stuck turn, so the pending state has to suspend them — and it needs a bound of
+// its own, or an unanswered question would pin the session busy forever.
+const QUESTION_TIMEOUT_MS = 1_800_000; // 30 min — then auto-reject and tell the user
+// The ack exists because a turn used to be silent until it finished. Now that
+// finished blocks stream out, it is only worth sending when the agent is slow to
+// produce the first one — otherwise it just duplicates a reply that is moments away.
+const ACK_DELAY_MS = 2_500;
+const ACK_TEXT = "⏳ 收到，正在处理";
 
 /** Channel type → display label mapping */
 const CHANNEL_LABELS: Record<string, string> = {
@@ -40,16 +58,61 @@ interface SessionContext {
   sessionId: string;
   chatId: string;
   workspaceDir: string;
+  /**
+   * Who sent the message that started this turn. A group chat maps to ONE chatId
+   * (`group:{conversationId}`) and therefore one session, so this is the only way
+   * to tell the person the agent is waiting on from everyone else talking.
+   */
+  senderId: string;
   senderName: string;
   channelType: string;
   /** Accumulated text per partID (handles multiple text parts) */
   textParts: Map<string, string>;
+  /**
+   * IDs of assistant messages in this turn. opencode broadcasts part.updated for
+   * the *user's* parts too (prompt.ts) — including synthetic ones it injects —
+   * so a part is only ours if its messageID is in here.
+   */
+  assistantMessageIds: Set<string>;
+  /**
+   * partIDs known to be assistant text. The delta event carries no part type and
+   * reasoning-delta uses the same `field: "text"` as text-delta (processor.ts),
+   * so deltas can only be attributed via the type learned from part.updated.
+   */
+  textPartIds: Set<string>;
   /** Callback to reply to the originating message */
   reply: (content: string) => Promise<void>;
   /** Optional: typing indicator callback */
   onTyping?: (typing: boolean) => void;
   /** Idle timeout handle — force-sends accumulated text if SSE misses idle event */
   idleTimer?: ReturnType<typeof setTimeout>;
+  /** Set while the agent is blocked on a question and we're awaiting the user's reply */
+  pendingQuestion?: PendingQuestion;
+  /**
+   * Questions already answered/rejected this turn. The poll's listQuestions()
+   * response can be computed server-side before our reply lands, so it still
+   * lists a question we just resolved — re-asking it would strand the user's
+   * next message on a request opencode no longer knows about.
+   */
+  resolvedQuestionIds: Set<string>;
+  /** Splits the reply into blocks that can be sent as the turn progresses */
+  chunker: BlockChunker;
+  /** Pending "still working" ack — cancelled if output arrives first */
+  ackTimer?: ReturnType<typeof setTimeout>;
+  /** Whether anything at all has been sent to the user this turn */
+  saidSomething: boolean;
+  /**
+   * Serialises outbound sends. Adapter `reply` is a bare HTTP POST; firing
+   * several concurrently lets the channel receive them out of order. One message
+   * per turn made that harmless — a reply split across blocks does not.
+   */
+  sendChain: Promise<void>;
+}
+
+interface PendingQuestion {
+  id: string;
+  questions: QuestionInfo[];
+  timer: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -57,7 +120,7 @@ interface SessionContext {
  * - Maps chatId → OpenCode session
  * - Sequential queue per chat to prevent concurrent prompts
  * - SSE subscription to collect assistant output and reply on idle
- * - Auto-handles permission (once) and question (reject)
+ * - Auto-approves permission (once); forwards questions to the user and waits
  * - Idle timeout fallback in case SSE misses the idle event
  */
 export class Bridge {
@@ -138,6 +201,13 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(oldSessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          this.clearAck(oldCtx);
+          if (oldCtx.pendingQuestion) {
+            // Don't leave the agent blocked on a question nobody will answer
+            this.resolvePendingQuestion(oldCtx, (pending) =>
+              this.getClient(oldCtx.workspaceDir).rejectQuestion(pending.id),
+            );
+          }
           this.activeContexts.delete(oldSessionId);
         }
       }
@@ -147,11 +217,55 @@ export class Bridge {
       return;
     }
 
-    // Instantly acknowledge receipt to the user (before any network calls)
-    msg.reply("⏳ 收到，正在处理").catch((err) => {
-      console.error(`[Bridge] Instant ack failed for ${msg.chatId}:`, err);
-    });
+    // If the agent is blocked on a question, this message is the answer — not a
+    // new prompt. opencode keeps the session busy while a question is pending,
+    // so sending it as a prompt would just come back as BusyError.
+    const activeSessionId = this.sessionMap.get(msg.chatId);
+    const activeCtx = activeSessionId
+      ? this.activeContexts.get(activeSessionId)
+      : undefined;
+    if (activeCtx?.pendingQuestion) {
+      // In a group everyone shares this chatId. Only the person the agent is
+      // waiting on may answer — otherwise unrelated chatter becomes the answer.
+      if (msg.senderId !== activeCtx.senderId) {
+        await msg
+          .reply(
+            `⏳ 正在等待 ${activeCtx.senderName} 回答上一个问题，稍后再来。`,
+          )
+          .catch(() => {});
+        return;
+      }
+      await this.answerPendingQuestion(activeCtx, msg);
+      return;
+    }
 
+    // Hold the ack briefly. Blocks now stream out as the agent produces them, so
+    // if the first one lands quickly the ack is cancelled unsent and the user
+    // sees real content instead of a placeholder followed by the same answer.
+    const ackTimer = setTimeout(() => {
+      msg.reply(ACK_TEXT).catch((err) => {
+        console.error(`[Bridge] Ack failed for ${msg.chatId}:`, err);
+      });
+    }, ACK_DELAY_MS);
+    // Everything from here to the moment ctx owns this timer can throw (missing
+    // password, opencode down, 401). Without this the user would get a lone
+    // "still working" 2.5s later and never hear anything again.
+    let ackOwned = false;
+    try {
+      await this.startTurn(msg, ackTimer, () => {
+        ackOwned = true;
+      });
+    } finally {
+      if (!ackOwned) clearTimeout(ackTimer);
+    }
+  }
+
+  /** The body of processMessage once the ack timer is armed */
+  private async startTurn(
+    msg: IncomingMessage,
+    ackTimer: ReturnType<typeof setTimeout>,
+    onAckOwned: () => void,
+  ): Promise<void> {
     const client = this.getClient(msg.workspaceDir);
 
     // Get or create session for this chat
@@ -168,6 +282,13 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(sessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          this.clearAck(oldCtx);
+          // The session is gone server-side; answering its question is moot, but
+          // the timer would still fire and message the user about a dead turn.
+          if (oldCtx.pendingQuestion) {
+            clearTimeout(oldCtx.pendingQuestion.timer);
+            oldCtx.pendingQuestion = undefined;
+          }
           this.activeContexts.delete(sessionId);
         }
         sessionId = undefined;
@@ -183,17 +304,41 @@ export class Bridge {
       );
     }
 
-    // Set up context to accumulate reply
-    const ctx: SessionContext = {
+    // A turn may still be running — most naturally right after the user answered
+    // a question and immediately added a remark. opencode queues the new prompt
+    // (verified: prompt_async returns 204 mid-turn), so the context must be
+    // REUSED, not replaced: a fresh one would have empty assistantMessageIds and
+    // a reset chunker, and the running turn's remaining output would be dropped
+    // on the floor as "not ours".
+    const inFlight = this.activeContexts.get(sessionId);
+    const ctx: SessionContext = inFlight ?? {
       sessionId,
       chatId: msg.chatId,
       workspaceDir: msg.workspaceDir,
+      senderId: msg.senderId,
       senderName: msg.senderName,
       channelType: msg.channelType,
       textParts: new Map(),
+      assistantMessageIds: new Set(),
+      textPartIds: new Set(),
+      chunker: new BlockChunker(),
+      resolvedQuestionIds: new Set(),
+      saidSomething: false,
+      sendChain: Promise.resolve(),
       reply: msg.reply,
       onTyping: msg.onTyping,
     };
+
+    if (inFlight) {
+      // Later output belongs to whoever spoke last (matters in a group chat)
+      ctx.senderId = msg.senderId;
+      ctx.senderName = msg.senderName;
+      ctx.reply = msg.reply;
+      ctx.onTyping = msg.onTyping;
+      this.clearAck(ctx);
+    }
+    ctx.ackTimer = ackTimer;
+    onAckOwned();
     this.activeContexts.set(sessionId, ctx);
 
     // Ensure SSE is connected for this workspace and WAIT for it to be ready
@@ -230,12 +375,72 @@ export class Bridge {
       this.startIdleTimer(sessionId);
     } catch (err) {
       console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
-      this.clearIdleTimer(ctx);
-      ctx.onTyping?.(false);
-      this.activeContexts.delete(sessionId);
+      this.clearAck(ctx);
       await msg
         .reply(`Error: Failed to send message to AI agent.`)
         .catch(() => {});
+      // Only tear the turn down if this message started it. If a turn was
+      // already running, it still owns this context and its output is still
+      // coming — dropping it here would lose the reply the user is waiting for.
+      if (!inFlight) {
+        this.clearIdleTimer(ctx);
+        ctx.onTyping?.(false);
+        this.activeContexts.delete(sessionId);
+      }
+    }
+  }
+
+  /** Cancel the "still working" ack — it is only for turns that stay silent */
+  private clearAck(ctx: SessionContext): void {
+    if (ctx.ackTimer) {
+      clearTimeout(ctx.ackTimer);
+      ctx.ackTimer = undefined;
+    }
+  }
+
+  /**
+   * Send content to the chat. Any real output makes the pending ack redundant —
+   * cancel it rather than let a "still working" note trail the answer itself.
+   */
+  private send(ctx: SessionContext, text: string): void {
+    this.clearAck(ctx);
+    ctx.saidSomething = true;
+    // Every outbound message passes through here, so the platform cap is enforced
+    // in one place. Streamed blocks need it as much as the final flush does: a
+    // single 25k-char paragraph is a valid block, and the channels reject or
+    // silently truncate anything over their limit.
+    const safe =
+      text.length > MAX_REPLY_LENGTH
+        ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
+        : text;
+    const reply = ctx.reply;
+    ctx.sendChain = ctx.sendChain.then(() =>
+      reply(safe).catch((err) => {
+        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+      }),
+    );
+  }
+
+  /**
+   * Send text and mark it consumed, so the final flush will not repeat it.
+   * (`next()` only advances the chunker at a paragraph cut; this forces it.)
+   */
+  private sendRemainder(ctx: SessionContext, text: string): void {
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    ctx.chunker.consume(full);
+    this.send(ctx, text);
+  }
+
+  /** Emit any finished block the agent has produced since the last one */
+  private streamReadyBlocks(ctx: SessionContext): void {
+    // A question is on screen and the user is answering it — do not interleave.
+    if (ctx.pendingQuestion) return;
+
+    for (;;) {
+      const full = Array.from(ctx.textParts.values()).join("\n\n");
+      const block = ctx.chunker.next(full);
+      if (!block) return;
+      this.send(ctx, block);
     }
   }
 
@@ -262,24 +467,38 @@ export class Bridge {
   }
 
   /** Flush accumulated text and send reply, then clean up */
-  private flushAndReply(sessionId: string): void {
+  private flushAndReply(sessionId: string, notifyEmpty = true): void {
     const ctx = this.activeContexts.get(sessionId);
     if (!ctx) return;
 
     this.clearIdleTimer(ctx);
     ctx.onTyping?.(false);
 
-    const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
-    if (text) {
-      const truncated =
-        text.length > MAX_REPLY_LENGTH
-          ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
-          : text;
-
-      ctx.reply(truncated).catch((err) => {
-        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
-      });
+    // The turn is ending (idle, error, or shutdown) — a question still hanging
+    // here will never be answered, and leaving it unresolved keeps the agent
+    // blocked inside tool execution.
+    if (ctx.pendingQuestion) {
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
     }
+
+    // Only what streaming has not already delivered (send() applies the cap)
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    const text = ctx.chunker.rest(full);
+    if (text) {
+      this.send(ctx, text);
+    } else if (notifyEmpty && !ctx.saidSomething) {
+      // Before the reasoning/user-echo filters landed, textParts always held at
+      // least the echoed prompt, so an empty flush was impossible. Now a turn
+      // that only produced reasoning or tool calls really can end up with no
+      // text — staying silent would read as the bot ignoring the user. (If blocks
+      // already went out, an empty remainder just means the answer ended on a
+      // block boundary — nothing to announce.)
+      this.send(ctx, EMPTY_REPLY_NOTICE);
+    }
+
+    this.clearAck(ctx);
 
     this.activeContexts.delete(sessionId);
     console.log(
@@ -324,6 +543,9 @@ export class Bridge {
 
   private handleSSEEvent(event: { type: string; properties: any }): void {
     switch (event.type) {
+      case "message.updated":
+        this.onMessageUpdated(event.properties.info);
+        break;
       case "message.part.updated":
         this.onPartUpdated(event.properties.part);
         break;
@@ -351,17 +573,40 @@ export class Bridge {
     }
   }
 
+  /** Track which messages are the assistant's, so user/synthetic parts can be dropped */
+  private onMessageUpdated(info: {
+    id: string;
+    sessionID: string;
+    role: string;
+  }): void {
+    if (info?.role !== "assistant") return;
+    const ctx = this.activeContexts.get(info.sessionID);
+    if (!ctx) return;
+    ctx.assistantMessageIds.add(info.id);
+  }
+
   /** Accumulate assistant text from full part updates */
   private onPartUpdated(part: MessagePart): void {
-    if (part.type !== "text") return;
     const ctx = this.activeContexts.get(part.sessionID);
     if (!ctx) return;
-    const partId = (part as any).id ?? "__default__";
-    const text = (part as any).content ?? (part as any).text ?? "";
-    ctx.textParts.set(partId, text);
 
-    // Reset idle timer — agent is still producing output
-    this.startIdleTimer(ctx.sessionId);
+    // Any part activity means the agent is alive — reasoning and tool parts
+    // included. This must happen before the content filters below: a long
+    // thinking block or a slow tool produces no text parts for minutes, and
+    // letting the idle fallback fire there would force-send a partial reply.
+    // While a question is pending the fallback stays off: it is the user we are
+    // waiting on, and re-arming here would force-send the reply out from under
+    // the question they are still reading.
+    if (!ctx.pendingQuestion) this.startIdleTimer(ctx.sessionId);
+
+    if (!ctx.assistantMessageIds.has(part.messageID)) return;
+    if (part.type !== "text") return;
+
+    const text = (part as any).content ?? (part as any).text ?? "";
+    ctx.textPartIds.add(part.id);
+    ctx.textParts.set(part.id, text);
+
+    this.streamReadyBlocks(ctx);
   }
 
   /** Accumulate assistant text from delta (incremental append) */
@@ -373,13 +618,19 @@ export class Bridge {
   }): void {
     const ctx = this.activeContexts.get(props.sessionID);
     if (!ctx) return;
-    if (props.field === "content" || props.field === "text") {
-      const existing = ctx.textParts.get(props.partID) ?? "";
-      ctx.textParts.set(props.partID, existing + props.delta);
 
-      // Reset idle timer — agent is still producing output
-      this.startIdleTimer(ctx.sessionId);
-    }
+    if (!ctx.pendingQuestion) this.startIdleTimer(ctx.sessionId);
+
+    if (props.field !== "content" && props.field !== "text") return;
+    // The delta event carries no type and reasoning-delta also arrives as
+    // `field: "text"` — only a partID already seen as an assistant text part
+    // may be appended to, or the model's chain of thought lands in the chat.
+    if (!ctx.textPartIds.has(props.partID)) return;
+
+    const existing = ctx.textParts.get(props.partID) ?? "";
+    ctx.textParts.set(props.partID, existing + props.delta);
+
+    this.streamReadyBlocks(ctx);
   }
 
   /** Session went idle → send accumulated reply */
@@ -406,19 +657,117 @@ export class Bridge {
     console.log(`[Bridge] Auto-approved permission ${perm.id}`);
   }
 
-  /** Auto-reject question */
-  private onQuestionAsked(question: { id: string; sessionID: string }): void {
+  /** Forward the agent's question to the chat and wait for the user's reply */
+  private onQuestionAsked(question: {
+    id: string;
+    sessionID: string;
+    questions?: QuestionInfo[];
+  }): void {
     const ctx = this.activeContexts.get(question.sessionID);
     if (!ctx) return;
+    // SSE and the poll can both deliver the same question — ask once.
+    if (ctx.pendingQuestion?.id === question.id) return;
+    if (ctx.resolvedQuestionIds.has(question.id)) return;
 
-    const client = this.getClient(ctx.workspaceDir);
-    client.rejectQuestion(question.id).catch((err) => {
-      console.error(
-        `[Bridge] Auto-reject question ${question.id} failed:`,
-        err,
+    const questions = question.questions ?? [];
+    if (questions.length === 0) {
+      // Nothing renderable — decline rather than strand the agent.
+      ctx.resolvedQuestionIds.add(question.id);
+      this.getClient(ctx.workspaceDir)
+        .rejectQuestion(question.id)
+        .catch(() => {});
+      return;
+    }
+
+    // The turn is blocked from here on: no parts, no status changes. Stop the
+    // idle fallback or it would force-send a partial reply out from under us
+    // while the user is still reading the question.
+    this.clearIdleTimer(ctx);
+    ctx.onTyping?.(false);
+
+    // Whatever the agent said leading up to the question ("I need to check one
+    // thing first…") is still sitting in the buffer, below the block threshold.
+    // Send it now: streaming is suspended while the question is up, so otherwise
+    // it would surface after the question it was introducing.
+    const preamble = ctx.chunker.rest(
+      Array.from(ctx.textParts.values()).join("\n\n"),
+    );
+    if (preamble) this.sendRemainder(ctx, preamble);
+
+    const timer = setTimeout(() => {
+      console.log(
+        `[Bridge] Question ${question.id} unanswered after ${QUESTION_TIMEOUT_MS / 60_000} min, rejecting`,
       );
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
+      // reject() makes the question tool throw inside the turn — the agent keeps
+      // running and may still answer, so don't claim the turn is over. Re-arm the
+      // idle fallback, which was suspended while the question was up.
+      this.send(ctx, "⌛ 提问已超时，已替你跳过这个问题。");
+      this.startIdleTimer(ctx.sessionId);
+    }, QUESTION_TIMEOUT_MS);
+
+    ctx.pendingQuestion = { id: question.id, questions, timer };
+    this.send(ctx, renderQuestions(questions));
+    console.log(`[Bridge] Asked user question ${question.id}`);
+  }
+
+  /**
+   * Route a chat message into the question the agent is blocked on.
+   * Returns false when the message is not an answer and should be treated as a
+   * fresh prompt.
+   */
+  private async answerPendingQuestion(
+    ctx: SessionContext,
+    msg: IncomingMessage,
+  ): Promise<void> {
+    const pending = ctx.pendingQuestion!;
+    const client = this.getClient(ctx.workspaceDir);
+    const text = msg.text.trim();
+
+    if (text === QUESTION_SKIP_COMMAND) {
+      this.resolvePendingQuestion(ctx, (p) => client.rejectQuestion(p.id));
+      await msg.reply("已跳过该问题。").catch(() => {});
+      return;
+    }
+
+    const parsed = parseAnswer(text, pending.questions);
+    if (!parsed.ok) {
+      // Keep waiting — a malformed answer must not fall through to promptAsync,
+      // which opencode would reject with BusyError while the question blocks.
+      await msg
+        .reply(`${parsed.error}\n\n${renderQuestions(pending.questions)}`)
+        .catch(() => {});
+      return;
+    }
+
+    this.resolvePendingQuestion(ctx, (p) =>
+      client.replyQuestion(p.id, parsed.answers),
+    );
+    // The turn resumes: parts start flowing again, so re-arm the idle fallback.
+    this.startIdleTimer(ctx.sessionId);
+    ctx.onTyping?.(true);
+    console.log(`[Bridge] Answered question ${pending.id}`);
+  }
+
+  /**
+   * Clear the pending-question state, then run the resolution call. The pending
+   * record is passed in: the field is already cleared by the time `resolve` runs,
+   * so it must not close over `ctx.pendingQuestion`.
+   */
+  private resolvePendingQuestion(
+    ctx: SessionContext,
+    resolve: (pending: PendingQuestion) => Promise<void>,
+  ): void {
+    const pending = ctx.pendingQuestion;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    ctx.pendingQuestion = undefined;
+    ctx.resolvedQuestionIds.add(pending.id);
+    resolve(pending).catch((err) => {
+      console.error(`[Bridge] Resolving question ${pending.id} failed:`, err);
     });
-    console.log(`[Bridge] Auto-rejected question ${question.id}`);
   }
 
   /** Handle session.error SSE event — notify user and clean up */
@@ -441,19 +790,21 @@ export class Bridge {
 
     this.clearIdleTimer(ctx);
     ctx.onTyping?.(false);
-
-    // Only reply if no text has been accumulated (avoid overwriting a partial response)
-    const accumulated = Array.from(ctx.textParts.values()).join("").trim();
-    if (!accumulated) {
-      ctx
-        .reply("⚠️ AI agent encountered an error. Please try again.")
-        .catch(() => {});
-    } else {
-      // Flush whatever we have
-      this.flushAndReply(sessionId);
-      return;
+    if (ctx.pendingQuestion) {
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
     }
 
+    // Flush whatever text has not gone out yet, then always say it failed. The
+    // remainder is often empty (the blocks already streamed), and silence there
+    // would leave the user with an answer that merely stops mid-way.
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    const remainder = ctx.chunker.rest(full);
+    if (remainder) this.sendRemainder(ctx, remainder);
+    this.send(ctx, "⚠️ AI agent encountered an error. Please try again.");
+
+    this.clearAck(ctx);
     this.activeContexts.delete(sessionId);
   }
 
@@ -463,10 +814,18 @@ export class Bridge {
     if (this.pollTimers.has(key)) return;
 
     const client = this.getClient(workspaceDir);
-    const startTime = Date.now();
+    let deadline = Date.now() + POLL_MAX_LIFETIME_MS;
     const timer = setInterval(async () => {
+      const ctx = this.activeContexts.get(sessionId);
+      // Waiting on the user is not a stuck turn — the question's own 30-min
+      // timeout bounds it. Without this the poll would die mid-question and
+      // stop backing up SSE for whatever the agent asks next.
+      if (ctx?.pendingQuestion) {
+        deadline = Date.now() + POLL_MAX_LIFETIME_MS;
+      }
+
       // Stop polling if no active context or max lifetime exceeded
-      if (!this.activeContexts.has(sessionId) || Date.now() - startTime > POLL_MAX_LIFETIME_MS) {
+      if (!ctx || Date.now() > deadline) {
         clearInterval(timer);
         this.pollTimers.delete(key);
         return;
@@ -499,9 +858,10 @@ export class Bridge {
   }
 
   async shutdown(): Promise<void> {
-    // Flush any pending replies before shutting down
+    // Flush any pending replies before shutting down. No empty-turn notice here —
+    // the gateway is going down, and "no text this turn" is not news worth sending.
     for (const sessionId of [...this.activeContexts.keys()]) {
-      this.flushAndReply(sessionId);
+      this.flushAndReply(sessionId, false);
     }
 
     // Close all SSE connections and backend resources
