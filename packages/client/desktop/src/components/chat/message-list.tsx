@@ -84,6 +84,9 @@ interface MessageListProps {
    * attribution is computed over ALL messages. Pairing them by index would not.
    */
   artifactsByTurn?: Map<string, Artifact[]>
+  /** Workspace root — used to de-duplicate a turn's cards against the FileBlocks
+   *  its own answer already renders. */
+  workspaceDir?: string
   /** Whether there are older messages available (cached or server-side) */
   showLoadEarlier?: boolean
   /** Whether older messages are currently being fetched */
@@ -100,6 +103,7 @@ export function MessageList({
   sessionActive = false,
   onArtifactClick,
   artifactsByTurn,
+  workspaceDir,
   showLoadEarlier = false,
   historyLoading = false,
   onLoadEarlier,
@@ -167,6 +171,7 @@ export function MessageList({
               isStopped={isStopped}
               onArtifactClick={onArtifactClick}
               artifacts={artifactsByTurn?.get(turnKey)}
+              workspaceDir={workspaceDir}
             />
             {isStopped && <ExecutionStatus state="stopped" />}
           </div>

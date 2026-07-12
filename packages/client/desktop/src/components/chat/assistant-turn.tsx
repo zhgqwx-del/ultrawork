@@ -28,6 +28,9 @@ interface AssistantTurnProps {
   onArtifactClick?: (artifact: Artifact) => void
   /** Artifacts this turn produced (from `useSessionArtifacts().byTurn`). */
   artifacts?: Artifact[]
+  /** Workspace root — needed to resolve an answer part's raw path against an
+   *  Artifact's workspace-relative one when de-duplicating the strip. */
+  workspaceDir?: string
 }
 
 const OUTPUT_TYPES = new Set(["text", "file", "patch"])
@@ -217,6 +220,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   isStopped = false,
   onArtifactClick,
   artifacts,
+  workspaceDir,
 }: AssistantTurnProps) {
   const { t } = useI18n()
   // Debounced streaming flag drives the "done" visuals (footer / collapse /
@@ -241,8 +245,8 @@ export const AssistantTurn = memo(function AssistantTurn({
       }
     }
     if (shown.length === 0) return artifacts
-    return artifacts.filter((a) => !shown.some((raw) => raw && samePath(raw, a.path)))
-  }, [artifacts, model.answer])
+    return artifacts.filter((a) => !shown.some((raw) => raw && samePath(raw, a.path, workspaceDir)))
+  }, [artifacts, model.answer, workspaceDir])
 
   const hasAnswerText = model.answer.some((p) => p.type === "text" && (p as { text?: string }).text?.trim())
   // Raw markdown of the final answer only (excludes the execution flow / tool
@@ -363,6 +367,7 @@ function turnPropsEqual(prev: AssistantTurnProps, next: AssistantTurnProps): boo
     prev.isStreaming !== next.isStreaming ||
     prev.isStopped !== next.isStopped ||
     prev.onArtifactClick !== next.onArtifactClick ||
+    prev.workspaceDir !== next.workspaceDir ||
     prev.messages.length !== next.messages.length
   ) {
     return false

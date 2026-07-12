@@ -82,9 +82,23 @@ describe("TurnArtifacts in the transcript", () => {
   // the strip. The same file twice, adjacent, is worse than not showing it.
   it("drops an artifact the answer already renders as a FileBlock", () => {
     const messages = turn([{ type: "file", filename: "/ws/project/chart.png", mime: "image/png", url: "" }])
-    render(<AssistantTurn messages={messages} artifacts={[file("chart.png", "image/png"), file("report.pdf")]} />)
+    render(
+      <AssistantTurn
+        messages={messages}
+        workspaceDir="/ws/project"
+        artifacts={[file("chart.png", "image/png"), file("report.pdf")]}
+      />
+    )
     // report.pdf still gets a card; chart.png does not (the FileBlock has it).
     expect(screen.getByRole("button", { name: /report\.pdf/ })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /chart\.png/ })).toBeNull()
+  })
+
+  // The suffix match this replaced said "same file" for two different ones, and the
+  // symptom was a card that simply wasn't there.
+  it("keeps the card when the answer's FileBlock is a DIFFERENT file with the same basename", () => {
+    const messages = turn([{ type: "file", filename: "/ws/project/sub/report.md", mime: "text/markdown", url: "" }])
+    render(<AssistantTurn messages={messages} workspaceDir="/ws/project" artifacts={[file("report.md")]} />)
+    expect(screen.getByRole("button", { name: /report\.md/ })).toBeInTheDocument()
   })
 })

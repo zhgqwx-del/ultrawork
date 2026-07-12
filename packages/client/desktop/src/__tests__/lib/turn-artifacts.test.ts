@@ -204,12 +204,70 @@ describe("attributeArtifactsToTurns — ordering", () => {
 
 describe("samePath", () => {
   it("matches a raw absolute path against its workspace-relative form", () => {
-    expect(samePath("/ws/project/docs/report.md", "docs/report.md")).toBe(true)
-    expect(samePath("C:\\ws\\project\\report.md", "report.md")).toBe(true)
-    expect(samePath("report.md", "report.md")).toBe(true)
+    expect(samePath(`${WS}/docs/report.md`, "docs/report.md", WS)).toBe(true)
+    expect(samePath("C:\\ws\\project\\report.md", "report.md", "C:\\ws\\project")).toBe(true)
+    expect(samePath("report.md", "report.md", WS)).toBe(true)
   })
 
   it("does not match a different file that merely ends similarly", () => {
-    expect(samePath("/ws/project/final-report.md", "report.md")).toBe(false)
+    expect(samePath(`${WS}/final-report.md`, "report.md", WS)).toBe(false)
+  })
+
+  // The suffix match this used to do looked right and quietly conflated two real,
+  // different files — suppressing a card that should have been there, with nothing
+  // to show for it.
+  it("does not conflate a nested file with a same-named one at the workspace root", () => {
+    expect(samePath(`${WS}/sub/report.md`, "report.md", WS)).toBe(false)
+    expect(samePath(`${WS}/a/b/report.md`, "b/report.md", WS)).toBe(false)
+  })
+
+  it("does not treat a file outside the workspace as one inside it", () => {
+    expect(samePath("/elsewhere/report.md", "report.md", WS)).toBe(false)
+  })
+})
+
+describe("regressions the adversarial review found", () => {
+  // D3: groupIntoTurns groups by ROLE and never looks at the clock. If a message
+  // with a missing/zero `time.created` were skipped when building windows, the
+  // anchor could become the turn's SECOND assistant message while the transcript
+  // still keys the turn on its first — and every card in that turn would vanish.
+  it("anchors on the first assistant message even when its timestamp is missing", () => {
+    const noTime = {
+      info: { id: "a1", sessionID: "s", role: "assistant", time: {} },
+      parts: [write("early.pdf")],
+    } as unknown as SendMessageResponse
+    const msgs = [user("u1", 1000), noTime, assistant("a2", 1100, 2000, [write("late.pdf")])]
+
+    const windows = buildTurnWindows(msgs)
+    expect(windows).toHaveLength(1)
+    expect(windows[0].anchorId).toBe("a1") // == groupIntoTurns' turnKey
+    expect(windows[0].messages.map((m) => m.info.id)).toEqual(["a1", "a2"])
+
+    // …and the untimed message's artifact is still attributed, not silently dropped.
+    expect(paths(attribute(msgs), "a1").sort()).toEqual(["early.pdf", "late.pdf"])
+  })
+
+  it("claims no scanned file when a turn has no usable timestamp at all", () => {
+    const noTime = { info: { id: "a1", sessionID: "s", role: "assistant", time: {} }, parts: [] } as unknown as SendMessageResponse
+    const windows = buildTurnWindows([noTime])
+    // An empty interval — it must not swallow every file in the workspace.
+    expect(windows[0].start).toBe(Number.POSITIVE_INFINITY)
+    expect(windows[0].end).toBe(Number.NEGATIVE_INFINITY)
+  })
+
+  // D2: the session-level filter counts ghost windows (it asks "any window?"), so a
+  // file only a ghost contains reaches the sidebar. Dropping it here would show it in
+  // one view and not the other — one dataset, two views, silently disagreeing.
+  it("does not lose a file that only a ghost window contains", () => {
+    const msgs = [
+      user("u1", 1000),
+      assistant("a1", 1100, 2000), // turn A: [1000, 7000]
+      user("u2", 10000), //           ghost:  [10000, 15000]
+      user("u3", 20000),
+      assistant("a3", 20100, 21000), // turn B: [20000, 26000]
+    ]
+    // 12000 is inside the ghost and inside no real turn.
+    const byTurn = attribute(msgs, [{ path: `${WS}/ghost.pdf`, mtimeMs: 12000 }])
+    expect(paths(byTurn, "a1")).toEqual(["ghost.pdf"]) // the most recent real turn
   })
 })

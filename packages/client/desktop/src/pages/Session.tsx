@@ -525,6 +525,7 @@ export function SessionPage() {
               <div ref={contentRef as React.Ref<HTMLDivElement>} className="mx-auto w-full max-w-[860px] px-6 pt-4 pb-8">
                 <MessageList
                   artifactsByTurn={artifactsByTurn}
+                  workspaceDir={workspaceDir}
                   messages={messages}
                   isLoading={loading && !sending}
                   streamingMessageId={streamingMessageId}

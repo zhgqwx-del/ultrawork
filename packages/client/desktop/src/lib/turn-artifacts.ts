@@ -1,12 +1,6 @@
 import type { SendMessageResponse } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
-import {
-  extractArtifacts,
-  isWorkingFile,
-  toRelative,
-  TURN_GRACE_MS,
-  type ScanHit,
-} from "@/components/session/artifacts-panel"
+import { extractArtifacts, toRelative, TURN_GRACE_MS, type ScanHit } from "@/components/session/artifacts-panel"
 
 /**
  * Per-turn artifact attribution (discussions/035).
@@ -54,35 +48,57 @@ export interface TurnWindow {
  */
 export function buildTurnWindows(messages: SendMessageResponse[], active?: boolean): TurnWindow[] {
   const windows: TurnWindow[] = []
-  let start: number | null = null
-  let end = 0
+  let open = false
+  // An empty interval: nothing can fall inside it. A turn whose messages all lack a
+  // usable timestamp keeps these, so it claims no scanned file — while still keeping
+  // its anchor and messages, which is what tool-derived attribution runs on.
+  let start = Number.POSITIVE_INFINITY
+  let end = Number.NEGATIVE_INFINITY
   let anchorId: string | null = null
   let turnMessages: SendMessageResponse[] = []
 
-  const flush = (windowEnd: number) => {
-    if (start === null) return
+  const stamp = (m: SendMessageResponse): number | undefined => {
+    const c = m.info?.time?.created
+    return typeof c === "number" && c > 0 ? c : undefined
+  }
+  const flush = (streaming: boolean) => {
+    if (!open) return
+    const windowEnd = streaming
+      ? Number.POSITIVE_INFINITY
+      : end === Number.NEGATIVE_INFINITY
+        ? end
+        : end + TURN_GRACE_MS
     windows.push({ start, end: windowEnd, anchorId, messages: turnMessages })
   }
 
+  // Grouping is driven by ROLE alone, never by the timestamp — that is the whole
+  // point. `groupIntoTurns` doesn't look at time, so if a message with a missing
+  // `time.created` were skipped here, the grouping would silently diverge: the
+  // anchor could end up being the turn's SECOND assistant message while the
+  // transcript still keys the turn on its first, and the entire turn's cards would
+  // vanish. Timestamps only ever widen a window; they never decide membership.
   for (const m of messages) {
-    const created = m.info?.time?.created
-    if (typeof created !== "number" || created <= 0) continue
+    const created = stamp(m)
     if (m.info.role === "user") {
-      flush(end + TURN_GRACE_MS)
-      start = created
-      end = created
+      flush(false)
+      open = true
+      start = created ?? Number.POSITIVE_INFINITY
+      end = created ?? Number.NEGATIVE_INFINITY
       anchorId = null
       turnMessages = []
     } else {
-      if (start === null) start = created
+      open = true
       // First assistant message after this user message == groupIntoTurns' turnKey.
       if (anchorId === null) anchorId = m.info.id
       turnMessages.push(m)
-      const done = m.info?.time?.completed ?? created
-      if (done > end) end = done
+      if (created !== undefined) {
+        if (created < start) start = created
+        const done = m.info?.time?.completed ?? created
+        if (done > end) end = done
+      }
     }
   }
-  flush(active ? Number.POSITIVE_INFINITY : end + TURN_GRACE_MS)
+  flush(!!active)
   return windows
 }
 
@@ -98,16 +114,34 @@ export function buildTurnWindows(messages: SendMessageResponse[], active?: boole
  * LAST match: the most recent turn that could have written the file.
  */
 function turnIndexForMtime(windows: TurnWindow[], mtimeMs: number): number {
+  const inside = (w: TurnWindow) => mtimeMs >= w.start && mtimeMs <= w.end
   for (let i = windows.length - 1; i >= 0; i--) {
-    const w = windows[i]
-    if (w.anchorId !== null && mtimeMs >= w.start && mtimeMs <= w.end) return i
+    if (windows[i].anchorId !== null && inside(windows[i])) return i
+  }
+  // Nothing real contains it — but a GHOST window might, and the session-level
+  // filter counts ghosts (it asks "any window?", and a ghost is a window). Dropping
+  // it here would put the file in the sidebar and nowhere in the transcript: one
+  // dataset, two views, silently disagreeing. Hand it to the most recent real turn
+  // that had already started when the file appeared.
+  if (!windows.some((w) => w.anchorId === null && inside(w))) return -1
+  for (let i = windows.length - 1; i >= 0; i--) {
+    if (windows[i].anchorId !== null && windows[i].start <= mtimeMs) return i
   }
   return -1
 }
 
-/** Whether a raw (possibly absolute) path names the same file as a workspace-relative one. */
-export function samePath(raw: string, rel: string): boolean {
-  return raw === rel || raw.endsWith("/" + rel) || raw.endsWith("\\" + rel)
+/**
+ * Whether a raw path off a message part names the same file as an Artifact's
+ * workspace-relative path.
+ *
+ * Exact, via the same `toRelative` the extractor used to produce `rel` in the first
+ * place — NOT a suffix match. A suffix match looks right and quietly conflates two
+ * different files: `/ws/proj/sub/report.md` ends with `/report.md`, so a FileBlock
+ * for the one in `sub/` would suppress the card for the one at the workspace root.
+ * The failure is invisible — a card that simply isn't there.
+ */
+export function samePath(raw: string, rel: string, directory?: string): boolean {
+  return toRelative(raw, directory) === rel
 }
 
 /**
@@ -170,16 +204,16 @@ export function attributeArtifactsToTurns(opts: {
     else byTurn.set(anchorId, [artifact])
   }
 
-  // Deliverables first, then session order. NOT `classifyArtifacts` — its "promote
-  // working files when there are no deliverables" rule is a property of the SET, not
-  // of the file, so per turn the same `gen.py` would read as a deliverable in the
-  // turn that only wrote scripts and as a working file in the turn that also
-  // produced a PDF. Ordering conveys the same thing without the contradiction.
+  // Session order, which is already `[...deliverables, ...working]` — so sorting by
+  // it puts deliverables first for free.
+  //
+  // Deliberately NOT `classifyArtifacts`: its "promote working files when there are
+  // no deliverables" rule is a property of the SET, not of the file, so per turn the
+  // same `gen.py` would read as a deliverable in the turn that only wrote scripts and
+  // as a working file in the turn that also produced a PDF. Ordering says the same
+  // thing without contradicting itself across turns.
   for (const list of byTurn.values()) {
-    list.sort((a, b) => {
-      const w = Number(isWorkingFile(a)) - Number(isWorkingFile(b))
-      return w !== 0 ? w : (rank.get(a.path) ?? 0) - (rank.get(b.path) ?? 0)
-    })
+    list.sort((a, b) => (rank.get(a.path) ?? 0) - (rank.get(b.path) ?? 0))
   }
   return byTurn
 }
