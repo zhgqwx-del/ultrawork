@@ -6,6 +6,7 @@ import { FileText, FileDiff } from "lucide-react"
 import type { FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
+import { MarkdownLink } from "@/components/ui/markdown-link"
 import { CodeBlock } from "./code-block"
 
 // Shared part renderers used by both the per-turn answer area (AssistantTurn)
@@ -45,16 +46,7 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </blockquote>
   ),
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      className="text-[var(--color-primary)] underline hover:opacity-80"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      {children}
-    </a>
-  ),
+  a: MarkdownLink,
   table: ({ children }) => (
     <div className="my-4 overflow-x-auto">
       <table className="min-w-full border-collapse border border-[var(--color-border)]">{children}</table>
