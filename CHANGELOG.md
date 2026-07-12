@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-07-12
+
+> AI 干完活会主动叫你了：回复完成 / agent 需要你操作时，提示音 + 系统通知 + Dock/任务栏图标提醒（ADR-053）。
+
 ### Added
 
 - **回合完成 / 需要交互时的桌面提醒（ADR-053，discussions/036）**：提示音（内存合成两声和弦，**零音频资源**）+ 系统通知（`tauri-plugin-notification`）+ 图标提醒（Dock 弹跳 / Windows 闪任务栏）；设置 → 偏好三个独立开关，默认全开。
