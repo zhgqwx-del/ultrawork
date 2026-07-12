@@ -17,7 +17,7 @@ interface ArtifactsPanelProps {
 }
 
 /** Convert absolute path to relative by stripping workspace root prefix */
-function toRelative(filePath: string, workspaceRoot?: string): string {
+export function toRelative(filePath: string, workspaceRoot?: string): string {
   if (!workspaceRoot || !filePath.startsWith(workspaceRoot)) return filePath
   let rel = filePath.slice(workspaceRoot.length)
   rel = rel.replace(/^[\\/]+/, "")
@@ -191,7 +191,7 @@ export interface ScanHit {
 
 /** Grace appended to a turn's end so a file flushed just after the turn's last
  * message still counts as that turn's output (clock/fs-mtime skew). */
-const TURN_GRACE_MS = 5000
+export const TURN_GRACE_MS = 5000
 
 /**
  * Time windows (epoch ms) during which THIS session was actively running a turn.
@@ -252,7 +252,7 @@ function extOf(path: string): string {
 }
 
 /** A file is "working" if it's a script/code/config artifact. Patches stay deliverables. */
-function isWorkingFile(a: Artifact): boolean {
+export function isWorkingFile(a: Artifact): boolean {
   return a.type === "file" && WORKING_EXTS.has(extOf(a.path))
 }
 

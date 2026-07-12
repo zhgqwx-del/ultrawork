@@ -77,6 +77,13 @@ interface MessageListProps {
    */
   sessionActive?: boolean
   onArtifactClick?: (artifact: Artifact) => void
+  /**
+   * Artifacts keyed by turn (`useSessionArtifacts().byTurn`). Keyed by the turn's
+   * first assistant message id — the same `turnKey` used below, so the lookup
+   * survives the transcript being windowed to the last TURN_INIT turns while the
+   * attribution is computed over ALL messages. Pairing them by index would not.
+   */
+  artifactsByTurn?: Map<string, Artifact[]>
   /** Whether there are older messages available (cached or server-side) */
   showLoadEarlier?: boolean
   /** Whether older messages are currently being fetched */
@@ -92,6 +99,7 @@ export function MessageList({
   stoppedAtMessageId = null,
   sessionActive = false,
   onArtifactClick,
+  artifactsByTurn,
   showLoadEarlier = false,
   historyLoading = false,
   onLoadEarlier,
@@ -158,6 +166,7 @@ export function MessageList({
               isStreaming={isStreaming}
               isStopped={isStopped}
               onArtifactClick={onArtifactClick}
+              artifacts={artifactsByTurn?.get(turnKey)}
             />
             {isStopped && <ExecutionStatus state="stopped" />}
           </div>

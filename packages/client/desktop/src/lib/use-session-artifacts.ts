@@ -10,6 +10,7 @@ import {
   sessionTurnWindows,
   type ScanHit,
 } from "@/components/session/artifacts-panel"
+import { attributeArtifactsToTurns } from "@/lib/turn-artifacts"
 
 export interface SessionArtifacts {
   /** Everything, deliverables first — the order the sidebar renders, and the
@@ -28,6 +29,15 @@ export interface SessionArtifacts {
    * there all along.
    */
   settled: boolean
+  /**
+   * Artifacts grouped by the turn that produced them, keyed by the turn's first
+   * assistant message id (== `groupIntoTurns`' render key). Drives the artifact
+   * cards under each answer in the transcript.
+   *
+   * Derived from `ordered`, never the other way round — see `lib/turn-artifacts.ts`
+   * for why the SSOT's first-wins order must stay untouched.
+   */
+  byTurn: Map<string, Artifact[]>
 }
 
 /**
@@ -109,8 +119,18 @@ export function useSessionArtifacts(
     [toolArtifacts, scannedPaths, directory],
   )
 
+  // The hits that belong to the CURRENT session identity — same guard as
+  // `scannedPaths`, but per-turn attribution needs the mtimes, which
+  // `filterScanByWindows` drops on its way out.
+  const hits = useMemo(
+    () => (scanned?.key === scanKey ? scanned.hits : []),
+    [scanned, scanKey],
+  )
+
   return useMemo(() => {
     const { deliverables, working } = classifyArtifacts(artifacts)
-    return { ordered: [...deliverables, ...working], deliverables, working, settled }
-  }, [artifacts, settled])
+    const ordered = [...deliverables, ...working]
+    const byTurn = attributeArtifactsToTurns({ messages, ordered, scanHits: hits, directory, active })
+    return { ordered, deliverables, working, settled, byTurn }
+  }, [artifacts, settled, messages, hits, directory, active])
 }
