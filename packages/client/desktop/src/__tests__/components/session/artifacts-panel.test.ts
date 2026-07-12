@@ -145,3 +145,41 @@ describe("filterScanByWindows — cross-session isolation", () => {
     expect(filterScanByWindows([{ path: "x", mtimeMs: 1 }], [])).toEqual([])
   })
 })
+
+describe("workspace-root matching (cross-platform)", () => {
+  // On Windows the two sides genuinely disagree: the root arrives from Rust as
+  // `C:\ws\proj`, while a model writing a `write` call habitually emits forward
+  // slashes. A raw `startsWith` calls that "outside the workspace" and the artifact
+  // is dropped outright — it reaches neither the sidebar nor the transcript, and
+  // nothing says why.
+  it("accepts a Windows path whose separators disagree with the root's", () => {
+    const WIN = "C:\\ws\\proj"
+    const msgs = [
+      assistant([
+        { type: "tool", tool: "write", state: { status: "completed", input: { filePath: "C:/ws/proj/out/a.pdf" } } },
+        { type: "tool", tool: "write", state: { status: "completed", input: { filePath: "C:\\ws\\proj\\b.pdf" } } },
+      ]),
+    ]
+    expect(extractArtifacts(msgs, WIN).map((a) => a.path).sort()).toEqual(["b.pdf", "out/a.pdf"])
+  })
+
+  // A bare prefix test puts `/ws/proj-old/a.pdf` inside `/ws/proj` and then hands
+  // back the nonsense relative path `-old/a.pdf`.
+  it("does not treat a sibling directory as being inside the workspace", () => {
+    const msgs = [
+      assistant([
+        { type: "tool", tool: "write", state: { status: "completed", input: { filePath: "/ws/project-old/a.pdf" } } },
+      ]),
+    ]
+    expect(extractArtifacts(msgs, WS)).toEqual([])
+  })
+
+  it("still strips the root from a well-formed path", () => {
+    const msgs = [
+      assistant([
+        { type: "tool", tool: "write", state: { status: "completed", input: { filePath: `${WS}/docs/r.pdf` } } },
+      ]),
+    ]
+    expect(extractArtifacts(msgs, WS).map((a) => a.path)).toEqual(["docs/r.pdf"])
+  })
+})

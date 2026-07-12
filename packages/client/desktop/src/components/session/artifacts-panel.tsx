@@ -16,10 +16,41 @@ interface ArtifactsPanelProps {
   selectedPath?: string
 }
 
+/**
+ * Separator-insensitive view of a path, for comparison only.
+ *
+ * `\` → `/` is length-preserving, so an index computed on the normalized string is
+ * still valid on the original — which is what lets `toRelative` slice by the root's
+ * length without rewriting the caller's separators.
+ */
+function normSep(p: string): string {
+  return p.replace(/\\/g, "/")
+}
+
+/**
+ * Whether `filePath` lives under `root`.
+ *
+ * Separator-insensitive because on Windows the two sides genuinely disagree: the
+ * root arrives from Rust as `C:\ws\proj`, while a model writing a `write` tool call
+ * habitually emits `C:/ws/proj/out/a.pdf`. A raw `startsWith` says "outside the
+ * workspace" and the artifact is dropped outright — it reaches neither the sidebar
+ * nor the transcript, and nothing says why.
+ *
+ * The trailing-separator check is the other half: a bare prefix test puts
+ * `/ws/proj-old/a.pdf` inside `/ws/proj`, and `toRelative` then hands back the
+ * nonsense `-old/a.pdf`.
+ */
+function withinRoot(filePath: string, root: string): boolean {
+  const f = normSep(filePath)
+  const r = normSep(root).replace(/\/+$/, "")
+  return f === r || f.startsWith(r + "/")
+}
+
 /** Convert absolute path to relative by stripping workspace root prefix */
-function toRelative(filePath: string, workspaceRoot?: string): string {
-  if (!workspaceRoot || !filePath.startsWith(workspaceRoot)) return filePath
-  let rel = filePath.slice(workspaceRoot.length)
+export function toRelative(filePath: string, workspaceRoot?: string): string {
+  if (!workspaceRoot || !withinRoot(filePath, workspaceRoot)) return filePath
+  const rootLen = workspaceRoot.replace(/[\\/]+$/, "").length
+  let rel = filePath.slice(rootLen)
   rel = rel.replace(/^[\\/]+/, "")
   return rel || filePath
 }
@@ -58,7 +89,7 @@ function isValidArtifactPath(filePath: string, workspaceRoot?: string): boolean 
   // If workspace root is known, only accept paths within it or relative paths
   if (workspaceRoot) {
     if (isAbsolutePath(filePath)) {
-      return filePath.startsWith(workspaceRoot)
+      return withinRoot(filePath, workspaceRoot)
     }
     // Relative paths are fine (e.g. "google.png")
     return true
@@ -191,7 +222,7 @@ export interface ScanHit {
 
 /** Grace appended to a turn's end so a file flushed just after the turn's last
  * message still counts as that turn's output (clock/fs-mtime skew). */
-const TURN_GRACE_MS = 5000
+export const TURN_GRACE_MS = 5000
 
 /**
  * Time windows (epoch ms) during which THIS session was actively running a turn.

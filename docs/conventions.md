@@ -270,7 +270,20 @@ Apply 后需重编译 sidecar。
 Gateway 非关键，用 `std::thread::spawn` + `app.handle().clone()` 在后台启动。
 
 ### 外部链接
-Tauri WebView 中 `window.open` 无法打开系统浏览器，必须用 `@tauri-apps/plugin-opener` 的 `openUrl()`。
+Tauri WebView 中 `window.open` 和 `<a href>` **都不行**（前者被吞、后者原地导航把 app 顶掉）。统一走 `@/lib/external-url`：
+
+```tsx
+import { openExternal } from "@/lib/external-url"
+
+// 按钮/图标类外链
+<button onClick={() => openExternal(url)} title={url}>…</button>
+
+// markdown 里的链接：一律复用共享渲染器，不要自己写 <a>
+import { MarkdownLink, MARKDOWN_LINK_ONLY } from "@/components/ui/markdown-link"
+<ReactMarkdown components={MARKDOWN_LINK_ONLY}>{md}</ReactMarkdown>
+```
+
+`openExternal` 只放行 `http/https/mailto/tel` —— 这是安全边界（模型输出是半可信输入，`openUrl` 走系统 handler）。相对链接/锚点渲染成惰性文本：一个看着能点、点了没反应的链接，比从没承诺过能点的文本更糟。反向坑详见 `gotchas.md` §6。
 
 ### Production vs Dev URL 差异
 Dev 模式下 Vite proxy 将相对路径转发到后端，Production 下没有 proxy。所有 localhost 服务请求必须区分环境：
@@ -497,3 +510,29 @@ const sessionGroups = groupSessionsByDate(orderedSessions, t, frozen)
 反面教材就在同一份代码里：`use-sessions.ts` 收到 SSE `session.updated` 时做的是**原地替换**（`next[idx] = {...}`，索引不动），于是 IM 消息把 `time.updated` 顶新了，会话在列表里**纹丝不动** —— 这正是 ADR-051 要修的 bug。顺序是数据的纯函数，就让它是。
 
 **配套**：如果排序和分组读的是同一个 key（这里是 `time.updated`），就把那个 key 做成**必填参数**而不是给默认值 —— 默认值会让调用方静默丢掉它，而单测因为直接传参会**保持全绿**。让 tsc 抓。
+
+## 17. 新视图需要不同的排序/归属时，在 SSOT 上**挂派生表**，不要改 SSOT（ADR-052）
+
+转录区要「产物归属到产出它的那一轮」，语义上需要 **last-wins**（一个文件被多轮改写，归最后写它的那轮——预览打开的永远是磁盘上的当前内容）。而 `extractArtifacts` 是 **first-wins**。
+
+**诱人但错误的做法：把 `extractArtifacts` 改成 last-wins。** 它有三个既有消费者（侧栏行序、预览 prev/next 计数器、deliverable/working 划分），**没有一个想要 last-wins**；改了会引入两个**静默回归**——被保留的 entry 的元数据翻成「最后一次出现」的值 ⇒ `mime` 丢失、`patch` 类型翻成 `file`（把带 diff 标的交付物打进默认收起的组，用户视角就是「消失了」）。**而当时 479 个测试一条都拦不住**（用 shim 换成 last-wins 跑全量套件全绿）。
+
+**正确做法**：`lib/turn-artifacts.ts` 是一张**派生表**——逐 turn 复用现有的 `extractArtifacts`（复用全部正则/校验/相对路径逻辑，不复制一行），后面的 turn 覆盖前面的；**卡片拿的仍是 SSOT 里那份 rich 的对象**，所以元数据回归从结构上不存在。
+
+```ts
+// ✅ 派生表：SSOT 零改动，新语义只活在表里
+const byTurn = attributeArtifactsToTurns({ messages, ordered /* SSOT，first-wins */, scanHits, directory })
+// 卡片点击时回 SSOT 里按 key 查，拿到的是 rich 的那份
+```
+
+**判断标准**：如果一个新特性想改动某个被多方消费的派生函数的**语义**（排序、去重、归属），先问「现有消费者里有几个真的想要这个新语义？」——答案常常是 0。ADR-048 D5 把数据提到 Session 层做 SSOT，正是为了让后来者**在它上面挂表**，而不是去改它。
+
+> 副产物：侧栏用 first-wins（首次产出序 ≈ 叙事顺序）**本来就更合理**——last-wins 会让反复迭代的主交付物一直往下沉。
+
+### 配套：派生表的 key 必须和渲染层的 key 同源
+
+转录区按 message id 渲染 turn（`groupIntoTurns` 的 `turnKey` = 该轮第一条 assistant 消息 id），**派生表就必须用同一个 key**。按索引配对必错，原因有二：① 转录区只渲染最近 15 个 turn，而归属是按全量消息算的；② `sessionTurnWindows` 按 user 消息切窗、`groupIntoTurns` 按连续 assistant 消息切 turn，**用户连发两条消息时两者数量发散**。详见 ADR-052 D4。
+
+### 配套：per-turn 的 memo 不能依赖每 token 变化的 `messages`
+
+`messages` 每个 `message.part.delta` 都换新数组引用。实测归属表的成本约等于整个既有产物管线（per-delta +105%，120 turn 时约 14ms 同步 JS/delta = 掉帧），而流式期间卡片压根不显示 ⇒ **全是废功**。`active` 时复用上次的表，**缓存按 sessionID 分键**（否则切会话会把上一个 session 的卡片挂到另一个 session 的 turn 下）。

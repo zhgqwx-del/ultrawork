@@ -1021,6 +1021,93 @@ fn open_file_with_system(app: tauri::AppHandle, path: String) -> Result<(), Stri
         .map_err(|e| format!("Failed to open {}: {}", path, e))
 }
 
+/// Whether `url` is the app's own document — the only thing the webview is ever
+/// allowed to navigate to.
+///
+/// Prod serves the bundle from `tauri://localhost` (macOS/Linux) or
+/// `http://tauri.localhost` (Windows); dev serves it from the Vite devUrl. React
+/// Router uses the History API, which is not a document navigation and so never
+/// reaches this check — an SPA that is behaving has no legitimate reason to
+/// navigate at all after the initial load.
+/// `is_app_navigation` with `is_dev` injected.
+///
+/// The seam exists purely so the dev gate is testable. `tauri::is_dev()` is
+/// `!cfg!(feature = "custom-protocol")`, and the feature is only ever passed by
+/// `tauri build` — so under `cargo test` it is always `true`, and an assertion
+/// written as `assert_eq!(is_app_navigation(u), tauri::is_dev())` compares the gate
+/// to itself. It passes just as happily with the gate deleted, which is to say it
+/// guards nothing: the one branch whose failure mode is "the packaged app follows
+/// any localhost origin" would ship untested.
+fn is_app_navigation_with(url: &tauri::Url, is_dev: bool) -> bool {
+    if url.scheme() == "tauri" || url.scheme() == "about" {
+        return true;
+    }
+    match url.host_str() {
+        // Windows prod (WebView2 cannot use a custom scheme for the app origin).
+        // Matched on host alone: the scheme may be http or https depending on
+        // `useHttpsScheme`. `tauri.localhost` does not resolve publicly, so this
+        // cannot be pointed anywhere real.
+        Some("tauri.localhost") => true,
+        // Vite devUrl. Gated on `is_dev` so a packaged build cannot be talked into
+        // navigating to a localhost origin — e.g. a page the agent just spun up.
+        Some("localhost") | Some("127.0.0.1") => is_dev,
+        _ => false,
+    }
+}
+
+/// Whether `url` is the app's own document — the only thing the webview is ever
+/// allowed to navigate to.
+///
+/// Prod serves the bundle from `tauri://localhost` (macOS/Linux — webkit2gtk takes
+/// the same branch as WKWebView) or `http(s)://tauri.localhost` (Windows); dev
+/// serves it from the Vite devUrl. React Router uses the History API, which is not a
+/// document navigation and so never reaches this check — an SPA that is behaving has
+/// no legitimate reason to navigate at all after the initial load.
+fn is_app_navigation(url: &tauri::Url) -> bool {
+    is_app_navigation_with(url, tauri::is_dev())
+}
+
+/// Fail-closed navigation guard.
+///
+/// A plain `<a href>` in a Tauri WebView navigates *in place*: the whole app is
+/// replaced by the page, with no back button. We route every link through
+/// `openExternal` on the JS side, but that is a convention, and conventions rot —
+/// the transcript renders model-authored markdown and the artifact preview renders
+/// model-authored files, so one missed plain `<a>` in either is enough to black-hole
+/// the app. The last word lives here instead: nothing but the app's own document may
+/// navigate, and an external URL is handed to the system browser (matching the JS
+/// protocol whitelist) rather than followed.
+///
+/// ⚠️ It does NOT cover `target="_blank"` / `window.open`, and cannot: Tauri only
+/// exposes a plugin hook for wry's *navigation* handler. A new-window request takes
+/// a different path — `NewWindowRequested` on Windows, `NEW_WINDOW_ACTION` on Linux
+/// — which wry drops on the floor when no per-webview handler is registered, and our
+/// window is built from `tauri.conf.json`, so none is. There the request simply
+/// vanishes; the guard never sees it. So this backstops the *dangerous* failure
+/// (in-place navigation), not the *inert* one (a swallowed `_blank`). The JS side
+/// must still never emit `target="_blank"`.
+fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+    tauri::plugin::Builder::new("navigation-guard")
+        .on_navigation(|webview, url| {
+            if is_app_navigation(url) {
+                return true;
+            }
+            // Same whitelist as `lib/external-url.ts`: these are the schemes we are
+            // willing to hand to the OS handler. Everything else (`file:`, custom
+            // app schemes) is dropped — model output must not be able to launch
+            // arbitrary local apps.
+            if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
+                let _ = webview.app_handle().opener().open_url(url.as_str(), None::<&str>);
+            } else {
+                eprintln!("[navigation-guard] blocked navigation to {}", url);
+            }
+            false
+        })
+        .build()
+}
+
 /// Read a file's raw bytes for in-app preview (e.g. pdf.js). Returns the bytes
 /// as an IPC binary response (efficient, no base64). Uses std::fs so it can read
 /// any workspace path the user opens — no plugin scope to configure, which is the
@@ -5306,6 +5393,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(navigation_guard())
         .invoke_handler(tauri::generate_handler![
             ensure_default_workspace,
             open_file_with_system,
@@ -8095,5 +8183,65 @@ mod sidecar_exit_watch_tests {
         assert!(!exited.load(Ordering::SeqCst));
         drop(tx);
         assert!(wait_for(&exited, true));
+    }
+}
+
+#[cfg(test)]
+mod navigation_guard_tests {
+    use super::{is_app_navigation, is_app_navigation_with};
+    use tauri::Url;
+
+    fn u(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn allows_the_apps_own_document() {
+        // Prod origin on macOS/Linux.
+        assert!(is_app_navigation(&u("tauri://localhost/index.html")));
+        // Prod origin on Windows — WebView2 cannot use a custom scheme for the app.
+        assert!(is_app_navigation(&u("http://tauri.localhost/index.html")));
+        assert!(is_app_navigation(&u("about:blank")));
+    }
+
+    #[test]
+    fn blocks_external_urls() {
+        // These are the ones that would black-hole the app: a bare `<a href>` in
+        // model-authored markdown navigates the webview in place.
+        assert!(!is_app_navigation(&u("https://example.com")));
+        assert!(!is_app_navigation(&u("http://example.com")));
+        assert!(!is_app_navigation(&u("file:///etc/passwd")));
+    }
+
+    // Drives the injected seam with BOTH values rather than comparing the gate to
+    // itself. `cargo test` never sets `custom-protocol`, so `tauri::is_dev()` is
+    // always true here — an assertion phrased against it would pass with the gate
+    // deleted, leaving the one branch that matters in a packaged build untested.
+    #[test]
+    fn the_vite_dev_server_loads_in_dev() {
+        assert!(is_app_navigation_with(&u("http://localhost:1420/"), true));
+        assert!(is_app_navigation_with(&u("http://127.0.0.1:1420/"), true));
+    }
+
+    #[test]
+    fn a_packaged_build_refuses_localhost() {
+        // The failure this guards: a packaged app that follows any localhost origin
+        // would happily navigate to a page the agent just spun up on a local port,
+        // replacing the whole app with content the model chose.
+        assert!(!is_app_navigation_with(&u("http://localhost:1420/"), false));
+        assert!(!is_app_navigation_with(&u("http://127.0.0.1:4096/"), false));
+        // …while the app's own origins still load, dev or not.
+        for dev in [true, false] {
+            assert!(is_app_navigation_with(&u("tauri://localhost/index.html"), dev));
+            assert!(is_app_navigation_with(&u("http://tauri.localhost/index.html"), dev));
+            assert!(is_app_navigation_with(&u("https://tauri.localhost/index.html"), dev));
+        }
+    }
+
+    #[test]
+    fn a_lookalike_host_is_not_the_app() {
+        // `host_str()` is the whole host, so a suffix attack does not match.
+        assert!(!is_app_navigation_with(&u("https://tauri.localhost.evil.com/"), true));
+        assert!(!is_app_navigation_with(&u("https://evil.com/#tauri.localhost"), true));
     }
 }

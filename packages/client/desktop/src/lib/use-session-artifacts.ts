@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
@@ -10,6 +10,7 @@ import {
   sessionTurnWindows,
   type ScanHit,
 } from "@/components/session/artifacts-panel"
+import { attributeArtifactsToTurns } from "@/lib/turn-artifacts"
 
 export interface SessionArtifacts {
   /** Everything, deliverables first — the order the sidebar renders, and the
@@ -28,6 +29,15 @@ export interface SessionArtifacts {
    * there all along.
    */
   settled: boolean
+  /**
+   * Artifacts grouped by the turn that produced them, keyed by the turn's first
+   * assistant message id (== `groupIntoTurns`' render key). Drives the artifact
+   * cards under each answer in the transcript.
+   *
+   * Derived from `ordered`, never the other way round — see `lib/turn-artifacts.ts`
+   * for why the SSOT's first-wins order must stay untouched.
+   */
+  byTurn: Map<string, Artifact[]>
 }
 
 /**
@@ -109,8 +119,43 @@ export function useSessionArtifacts(
     [toolArtifacts, scannedPaths, directory],
   )
 
-  return useMemo(() => {
-    const { deliverables, working } = classifyArtifacts(artifacts)
-    return { ordered: [...deliverables, ...working], deliverables, working, settled }
-  }, [artifacts, settled])
+  // The hits that belong to the CURRENT session identity — same guard as
+  // `scannedPaths`, but per-turn attribution needs the mtimes, which
+  // `filterScanByWindows` drops on its way out.
+  const hits = useMemo(
+    () => (scanned?.key === scanKey ? scanned.hits : []),
+    [scanned, scanKey],
+  )
+
+  const split = useMemo(() => classifyArtifacts(artifacts), [artifacts])
+  const ordered = useMemo(() => [...split.deliverables, ...split.working], [split])
+
+  /**
+   * Last computed attribution, so a streaming turn doesn't recompute it per token.
+   *
+   * `messages` gets a new array identity on every `message.part.delta`, so a plain
+   * memo here would re-derive the whole table for every token — and the table is
+   * roughly as expensive as the entire pre-existing artifact pipeline (measured:
+   * +105% on the per-delta cost; at 120 turns that is ~14ms of synchronous work per
+   * delta, a dropped frame). All of it wasted: the strip is hidden while a turn
+   * streams (AssistantTurn gates on `!streaming`), and a settled turn's artifacts
+   * cannot change while a later one is still running.
+   *
+   * Keyed by session, because "reuse the last map" must not survive a session switch
+   * mid-stream — that would hang one session's cards under another's turns.
+   */
+  const cache = useRef<{ key: string; map: Map<string, Artifact[]> }>({ key: "", map: new Map() })
+  const sessionKey = messages[0]?.info?.sessionID ?? ""
+
+  const byTurn = useMemo(() => {
+    if (active && cache.current.key === sessionKey) return cache.current.map
+    const map = attributeArtifactsToTurns({ messages, ordered, scanHits: hits, directory, active })
+    cache.current = { key: sessionKey, map }
+    return map
+  }, [active, sessionKey, messages, ordered, hits, directory])
+
+  return useMemo(
+    () => ({ ordered, deliverables: split.deliverables, working: split.working, settled, byTurn }),
+    [ordered, split, settled, byTurn],
+  )
 }

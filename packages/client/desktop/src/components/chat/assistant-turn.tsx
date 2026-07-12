@@ -4,8 +4,13 @@ import type { SendMessageResponse, MessageInfo, MessagePart, ToolPart, FilePart,
 import type { Artifact } from "@/components/session/artifact-preview"
 import { MarkdownContent, FileBlock, PatchBlock } from "./message-parts"
 import { ExecutionFlow } from "./execution-flow"
+import { TurnArtifacts } from "./turn-artifacts"
 import { CopyButton } from "./copy-button"
 import { useI18n } from "@/lib/i18n-context"
+import { samePath } from "@/lib/turn-artifacts"
+
+/** Stable identity so the `turnArtifacts` memo doesn't churn on every render. */
+const EMPTY_ARTIFACTS: Artifact[] = []
 
 /** Human-readable text for a message-level error (provider APIError / moderation
  * / etc.). opencode uses `{ name, data: { message } }`; others may use a string. */
@@ -21,6 +26,11 @@ interface AssistantTurnProps {
   isStreaming?: boolean
   isStopped?: boolean
   onArtifactClick?: (artifact: Artifact) => void
+  /** Artifacts this turn produced (from `useSessionArtifacts().byTurn`). */
+  artifacts?: Artifact[]
+  /** Workspace root — needed to resolve an answer part's raw path against an
+   *  Artifact's workspace-relative one when de-duplicating the strip. */
+  workspaceDir?: string
 }
 
 const OUTPUT_TYPES = new Set(["text", "file", "patch"])
@@ -209,6 +219,8 @@ export const AssistantTurn = memo(function AssistantTurn({
   isStreaming = false,
   isStopped = false,
   onArtifactClick,
+  artifacts,
+  workspaceDir,
 }: AssistantTurnProps) {
   const { t } = useI18n()
   // Debounced streaming flag drives the "done" visuals (footer / collapse /
@@ -216,6 +228,25 @@ export const AssistantTurn = memo(function AssistantTurn({
   // state. Duration/token math still uses the raw flag (values, not appearance).
   const streaming = useStableStreaming(isStreaming)
   const model = useMemo(() => buildTurnModel(messages, isStreaming), [messages, isStreaming])
+
+  // A `file`/`patch` part in the answer already renders its own FileBlock/PatchBlock
+  // right above the cards. Showing the same file twice, adjacent, is worse than not
+  // showing it at all — drop it from the strip. (Answer parts carry the raw path;
+  // artifacts carry the workspace-relative one, hence `samePath` rather than `===`.)
+  const turnArtifacts = useMemo(() => {
+    if (!artifacts?.length) return EMPTY_ARTIFACTS
+    const shown: string[] = []
+    for (const p of model.answer) {
+      if (p.type === "file") {
+        const fp = p as FilePart
+        shown.push(fp.filename || fp.url || "")
+      } else if (p.type === "patch") {
+        shown.push(...(p as PatchPart).files)
+      }
+    }
+    if (shown.length === 0) return artifacts
+    return artifacts.filter((a) => !shown.some((raw) => raw && samePath(raw, a.path, workspaceDir)))
+  }, [artifacts, model.answer, workspaceDir])
 
   const hasAnswerText = model.answer.some((p) => p.type === "text" && (p as { text?: string }).text?.trim())
   // Raw markdown of the final answer only (excludes the execution flow / tool
@@ -242,7 +273,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   }
 
   return (
-    <div className="group py-3">
+    <div className="group py-3" data-testid="assistant-turn">
       {model.visibleProcessCount > 0 && (
         <ExecutionFlow
           parts={model.process}
@@ -283,6 +314,14 @@ export const AssistantTurn = memo(function AssistantTurn({
             iconClassName="size-3.5"
           />
         </div>
+      )}
+
+      {/* Only once the turn has settled. The workspace scan that finds most
+          artifacts runs on idle, so mid-stream the list is both incomplete and
+          still moving (the open window swallows everything) — cards would appear,
+          then re-attribute and jump to another turn. */}
+      {!streaming && turnArtifacts.length > 0 && (
+        <TurnArtifacts artifacts={turnArtifacts} onArtifactClick={onArtifactClick} />
       )}
 
       {!streaming && model.errorText && (
@@ -328,9 +367,22 @@ function turnPropsEqual(prev: AssistantTurnProps, next: AssistantTurnProps): boo
     prev.isStreaming !== next.isStreaming ||
     prev.isStopped !== next.isStopped ||
     prev.onArtifactClick !== next.onArtifactClick ||
+    prev.workspaceDir !== next.workspaceDir ||
     prev.messages.length !== next.messages.length
   ) {
     return false
+  }
+  // `artifacts` comes out of a Map that is rebuilt on every render, so its array
+  // identity always differs. Comparing by reference here would defeat this memo for
+  // EVERY turn on every token — exactly the long-session cost ADR-021/047 exist to
+  // avoid — so compare the content instead.
+  const pa = prev.artifacts
+  const na = next.artifacts
+  if ((pa?.length ?? 0) !== (na?.length ?? 0)) return false
+  if (pa && na) {
+    for (let i = 0; i < pa.length; i++) {
+      if (pa[i].path !== na[i].path || pa[i].type !== na[i].type) return false
+    }
   }
   for (let i = 0; i < prev.messages.length; i++) {
     if (prev.messages[i] !== next.messages[i]) return false

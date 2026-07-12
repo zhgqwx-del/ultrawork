@@ -77,6 +77,16 @@ interface MessageListProps {
    */
   sessionActive?: boolean
   onArtifactClick?: (artifact: Artifact) => void
+  /**
+   * Artifacts keyed by turn (`useSessionArtifacts().byTurn`). Keyed by the turn's
+   * first assistant message id — the same `turnKey` used below, so the lookup
+   * survives the transcript being windowed to the last TURN_INIT turns while the
+   * attribution is computed over ALL messages. Pairing them by index would not.
+   */
+  artifactsByTurn?: Map<string, Artifact[]>
+  /** Workspace root — used to de-duplicate a turn's cards against the FileBlocks
+   *  its own answer already renders. */
+  workspaceDir?: string
   /** Whether there are older messages available (cached or server-side) */
   showLoadEarlier?: boolean
   /** Whether older messages are currently being fetched */
@@ -92,6 +102,8 @@ export function MessageList({
   stoppedAtMessageId = null,
   sessionActive = false,
   onArtifactClick,
+  artifactsByTurn,
+  workspaceDir,
   showLoadEarlier = false,
   historyLoading = false,
   onLoadEarlier,
@@ -158,6 +170,8 @@ export function MessageList({
               isStreaming={isStreaming}
               isStopped={isStopped}
               onArtifactClick={onArtifactClick}
+              artifacts={artifactsByTurn?.get(turnKey)}
+              workspaceDir={workspaceDir}
             />
             {isStopped && <ExecutionStatus state="stopped" />}
           </div>

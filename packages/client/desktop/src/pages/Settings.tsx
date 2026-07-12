@@ -38,6 +38,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { MCPStatus, MCPConfig } from "@agent/api-client"
 import { openUrl } from "@tauri-apps/plugin-opener"
+import { openExternal } from "@/lib/external-url"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 import { APP_VERSION } from "@/lib/app-version"
 
@@ -1962,14 +1963,14 @@ export function SkillsSection() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-[var(--color-fg)]">{s.name}</span>
-                            <a
-                              href={`https://github.com/${s.repo}/tree/main/${s.path}`}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              title={`https://github.com/${s.repo}/tree/main/${s.path}`}
+                              onClick={() => openExternal(`https://github.com/${s.repo}/tree/main/${s.path}`)}
                               className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
                             >
                               <ExternalLink className="size-3" />
-                            </a>
+                            </button>
                           </div>
                           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{t(s.descKey)}</p>
                           {builtinBacked && !installed && (
@@ -2357,17 +2358,17 @@ function AboutSection() {
       {/* Quick links */}
       <div className="flex flex-wrap gap-2">
         {LINKS.map((link) => (
-          <a
+          <button
             key={link.labelKey}
-            href={link.href}
-            target="_blank"
-            rel="noopener noreferrer"
+            type="button"
+            title={link.href}
+            onClick={() => openExternal(link.href)}
             className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-xs text-[var(--color-fg)] transition-colors hover:bg-[var(--color-accent)]"
           >
             <link.icon className="size-3.5" />
             {t(link.labelKey)}
             <ExternalLink className="size-3 text-[var(--color-fg-muted)]" />
-          </a>
+          </button>
         ))}
       </div>
 
@@ -2387,15 +2388,15 @@ function InfoRow({ label, value, href }: { label: string; value: string; href?: 
     <div className="flex items-center justify-between px-4 py-3">
       <span className="text-sm text-[var(--color-fg-muted)]">{label}</span>
       {href ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          title={href}
+          onClick={() => openExternal(href)}
           className="inline-flex items-center gap-1 text-sm text-[var(--color-fg)] hover:text-[var(--color-primary)]"
         >
           {value}
           <ExternalLink className="size-3" />
-        </a>
+        </button>
       ) : (
         <span className="text-sm text-[var(--color-fg)]">{value}</span>
       )}

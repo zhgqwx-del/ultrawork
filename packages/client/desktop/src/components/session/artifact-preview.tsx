@@ -12,7 +12,11 @@ import { cn } from "@/lib/utils"
 import { pathBasename, isAbsolutePath } from "@/lib/path-utils"
 import { extractExtension, getLanguageExtension } from "@/lib/codemirror-lang"
 import { FileIcon, isBinaryFile, getFileTypeLabel } from "@/components/ui/file-icon"
+import { MARKDOWN_LINK_ONLY } from "@/components/ui/markdown-link"
 import { PdfView } from "./pdf-view"
+
+/** Module-level so ReactMarkdown doesn't re-parse on every render. */
+const MD_REMARK_PLUGINS = [remarkGfm]
 
 export interface Artifact {
   type: "file" | "patch"
@@ -397,7 +401,7 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
           </div>
         ) : isMarkdown(artifact.path) ? (
           <div className="prose prose-sm max-w-none p-4 dark:prose-invert">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={MD_REMARK_PLUGINS} components={MARKDOWN_LINK_ONLY}>{content}</ReactMarkdown>
           </div>
         ) : (
           <CodeMirror
