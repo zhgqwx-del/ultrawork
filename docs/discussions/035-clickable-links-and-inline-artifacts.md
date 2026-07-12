@@ -1,6 +1,6 @@
 # 035 — 回复内链接可点 + 转录区内联产物（调研 + 方案）
 
-> 2026-07-12 · P0 已落地（分支 `feat/clickable-links-and-artifact-cards`，commit `4a271866`）· P1/P2 待落 ADR-052
+> 2026-07-12 · 分支 `feat/clickable-links-and-artifact-cards` · P0 已落地（`4a271866`）· P1 已落地（`1c2c5413`）· **P2 已砍** · 待落 ADR-052
 
 ## 触发
 
@@ -94,7 +94,7 @@
 - 它**没有业界参照**；
 - **pptx（ppt-master 旗舰场景）技术上出不了图** —— 除非走 LibreOffice headless → PDF → 渲首页 PNG，而这在三平台上是**真成本**（macOS 有 QuickLook、Windows 有 Shell thumbnail API，跨平台一致性不可低估）。
 
-⇒ **P1（卡片）交付绝大部分价值；P2（缩略图）是增量，且应在真机反馈之后再决定要不要做。**
+⇒ **P1（卡片）交付绝大部分价值。P2（缩略图）后来被砍掉 —— 见下文「P2：砍掉」。**
 
 ### 噪音控制：一个带数字的硬指标
 
@@ -182,30 +182,42 @@ classifyArtifacts([gen.py, report.pdf]) → deliverables=[report.pdf], working=[
 
 ---
 
-## P2（缩略图）的技术约束
+## P2（缩略图）：**砍掉**
 
-- **`mtimeMs` 已经从 Rust 传上来了**（`ScanHit.mtimeMs`），只是被 `filterScanByWindows` 的 `.map(h => h.path)` 扔掉。保留它是**一石二鸟**：turn 归属要它，**缩略图缓存失效也要它**（文件被重写后必须换图，否则显示旧版缩略图 = 又一个撒谎的 UI）。
+**拍板：不做缩略图。** 用户最初的诉求表述是"产物缩略图"，但调研的结论是**卡片本身（图标 + 文件名 + 类型标签）就是业界主流形态，而缩略图几乎无人做**：
 
-- **缩略图槽位必须是固定尺寸**（硬约束）。`use-stick-to-bottom` 靠 ResizeObserver 观察内容层；缩略图**异步加载**会改变历史 turn 的高度，而 **WebKit 没有 scroll anchoring**（ADR-047 已记，Tauri 用的正是 WKWebView）⇒ **用户正在读旧回复时，上方某个缩略图加载完会把视口顶走**。固定尺寸槽位 ⇒ 加载前后布局高度不变 ⇒ 问题从结构上消失。
-  > 这条也反过来支持"统一卡片、缩略图是可选槽位"的形态选择。
+- Claude Artifacts 的内联卡片用的是**类型标签**（"Interactive artifact"），不是缩略图；
+- 查不到任何主流 AI chat 产品在对话流里出 **PDF 首页缩略图**；
+- **Office 文档（pptx/docx/xlsx）无一家做** —— 而 pptx 恰是 ppt-master 的旗舰场景，技术上还偏偏是唯一出不了图的（只能走 LibreOffice headless → PDF → 渲首页 PNG，三平台一致性是真成本）。
 
-- **不缓存 objectURL，改缓存降采样后的小 dataURL**：`read_file_bytes` → Blob → 画到 ~240px 画布 → `toDataURL('image/jpeg')` → **objectURL 当场 revoke**。
-  - 整类 **objectURL 泄漏问题直接消失**（没有长期持有的 objectURL）；
-  - 内存有上限（240px jpeg ≈ 10–20KB，不管源文件是 8MB PNG）；
-  - **图片和 PDF 走同一条路**（pdf.js 本来就渲到 canvas）。
-  - 缓存键 = `path + mtimeMs`，模块级 LRU。
+P1 落地的卡片形态**已经就是**业界标准形态。真正解决"找不到"的是**卡片本身**（发现性 + 一键入口），不是缩略图。继续做 P2 = 承担 pdf.js 批量渲染、LRU 缓存失效、objectURL 生命周期、三平台 Office 渲染这一整套成本，换一个业界证明没人需要的东西。
 
-- **pdf.js 是单一共享 worker** ⇒ 多个 PDF 缩略图会**串行排队**（不会炸出 N 个 worker，但也意味着 lazy 是硬要求）。转录区初始窗口 15 个 turn ⇒ IntersectionObserver 懒加载。
+### ⚠️ 唯一的例外，留作**待观察项**：图片
 
-- **不要给 HTML 出视觉缩略图**：iframe 缩放当缩略图会执行脚本、加载远程资源，而 `csp: null` ⇒ 白送的攻击面。
+调研里有一条容易被读漏：**所有产品对图片都是直接渲染图片内容**，不是缩略图、也不是卡片。Claude / ChatGPT 生成一张图表，是把**图**摆进回复里。
 
-- **`read_file_bytes` 是 scope-free 的正路**（`gotchas.md` §157 已定：**不能用 assetProtocol**，因为 workspace 可能在 `$HOME` 之外，而 scope 是静态配置、动态化不了）。asset protocol **不需要启用**。
+也就是说，我们现在对图片的处理（一张写着 `chart.png · PNG` 的卡片）**低于**业界标准而非符合 —— agent 的截图/图表文件名往往是 `screenshot-2026-07-12.png` 这类零信息量的东西，卡片上的文件名等于什么都没说。
+
+| 格式 | 业界做法 | P1 现状 | 结论 |
+|---|---|---|---|
+| pdf / pptx / docx / html / md / 代码 | 图标 + 文件名 + 类型标签 | ✅ 一致 | **不做** |
+| **图片** | **直接渲染图片内容** | ❌ 只有图标 | **待观察** |
+
+**若真机反馈显示图片产物常见**，再做一个窄得多的东西：**图片卡片内嵌一个固定尺寸的小图**（如 40×40）。这样保持卡片的"交接把手"隐喻、不破坏统一形态，且：
+
+- **固定尺寸是硬约束**。`use-stick-to-bottom` 靠 ResizeObserver 观察内容层；图片**异步加载**会改变历史 turn 的高度，而 **WebKit 没有 scroll anchoring**（ADR-047 已记，Tauri 用的正是 WKWebView）⇒ **用户正在读旧回复时，上方某张图加载完会把视口顶走**。固定槽位 ⇒ 加载前后布局高度不变 ⇒ 问题从结构上消失。
+- **不缓存 objectURL，缓存降采样后的小 dataURL**：`read_file_bytes` → Blob → 画到小画布 → `toDataURL('image/jpeg')` → **objectURL 当场 revoke**。整类泄漏问题消失，内存有上限（小 jpeg ≈ 10–20KB，不管源文件多大）。缓存键用 `path + mtimeMs`（文件被重写后必须换图，否则显示旧版 = 又一个撒谎的 UI）。
+- **`mtimeMs` 已经从 Rust 传上来了**（`ScanHit.mtimeMs`），只是被 `filterScanByWindows` 的 `.map(h => h.path)` 扔掉 —— turn 归属和缓存失效都要它。
+- **只对图片走这条路。** pdf.js 批量渲染（单一共享 worker，会串行排队）、LibreOffice、Office 缩略图**全都不碰** —— 那才是原 P2 里 80% 的成本和坑。
+- **HTML 永不出视觉缩略图**：iframe 缩放会执行脚本、加载远程资源，而 `csp: null` ⇒ 白送的攻击面。
+
+> 取字节一律走 **`read_file_bytes`**（scope-free）。`gotchas.md` §157 已定：**不能用 assetProtocol**，因为 workspace 可能在 `$HOME` 之外，而 scope 是静态配置、动态化不了。asset protocol 不需要启用。
 
 ---
 
 ## 方案（待落 ADR-052）
 
-### P1 — 转录区产物卡片（不含缩略图）
+### P1 — 转录区产物卡片（已落地，commit `1c2c5413`）
 
 1. **数据**：`Artifact` 增 `mtimeMs?`（从 `ScanHit` 保留）。`extractArtifacts` **不改**。
 2. **归属**：新建 `useTurnArtifacts` 派生表 —— 按 user message 切 turn，逐 turn 调 `extractArtifacts`，last-wins 覆盖；fs 扫描项按新的 `{path, turnId}` 函数归属（窗口携带 `anchorMessageId`、丢弃幽灵窗、重叠取 `findLast`）。**按 message id 对齐，不按索引。**
@@ -216,17 +228,32 @@ classifyArtifacts([gen.py, report.pdf]) → deliverables=[report.pdf], working=[
 7. 去掉 `ExecutionFlow` 里的 `file`/`patch` ArtifactRow（见 ③）。
 8. i18n 文案。
 
-### P2 — 图片 / PDF 缩略图（增量，可延后）
+### ~~P2 — 缩略图~~（已砍，见上）
 
-按上面的技术约束实现。**pptx/docx/xlsx/html 出不了图，保持图标 + 类型标签。**
+卡片形态即业界标准形态，缩略图无人做。**唯一待观察项 = 图片卡片内嵌小图**，等真机反馈判断图片产物是否常见再定。
 
-### P3（可选）
+### 后续可选（都不在当前范围）
 
-pptx 封面图（需 ppt-master 技能导出封面 png + 重打 zip，走 ADR-041 的 pack 流程）· 相对链接接产物预览（需防路径穿越）。
+- **相对链接接产物预览**：模型爱写 `[报告](./report.pdf)`，现在渲染成惰性文本。接进 `onArtifactClick` 是个诱人的协同点，但需防路径穿越（限制在 workspace 内）。
+- **pptx 封面图**：需 ppt-master 技能导出封面 png + 重打 zip（走 ADR-041 的 pack 流程）。产品侧解法，成本比看上去大。
+- **ExecutionFlow 里的 `file`/`patch` ArtifactRow**：P1 选择了在卡片侧对答案区 `FileBlock` 去重，而没有动 ExecutionFlow —— 它在默认收起的"执行过程"块里，语义是"过程中出现的 part"，与底部"这一轮产出了什么"不同。若真机觉得重复，再考虑摘掉。
 
-## 需要新增的守护（当前一条都没有）
+## 守护（P1 已补齐）
+
+desktop **502**（基线 479，+23）· typecheck 8/8 · 真 app 启动无 panic。
 
 1. turn 归属的 last-wins（文件被重写后归属确实改变）。
-2. **侧栏顺序不因本特性而改变**的回归断言。
+2. **侧栏顺序不因本特性而改变**的回归断言（`extractArtifacts` 输出逐字不变）。
 3. 窗口重叠 / 幽灵窗 / 连发两条消息 时归属不错位。
-4. 卡片按 message id 对齐（`allMessages` vs `displayMessages` 窗口化下仍正确）。
+4. 卡片按 message id 对齐（转录区只渲染最近 15 个 turn、归属按全量消息算，两者不错开）。
+5. 折叠阈值 · 流式期间不显示 · 答案区 FileBlock 去重。
+6. **接线的集成测试**（`useSessionArtifacts → MessageList → AssistantTurn`，mock fs 扫描）——
+   单测直接调 `attributeArtifactsToTurns`，绕过 hook 和 prop，接错了也会全绿。
+
+**七条 A/B 反证**逐条撤掉护栏确认会红。其中第一版「幽灵窗」用例**是假的**：撤掉守卫仍全绿
+——构造的时间区间是包含关系，反向扫描无论如何先命中真 turn，**压根走不到守卫**。守卫真正
+保护的是「文件落在幽灵窗和一个**更早**的真 turn 里、但不在更晚的 turn 里」，此时没有守卫
+会先命中幽灵窗、然后在 `anchorId` 检查处**把文件整个丢掉**（侧栏有、转录区没有）。已重写。
+
+**真机待验**（headless 够不着）：真实 fs 扫描经 Tauri `invoke`，所以「bash 副作用写出的产物
+出现在正确的 turn 下」只能人工验 —— 与 ADR-047/048 同一笔自动化基建欠账。
