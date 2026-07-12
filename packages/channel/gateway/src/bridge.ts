@@ -58,6 +58,12 @@ interface SessionContext {
   sessionId: string;
   chatId: string;
   workspaceDir: string;
+  /**
+   * Who sent the message that started this turn. A group chat maps to ONE chatId
+   * (`group:{conversationId}`) and therefore one session, so this is the only way
+   * to tell the person the agent is waiting on from everyone else talking.
+   */
+  senderId: string;
   senderName: string;
   channelType: string;
   /** Accumulated text per partID (handles multiple text parts) */
@@ -206,6 +212,16 @@ export class Bridge {
       ? this.activeContexts.get(activeSessionId)
       : undefined;
     if (activeCtx?.pendingQuestion) {
+      // In a group everyone shares this chatId. Only the person the agent is
+      // waiting on may answer — otherwise unrelated chatter becomes the answer.
+      if (msg.senderId !== activeCtx.senderId) {
+        await msg
+          .reply(
+            `⏳ 正在等待 ${activeCtx.senderName} 回答上一个问题，稍后再来。`,
+          )
+          .catch(() => {});
+        return;
+      }
       await this.answerPendingQuestion(activeCtx, msg);
       return;
     }
@@ -262,6 +278,7 @@ export class Bridge {
       sessionId,
       chatId: msg.chatId,
       workspaceDir: msg.workspaceDir,
+      senderId: msg.senderId,
       senderName: msg.senderName,
       channelType: msg.channelType,
       textParts: new Map(),

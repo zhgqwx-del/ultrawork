@@ -804,6 +804,39 @@ describe("Bridge", () => {
       await bridge.shutdown()
     })
 
+    it("only accepts the answer from the person the agent asked", async () => {
+      const bridge = new Bridge()
+      // A group chat: one chatId, many senders
+      const asker = createMessage({ chatId: "group:g1", senderId: "alice", senderName: "Alice" })
+      await bridge.handleMessage(asker)
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "question.asked",
+        properties: { id: "q-1", sessionID: "sess-1", questions: QUESTIONS },
+      })
+
+      // Someone else in the group says something unrelated — it is NOT an answer
+      const bystander = createMessage({
+        chatId: "group:g1",
+        senderId: "bob",
+        senderName: "Bob",
+        text: "1",
+      })
+      await bridge.handleMessage(bystander)
+
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1) // and no BusyError-bound prompt
+      expect(bystander.reply).toHaveBeenCalledWith(expect.stringContaining("Alice"))
+
+      // Alice's answer still works
+      await bridge.handleMessage(
+        createMessage({ chatId: "group:g1", senderId: "alice", senderName: "Alice", text: "2" }),
+      )
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["B 方案"]])
+      await bridge.shutdown()
+    })
+
     it("lets the user skip", async () => {
       const bridge = new Bridge()
       await bridge.handleMessage(createMessage())
