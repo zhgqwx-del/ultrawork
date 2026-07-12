@@ -1,7 +1,12 @@
 import { OpenCodeBackend, UNLIMITED_SSE_RETRY, type Unsubscribe } from "@agent/connector";
-import type { ApiClient, MessagePart } from "@agent/api-client";
+import type { ApiClient, MessagePart, QuestionInfo } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
 import { loadSessionMap, saveSessionMap } from "./session-store.js";
+import {
+  parseAnswer,
+  renderQuestions,
+  QUESTION_SKIP_COMMAND,
+} from "./question-prompt.js";
 
 // Base URL is injected by the Tauri host alongside the password — opencode's
 // port is chosen at startup, not compile time. The fallback keeps a standalone
@@ -28,6 +33,12 @@ const EMPTY_REPLY_NOTICE = "✅ 处理完成，但本轮没有产生文本回复
 const POLL_INTERVAL_MS = 3_000; // Permission/question poll interval
 const IDLE_TIMEOUT_MS = 180_000; // 3 min — force-send if idle event missed
 const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if session stuck
+// A question blocks inside tool execution, so the session stays busy and emits
+// nothing at all until it is answered (verified against a real opencode server:
+// 195s of silence, zero events). Every other timer here treats silence as a
+// stuck turn, so the pending state has to suspend them — and it needs a bound of
+// its own, or an unanswered question would pin the session busy forever.
+const QUESTION_TIMEOUT_MS = 1_800_000; // 30 min — then auto-reject and tell the user
 
 /** Channel type → display label mapping */
 const CHANNEL_LABELS: Record<string, string> = {
@@ -63,6 +74,14 @@ interface SessionContext {
   onTyping?: (typing: boolean) => void;
   /** Idle timeout handle — force-sends accumulated text if SSE misses idle event */
   idleTimer?: ReturnType<typeof setTimeout>;
+  /** Set while the agent is blocked on a question and we're awaiting the user's reply */
+  pendingQuestion?: PendingQuestion;
+}
+
+interface PendingQuestion {
+  id: string;
+  questions: QuestionInfo[];
+  timer: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -70,7 +89,7 @@ interface SessionContext {
  * - Maps chatId → OpenCode session
  * - Sequential queue per chat to prevent concurrent prompts
  * - SSE subscription to collect assistant output and reply on idle
- * - Auto-handles permission (once) and question (reject)
+ * - Auto-approves permission (once); forwards questions to the user and waits
  * - Idle timeout fallback in case SSE misses the idle event
  */
 export class Bridge {
@@ -151,12 +170,30 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(oldSessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          if (oldCtx.pendingQuestion) {
+            // Don't leave the agent blocked on a question nobody will answer
+            this.resolvePendingQuestion(oldCtx, (pending) =>
+              this.getClient(oldCtx.workspaceDir).rejectQuestion(pending.id),
+            );
+          }
           this.activeContexts.delete(oldSessionId);
         }
       }
       this.sessionMap.delete(msg.chatId);
       this.persistSessionMap();
       await msg.reply("✅ 已重置对话，下条消息将开启新会话").catch(() => {});
+      return;
+    }
+
+    // If the agent is blocked on a question, this message is the answer — not a
+    // new prompt. opencode keeps the session busy while a question is pending,
+    // so sending it as a prompt would just come back as BusyError.
+    const activeSessionId = this.sessionMap.get(msg.chatId);
+    const activeCtx = activeSessionId
+      ? this.activeContexts.get(activeSessionId)
+      : undefined;
+    if (activeCtx?.pendingQuestion) {
+      await this.answerPendingQuestion(activeCtx, msg);
       return;
     }
 
@@ -181,6 +218,12 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(sessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          // The session is gone server-side; answering its question is moot, but
+          // the timer would still fire and message the user about a dead turn.
+          if (oldCtx.pendingQuestion) {
+            clearTimeout(oldCtx.pendingQuestion.timer);
+            oldCtx.pendingQuestion = undefined;
+          }
           this.activeContexts.delete(sessionId);
         }
         sessionId = undefined;
@@ -283,6 +326,15 @@ export class Bridge {
 
     this.clearIdleTimer(ctx);
     ctx.onTyping?.(false);
+
+    // The turn is ending (idle, error, or shutdown) — a question still hanging
+    // here will never be answered, and leaving it unresolved keeps the agent
+    // blocked inside tool execution.
+    if (ctx.pendingQuestion) {
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
+    }
 
     const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
     if (text) {
@@ -454,19 +506,105 @@ export class Bridge {
     console.log(`[Bridge] Auto-approved permission ${perm.id}`);
   }
 
-  /** Auto-reject question */
-  private onQuestionAsked(question: { id: string; sessionID: string }): void {
+  /** Forward the agent's question to the chat and wait for the user's reply */
+  private onQuestionAsked(question: {
+    id: string;
+    sessionID: string;
+    questions?: QuestionInfo[];
+  }): void {
     const ctx = this.activeContexts.get(question.sessionID);
     if (!ctx) return;
+    // SSE and the poll can both deliver the same question — ask once.
+    if (ctx.pendingQuestion?.id === question.id) return;
 
-    const client = this.getClient(ctx.workspaceDir);
-    client.rejectQuestion(question.id).catch((err) => {
-      console.error(
-        `[Bridge] Auto-reject question ${question.id} failed:`,
-        err,
+    const questions = question.questions ?? [];
+    if (questions.length === 0) {
+      // Nothing renderable — decline rather than strand the agent.
+      this.getClient(ctx.workspaceDir)
+        .rejectQuestion(question.id)
+        .catch(() => {});
+      return;
+    }
+
+    // The turn is blocked from here on: no parts, no status changes. Stop the
+    // idle fallback or it would force-send a partial reply out from under us
+    // while the user is still reading the question.
+    this.clearIdleTimer(ctx);
+    ctx.onTyping?.(false);
+
+    const timer = setTimeout(() => {
+      console.log(
+        `[Bridge] Question ${question.id} unanswered after ${QUESTION_TIMEOUT_MS / 60_000} min, rejecting`,
       );
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
+      ctx
+        .reply("⌛ 提问已超时，本轮已结束。可以重新发消息继续。")
+        .catch(() => {});
+    }, QUESTION_TIMEOUT_MS);
+
+    ctx.pendingQuestion = { id: question.id, questions, timer };
+    ctx.reply(renderQuestions(questions)).catch((err) => {
+      console.error(`[Bridge] Question delivery failed for ${ctx.chatId}:`, err);
     });
-    console.log(`[Bridge] Auto-rejected question ${question.id}`);
+    console.log(`[Bridge] Asked user question ${question.id}`);
+  }
+
+  /**
+   * Route a chat message into the question the agent is blocked on.
+   * Returns false when the message is not an answer and should be treated as a
+   * fresh prompt.
+   */
+  private async answerPendingQuestion(
+    ctx: SessionContext,
+    msg: IncomingMessage,
+  ): Promise<void> {
+    const pending = ctx.pendingQuestion!;
+    const client = this.getClient(ctx.workspaceDir);
+    const text = msg.text.trim();
+
+    if (text === QUESTION_SKIP_COMMAND) {
+      this.resolvePendingQuestion(ctx, (p) => client.rejectQuestion(p.id));
+      await msg.reply("已跳过该问题。").catch(() => {});
+      return;
+    }
+
+    const parsed = parseAnswer(text, pending.questions);
+    if (!parsed.ok) {
+      // Keep waiting — a malformed answer must not fall through to promptAsync,
+      // which opencode would reject with BusyError while the question blocks.
+      await msg
+        .reply(`${parsed.error}\n\n${renderQuestions(pending.questions)}`)
+        .catch(() => {});
+      return;
+    }
+
+    this.resolvePendingQuestion(ctx, (p) =>
+      client.replyQuestion(p.id, parsed.answers),
+    );
+    // The turn resumes: parts start flowing again, so re-arm the idle fallback.
+    this.startIdleTimer(ctx.sessionId);
+    ctx.onTyping?.(true);
+    console.log(`[Bridge] Answered question ${pending.id}`);
+  }
+
+  /**
+   * Clear the pending-question state, then run the resolution call. The pending
+   * record is passed in: the field is already cleared by the time `resolve` runs,
+   * so it must not close over `ctx.pendingQuestion`.
+   */
+  private resolvePendingQuestion(
+    ctx: SessionContext,
+    resolve: (pending: PendingQuestion) => Promise<void>,
+  ): void {
+    const pending = ctx.pendingQuestion;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    ctx.pendingQuestion = undefined;
+    resolve(pending).catch((err) => {
+      console.error(`[Bridge] Resolving question ${pending.id} failed:`, err);
+    });
   }
 
   /** Handle session.error SSE event — notify user and clean up */
@@ -489,6 +627,11 @@ export class Bridge {
 
     this.clearIdleTimer(ctx);
     ctx.onTyping?.(false);
+    if (ctx.pendingQuestion) {
+      this.resolvePendingQuestion(ctx, (pending) =>
+        this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
+      );
+    }
 
     // Only reply if no text has been accumulated (avoid overwriting a partial response)
     const accumulated = Array.from(ctx.textParts.values()).join("").trim();
@@ -511,10 +654,18 @@ export class Bridge {
     if (this.pollTimers.has(key)) return;
 
     const client = this.getClient(workspaceDir);
-    const startTime = Date.now();
+    let deadline = Date.now() + POLL_MAX_LIFETIME_MS;
     const timer = setInterval(async () => {
+      const ctx = this.activeContexts.get(sessionId);
+      // Waiting on the user is not a stuck turn — the question's own 30-min
+      // timeout bounds it. Without this the poll would die mid-question and
+      // stop backing up SSE for whatever the agent asks next.
+      if (ctx?.pendingQuestion) {
+        deadline = Date.now() + POLL_MAX_LIFETIME_MS;
+      }
+
       // Stop polling if no active context or max lifetime exceeded
-      if (!this.activeContexts.has(sessionId) || Date.now() - startTime > POLL_MAX_LIFETIME_MS) {
+      if (!ctx || Date.now() > deadline) {
         clearInterval(timer);
         this.pollTimers.delete(key);
         return;

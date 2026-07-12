@@ -5,6 +5,7 @@ const mockCreateSession = vi.fn()
 const mockPromptAsync = vi.fn()
 const mockReplyPermission = vi.fn()
 const mockRejectQuestion = vi.fn()
+const mockReplyQuestion = vi.fn()
 const mockListPermissions = vi.fn()
 const mockListQuestions = vi.fn()
 const mockGetConfig = vi.fn()
@@ -17,6 +18,7 @@ vi.mock("@agent/api-client", () => ({
     promptAsync: mockPromptAsync,
     replyPermission: mockReplyPermission,
     rejectQuestion: mockRejectQuestion,
+    replyQuestion: mockReplyQuestion,
     listPermissions: mockListPermissions,
     listQuestions: mockListQuestions,
     getConfig: mockGetConfig,
@@ -80,6 +82,7 @@ beforeEach(() => {
   mockPromptAsync.mockResolvedValue(undefined)
   mockReplyPermission.mockResolvedValue(undefined)
   mockRejectQuestion.mockResolvedValue(undefined)
+  mockReplyQuestion.mockResolvedValue(undefined)
   mockListPermissions.mockResolvedValue([])
   mockListQuestions.mockResolvedValue([])
   mockGetConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-4-20250514", tools: { "orchestrator_*": false } })
@@ -602,17 +605,144 @@ describe("Bridge", () => {
     })
   })
 
-  describe("handleSSEEvent — question auto-reject", () => {
-    it("auto-rejects question", async () => {
+  describe("handleSSEEvent — question", () => {
+    const QUESTIONS = [
+      {
+        question: "用 A 方案还是 B 方案？",
+        header: "方案选择",
+        options: [
+          { label: "A 方案", description: "第一种" },
+          { label: "B 方案", description: "第二种" },
+        ],
+      },
+    ]
+
+    function askQuestion(bridge: Bridge, id = "q-1") {
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "question.asked",
+        properties: { id, sessionID: "sess-1", questions: QUESTIONS },
+      })
+    }
+
+    it("asks the user instead of rejecting", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+
+      expect(mockRejectQuestion).not.toHaveBeenCalled()
+      expect(msg.reply).toHaveBeenLastCalledWith(expect.stringContaining("1. A 方案"))
+      await bridge.shutdown()
+    })
+
+    it("routes the next message into the question rather than a new prompt", async () => {
+      const bridge = new Bridge()
+      const first = createMessage({ text: "帮我改造这个模块" })
+      await bridge.handleMessage(first)
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1)
+
+      askQuestion(bridge)
+
+      const answer = createMessage({ text: "2" })
+      await bridge.handleMessage(answer)
+
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["B 方案"]])
+      // The session is busy inside the blocked tool — a prompt here would 409
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1)
+      await bridge.shutdown()
+    })
+
+    it("re-asks on an unparsable answer and stays pending", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      const bad = createMessage({ text: "9" })
+      await bridge.handleMessage(bad)
+
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      expect(mockPromptAsync).toHaveBeenCalledTimes(1) // no fall-through
+      expect(bad.reply).toHaveBeenCalledWith(expect.stringContaining("超出范围"))
+
+      // Still waiting: a valid answer now goes through
+      const good = createMessage({ text: "1" })
+      await bridge.handleMessage(good)
+      expect(mockReplyQuestion).toHaveBeenCalledWith("q-1", [["A 方案"]])
+      await bridge.shutdown()
+    })
+
+    it("lets the user skip", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      await bridge.handleMessage(createMessage({ text: "/skip" }))
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      expect(mockReplyQuestion).not.toHaveBeenCalled()
+      await bridge.shutdown()
+    })
+
+    it("suspends the idle fallback while waiting for the user", async () => {
       const bridge = new Bridge()
       const msg = createMessage()
       await bridge.handleMessage(msg)
 
       const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "先说一句" } },
+      })
 
+      askQuestion(bridge)
+
+      // A blocked question emits nothing for as long as the user takes to read
+      // it. The 3-min idle fallback must not fire a partial reply underneath.
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(msg.reply).not.toHaveBeenCalledWith("先说一句")
+      expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
+      await bridge.shutdown()
+    })
+
+    it("rejects and tells the user when a question goes unanswered too long", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      askQuestion(bridge)
+
+      await vi.advanceTimersByTimeAsync(1_800_001)
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      expect(msg.reply).toHaveBeenCalledWith(expect.stringContaining("超时"))
+      await bridge.shutdown()
+    })
+
+    it("asks once when SSE and the poll deliver the same question", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+      askQuestion(bridge) // duplicate delivery
+
+      const questionMessages = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([text]) => typeof text === "string" && text.includes("1. A 方案"),
+      )
+      expect(questionMessages).toHaveLength(1)
+      await bridge.shutdown()
+    })
+
+    it("declines a question with nothing renderable", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
       handleSSE({
         type: "question.asked",
-        properties: { id: "q-1", sessionID: "sess-1" },
+        properties: { id: "q-1", sessionID: "sess-1", questions: [] },
       })
 
       expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
@@ -625,10 +755,21 @@ describe("Bridge", () => {
 
       handleSSE({
         type: "question.asked",
-        properties: { id: "q-1", sessionID: "unknown" },
+        properties: { id: "q-1", sessionID: "unknown", questions: QUESTIONS },
       })
 
       expect(mockRejectQuestion).not.toHaveBeenCalled()
+      await bridge.shutdown()
+    })
+
+    it("does not leave the agent blocked when the turn ends or is reset", async () => {
+      const bridge = new Bridge()
+      await bridge.handleMessage(createMessage())
+      askQuestion(bridge)
+
+      await bridge.handleMessage(createMessage({ text: "/new" }))
+
+      expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
       await bridge.shutdown()
     })
   })
