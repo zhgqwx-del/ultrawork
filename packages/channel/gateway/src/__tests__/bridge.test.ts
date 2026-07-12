@@ -153,6 +153,7 @@ describe("Bridge", () => {
 
       await bridge.handleMessage(msg)
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(
         expect.stringContaining("Error"),
       )
@@ -225,6 +226,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Hello world")
       await bridge.shutdown()
     })
@@ -270,6 +272,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Hello world")
       await bridge.shutdown()
     })
@@ -301,6 +304,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Part 1\n\nPart 2")
       await bridge.shutdown()
     })
@@ -326,7 +330,9 @@ describe("Bridge", () => {
       })
 
       // The notice is the only thing sent: it cancels the not-yet-due ack
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
@@ -368,7 +374,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("你好！")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("The user greeted me"))
       await bridge.shutdown()
     })
@@ -415,6 +423,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("你好！有什么可以帮你的？")
       await bridge.shutdown()
     })
@@ -444,7 +453,9 @@ describe("Bridge", () => {
 
       // 10 minutes of pure reasoning: the user got the ack (the turn stayed
       // silent long enough to deserve one) and nothing else.
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(ACK)
 
       handleSSE({
@@ -456,6 +467,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Done.")
       await bridge.shutdown()
     })
@@ -497,7 +509,9 @@ describe("Bridge", () => {
       streamText(bridge, `${LONG}\n\n还在写后面的部分`)
 
       // The block goes out immediately — the user is not left staring at nothing
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(LONG)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("还在写"))
       await bridge.shutdown()
     })
@@ -515,6 +529,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.map(([t]) => t)
       expect(sent).toEqual([LONG, "收尾"]) // the streamed block is not repeated
       await bridge.shutdown()
@@ -536,7 +551,9 @@ describe("Bridge", () => {
       // Even past the point the ack was due it must not arrive: the answer beat
       // it, and a trailing "still working" would be nonsense.
       await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("秒回")
       await bridge.shutdown()
     })
@@ -548,6 +565,7 @@ describe("Bridge", () => {
 
       await vi.advanceTimersByTimeAsync(2_500)
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(ACK)
       await bridge.shutdown()
     })
@@ -562,6 +580,7 @@ describe("Bridge", () => {
       streamText(bridge, `${LONG}\n\n继续`)
       await vi.advanceTimersByTimeAsync(10_000)
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalledWith(ACK)
       await bridge.shutdown()
     })
@@ -577,6 +596,7 @@ describe("Bridge", () => {
       // full length — over every channel's message limit.
       streamText(bridge, `${"长".repeat(25_000)}\n\n尾巴`)
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
       expect(sent.length).toBeLessThanOrEqual(20_000 + "\n\n...(truncated)".length)
       expect(sent).toContain("...(truncated)")
@@ -604,6 +624,7 @@ describe("Bridge", () => {
       streamText(bridge, `${LONG}\n\n后续`)
 
       // Pushing text under a pending question would bury it — hold the block
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalledWith(LONG)
       await bridge.shutdown()
     })
@@ -622,7 +643,9 @@ describe("Bridge", () => {
       })
 
       // Silence would read as the bot ignoring the user — say something instead
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
@@ -647,6 +670,7 @@ describe("Bridge", () => {
       })
 
       // Nothing sent: the turn is still running and the ack is not due yet
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
@@ -698,6 +722,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(replyArg.length).toBeLessThan(25_000)
       expect(replyArg).toContain("...(truncated)")
@@ -764,6 +789,7 @@ describe("Bridge", () => {
       askQuestion(bridge)
 
       expect(mockRejectQuestion).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenLastCalledWith(expect.stringContaining("1. A 方案"))
       await bridge.shutdown()
     })
@@ -790,12 +816,15 @@ describe("Bridge", () => {
       await bridge.handleMessage(createMessage())
       askQuestion(bridge)
 
-      const bad = createMessage({ text: "9" })
+      // Two picks for a single-choice question. (A bare number is NOT unparsable:
+      // it is a valid typed answer when it names no option.)
+      const bad = createMessage({ text: "1,2" })
       await bridge.handleMessage(bad)
 
       expect(mockReplyQuestion).not.toHaveBeenCalled()
       expect(mockPromptAsync).toHaveBeenCalledTimes(1) // no fall-through
-      expect(bad.reply).toHaveBeenCalledWith(expect.stringContaining("超出范围"))
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+      expect(bad.reply).toHaveBeenCalledWith(expect.stringContaining("只能选一个"))
 
       // Still waiting: a valid answer now goes through
       const good = createMessage({ text: "1" })
@@ -827,6 +856,7 @@ describe("Bridge", () => {
 
       expect(mockReplyQuestion).not.toHaveBeenCalled()
       expect(mockPromptAsync).toHaveBeenCalledTimes(1) // and no BusyError-bound prompt
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(bystander.reply).toHaveBeenCalledWith(expect.stringContaining("Alice"))
 
       // Alice's answer still works
@@ -862,12 +892,19 @@ describe("Bridge", () => {
       })
 
       askQuestion(bridge)
+      await vi.advanceTimersByTimeAsync(0)
+
+      // The lead-in ships WITH the question, not after the thing it introduces
+      expect(msg.reply).toHaveBeenCalledWith("先说一句")
+      const settled = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.length
 
       // A blocked question emits nothing for as long as the user takes to read
-      // it. The 3-min idle fallback must not fire a partial reply underneath.
+      // it. The 3-min idle fallback must not fire and tear the turn down.
       await vi.advanceTimersByTimeAsync(600_000)
-      expect(msg.reply).not.toHaveBeenCalledWith("先说一句")
+      await vi.advanceTimersByTimeAsync(0)
+      expect((msg.reply as ReturnType<typeof vi.fn>).mock.calls.length).toBe(settled)
       expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
+      expect((bridge as any).activeContexts.get("sess-1").pendingQuestion).toBeDefined()
       await bridge.shutdown()
     })
 
@@ -880,6 +917,7 @@ describe("Bridge", () => {
       await vi.advanceTimersByTimeAsync(1_800_001)
 
       expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(expect.stringContaining("超时"))
       await bridge.shutdown()
     })
@@ -891,6 +929,7 @@ describe("Bridge", () => {
 
       askQuestion(bridge)
       askQuestion(bridge) // duplicate delivery
+      await vi.advanceTimersByTimeAsync(0)
 
       const questionMessages = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.filter(
         ([text]) => typeof text === "string" && text.includes("1. A 方案"),
@@ -910,6 +949,102 @@ describe("Bridge", () => {
       })
 
       expect(mockRejectQuestion).toHaveBeenCalledWith("q-1")
+      await bridge.shutdown()
+    })
+
+    it("keeps the running turn alive when the user adds a remark after answering", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage({ text: "干活" })
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      askQuestion(bridge)
+      await bridge.handleMessage(createMessage({ text: "1" })) // answer
+
+      // "回答 + 补一句" is the most natural thing to do here. opencode queues the
+      // second prompt (prompt_async returns 204 mid-turn), so the context must
+      // survive: a replacement would have empty assistantMessageIds and the
+      // running turn's remaining output would be discarded as "not ours".
+      const remark = createMessage({ text: "顺便改下标题" })
+      await bridge.handleMessage(remark)
+
+      const ctx = (bridge as any).activeContexts.get("sess-1")
+      expect(ctx).toBeDefined()
+      expect(ctx.assistantMessageIds.has("m1")).toBe(true) // turn 1 still recognised
+
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: "选了 A 方案" } },
+      })
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      // Delivered through the newest message's reply closure — same chat either way
+      expect(remark.reply).toHaveBeenCalledWith("选了 A 方案")
+      await bridge.shutdown()
+    })
+
+    it("does not re-ask a question the poll still lists after it was answered", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      askQuestion(bridge)
+      await bridge.handleMessage(createMessage({ text: "1" }))
+      await vi.advanceTimersByTimeAsync(0)
+
+      // listQuestions() can be computed server-side before our reply lands, so it
+      // still lists q-1. Re-asking would strand the user's next message on a
+      // request opencode has already resolved.
+      mockListQuestions.mockResolvedValueOnce([
+        { id: "q-1", sessionID: "sess-1", questions: QUESTIONS },
+      ])
+      await vi.advanceTimersByTimeAsync(3_100)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const asked = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([t]) => typeof t === "string" && t.includes("1. A 方案"),
+      )
+      expect(asked).toHaveLength(1)
+      expect((bridge as any).activeContexts.get("sess-1")?.pendingQuestion).toBeUndefined()
+      await bridge.shutdown()
+    })
+
+    it("a stray part during a pending question must not re-arm the idle fallback", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      askQuestion(bridge)
+      await vi.advanceTimersByTimeAsync(0)
+      const settled = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.length
+
+      // opencode happens to emit nothing while a question blocks — today. A
+      // parallel tool in the same step, an SSE replay after a reconnect, or a
+      // vendor bump could each land one part here. If that re-armed the idle
+      // fallback, 3 minutes later it would reject the question the user is
+      // reading, force-send a half reply and delete the context.
+      handleSSE({
+        type: "message.part.updated",
+        properties: { part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p9", content: "" } },
+      })
+      handleSSE({
+        type: "message.part.delta",
+        properties: { sessionID: "sess-1", partID: "p9", field: "text", delta: "偷跑的内容" },
+      })
+
+      await vi.advanceTimersByTimeAsync(600_000)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect((msg.reply as ReturnType<typeof vi.fn>).mock.calls.length).toBe(settled)
+      expect(mockRejectQuestion).not.toHaveBeenCalled()
+      const ctx = (bridge as any).activeContexts.get("sess-1")
+      expect(ctx?.pendingQuestion).toBeDefined()
       await bridge.shutdown()
     })
 
@@ -1146,6 +1281,7 @@ describe("Bridge", () => {
       })
 
       // Should reply with error (in addition to the instant ack)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(
         expect.stringContaining("error")
       )
@@ -1180,6 +1316,7 @@ describe("Bridge", () => {
       })
 
       // Should flush the partial response, not send error message
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("Partial response")
       await bridge.shutdown()
     })
@@ -1202,6 +1339,7 @@ describe("Bridge", () => {
 
       // Should not affect the active session
       expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
@@ -1235,6 +1373,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith("hi")
       await bridge.shutdown()
     })
@@ -1272,7 +1411,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0) // let the send chain settle
       expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })

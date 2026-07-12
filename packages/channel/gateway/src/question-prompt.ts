@@ -86,20 +86,29 @@ function parseOne(line: string, question: QuestionInfo, index: number): OneResul
   const tokens = line.split(/[,，、\s]+/).filter(Boolean);
   const allNumeric = tokens.length > 0 && tokens.every((t) => /^\d+$/.test(t));
 
-  if (allNumeric) {
+  const inRange = (t: string) => {
+    const n = Number(t);
+    return n >= 1 && n <= count;
+  };
+
+  // A number is an option pick only when it actually names one. "80" against a
+  // 2-option budget question is an answer, not a typo — treating it as an index
+  // and re-asking would dead-loop the user (the model cannot set custom=false
+  // anyway: QuestionTool omits the field, so custom is always allowed).
+  if (allNumeric && tokens.every(inRange)) {
     if (tokens.length > 1 && !question.multiple) {
       return { ok: false, error: `${where}只能选一个。` };
     }
     const picked: string[] = [];
     for (const t of tokens) {
-      const n = Number(t);
-      if (n < 1 || n > count) {
-        return { ok: false, error: `${where}的序号 ${n} 超出范围（1-${count}）。` };
-      }
-      const label = question.options[n - 1].label;
+      const label = question.options[Number(t) - 1].label;
       if (!picked.includes(label)) picked.push(label);
     }
     return { ok: true, labels: picked };
+  }
+
+  if (allNumeric && !allowsCustom) {
+    return { ok: false, error: `${where}请回复序号（1-${count}）。` };
   }
 
   // Not a number — a typed answer, if this question takes one

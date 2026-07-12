@@ -59,6 +59,27 @@ describe("BlockChunker", () => {
     expect(c.rest(text)).toContain(para(20, "4"))
   })
 
+  it("survives opencode rewriting a part it already published", () => {
+    // text-end trims the part that was already streamed (processor.ts), which
+    // shortens it and shifts every later part left. An absolute offset into the
+    // joined text ate the next part's first characters.
+    const c = new BlockChunker()
+    expect(c.next(`${para(210)}\n\n\n\n`)).toBe(para(210))
+
+    const full = [para(210), "SECOND PART TEXT"].join("\n\n") // p1 now trimEnd'd
+    expect(c.rest(full)).toBe("SECOND PART TEXT")
+  })
+
+  it("survives a rewrite that lengthens an earlier part", () => {
+    const c = new BlockChunker()
+    expect(c.next(`${para(210)}\n\nx`)).toBe(para(210))
+
+    // A plugin rewrites p1 longer: the tail must not be re-sent from a stale offset
+    const full = `${para(230)}\n\nx`
+    expect(c.rest(full)).not.toContain(para(230)) // no duplication of sent text
+    expect(c.rest(full).endsWith("x")).toBe(true)
+  })
+
   it("does not lose text across successive emits", () => {
     const c = new BlockChunker({ minChars: 10 })
     const first = `${para(20, "x")}\n\n`

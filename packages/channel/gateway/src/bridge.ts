@@ -88,12 +88,25 @@ interface SessionContext {
   idleTimer?: ReturnType<typeof setTimeout>;
   /** Set while the agent is blocked on a question and we're awaiting the user's reply */
   pendingQuestion?: PendingQuestion;
+  /**
+   * Questions already answered/rejected this turn. The poll's listQuestions()
+   * response can be computed server-side before our reply lands, so it still
+   * lists a question we just resolved — re-asking it would strand the user's
+   * next message on a request opencode no longer knows about.
+   */
+  resolvedQuestionIds: Set<string>;
   /** Splits the reply into blocks that can be sent as the turn progresses */
   chunker: BlockChunker;
   /** Pending "still working" ack — cancelled if output arrives first */
   ackTimer?: ReturnType<typeof setTimeout>;
   /** Whether anything at all has been sent to the user this turn */
   saidSomething: boolean;
+  /**
+   * Serialises outbound sends. Adapter `reply` is a bare HTTP POST; firing
+   * several concurrently lets the channel receive them out of order. One message
+   * per turn made that harmless — a reply split across blocks does not.
+   */
+  sendChain: Promise<void>;
 }
 
 interface PendingQuestion {
@@ -234,7 +247,25 @@ export class Bridge {
         console.error(`[Bridge] Ack failed for ${msg.chatId}:`, err);
       });
     }, ACK_DELAY_MS);
+    // Everything from here to the moment ctx owns this timer can throw (missing
+    // password, opencode down, 401). Without this the user would get a lone
+    // "still working" 2.5s later and never hear anything again.
+    let ackOwned = false;
+    try {
+      await this.startTurn(msg, ackTimer, () => {
+        ackOwned = true;
+      });
+    } finally {
+      if (!ackOwned) clearTimeout(ackTimer);
+    }
+  }
 
+  /** The body of processMessage once the ack timer is armed */
+  private async startTurn(
+    msg: IncomingMessage,
+    ackTimer: ReturnType<typeof setTimeout>,
+    onAckOwned: () => void,
+  ): Promise<void> {
     const client = this.getClient(msg.workspaceDir);
 
     // Get or create session for this chat
@@ -273,8 +304,14 @@ export class Bridge {
       );
     }
 
-    // Set up context to accumulate reply
-    const ctx: SessionContext = {
+    // A turn may still be running — most naturally right after the user answered
+    // a question and immediately added a remark. opencode queues the new prompt
+    // (verified: prompt_async returns 204 mid-turn), so the context must be
+    // REUSED, not replaced: a fresh one would have empty assistantMessageIds and
+    // a reset chunker, and the running turn's remaining output would be dropped
+    // on the floor as "not ours".
+    const inFlight = this.activeContexts.get(sessionId);
+    const ctx: SessionContext = inFlight ?? {
       sessionId,
       chatId: msg.chatId,
       workspaceDir: msg.workspaceDir,
@@ -285,11 +322,23 @@ export class Bridge {
       assistantMessageIds: new Set(),
       textPartIds: new Set(),
       chunker: new BlockChunker(),
+      resolvedQuestionIds: new Set(),
       saidSomething: false,
-      ackTimer,
+      sendChain: Promise.resolve(),
       reply: msg.reply,
       onTyping: msg.onTyping,
     };
+
+    if (inFlight) {
+      // Later output belongs to whoever spoke last (matters in a group chat)
+      ctx.senderId = msg.senderId;
+      ctx.senderName = msg.senderName;
+      ctx.reply = msg.reply;
+      ctx.onTyping = msg.onTyping;
+      this.clearAck(ctx);
+    }
+    ctx.ackTimer = ackTimer;
+    onAckOwned();
     this.activeContexts.set(sessionId, ctx);
 
     // Ensure SSE is connected for this workspace and WAIT for it to be ready
@@ -326,13 +375,18 @@ export class Bridge {
       this.startIdleTimer(sessionId);
     } catch (err) {
       console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
-      this.clearIdleTimer(ctx);
       this.clearAck(ctx);
-      ctx.onTyping?.(false);
-      this.activeContexts.delete(sessionId);
       await msg
         .reply(`Error: Failed to send message to AI agent.`)
         .catch(() => {});
+      // Only tear the turn down if this message started it. If a turn was
+      // already running, it still owns this context and its output is still
+      // coming — dropping it here would lose the reply the user is waiting for.
+      if (!inFlight) {
+        this.clearIdleTimer(ctx);
+        ctx.onTyping?.(false);
+        this.activeContexts.delete(sessionId);
+      }
     }
   }
 
@@ -359,9 +413,22 @@ export class Bridge {
       text.length > MAX_REPLY_LENGTH
         ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
         : text;
-    ctx.reply(safe).catch((err) => {
-      console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
-    });
+    const reply = ctx.reply;
+    ctx.sendChain = ctx.sendChain.then(() =>
+      reply(safe).catch((err) => {
+        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+      }),
+    );
+  }
+
+  /**
+   * Send text and mark it consumed, so the final flush will not repeat it.
+   * (`next()` only advances the chunker at a paragraph cut; this forces it.)
+   */
+  private sendRemainder(ctx: SessionContext, text: string): void {
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    ctx.chunker.consume(full);
+    this.send(ctx, text);
   }
 
   /** Emit any finished block the agent has produced since the last one */
@@ -527,7 +594,10 @@ export class Bridge {
     // included. This must happen before the content filters below: a long
     // thinking block or a slow tool produces no text parts for minutes, and
     // letting the idle fallback fire there would force-send a partial reply.
-    this.startIdleTimer(ctx.sessionId);
+    // While a question is pending the fallback stays off: it is the user we are
+    // waiting on, and re-arming here would force-send the reply out from under
+    // the question they are still reading.
+    if (!ctx.pendingQuestion) this.startIdleTimer(ctx.sessionId);
 
     if (!ctx.assistantMessageIds.has(part.messageID)) return;
     if (part.type !== "text") return;
@@ -549,7 +619,7 @@ export class Bridge {
     const ctx = this.activeContexts.get(props.sessionID);
     if (!ctx) return;
 
-    this.startIdleTimer(ctx.sessionId);
+    if (!ctx.pendingQuestion) this.startIdleTimer(ctx.sessionId);
 
     if (props.field !== "content" && props.field !== "text") return;
     // The delta event carries no type and reasoning-delta also arrives as
@@ -597,10 +667,12 @@ export class Bridge {
     if (!ctx) return;
     // SSE and the poll can both deliver the same question — ask once.
     if (ctx.pendingQuestion?.id === question.id) return;
+    if (ctx.resolvedQuestionIds.has(question.id)) return;
 
     const questions = question.questions ?? [];
     if (questions.length === 0) {
       // Nothing renderable — decline rather than strand the agent.
+      ctx.resolvedQuestionIds.add(question.id);
       this.getClient(ctx.workspaceDir)
         .rejectQuestion(question.id)
         .catch(() => {});
@@ -613,6 +685,15 @@ export class Bridge {
     this.clearIdleTimer(ctx);
     ctx.onTyping?.(false);
 
+    // Whatever the agent said leading up to the question ("I need to check one
+    // thing first…") is still sitting in the buffer, below the block threshold.
+    // Send it now: streaming is suspended while the question is up, so otherwise
+    // it would surface after the question it was introducing.
+    const preamble = ctx.chunker.rest(
+      Array.from(ctx.textParts.values()).join("\n\n"),
+    );
+    if (preamble) this.sendRemainder(ctx, preamble);
+
     const timer = setTimeout(() => {
       console.log(
         `[Bridge] Question ${question.id} unanswered after ${QUESTION_TIMEOUT_MS / 60_000} min, rejecting`,
@@ -620,9 +701,11 @@ export class Bridge {
       this.resolvePendingQuestion(ctx, (pending) =>
         this.getClient(ctx.workspaceDir).rejectQuestion(pending.id),
       );
-      ctx
-        .reply("⌛ 提问已超时，本轮已结束。可以重新发消息继续。")
-        .catch(() => {});
+      // reject() makes the question tool throw inside the turn — the agent keeps
+      // running and may still answer, so don't claim the turn is over. Re-arm the
+      // idle fallback, which was suspended while the question was up.
+      this.send(ctx, "⌛ 提问已超时，已替你跳过这个问题。");
+      this.startIdleTimer(ctx.sessionId);
     }, QUESTION_TIMEOUT_MS);
 
     ctx.pendingQuestion = { id: question.id, questions, timer };
@@ -681,6 +764,7 @@ export class Bridge {
     if (!pending) return;
     clearTimeout(pending.timer);
     ctx.pendingQuestion = undefined;
+    ctx.resolvedQuestionIds.add(pending.id);
     resolve(pending).catch((err) => {
       console.error(`[Bridge] Resolving question ${pending.id} failed:`, err);
     });
@@ -712,15 +796,13 @@ export class Bridge {
       );
     }
 
-    // Only reply if no text has been accumulated (avoid overwriting a partial response)
-    const accumulated = Array.from(ctx.textParts.values()).join("").trim();
-    if (!accumulated) {
-      this.send(ctx, "⚠️ AI agent encountered an error. Please try again.");
-    } else {
-      // Flush whatever we have
-      this.flushAndReply(sessionId);
-      return;
-    }
+    // Flush whatever text has not gone out yet, then always say it failed. The
+    // remainder is often empty (the blocks already streamed), and silence there
+    // would leave the user with an answer that merely stops mid-way.
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    const remainder = ctx.chunker.rest(full);
+    if (remainder) this.sendRemainder(ctx, remainder);
+    this.send(ctx, "⚠️ AI agent encountered an error. Please try again.");
 
     this.clearAck(ctx);
     this.activeContexts.delete(sessionId);

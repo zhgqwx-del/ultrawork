@@ -46,10 +46,17 @@ describe("parseAnswer", () => {
     })
   })
 
-  it("rejects an out-of-range number", () => {
-    const r = parseAnswer("5", [pick])
+  it("treats an out-of-range number as a typed answer, not a bad index", () => {
+    // The model cannot forbid custom answers (QuestionTool omits the field), so
+    // "80" to a budget question is the answer — rejecting it as a bad option
+    // index would dead-loop the user: re-ask, they retype 80, re-ask…
+    expect(parseAnswer("80", [pick])).toEqual({ ok: true, answers: [["80"]] })
+  })
+
+  it("still demands an index when the question forbids a custom answer", () => {
+    const r = parseAnswer("80", [{ ...pick, custom: false }])
     expect(r.ok).toBe(false)
-    expect(r.ok === false && r.error).toContain("超出范围")
+    expect(r.ok === false && r.error).toContain("请回复序号")
   })
 
   it("rejects free text when the question forbids a custom answer", () => {

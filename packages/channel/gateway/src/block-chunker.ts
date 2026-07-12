@@ -25,8 +25,15 @@ const DEFAULT_MAX_CHUNKS = 6;
 export class BlockChunker {
   private readonly minChars: number;
   private readonly maxChunks: number;
-  /** How much of the full text has already been sent */
-  private emitted = 0;
+  /**
+   * The exact text already sent. NOT an offset: the full text is rebuilt from
+   * textParts on every event and it is not append-only — opencode's `text-end`
+   * rewrites a part it already published (`trimEnd()`, plus whatever the
+   * `experimental.text.complete` plugin returns), which shortens it and shifts
+   * every later part left. An absolute index into that string silently ate the
+   * next part's opening characters; matching on the sent text does not.
+   */
+  private sentText = "";
   private chunks = 0;
 
   constructor(options: ChunkerOptions = {}) {
@@ -46,14 +53,14 @@ export class BlockChunker {
   next(fullText: string): string | null {
     if (this.chunks >= this.maxChunks) return null;
 
-    const pending = fullText.slice(this.emitted);
-    if (pending.length < this.minChars) return null;
+    const start = this.consumed(fullText);
+    if (fullText.length - start < this.minChars) return null;
 
-    const cut = this.findCut(fullText);
+    const cut = this.findCut(fullText, start);
     if (cut < 0) return null;
 
-    const block = fullText.slice(this.emitted, cut).trim();
-    this.emitted = cut;
+    const block = fullText.slice(start, cut).trim();
+    this.sentText = fullText.slice(0, cut);
     if (!block) return null; // whitespace-only: swallow it, but keep the advance
 
     this.chunks++;
@@ -62,19 +69,42 @@ export class BlockChunker {
 
   /** Whatever has not been streamed yet */
   rest(fullText: string): string {
-    return fullText.slice(this.emitted).trim();
+    return fullText.slice(this.consumed(fullText)).trim();
+  }
+
+  /**
+   * Mark the whole text as sent, without a paragraph cut. For the callers that
+   * flush the buffer on their own terms (a question is about to go up, the turn
+   * errored) — the final flush must not send it a second time.
+   */
+  consume(fullText: string): void {
+    this.sentText = fullText;
+  }
+
+  /**
+   * Where the unsent text begins. Re-derived every call by matching what we sent
+   * against the current full text, so a rewritten (shortened or lengthened)
+   * earlier part cannot desynchronise us.
+   */
+  private consumed(fullText: string): number {
+    if (fullText.startsWith(this.sentText)) return this.sentText.length;
+
+    const limit = Math.min(this.sentText.length, fullText.length);
+    let i = 0;
+    while (i < limit && this.sentText[i] === fullText[i]) i++;
+    return i;
   }
 
   /**
    * Last paragraph break that is at least `minChars` into the unsent text and
    * sits outside a code fence. Splitting a fence would emit two broken halves.
    */
-  private findCut(fullText: string): number {
-    const floor = this.emitted + this.minChars;
+  private findCut(fullText: string, start: number): number {
+    const floor = start + this.minChars;
     let cut = -1;
 
     for (
-      let i = fullText.indexOf("\n\n", this.emitted);
+      let i = fullText.indexOf("\n\n", start);
       i !== -1;
       i = fullText.indexOf("\n\n", i + 1)
     ) {
