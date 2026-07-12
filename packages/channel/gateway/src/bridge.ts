@@ -7,6 +7,7 @@ import {
   renderQuestions,
   QUESTION_SKIP_COMMAND,
 } from "./question-prompt.js";
+import { BlockChunker } from "./block-chunker.js";
 
 // Base URL is injected by the Tauri host alongside the password — opencode's
 // port is chosen at startup, not compile time. The fallback keeps a standalone
@@ -39,6 +40,11 @@ const POLL_MAX_LIFETIME_MS = 300_000; // 5 min — auto-stop polling even if ses
 // stuck turn, so the pending state has to suspend them — and it needs a bound of
 // its own, or an unanswered question would pin the session busy forever.
 const QUESTION_TIMEOUT_MS = 1_800_000; // 30 min — then auto-reject and tell the user
+// The ack exists because a turn used to be silent until it finished. Now that
+// finished blocks stream out, it is only worth sending when the agent is slow to
+// produce the first one — otherwise it just duplicates a reply that is moments away.
+const ACK_DELAY_MS = 2_500;
+const ACK_TEXT = "⏳ 收到，正在处理";
 
 /** Channel type → display label mapping */
 const CHANNEL_LABELS: Record<string, string> = {
@@ -76,6 +82,12 @@ interface SessionContext {
   idleTimer?: ReturnType<typeof setTimeout>;
   /** Set while the agent is blocked on a question and we're awaiting the user's reply */
   pendingQuestion?: PendingQuestion;
+  /** Splits the reply into blocks that can be sent as the turn progresses */
+  chunker: BlockChunker;
+  /** Pending "still working" ack — cancelled if output arrives first */
+  ackTimer?: ReturnType<typeof setTimeout>;
+  /** Whether anything at all has been sent to the user this turn */
+  saidSomething: boolean;
 }
 
 interface PendingQuestion {
@@ -170,6 +182,7 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(oldSessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          this.clearAck(oldCtx);
           if (oldCtx.pendingQuestion) {
             // Don't leave the agent blocked on a question nobody will answer
             this.resolvePendingQuestion(oldCtx, (pending) =>
@@ -197,10 +210,14 @@ export class Bridge {
       return;
     }
 
-    // Instantly acknowledge receipt to the user (before any network calls)
-    msg.reply("⏳ 收到，正在处理").catch((err) => {
-      console.error(`[Bridge] Instant ack failed for ${msg.chatId}:`, err);
-    });
+    // Hold the ack briefly. Blocks now stream out as the agent produces them, so
+    // if the first one lands quickly the ack is cancelled unsent and the user
+    // sees real content instead of a placeholder followed by the same answer.
+    const ackTimer = setTimeout(() => {
+      msg.reply(ACK_TEXT).catch((err) => {
+        console.error(`[Bridge] Ack failed for ${msg.chatId}:`, err);
+      });
+    }, ACK_DELAY_MS);
 
     const client = this.getClient(msg.workspaceDir);
 
@@ -218,6 +235,7 @@ export class Bridge {
         const oldCtx = this.activeContexts.get(sessionId);
         if (oldCtx) {
           this.clearIdleTimer(oldCtx);
+          this.clearAck(oldCtx);
           // The session is gone server-side; answering its question is moot, but
           // the timer would still fire and message the user about a dead turn.
           if (oldCtx.pendingQuestion) {
@@ -249,6 +267,9 @@ export class Bridge {
       textParts: new Map(),
       assistantMessageIds: new Set(),
       textPartIds: new Set(),
+      chunker: new BlockChunker(),
+      saidSomething: false,
+      ackTimer,
       reply: msg.reply,
       onTyping: msg.onTyping,
     };
@@ -289,11 +310,45 @@ export class Bridge {
     } catch (err) {
       console.error(`[Bridge] promptAsync failed for ${sessionId}:`, err);
       this.clearIdleTimer(ctx);
+      this.clearAck(ctx);
       ctx.onTyping?.(false);
       this.activeContexts.delete(sessionId);
       await msg
         .reply(`Error: Failed to send message to AI agent.`)
         .catch(() => {});
+    }
+  }
+
+  /** Cancel the "still working" ack — it is only for turns that stay silent */
+  private clearAck(ctx: SessionContext): void {
+    if (ctx.ackTimer) {
+      clearTimeout(ctx.ackTimer);
+      ctx.ackTimer = undefined;
+    }
+  }
+
+  /**
+   * Send content to the chat. Any real output makes the pending ack redundant —
+   * cancel it rather than let a "still working" note trail the answer itself.
+   */
+  private send(ctx: SessionContext, text: string): void {
+    this.clearAck(ctx);
+    ctx.saidSomething = true;
+    ctx.reply(text).catch((err) => {
+      console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
+    });
+  }
+
+  /** Emit any finished block the agent has produced since the last one */
+  private streamReadyBlocks(ctx: SessionContext): void {
+    // A question is on screen and the user is answering it — do not interleave.
+    if (ctx.pendingQuestion) return;
+
+    for (;;) {
+      const full = Array.from(ctx.textParts.values()).join("\n\n");
+      const block = ctx.chunker.next(full);
+      if (!block) return;
+      this.send(ctx, block);
     }
   }
 
@@ -336,25 +391,27 @@ export class Bridge {
       );
     }
 
-    const text = Array.from(ctx.textParts.values()).join("\n\n").trim();
+    // Only what streaming has not already delivered
+    const full = Array.from(ctx.textParts.values()).join("\n\n");
+    const text = ctx.chunker.rest(full);
     if (text) {
       const truncated =
         text.length > MAX_REPLY_LENGTH
           ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
           : text;
 
-      ctx.reply(truncated).catch((err) => {
-        console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
-      });
-    } else if (notifyEmpty) {
+      this.send(ctx, truncated);
+    } else if (notifyEmpty && !ctx.saidSomething) {
       // Before the reasoning/user-echo filters landed, textParts always held at
       // least the echoed prompt, so an empty flush was impossible. Now a turn
       // that only produced reasoning or tool calls really can end up with no
-      // text — staying silent would read as the bot ignoring the user.
-      ctx.reply(EMPTY_REPLY_NOTICE).catch((err) => {
-        console.error(`[Bridge] Empty-reply notice failed for ${ctx.chatId}:`, err);
-      });
+      // text — staying silent would read as the bot ignoring the user. (If blocks
+      // already went out, an empty remainder just means the answer ended on a
+      // block boundary — nothing to announce.)
+      this.send(ctx, EMPTY_REPLY_NOTICE);
     }
+
+    this.clearAck(ctx);
 
     this.activeContexts.delete(sessionId);
     console.log(
@@ -458,6 +515,8 @@ export class Bridge {
     const text = (part as any).content ?? (part as any).text ?? "";
     ctx.textPartIds.add(part.id);
     ctx.textParts.set(part.id, text);
+
+    this.streamReadyBlocks(ctx);
   }
 
   /** Accumulate assistant text from delta (incremental append) */
@@ -480,6 +539,8 @@ export class Bridge {
 
     const existing = ctx.textParts.get(props.partID) ?? "";
     ctx.textParts.set(props.partID, existing + props.delta);
+
+    this.streamReadyBlocks(ctx);
   }
 
   /** Session went idle → send accumulated reply */
@@ -545,9 +606,7 @@ export class Bridge {
     }, QUESTION_TIMEOUT_MS);
 
     ctx.pendingQuestion = { id: question.id, questions, timer };
-    ctx.reply(renderQuestions(questions)).catch((err) => {
-      console.error(`[Bridge] Question delivery failed for ${ctx.chatId}:`, err);
-    });
+    this.send(ctx, renderQuestions(questions));
     console.log(`[Bridge] Asked user question ${question.id}`);
   }
 
@@ -636,15 +695,14 @@ export class Bridge {
     // Only reply if no text has been accumulated (avoid overwriting a partial response)
     const accumulated = Array.from(ctx.textParts.values()).join("").trim();
     if (!accumulated) {
-      ctx
-        .reply("⚠️ AI agent encountered an error. Please try again.")
-        .catch(() => {});
+      this.send(ctx, "⚠️ AI agent encountered an error. Please try again.");
     } else {
       // Flush whatever we have
       this.flushAndReply(sessionId);
       return;
     }
 
+    this.clearAck(ctx);
     this.activeContexts.delete(sessionId);
   }
 

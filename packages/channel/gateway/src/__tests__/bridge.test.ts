@@ -325,10 +325,9 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // Ack + empty-turn notice: a tool-only turn produced no text to send
-      expect(msg.reply).toHaveBeenCalledTimes(2)
-      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
-      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
+      // The notice is the only thing sent: it cancels the not-yet-due ack
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
 
@@ -443,7 +442,8 @@ describe("Bridge", () => {
         })
       }
 
-      // 10 minutes of pure reasoning — still no reply beyond the ack
+      // 10 minutes of pure reasoning: the user got the ack (the turn stayed
+      // silent long enough to deserve one) and nothing else.
       expect(msg.reply).toHaveBeenCalledTimes(1)
       expect(msg.reply).toHaveBeenCalledWith(ACK)
 
@@ -475,6 +475,123 @@ describe("Bridge", () => {
     })
   })
 
+  describe("progressive delivery + ack", () => {
+    const LONG = "段落一".repeat(100) // > 200 chars
+
+    function streamText(bridge: Bridge, text: string, partId = "p1") {
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      handleSSE({
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text", sessionID: "sess-1", messageID: "m1", id: partId, content: text },
+        },
+      })
+    }
+
+    it("sends a finished block before the turn ends", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      streamText(bridge, `${LONG}\n\n还在写后面的部分`)
+
+      // The block goes out immediately — the user is not left staring at nothing
+      expect(msg.reply).toHaveBeenCalledWith(LONG)
+      expect(msg.reply).not.toHaveBeenCalledWith(expect.stringContaining("还在写"))
+      await bridge.shutdown()
+    })
+
+    it("sends only the un-streamed remainder at the end", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      streamText(bridge, `${LONG}\n\n收尾`)
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls.map(([t]) => t)
+      expect(sent).toEqual([LONG, "收尾"]) // the streamed block is not repeated
+      await bridge.shutdown()
+    })
+
+    it("skips the ack when the answer arrives quickly", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      streamText(bridge, "秒回")
+      handleSSE({
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: { type: "idle" } },
+      })
+
+      // Even past the point the ack was due it must not arrive: the answer beat
+      // it, and a trailing "still working" would be nonsense.
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith("秒回")
+      await bridge.shutdown()
+    })
+
+    it("still acks when the agent stays silent", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+
+      await vi.advanceTimersByTimeAsync(2_500)
+
+      expect(msg.reply).toHaveBeenCalledWith(ACK)
+      await bridge.shutdown()
+    })
+
+    it("cancels the ack once a block goes out", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      await vi.advanceTimersByTimeAsync(2_000) // ack still pending
+      streamText(bridge, `${LONG}\n\n继续`)
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      expect(msg.reply).not.toHaveBeenCalledWith(ACK)
+      await bridge.shutdown()
+    })
+
+    it("does not interleave blocks with a question on screen", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+      emitAssistantMessage(handleSSE)
+
+      handleSSE({
+        type: "question.asked",
+        properties: {
+          id: "q-1",
+          sessionID: "sess-1",
+          questions: [
+            { question: "A 还是 B？", header: "选择", options: [{ label: "A", description: "" }] },
+          ],
+        },
+      })
+
+      streamText(bridge, `${LONG}\n\n后续`)
+
+      // Pushing text under a pending question would bury it — hold the block
+      expect(msg.reply).not.toHaveBeenCalledWith(LONG)
+      await bridge.shutdown()
+    })
+  })
+
   describe("handleSSEEvent — session.status idle", () => {
     it("sends an empty-turn notice when the turn produced no text", async () => {
       const bridge = new Bridge()
@@ -488,9 +605,8 @@ describe("Bridge", () => {
       })
 
       // Silence would read as the bot ignoring the user — say something instead
-      expect(msg.reply).toHaveBeenCalledTimes(2)
-      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
-      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
 
@@ -513,9 +629,8 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "running" } },
       })
 
-      // Only instant ack, no AI content reply (not idle yet)
-      expect(msg.reply).toHaveBeenCalledTimes(1)
-      expect(msg.reply).toHaveBeenCalledWith("⏳ 收到，正在处理")
+      // Nothing sent: the turn is still running and the ack is not due yet
+      expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
 
@@ -566,8 +681,7 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      // calls[0] = instant ack, calls[1] = AI reply (truncated)
-      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[1][0]
+      const replyArg = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(replyArg.length).toBeLessThan(25_000)
       expect(replyArg).toContain("...(truncated)")
       await bridge.shutdown()
@@ -1038,8 +1152,7 @@ describe("Bridge", () => {
 
       // Should not affect the active session
       expect((bridge as any).activeContexts.has("sess-1")).toBe(true)
-      // Only the instant ack reply
-      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).not.toHaveBeenCalled()
       await bridge.shutdown()
     })
   })
@@ -1109,9 +1222,8 @@ describe("Bridge", () => {
         properties: { sessionID: "sess-1", status: { type: "idle" } },
       })
 
-      expect(msg.reply).toHaveBeenCalledTimes(2)
-      expect(msg.reply).toHaveBeenNthCalledWith(1, ACK)
-      expect(msg.reply).toHaveBeenNthCalledWith(2, EMPTY_NOTICE)
+      expect(msg.reply).toHaveBeenCalledTimes(1)
+      expect(msg.reply).toHaveBeenCalledWith(EMPTY_NOTICE)
       await bridge.shutdown()
     })
   })
