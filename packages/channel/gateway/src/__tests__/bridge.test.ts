@@ -566,6 +566,23 @@ describe("Bridge", () => {
       await bridge.shutdown()
     })
 
+    it("caps a streamed block at the platform limit, not just the final reply", async () => {
+      const bridge = new Bridge()
+      const msg = createMessage()
+      await bridge.handleMessage(msg)
+      emitAssistantMessage((bridge as any).handleSSEEvent.bind(bridge))
+
+      // One huge paragraph is a legitimate block. Before the cap moved into
+      // send(), streamed blocks bypassed truncation entirely and went out at
+      // full length — over every channel's message limit.
+      streamText(bridge, `${"长".repeat(25_000)}\n\n尾巴`)
+
+      const sent = (msg.reply as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+      expect(sent.length).toBeLessThanOrEqual(20_000 + "\n\n...(truncated)".length)
+      expect(sent).toContain("...(truncated)")
+      await bridge.shutdown()
+    })
+
     it("does not interleave blocks with a question on screen", async () => {
       const bridge = new Bridge()
       const msg = createMessage()

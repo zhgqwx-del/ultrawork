@@ -334,7 +334,15 @@ export class Bridge {
   private send(ctx: SessionContext, text: string): void {
     this.clearAck(ctx);
     ctx.saidSomething = true;
-    ctx.reply(text).catch((err) => {
+    // Every outbound message passes through here, so the platform cap is enforced
+    // in one place. Streamed blocks need it as much as the final flush does: a
+    // single 25k-char paragraph is a valid block, and the channels reject or
+    // silently truncate anything over their limit.
+    const safe =
+      text.length > MAX_REPLY_LENGTH
+        ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
+        : text;
+    ctx.reply(safe).catch((err) => {
       console.error(`[Bridge] Reply failed for ${ctx.chatId}:`, err);
     });
   }
@@ -391,16 +399,11 @@ export class Bridge {
       );
     }
 
-    // Only what streaming has not already delivered
+    // Only what streaming has not already delivered (send() applies the cap)
     const full = Array.from(ctx.textParts.values()).join("\n\n");
     const text = ctx.chunker.rest(full);
     if (text) {
-      const truncated =
-        text.length > MAX_REPLY_LENGTH
-          ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
-          : text;
-
-      this.send(ctx, truncated);
+      this.send(ctx, text);
     } else if (notifyEmpty && !ctx.saidSomething) {
       // Before the reasoning/user-echo filters landed, textParts always held at
       // least the echoed prompt, so an empty flush was impossible. Now a turn
