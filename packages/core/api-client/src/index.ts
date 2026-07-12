@@ -64,6 +64,8 @@ export type {
   FeishuChannelConfig,
   ChannelConfig,
   ChannelListResponse,
+  ChannelSessionEntry,
+  ChannelSessionsResponse,
   ChannelQRState,
   ChannelQRStartResponse,
   ChannelQRStatusResponse,

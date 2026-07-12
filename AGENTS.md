@@ -146,6 +146,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Gateway（`packages/channel/gateway/src/`）**
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
+- `session-store.ts` — chatId→session 绑定的持久化（`~/.ultrawork/session-map.json`，v2 schema：channelType/senderName/lastActiveAt/prevSessionId，key 带渠道命名空间）。**路径可注入**（测试绝不碰真实 home，ADR-051）；原子写=唯一临时名 + 串行化
+- `bridge.ts` 的 idle 轮转（ADR-051）：`getIdleRotateMs()`（env `ULTRAWORK_CHANNEL_IDLE_ROTATE_MS`，默认 60min）· `shouldRotate()`（in-flight 护栏）· `touchSession()`（活动时钟，只有真正处理了的消息才刷新）· `/resume`
 - `qr-registry.ts` — 扫码建渠道骨架（后台轮询 + 凭证到达即落盘 + 统一状态枚举 + 并发去重，ADR-044；接入模式 conventions §14）
 - `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, qr-provider.ts（ilink 扫码）
 - `adapters/dingtalk/` — dingtalk-adapter.ts（Stream 模式）, token-manager.ts, qr-provider.ts（registration 设备流）
@@ -168,7 +170,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `worktree.ts` — Fan-out worktree 隔离（create/remove/stageInputs/collectArtifact；`<xdgData>/ultrawork/worktrees/`）
 - `session-queue.ts`（QueueOwner 实现）, `task-registry.ts`（Semaphore 排队语义 + 任务跟踪）, `run-store.ts`（JSON 落盘 `~/.local/share/ultrawork/orchestrator-runs/`）
 - 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `team-routes.ts`+`team-store.ts`（Team 会话注册表：leader/twin 以 ROOT 创建〔018 A-4〕+ ACP leader 注入回滚 + `team-sessions.json` 持久化）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
-- Desktop：`pages/Orchestration.tsx`（纯流水线页，018 A-3）+ `components/orchestration/pipeline-tab.tsx`（Pipeline|Fan-out 模板 + 步骤级 model）+ `lib/team-sessions-context.tsx`（018：per-workspace Team 注册表 context，徽标/补显/注入数据源 + ACP leader 加载即绑定）+ `components/session/team-header.tsx`（Team 成员条：头像组 + delegate SSE 实时活动环）+ `components/chat/team-member-select.tsx`/`agent-avatar.tsx`（成员卡片多选 / 首字母头像）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts`（含 team sessions API）+ `lib/team-leader-prompt.ts`（Leader system 提示模板，017 §2.4）+ `lib/orchestrator-mcp.ts`（全局 MCP 静默 ensure，取代「编排模式」开关）+ `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（delegate 卡片）+ `delegate-dock.tsx`（阻塞期权限）
+- Desktop：`pages/Orchestration.tsx`（纯流水线页，018 A-3）+ `components/orchestration/pipeline-tab.tsx`（Pipeline|Fan-out 模板 + 步骤级 model）+ `lib/team-sessions-context.tsx`（018：per-workspace Team 注册表 context，徽标/补显/注入数据源 + ACP leader 加载即绑定）+ `lib/channel-sessions-context.tsx`（ADR-051：渠道会话注册表，喂侧边栏渠道徽标；gateway 不可达降级为空、badge-less 继续工作）+ `lib/use-unread.ts`（ADR-051：未读派生 + 冷启动地板 seedAt，模块级 store 而非 Provider）+ `components/session/team-header.tsx`（Team 成员条：头像组 + delegate SSE 实时活动环）+ `components/chat/team-member-select.tsx`/`agent-avatar.tsx`（成员卡片多选 / 首字母头像）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts`（含 team sessions API）+ `lib/team-leader-prompt.ts`（Leader system 提示模板，017 §2.4）+ `lib/orchestrator-mcp.ts`（全局 MCP 静默 ensure，取代「编排模式」开关）+ `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（delegate 卡片）+ `delegate-dock.tsx`（阻塞期权限）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
 - `turn-shaper.ts` — 核心：ACP `session/update` → opencode N-message/回合整形（纯逻辑，可测）
@@ -201,7 +203,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (50 ADRs, 001–049)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (51 ADRs, 001–051)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

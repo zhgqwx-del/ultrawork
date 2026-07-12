@@ -7,6 +7,8 @@ import { randomBytes } from "crypto";
 import type { ChannelManager } from "./channel-manager.js";
 import type { ChannelConfig, DingTalkChannelConfig, WeChatChannelConfig, WeComChannelConfig, FeishuChannelConfig } from "./types.js";
 import type { QRRegistry } from "./qr-registry.js";
+import type { ChannelSessionEntry } from "./session-store.js";
+import { getIdleRotateMs } from "./bridge.js";
 
 function generateId(): string {
   return `ch_${randomBytes(6).toString("hex")}`;
@@ -59,10 +61,19 @@ function sidecarBasicAuth(auth: SidecarAuth): MiddlewareHandler {
  * `null` means "no authentication" and is only for unit tests — a loopback port
  * is not a security boundary, any local process can reach it (ADR-028 / 029 §9).
  */
+/**
+ * The Bridge, narrowed to what the sidebar needs. Keeps this module off the
+ * Bridge type (and its opencode/SSE baggage) for a single read-only listing.
+ */
+export interface ChannelSessionSource {
+  listChannelSessions(): ChannelSessionEntry[];
+}
+
 export function createApp(
   manager: ChannelManager,
   qrRegistry: QRRegistry | undefined,
   auth: SidecarAuth | null,
+  sessions?: ChannelSessionSource,
 ): Hono {
   const app = new Hono();
 
@@ -87,8 +98,21 @@ export function createApp(
     app.use("/*", sidecarBasicAuth(auth));
   }
 
-  // Health check
-  app.get("/channel/health", (c) => c.json({ status: "ok" }));
+  // Health check. Reports the idle-rotation threshold in force because nothing else
+  // can: Tauri does not forward a sidecar's stdout, so the startup log is invisible,
+  // and the threshold arrives by env inheritance — "rotation never fired" and "the
+  // env never reached the process" are otherwise indistinguishable.
+  app.get("/channel/health", (c) =>
+    c.json({ status: "ok", idleRotateMs: getIdleRotateMs() }),
+  );
+
+  // Channel-owned sessions, for the desktop sidebar's badge + unread dot. Must be
+  // declared before /channel/:type/* — "sessions" would otherwise be read as a
+  // channel type. Degrades to an empty list when no source is wired, and the
+  // sidebar must keep working badge-less in that case.
+  app.get("/channel/sessions", (c) =>
+    c.json({ sessions: sessions?.listChannelSessions() ?? [] }),
+  );
 
   // List all channels with status (configs are secret-masked)
   app.get("/channel", (c) => {

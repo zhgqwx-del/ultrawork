@@ -125,6 +125,15 @@
 - **分段发送必须带频控预算**：四个 adapter 的发送路径**零节流**，而企微单会话 **30 条/分、1000 条/时**，钉钉群机器人 20 条/分。切太碎会被限流吞掉（我们封顶每轮 6 个中间块）。
 - **真流式是可行的，但四家四套**（未实施，见 discussions/033 §2.2）：飞书 CardKit 卡片实体（普通自建应用即可，免费，单卡 10 次/秒）· 企微智能机器人 `msgtype: "stream"`（**我们的 wecom adapter 已经在 aibot 长连接上，只是没调这个 API**）· 钉钉 AI 卡片 `PUT /v1.0/card/streaming`（**每帧算一次付费 API 调用**，单帧 ≤1KB）· 微信 iLink **协议层无 edit 端点，不存在绕过办法**。
 
+### 渠道会话轮转与 session-map（ADR-051，2026-07-12）
+
+- **`gatewayBaseUrl()` 本身已经含 `/channel` 前缀**（dev 下是 `"/channel"`，prod 下是 `http://localhost:<port>/channel`）。再拼 `/channel/xxx` 会得到 `/channel/channel/xxx` → **404**。正确写法是 `${gatewayBaseUrl()}/xxx`（对照 `use-channels.ts`：列表用的是 `gatewayFetch("")`）。这个坑**极难发现**：`channel-sessions-context` 的失败被 catch → 退避静默吞掉，症状只是「徽标永远不出现」，日志一个字都没有。单测也看不见（fetch 根本没跑）——是**真浏览器 e2e** 抓到的。现已有单测钉死 URL + 首次失败 `console.warn`。
+- **`~/.ultrawork/session-map.json` 的落盘频率从「建/删会话时」变成了「每条入站消息」**（要重打 `lastActiveAt`）。因此 `save()` **必须**用唯一临时名（pid + 序号）并**串行化**：共享一个固定的 `.tmp` 名会让两个并发写互相覆盖，可能把**半写入的 JSON** rename 成正式文件 → 下次启动解析失败 → 走 corrupt 分支静默清空 → **四个渠道的绑定一起丢**。（与 ADR-045 的 `ports.json` 原子写同构。）
+- **`lastActiveAt` 只能由「我们真正处理了的」消息刷新**。特别是：回答 question 的消息走的是 **early-return**（不经过 `startTurn`），所以时间戳必须在那条分支里单独打——否则一段长达半小时的问答会被判成 idle，轮转会把用户正在进行的对话切掉。反过来，**被挡回去的旁人插话不能刷新时钟**（它从未到达 agent，否则群里任何人都能让一个死会话永远活着）。
+- **轮转的 in-flight 护栏（`activeContexts` 非空则不轮转）在 question 路径上是「死代码」**——question 消息在 `pendingQuestion` 分支就被当作答案 early-return 了，根本走不到轮转判定。它真正保护的是**普通 turn 在飞**的场景。写测试时别搞错对象：针对 question 场景的测试**撤掉护栏仍然全绿**（曾实际发生）。
+- **`ULTRAWORK_CHANNEL_IDLE_ROTATE_MS` 在打包后的 app 里传不进去**：Tauri 只显式传 5 个 env 给 gateway，其余靠继承父进程环境，而双击启动时父环境是 launchd 的。它实质是**开发/调试逃生阀**，生产只能用默认 60 分钟。
+- **Tauri 不转发 sidecar 的 stdout** —— gateway 的 `console.log` 在 `tauri dev` 的终端里**看不见**。所以「轮转没触发」和「env 根本没到达进程」无法区分。⇒ `GET /channel/health` 会返回 `idleRotateMs`，用它来确认。
+
 ## 5. Knowledge / IMA（:4098）
 
 - **DB**：`~/.ultrawork/knowledge/kb.db`（SQLite WAL + FTS5 + `_migrations` 版本管理）。
@@ -184,6 +193,16 @@
 
 - **`bun build --compile` 后，中文字面量不以明文形式存在于二进制里（2026-07-12 踩坑）**：`strings` 只提 ASCII，而 `grep -a` 连 UTF-8 / UTF-16LE 原字节也搜不到（源码被编成字节码）。⇒ **「中文串搜不到」不能证明代码没进包**。要验证某次改动确实进了 sidecar 二进制，**用 ASCII 的日志串做探针**（如新增的 `console.log` 文案），并同时确认旧代码的串已消失。
 - **sidecar 的构建新鲜度 hash 必须覆盖它 bundle 进去的每一个 workspace 依赖（2026-07-12，A/B 实证）**：`build-gateway.ts` 曾只喂 `api-client`、漏了 `@agent/connector` —— 只改 connector 的那次构建会被判 `up-to-date, skipping build`，**客户机器上装到旧逻辑且无任何提示**。新增依赖时同步更新 `computeSourceHash` 的 extraDirs。
+
+### `os.homedir()` 不认运行时改的 `HOME`（Bun，2026-07-12，血泪）
+
+`os.homedir()` **只在进程启动时解析一次**。运行时写 `process.env.HOME`（`vi.stubEnv` 正是这么干的）**完全无效**。
+
+后果不是抽象的：`session-store.ts` 早期版本在模块顶层就 `join(homedir(), ".ultrawork", ...)`，单测想用 `vi.stubEnv("HOME", tmp)` 隔离——**没生效**，测试直接**覆盖了开发者真实的 `~/.ultrawork/session-map.json`**（真的丢了数据）。
+
+⇒ 两条规矩：
+1. **凡是会写真实用户目录的模块，路径必须可注入**（`new SessionStore(path)`），测试传临时路径，绝不构造无参默认实例。
+2. e2e 里要重定向 HOME，只能让**父进程 spawn 一个新进程**并在 spawn 时设 env（`channel-session-rotation.e2e.ts` 就是这么做的），并且加 **fail-closed 断言**：`homedir() !== tmp` 就拒绝运行，而不是继续往真实路径写。
 
 ## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
 
@@ -314,6 +333,9 @@
 
 - **e2e 的工作区不能建在系统 tmpdir**（ADR-048 踩坑）。macOS 的 `tmpdir()` 是 `/var/folders/…`，而产物识别的 `TEMP_PATH_RE`（`artifacts-panel.tsx`）**刻意把它当临时路径过滤掉** —— agent 在那里写的文件永远进不了产物列表，测试会莫名其妙地「没有产物」。把沙箱 HOME 留在 tmp，但**工作区放到 `homedir()` 下的临时目录**。
 - **产物行的选择器要限定在 `[data-testid="artifacts-panel"]` 内**。「执行活动」面板排在产物区之上、同样默认展开、且会列出同一个文件的绝对路径 —— 无限定的文本匹配会点到那一行惰性文本上，表现为「点了没反应」。
+
+- **`vi.restoreAllMocks()` 不会清理 `vi.stubEnv()`** —— 必须显式 `vi.unstubAllEnvs()`。曾实际中招：一条「阈值设 0 关闭功能」的测试把 env **泄漏给了后面所有测试**，导致 `/resume` 的用例根本没发生轮转，却以「看起来合理」的方式失败（ADR-051）。
+- **给纯函数加「必填参数」比加测试更能防漏传**：`groupSessionsByDate(sessions, t, frozen)` 的 `frozen` **刻意不给默认值**——排序与分组必须读同一个 key，而一个默认值会让调用方静默丢掉它（行在 hover 时跳组），同时单测因为直接传参**保持全绿**。让 tsc 抓，别指望测试（ADR-051）。
 
 ## 14. 办公 CLI 连接器（lark-cli + dws + wecom-cli，ADR-043 / discussions/027）
 

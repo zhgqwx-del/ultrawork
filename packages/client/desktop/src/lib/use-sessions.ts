@@ -7,6 +7,7 @@ import { useConnector, useSSESubscribe } from "./sse-context"
 import { useTeamSessions, type TeamSessionEntry } from "./team-sessions-context"
 import { deleteTeamSession } from "./orchestration-client"
 import { applyMessageEventToCache, forgetMessageCacheSession } from "./use-session-messages"
+import { forgetSessionRead } from "./use-unread"
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -174,6 +175,7 @@ export function useSessions() {
       }
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
       forgetMessageCacheSession(sessionId) // L1: don't leak the deleted session's cache
+      forgetSessionRead(sessionId) // ...nor its unread bookkeeping
     },
     [connector, isTeamSession, removeTeamEntry]
   )

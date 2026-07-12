@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { handleDrag } from "./drag-region"
@@ -38,6 +38,20 @@ import { SettingsPopover } from "@/components/settings/settings-popover"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
 import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
+import { useChannelSessions, type ChannelSessionEntry } from "@/lib/channel-sessions-context"
+import { useUnread } from "@/lib/use-unread"
+import { useWorkspace } from "@/lib/workspace-context"
+import { WeChatIcon, WeComIcon, DingTalkIcon, FeishuIcon } from "@/components/brand-icons"
+import type { ComponentType } from "react"
+
+/** Brand icon per channel type — same registry as the settings page. A type with
+ *  no icon here still gets a badge, just a generic one. */
+const CHANNEL_TYPE_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  wechat: WeChatIcon,
+  dingtalk: DingTalkIcon,
+  wecom: WeComIcon,
+  feishu: FeishuIcon,
+}
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
@@ -57,7 +71,57 @@ interface SessionGroup {
   sessions: Session[]
 }
 
-function groupSessionsByDate(sessions: Session[], t: (key: string) => string): SessionGroup[] {
+/**
+ * Snapshot of the list order, taken while the pointer sits over the sidebar.
+ * `recency` pins the sort/group key per session; `ids` is the row set at freeze
+ * time, so sessions born mid-freeze stay out instead of splicing in on top.
+ */
+export interface FrozenOrder {
+  ids: Set<string>
+  recency: Map<string, number>
+}
+
+export function snapshotOrder(rows: Session[]): FrozenOrder {
+  return {
+    ids: new Set(rows.map((s) => s.id)),
+    recency: new Map(rows.map((s) => [s.id, s.time.updated])),
+  }
+}
+
+/** Sort/group key: the frozen value while frozen, else live last-activity. */
+export function recencyOf(session: Session, frozen: FrozenOrder | null): number {
+  return frozen?.recency.get(session.id) ?? session.time.updated
+}
+
+/**
+ * Sidebar order, DERIVED — never held in state. useSessions patches a session in
+ * place on SSE session.updated (index untouched), so a gateway prompt bumping
+ * time.updated reordered nothing and IM traffic never surfaced in the list.
+ * Deriving at render makes order a pure function of the data, with no
+ * effect-ordering race to lose (ADR-048 took the same turn with `settled`).
+ */
+export function orderSessions(sessions: Session[], frozen: FrozenOrder | null): Session[] {
+  const visible = frozen ? sessions.filter((s) => frozen.ids.has(s.id)) : sessions
+  return [...visible].sort((a, b) => recencyOf(b, frozen) - recencyOf(a, frozen))
+}
+
+/**
+ * Group by LAST ACTIVITY, not creation. The list is sorted by time.updated, so
+ * grouping by time.created tore the two apart: a channel session created weeks
+ * ago but woken by an IM message today stayed pinned under 「更早」 — first in a
+ * group nobody scrolls to — even after a manual refresh. Headings read as "what
+ * moved today", so they must key off the same clock the order does.
+ *
+ * `frozen` is required rather than defaulted: sort and grouping must read the SAME
+ * key or they tear apart again. A default would let a caller silently drop it —
+ * rows hopping date groups mid-hover — while these unit tests, which pass `frozen`
+ * explicitly, stayed green. Let tsc catch it instead.
+ */
+export function groupSessionsByDate(
+  sessions: Session[],
+  t: (key: string) => string,
+  frozen: FrozenOrder | null,
+): SessionGroup[] {
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
@@ -69,12 +133,12 @@ function groupSessionsByDate(sessions: Session[], t: (key: string) => string): S
   const earlier: Session[] = []
 
   sessions.forEach((session) => {
-    const created = session.time.created
-    if (created >= todayStart) {
+    const active = recencyOf(session, frozen)
+    if (active >= todayStart) {
       today.push(session)
-    } else if (created >= yesterdayStart) {
+    } else if (active >= yesterdayStart) {
       yesterday.push(session)
-    } else if (created >= weekStart) {
+    } else if (active >= weekStart) {
       thisWeek.push(session)
     } else {
       earlier.push(session)
@@ -99,6 +163,9 @@ export function LeftSidebar() {
   const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
   const { entryOf } = useTeamSessions()
+  const { entryOf: channelEntryOf } = useChannelSessions()
+  const { isUnread } = useUnread()
+  const { workspacePath } = useWorkspace()
   const { t } = useI18n()
 
   // "+" goes Home instead of creating a session: the session is born on the
@@ -138,11 +205,44 @@ export function LeftSidebar() {
   const isSettings = isSettingsPath(location.pathname)
   const effectiveOpen = leftOpen && !isSettings
 
-  const filteredSessions = sessions.filter((session) =>
-    session.title.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredSessions = useMemo(
+    () =>
+      sessions.filter((session) =>
+        session.title.toLowerCase().includes(searchQuery.toLowerCase())
+      ),
+    [sessions, searchQuery]
   )
 
-  const sessionGroups = groupSessionsByDate(filteredSessions, t)
+  // Freeze the order while the pointer is over the list: an IM message floating an
+  // old session to the top is exactly what we want, EXCEPT when it reshuffles rows
+  // under a cursor that is about to click (mis-click). Contents (title, relative
+  // time) keep updating live underneath; only the order is held. Thaws on leave.
+  const [frozen, setFrozen] = useState<FrozenOrder | null>(null)
+
+  const orderedSessions = useMemo(
+    () => orderSessions(filteredSessions, frozen),
+    [filteredSessions, frozen]
+  )
+
+  // Read by the freeze handler only — keeps it out of the dependency cycle it would
+  // otherwise form (freezing reads the very order it is about to freeze).
+  const orderedRef = useRef<Session[]>(orderedSessions)
+  orderedRef.current = orderedSessions
+
+  const freezeOrder = useCallback(() => {
+    setFrozen((prev) => prev ?? snapshotOrder(orderedRef.current))
+  }, [])
+
+  const thawOrder = useCallback(() => setFrozen(null), [])
+
+  // Search re-filters the list and a workspace switch replaces it wholesale; a
+  // stale freeze would withhold every row that is not in its `ids`. In both cases
+  // the pointer is off the rows anyway, so there is nothing left to protect.
+  useEffect(() => {
+    setFrozen(null)
+  }, [searchQuery, workspacePath])
+
+  const sessionGroups = groupSessionsByDate(orderedSessions, t, frozen)
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -222,12 +322,16 @@ export function LeftSidebar() {
 
             {/* Task/Sessions list */}
             <div className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden px-3">
-              <div className="scrollbar-soft flex-1 space-y-0.5 overflow-y-auto">
+              <div
+                onMouseEnter={freezeOrder}
+                onMouseLeave={thawOrder}
+                className="scrollbar-soft flex-1 space-y-0.5 overflow-y-auto"
+              >
                 {loading ? (
                   <div className="flex items-center justify-center py-6">
                     <Loader2 className="size-4 animate-spin text-[var(--sidebar-fg-muted)]" />
                   </div>
-                ) : filteredSessions.length === 0 ? (
+                ) : orderedSessions.length === 0 ? (
                   <div className="px-2 py-4 text-center text-xs text-[var(--sidebar-fg-muted)]">
                     {searchQuery ? t("sidebar.noMatch") : t("sidebar.noSessions")}
                   </div>
@@ -247,6 +351,8 @@ export function LeftSidebar() {
                               key={session.id}
                               session={session}
                               teamEntry={entryOf(session.id)}
+                              channelEntry={channelEntryOf(session.id)}
+                              isUnread={isUnread(session)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={true}
@@ -262,6 +368,8 @@ export function LeftSidebar() {
                               key={session.id}
                               session={session}
                               teamEntry={entryOf(session.id)}
+                              channelEntry={channelEntryOf(session.id)}
+                              isUnread={isUnread(session)}
                               isActive={currentSessionId === session.id}
                               isRunning={activeSessionIds.has(session.id)}
                               isPinned={false}
@@ -378,9 +486,34 @@ export function LeftSidebar() {
   )
 }
 
+/** Which IM a session came from. The gateway's "[钉钉·张三]" title prefix is text
+ *  the user cannot scan at a glance — and it only lands after the first turn. */
+function ChannelBadge({ entry }: { entry: ChannelSessionEntry }) {
+  // A v1 entry migrated from the old flat store has no channel type until its chat
+  // is seen again — rendering it would put a mute, tooltip-less icon on the row.
+  // Say nothing rather than something meaningless.
+  if (!entry.channelType) return null
+
+  const Icon = CHANNEL_TYPE_ICONS[entry.channelType]
+  const label = entry.senderName
+    ? `${entry.channelType} · ${entry.senderName}`
+    : entry.channelType
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className="inline-flex shrink-0 items-center rounded-full bg-[var(--color-brand)]/10 p-0.5 text-[var(--color-brand)]"
+    >
+      {Icon ? <Icon className="size-3" /> : <MessageSquare className="size-3" />}
+    </span>
+  )
+}
+
 function SessionItem({
   session,
   teamEntry,
+  channelEntry,
+  isUnread,
   isActive,
   isRunning,
   isPinned,
@@ -393,6 +526,9 @@ function SessionItem({
   session: { id: string; title: string; time: { created: number; updated: number } }
   /** Present when this session is a Team leader (018 A-1 混排+徽标). */
   teamEntry?: TeamSessionEntry
+  /** Present when an IM chat owns this session (gateway registry). */
+  channelEntry?: ChannelSessionEntry
+  isUnread: boolean
   isActive: boolean
   isRunning: boolean
   isPinned: boolean
@@ -526,14 +662,25 @@ function SessionItem({
               {t("team.badge")}
             </span>
           )}
+          {channelEntry && <ChannelBadge entry={channelEntry} />}
           <span
             className={cn(
               "truncate",
-              !isActive && "text-[var(--sidebar-fg-soft)] group-hover:text-[var(--sidebar-fg)]"
+              // Unread reads as weight + full-strength text, not just the dot —
+              // the dot alone is easy to miss in a long list.
+              isUnread && !isActive && "font-medium text-[var(--sidebar-fg)]",
+              !isActive && !isUnread && "text-[var(--sidebar-fg-soft)] group-hover:text-[var(--sidebar-fg)]"
             )}
           >
             {title}
           </span>
+          {isUnread && !isActive && (
+            <span
+              aria-label={t("sidebar.unread")}
+              title={t("sidebar.unread")}
+              className="ml-auto size-2 shrink-0 rounded-full bg-[var(--color-primary)]"
+            />
+          )}
         </p>
         <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>

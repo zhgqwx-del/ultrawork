@@ -26,6 +26,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "sidebar.searchPlaceholder": "Search sessions...",
     "sidebar.noMatch": "No matching sessions",
     "sidebar.noSessions": "No sessions yet",
+    "sidebar.unread": "New activity",
     "sidebar.user": "User",
 
     // Settings popover
@@ -815,6 +816,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "sidebar.searchPlaceholder": "搜索会话...",
     "sidebar.noMatch": "没有匹配的会话",
     "sidebar.noSessions": "暂无会话",
+    "sidebar.unread": "有新消息",
     "sidebar.user": "用户",
 
     // Settings popover
