@@ -62,7 +62,7 @@ pub fn ensure_webview_runtime() {
         if go_download {
             // Not `cmd /C start`: release builds carry no console, so spawning one
             // flashes a black window. explorer.exe is already a GUI process.
-            let _ = std::process::Command::new("explorer")
+            let _ = std::process::Command::new("explorer") // allow-bare-command: GUI program, no console to suppress
                 .arg(WEBVIEW2_DOWNLOAD_URL)
                 .spawn();
         }

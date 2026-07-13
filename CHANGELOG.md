@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows 退出时闪现多个 PowerShell 控制台窗口（ADR-054，discussions/037）**：release 构建是 GUI 子系统程序（无控制台），派生控制台子进程时若不带 `CREATE_NO_WINDOW` 就会被系统分配一个可见窗口。退出清理路径（`shutdown_sidecars`）一次性起 **4 个 PowerShell**（`kill_browser_mcp_processes` 按 needle 循环，且**无条件调用**——没用过浏览器也照弹）+ 每个 sidecar 一个 `taskkill`，全都没带该 flag。
+  - **收敛而非逐个补**：全部 35 处 `Command::new` 归一到唯一构造器 `sys_cmd()`（恒定加 flag）。此前已有 `no_window()` 辅助函数，但只覆盖 5/35 处——**这个 bug 正是"有的加了、有的漏了"造成的**，逐个补一遍下次照样漏。新增 `no_bare_command_new` 单测扫描整个 `src/`，禁止裸 `Command::new`（CI 里没有任何东西能"看见"一个窗口闪过，源码是唯一守得住的层面）。
+  - **PowerShell 降级为纯枚举器**：对抗审查抓出，单纯给 PowerShell 加 flag 会让窗口**转嫁到它派生的 `taskkill` 上**（Chrome helper 全命中 needle ⇒ 可能几十个窗口，比原 bug 更糟）。现在 PowerShell 只 `ForEach-Object { $_.ProcessId }` 打印 PID，杀进程回到 Rust 侧 `kill_process_tree()`（由 GUI 主进程经 `sys_cmd` 派生 ⇒ 零窗口）。
+  - **修掉一个既有的静默失效**：该 WMI 查询的 needle **字面写在 PowerShell 自己的命令行里** ⇒ 它匹配到自身 ⇒ 把自己的 PID 喂给 `taskkill /F` ⇒ 中途自杀、剩余 PID 全不清理。**Windows 上的浏览器进程清理很可能从来没可靠工作过**。已加 `$_.ProcessId -ne $PID` 自排除。
+  - 4 次 WMI 全进程表扫描 + 4 次 PowerShell 冷启动 → **1 次**，退出更快。
+  - 验证：Rust 单测 **132**（+5 守卫，每条均经 A/B 反证）· clippy 零新增 · `sys_cmd` 的 `#[cfg(windows)]` 块已单独对 `x86_64-pc-windows-msvc` 交叉编译。**⚠️ Windows 真机验收待做**——闪窗只在 Windows release 包上可观测（dev 构建自带控制台，永远不弹窗），mac 上物理验不了。
+
 ## [0.2.6] - 2026-07-12
 
 > AI 干完活会主动叫你了：回复完成 / agent 需要你操作时，提示音 + 系统通知 + Dock/任务栏图标提醒（ADR-053）。
