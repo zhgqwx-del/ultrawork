@@ -18,7 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - **PowerShell 降级为纯枚举器**：对抗审查抓出，单纯给 PowerShell 加 flag 会让窗口**转嫁到它派生的 `taskkill` 上**（Chrome helper 全命中 needle ⇒ 可能几十个窗口，比原 bug 更糟）。现在 PowerShell 只 `ForEach-Object { $_.ProcessId }` 打印 PID，杀进程回到 Rust 侧 `kill_process_tree()`（由 GUI 主进程经 `sys_cmd` 派生 ⇒ 零窗口）。
   - **修掉一个既有的静默失效**：该 WMI 查询的 needle **字面写在 PowerShell 自己的命令行里** ⇒ 它匹配到自身 ⇒ 把自己的 PID 喂给 `taskkill /F` ⇒ 中途自杀、剩余 PID 全不清理。**Windows 上的浏览器进程清理很可能从来没可靠工作过**。已加 `$_.ProcessId -ne $PID` 自排除。
   - 4 次 WMI 全进程表扫描 + 4 次 PowerShell 冷启动 → **1 次**，退出更快。
-  - 验证：Rust 单测 **132**（+5 守卫，每条均经 A/B 反证）· clippy 零新增 · `sys_cmd` 的 `#[cfg(windows)]` 块已单独对 `x86_64-pc-windows-msvc` 交叉编译。**⚠️ Windows 真机验收待做**——闪窗只在 Windows release 包上可观测（dev 构建自带控制台，永远不弹窗），mac 上物理验不了。
+  - 验证：Rust 单测 **132**（+5 守卫，每条均经 A/B 反证）· clippy 零新增 · `sys_cmd` 的 `#[cfg(windows)]` 块已单独对 `x86_64-pc-windows-msvc` 交叉编译。**✅ Windows 真机验收通过（v0.2.7 正式包）**：启动→退出零窗口；用浏览器 MCP 后退出零窗口且 Chrome 清理干净（顺带坐实旧代码那条自杀的 PowerShell 确实让清理夭折过）。
 
 ## [0.2.6] - 2026-07-12
 

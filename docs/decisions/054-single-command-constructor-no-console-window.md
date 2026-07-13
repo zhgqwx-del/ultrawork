@@ -1,6 +1,6 @@
 # ADR-054：所有子进程走单一构造器 `sys_cmd()`，杜绝 Windows 控制台窗口闪现
 
-- 状态：已接受（**Windows 真机验收待做**）
+- 状态：已接受（**Windows 真机验收通过**，2026-07-13 / v0.2.7）
 - 日期：2026-07-13
 - 背景讨论：`docs/discussions/037-windows-console-flash-on-exit.md`
 - 相关：ADR-037（跨平台）· ADR-045（sidecar 关停）· gotchas §12
@@ -61,4 +61,5 @@ Rust 读回 PID → `kill_process_tree()` → `taskkill /F /T` 由 GUI 主进程
 - Rust 单测 **132**（基线 127 + 5 个守卫），clippy 零新增警告，typecheck 8/8。
 - **每个守卫都做过 A/B 反证**：注入裸 `Command::new`（含新建模块）→ 红并精确报行；把 `taskkill` 塞回 PowerShell 管道 → 红；撤掉 `$PID` 自排除 → 红。
 - `sys_cmd` 的 `#[cfg(windows)]` 块已单独对 `x86_64-pc-windows-msvc` 交叉编译通过（整个 `lib.rs` 里该属性只此一处，其余 Windows 逻辑全是 `if cfg!(...)` 运行时分支 ⇒ **本次没有一行代码是编译器没看过的**）。
-- **⚠️ 待办：Windows 真机验收。** 闪窗只在 Windows **release** 包上可观测——dev 构建自带控制台，子进程直接复用，永远不弹窗。验法见 discussions/037 §6（含结构化断言：退出期间 powershell 进程 ≤1、**由 powershell 派生的进程 = 0**、taskkill 的父进程是 `Ultrawork.exe`）。
+- **✅ Windows 真机验收通过（2026-07-13，v0.2.7 正式 Release 包）**：① 启动 → 退出 = **零窗口闪现**（主症状消失）；② 用浏览器 MCP 后退出 = **零窗口** 且 Chrome 清理干净（**顺带坐实 D3-②**：旧代码那条自杀的 PowerShell 确实让清理夭折过）。发包前已从正式 Release 的安装器里解出 `ultrawork.exe` 做**双向探针**——新枚举命令在 / 旧的管道内 `taskkill` 已消失 / PE 子系统 = 2 (WINDOWS_GUI)，三条堵死「测到旧包」和「测到自带控制台的构建」两种假绿。
+- **未验证项**：「起 ACP 会话是否闪窗」（`Bun.spawn` 未传 `windowsHide`）—— 该 Windows 机器**未安装 Claude/Gemini**，结构上无法验证。见下方「已知残余」。
