@@ -13,7 +13,15 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const { config, updateConfig } = useConfig()
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light")
+  // Seeded from the class the inline script in index.html already resolved, not from a
+  // hardcoded "light". The effect below sets the *class* correctly on the first pass,
+  // but consumers of `resolvedTheme` (the Toaster, CodeMirror's theme) render before it
+  // runs — so a dark-mode user used to get one light-themed frame of those regardless.
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark")
+      ? "dark"
+      : "light"
+  )
 
   const setTheme = (theme: Theme) => {
     updateConfig({ theme })

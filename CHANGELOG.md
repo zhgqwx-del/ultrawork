@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-07-13
+
+> 启动不再白屏，而且快了近一倍：应用可用时间 4.23s → 2.22s（macOS 真机像素级实测）。
+
+### Fixed
+
+- **启动白屏（ADR-055，discussions/038）**：Tauri 先按 `tauri.conf.json` 创建窗口（`visible` 默认 true），**之后**才调用 `setup()` 钩子，而整个 `setup()` 跑在 `app.run()` 启动事件循环**之前**（`tauri-2.10.3/src/app.rs:2370-2383`）。我们在 `setup()` 里同步启动 sidecar——`start_sidecar("opencode-server")` 是四个里**唯一没丢进后台线程的**，靠 `thread::sleep` 轮询健康检查。主线程一停 runloop 就不转，WebView **一帧都画不出来**：白屏不是"渲染慢"，是根本没在渲染。
+  - **重活全部移入 `boot_sidecars()` 协调线程**，顺序一字不改（技能要先于 opencode 首次扫描落地、孤儿要先于选端口回收、凭证要先于任何 sidecar 生成），`setup()` 立即返回。
+  - **顺带提速近一倍**：主线程释放后，WebView 解析 2.4MB bundle 与 opencode 启动**天然并行**，总时长从"相加"变"取大"。
+  - **splash 内联在 `index.html`**（纯 HTML/CSS，零 JS 依赖，WebView 首帧即可绘制），阶段文案由 Rust 经 `boot-progress` 事件驱动。**不做假百分比**——真正慢的是装完第一次启动（拷 124MB sidecar + 解压 12165 个技能文件，实测 2s+），假进度条卡在 90% 比诚实的阶段名更伤。中/英双语。
+  - **前置事实**：主线程不解阻塞，任何 splash（包括静态 HTML）都画不出来。"解阻塞"和"加 loading"不是两个可选项，是一件事的两半。
+- **OpenCode 启动失败时 app 永久冻死（既存缺陷，本次顺带修复）**：`tauri-plugin-dialog` 的 `blocking_show` 内部靠 `run_on_main_thread` 把弹窗投递给事件循环、再阻塞等回调。旧 `setup()` 在事件循环启动**之前**阻塞主线程 ⇒ 那个闭包永远不会被执行 ⇒ **死锁**。不是"弹窗没弹出来"，是整个 app 卡死。搬到后台线程后自然修复。
+- **深色模式启动闪一帧浅色**：`index.html` 内联脚本在 body 存在前就解析主题并给 `<html>` 打 class；`theme-context` 的 `resolvedTheme` 初值也改为读该 class（此前硬编码 `"light"`，导致 Toaster / CodeMirror 主题在深色下仍吃一帧浅色）。
+
+### Changed
+
+- **停机改用「屏障 + spawn 锁」双重握手**：`setup()` 变非阻塞后，「启动中途退出」从不可达变为**可达**，且窗口比听起来宽——gateway/knowledge/acp 在 opencode 健康**之后**才派生，也就是主界面刚出现那会儿，用户在窗口弹出后一秒按 Cmd-Q 就落进去。两条退出路径都在 `shutdown_sidecars()` 一返回就销毁进程（信号路径直接 `process::exit`），**不等协调线程** ⇒ 一个卡在 `spawn_sidecar` 里的线程会连同它欠下的 `kill_pid` 一起被销毁，那个子进程既不在被抽空的注册表里、也不在已被删除的 `ports.json` 里 ⇒ **永久孤儿**。`SHUTTING_DOWN` 定所有权、`SPAWN_LOCK` 定时序，二者缺一不可。
+- **渲染门（`get_sidecar_ports`）改为 async + `spawn_blocking`**，park 到 opencode **健康**为止（不是端口一选定就放行——那样 UI 会渲染到没人监听的端口上，每个 Provider 的首次 fetch 全部失败）。超时 20s → **90s**（原值低于代码自己的最坏合法启动 45s，会在合法慢启动上误触发）。
+- `load_or_create_sidecar_credentials` 加锁串行化：首次启动时协调线程与渲染端会并发调用，不加锁会各自生成一份**不同的**随机密码。
+
 ## [0.2.7] - 2026-07-13
 
 > Windows 上退出 app 不再闪现一排 PowerShell 控制台窗口（ADR-054）。

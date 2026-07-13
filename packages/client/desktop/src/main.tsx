@@ -12,6 +12,7 @@ import { AgentProvider } from "./lib/agent-context"
 import { router } from "./router"
 import { loadSidecarPorts } from "./lib/sidecar-ports"
 import { loadSidecarCredentials } from "./lib/sidecar-auth"
+import { beginBootTracking, dismissSplashWhenReady } from "./lib/boot-splash"
 import "./index.css"
 
 function ThemedToaster() {
@@ -28,10 +29,23 @@ function ThemedToaster() {
   )
 }
 
+// Narrate the splash from here on. This MUST come before the startup gate below, not
+// inside it: the gate only opens once the engine is up, so a listener attached after it
+// would have missed every intermediate stage and could only ever see the final one —
+// leaving the splash stuck on its hardcoded first line for the entire boot, and the
+// stage texts unreachable (discussions/038).
+beginBootTracking()
+
 // Startup gate: sidecar ports AND credentials are resolved before the first
 // render, so every base-URL / auth-header helper downstream stays synchronous and
 // no provider has to model a "not known yet" state. Neither loader rejects —
 // outside Tauri they fall back — so this cannot wedge the boot.
+//
+// The host holds `get_sidecar_ports` until opencode is healthy, so this still gates the
+// first render on a live backend, exactly as it did when startup blocked the main
+// thread. What changed is that the main thread is now free while it waits, so the
+// webview parses its bundle *alongside* the engine boot instead of after it — and the
+// splash is on screen for all of it.
 Promise.all([loadSidecarPorts(), loadSidecarCredentials()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -53,4 +67,6 @@ Promise.all([loadSidecarPorts(), loadSidecarCredentials()]).then(() => {
       </ConfigProvider>
     </React.StrictMode>
   )
+
+  dismissSplashWhenReady()
 })
