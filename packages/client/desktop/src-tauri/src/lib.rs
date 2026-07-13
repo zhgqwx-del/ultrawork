@@ -41,6 +41,139 @@ fn drop_registry_entry(reg: &mut Vec<SidecarEntry>, name: &str, pid: u32) {
     reg.retain(|e| !(e.name == name && e.pid == Some(pid)));
 }
 
+// ── Boot lifecycle ───────────────────────────────────────────────────
+//
+// Startup used to run inside `setup()`, on the main thread, *before* Tauri's event
+// loop existed (`tauri::app::setup` builds the config windows and only then calls
+// our hook). The window was therefore already on screen while the main thread sat
+// in `await_sidecar_ready`'s sleep loop — with the runloop stopped the webview
+// cannot paint a single frame, which is what the startup "white screen" was.
+//
+// The work now runs on a boot coordinator thread (`boot_sidecars`) in exactly the
+// same order, so `setup()` returns immediately and the webview can paint the splash.
+// Three consequences have to be handled explicitly — see below.
+
+/// Stages the coordinator broadcasts to the splash. `ready`/`failed` are terminal.
+///
+/// Deliberately coarse and honest: the splash names the stage it is in rather than
+/// animating a percentage. The genuinely slow launch is the first one after an
+/// install (copying ~124MB of sidecars, unpacking skills), and a fake bar stuck at
+/// 90% reads worse there than "正在准备组件".
+const BOOT_PROGRESS_EVENT: &str = "boot-progress";
+const BOOT_STAGE_PREPARING: &str = "preparing";
+const BOOT_STAGE_SKILLS: &str = "skills";
+const BOOT_STAGE_ENGINE: &str = "engine";
+const BOOT_STAGE_READY: &str = "ready";
+const BOOT_STAGE_FAILED: &str = "failed";
+
+static BOOT_STAGE: Mutex<&'static str> = Mutex::new(BOOT_STAGE_PREPARING);
+
+fn boot_stage() -> &'static str {
+    match BOOT_STAGE.lock() {
+        Ok(s) => *s,
+        Err(poisoned) => *poisoned.into_inner(),
+    }
+}
+
+/// Broadcast a stage, and record it so a renderer that attached its listener *after*
+/// the event fired can still catch up (`get_boot_status`). A fast path — opencode
+/// reusing a healthy port — can reach `ready` before the bundle has even parsed.
+fn set_boot_stage<T: tauri::Emitter<tauri::Wry>>(emitter: &T, stage: &'static str) {
+    if let Ok(mut s) = BOOT_STAGE.lock() {
+        *s = stage;
+    }
+    let _ = emitter.emit(BOOT_PROGRESS_EVENT, serde_json::json!({ "stage": stage }));
+}
+
+/// Current stage, for a renderer that missed the event.
+#[tauri::command]
+fn get_boot_status() -> &'static str {
+    boot_stage()
+}
+
+/// Set the moment shutdown begins, and never cleared.
+///
+/// `shutdown_sidecars` drains the registry (`mem::take`) and then deletes
+/// `ports.json`. While startup was synchronous the user had no way to quit
+/// mid-boot, so nothing could spawn after that drain. Now they can: without this
+/// flag the coordinator would happily `reg.push` a sidecar *after* the registry was
+/// emptied, leaving a process nobody will ever kill — and invisible to the next
+/// launch's `reap_orphaned_sidecars`, which only knows what `ports.json` records.
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn shutting_down() -> bool {
+    SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Held across "check the barrier → spawn → register", and by `shutdown_sidecars`
+/// across "raise the barrier → drain the registry".
+///
+/// The barrier alone settles *ownership* but not *timing*, and timing is what kills
+/// us here: both shutdown paths destroy the process the moment they are done — the
+/// signal handler calls `std::process::exit` outright, and `RunEvent::Exit` returns
+/// into tao, which terminates. Nothing waits for the boot threads. So a spawner
+/// sitting inside `spawn_sidecar` — child already forked, not yet pushed to the
+/// registry — is not merely late: it is about to be destroyed, and the debt it owed
+/// (killing that child) dies with it. The child is then in neither the drained
+/// registry nor `ports.json`, which shutdown has already deleted, so the next
+/// launch's `reap_orphaned_sidecars` cannot see it either. A permanent orphan.
+///
+/// This is not the narrow "quit during boot" window it sounds like: gateway,
+/// knowledge and acp only start spawning *after* opencode is healthy, i.e. right
+/// around the time the UI first appears. Quitting a second after the window shows is
+/// completely ordinary.
+///
+/// Taking the lock makes the two sequences mutually exclusive, so the barrier check
+/// and the spawn can no longer be torn apart. Lock order is always
+/// `SPAWN_LOCK → SIDECAR_REGISTRY`.
+static SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+fn spawn_guard() -> std::sync::MutexGuard<'static, ()> {
+    SPAWN_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The renderer's startup gate.
+///
+/// `main.tsx` awaits `get_sidecar_ports()` before the first render, so that every
+/// base-URL helper downstream can stay synchronous and no provider has to model a
+/// "backend not up yet" state. Both halves of that contract used to hold for free:
+/// setup had picked the port *and* waited out opencode's health check before the
+/// webview existed. Now the webview and the coordinator run concurrently, so the
+/// command parks here until the coordinator opens the gate — which it does only once
+/// opencode is healthy (or has definitively failed).
+///
+/// Opening it earlier (as soon as the port was merely *chosen*) would render the UI
+/// against a port nobody is listening on yet, and every provider's first fetch would
+/// fail. The parallelism this change buys does not depend on that: the webview parses
+/// its bundle while opencode boots simply because the main thread is no longer blocked.
+static BOOT_PORTS_READY: (Mutex<bool>, std::sync::Condvar) =
+    (Mutex::new(false), std::sync::Condvar::new());
+
+/// Last-resort bound on the renderer's wait. It must sit *above* the slowest boot the
+/// coordinator can legitimately produce, or it stops being a backstop and becomes a
+/// bug: firing it mid-boot renders the UI against a backend that is not up, which is
+/// precisely the state the gate exists to prevent. (An earlier 20s was below the
+/// coordinator's own worst case — `MAX_START_ATTEMPTS` × the 15s health timeout is 45s
+/// on its own, before the first-launch file work.)
+///
+/// The coordinator always signals — every exit path does, including a panic
+/// (`catch_unwind` in `run()`) — so in practice this never fires at all.
+const BOOT_PORTS_WAIT: Duration = Duration::from_secs(90);
+
+fn signal_boot_ports_ready() {
+    let (lock, cvar) = &BOOT_PORTS_READY;
+    if let Ok(mut ready) = lock.lock() {
+        *ready = true;
+    }
+    cvar.notify_all();
+}
+
+fn await_boot_ports_ready(timeout: Duration) {
+    let (lock, cvar) = &BOOT_PORTS_READY;
+    let Ok(ready) = lock.lock() else { return };
+    let _ = cvar.wait_timeout_while(ready, timeout, |ready| !*ready);
+}
+
 // ── Sidecar port registry (runtime source of truth) ──────────────────
 //
 // Ports are decided once at startup and handed to every consumer from here:
@@ -142,8 +275,12 @@ fn ephemeral_port() -> Result<u16, String> {
     Ok(port)
 }
 
+/// Async on purpose: a *sync* command body runs on the main thread, so blocking in
+/// one would re-create the very stall this whole change removes. `spawn_blocking`
+/// parks the wait on a pool thread instead.
 #[tauri::command]
-fn get_sidecar_ports() -> SidecarPorts {
+async fn get_sidecar_ports() -> SidecarPorts {
+    let _ = tauri::async_runtime::spawn_blocking(|| await_boot_ports_ready(BOOT_PORTS_WAIT)).await;
     sidecar_ports()
 }
 
@@ -228,6 +365,19 @@ fn write_ports_json_at(path: &std::path::Path, json: &str) -> std::io::Result<()
 /// a failure here degrades self-heal, never startup.
 fn write_ports_json() {
     let _guard = PORTS_JSON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // A sidecar that goes ready just as the user quits must not re-create the file
+    // `shutdown_sidecars` has already deleted: the leftover would name ports nobody
+    // is listening on, and the next launch's `reap_orphaned_sidecars` would take it
+    // for a crashed instance.
+    //
+    // Checked *inside* the lock, not before it. `remove_ports_json` takes the same
+    // lock, so holding it here is what makes "is the app shutting down?" and "write
+    // the file" a single atomic step — outside the lock, the delete could slip
+    // between the two and the file would be resurrected.
+    if shutting_down() {
+        return;
+    }
 
     // One snapshot of each source, taken together: pairing a port read now against a
     // pid read later can attribute a pid to a port it never owned (a sidecar mid-retry
@@ -361,7 +511,14 @@ fn reap_recorded_listeners(
 
 /// Drop the port mirror on clean exit. Its absence is what tells the next launch
 /// "the previous instance shut down properly".
+///
+/// Takes `PORTS_JSON_LOCK` for the same reason the writers do — and it is not
+/// theoretical. A sidecar that goes healthy just as the user quits calls
+/// `write_ports_json`, and without the lock this delete could land *between* that
+/// writer's barrier check and its `rename(2)`, so the file would come back from the
+/// dead naming ports we had just killed.
 fn remove_ports_json() {
+    let _guard = PORTS_JSON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = ports_json_path();
     if path.exists() {
         if let Err(e) = std::fs::remove_file(&path) {
@@ -626,6 +783,29 @@ fn port_listener_orphaned(port: u16) -> bool {
 fn shutdown_sidecars() {
     println!("[shutdown] Cleaning up sidecar processes...");
 
+    // Raise the barrier and drain the registry as one step, under `SPAWN_LOCK`.
+    //
+    // The barrier alone is not enough. Both exit paths destroy the process as soon as
+    // this function returns (the signal handler calls `std::process::exit`;
+    // `RunEvent::Exit` returns into tao), so nothing ever waits for the boot threads:
+    // a spawner caught mid-`spawn_sidecar` would be killed still owing us a `kill_pid`,
+    // and its child — in neither the registry nor the about-to-be-deleted `ports.json`
+    // — would outlive the app with nothing able to find it again. Taking the lock means
+    // any spawner is either finished (so its child is in the drained set) or has not
+    // started (so it sees the barrier and refuses).
+    //
+    // Also releases the renderer's startup gate: quitting mid-boot must not leave
+    // `get_sidecar_ports` parked.
+    let entries = {
+        let _spawn = spawn_guard();
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+        match SIDECAR_REGISTRY.lock() {
+            Ok(mut reg) => std::mem::take(&mut *reg),
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        }
+    };
+    signal_boot_ports_ready();
+
     // Pending office-CLI children (lark `config init`, dws `auth login`) are
     // not in the sidecar registry — kill them here so they can't survive app
     // quit and race a next-launch flow on the same CLI config/token store.
@@ -636,11 +816,6 @@ fn shutdown_sidecars() {
             let _ = pending.child.wait();
         }
     }
-
-    let entries = match SIDECAR_REGISTRY.lock() {
-        Ok(mut reg) => std::mem::take(&mut *reg),
-        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
-    };
 
     // Phase 1: kill by PID
     for entry in &entries {
@@ -936,11 +1111,27 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
     let mut last_error = String::new();
 
     for attempt in 1..=MAX_START_ATTEMPTS {
+        // Quitting mid-boot is reachable now that startup does not block the event
+        // loop. Bail before spawning anything the shutdown pass can no longer see.
+        if shutting_down() {
+            return Err(format!("{} not started: app is shutting down", name));
+        }
+
         // Attempt 1 may reuse or take the preferred port; a retry always moves.
         let port = if attempt == 1 {
             match plan_port(name, preferred_port, health_path, health_auth, fixed)? {
                 PortPlan::Reuse(port) => {
                     println!("{} already running on port {} (healthy), reusing", name, port);
+
+                    // Adopting an incumbent is a registry write like any other, so it
+                    // takes the same lock. `plan_port` health-checks the incumbent and
+                    // can therefore run long, which is exactly when shutdown lands.
+                    let _spawn = spawn_guard();
+                    if shutting_down() {
+                        // Nothing was adopted, so nothing is ours to kill: this process
+                        // belongs to whoever started it, and we are on our way out.
+                        return Err(format!("{} not started: app is shutting down", name));
+                    }
                     set_sidecar_port(name, port);
                     if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
                         reg.push(SidecarEntry { name, port, pid: None });
@@ -954,11 +1145,25 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
             ephemeral_port()?
         };
 
-        publish_sidecar_port(shell_host, name, port);
-        let child = spawn_sidecar(shell_host, name, &args_for(port), &env_for(port))?;
-        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-            reg.push(SidecarEntry { name, port, pid: Some(child.pid) });
-        }
+        // Spawn and register as one indivisible step. Holding `SPAWN_LOCK` across both
+        // is what closes the orphan window: shutdown cannot drain the registry between
+        // the fork and the push, so every child we create is either in the set shutdown
+        // drains, or refused before it exists. Re-check the barrier *inside* the lock —
+        // the check above is only a cheap early-out, and shutdown may have started since.
+        let child = {
+            let _spawn = spawn_guard();
+            if shutting_down() {
+                return Err(format!("{} not started: app is shutting down", name));
+            }
+            publish_sidecar_port(shell_host, name, port);
+            let child = spawn_sidecar(shell_host, name, &args_for(port), &env_for(port))?;
+            if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+                reg.push(SidecarEntry { name, port, pid: Some(child.pid) });
+            }
+            child
+        };
+        // Lock released. The health wait below is long, and shutdown must not be made
+        // to wait it out — by now the child is registered, so shutdown owns it.
 
         match await_sidecar_ready(port, health_path, health_auth, &child.exited, max_wait) {
             ReadyOutcome::Ready => {
@@ -2345,7 +2550,22 @@ fn sidecar_credentials_path() -> PathBuf {
     global_config_dir().join("sidecar-auth.json")
 }
 
+/// Serializes the exists-then-generate sequence below.
+///
+/// Two callers now race on first launch — the boot coordinator (which hands the
+/// password to every sidecar via env) and the renderer's `get_sidecar_credentials`.
+/// Unserialized, both would find no file, both would generate a *different* random
+/// password, and the one the renderer signs its requests with would not be the one
+/// the sidecars accept. Under the lock the loser simply reads the winner's file.
+/// (While startup was synchronous this could not happen: the file always existed
+/// before the webview did.)
+static SIDECAR_CREDENTIALS_LOCK: Mutex<()> = Mutex::new(());
+
 fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    let _guard = SIDECAR_CREDENTIALS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     // Env var escape hatch for tests / scripted access
     if let Ok(pass) = std::env::var("ULTRAWORK_SIDECAR_PASSWORD") {
         if !pass.is_empty() {
@@ -2409,9 +2629,14 @@ fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
     Ok(creds)
 }
 
+/// Async for the same reason as `get_sidecar_ports`: it can contend with the boot
+/// coordinator on `SIDECAR_CREDENTIALS_LOCK`, and a sync command body would do that
+/// waiting on the main thread.
 #[tauri::command]
-fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
-    load_or_create_sidecar_credentials()
+async fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    tauri::async_runtime::spawn_blocking(load_or_create_sidecar_credentials)
+        .await
+        .map_err(|e| format!("credential lookup failed: {}", e))?
 }
 
 // Tauri target triple for the currently-running build. Used to construct sidecar
@@ -5460,6 +5685,270 @@ fn probe_log(msg: String) {
     println!("[PROBE][web] {msg}");
 }
 
+/// Startup, off the main thread.
+///
+/// Same order as before — it encodes real dependencies (skills must land before
+/// opencode's first scan; orphans must be reaped before ports are picked; the
+/// credential must exist before any sidecar is handed it) — but nothing here blocks
+/// the event loop any more. Progress is narrated to the splash via `boot-progress`.
+fn boot_sidecars(app: tauri::AppHandle) {
+    set_boot_stage(&app, BOOT_STAGE_PREPARING);
+
+    // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
+    // and any external tooling can use a stable user-local path.
+    ensure_sidecar_copies();
+
+    set_boot_stage(&app, BOOT_STAGE_SKILLS);
+
+    // Stage 1b: copy bundled built-in skills into the config skills dir
+    // (before OpenCode starts, so the first /skill scan sees them) and
+    // reconcile same-name shadowing (user installs win, gotchas §10).
+    if let Err(e) = ensure_builtin_skills(&app) {
+        eprintln!("[builtin-skills] {}", e);
+    }
+
+    // Stage 2: migrate any pre-existing MCP entries in opencode.json to
+    // point at the canonical user-local path (handles dev → DMG and old
+    // app-bundle paths in pre-existing configs).
+    canonicalize_sidecar_mcp_paths();
+
+    // Stage 2b: drop ports that older builds baked into opencode.json.
+    // Must run before opencode starts: it reads the file at boot, and a
+    // stale mcp.environment port would override the one we inject.
+    strip_persisted_sidecar_ports();
+
+    // Stage 2c: a surviving ports.json means the previous instance died without
+    // cleaning up. Kill whatever of ours is still holding those ports before we
+    // pick new ones — `prepare_port` only looks at the preferred four.
+    reap_orphaned_sidecars();
+
+    // Load (or first-time generate) the per-install sidecar credentials before
+    // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
+    // call the OpenCode HTTP API, and OpenCode itself reads it from env.
+    let creds = match load_or_create_sidecar_credentials() {
+        Ok(c) => c,
+        Err(e) => {
+            // Tear the splash down *before* the modal, not after. `blocking_show`
+            // parks this thread until the user clicks OK, so anything after it is
+            // anything-after-the-user — and an error dialog stacked on top of a splash
+            // still animating "正在准备组件…" is a mixed message at best. Releasing the
+            // gate first also means the app is behind the dialog when it is dismissed,
+            // rather than a splash that then has to catch up.
+            signal_boot_ports_ready();
+            set_boot_stage(&app, BOOT_STAGE_FAILED);
+            app.dialog()
+                .message(format!(
+                    "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
+                    e
+                ))
+                .kind(MessageDialogKind::Error)
+                .title("Startup Error")
+                .blocking_show();
+            return;
+        }
+    };
+    let auth_header = {
+        use base64::Engine;
+        let token = base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", creds.username, creds.password));
+        format!("Basic {}", token)
+    };
+
+    // OpenCode goes first (critical — blocks until ready). The other three
+    // are started afterwards because two of them need opencode's *final*
+    // port in their env, and with dynamic ports that is not known until it
+    // is actually listening.
+    //
+    // The reverse dependency — opencode's delegate-mcp shim needing the ACP
+    // port — is deliberately NOT resolved through env: it would be a cycle.
+    // The shim reads ~/.ultrawork/run/ports.json at spawn time instead
+    // (delegate-mcp.ts), by which point the ACP sidecar has settled.
+    //
+    // PATH: rich (login-shell) PATH, same as acp-client — skills shell out
+    // to python3/pandoc/… and a Finder-launched app only inherits the
+    // minimal GUI PATH. This also keeps the skill-dependency probes
+    // (skill_dep_path, rich-based) consistent with what skill bash
+    // actually resolves at runtime.
+    set_boot_stage(&app, BOOT_STAGE_ENGINE);
+
+    let oc_path = rich_path();
+    let oc_password = creds.password.clone();
+    let oc_username = creds.username.clone();
+    let engine_ok = start_sidecar(
+        &app,
+        "opencode-server",
+        OPENCODE_PORT,
+        "/global/health",
+        Some(&auth_header),
+        &|port| vec!["serve".into(), "--port".into(), port.to_string()],
+        &|_port| {
+            vec![
+                ("OPENCODE_SERVER_PASSWORD".into(), oc_password.clone()),
+                ("OPENCODE_APP_NAME".into(), OPENCODE_APP_NAME.into()),
+                ("PATH".into(), oc_path.clone()),
+                // Not for opencode itself — inherited by the delegate-mcp stdio
+                // shims it spawns, which must authenticate to the ACP sidecar.
+                ("ULTRAWORK_SIDECAR_USERNAME".into(), oc_username.clone()),
+                ("ULTRAWORK_SIDECAR_PASSWORD".into(), oc_password.clone()),
+            ]
+        },
+    );
+
+    // Open the renderer's gate — opencode is healthy (or has definitively failed), and
+    // its port is final even on the failure path. Holding the gate until *health*, not
+    // merely until the port was chosen, is what preserves the invariant the whole app
+    // rests on: by the time a provider mounts and fetches, the backend answers.
+    //
+    // This costs nothing in wall-clock. The speed-up comes from the main thread being
+    // free at all: the webview now parses its 2.4MB bundle *while* opencode boots,
+    // instead of afterwards. Serial 2.5s becomes parallel ~1.5s — and the splash, which
+    // lives in index.html and needs neither, has been on screen the entire time.
+    signal_boot_ports_ready();
+
+    if let Err(e) = &engine_ok {
+        eprintln!("OpenCode Server startup failed: {}", e);
+        // Terminal stage before the modal — same reasoning as the credential path: the
+        // dialog blocks this thread until dismissed, and the splash must not still be
+        // claiming progress underneath it.
+        set_boot_stage(&app, BOOT_STAGE_FAILED);
+        // Now legitimately off the main thread. `blocking_show` marshals the dialog to
+        // the main thread and parks on a channel until it answers — so on the main
+        // thread, *before the event loop had started*, it could never be answered.
+        // This dialog did not merely fail to appear; it deadlocked the app.
+        app.dialog()
+            .message(format!(
+                "Failed to start OpenCode Server:\n\n{}\n\nThe application may not work correctly.",
+                e
+            ))
+            .kind(MessageDialogKind::Error)
+            .title("Startup Error")
+            .blocking_show();
+    } else {
+        // OpenCode is healthy — eagerly trigger MCP InstanceState init in
+        // the background so the first user prompt doesn't pay the per-MCP
+        // spawn/connect cost.
+        warm_opencode_mcp(sidecar_ports().opencode, auth_header.clone());
+    }
+
+    // opencode's port is settled now (even a failed start leaves the
+    // registry consistent), so the two sidecars that call it can be told
+    // where it is.
+    let opencode_url = format!("http://127.0.0.1:{}", sidecar_ports().opencode);
+
+    // Start Channel Gateway sidecar in background (non-critical, don't block UI)
+    let gw_handle = app.clone();
+    let gw_password = creds.password.clone();
+    let gw_opencode_url = opencode_url.clone();
+    let gw_username = creds.username.clone();
+    let gw_auth_header = auth_header.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = start_sidecar(
+            &gw_handle,
+            "channel-gateway",
+            GATEWAY_PORT,
+            "/channel/health",
+            Some(&gw_auth_header),
+            &|_port| vec![],
+            &|port| {
+                vec![
+                    ("OPENCODE_SERVER_PASSWORD".into(), gw_password.clone()),
+                    ("ULTRAWORK_SIDECAR_USERNAME".into(), gw_username.clone()),
+                    ("ULTRAWORK_SIDECAR_PASSWORD".into(), gw_password.clone()),
+                    ("GATEWAY_PORT".into(), port.to_string()),
+                    ("OPENCODE_BASE_URL".into(), gw_opencode_url.clone()),
+                ]
+            },
+        ) {
+            eprintln!("Channel Gateway startup failed: {}", e);
+            use tauri::Emitter;
+            let _ = gw_handle.emit(
+                "sidecar-startup-failed",
+                serde_json::json!({ "name": "channel-gateway", "error": e }),
+            );
+        }
+    });
+
+    // Start Knowledge Sidecar in background (non-critical, don't block UI)
+    let kb_handle = app.clone();
+    let kb_username = creds.username.clone();
+    let kb_password = creds.password.clone();
+    let kb_auth_header = auth_header.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = start_sidecar(
+            &kb_handle,
+            "knowledge-sidecar",
+            KNOWLEDGE_PORT,
+            "/kb/health",
+            Some(&kb_auth_header),
+            &|_port| vec![],
+            &|port| {
+                vec![
+                    ("KB_PORT".into(), port.to_string()),
+                    ("ULTRAWORK_SIDECAR_USERNAME".into(), kb_username.clone()),
+                    ("ULTRAWORK_SIDECAR_PASSWORD".into(), kb_password.clone()),
+                ]
+            },
+        ) {
+            eprintln!("Knowledge Sidecar startup failed: {}", e);
+            use tauri::Emitter;
+            let _ = kb_handle.emit(
+                "sidecar-startup-failed",
+                serde_json::json!({ "name": "knowledge-sidecar", "error": e }),
+            );
+        }
+    });
+
+    // Start ACP Client sidecar in background (non-critical, don't block
+    // UI). It spawns external agent commands (bunx / claude), which are
+    // not on the minimal Finder-launch PATH — pass the enriched one.
+    let acp_handle = app.clone();
+    let acp_password = creds.password.clone();
+    let acp_opencode_url = opencode_url;
+    let acp_username = creds.username.clone();
+    let acp_auth_header = auth_header.clone();
+    std::thread::spawn(move || {
+        let acp_path = rich_path();
+        if let Err(e) = start_sidecar(
+            &acp_handle,
+            "acp-client",
+            ACP_PORT,
+            "/acp/health",
+            Some(&acp_auth_header),
+            &|_port| vec![],
+            &|port| {
+                vec![
+                    ("PATH".into(), acp_path.clone()),
+                    // In-sidecar orchestrator calls the OpenCode REST API
+                    // (same credential channel as channel-gateway).
+                    ("OPENCODE_SERVER_PASSWORD".into(), acp_password.clone()),
+                    // Inbound auth for /acp/* and /orchestration/*, and inherited
+                    // by the delegate-mcp shims this sidecar spawns.
+                    ("ULTRAWORK_SIDECAR_USERNAME".into(), acp_username.clone()),
+                    ("ULTRAWORK_SIDECAR_PASSWORD".into(), acp_password.clone()),
+                    ("ACP_CLIENT_PORT".into(), port.to_string()),
+                    ("OPENCODE_BASE_URL".into(), acp_opencode_url.clone()),
+                ]
+            },
+        ) {
+            eprintln!("ACP Client startup failed: {}", e);
+            use tauri::Emitter;
+            let _ = acp_handle.emit(
+                "sidecar-startup-failed",
+                serde_json::json!({ "name": "acp-client", "error": e }),
+            );
+        }
+    });
+
+    // Terminal, and always reached: the splash dismisses on `ready` *or* `failed`, so
+    // a coordinator that returned without saying either would strand the user behind
+    // it. The other three sidecars are non-critical and still starting in their own
+    // threads — the UI is usable without them, as it always has been.
+    set_boot_stage(
+        &app,
+        if engine_ok.is_ok() { BOOT_STAGE_READY } else { BOOT_STAGE_FAILED },
+    );
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -5506,6 +5995,7 @@ pub fn run() {
             get_sidecar_path,
             get_sidecar_credentials,
             get_sidecar_ports,
+            get_boot_status,
             check_skill_dependencies,
             check_cli_connectors,
             install_office_cli,
@@ -5521,219 +6011,28 @@ pub fn run() {
             probe_log,
         ])
         .setup(|app| {
-            // Stage 0: catch catchable termination signals so sidecars are
-            // cleaned up on exit paths RunEvent::Exit misses (Ctrl+C, plain kill).
+            // Stage 0 stays on the main thread: it is instantaneous, and the earlier
+            // the handlers exist the smaller the window in which a Ctrl+C leaks sidecars.
             install_signal_handlers();
 
-            // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
-            // and any external tooling can use a stable user-local path.
-            ensure_sidecar_copies();
-
-            // Stage 1b: copy bundled built-in skills into the config skills dir
-            // (before OpenCode starts, so the first /skill scan sees them) and
-            // reconcile same-name shadowing (user installs win, gotchas §10).
-            if let Err(e) = ensure_builtin_skills(app.handle()) {
-                eprintln!("[builtin-skills] {}", e);
-            }
-
-            // Stage 2: migrate any pre-existing MCP entries in opencode.json to
-            // point at the canonical user-local path (handles dev → DMG and old
-            // app-bundle paths in pre-existing configs).
-            canonicalize_sidecar_mcp_paths();
-
-            // Stage 2b: drop ports that older builds baked into opencode.json.
-            // Must run before opencode starts: it reads the file at boot, and a
-            // stale mcp.environment port would override the one we inject.
-            strip_persisted_sidecar_ports();
-
-            // Stage 2c: a surviving ports.json means the previous instance died without
-            // cleaning up. Kill whatever of ours is still holding those ports before we
-            // pick new ones — `prepare_port` only looks at the preferred four.
-            reap_orphaned_sidecars();
-
-            // Load (or first-time generate) the per-install sidecar credentials before
-            // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
-            // call the OpenCode HTTP API, and OpenCode itself reads it from env.
-            let creds = match load_or_create_sidecar_credentials() {
-                Ok(c) => c,
-                Err(e) => {
-                    app.dialog()
-                        .message(format!(
-                            "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
-                            e
-                        ))
-                        .kind(MessageDialogKind::Error)
-                        .title("Startup Error")
-                        .blocking_show();
-                    return Ok(());
-                }
-            };
-            let auth_header = {
-                use base64::Engine;
-                let token = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{}:{}", creds.username, creds.password));
-                format!("Basic {}", token)
-            };
-
-            // OpenCode goes first (critical — blocks until ready). The other three
-            // are started afterwards because two of them need opencode's *final*
-            // port in their env, and with dynamic ports that is not known until it
-            // is actually listening.
-            //
-            // The reverse dependency — opencode's delegate-mcp shim needing the ACP
-            // port — is deliberately NOT resolved through env: it would be a cycle.
-            // The shim reads ~/.ultrawork/run/ports.json at spawn time instead
-            // (delegate-mcp.ts), by which point the ACP sidecar has settled.
-            //
-            // PATH: rich (login-shell) PATH, same as acp-client — skills shell out
-            // to python3/pandoc/… and a Finder-launched app only inherits the
-            // minimal GUI PATH. This also keeps the skill-dependency probes
-            // (skill_dep_path, rich-based) consistent with what skill bash
-            // actually resolves at runtime.
-            let oc_path = rich_path();
-            let oc_password = creds.password.clone();
-            let oc_username = creds.username.clone();
-            if let Err(e) = start_sidecar(
-                &app.handle().clone(),
-                "opencode-server",
-                OPENCODE_PORT,
-                "/global/health",
-                Some(&auth_header),
-                &|port| vec!["serve".into(), "--port".into(), port.to_string()],
-                &|_port| {
-                    vec![
-                        ("OPENCODE_SERVER_PASSWORD".into(), oc_password.clone()),
-                        ("OPENCODE_APP_NAME".into(), OPENCODE_APP_NAME.into()),
-                        ("PATH".into(), oc_path.clone()),
-                        // Not for opencode itself — inherited by the delegate-mcp stdio
-                        // shims it spawns, which must authenticate to the ACP sidecar.
-                        ("ULTRAWORK_SIDECAR_USERNAME".into(), oc_username.clone()),
-                        ("ULTRAWORK_SIDECAR_PASSWORD".into(), oc_password.clone()),
-                    ]
-                },
-            ) {
-                eprintln!("OpenCode Server startup failed: {}", e);
-                app.dialog()
-                    .message(format!(
-                        "Failed to start OpenCode Server:\n\n{}\n\nThe application may not work correctly.",
-                        e
-                    ))
-                    .kind(MessageDialogKind::Error)
-                    .title("Startup Error")
-                    .blocking_show();
-            } else {
-                // OpenCode is healthy — eagerly trigger MCP InstanceState init in
-                // the background so the first user prompt doesn't pay the per-MCP
-                // spawn/connect cost.
-                warm_opencode_mcp(sidecar_ports().opencode, auth_header.clone());
-            }
-
-            // opencode's port is settled now (even a failed start leaves the
-            // registry consistent), so the two sidecars that call it can be told
-            // where it is.
-            let opencode_url = format!("http://127.0.0.1:{}", sidecar_ports().opencode);
-
-            // Start Channel Gateway sidecar in background (non-critical, don't block UI)
-            let gw_handle = app.handle().clone();
-            let gw_password = creds.password.clone();
-            let gw_opencode_url = opencode_url.clone();
-            let gw_username = creds.username.clone();
-            let gw_auth_header = auth_header.clone();
+            // Everything else runs on the boot coordinator. `setup()` is called
+            // *before* Tauri's event loop starts, and Tauri has already put the
+            // config window on screen by then — so anything slow here is a frozen,
+            // unpaintable white window, which is exactly what the startup white
+            // screen was (discussions/038). Returning immediately lets the webview
+            // paint the splash while the coordinator does the work behind it.
+            let boot_app = app.handle().clone();
             std::thread::spawn(move || {
-                if let Err(e) = start_sidecar(
-                    &gw_handle,
-                    "channel-gateway",
-                    GATEWAY_PORT,
-                    "/channel/health",
-                    Some(&gw_auth_header),
-                    &|_port| vec![],
-                    &|port| {
-                        vec![
-                            ("OPENCODE_SERVER_PASSWORD".into(), gw_password.clone()),
-                            ("ULTRAWORK_SIDECAR_USERNAME".into(), gw_username.clone()),
-                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), gw_password.clone()),
-                            ("GATEWAY_PORT".into(), port.to_string()),
-                            ("OPENCODE_BASE_URL".into(), gw_opencode_url.clone()),
-                        ]
-                    },
-                ) {
-                    eprintln!("Channel Gateway startup failed: {}", e);
-                    use tauri::Emitter;
-                    let _ = gw_handle.emit(
-                        "sidecar-startup-failed",
-                        serde_json::json!({ "name": "channel-gateway", "error": e }),
-                    );
-                }
-            });
-
-            // Start Knowledge Sidecar in background (non-critical, don't block UI)
-            let kb_handle = app.handle().clone();
-            let kb_username = creds.username.clone();
-            let kb_password = creds.password.clone();
-            let kb_auth_header = auth_header.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = start_sidecar(
-                    &kb_handle,
-                    "knowledge-sidecar",
-                    KNOWLEDGE_PORT,
-                    "/kb/health",
-                    Some(&kb_auth_header),
-                    &|_port| vec![],
-                    &|port| {
-                        vec![
-                            ("KB_PORT".into(), port.to_string()),
-                            ("ULTRAWORK_SIDECAR_USERNAME".into(), kb_username.clone()),
-                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), kb_password.clone()),
-                        ]
-                    },
-                ) {
-                    eprintln!("Knowledge Sidecar startup failed: {}", e);
-                    use tauri::Emitter;
-                    let _ = kb_handle.emit(
-                        "sidecar-startup-failed",
-                        serde_json::json!({ "name": "knowledge-sidecar", "error": e }),
-                    );
-                }
-            });
-
-            // Start ACP Client sidecar in background (non-critical, don't block
-            // UI). It spawns external agent commands (bunx / claude), which are
-            // not on the minimal Finder-launch PATH — pass the enriched one.
-            let acp_handle = app.handle().clone();
-            let acp_password = creds.password.clone();
-            let acp_opencode_url = opencode_url;
-            let acp_username = creds.username.clone();
-            let acp_auth_header = auth_header.clone();
-            std::thread::spawn(move || {
-                let acp_path = rich_path();
-                if let Err(e) = start_sidecar(
-                    &acp_handle,
-                    "acp-client",
-                    ACP_PORT,
-                    "/acp/health",
-                    Some(&acp_auth_header),
-                    &|_port| vec![],
-                    &|port| {
-                        vec![
-                            ("PATH".into(), acp_path.clone()),
-                            // In-sidecar orchestrator calls the OpenCode REST API
-                            // (same credential channel as channel-gateway).
-                            ("OPENCODE_SERVER_PASSWORD".into(), acp_password.clone()),
-                            // Inbound auth for /acp/* and /orchestration/*, and inherited
-                            // by the delegate-mcp shims this sidecar spawns.
-                            ("ULTRAWORK_SIDECAR_USERNAME".into(), acp_username.clone()),
-                            ("ULTRAWORK_SIDECAR_PASSWORD".into(), acp_password.clone()),
-                            ("ACP_CLIENT_PORT".into(), port.to_string()),
-                            ("OPENCODE_BASE_URL".into(), acp_opencode_url.clone()),
-                        ]
-                    },
-                ) {
-                    eprintln!("ACP Client startup failed: {}", e);
-                    use tauri::Emitter;
-                    let _ = acp_handle.emit(
-                        "sidecar-startup-failed",
-                        serde_json::json!({ "name": "acp-client", "error": e }),
-                    );
+                // A panic in here would take the whole startup contract down with it:
+                // the renderer's gate would never open and the splash would never hear
+                // a terminal stage, so the user would stare at it until the 60s
+                // backstop. Degrade to "the app is up but the engine isn't" instead —
+                // the same state a failed opencode start already produces.
+                let boot = std::panic::AssertUnwindSafe(|| boot_sidecars(boot_app.clone()));
+                if std::panic::catch_unwind(boot).is_err() {
+                    eprintln!("[boot] coordinator panicked — releasing the renderer");
+                    signal_boot_ports_ready();
+                    set_boot_stage(&boot_app, BOOT_STAGE_FAILED);
                 }
             });
 
@@ -6642,6 +6941,98 @@ mod builtin_skills_tests {
 ///   - `shutdown_sidecars` phase 2, which mutates the global registry and
 ///     kills browser MCP processes.
 /// Everything else below runs against real sockets and real child processes.
+#[cfg(test)]
+mod boot_gate_tests {
+    use super::*;
+
+    /// The renderer's startup gate, both halves in one test on purpose: `BOOT_PORTS_READY`
+    /// is process-global and latches, so "blocks before the signal" and "passes after it"
+    /// cannot be separate tests — the second would decide the first's outcome.
+    ///
+    /// What this pins down is the property the white-screen fix rests on: the gate is a
+    /// *wait*, not a poll of some already-true default. If `await_boot_ports_ready`
+    /// returned immediately before the coordinator had chosen a port, the renderer would
+    /// silently build every base URL from the preferred ports and talk to nobody.
+    #[test]
+    fn ports_gate_blocks_until_the_coordinator_signals() {
+        // Before the signal: the wait must actually park.
+        let started = std::time::Instant::now();
+        await_boot_ports_ready(Duration::from_millis(150));
+        assert!(
+            started.elapsed() >= Duration::from_millis(140),
+            "gate returned early ({:?}) — a renderer would race the port decision",
+            started.elapsed()
+        );
+
+        // A late signal must wake a waiter already parked on the condvar, not just
+        // callers that arrive afterwards.
+        let waiter = std::thread::spawn(|| {
+            let started = std::time::Instant::now();
+            await_boot_ports_ready(Duration::from_secs(10));
+            started.elapsed()
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        signal_boot_ports_ready();
+        let waited = waiter.join().expect("waiter panicked");
+        assert!(
+            waited < Duration::from_secs(5),
+            "waiter was not woken by the signal (waited {:?}) — it timed out instead",
+            waited
+        );
+
+        // Latched: every later caller passes straight through.
+        let started = std::time::Instant::now();
+        await_boot_ports_ready(Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_millis(100), "gate did not latch open");
+    }
+
+    /// `shutdown_sidecars` raises this before it drains the registry; `start_sidecar`
+    /// re-reads it *after* registering a freshly-spawned child. That order is what makes
+    /// the handoff total: if the drain already happened, the spawner sees the barrier and
+    /// kills its own child; if the drain happens later, it sees the entry and kills it.
+    /// Neither side can leave a sidecar that nobody owns.
+    #[test]
+    fn shutdown_barrier_is_visible_to_a_spawner_that_registered_after_the_drain() {
+        assert!(!shutting_down(), "barrier must start down");
+
+        // Simulate the drain half of `shutdown_sidecars` (without killing anything).
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+        let drained: Vec<SidecarEntry> = match SIDECAR_REGISTRY.lock() {
+            Ok(mut reg) => std::mem::take(&mut *reg),
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        };
+        assert!(drained.is_empty(), "no test spawns real sidecars");
+
+        // The spawner's half: register, then re-check. It must find the barrier up.
+        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+            reg.push(SidecarEntry { name: "opencode-server", port: 65535, pid: Some(u32::MAX) });
+        }
+        assert!(
+            shutting_down(),
+            "a sidecar registered after the drain would never be killed by anyone"
+        );
+
+        // A sidecar that goes ready now must not re-create the `ports.json` that
+        // shutdown already deleted — the leftover would name dead ports, and the next
+        // launch's `reap_orphaned_sidecars` would read it as a crashed instance.
+        //
+        // `write_ports_json` writes to the real run dir, so this compares the file
+        // before and after rather than asserting on a return value: were the guard ever
+        // removed, this test would be the thing that catches it (a bare call would just
+        // clobber the file and still pass).
+        let before = std::fs::read_to_string(ports_json_path()).ok();
+        write_ports_json();
+        let after = std::fs::read_to_string(ports_json_path()).ok();
+        assert_eq!(before, after, "write_ports_json wrote while shutting down");
+
+        // Leave the process as we found it: this static is global to the test binary.
+        if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
+            drop_registry_entry(&mut reg, "opencode-server", u32::MAX);
+        }
+        SHUTTING_DOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
