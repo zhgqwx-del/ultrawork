@@ -460,12 +460,12 @@ fn listening_pids_on_port(port: u16) -> Vec<u32> {
         // `-p tcp` lists IPv4 TCP only — consistent with is_port_in_use/check_health,
         // which connect to 127.0.0.1 (IPv4); sidecars must bind IPv4 to be detected
         // either way, and this conveniently avoids parsing `[::]:port` IPv6 rows.
-        let Ok(output) = Command::new("netstat").args(["-ano", "-p", "tcp"]).output() else {
+        let Ok(output) = sys_cmd("netstat").args(["-ano", "-p", "tcp"]).output() else {
             return Vec::new();
         };
         parse_netstat_listening_pids(&String::from_utf8_lossy(&output.stdout), port)
     } else {
-        let Ok(output) = Command::new("lsof")
+        let Ok(output) = sys_cmd("lsof")
             .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
             .output()
         else {
@@ -526,7 +526,7 @@ fn exe_name_from_proc_link(link: &str) -> Option<String> {
 /// treat that as "not ours".
 fn process_exe_name(pid: u32) -> Option<String> {
     if cfg!(target_os = "windows") {
-        let output = Command::new("tasklist")
+        let output = sys_cmd("tasklist")
             .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
             .output()
             .ok()?;
@@ -535,7 +535,7 @@ fn process_exe_name(pid: u32) -> Option<String> {
         let link = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
         exe_name_from_proc_link(&link.to_string_lossy())
     } else {
-        let output = Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
+        let output = sys_cmd("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
         let text = String::from_utf8_lossy(&output.stdout);
         let path = text.trim();
         (!path.is_empty()).then(|| path.rsplit('/').next().unwrap_or(path).to_string())
@@ -552,9 +552,9 @@ fn process_is_sidecar(pid: u32, name: &str) -> bool {
 /// (`taskkill /F` on Windows, `kill` on Unix).
 fn kill_pid(pid: u32) {
     if cfg!(target_os = "windows") {
-        Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output().ok();
+        sys_cmd("taskkill").args(["/F", "/PID", &pid.to_string()]).output().ok();
     } else {
-        Command::new("kill").arg(pid.to_string()).output().ok();
+        sys_cmd("kill").arg(pid.to_string()).output().ok();
     }
 }
 
@@ -598,7 +598,7 @@ fn process_ppid(pid: u32) -> Option<u32> {
     if cfg!(target_os = "windows") {
         return None;
     }
-    let output = Command::new("ps")
+    let output = sys_cmd("ps")
         .args(["-o", "ppid=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -1149,25 +1149,37 @@ fn build_provider_test_url(base_url: &str, protocol: &str) -> String {
     }
 }
 
-/// Suppress the console window a child process would otherwise flash on
-/// Windows release builds (`windows_subsystem = "windows"`). No-op elsewhere.
-fn no_window(cmd: &mut Command) {
+/// The **only** place in this crate allowed to call `Command::new` — enforced by
+/// `no_bare_command_new` below. Every child process must go through here.
+///
+/// A release build is a GUI-subsystem binary (`windows_subsystem = "windows"` in
+/// `main.rs`) and therefore owns no console. Spawning a *console* program from it
+/// without `CREATE_NO_WINDOW` makes Windows allocate a fresh console window for
+/// the child, which flashes on screen for the child's lifetime and vanishes when
+/// it exits. `shutdown_sidecars` alone spawns up to a dozen such children
+/// (taskkill / netstat / tasklist / powershell), so quitting the app used to
+/// strobe a row of console windows (discussions/037).
+///
+/// On Unix the flag does not exist and this is a plain `Command::new`. On a Windows
+/// *dev* build it does still apply — the child gets no console instead of inheriting
+/// the parent's — but nothing observable changes, because every child here has its
+/// stdio redirected, and CREATE_NO_WINDOW suppresses only the console *window*: the
+/// inherited stdin/stdout/stderr handles keep working.
+fn sys_cmd(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program); // allow-bare-command: the one sanctioned call
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    #[cfg(not(windows))]
-    let _ = cmd;
+    cmd
 }
 
-/// Run a `curl` probe without popping a console window on Windows (release
-/// builds are `windows_subsystem = "windows"`; a bare `.output()` flashes a
-/// visible console for the probe's lifetime — same fix as `run_probe`).
+/// Run a `curl` probe. Console-window suppression comes from `sys_cmd`.
 fn run_curl_probe(args: &[String]) -> std::io::Result<std::process::Output> {
-    let mut cmd = Command::new("curl");
+    let mut cmd = sys_cmd("curl");
     cmd.args(args);
-    no_window(&mut cmd);
     cmd.output()
 }
 
@@ -1443,7 +1455,7 @@ fn download_node() -> Result<NodeInfo, String> {
 
     // Download archive via curl (present on macOS, modern Windows 10+, and Linux runners)
     let archive_path = tmp_dir.join(&archive_name);
-    let output = Command::new("curl")
+    let output = sys_cmd("curl")
         .args(["-fSL", "-o", &archive_path.to_string_lossy(), &url])
         .output()
         .map_err(|e| format!("Failed to run curl: {}", e))?;
@@ -1456,11 +1468,11 @@ fn download_node() -> Result<NodeInfo, String> {
     // Extract. bsdtar (Windows 10+ `tar.exe`) auto-detects .zip — pull the whole
     // tree and copy what we need below; Unix extracts only the needed members.
     let extract = if is_win {
-        Command::new("tar")
+        sys_cmd("tar")
             .args(["-xf", &archive_path.to_string_lossy(), "-C", &tmp_dir.to_string_lossy()])
             .output()
     } else {
-        Command::new("tar")
+        sys_cmd("tar")
             .args([
                 "-xzf", &archive_path.to_string_lossy(),
                 "-C", &tmp_dir.to_string_lossy(),
@@ -1510,13 +1522,13 @@ fn download_node() -> Result<NodeInfo, String> {
     // Strip debug symbols (Unix; ~105MB → ~84MB). Re-sign on macOS (Apple Silicon
     // requires a valid signature). Both are no-ops / unavailable on Windows.
     if !is_win {
-        let _ = Command::new("strip").arg(&target_node).output();
+        let _ = sys_cmd("strip").arg(&target_node).output();
     }
     if cfg!(target_os = "macos") {
-        let _ = Command::new("codesign")
+        let _ = sys_cmd("codesign")
             .args(["--remove-signature", &target_node.to_string_lossy()])
             .output();
-        let _ = Command::new("codesign")
+        let _ = sys_cmd("codesign")
             .args(["-s", "-", &target_node.to_string_lossy()])
             .output();
     }
@@ -1560,7 +1572,7 @@ fn get_embedded_node_info() -> Result<NodeInfo, String> {
     if !node.exists() {
         return Err("Embedded Node.js not set up".to_string());
     }
-    let output = Command::new(&node)
+    let output = sys_cmd(&node)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to run node: {}", e))?;
@@ -1795,7 +1807,7 @@ fn login_shell_path() -> Option<String> {
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     // -l: login (source .zprofile), -i: interactive (source .zshrc), -c: run.
-    let mut child = Command::new(&shell)
+    let mut child = sys_cmd(&shell)
         .args(["-lic", "printf '___UWPATH[%s]UWPATH___' \"$PATH\""])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1926,7 +1938,7 @@ fn detect_system_node() -> Option<NodeInfo> {
     let path_env = rich_path();
     // Windows `where` (may return several lines — take the first); Unix `which`.
     let which = if cfg!(target_os = "windows") { "where" } else { "/usr/bin/which" };
-    let node_path = Command::new(which)
+    let node_path = sys_cmd(which)
         .arg("node")
         .env("PATH", &path_env)
         .output()
@@ -1940,7 +1952,7 @@ fn detect_system_node() -> Option<NodeInfo> {
                 .to_string();
             if p.is_empty() { None } else { Some(p) }
         })?;
-    let output = Command::new(&node_path).arg("--version").output().ok()?;
+    let output = sys_cmd(&node_path).arg("--version").output().ok()?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let major: u32 = version
         .strip_prefix('v')
@@ -1995,57 +2007,127 @@ fn detect_chrome() -> Option<String> {
 
 // ── Browser process cleanup ────────────────────────────────────────
 
+/// Command-line fragments that identify a browser-MCP process: the MCP server
+/// itself, or a Chrome launched with our `chrome-profile` user-data-dir.
+///
+/// Used verbatim by the Windows WQL filter. The Unix path matches the same three
+/// server fragments via `pgrep -f` and locates the Chrome by the profile's full
+/// path instead, so it does not read this list.
+const BROWSER_MCP_NEEDLES: &[&str] =
+    &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp", "chrome-profile"];
+
+/// WQL `OR`-chain matching `CommandLine` against any of `needles`.
+///
+/// No LIKE-escaping: none of the needles contains `\`, `%`, `_` or `'` — the four
+/// characters that would need it. That is a property of the constants, not a
+/// guarantee about future ones, so `browser_mcp_needles_need_no_wql_escaping`
+/// asserts it and will fail the day someone adds a needle that does.
+fn browser_mcp_wql_filter(needles: &[&str]) -> String {
+    needles
+        .iter()
+        .map(|n| format!("CommandLine LIKE '%{}%'", n))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+/// PowerShell that **enumerates** browser-MCP PIDs, one per line. It kills nothing.
+///
+/// Two properties this command must keep — both are load-bearing, both are asserted
+/// by `enum_command_spawns_nothing_and_excludes_self`:
+///
+/// 1. **It spawns no child process.** PowerShell runs under CREATE_NO_WINDOW, i.e.
+///    with *no console of its own*, and a console-less parent that launches a console
+///    program gets it a freshly allocated — visible — console window. The old command
+///    piped into `ForEach-Object { taskkill … }`, so hiding PowerShell would merely
+///    have traded 4 PowerShell windows for one `taskkill` window per killed process
+///    (Chrome's helpers all carry `--user-data-dir=…\chrome-profile`, so that is
+///    potentially dozens). Enumerate here; kill from Rust, where `sys_cmd` sets the
+///    flag on the `taskkill` itself.
+///
+/// 2. **It excludes its own PID.** This command line *contains all four needles as
+///    literal text*, so powershell.exe's own `Win32_Process.CommandLine` matches the
+///    filter. The previous version therefore fed its own PID to `taskkill /F`, killing
+///    itself mid-pipeline and abandoning every PID not yet enumerated — WMI ordering
+///    decides how much of the cleanup ever ran. (Pre-existing: each of the old four
+///    passes self-matched on its own needle.)
+fn browser_mcp_enum_command() -> String {
+    format!(
+        "Get-CimInstance Win32_Process -Filter \"{}\" | \
+         Where-Object {{ $_.ProcessId -ne $PID }} | \
+         ForEach-Object {{ $_.ProcessId }}",
+        browser_mcp_wql_filter(BROWSER_MCP_NEEDLES)
+    )
+}
+
+/// PIDs from newline-separated stdout. Non-numeric lines (banners, warnings) drop out.
+fn parse_pid_lines(stdout: &str) -> Vec<u32> {
+    stdout
+        .lines()
+        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .filter(|p| *p != 0)
+        .collect()
+}
+
+/// Force-kill `pid` *and its descendants* — unlike `kill_pid`, which spares them.
+/// Used for browser-MCP servers, whose Chrome children would otherwise survive and
+/// keep holding the profile lock.
+fn kill_process_tree(pid: u32) {
+    if cfg!(target_os = "windows") {
+        sys_cmd("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output().ok();
+    } else {
+        sys_cmd("kill").arg(pid.to_string()).output().ok();
+    }
+}
+
 /// Kill browser MCP child processes (Chrome instances spawned by chrome-devtools-mcp
 /// or Playwright). Called before disconnect to prevent "session locked" errors.
 #[tauri::command]
 fn kill_browser_mcp_processes() {
     if cfg!(target_os = "windows") {
-        // Windows has no pgrep — match by command line via WMI and tree-kill each
-        // (taskkill /T also kills the Chrome children spawned by the MCP server).
-        // "chrome-profile" (the user-data-dir folder name) is backslash-free, so it
-        // needs no WQL LIKE escaping.
-        for needle in &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp", "chrome-profile"] {
-            let ps = format!(
-                "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%{}%'\" | \
-                 ForEach-Object {{ taskkill /F /T /PID $_.ProcessId 2>$null }}",
-                needle
-            );
-            Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
-                .output()
-                .ok();
+        // Windows has no pgrep, so command lines come from WMI. One scan for all four
+        // needles, not one each: `shutdown_sidecars` calls this on every quit, and
+        // `Get-CimInstance Win32_Process` with a `CommandLine` filter walks the whole
+        // process table (discussions/037).
+        let Ok(out) = sys_cmd("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &browser_mcp_enum_command()])
+            .output()
+        else {
+            return;
+        };
+        for pid in parse_pid_lines(&String::from_utf8_lossy(&out.stdout)) {
+            kill_process_tree(pid);
         }
         return;
     }
     // Kill chrome-devtools-mcp node processes and their Chrome children
     for pattern in &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp"] {
         // Find node processes running the MCP server
-        if let Ok(output) = Command::new("pgrep").args(["-f", pattern]).output() {
+        if let Ok(output) = sys_cmd("pgrep").args(["-f", pattern]).output() {
             let pids = String::from_utf8_lossy(&output.stdout);
             for pid_str in pids.trim().lines() {
                 let pid = pid_str.trim();
                 if pid.is_empty() { continue; }
                 // Kill descendants first (Chrome processes)
-                if let Ok(children) = Command::new("pgrep").args(["-P", pid]).output() {
+                if let Ok(children) = sys_cmd("pgrep").args(["-P", pid]).output() {
                     for cpid in String::from_utf8_lossy(&children.stdout).trim().lines() {
                         let cpid = cpid.trim();
                         if !cpid.is_empty() {
-                            Command::new("kill").arg(cpid).output().ok();
+                            sys_cmd("kill").arg(cpid).output().ok();
                         }
                     }
                 }
                 // Then kill the MCP server process itself
-                Command::new("kill").arg(pid).output().ok();
+                sys_cmd("kill").arg(pid).output().ok();
             }
         }
     }
     // Also kill any Chrome launched with our user-data-dir
     let profile = ultrawork_dir().join("chrome-profile");
-    if let Ok(output) = Command::new("pgrep").args(["-f", &profile.to_string_lossy()]).output() {
+    if let Ok(output) = sys_cmd("pgrep").args(["-f", &profile.to_string_lossy()]).output() {
         for pid in String::from_utf8_lossy(&output.stdout).trim().lines() {
             let pid = pid.trim();
             if !pid.is_empty() {
-                Command::new("kill").arg(pid).output().ok();
+                sys_cmd("kill").arg(pid).output().ok();
             }
         }
     }
@@ -2136,7 +2218,7 @@ fn npm_install_in(node_path: &str, sub_dir: &str, package: &str) -> Result<(), S
     let current_path = std::env::var("PATH").unwrap_or_default();
     let enriched_path = format!("{}{}{}", node_bin_dir, PATH_LIST_SEP, current_path);
 
-    let output = Command::new(node_path)
+    let output = sys_cmd(node_path)
         .args([npm_cli.to_string_lossy().as_ref(), "install", package])
         .current_dir(&dir)
         .env("PATH", &enriched_path)
@@ -3256,7 +3338,6 @@ fn run_probe(cmd: &mut Command, timeout: Duration) -> Option<std::process::Outpu
 /// stdout/stderr drain on reader threads, so even a chatty or long-running
 /// child (device-flow token polling) can never stall on a full pipe.
 fn run_probe_capture(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
-    no_window(cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -3302,7 +3383,7 @@ fn spawn_drain(
 /// CLT is actually present (`xcode-select -p` succeeds, cheap and dialog-free).
 fn python_probe_allowed(python: &str) -> bool {
     if cfg!(target_os = "macos") && python == "/usr/bin/python3" {
-        return Command::new("/usr/bin/xcode-select")
+        return sys_cmd("/usr/bin/xcode-select")
             .arg("-p")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -3320,7 +3401,7 @@ fn python_probe_allowed(python: &str) -> bool {
 /// caller can try the next candidate.
 fn run_python_feature_probe(python: &str, timeout: Duration) -> Option<(bool, bool)> {
     const CODE: &str = "import sys, importlib.util\nprint(1 if sys.version_info >= (3, 10) else 0)\nprint(1 if importlib.util.find_spec('pptx') else 0)";
-    let out = run_probe(Command::new(python).args(["-c", CODE]), timeout)?;
+    let out = run_probe(sys_cmd(python).args(["-c", CODE]), timeout)?;
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines();
     let ver = lines.next().map(|l| l.trim() == "1")?;
@@ -3497,7 +3578,7 @@ fn find_lark_cli() -> Option<String> {
 /// Base lark-cli invocation: notifier `_notice` noise suppressed so JSON
 /// output stays machine-readable (documented in the CLI's lark-shared skill).
 fn lark_cmd(bin: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new(bin);
+    let mut cmd = sys_cmd(bin);
     cmd.args(args)
         .env("LARKSUITE_CLI_NO_UPDATE_NOTIFIER", "1")
         .env("LARKSUITE_CLI_NO_SKILLS_NOTIFIER", "1");
@@ -3713,7 +3794,7 @@ fn find_dws_cli() -> Option<String> {
 /// `_notice` notifiers — dws `config list` shows no equivalent knob and probes
 /// showed clean JSON, real-device 2026-07-07).
 fn dws_cmd(bin: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new(bin);
+    let mut cmd = sys_cmd(bin);
     cmd.args(args);
     cmd
 }
@@ -3840,7 +3921,7 @@ fn find_wecom_cli() -> Option<String> {
 /// stderr logs) — strip it so probe classification never has to fight log
 /// noise (the unauthorized verdict is an exact-match stdout sentinel).
 fn wecom_cmd(bin: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new(bin);
+    let mut cmd = sys_cmd(bin);
     cmd.args(args).env_remove("WECOM_CLI_LOG_LEVEL");
     cmd
 }
@@ -4100,14 +4181,13 @@ fn verify_sha256(path: &std::path::Path, expected: &str) -> Result<(), String> {
 /// too) into `dest`.
 fn extract_tar(archive: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
     let tar_flag = if cfg!(target_os = "windows") { "-xf" } else { "-xzf" };
-    let mut tar = Command::new("tar");
+    let mut tar = sys_cmd("tar");
     tar.args([
         tar_flag,
         &archive.to_string_lossy(),
         "-C",
         &dest.to_string_lossy(),
     ]);
-    no_window(&mut tar);
     let out = tar.output().map_err(|e| format!("failed to run tar: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -4538,7 +4618,6 @@ fn start_lark_config(lang: Option<String>) -> Result<String, String> {
     if let Some(l) = lang.as_deref().filter(|l| !l.is_empty()) {
         cmd.args(["--lang", l]);
     }
-    no_window(&mut cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -4670,7 +4749,6 @@ struct ParkedFlowSpec {
 /// park first, scrape later), scrape the marker URL from merged stdout+stderr,
 /// and hand the line channel to the slot for `complete_parked_cli_auth`.
 fn start_parked_device_flow(mut cmd: Command, spec: &ParkedFlowSpec) -> Result<CliDeviceLogin, String> {
-    no_window(&mut cmd);
     let mut child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -5965,7 +6043,7 @@ mod builtin_skills_tests {
         std::fs::set_permissions(&hang, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let start = std::time::Instant::now();
-        let out = run_probe(&mut Command::new(hang.to_str().unwrap()), Duration::from_millis(300));
+        let out = run_probe(&mut sys_cmd(hang.to_str().unwrap()), Duration::from_millis(300));
         assert!(out.is_none());
         assert!(start.elapsed() < Duration::from_secs(5), "timeout did not bound the probe");
 
@@ -6547,7 +6625,7 @@ mod builtin_skills_tests {
         let Some((ver, _pptx)) = run_python_feature_probe(&py, Duration::from_secs(10)) else {
             return; // interpreter present but not runnable (stub) — probe correctly rejected it
         };
-        let Ok(out) = Command::new(&py)
+        let Ok(out) = sys_cmd(&py)
             .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
             .output()
         else {
@@ -6624,7 +6702,7 @@ mod lifecycle_tests {
             std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut child = Command::new(&exe)
+        let mut child = sys_cmd(&exe)
             .args(["lifecycle_tests::fake_sidecar_listener", "--exact", "--nocapture"])
             .env("ULTRAWORK_TEST_FAKE_SIDECAR_PORT", port.to_string())
             .spawn()
@@ -8257,5 +8335,169 @@ mod navigation_guard_tests {
         // `host_str()` is the whole host, so a suffix attack does not match.
         assert!(!is_app_navigation_with(&u("https://tauri.localhost.evil.com/"), true));
         assert!(!is_app_navigation_with(&u("https://evil.com/#tauri.localhost"), true));
+    }
+}
+
+// ── Console-window suppression (Windows) ───────────────────────────
+//
+// A release build is GUI-subsystem (`windows_subsystem = "windows"`), so every
+// console child it spawns without CREATE_NO_WINDOW gets a *visible* console
+// window. Quitting the app used to strobe a row of them (discussions/037).
+//
+// These are source-level guards on purpose: nothing in CI can *see* a window
+// flash — the three-platform matrix runs compile + unit tests, and no e2e harness
+// reaches a native window. The source is the only layer we can hold.
+#[cfg(test)]
+mod console_window_tests {
+    use super::*;
+
+    /// Every child process must be built by `sys_cmd`, which sets CREATE_NO_WINDOW.
+    /// A bare `Command::new` reintroduces the flash — and would do it silently,
+    /// since it is invisible to every other check we run.
+    ///
+    /// Escape hatch: put `allow-bare-command` on the line, with a reason.
+    ///
+    /// Walks **every** `.rs` under `src/` rather than an explicit file list: this
+    /// bug was born from an incomplete list (a `no_window()` helper existed and was
+    /// applied to 5 of 35 call sites), and a guard that has to be told about each
+    /// new module would reproduce exactly that failure.
+    #[test]
+    fn no_bare_command_new() {
+        // Built at runtime: a literal would match itself in this very file.
+        let needle = format!("Command::{}(", "new");
+
+        // Compile-time crate root, so this does not depend on the test's CWD.
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+        fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let entries = std::fs::read_dir(dir)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    rs_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        rs_files(&src_dir, &mut files);
+        files.sort();
+
+        // Fail closed: a walk that silently finds nothing would pass vacuously and
+        // leave the whole guard doing nothing at all.
+        let names: Vec<_> =
+            files.iter().filter_map(|p| p.file_name()?.to_str()).map(str::to_string).collect();
+        for expected in ["lib.rs", "main.rs", "webview_runtime.rs"] {
+            assert!(names.contains(&expected.to_string()), "source walk missed {expected}: {names:?}");
+        }
+
+        let mut offenders = Vec::new();
+        for path in &files {
+            let src = std::fs::read_to_string(path).expect("read source");
+            // `lines()` strips a trailing \r, so a CRLF checkout scans identically.
+            for (i, line) in src.lines().enumerate() {
+                let code = line.trim_start();
+                // Prose mentioning the call spawns nothing. Skipping comment lines keeps
+                // a docs-only edit from reddening CI — and, more to the point, keeps the
+                // obvious "fix" for that (slapping `allow-bare-command` on the comment)
+                // from quietly blunting the guard.
+                if code.starts_with("//") || code.starts_with('*') {
+                    continue;
+                }
+                if line.contains(&needle) && !line.contains("allow-bare-command") {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    offenders.push(format!("{}:{}: {}", name, i + 1, line.trim()));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "bare `Command::new` — use `sys_cmd`, which sets CREATE_NO_WINDOW so the \
+             child does not flash a console window on Windows (discussions/037). \
+             If the child is a GUI program, annotate the line `allow-bare-command: <why>`.\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// `browser_mcp_wql_filter` interpolates the needles into a WQL `LIKE` pattern
+    /// without escaping. That is sound only while none of them contains a character
+    /// WQL treats specially. A needle with a `\` would silently mismatch — and the
+    /// only symptom would be an orphaned Chrome holding its profile lock.
+    #[test]
+    fn browser_mcp_needles_need_no_wql_escaping() {
+        for n in BROWSER_MCP_NEEDLES {
+            for bad in ['\\', '%', '_', '\''] {
+                assert!(
+                    !n.contains(bad),
+                    "needle {:?} contains {:?}, which WQL LIKE treats specially — \
+                     escape it in browser_mcp_wql_filter before adding it",
+                    n,
+                    bad
+                );
+            }
+        }
+    }
+
+    /// One WMI scan for all needles, not one per needle: `shutdown_sidecars` calls
+    /// this on every quit, and each `Get-CimInstance Win32_Process` with a
+    /// `CommandLine` filter walks the whole process table.
+    ///
+    /// Pinned to the exact string because nothing else can check it: no test here
+    /// runs PowerShell, so a filter silently mangled into something WQL rejects
+    /// would still "pass" every other gate — and fail only as an orphaned Chrome
+    /// on a user's machine.
+    #[test]
+    fn wql_filter_is_one_or_chain() {
+        assert_eq!(
+            browser_mcp_wql_filter(BROWSER_MCP_NEEDLES),
+            "CommandLine LIKE '%chrome-devtools-mcp%' OR \
+             CommandLine LIKE '%playwright-mcp%' OR \
+             CommandLine LIKE '%@playwright/mcp%' OR \
+             CommandLine LIKE '%chrome-profile%'"
+        );
+    }
+
+    /// The two properties of `browser_mcp_enum_command` that no other check can see,
+    /// and whose absence shows up only as bizarre behaviour on a user's Windows box:
+    /// a swarm of `taskkill` console windows on quit, and a cleanup that silently
+    /// abandons half its work. See the function's doc comment for the mechanisms.
+    #[test]
+    fn enum_command_spawns_nothing_and_excludes_self() {
+        let cmd = browser_mcp_enum_command();
+
+        // 1. Nothing that launches a child process from a console-less PowerShell.
+        for spawner in ["taskkill", "Stop-Process", "Start-Process", "Invoke-Expression"] {
+            assert!(
+                !cmd.contains(spawner),
+                "`{spawner}` spawns a process from a PowerShell that has no console — \
+                 Windows would allocate a visible console window for each one. \
+                 Enumerate here and kill from Rust via `kill_process_tree`.\n{cmd}"
+            );
+        }
+
+        // 2. Self-exclusion: this very command line contains all four needles, so the
+        //    WQL filter matches the PowerShell running it.
+        assert!(
+            cmd.contains("$_.ProcessId -ne $PID"),
+            "without self-exclusion the enumeration returns its own PowerShell's PID, \
+             and the caller kills it\n{cmd}"
+        );
+
+        // The needles really are present in the command line — the premise of (2).
+        for n in BROWSER_MCP_NEEDLES {
+            assert!(cmd.contains(n), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn parse_pid_lines_ignores_noise() {
+        assert_eq!(parse_pid_lines("1234\r\n5678\n"), vec![1234, 5678]);
+        assert_eq!(parse_pid_lines(""), Vec::<u32>::new());
+        // A banner or warning on stdout must not become a PID — 0 is never a target.
+        assert_eq!(parse_pid_lines("WARNING: blah\n0\n\n42\n"), vec![42]);
     }
 }
