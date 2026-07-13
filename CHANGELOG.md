@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-07-13
+
+> Windows 上退出 app 不再闪现一排 PowerShell 控制台窗口（ADR-054）。
+
 ### Fixed
 
 - **Windows 退出时闪现多个 PowerShell 控制台窗口（ADR-054，discussions/037）**：release 构建是 GUI 子系统程序（无控制台），派生控制台子进程时若不带 `CREATE_NO_WINDOW` 就会被系统分配一个可见窗口。退出清理路径（`shutdown_sidecars`）一次性起 **4 个 PowerShell**（`kill_browser_mcp_processes` 按 needle 循环，且**无条件调用**——没用过浏览器也照弹）+ 每个 sidecar 一个 `taskkill`，全都没带该 flag。
