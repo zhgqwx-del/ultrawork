@@ -53,7 +53,8 @@ Rust 读回 PID → `kill_process_tree()` → `taskkill /F /T` 由 GUI 主进程
 
 ## 已知残余
 
-- **`npm install` 的孙进程**（同一条转嫁规则）：npm 自身的控制台已隐藏，但它派生的 postinstall / git / node-gyp 可能各自弹窗。我们控制不了 npm 怎么 spawn，且相对现状**不劣化**（今天这条路径本就弹一个 npm 窗口且持续整个安装），列为真机观察项。
+- **`npm install` 的孙进程**（同一条转嫁规则）：npm 自身的控制台已隐藏，但它派生的 postinstall / git / node-gyp 可能各自弹窗。我们控制不了 npm 怎么 spawn，且相对现状**不劣化**（今天这条路径本就弹一个 npm 窗口且持续整个安装）。
+  **状态（2026-07-13）**：这条路径**已在 Windows 真机上被走过**（Browser MCP 安装：下载 Node → `npm install` → 驱动 Chrome，功能全链路通过），但**「安装期间有没有窗口闪」这项观察没有被收集**。所以它既没有被证实，也没有被证伪 —— 仍是未确认项，不要当成「已验证无害」。
 - **`Bun.spawn` 未传 `windowsHide`**（`acp-client` 起 claude/gemini）：sidecar 自身被 plugin-shell 以 `CREATE_NO_WINDOW` 启动 ⇒ **它也没有控制台** ⇒ 它的子进程理论上会自建窗口。**未确认**——预期症状是"启动 ACP 会话时闪窗"，与本次报告的"退出时闪窗"不是同一现象，mac 上无法证实，故不并入本次修复。
 
 ## 验证
