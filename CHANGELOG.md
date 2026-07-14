@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **启动进度条对齐品牌橘红**（ADR-055 的收尾微调）：滑块由 `currentColor`（zinc 灰 `#71717a`，还叠了 `opacity: 0.55`）改为品牌色 `#ea580c`，与全站 `--color-brand` 一致；轨道保持中性灰——灰轨衬品牌色滑块，才读得出"进度"。
+  - **色值是字面量、不是 `var(--color-brand)`**：token 定义在 `index.css`，而 dev 下该文件随 bundle 到达——正是这条进度条要盖住的那段时间；引用它会让滑块在最该显示的几秒里没有颜色（prod 不复现，见 gotchas §6）。品牌色两套主题同值，无需主题分支。
+  - 附带澄清：`--color-primary`（蓝 `#2563eb`）仅剩 1 处引用，实际主色是 `--color-brand`（21 处）。该蓝色 token 已近乎废弃，未在本次清理。
+
 ## [0.2.8] - 2026-07-13
 
 > 启动不再白屏，而且快了近一倍：应用可用时间 4.23s → 2.22s（macOS 真机像素级实测）。

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-12 -->
+<!-- last-synced: 2026-07-14 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -150,6 +150,7 @@
 - **`setup()` 跑在事件循环启动之前，而窗口已经在屏幕上了 —— 在里面做任何慢活 = 白屏（ADR-055，2026-07-13，源码级确认）**：`tauri-2.10.3/src/app.rs:2370-2383` 先按 `tauri.conf.json` 创建窗口（未设 `visible:false` ⇒ **默认可见**），**之后**才调用户的 `setup()` 钩子；而整个流程发生在 `app.run()` 之前 ⇒ **runloop 还没转**。所以 `setup()` 里每一毫秒的同步工作，用户都是对着一个**画不出任何东西、且无响应**的空窗口在等。白屏不是"渲染慢"，是**根本没在渲染**。**推论一：`setup()` 里只放瞬时操作**（我们只留 `install_signal_handlers()`），其余一律丢进后台线程（`boot_sidecars()`）。**推论二：任何"在 setup 里加个 splash/loading"的想法都是死路**——主线程堵着，splash 同样画不出来；解阻塞与加 loading 是**一件事的两半**，不能只做后者。
 - **`blocking_show()` 在 `setup()` 里 = 永久死锁，不是"弹窗没弹出来"（ADR-055）**：`tauri-plugin-dialog` 的 `blocking_show` 内部是 `run_on_main_thread(闭包)` + `rx.recv()` 阻塞等回调（`lib.rs:68-77` / `desktop.rs:215-222`，原生对话框**永远在主线程构造**，满足 AppKit 契约）。在 `setup()` 里调它：`rx.recv()` 阻塞主线程 ⇒ 负责 `send` 的闭包被投递到**同一个尚未启动的事件循环** ⇒ 永远不会执行 ⇒ **app 冻死**。我们的「OpenCode 启动失败」弹窗曾长期处于这个状态。插件文档写的 "should **NOT** be used when running on the main thread context" 指的就是这个。**从后台线程调是安全的、也是唯一正确的**。
 - **`titleBarStyle: Overlay` 下 `data-tauri-drag-region` 不生效，但 Tauri 的拖拽脚本仍然三平台都注入**：见下方 Overlay 条目（React 侧要用 `startDragging()`）。注意**只有挂了该属性的元素本身**会响应，子元素不继承 —— 启动 splash 的进度条/文案节点必须各自挂一份，否则用户抓着唯一可见的那部分反而拖不动窗口。
+- **启动 splash 的内联样式不能引用 `index.css` 的设计 token（ADR-055，2026-07-14）**：`index.html` 里的 splash 之所以内联，就是为了在 bundle 解析完之前就能画出来；而 `--color-brand` 之流定义在 `index.css` 里，**dev 下这个文件是跟着 bundle 一起到的**（Vite 用 JS 注入 style）⇒ 写 `var(--color-brand)` 会让它在**最需要显示的那几秒里恰好没有颜色**（prod 下 CSS 是 render-blocking 的 `<link>`，反而不复现 ⇒ **dev 能看见的 bug，prod 看不见**，别拿 prod 截图当验证）。主题相关的值由 `<head>` 里的内联脚本写成 `--boot-*`（它先于 body 执行），主题无关的值（品牌色两套主题同值）直接写字面量 + 注释标注需与 `index.css` 同步。**判据**：splash 层的任何依赖，都必须是"webview 首帧就已具备"的东西。
 
 - **`open_file_with_system` / `reveal_file_in_finder`（ADR-037 起已改 opener 插件 Rust 侧 API）**：现内部用 `app.opener().open_path(...)` / `reveal_item_in_dir(...)`（`lib.rs:363/487`，内部 ShellExecute/`open`/xdg-open，三平台）。历史坑：JS 侧 `opener:allow-open-path` 需配静态 scope 且对隐藏目录（如 `.ultrawork`）不可靠 → 曾改自定义 command + `Command::new("open")`（macOS-only），ADR-037 跨平台化时收敛为 **Rust 侧调 opener 插件**（不受 JS permission scope 限制，也无 cmd 注入面，见 §12）。新代码打开文件/揭示文件一律复用这两个现成 command。
 - **`window.open` 打不开系统浏览器**：Tauri WebView 中必须用 `@tauri-apps/plugin-opener` 的 `openUrl()`。
