@@ -42,7 +42,7 @@ export function SessionPage() {
   const navigate = useNavigate()
   const { sessions, activeSessionIds } = useSessionsContext()
   const { t } = useI18n()
-  const { currentModel, setModel } = useModel()
+  const { currentModel, setModel, maybeOfferFreeTrial } = useModel()
   const { rightOpen, toggleRight, setRightOpen, previewMode, openPreview, closePreview, togglePreviewMaximized } = useSidebar()
   const { workspacePath } = useWorkspace()
   const { config } = useConfig()
@@ -267,6 +267,14 @@ export function SessionPage() {
     // pasting an image then hitting Enter immediately would otherwise sail straight past a
     // check that simply had not finished computing yet.
     if (attach.blocker || attach.checking || preparing) return
+
+    // Pre-dispatch consent gate (ADR-057): if the only usable models are free Zen models and the
+    // user hasn't opted in, offer the trial instead of dispatching (the server would otherwise
+    // route their code to a free model with no consent). Placed BEFORE materialize so the
+    // post-consent auto-retry re-enters cleanly without double-copying attachments. Gated on
+    // `supportsModel` (false for ACP sessions, which ignore the opencode model) so ACP team/single
+    // sessions don't get a meaningless free-Zen-model card.
+    if (supportsModel && await maybeOfferFreeTrial(() => { void handleSend() })) return
 
     // Documents are copied into the workspace here (not at attach time) and their paths
     // appended to the prompt, since OpenCode can't inline them (discussions/039 §3.2).

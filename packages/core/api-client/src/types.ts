@@ -398,6 +398,10 @@ export interface AuthStatus {
 
 export interface OpenCodeConfig {
   model?: string
+  /** Model for auxiliary tasks like title generation (opencode `small_model`, format `provider/model`).
+   *  Seeded alongside `model` in the free-trial flow so titles don't hit opencode's built-in
+   *  `gpt-5-nano` default, which 401s anonymously (ADR-057 D4). */
+  small_model?: string
   provider?: Record<string, ProviderConfig>
   /** Provider IDs hidden from `GET /provider` (used to "delete" custom providers). */
   disabled_providers?: string[]

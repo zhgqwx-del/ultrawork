@@ -65,7 +65,7 @@ export function HomePage() {
   const { agents, acpAvailable, bindSessionAgent } = useAgents()
   const connector = useConnector()
   const { t } = useI18n()
-  const { currentModel, setModel } = useModel()
+  const { currentModel, setModel, maybeOfferFreeTrial } = useModel()
 
   // Team mode runs on ACP (text-only prompts), so the attach entry point is hidden there.
   const attach = useAttachments(currentModel)
@@ -249,6 +249,12 @@ export function HomePage() {
     // `checking` matters as much as `blocker`: the gate awaits a 4 MB GET /provider, and
     // paste-then-Enter would otherwise outrun a check that simply hadn't finished.
     if (attach.blocker || attach.checking) return
+    // Pre-dispatch consent gate (ADR-057): offer the free-trial card instead of dispatching when
+    // the only usable models are free Zen models and the user hasn't opted in. On consent it
+    // re-invokes handleSend, which then falls through to the real dispatch. Skipped for ACP agents
+    // (Claude/Gemini CLI) — they carry their own auth and ignore the opencode model entirely, so a
+    // free-Zen-model card would be meaningless there.
+    if (!isACP && await maybeOfferFreeTrial(() => { void handleSend() })) return
     // Team mode runs on ACP, which is text-only; the composer already hides the attach
     // button there, so this is belt-and-braces rather than a reachable path.
     if (mode === "team") await handleTeamSend(text)
