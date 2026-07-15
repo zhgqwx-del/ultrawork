@@ -13,8 +13,35 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  # Guard: on a version tag (v*), the tag MUST match the version baked into the
+  # installer (tauri.conf.json). Nothing else in this workflow derives the
+  # version from the tag — the installer and the About page read tauri.conf.json
+  # / app-version.ts, which check-docs.ts keeps mutually equal. So a tag that
+  # disagrees with those files would silently ship an installer whose internal
+  # version differs from the Release page title. Fail fast here, before the
+  # expensive cross-platform build. workflow_dispatch runs carry no tag → skip.
+  guard:
+    name: guard (tag == file version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches tauri.conf.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(jq -r '.version' packages/client/desktop/src-tauri/tauri.conf.json)"
+          echo "tag version:  $tag"
+          echo "file version: $file"
+          if [ "$tag" != "$file" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' does not match tauri.conf.json version '$file'." \
+                 "Bump all five version files (root/desktop package.json, tauri.conf.json," \
+                 "Cargo.toml, app-version.ts) to match the tag, or retag. See check-docs.ts §2f."
+            exit 1
+          fi
+
   build:
     name: build (${{ matrix.name }})
+    needs: guard
     strategy:
       fail-fast: false
       matrix:

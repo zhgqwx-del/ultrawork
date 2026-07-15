@@ -17,6 +17,36 @@ const unsigned  = args.has("--unsigned")    // ad-hoc sign only; produces app th
 // automation is broken. Ugly on purpose — it lets a mislaid DMG out the door.
 const allowBadDmgLayout = args.has("--allow-bad-dmg-layout")
 
+// ── Version tag guard ──────────────────────────────────────────────
+// When this build happens AT a version tag, the tag must equal the version
+// baked into tauri.conf.json — the version that lands in the installer and,
+// via check-docs.ts §2f, on the About page. Otherwise the Release page title
+// (which is just the tag name) and the installer's real version silently
+// disagree. CI's release.yml fails fast on the same mismatch; this mirrors it
+// for a local `bun run release` off a tagged commit. A build that is NOT on a
+// tag (routine dev/test build) is skipped — only a v* tag triggers the check.
+{
+  const ci = process.env.GITHUB_REF_NAME
+  let versionTag: string | null = ci && ci.startsWith("v") ? ci : null
+  if (!versionTag) {
+    // Local: is HEAD sitting exactly on a v* tag?
+    const r = await $`git describe --tags --exact-match HEAD`.quiet().nothrow()
+    const t = r.exitCode === 0 ? r.stdout.toString().trim() : ""
+    if (t.startsWith("v")) versionTag = t
+  }
+  if (versionTag) {
+    const fileVer = (await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()).version
+    const tagVer = versionTag.replace(/^v/, "")
+    if (tagVer !== fileVer) {
+      console.error(`❌ Version tag '${versionTag}' does not match tauri.conf.json version '${fileVer}'.`)
+      console.error(`   Bump the five version files (root + desktop package.json, tauri.conf.json,`)
+      console.error(`   Cargo.toml, app-version.ts) to match the tag, or retag. See check-docs.ts §2f.`)
+      process.exit(1)
+    }
+    console.log(`🔖 Version tag '${versionTag}' matches file version '${fileVer}' ✓`)
+  }
+}
+
 // ── Built-in skills zip (bundle.resources 携带物) ──────────────────
 // beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
 console.log("📦 Packing built-in skills zip...")
