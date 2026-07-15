@@ -1446,6 +1446,398 @@ fn copy_attachment_impl(workspace: &str, session_id: &str, src: &str) -> Result<
     Ok(dest.to_string_lossy().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// In-app screenshot button (discussions/039 §4 P2, ADR-056)
+//
+// Design split, deliberate: the platform CAPTURE bodies below are `#[cfg]`-gated
+// because they call OS binaries / crates that do not exist off-target
+// (screencapture / ms-screenclip / gnome-screenshot; the `png` crate is a
+// Windows-only dep) — the FFI/exec exception ADR-037 itself carves out. The
+// BUSINESS logic that decides *whether* to capture (the macOS permission gate,
+// the Linux tool-presence check, the outcome mapping) lives in `capture_screenshot`
+// as runtime `if cfg!` branches, so a local `cargo check` on macOS still compiles
+// and type-checks it. Only the leaf system calls escape that.
+// ---------------------------------------------------------------------------
+
+/// macOS Screen Recording (TCC) gate. The CoreGraphics symbols only exist in that
+/// framework, so this shim is compile-gated; the runtime `if cfg!(target_os="macos")`
+/// in the command is what stays testable.
+///
+/// Probe 2 (discussions/039 §5) proved this gate is MANDATORY: an unauthorized
+/// `screencapture` still exits 0 and still writes a file — of the wallpaper, with
+/// the target window silently stripped. Preflighting is the ONLY reliable success
+/// signal, because the exit code always lies.
+#[cfg(target_os = "macos")]
+mod screen_access {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    /// True iff this app already holds Screen Recording permission. Never spawns a
+    /// dialog — safe to consult before every capture.
+    pub fn authorized() -> bool {
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    /// Ask the system to surface the Screen Recording permission dialog. Probe 2b
+    /// confirmed this DOES pop the system prompt; it returns immediately (the dialog
+    /// is async) and macOS only honours the grant after an app restart, so
+    /// `authorized()` keeps returning false for the rest of this run.
+    pub fn request() -> bool {
+        unsafe { CGRequestScreenCaptureAccess() }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod screen_access {
+    /// No TCC gate off macOS: Windows/Linux capture tools carry their own permission
+    /// model (or none), so the runtime branch that consults this is a no-op there.
+    pub fn authorized() -> bool {
+        true
+    }
+    pub fn request() -> bool {
+        false
+    }
+}
+
+/// Directory holding transient screenshot PNGs, created on demand. A dedicated
+/// subdir (not bare `temp_dir`) is what makes `discard_temp_file`'s "only delete
+/// under here" guard meaningful.
+fn screenshot_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("ultrawork-screenshots")
+}
+
+/// A fresh, unique PNG path under the screenshot temp dir. pid + a monotonic
+/// counter, not a clock: two rapid captures must not collide and this needs no time
+/// source.
+fn next_screenshot_path() -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    screenshot_temp_dir().join(format!("shot-{}-{}.png", std::process::id(), n))
+}
+
+/// The outcome of a capture attempt. Serialized tagged so the frontend can switch on
+/// `outcome` without guessing.
+#[derive(Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum CaptureOutcome {
+    /// A real capture landed at `path` (a PNG the frontend reads, inlines, then asks
+    /// us to discard).
+    Captured { path: String },
+    /// User dismissed the selector (Esc / clicked away). NOT an error.
+    Cancelled,
+    /// macOS only: Screen Recording permission is missing. The frontend offers to
+    /// request it, then falls back to the paste path.
+    NeedsPermission,
+    /// Linux only: no known screenshot tool on PATH. The button degrades to "use your
+    /// system shortcut, then paste".
+    Unavailable,
+}
+
+/// A Linux screenshot helper we know how to drive, resolved off PATH (a pure scan —
+/// no `which` subprocess). Ordered by how likely each is to be present for the
+/// purpose. `import` (ImageMagick) is last: rarely installed just for screenshots.
+///
+/// NOT `#[cfg]`-gated: it uses only cross-platform APIs, so leaving it un-gated lets
+/// the dev's macOS `cargo check` compile and type-check the real body (ADR-037). It
+/// is only *called* on Linux (the runtime `if cfg!` in `screenshot_capability` and
+/// the `#[cfg]` dispatch in `capture_platform`); on other targets the PATH scan
+/// simply finds nothing.
+fn linux_screenshot_tool() -> Option<&'static str> {
+    for tool in ["gnome-screenshot", "spectacle", "grim", "import"] {
+        let Some(path) = std::env::var_os("PATH") else { return None };
+        if std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()) {
+            return Some(tool);
+        }
+    }
+    None
+}
+
+#[derive(Serialize)]
+struct ScreenshotCapability {
+    /// False only on Linux with no known tool installed — the one case where the
+    /// button is disabled rather than click-to-fallback. mac/Windows always have a
+    /// route (screencapture / ms-screenclip ship with the OS).
+    available: bool,
+}
+
+#[tauri::command]
+async fn screenshot_capability() -> ScreenshotCapability {
+    let available = if cfg!(target_os = "linux") {
+        linux_screenshot_tool().is_some()
+    } else {
+        true
+    };
+    ScreenshotCapability { available }
+}
+
+/// macOS only: ask the system to show the Screen Recording permission dialog.
+/// Returns whether preflight passed synchronously (it won't, the first time — the
+/// dialog is async and the grant needs a restart), so the frontend uses this purely
+/// as "the request was made".
+#[tauri::command]
+async fn request_screen_capture_access() -> bool {
+    screen_access::request()
+}
+
+/// Take an interactive screenshot and return the outcome.
+///
+/// `hide_window` (user-toggled, default on): hide our own window before capturing so
+/// it is not in the shot. Safe here — this is a runtime command with the event loop
+/// long since running; the ADR-055 deadlock was about blocking the main thread
+/// *before* `app.run()`, which this is not.
+#[tauri::command]
+async fn capture_screenshot(
+    app: tauri::AppHandle,
+    hide_window: bool,
+) -> Result<CaptureOutcome, String> {
+    use tauri::Manager;
+
+    // Bail to the permission flow BEFORE hiding or spawning anything: an unauthorized
+    // macOS capture would silently return wallpaper (probe 2), and no exit code would
+    // reveal it.
+    if cfg!(target_os = "macos") && !screen_access::authorized() {
+        return Ok(CaptureOutcome::NeedsPermission);
+    }
+    // Nothing to drive on Linux → let the frontend degrade to the paste hint.
+    if cfg!(target_os = "linux") && linux_screenshot_tool().is_none() {
+        return Ok(CaptureOutcome::Unavailable);
+    }
+
+    let window = app.get_webview_window("main");
+    let hid = hide_window && window.as_ref().map(|w| w.hide().is_ok()).unwrap_or(false);
+
+    // The capture blocks on an interactive selector the user drives for seconds —
+    // keep it off the async executor.
+    let app2 = app.clone();
+    let joined = tauri::async_runtime::spawn_blocking(move || capture_platform(&app2, hid)).await;
+
+    // Restore the window whatever happened — including a PANIC in the capture task.
+    // This must run before we inspect `joined`: an early `?` here would leave a hidden
+    // task-panicked app permanently invisible, with no way back short of a quit.
+    if hid {
+        if let Some(w) = &window {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }
+
+    match joined {
+        Ok(out) => out,
+        Err(e) => Err(format!("capture task panicked: {}", e)),
+    }
+}
+
+/// Dispatch to the compiled-in platform capture. `#[cfg]` here (not runtime `if cfg!`)
+/// because each body references APIs/crates absent off-target — see the module header.
+#[allow(unused_variables)]
+fn capture_platform(app: &tauri::AppHandle, hidden: bool) -> Result<CaptureOutcome, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return capture_macos();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return capture_windows(app, hidden);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return capture_linux();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Ok(CaptureOutcome::Unavailable)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos() -> Result<CaptureOutcome, String> {
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    // Unlink any leftover at this exact path FIRST. The counter resets to 0 each launch
+    // and the OS reuses pids, so a crash that skipped `discard_temp_file` could leave
+    // `shot-<pid>-0.png` behind — and since success is "file exists & non-empty" (the
+    // exit code is untrustworthy), a subsequent CANCEL would otherwise read that stale
+    // file as a fresh capture and hand the user last time's screenshot.
+    let _ = std::fs::remove_file(&path);
+    // -i interactive region select (system crosshair / space-to-window / Esc cancel),
+    // -x silent. Writes a FILE (not the clipboard), so no clipboard plugin is needed.
+    // Absolute path: a Finder-launched .app has a minimal PATH that may omit /usr/sbin.
+    let status = sys_cmd("/usr/sbin/screencapture")
+        .args(["-i", "-x"])
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("screencapture: {}", e))?;
+    // The exit code LIES (probe 2) — 0 on a silent wallpaper capture, non-zero on
+    // cancel. Ignore it entirely. Authorization was preflighted, so a non-empty file
+    // is real content; cancel writes nothing.
+    let _ = status;
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > 0 => Ok(CaptureOutcome::Captured {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        _ => Ok(CaptureOutcome::Cancelled),
+    }
+}
+
+// Un-gated (compiles on the dev's macOS box so `cargo check` type-checks it — ADR-037);
+// only *called* on Linux via the `#[cfg]` dispatch in `capture_platform`, hence dead on
+// other targets.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn capture_linux() -> Result<CaptureOutcome, String> {
+    let Some(tool) = linux_screenshot_tool() else {
+        return Ok(CaptureOutcome::Unavailable);
+    };
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    // See capture_macos: unlink first so a leftover PNG can't be misread as a fresh
+    // capture on cancel (these tools write nothing on cancel).
+    let _ = std::fs::remove_file(&path);
+    let out = path.to_string_lossy().to_string();
+    match tool {
+        "gnome-screenshot" => {
+            let _ = sys_cmd("gnome-screenshot").args(["-a", "-f", &out]).status();
+        }
+        "spectacle" => {
+            let _ = sys_cmd("spectacle")
+                .args(["-r", "-b", "-n", "-o", &out])
+                .status();
+        }
+        "grim" => {
+            // grim has no region UI of its own — slurp draws the selection and prints a
+            // geometry string grim crops to. slurp exits non-zero on Esc.
+            if let Ok(sel) = sys_cmd("slurp").output() {
+                let geom = String::from_utf8_lossy(&sel.stdout).trim().to_string();
+                if sel.status.success() && !geom.is_empty() {
+                    let _ = sys_cmd("grim").args(["-g", &geom, &out]).status();
+                }
+            }
+        }
+        "import" => {
+            let _ = sys_cmd("import").arg(&out).status();
+        }
+        _ => {}
+    }
+    // Same as macOS: trust file-exists over the exit code. Cancel leaves no file.
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > 0 => Ok(CaptureOutcome::Captured { path: out }),
+        _ => Ok(CaptureOutcome::Cancelled),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows(app: &tauri::AppHandle, hidden: bool) -> Result<CaptureOutcome, String> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+
+    // Fingerprint whatever image is on the clipboard now, so a NEW snip is
+    // distinguishable from one that was already there.
+    let before = clipboard_image_fingerprint(app);
+
+    // Launch the modern Snip overlay through the opener plugin's Rust API. NOT
+    // `cmd /c start ms-screenclip:` — that would flash a console window even on a GUI
+    // build (ADR-054) and run the URI through cmd's metacharacter parsing.
+    app.opener()
+        .open_url("ms-screenclip:", None::<&str>)
+        .map_err(|e| format!("ms-screenclip: {}", e))?;
+
+    // Restore our window once the overlay has grabbed its frozen snapshot. Windows'
+    // ONLY cancel signal is the 60s timeout below, so leaving the window hidden until
+    // the poll ends would make the app INVISIBLE for a full minute on every cancelled
+    // snip — indistinguishable from a hang. ms-screenclip snapshots the screen at
+    // launch, so a brief hide is enough to keep our window out of the shot; show it
+    // (without stealing focus from the overlay) and let the poll run with the window
+    // back. (Timing/behaviour here is UNVERIFIED without a real Windows box — probe 4.)
+    if hidden {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+        }
+    }
+
+    // ms-screenclip writes ONLY to the clipboard — no file, no callback — so poll for
+    // a changed image, bounded so a user who wanders off never hangs the button.
+    // Cancel detection here is UNVERIFIED without a real Windows box (probe 4,
+    // Windows 欠账 batch): a timeout is the only signal we can trust blind.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if let Some((w, h, rgba)) = read_clipboard_rgba(app) {
+            let fp = Some((w, h, fnv1a(&rgba)));
+            if fp != before {
+                return write_rgba_png(w, h, &rgba).map(|path| CaptureOutcome::Captured { path });
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(CaptureOutcome::Cancelled);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_clipboard_rgba(app: &tauri::AppHandle) -> Option<(u32, u32, Vec<u8>)> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let img = app.clipboard().read_image().ok()?;
+    Some((img.width(), img.height(), img.rgba().to_vec()))
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_image_fingerprint(app: &tauri::AppHandle) -> Option<(u32, u32, u64)> {
+    let (w, h, rgba) = read_clipboard_rgba(app)?;
+    Some((w, h, fnv1a(&rgba)))
+}
+
+#[cfg(target_os = "windows")]
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+#[cfg(target_os = "windows")]
+fn write_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Result<String, String> {
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    let file = std::fs::File::create(&path).map_err(|e| format!("create png: {}", e))?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().map_err(|e| format!("png header: {}", e))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|e| format!("png data: {}", e))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Delete a screenshot temp file after the frontend has inlined it. Guarded to our
+/// own screenshot temp dir so a stray/hostile path can never make this an
+/// arbitrary-delete primitive.
+#[tauri::command]
+async fn discard_temp_file(path: String) -> Result<(), String> {
+    discard_temp_file_impl(&path)
+}
+
+fn discard_temp_file_impl(path: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    // Its parent must be EXACTLY our screenshot dir. next_screenshot_path builds files
+    // directly under it, so a legitimate path always matches; anything else is refused.
+    if p.parent() != Some(screenshot_temp_dir().as_path()) {
+        return Err(format!(
+            "refusing to delete outside the screenshot temp dir: {}",
+            path
+        ));
+    }
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        // Already gone is success, not a failure to report.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("delete {}: {}", path, e)),
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderTestResult {
     ok: bool,
@@ -6090,6 +6482,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(navigation_guard())
         .invoke_handler(tauri::generate_handler![
             ensure_default_workspace,
@@ -6125,6 +6518,10 @@ pub fn run() {
             read_file_bytes,
             copy_attachment_into_workspace,
             file_size,
+            capture_screenshot,
+            screenshot_capability,
+            request_screen_capture_access,
+            discard_temp_file,
             test_provider_connection,
             test_search_provider,
             probe_log,
@@ -9088,6 +9485,32 @@ mod console_window_tests {
         let bundle = ws.join("deck.key");
         std::fs::create_dir_all(&bundle).unwrap();
         assert!(file_size_impl(&bundle.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn discard_temp_file_refuses_paths_outside_the_screenshot_dir() {
+        // The guard is the only thing standing between this command and an arbitrary
+        // file delete. A path in bare temp_dir (one level up from our subdir) must be
+        // refused, and — critically — the file must survive the refusal.
+        let victim = std::env::temp_dir().join(format!("uw-discard-victim-{}", std::process::id()));
+        std::fs::write(&victim, b"do not delete").unwrap();
+        let r = discard_temp_file_impl(&victim.to_string_lossy());
+        assert!(r.is_err(), "a path outside the screenshot dir must be refused");
+        assert!(victim.exists(), "refused path must NOT be deleted");
+        std::fs::remove_file(&victim).ok();
+    }
+
+    #[test]
+    fn discard_temp_file_deletes_inside_and_is_ok_when_already_gone() {
+        // A real screenshot path deletes; a second discard of the same path is success,
+        // not an error (the frontend may retry, or the OS may have reaped it).
+        let path = next_screenshot_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"png").unwrap();
+        assert!(discard_temp_file_impl(&path.to_string_lossy()).is_ok());
+        assert!(!path.exists());
+        // Idempotent: already-gone is Ok, not Err.
+        assert!(discard_temp_file_impl(&path.to_string_lossy()).is_ok());
     }
 
     #[test]

@@ -6,6 +6,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAttachments } from "@/lib/use-attachments"
+import { useScreenshot } from "@/lib/use-screenshot"
 import { useAgents } from "@/lib/agent-context"
 import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace-context"
@@ -68,6 +69,7 @@ export function HomePage() {
 
   // Team mode runs on ACP (text-only prompts), so the attach entry point is hidden there.
   const attach = useAttachments(currentModel)
+  const shot = useScreenshot(attach.add)
   const attachmentSlot = useMemo(
     () => ({
       items: attach.items,
@@ -77,8 +79,9 @@ export function HomePage() {
       blocker: attach.blocker,
       checking: attach.checking,
       disabled: mode === "team",
+      screenshot: shot,
     }),
-    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, mode],
+    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, mode, shot],
   )
   // Switching to Team mode after attaching: Team runs on ACP, which takes text only. The
   // disabled slot only greys out the ➕ button — the already-attached files would still sit

@@ -118,6 +118,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
 - `src/lib/use-api.ts` — backend-specific REST 面：返回 connector 持有的 ApiClient（签名不变）
 - `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）
+- `src/lib/use-attachments.ts` + `attachments.ts` + `use-screenshot.ts` + `model-capabilities.ts` — 输入框多模态附件（discussions/039，P0+P1 + P2 截图 ADR-056）：三入口（➕/拖拽/粘贴）+ 剪刀截图按钮 → `add(File[])`/`addPaths` 管道；**按成本分流**（图片降采样内联 · 文本 `file://` 走服务端 Read 截断 · PDF 按页数分流〔>8MB 或 >20 页降级 document〕· Office 拷进 `.ultrawork/attachments/`）+ 模型能力门控（读 `capabilities.input.image`，gotchas §1）+ 单轮内联预算。截图产出走 Rust `capture_screenshot`（mac `screencapture -i -x` + TCC 门控 · win `ms-screenclip` 剪贴板轮询 · linux 探测），字节复用 `add()` 管道
 - `src/lib/use-session-plan.ts` — 任务规划会话级状态（ADR-038）：`connector.getPlan` 水合 + 订阅 `plan.updated` 整表替换，按 sessionID；两竞态防护见 conventions §3（`liveArrivedRef` live-wins + binding 纳入依赖）
 - `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
@@ -205,7 +206,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (55 ADRs, 001–055)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (56 ADRs, 001–056)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

@@ -17,6 +17,7 @@ import { useSessionScroll } from "@/lib/use-session-scroll"
 import { ChatInput, MessageList, ModelSelector, AgentSelector, AgentAvatar } from "@/components/chat"
 import { useConnector } from "@/lib/sse-context"
 import { useAttachments } from "@/lib/use-attachments"
+import { useScreenshot } from "@/lib/use-screenshot"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
@@ -165,6 +166,14 @@ export function SessionPage() {
   // prompt() throws on attachments, so the entry point is disabled there rather than
   // letting the user attach a file that would only blow up on send.
   const attach = useAttachments(currentModel)
+  const shot = useScreenshot(attach.add)
+  // Read the BACKEND's image capability live per render (same pattern as `supportsModel`
+  // above), NOT inside the memo keyed on `connector`/`id`. Switching a fresh session's agent
+  // (opencode→ACP) via the in-session AgentSelector flips the backend without changing `id`
+  // or `connector` identity, so a memo keyed on those would go stale and leave attachments
+  // enabled on a text-only ACP backend — whose prompt() throws on attachments (the exact
+  // silent-drop/blow-up this feature exists to prevent).
+  const backendAcceptsAttachments = connector.capabilitiesOf(id).image
   // True while attachments are being materialised (a document copy can take seconds).
   const [preparing, setPreparing] = useState(false)
   const attachmentSlot = useMemo(
@@ -175,9 +184,10 @@ export function SessionPage() {
       remove: attach.remove,
       blocker: attach.blocker,
       checking: attach.checking,
-      disabled: !connector.capabilitiesOf(id).image,
+      disabled: !backendAcceptsAttachments,
+      screenshot: shot,
     }),
-    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, connector, id],
+    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, backendAcceptsAttachments, shot],
   )
 
   // Artifacts (ADR-048 D5): derived at session level, not inside the sidebar

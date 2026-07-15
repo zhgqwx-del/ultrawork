@@ -4,10 +4,17 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useI18n } from "@/lib/i18n-context"
-import { AlertTriangle, Loader2, Plus, Square, X } from "lucide-react"
+import { AlertTriangle, Check, ChevronDown, Loader2, Plus, Scissors, Square, X } from "lucide-react"
 import { CommandSelector } from "./command-selector"
 import { FileIcon } from "@/components/ui/file-icon"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { Attachment } from "@/lib/attachments"
+import type { ScreenshotControl } from "@/lib/use-screenshot"
 import type { Command } from "@agent/api-client"
 
 /** The composer's attachment surface. Absent ⇒ this composer takes no attachments. */
@@ -24,6 +31,8 @@ export interface AttachmentSlot {
   checking?: boolean
   /** e.g. an ACP/Team session, whose backend is text-only. */
   disabled?: boolean
+  /** In-app screenshot capture. Absent ⇒ no screenshot button (e.g. non-Tauri host). */
+  screenshot?: ScreenshotControl
 }
 
 interface ChatInputProps {
@@ -61,6 +70,94 @@ function AttachButton({ onClick, disabled, label }: { onClick: () => void; disab
     >
       <Plus className="size-4" />
     </button>
+  )
+}
+
+const HIDE_WINDOW_KEY = "uw.screenshot.hideWindow"
+
+function readHideWindowPref(): boolean {
+  // Default ON — 飞书/微信 both hide the composer during capture (discussions/039
+  // §4 P1). A malformed/absent value falls back to that default, never to a throw.
+  try {
+    return localStorage.getItem(HIDE_WINDOW_KEY) !== "false"
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Screenshot control: a scissors button (capture) split with a caret that opens the
+ * "hide window while capturing" toggle — the toggle 飞书/微信 both expose, kept out
+ * of the ➕ menu because a screenshot is a peer of "attach a file", not a sub-kind of
+ * it (discussions/039 §4 P1). When no tool is available (Linux), the button is
+ * disabled with a hint to use the system shortcut, and the caret is hidden.
+ */
+function ScreenshotButton({ control, disabled, label }: { control: ScreenshotControl; disabled: boolean; label: string }) {
+  const { t } = useI18n()
+  const [hideWindow, setHideWindow] = useState(readHideWindowPref)
+
+  const toggleHideWindow = () => {
+    setHideWindow((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(HIDE_WINDOW_KEY, String(next))
+      } catch {
+        /* private mode / disabled storage: the in-memory value still applies this session */
+      }
+      return next
+    })
+  }
+
+  // No tool on this platform: a disabled button that says why beats a hidden one —
+  // the user looked for it, and the paste path is right there.
+  const unavailable = !control.available
+  const mainDisabled = disabled || unavailable || control.busy
+  const title = unavailable ? t("screenshot.unavailable") : label
+
+  return (
+    <div className="flex shrink-0 items-center">
+      <button
+        type="button"
+        onClick={() => control.capture(hideWindow)}
+        disabled={mainDisabled}
+        aria-label={label}
+        title={title}
+        className={cn(
+          "flex size-7 items-center justify-center text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:cursor-default disabled:opacity-30",
+          unavailable ? "rounded-lg" : "rounded-l-lg",
+        )}
+      >
+        {control.busy ? <Loader2 className="size-4 animate-spin" /> : <Scissors className="size-4" />}
+      </button>
+      {!unavailable && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={t("screenshot.options")}
+              title={t("screenshot.options")}
+              className="flex h-7 w-4 items-center justify-center rounded-r-lg text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:cursor-default disabled:opacity-30"
+            >
+              <ChevronDown className="size-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              onSelect={(e) => {
+                // Keep the menu open so the checkmark change is visible — a toggle
+                // that closes on click reads as "did nothing".
+                e.preventDefault()
+                toggleHideWindow()
+              }}
+            >
+              <Check className={cn("size-4", hideWindow ? "opacity-100" : "opacity-0")} />
+              {t("screenshot.hideWindow")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   )
 }
 
@@ -334,6 +431,9 @@ export function ChatInput({
         /* Home variant: toolbar below with send button flush bottom-right */
         <div className="mt-3 flex items-center gap-2">
           {attachments && <AttachButton onClick={handlePickFiles} disabled={!canAttach} label={t("aria.attachment")} />}
+          {attachments?.screenshot && (
+            <ScreenshotButton control={attachments.screenshot} disabled={!canAttach} label={t("screenshot.button")} />
+          )}
           {/* Toolbar chips (leftSlot owns flex-1 + flex-wrap): they wrap to a
               second line on very narrow windows instead of clipping or
               scrolling — the CTA stays a fixed, single-line button. */}
@@ -358,6 +458,9 @@ export function ChatInput({
         {(leftSlot || attachments) && (
           <div className="mt-1 flex items-center gap-1">
             {attachments && <AttachButton onClick={handlePickFiles} disabled={!canAttach} label={t("aria.attachment")} />}
+            {attachments?.screenshot && (
+              <ScreenshotButton control={attachments.screenshot} disabled={!canAttach} label={t("screenshot.button")} />
+            )}
             {leftSlot}
           </div>
         )}

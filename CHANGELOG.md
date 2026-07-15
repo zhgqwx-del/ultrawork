@@ -17,6 +17,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - **边界加固**（四轮对抗审查）：图片解码炸弹防护（先读文件头再解码）、单条消息内联总预算 15MB、并发闸门、TOCTOU 复检、跨平台 `toFileUrl`（UNC/Windows 盘符/POSIX 反斜杠）、Linux 伪路径过滤、静默失败全部改为可见 toast 或写入 prompt。
   - **验证**：desktop 574 测试 · Rust 140 · e2e `attachments-composer`（provider 侧断言 + 证伪验证）；粘贴/拖拽/Rust 命令真机通过。
   - **未做**：P2（应用内截图按钮）· P3（IM 渠道入站图片，仍静默丢弃）· Windows/Linux 真机。
+- **输入框多模态附件 — P2：应用内截图按钮（ADR-056，discussions/039）**：输入框工具条新增一级剪刀按钮（对齐飞书/微信），点击唤起系统截图工具、框选后缩略图进输入框、走 P0 的 `add()` 管道发送（降采样/门控/预算全继承，不另起炉灶）。
+  - **三平台**：mac `screencapture -i -x`（**必须 `CGPreflightScreenCaptureAccess` 屏幕录制权限门控** + `CGRequestScreenCaptureAccess` 一键授权引导、授权后需重启；**绝不看退出码判成功**——未授权时退出码仍为 0 但截出的是壁纸）· Windows `ms-screenclip` 剪贴板轮询（经 `tauri-plugin-opener` 的 Rust API 唤起，非 `cmd /c start`）· Linux 探测 `gnome-screenshot/spectacle/grim/import`，都无则按钮禁用降级、不给 deb/rpm 加 depends。
+  - 剪刀带下拉「截图时隐藏窗口」开关（默认开、localStorage 持久化）；`capture` 前 unlink 目标路径防 pid 复用下陈旧 PNG 被误判为新截图。
+  - 新增 Rust 命令 `capture_screenshot` / `screenshot_capability` / `request_screen_capture_access` / `discard_temp_file`；新增依赖 `tauri-plugin-clipboard-manager`（跨平台）+ `png`（Windows-only）。CoreGraphics FFI 用 `#[cfg(macos)]` module 双定义（合法 FFI 例外），业务门控逻辑留运行时 `if cfg!` 分支。
+  - **验证**：desktop **585** · Rust **142** · 两轮对抗审查抓 6 缺陷全修 · 硬编码审计干净 · **macOS 真机 A/B/C/D 全过**（B 授权引导在打包 `.app` 真身份下验证）。Windows/Linux 运行时并入真机欠账。
+
+### Fixed
+
+- **附件管道三个缺陷（全分支对抗审查抓出，均在已提交的 P0+P1）**：
+  - **>8MB PDF 被硬拒**，没走「降级为 document」的设计路径 —— `rejectionOf` 的 8MB 内联上限在页数/文档路由**之前**执行，把 12MB/40 页的正当报告按「太大」拒收，而它本该拷进工作区让 agent 按需读。改为：8~100MB 的 file:// PDF 降级为 document（跳过页数统计，直接拷贝路径）。
+  - **`checking` 能力门控竞态**：`checking` 只在 paint 后的 passive effect 里置真，留一个 paint→effect 窗口让快速「粘贴→回车」绕过门控 → 模型对看不见的图道歉。改为在 `accept` 里对 image/pdf **同步**置 `checking=true`（与 item 同一次提交）。
+  - **Session `disabled` 陈旧**：`disabled: !connector.capabilitiesOf(id).image` 被 memo 缓存但缺 binding 依赖 —— 切换新会话的 agent(opencode→ACP) 会翻转后端而不改 `id`/`connector` 身份 ⇒ memo 不重算 ⇒ 附件在文本后端 ACP 上仍启用、发送时 `prompt()` 抛错。改为每渲染实时读后端能力（对齐既有 `supportsModel` 写法）。
 
 ### Changed
 

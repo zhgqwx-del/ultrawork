@@ -17,6 +17,7 @@ import {
   classify,
   inlineBytesOf,
   mimeOfDataUrl,
+  MAX_BYTES,
   MAX_INLINE_PDF_PAGES,
   MAX_INLINE_TOTAL_BYTES,
   nextAttachmentId,
@@ -174,6 +175,13 @@ export function useAttachments(model: string | null | undefined): UseAttachments
         })
         return
       }
+      // Raise the capability gate SYNCHRONOUSLY, in the same commit as the item — not only in
+      // the post-commit effect below. Otherwise there is a paint→passive-effect window where
+      // the chip is visible but `checking` is still false and `blocker` still null, and a fast
+      // paste-then-Enter sails through ungated (send re-checks `checking` at call time), landing
+      // an image on a model that can't see it — the exact "model silently apologises" failure the
+      // gate exists to prevent. The effect then owns clearing it once /provider resolves.
+      if (candidate.kind === "image" || candidate.kind === "pdf") setChecking(true)
       setBoth([...itemsRef.current, candidate])
     },
     [reject, setBoth],
@@ -267,8 +275,35 @@ export function useAttachments(model: string | null | undefined): UseAttachments
 
           const rejection = rejectionOf({ name, size }, kind, itemsRef.current.length)
           if (rejection) {
-            reject(rejection.key, rejection.params ?? {})
-            continue // never `break` — a silent drop is the failure mode we are here to kill
+            // A pdf that only trips the (inline) SIZE cap is NOT rejected: over the inline cap it
+            // degrades to a document — copied into the workspace, path handed to the agent — the
+            // same fallback as a long or unparseable pdf (a 12 MB report must be attachable, just
+            // not inlined). It is also too big to safely slurp into memory to count pages, so skip
+            // the count and route it straight there. Reject only if it also blows the far larger
+            // document cap, or for any other rejection (count cap, or a non-pdf that's too large).
+            const pdfDegradesToDocument =
+              kind === "pdf" &&
+              rejection.key === "attachment.tooLarge" &&
+              size <= MAX_BYTES.document
+            if (!pdfDegradesToDocument) {
+              reject(rejection.key, rejection.params ?? {})
+              continue // never `break` — a silent drop is the failure mode we are here to kill
+            }
+            toast.info(
+              t("attachment.pdfTooBigLazy")
+                .replace("{name}", name)
+                .replace("{max}", String(Math.round(MAX_BYTES.pdf / 1024 / 1024))),
+            )
+            accept({
+              id: nextAttachmentId(),
+              kind: "document",
+              mime: wireMime("document", "", name),
+              filename: name,
+              wireUrl: "",
+              size,
+              srcPath: path,
+            })
+            continue
           }
 
           if (kind === "pdf") {
