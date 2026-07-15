@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **发布版本护栏：git tag 必须等于安装包版本**：`v*` tag 与 `tauri.conf.json` 版本不一致时快速失败。此前 release 流水线不从 tag 派生版本——安装包/关于页读的是 `tauri.conf.json`/`app-version.ts`（由 `check-docs.ts §2f` 保持五文件互等），tag 只决定 Release 页标题，二者漂移无护栏。现两处拦截：① `release.yml` 新增前置 `guard` job（`build needs: guard`，在三平台构建前快速失败；`workflow_dispatch` 无 tag 时跳过）；② `scripts/build-release.ts` 脚本开头同样校验（CI 读 `GITHUB_REF_NAME`、本地读 `git describe --exact-match`），覆盖本地在 tagged commit 上 `bun run release` 的场景；不在 tag 上则跳过，不打扰 dev 构建。
 - **输入框多模态附件（图片 / PDF / 文本 / Office 文件）— P0+P1（discussions/039）**：➕ 按钮、原生拖拽、粘贴三个入口；对齐钉钉/微信/飞书体验。
   - **管道拓宽（P0）**：`text: string` 焊死的四层（输入框→hook→connector→api-client）拓成 `parts[]`；`promptAsync` 新增 `attachments`，用户气泡不再丢弃 file part。后端 opencode 的 `FilePartInput` 契约本就支持，零改动。
   - **按成本分流，不按扩展名**：图片降采样到 1600px 内联；文本走 `file://` 由服务端 Read 工具截断读取（50KB）；PDF 按**页数**分流（≤20 页内联，超过转工作区路径）；Office 拷进 `<workspace>/.ultrawork/attachments/`（dot-dir，产物扫描天然隐形）让 agent 自己读。
