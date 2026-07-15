@@ -99,9 +99,32 @@ export interface CreateSessionOptions {
   title?: string
 }
 
+/**
+ * A file attached to a prompt (ADR pending, see discussions/039).
+ *
+ * `url` is either a `data:` URL carrying the bytes inline, or a `file://` absolute
+ * path the backend reads off disk — OpenCode has no upload endpoint, so either way
+ * the attachment travels inside the prompt body.
+ *
+ * `mime` selects the server-side path and is NOT cosmetic: `image/*` and
+ * `application/pdf` are true multimodal input (gate on the model's
+ * `capabilities.input.image` / `.pdf` first); `text/plain` makes the server read the
+ * file and inline it as text; anything else is unsupported and must not be sent.
+ */
+export interface PromptAttachment {
+  mime: string
+  filename?: string
+  url: string
+}
+
 export interface PromptOptions {
   /** opencode persona agent (build/plan/...) — distinct from boundAgentId. */
   agent?: string
+  /**
+   * Files to attach to this prompt. Only backends whose `capabilities.image` is
+   * true accept these; the others throw rather than silently dropping them.
+   */
+  attachments?: PromptAttachment[]
   /** Model override "providerID/modelID" (capabilities.model). */
   model?: string
   /** Raw agent id this session is bound to (filled in by Connector). */

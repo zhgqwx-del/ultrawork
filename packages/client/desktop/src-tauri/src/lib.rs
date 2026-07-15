@@ -1329,6 +1329,123 @@ async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Size of a file in bytes, for the composer's attachment cap.
+///
+/// Needed because the PDF/text/document attachment paths never read the file (the server
+/// reads it off disk itself) — without this the per-kind byte caps would only ever apply to
+/// images and pasted bytes, and an 800 MB log could be handed to the server's Read tool.
+// async only so Tauri runs it off the UI thread; the work itself is sync (and unit-tested
+// through the impl fn — the command wrapper adds nothing to test).
+#[tauri::command]
+async fn file_size(path: String) -> Result<u64, String> {
+    file_size_impl(&path)
+}
+
+fn file_size_impl(path: &str) -> Result<u64, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat {}: {}", path, e))?;
+    // A DIRECTORY must be an error, not a size. On macOS a .key/.pages/.app is a bundle —
+    // a directory — and reporting its inode size (~96 bytes) let it sail through every cap,
+    // sit in the composer looking attached, and only fail at send time when the copy found no
+    // regular file. Refuse it at the door instead.
+    if !meta.is_file() {
+        return Err(format!("Not a regular file: {}", path));
+    }
+    Ok(meta.len())
+}
+
+/// Copy a user-attached document (docx/xlsx/zip/…) into the session's attachment folder
+/// inside the workspace, returning the absolute destination path.
+///
+/// OpenCode cannot inline these — it has no extractor, so a real-mime file part gets
+/// base64'd straight to the provider and a text/plain one throws "cannot read binary
+/// file". Instead we drop the file where the agent's own tools (Office CLI connectors,
+/// bash, read) can open it and hand it the path.
+///
+/// Destination is `<workspace>/.ultrawork/attachments/<session>/` — a DOT-directory on
+/// purpose: `collect_changed_files` skips dotted entries, so the copy is not mistaken for
+/// a file the agent produced (ADR-033 artifact capture).
+// async: a large copy must not block the webview.
+#[tauri::command]
+async fn copy_attachment_into_workspace(
+    workspace: String,
+    session_id: String,
+    src: String,
+) -> Result<String, String> {
+    copy_attachment_impl(&workspace, &session_id, &src)
+}
+
+fn copy_attachment_impl(workspace: &str, session_id: &str, src: &str) -> Result<String, String> {
+    let src_path = std::path::Path::new(src);
+    if !src_path.is_file() {
+        return Err(format!("File not found: {}", src));
+    }
+    // session_id comes from our own code, but it lands in a path — so validate it as if it
+    // did not. A blocklist was the wrong shape: on Windows, `Path::join("C:")` does not append
+    // at all, it REPLACES the whole path (a prefix without a root), so `session_id = "C:"`
+    // contains no `/`, no `\` and no `..` yet would relocate the file to the C: drive — out of
+    // the workspace and out of the dot-directory that keeps user attachments from being
+    // mistaken for agent artifacts. Allowlist the characters a session id actually uses.
+    if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(format!("Invalid session id: {}", session_id));
+    }
+    let ws = std::path::Path::new(workspace);
+    if !ws.is_dir() {
+        return Err(format!("Workspace not found: {}", workspace));
+    }
+
+    let dir = ws.join(".ultrawork").join("attachments").join(session_id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+
+    let name = src_path
+        .file_name()
+        .ok_or_else(|| format!("Not a file: {}", src))?
+        .to_string_lossy()
+        .to_string();
+
+    // Attaching the same file twice must not clobber the first copy (the agent may still
+    // be reading it), so uniquify rather than overwrite.
+    let mut dest = dir.join(&name);
+    if dest.exists() {
+        let stem = src_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let ext = src_path.extension().map(|s| s.to_string_lossy().to_string());
+        let mut found = false;
+        for n in 1..1000 {
+            let candidate = match &ext {
+                Some(e) => format!("{}-{}.{}", stem, n, e),
+                None => format!("{}-{}", stem, n),
+            };
+            dest = dir.join(candidate);
+            if !dest.exists() {
+                found = true;
+                break;
+            }
+        }
+        // Running out of candidates must fail loudly: falling through would copy over the
+        // last candidate, which is exactly the overwrite this branch exists to prevent
+        // (the agent may still be reading it).
+        if !found {
+            return Err(format!("Too many copies of {} already attached", name));
+        }
+    }
+
+    // Copy to a temp name, then rename into place. `std::fs::copy` failing part-way (ENOSPC is
+    // the realistic one) leaves the DESTINATION created and partially written — a truncated
+    // .docx sitting in the workspace under the real filename, which the agent would then read
+    // as if it were the user's file. Rename is atomic within a filesystem, so the final name
+    // only ever appears once the bytes are all there.
+    let tmp = dest.with_extension("uw-partial");
+    let _ = std::fs::remove_file(&tmp);
+    if let Err(e) = std::fs::copy(src_path, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Failed to copy {} -> {}: {}", src, dest.display(), e));
+    }
+    if let Err(e) = std::fs::rename(&tmp, &dest) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Failed to place {}: {}", dest.display(), e));
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
 #[derive(Serialize)]
 struct ProviderTestResult {
     ok: bool,
@@ -6006,6 +6123,8 @@ pub fn run() {
             remove_user_skill_override,
             scan_workspace_changes,
             read_file_bytes,
+            copy_attachment_into_workspace,
+            file_size,
             test_provider_connection,
             test_search_provider,
             probe_log,
@@ -8890,5 +9009,113 @@ mod console_window_tests {
         assert_eq!(parse_pid_lines(""), Vec::<u32>::new());
         // A banner or warning on stdout must not become a PID — 0 is never a target.
         assert_eq!(parse_pid_lines("WARNING: blah\n0\n\n42\n"), vec![42]);
+    }
+
+    // ── composer attachments (discussions/039) ───────────────────────
+
+    fn tmp_ws(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("uw-attach-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn copy_attachment_lands_in_a_dot_dir_the_artifact_scan_ignores() {
+        // THE load-bearing property: a document the USER attached must never be reported as a
+        // file the AGENT produced. That holds only because the destination is a dot-directory
+        // and collect_changed_files skips dotted entries — so assert the two together, not
+        // just the path string.
+        let ws = tmp_ws("scan");
+        let src = ws.join("report.docx");
+        std::fs::write(&src, b"fake docx").unwrap();
+        // A file the agent really did write, as a control.
+        std::fs::write(ws.join("agent-output.md"), b"# out").unwrap();
+
+        let dest = copy_attachment_impl(&ws.to_string_lossy(), "ses_abc", &src.to_string_lossy())
+        .expect("copy should succeed");
+
+        assert!(dest.contains(".ultrawork"), "dest must live under the dot-dir: {dest}");
+        assert!(std::path::Path::new(&dest).is_file());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"fake docx");
+
+        let seen = collect_changed_files(&ws, 0);
+        let names: Vec<String> = seen.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            names.iter().any(|p| p.ends_with("agent-output.md")),
+            "control: a real agent artifact must still be picked up"
+        );
+        assert!(
+            !names.iter().any(|p| p.contains(".ultrawork")),
+            "the user's attachment must be invisible to the artifact scan, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn copy_attachment_uniquifies_instead_of_overwriting() {
+        // The agent may still be reading the first copy.
+        let ws = tmp_ws("dup");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"one").unwrap();
+        let first = copy_attachment_impl(&ws.to_string_lossy(), "s", &src.to_string_lossy())
+        .unwrap();
+        std::fs::write(&src, b"two").unwrap();
+        let second = copy_attachment_impl(&ws.to_string_lossy(), "s", &src.to_string_lossy())
+        .unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"one", "first copy must survive");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+    }
+
+    #[test]
+    fn copy_attachment_refuses_a_session_id_that_escapes_the_dir() {
+        let ws = tmp_ws("escape");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"x").unwrap();
+        // "C:" is the one that a blocklist misses: no slash, no dots, but on Windows
+        // Path::join REPLACES the whole path with it.
+        for evil in ["../../etc", "a/b", "a\\b", "..", "C:", "C:foo", "a b", "a.b"] {
+            let r = copy_attachment_impl(&ws.to_string_lossy(), evil, &src.to_string_lossy());
+            assert!(r.is_err(), "session id {evil:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn file_size_refuses_a_directory() {
+        // A macOS .key/.app bundle IS a directory. Reporting its inode size let it through
+        // every cap and into the composer, only to fail at send time.
+        let ws = tmp_ws("dir");
+        let bundle = ws.join("deck.key");
+        std::fs::create_dir_all(&bundle).unwrap();
+        assert!(file_size_impl(&bundle.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn copy_attachment_leaves_no_partial_file_behind_on_failure() {
+        // The destination must never exist under its real name unless it is complete: a
+        // truncated .docx would be read by the agent as if it were the user's file.
+        let ws = tmp_ws("partial");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"payload").unwrap();
+        // Force the copy to fail by pointing at a workspace that is not a directory.
+        let not_a_dir = ws.join("file-not-dir");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let r = copy_attachment_impl(&not_a_dir.to_string_lossy(), "s", &src.to_string_lossy());
+        assert!(r.is_err());
+        assert!(!ws.join(".ultrawork").exists() || {
+            let leftovers = collect_changed_files(&ws, 0);
+            !leftovers.iter().any(|(p, _)| p.contains("uw-partial"))
+        });
+    }
+
+    #[test]
+    fn file_size_reports_bytes_and_errors_on_missing() {
+        // The pdf/text/document attachment paths never read the file, so this stat is the
+        // ONLY thing standing between an 800 MB log and the server's Read tool.
+        let ws = tmp_ws("size");
+        let f = ws.join("x.bin");
+        std::fs::write(&f, vec![7u8; 1234]).unwrap();
+        assert_eq!(file_size_impl(&f.to_string_lossy()).unwrap(), 1234);
+        assert!(file_size_impl(&ws.join("nope").to_string_lossy()).is_err());
     }
 }

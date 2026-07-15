@@ -239,12 +239,34 @@ export interface QuestionRequest {
 
 // --- Provider / Model types ---
 
+/** Per-modality flags. The server keys these by modality name, not a string list. */
+export interface ModelModalities {
+  text?: boolean
+  image?: boolean
+  audio?: boolean
+  video?: boolean
+  pdf?: boolean
+}
+
 export interface ProviderModel {
   id: string
   name: string
+  /**
+   * Was previously typed `input?: string[]` — the server actually sends an object of
+   * per-modality booleans, so `capabilities.input.includes("image")` type-checked and
+   * was forever false at runtime. Nothing consumed it, so the lie went unnoticed.
+   *
+   * `input.image` / `input.pdf` are the ONLY correct gate for attachments: vendor
+   * `provider/transform.ts` checks exactly these before handing a file part to the
+   * model, and replaces it with an error string when false. (`capabilities.attachment`
+   * is a different, coarser flag — do not gate on it.)
+   */
   capabilities?: {
-    input?: string[]
-    output?: string[]
+    input?: ModelModalities
+    output?: ModelModalities
+    attachment?: boolean
+    toolcall?: boolean
+    reasoning?: boolean
   }
   limit?: {
     context?: number
@@ -439,10 +461,45 @@ export interface ModelOverride {
   modelID: string
 }
 
+// --- Prompt input parts (request side; the server assigns part ids) ---
+
+export interface TextPartInput {
+  type: "text"
+  text: string
+}
+
+/**
+ * A file attached to a prompt. OpenCode has no upload endpoint — attachments are
+ * always inlined into the prompt body, either as a `data:` URL (raw bytes) or a
+ * `file://` absolute path the server reads off disk itself.
+ *
+ * `mime` is not cosmetic: it selects an entirely different server-side path
+ * (vendor `session/prompt.ts` `resolvePart`).
+ *   - `image/*` and `application/pdf` → real multimodal input. Gate on the model's
+ *     `capabilities.input.image` / `.pdf` before sending, or the server silently
+ *     swaps the part for an "ERROR: this model does not support image input" text
+ *     and the model apologises to the user (vendor `provider/transform.ts`).
+ *   - `text/plain` → the server reads the file via its Read tool and inlines the
+ *     text. Use this for ALL text-ish files (source, md, csv, json).
+ *   - anything else (docx/xlsx/zip/…) → unsupported; OpenCode has no extractor and
+ *     will either hand raw base64 to the provider or throw "cannot read binary
+ *     file". Copy such files into the workspace and pass the path instead.
+ *
+ * See docs/discussions/039-multimodal-input-attachments.md §3.
+ */
+export interface FilePartInput {
+  type: "file"
+  mime: string
+  filename?: string
+  url: string
+}
+
+export type PromptPartInput = TextPartInput | FilePartInput
+
 // --- Prompt async request ---
 
 export interface PromptAsyncRequest {
-  parts: Array<{ type: string; text?: string; [key: string]: any }>
+  parts: PromptPartInput[]
   agent?: string
   model?: ModelOverride
   /**

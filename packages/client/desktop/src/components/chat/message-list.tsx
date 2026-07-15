@@ -1,4 +1,4 @@
-import type { SendMessageResponse, MessageInfo } from "@agent/api-client"
+import type { SendMessageResponse, MessageInfo, FilePart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { UserMessage } from "./user-message"
 import { AssistantTurn } from "./assistant-turn"
@@ -140,12 +140,27 @@ export function MessageList({
           const message = group.message
           const isStopped = message.info.id === stoppedAtMessageId
           const content = message.parts
-            .filter((part): part is { type: "text"; text: string; [key: string]: any } => part.type === "text" && "text" in part)
+            .filter(
+              (part): part is { type: "text"; text: string; [key: string]: any } =>
+                part.type === "text" &&
+                "text" in part &&
+                // The server injects SYNTHETIC text parts into the user's message: attaching a
+                // text file makes it splice in "Called the Read tool with the following
+                // input: …" plus up to 50 KB of the file's contents. Rendering those verbatim
+                // puts a tool transcript and a file dump inside the user's own speech bubble,
+                // as if they had typed it. Only what the user actually wrote belongs here.
+                part.synthetic !== true,
+            )
             .map((part) => part.text)
             .join("\n\n")
+          // File parts used to be dropped here, so an attached image vanished from the
+          // user's own bubble even though the model saw it (discussions/039 §2.2).
+          const attachments = message.parts.filter(
+            (part): part is FilePart => part.type === "file" && "url" in part && "mime" in part,
+          )
           return (
             <div key={message.info.id || index}>
-              <UserMessage content={content} />
+              <UserMessage content={content} attachments={attachments} />
               {isStopped && <ExecutionStatus state="stopped" />}
             </div>
           )

@@ -5,7 +5,7 @@ import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
 import type { SendMessageResponse } from "@agent/api-client"
-import type { SSEEvent } from "@agent/connector"
+import type { PromptAttachment, SSEEvent } from "@agent/connector"
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -479,7 +479,24 @@ export function useSessionMessages(
             const tempMsg = prev.find((m) => m.info.id.startsWith("temp-"))
             const hasTemp = !!tempMsg
             const filtered = prev.filter((m) => !m.info.id.startsWith("temp-"))
-            const inferredRole = hasTemp && part.type === "text" ? "user" as const : "assistant" as const
+            // While the optimistic bubble is still up, the first unknown message to stream parts
+            // is the server's echo of the USER's turn (it persists that before the assistant
+            // starts). Keying on `text` alone was a proxy for that, and it broke the moment a
+            // turn could consist of an attachment and nothing else: the echo then leads with a
+            // `file` part, got labelled `assistant`, and the user's own image was ripped out of
+            // their bubble and re-rendered as if the model had said it. Accept the part types a
+            // user can actually send; anything else (reasoning, tool, step) is assistant-only.
+            // A user's turn can consist of an attachment and nothing else, so its echoed
+            // message may lead with a `file` part rather than a `text` one. Keying the role on
+            // `text` alone would label that message `assistant`.
+            //
+            // NOTE: reverting this line does NOT reproduce a visible failure — the image still
+            // renders in the user's bubble, so some earlier event (message.updated, or a text
+            // part the server emits first) is already establishing the role. This is defensive,
+            // not a fix for an observed bug; the e2e assertion below it is correspondingly
+            // NON-discriminating (verified by falsification: it stays green with this reverted).
+            const userishPart = part.type === "text" || part.type === "file"
+            const inferredRole = hasTemp && userishPart ? ("user" as const) : ("assistant" as const)
             return [
               ...filtered,
               {
@@ -744,12 +761,16 @@ export function useSessionMessages(
   const sendMessage = useCallback((
     text: string,
     model?: string | null,
+    attachments?: PromptAttachment[],
   ) => {
+    // An attachment with no text is a legitimate turn ("here, look at this screenshot"),
+    // so emptiness is judged on text AND attachments together.
+    const hasContent = Boolean(text.trim()) || Boolean(attachments?.length)
     // The last clause guards switch-back: a session still running in the
     // background has sending/sendingRef reset by remount, so without the
     // app-level busy check a second prompt could slip past the UI's disabled
     // state and collide with the in-flight turn (discussions/022).
-    if (!sessionId || !text.trim() || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
+    if (!sessionId || !hasContent || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
     sendingRef.current = true
     markSessionActive(sessionId)
     // The desktop user started this turn ⇒ they are owed a notification when it ends.
@@ -776,7 +797,18 @@ export function useSessionMessages(
         role: "user",
         time: { created: Date.now() },
       },
-      parts: [{ type: "text", text: userMessage }],
+      parts: [
+        // Mirror what the server will persist: an empty text part is never sent, so
+        // don't fabricate one here either — otherwise the optimistic bubble renders a
+        // blank line above the image and then visibly reflows when the real message lands.
+        ...(userMessage ? [{ type: "text" as const, text: userMessage }] : []),
+        ...(attachments ?? []).map((a) => ({
+          type: "file" as const,
+          mime: a.mime,
+          filename: a.filename,
+          url: a.url,
+        })),
+      ],
     }
     setMessages((prev) => [...prev, tempUserMessage])
 
@@ -809,6 +841,7 @@ export function useSessionMessages(
         directory,
         system: opts?.promptOptions?.system,
         tools: opts?.promptOptions?.tools,
+        attachments,
       })
       .catch(handleSendError)
   }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])

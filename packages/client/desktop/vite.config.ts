@@ -3,10 +3,14 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "path"
 
-// Shared proxy target configs
-const backend = { target: "http://localhost:4096", changeOrigin: true }
-const gateway = { target: "http://localhost:4097", changeOrigin: true }
-const knowledge = { target: "http://localhost:4098", changeOrigin: true }
+// Shared proxy target configs.
+// Ports are overridable so an e2e run can stand up its own sidecars on free ports instead
+// of fighting a dev app that already holds the defaults. Unset (the normal case) → the
+// same 4096/4097/4098 every other e2e and `tauri dev` rely on.
+const port = (env: string, fallback: number) => Number(process.env[env] ?? fallback)
+const backend = { target: `http://localhost:${port("E2E_OPENCODE_PORT", 4096)}`, changeOrigin: true }
+const gateway = { target: `http://localhost:${port("E2E_GATEWAY_PORT", 4097)}`, changeOrigin: true }
+const knowledge = { target: `http://localhost:${port("E2E_KNOWLEDGE_PORT", 4098)}`, changeOrigin: true }
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

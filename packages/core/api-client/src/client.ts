@@ -14,7 +14,9 @@ import type {
   CustomProviderDef,
   AuthStatus,
   Agent,
+  FilePartInput,
   PromptAsyncRequest,
+  PromptPartInput,
   MCPConfig,
   MCPStatusMap,
   Command,
@@ -485,11 +487,25 @@ export class ApiClient {
   async promptAsync(
     sessionId: string,
     message: string,
-    options?: { agent?: string; model?: string; tools?: Record<string, boolean>; system?: string },
+    options?: {
+      agent?: string
+      model?: string
+      tools?: Record<string, boolean>
+      system?: string
+      /** Inlined attachments (`data:` or `file://` URLs). See FilePartInput. */
+      attachments?: FilePartInput[]
+    },
   ): Promise<void> {
-    const requestBody: PromptAsyncRequest = {
-      parts: [{ type: "text", text: message }],
+    const parts: PromptPartInput[] = []
+    // An attachment-only prompt (user pastes an image and hits enter) is legal, but
+    // an empty text part is not — omit it rather than sending `{type:"text",text:""}`.
+    if (message) parts.push({ type: "text", text: message })
+    if (options?.attachments?.length) parts.push(...options.attachments)
+    if (parts.length === 0) {
+      throw new Error("promptAsync: refusing to send a prompt with no text and no attachments")
     }
+
+    const requestBody: PromptAsyncRequest = { parts }
     if (options?.agent) {
       requestBody.agent = options.agent
     }

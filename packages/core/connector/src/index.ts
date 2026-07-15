@@ -30,6 +30,7 @@ export {
   type FetchHistoryResult,
   type PermissionReply,
   type PromptOptions,
+  type PromptAttachment,
   type ConnectorHooks,
   type QueueOwner,
   type SessionRef,

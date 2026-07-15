@@ -99,6 +99,11 @@ export class ACPBackend implements AgentBackend {
   async prompt(sessionId: string, text: string, opts?: PromptOptions): Promise<void> {
     if (!opts?.boundAgentId) throw new Error("ACP prompt requires the bound agent id")
     if (!opts?.directory) throw new Error("Session has no workspace directory")
+    // capabilities.image is false for this backend. Throw rather than drop: a silently
+    // discarded attachment looks to the user like the agent ignored their screenshot.
+    if (opts.attachments?.length) {
+      throw new Error("This agent does not support attachments (ACP prompt is text-only)")
+    }
     await this.http.ensureSession(opts.boundAgentId, opts.directory, sessionId)
     await this.http.prompt(sessionId, text)
   }

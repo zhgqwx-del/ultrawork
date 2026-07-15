@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **输入框多模态附件（图片 / PDF / 文本 / Office 文件）— P0+P1（discussions/039）**：➕ 按钮、原生拖拽、粘贴三个入口；对齐钉钉/微信/飞书体验。
+  - **管道拓宽（P0）**：`text: string` 焊死的四层（输入框→hook→connector→api-client）拓成 `parts[]`；`promptAsync` 新增 `attachments`，用户气泡不再丢弃 file part。后端 opencode 的 `FilePartInput` 契约本就支持，零改动。
+  - **按成本分流，不按扩展名**：图片降采样到 1600px 内联；文本走 `file://` 由服务端 Read 工具截断读取（50KB）；PDF 按**页数**分流（≤20 页内联，超过转工作区路径）；Office 拷进 `<workspace>/.ultrawork/attachments/`（dot-dir，产物扫描天然隐形）让 agent 自己读。
+  - **能力门控**：发送前查 `capabilities.input.image`/`.pdf`，不支持则拦截并给出可切换的模型名（用户默认的 myqwen 无视觉模型）。
+  - 新增 Rust 命令 `copy_attachment_into_workspace` / `file_size`（临时文件+原子重命名、session_id 白名单校验、拒绝目录包）。
+  - **边界加固**（四轮对抗审查）：图片解码炸弹防护（先读文件头再解码）、单条消息内联总预算 15MB、并发闸门、TOCTOU 复检、跨平台 `toFileUrl`（UNC/Windows 盘符/POSIX 反斜杠）、Linux 伪路径过滤、静默失败全部改为可见 toast 或写入 prompt。
+  - **验证**：desktop 574 测试 · Rust 140 · e2e `attachments-composer`（provider 侧断言 + 证伪验证）；粘贴/拖拽/Rust 命令真机通过。
+  - **未做**：P2（应用内截图按钮）· P3（IM 渠道入站图片，仍静默丢弃）· Windows/Linux 真机。
+
 ### Changed
 
 - **启动进度条对齐品牌橘红**（ADR-055 的收尾微调）：滑块由 `currentColor`（zinc 灰 `#71717a`，还叠了 `opacity: 0.55`）改为品牌色 `#ea580c`，与全站 `--color-brand` 一致；轨道保持中性灰——灰轨衬品牌色滑块，才读得出"进度"。
