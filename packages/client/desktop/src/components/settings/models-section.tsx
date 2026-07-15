@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { EXTERNAL_LINKS } from "@/lib/external-links"
 import { useApi } from "@/lib/use-api"
+import { invalidateModelCapabilities } from "@/lib/model-capabilities"
 import { useI18n } from "@/lib/i18n-context"
 import { useModel } from "@/lib/model-context"
 import { cn } from "@/lib/utils"
@@ -202,6 +203,11 @@ export function ModelsSection() {
 
   const fetchData = useCallback(async () => {
     setLoading(true)
+    // This page refetches providers exactly when they may have changed (mount, and after
+    // every save). The composer's attachment gate caches the same catalogue, so that cache
+    // is stale by definition at this point — drop it here rather than sprinkling an
+    // invalidate call across each individual save handler.
+    invalidateModelCapabilities()
     try {
       const [provs, auths, globalCfg] = await Promise.all([
         api.getProviders(),

@@ -1329,6 +1329,515 @@ async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Size of a file in bytes, for the composer's attachment cap.
+///
+/// Needed because the PDF/text/document attachment paths never read the file (the server
+/// reads it off disk itself) — without this the per-kind byte caps would only ever apply to
+/// images and pasted bytes, and an 800 MB log could be handed to the server's Read tool.
+// async only so Tauri runs it off the UI thread; the work itself is sync (and unit-tested
+// through the impl fn — the command wrapper adds nothing to test).
+#[tauri::command]
+async fn file_size(path: String) -> Result<u64, String> {
+    file_size_impl(&path)
+}
+
+fn file_size_impl(path: &str) -> Result<u64, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat {}: {}", path, e))?;
+    // A DIRECTORY must be an error, not a size. On macOS a .key/.pages/.app is a bundle —
+    // a directory — and reporting its inode size (~96 bytes) let it sail through every cap,
+    // sit in the composer looking attached, and only fail at send time when the copy found no
+    // regular file. Refuse it at the door instead.
+    if !meta.is_file() {
+        return Err(format!("Not a regular file: {}", path));
+    }
+    Ok(meta.len())
+}
+
+/// Copy a user-attached document (docx/xlsx/zip/…) into the session's attachment folder
+/// inside the workspace, returning the absolute destination path.
+///
+/// OpenCode cannot inline these — it has no extractor, so a real-mime file part gets
+/// base64'd straight to the provider and a text/plain one throws "cannot read binary
+/// file". Instead we drop the file where the agent's own tools (Office CLI connectors,
+/// bash, read) can open it and hand it the path.
+///
+/// Destination is `<workspace>/.ultrawork/attachments/<session>/` — a DOT-directory on
+/// purpose: `collect_changed_files` skips dotted entries, so the copy is not mistaken for
+/// a file the agent produced (ADR-033 artifact capture).
+// async: a large copy must not block the webview.
+#[tauri::command]
+async fn copy_attachment_into_workspace(
+    workspace: String,
+    session_id: String,
+    src: String,
+) -> Result<String, String> {
+    copy_attachment_impl(&workspace, &session_id, &src)
+}
+
+fn copy_attachment_impl(workspace: &str, session_id: &str, src: &str) -> Result<String, String> {
+    let src_path = std::path::Path::new(src);
+    if !src_path.is_file() {
+        return Err(format!("File not found: {}", src));
+    }
+    // session_id comes from our own code, but it lands in a path — so validate it as if it
+    // did not. A blocklist was the wrong shape: on Windows, `Path::join("C:")` does not append
+    // at all, it REPLACES the whole path (a prefix without a root), so `session_id = "C:"`
+    // contains no `/`, no `\` and no `..` yet would relocate the file to the C: drive — out of
+    // the workspace and out of the dot-directory that keeps user attachments from being
+    // mistaken for agent artifacts. Allowlist the characters a session id actually uses.
+    if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(format!("Invalid session id: {}", session_id));
+    }
+    let ws = std::path::Path::new(workspace);
+    if !ws.is_dir() {
+        return Err(format!("Workspace not found: {}", workspace));
+    }
+
+    let dir = ws.join(".ultrawork").join("attachments").join(session_id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+
+    let name = src_path
+        .file_name()
+        .ok_or_else(|| format!("Not a file: {}", src))?
+        .to_string_lossy()
+        .to_string();
+
+    // Attaching the same file twice must not clobber the first copy (the agent may still
+    // be reading it), so uniquify rather than overwrite.
+    let mut dest = dir.join(&name);
+    if dest.exists() {
+        let stem = src_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let ext = src_path.extension().map(|s| s.to_string_lossy().to_string());
+        let mut found = false;
+        for n in 1..1000 {
+            let candidate = match &ext {
+                Some(e) => format!("{}-{}.{}", stem, n, e),
+                None => format!("{}-{}", stem, n),
+            };
+            dest = dir.join(candidate);
+            if !dest.exists() {
+                found = true;
+                break;
+            }
+        }
+        // Running out of candidates must fail loudly: falling through would copy over the
+        // last candidate, which is exactly the overwrite this branch exists to prevent
+        // (the agent may still be reading it).
+        if !found {
+            return Err(format!("Too many copies of {} already attached", name));
+        }
+    }
+
+    // Copy to a temp name, then rename into place. `std::fs::copy` failing part-way (ENOSPC is
+    // the realistic one) leaves the DESTINATION created and partially written — a truncated
+    // .docx sitting in the workspace under the real filename, which the agent would then read
+    // as if it were the user's file. Rename is atomic within a filesystem, so the final name
+    // only ever appears once the bytes are all there.
+    let tmp = dest.with_extension("uw-partial");
+    let _ = std::fs::remove_file(&tmp);
+    if let Err(e) = std::fs::copy(src_path, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Failed to copy {} -> {}: {}", src, dest.display(), e));
+    }
+    if let Err(e) = std::fs::rename(&tmp, &dest) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Failed to place {}: {}", dest.display(), e));
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// In-app screenshot button (discussions/039 §4 P2, ADR-056)
+//
+// Design split, deliberate: the platform CAPTURE bodies below are `#[cfg]`-gated
+// because they call OS binaries / crates that do not exist off-target
+// (screencapture / ms-screenclip / gnome-screenshot; the `png` crate is a
+// Windows-only dep) — the FFI/exec exception ADR-037 itself carves out. The
+// BUSINESS logic that decides *whether* to capture (the macOS permission gate,
+// the Linux tool-presence check, the outcome mapping) lives in `capture_screenshot`
+// as runtime `if cfg!` branches, so a local `cargo check` on macOS still compiles
+// and type-checks it. Only the leaf system calls escape that.
+// ---------------------------------------------------------------------------
+
+/// macOS Screen Recording (TCC) gate. The CoreGraphics symbols only exist in that
+/// framework, so this shim is compile-gated; the runtime `if cfg!(target_os="macos")`
+/// in the command is what stays testable.
+///
+/// Probe 2 (discussions/039 §5) proved this gate is MANDATORY: an unauthorized
+/// `screencapture` still exits 0 and still writes a file — of the wallpaper, with
+/// the target window silently stripped. Preflighting is the ONLY reliable success
+/// signal, because the exit code always lies.
+#[cfg(target_os = "macos")]
+mod screen_access {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    /// True iff this app already holds Screen Recording permission. Never spawns a
+    /// dialog — safe to consult before every capture.
+    pub fn authorized() -> bool {
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    /// Ask the system to surface the Screen Recording permission dialog. Probe 2b
+    /// confirmed this DOES pop the system prompt; it returns immediately (the dialog
+    /// is async) and macOS only honours the grant after an app restart, so
+    /// `authorized()` keeps returning false for the rest of this run.
+    pub fn request() -> bool {
+        unsafe { CGRequestScreenCaptureAccess() }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod screen_access {
+    /// No TCC gate off macOS: Windows/Linux capture tools carry their own permission
+    /// model (or none), so the runtime branch that consults this is a no-op there.
+    pub fn authorized() -> bool {
+        true
+    }
+    pub fn request() -> bool {
+        false
+    }
+}
+
+/// Directory holding transient screenshot PNGs, created on demand. A dedicated
+/// subdir (not bare `temp_dir`) is what makes `discard_temp_file`'s "only delete
+/// under here" guard meaningful.
+fn screenshot_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("ultrawork-screenshots")
+}
+
+/// A fresh, unique PNG path under the screenshot temp dir. pid + a monotonic
+/// counter, not a clock: two rapid captures must not collide and this needs no time
+/// source.
+fn next_screenshot_path() -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    screenshot_temp_dir().join(format!("shot-{}-{}.png", std::process::id(), n))
+}
+
+/// The outcome of a capture attempt. Serialized tagged so the frontend can switch on
+/// `outcome` without guessing.
+#[derive(Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum CaptureOutcome {
+    /// A real capture landed at `path` (a PNG the frontend reads, inlines, then asks
+    /// us to discard).
+    Captured { path: String },
+    /// User dismissed the selector (Esc / clicked away). NOT an error.
+    Cancelled,
+    /// macOS only: Screen Recording permission is missing. The frontend offers to
+    /// request it, then falls back to the paste path.
+    NeedsPermission,
+    /// Linux only: no known screenshot tool on PATH. The button degrades to "use your
+    /// system shortcut, then paste".
+    Unavailable,
+}
+
+/// A Linux screenshot helper we know how to drive, resolved off PATH (a pure scan —
+/// no `which` subprocess). Ordered by how likely each is to be present for the
+/// purpose. `import` (ImageMagick) is last: rarely installed just for screenshots.
+///
+/// NOT `#[cfg]`-gated: it uses only cross-platform APIs, so leaving it un-gated lets
+/// the dev's macOS `cargo check` compile and type-check the real body (ADR-037). It
+/// is only *called* on Linux (the runtime `if cfg!` in `screenshot_capability` and
+/// the `#[cfg]` dispatch in `capture_platform`); on other targets the PATH scan
+/// simply finds nothing.
+fn linux_screenshot_tool() -> Option<&'static str> {
+    for tool in ["gnome-screenshot", "spectacle", "grim", "import"] {
+        let Some(path) = std::env::var_os("PATH") else { return None };
+        if std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()) {
+            return Some(tool);
+        }
+    }
+    None
+}
+
+#[derive(Serialize)]
+struct ScreenshotCapability {
+    /// False only on Linux with no known tool installed — the one case where the
+    /// button is disabled rather than click-to-fallback. mac/Windows always have a
+    /// route (screencapture / ms-screenclip ship with the OS).
+    available: bool,
+}
+
+#[tauri::command]
+async fn screenshot_capability() -> ScreenshotCapability {
+    let available = if cfg!(target_os = "linux") {
+        linux_screenshot_tool().is_some()
+    } else {
+        true
+    };
+    ScreenshotCapability { available }
+}
+
+/// macOS only: ask the system to show the Screen Recording permission dialog.
+/// Returns whether preflight passed synchronously (it won't, the first time — the
+/// dialog is async and the grant needs a restart), so the frontend uses this purely
+/// as "the request was made".
+#[tauri::command]
+async fn request_screen_capture_access() -> bool {
+    screen_access::request()
+}
+
+/// Take an interactive screenshot and return the outcome.
+///
+/// `hide_window` (user-toggled, default on): hide our own window before capturing so
+/// it is not in the shot. Safe here — this is a runtime command with the event loop
+/// long since running; the ADR-055 deadlock was about blocking the main thread
+/// *before* `app.run()`, which this is not.
+#[tauri::command]
+async fn capture_screenshot(
+    app: tauri::AppHandle,
+    hide_window: bool,
+) -> Result<CaptureOutcome, String> {
+    use tauri::Manager;
+
+    // Bail to the permission flow BEFORE hiding or spawning anything: an unauthorized
+    // macOS capture would silently return wallpaper (probe 2), and no exit code would
+    // reveal it.
+    if cfg!(target_os = "macos") && !screen_access::authorized() {
+        return Ok(CaptureOutcome::NeedsPermission);
+    }
+    // Nothing to drive on Linux → let the frontend degrade to the paste hint.
+    if cfg!(target_os = "linux") && linux_screenshot_tool().is_none() {
+        return Ok(CaptureOutcome::Unavailable);
+    }
+
+    let window = app.get_webview_window("main");
+    let hid = hide_window && window.as_ref().map(|w| w.hide().is_ok()).unwrap_or(false);
+
+    // The capture blocks on an interactive selector the user drives for seconds —
+    // keep it off the async executor.
+    let app2 = app.clone();
+    let joined = tauri::async_runtime::spawn_blocking(move || capture_platform(&app2, hid)).await;
+
+    // Restore the window whatever happened — including a PANIC in the capture task.
+    // This must run before we inspect `joined`: an early `?` here would leave a hidden
+    // task-panicked app permanently invisible, with no way back short of a quit.
+    if hid {
+        if let Some(w) = &window {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }
+
+    match joined {
+        Ok(out) => out,
+        Err(e) => Err(format!("capture task panicked: {}", e)),
+    }
+}
+
+/// Dispatch to the compiled-in platform capture. `#[cfg]` here (not runtime `if cfg!`)
+/// because each body references APIs/crates absent off-target — see the module header.
+#[allow(unused_variables)]
+fn capture_platform(app: &tauri::AppHandle, hidden: bool) -> Result<CaptureOutcome, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return capture_macos();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return capture_windows(app, hidden);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return capture_linux();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Ok(CaptureOutcome::Unavailable)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos() -> Result<CaptureOutcome, String> {
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    // Unlink any leftover at this exact path FIRST. The counter resets to 0 each launch
+    // and the OS reuses pids, so a crash that skipped `discard_temp_file` could leave
+    // `shot-<pid>-0.png` behind — and since success is "file exists & non-empty" (the
+    // exit code is untrustworthy), a subsequent CANCEL would otherwise read that stale
+    // file as a fresh capture and hand the user last time's screenshot.
+    let _ = std::fs::remove_file(&path);
+    // -i interactive region select (system crosshair / space-to-window / Esc cancel),
+    // -x silent. Writes a FILE (not the clipboard), so no clipboard plugin is needed.
+    // Absolute path: a Finder-launched .app has a minimal PATH that may omit /usr/sbin.
+    let status = sys_cmd("/usr/sbin/screencapture")
+        .args(["-i", "-x"])
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("screencapture: {}", e))?;
+    // The exit code LIES (probe 2) — 0 on a silent wallpaper capture, non-zero on
+    // cancel. Ignore it entirely. Authorization was preflighted, so a non-empty file
+    // is real content; cancel writes nothing.
+    let _ = status;
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > 0 => Ok(CaptureOutcome::Captured {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        _ => Ok(CaptureOutcome::Cancelled),
+    }
+}
+
+// Un-gated (compiles on the dev's macOS box so `cargo check` type-checks it — ADR-037);
+// only *called* on Linux via the `#[cfg]` dispatch in `capture_platform`, hence dead on
+// other targets.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn capture_linux() -> Result<CaptureOutcome, String> {
+    let Some(tool) = linux_screenshot_tool() else {
+        return Ok(CaptureOutcome::Unavailable);
+    };
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    // See capture_macos: unlink first so a leftover PNG can't be misread as a fresh
+    // capture on cancel (these tools write nothing on cancel).
+    let _ = std::fs::remove_file(&path);
+    let out = path.to_string_lossy().to_string();
+    match tool {
+        "gnome-screenshot" => {
+            let _ = sys_cmd("gnome-screenshot").args(["-a", "-f", &out]).status();
+        }
+        "spectacle" => {
+            let _ = sys_cmd("spectacle")
+                .args(["-r", "-b", "-n", "-o", &out])
+                .status();
+        }
+        "grim" => {
+            // grim has no region UI of its own — slurp draws the selection and prints a
+            // geometry string grim crops to. slurp exits non-zero on Esc.
+            if let Ok(sel) = sys_cmd("slurp").output() {
+                let geom = String::from_utf8_lossy(&sel.stdout).trim().to_string();
+                if sel.status.success() && !geom.is_empty() {
+                    let _ = sys_cmd("grim").args(["-g", &geom, &out]).status();
+                }
+            }
+        }
+        "import" => {
+            let _ = sys_cmd("import").arg(&out).status();
+        }
+        _ => {}
+    }
+    // Same as macOS: trust file-exists over the exit code. Cancel leaves no file.
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > 0 => Ok(CaptureOutcome::Captured { path: out }),
+        _ => Ok(CaptureOutcome::Cancelled),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows(app: &tauri::AppHandle, hidden: bool) -> Result<CaptureOutcome, String> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+
+    // Fingerprint whatever image is on the clipboard now, so a NEW snip is
+    // distinguishable from one that was already there.
+    let before = clipboard_image_fingerprint(app);
+
+    // Launch the modern Snip overlay through the opener plugin's Rust API. NOT
+    // `cmd /c start ms-screenclip:` — that would flash a console window even on a GUI
+    // build (ADR-054) and run the URI through cmd's metacharacter parsing.
+    app.opener()
+        .open_url("ms-screenclip:", None::<&str>)
+        .map_err(|e| format!("ms-screenclip: {}", e))?;
+
+    // Restore our window once the overlay has grabbed its frozen snapshot. Windows'
+    // ONLY cancel signal is the 60s timeout below, so leaving the window hidden until
+    // the poll ends would make the app INVISIBLE for a full minute on every cancelled
+    // snip — indistinguishable from a hang. ms-screenclip snapshots the screen at
+    // launch, so a brief hide is enough to keep our window out of the shot; show it
+    // (without stealing focus from the overlay) and let the poll run with the window
+    // back. (Timing/behaviour here is UNVERIFIED without a real Windows box — probe 4.)
+    if hidden {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+        }
+    }
+
+    // ms-screenclip writes ONLY to the clipboard — no file, no callback — so poll for
+    // a changed image, bounded so a user who wanders off never hangs the button.
+    // Cancel detection here is UNVERIFIED without a real Windows box (probe 4,
+    // Windows 欠账 batch): a timeout is the only signal we can trust blind.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if let Some((w, h, rgba)) = read_clipboard_rgba(app) {
+            let fp = Some((w, h, fnv1a(&rgba)));
+            if fp != before {
+                return write_rgba_png(w, h, &rgba).map(|path| CaptureOutcome::Captured { path });
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(CaptureOutcome::Cancelled);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_clipboard_rgba(app: &tauri::AppHandle) -> Option<(u32, u32, Vec<u8>)> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let img = app.clipboard().read_image().ok()?;
+    Some((img.width(), img.height(), img.rgba().to_vec()))
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_image_fingerprint(app: &tauri::AppHandle) -> Option<(u32, u32, u64)> {
+    let (w, h, rgba) = read_clipboard_rgba(app)?;
+    Some((w, h, fnv1a(&rgba)))
+}
+
+#[cfg(target_os = "windows")]
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+#[cfg(target_os = "windows")]
+fn write_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Result<String, String> {
+    std::fs::create_dir_all(screenshot_temp_dir()).map_err(|e| format!("temp dir: {}", e))?;
+    let path = next_screenshot_path();
+    let file = std::fs::File::create(&path).map_err(|e| format!("create png: {}", e))?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().map_err(|e| format!("png header: {}", e))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|e| format!("png data: {}", e))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Delete a screenshot temp file after the frontend has inlined it. Guarded to our
+/// own screenshot temp dir so a stray/hostile path can never make this an
+/// arbitrary-delete primitive.
+#[tauri::command]
+async fn discard_temp_file(path: String) -> Result<(), String> {
+    discard_temp_file_impl(&path)
+}
+
+fn discard_temp_file_impl(path: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    // Its parent must be EXACTLY our screenshot dir. next_screenshot_path builds files
+    // directly under it, so a legitimate path always matches; anything else is refused.
+    if p.parent() != Some(screenshot_temp_dir().as_path()) {
+        return Err(format!(
+            "refusing to delete outside the screenshot temp dir: {}",
+            path
+        ));
+    }
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        // Already gone is success, not a failure to report.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("delete {}: {}", path, e)),
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderTestResult {
     ok: bool,
@@ -5973,6 +6482,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(navigation_guard())
         .invoke_handler(tauri::generate_handler![
             ensure_default_workspace,
@@ -6006,6 +6516,12 @@ pub fn run() {
             remove_user_skill_override,
             scan_workspace_changes,
             read_file_bytes,
+            copy_attachment_into_workspace,
+            file_size,
+            capture_screenshot,
+            screenshot_capability,
+            request_screen_capture_access,
+            discard_temp_file,
             test_provider_connection,
             test_search_provider,
             probe_log,
@@ -8890,5 +9406,139 @@ mod console_window_tests {
         assert_eq!(parse_pid_lines(""), Vec::<u32>::new());
         // A banner or warning on stdout must not become a PID — 0 is never a target.
         assert_eq!(parse_pid_lines("WARNING: blah\n0\n\n42\n"), vec![42]);
+    }
+
+    // ── composer attachments (discussions/039) ───────────────────────
+
+    fn tmp_ws(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("uw-attach-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn copy_attachment_lands_in_a_dot_dir_the_artifact_scan_ignores() {
+        // THE load-bearing property: a document the USER attached must never be reported as a
+        // file the AGENT produced. That holds only because the destination is a dot-directory
+        // and collect_changed_files skips dotted entries — so assert the two together, not
+        // just the path string.
+        let ws = tmp_ws("scan");
+        let src = ws.join("report.docx");
+        std::fs::write(&src, b"fake docx").unwrap();
+        // A file the agent really did write, as a control.
+        std::fs::write(ws.join("agent-output.md"), b"# out").unwrap();
+
+        let dest = copy_attachment_impl(&ws.to_string_lossy(), "ses_abc", &src.to_string_lossy())
+        .expect("copy should succeed");
+
+        assert!(dest.contains(".ultrawork"), "dest must live under the dot-dir: {dest}");
+        assert!(std::path::Path::new(&dest).is_file());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"fake docx");
+
+        let seen = collect_changed_files(&ws, 0);
+        let names: Vec<String> = seen.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            names.iter().any(|p| p.ends_with("agent-output.md")),
+            "control: a real agent artifact must still be picked up"
+        );
+        assert!(
+            !names.iter().any(|p| p.contains(".ultrawork")),
+            "the user's attachment must be invisible to the artifact scan, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn copy_attachment_uniquifies_instead_of_overwriting() {
+        // The agent may still be reading the first copy.
+        let ws = tmp_ws("dup");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"one").unwrap();
+        let first = copy_attachment_impl(&ws.to_string_lossy(), "s", &src.to_string_lossy())
+        .unwrap();
+        std::fs::write(&src, b"two").unwrap();
+        let second = copy_attachment_impl(&ws.to_string_lossy(), "s", &src.to_string_lossy())
+        .unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"one", "first copy must survive");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+    }
+
+    #[test]
+    fn copy_attachment_refuses_a_session_id_that_escapes_the_dir() {
+        let ws = tmp_ws("escape");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"x").unwrap();
+        // "C:" is the one that a blocklist misses: no slash, no dots, but on Windows
+        // Path::join REPLACES the whole path with it.
+        for evil in ["../../etc", "a/b", "a\\b", "..", "C:", "C:foo", "a b", "a.b"] {
+            let r = copy_attachment_impl(&ws.to_string_lossy(), evil, &src.to_string_lossy());
+            assert!(r.is_err(), "session id {evil:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn file_size_refuses_a_directory() {
+        // A macOS .key/.app bundle IS a directory. Reporting its inode size let it through
+        // every cap and into the composer, only to fail at send time.
+        let ws = tmp_ws("dir");
+        let bundle = ws.join("deck.key");
+        std::fs::create_dir_all(&bundle).unwrap();
+        assert!(file_size_impl(&bundle.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn discard_temp_file_refuses_paths_outside_the_screenshot_dir() {
+        // The guard is the only thing standing between this command and an arbitrary
+        // file delete. A path in bare temp_dir (one level up from our subdir) must be
+        // refused, and — critically — the file must survive the refusal.
+        let victim = std::env::temp_dir().join(format!("uw-discard-victim-{}", std::process::id()));
+        std::fs::write(&victim, b"do not delete").unwrap();
+        let r = discard_temp_file_impl(&victim.to_string_lossy());
+        assert!(r.is_err(), "a path outside the screenshot dir must be refused");
+        assert!(victim.exists(), "refused path must NOT be deleted");
+        std::fs::remove_file(&victim).ok();
+    }
+
+    #[test]
+    fn discard_temp_file_deletes_inside_and_is_ok_when_already_gone() {
+        // A real screenshot path deletes; a second discard of the same path is success,
+        // not an error (the frontend may retry, or the OS may have reaped it).
+        let path = next_screenshot_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"png").unwrap();
+        assert!(discard_temp_file_impl(&path.to_string_lossy()).is_ok());
+        assert!(!path.exists());
+        // Idempotent: already-gone is Ok, not Err.
+        assert!(discard_temp_file_impl(&path.to_string_lossy()).is_ok());
+    }
+
+    #[test]
+    fn copy_attachment_leaves_no_partial_file_behind_on_failure() {
+        // The destination must never exist under its real name unless it is complete: a
+        // truncated .docx would be read by the agent as if it were the user's file.
+        let ws = tmp_ws("partial");
+        let src = ws.join("a.docx");
+        std::fs::write(&src, b"payload").unwrap();
+        // Force the copy to fail by pointing at a workspace that is not a directory.
+        let not_a_dir = ws.join("file-not-dir");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let r = copy_attachment_impl(&not_a_dir.to_string_lossy(), "s", &src.to_string_lossy());
+        assert!(r.is_err());
+        assert!(!ws.join(".ultrawork").exists() || {
+            let leftovers = collect_changed_files(&ws, 0);
+            !leftovers.iter().any(|(p, _)| p.contains("uw-partial"))
+        });
+    }
+
+    #[test]
+    fn file_size_reports_bytes_and_errors_on_missing() {
+        // The pdf/text/document attachment paths never read the file, so this stat is the
+        // ONLY thing standing between an 800 MB log and the server's Read tool.
+        let ws = tmp_ws("size");
+        let f = ws.join("x.bin");
+        std::fs::write(&f, vec![7u8; 1234]).unwrap();
+        assert_eq!(file_size_impl(&f.to_string_lossy()).unwrap(), 1234);
+        assert!(file_size_impl(&ws.join("nope").to_string_lossy()).is_err());
     }
 }

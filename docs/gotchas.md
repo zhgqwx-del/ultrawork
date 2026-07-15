@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-14 -->
+<!-- last-synced: 2026-07-15 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -54,6 +54,8 @@
 - **turn 进行中再调 `prompt_async` 会返回 204 并排队，不是 BusyError（2026-07-12 实测，推翻了一个看起来很合理的推断）**：Runner 有队列语义。⇒ **不要为"并发 prompt"写拒绝逻辑**；真正的坑在消费侧——若你为每条消息新建一个上下文并覆盖旧的，在飞那一轮剩余的 part 会因 messageID 不在新集合里而被整个丢弃。
 - **没有 per-session 的 `ask` 入口（2026-07-12，ADR-050 源码核验）**：`PATCH /session/:id` 只接受 `title` / `time.archived`（`server/routes/session.ts:263`）；`prompt` 的 `tools` 参数虽会落成 session 级 permission ruleset（`prompt.ts:1313`），但只映射 `allow`/`deny` ——**唯独没有 `ask`**（`Ruleset` schema 本身支持）。⇒ 想只给某类会话（如 IM）上锁而不动全局 config，**绕不开 vendor patch**。
 - **`permission` 不配置 = 全部放行，不会弹授权框**（2026-07-11 实测）。`opencode.json` 的 `permission.{bash,edit,webfetch}` 全是 optional，缺省即 allow。**验证权限相关 UI（PermissionDock / 委派子权限中继）时必须显式配 `"permission": {"bash": "ask"}` 并重启 sidecar**，否则请求根本不会产生，会误判成「dock 坏了」。
+
+- **多模态门控字段是 `capabilities.input.image` / `.pdf`，不是顶层 `attachment`（ADR-056 / discussions/039 §3.1，2026-07-15 实测）**：`GET /config/providers` 每个模型对象的 `capabilities` 同时有 `attachment`（粗粒度布尔）和 `input: { text, image, pdf, audio, video }`。opencode `provider/transform.ts:265` 的 `unsupportedParts()` 门控用的是 **`capabilities.input[modality]`**——用错字段（读 `attachment`）= 前端放行、后端把 image part 替换成 `ERROR: … does not support image input` 文本喂模型 ⇒ 模型莫名向用户道歉。发送前的能力门控必须读同一个字段。（附：用户默认的 myqwen provider 模型 0 个支持 image，alibaba-cn 有 20+ 个。）
 
 ## 2. OpenCode Server 运行时限制
 
@@ -196,6 +198,8 @@
 - **headless 浏览器里做不出「窗口失焦」**：Chrome/WebKit 的 `document.hasFocus()` 在另一个 tab `bringToFront()` 之后**仍然是 true**，所以「用户离开」这种前提在 e2e 里**只能由测试显式驱动**（把焦点读做成假桥里的一个可写标志），焦点读本身靠真机探针保证。
 - **e2e 里 `page.goto` 会清空模块级单例**（新 document ⇒ 新 JS 上下文）：要模拟"用户在 app 内切到别的页面"必须走客户端导航（`history.pushState` + `popstate`，react-router 会响应），否则测的是"重启 app"而不是"换个页面"。同理，`addInitScript` 注入的计数器在每次导航后归零 ⇒ baseline 必须在导航**之后**取。
 - **跑 e2e 前先确认端口 1420 上没有别人**：残留的 `tauri dev`（尤其带调试 flag 的）会让 `poll("vite")` 直接看到"健康"，于是整轮 e2e 跑在**别人的代码**上。e2e 应当在启动前 fail-closed 断言端口空闲。
+
+- **WKWebView 的 DOM `paste` 事件能拿到完整图片（ADR-056 / discussions/039 §5，2026-07-14 实测）**：截图/复制图片后按 `Cmd+V`，`clipboardData.files[0]` 是正经 `image/png` File，`FileReader` 读出的字节与源文件**完全一致**，零依赖零权限——这让「系统快捷键截图 → 粘贴」白送截图能力（不需要屏幕录制权限，走的是系统截图工具自己的权限）。⚠️ WebKitGTK 历史上会「剪贴板说有图但给不出 File」（`types` 含 `image/*` 但 `files` 为空）⇒ 粘贴处理要对这种情况显式报错，别静默无反应。Windows/Linux WebView 待真机复验。
 
 ## 7. 构建 / 运行时
 
@@ -351,6 +355,14 @@
 - **GUI 子系统程序派生控制台程序 ⇒ Windows 给它新建一个可见窗口（ADR-054 / discussions/037，2026-07-13）**：release 构建是 `windows_subsystem = "windows"`（`main.rs`），**自身没有控制台**；此时用 `std::process::Command` 起 `taskkill`/`netstat`/`tasklist`/`powershell`/`node`/`curl` 等控制台程序，若不带 `CREATE_NO_WINDOW`（`0x0800_0000`），系统会**为子进程新建一个可见控制台窗口**，子进程退出即销毁 ⇒ 用户看到「闪一下就没了」。退出清理路径曾一次性弹出 **4 个 PowerShell + 每个 sidecar 一个 taskkill**。**Rust 侧一律走 `sys_cmd()` 构造 Command，禁止裸 `Command::new`**（`no_bare_command_new` 单测强制，扫描整个 `src/`；GUI 子进程如 `explorer` 可用同行 `allow-bare-command: <理由>` 豁免）。**dev 构建测不出来**——它自带控制台，子进程直接复用，永远不弹窗。
 - **这条规则会「转嫁」：隐藏了父进程，窗口就跑到孙进程身上（同上）**：给 PowerShell 加了 `CREATE_NO_WINDOW` 之后**它自己也没有控制台**了 ⇒ 它管道里 `ForEach-Object { taskkill ... }` 派生的**每个 taskkill 都会被系统分配一个新窗口**（Chrome helper 全带 `--user-data-dir=…\chrome-profile`、全命中 needle ⇒ 可能几十个，**比原 bug 更糟**）。**所以 PowerShell 只能用来枚举、绝不能在里面杀进程**：`... | ForEach-Object { $_.ProcessId }` 把 PID 打回 stdout，由 Rust 侧 `kill_process_tree()` 起 taskkill（GUI 主进程直接派生 ⇒ 走 `sys_cmd` ⇒ 带 flag ⇒ 零窗口）。**同一条转嫁规则的残余落点：`npm install`**（npm 的 postinstall/git/node-gyp 孙进程可能各自弹窗，我们控制不了 npm 怎么 spawn，已知未修）。
 - **`Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%…%'"` 会匹配到执行它的那个 PowerShell 自己（同上）**：查询串里的 needle **就字面写在 powershell.exe 的命令行里**，所以它满足自己的过滤条件 ⇒ 旧代码把自身 PID 喂给 `taskkill /F` ⇒ **PowerShell 中途自杀、尚未枚举到的 PID 一个都没清理**（WMI 枚举顺序未定义 ⇒ 不确定性失败，Windows 上的浏览器清理很可能**从来没可靠工作过**）。**必须 `| Where-Object { $_.ProcessId -ne $PID }`**。needle 里含 `\ % _ '` 还会破坏 WQL `LIKE`（`browser_mcp_needles_need_no_wql_escaping` 单测守着）。
+
+- **应用内截图 / macOS 屏幕录制（TCC）权限（ADR-056，2026-07-15 实测）**：
+  - **`screencapture` 无屏幕录制权限时静默降级**：退出码 **0**、文件正常产出、尺寸都对，但窗口内容被剥光只剩壁纸；**交互式 `-i` 同样被挡**（用户看得见框、能拖选区，截出来还是壁纸 ⇒ 人眼所见 ≠ `screencapture` 所返）。直接 spawn **不会**自动弹授权框。⇒ 必须 `CGPreflightScreenCaptureAccess()` 查授权（**看退出码判成功=假绿**）、`CGRequestScreenCaptureAccess()` 显式拉起（实测**能**弹系统框、可做一键引导），授权后需**重启 app** 才在 preflight 翻 true。成功信号只能是「已过 preflight 闸 **且** 文件非空」。
+  - **成功检测必须先 `remove_file` 目标路径**：成功信号是「文件非空」而非退出码；pid 会被 OS 复用、计数器每次启动归零，若崩溃跳过清理留下 `shot-<pid>-0.png`，下次同 pid 首次截图**取消**（不产文件）时会读到那个陈旧文件、误判为新截图并交出**上次的**内容（隐私+正确性）。capture 前 unlink 目标即可堵死。
+  - **Windows `ms-screenclip:` 唯一取消信号是超时**：它只写剪贴板、无文件无回调，取消（Esc）时剪贴板不变 ⇒ 只能靠有界轮询超时判取消。所以**抢到冻结快照后要立刻恢复主窗**——否则「隐藏窗口→截图→取消」会让主窗隐藏满整个轮询周期（60s）像卡死。唤起走 `tauri-plugin-opener` 的 Rust API，**不能** `cmd /c start`（ADR-054 闪窗 + 元字符注入）。
+  - **`clipboard-manager` 的 `read_image()` 不能在主线程调用**（插件文档明示，Linux 会死锁冻结整个 app）⇒ 放进 `spawn_blocking`。顺带：**Rust 直接调插件 API 绕过 JS 侧 ACL**，所以 capability 里**不要**为此加 `clipboard-manager:allow-read-image`（那只放行 renderer、纯过度授权）。
+- **Tauri 打包二进制里 webview 资源是压缩嵌入的 ⇒ `strings`/byte-scan 命令名 grep 不到 ≠ 命令没注册（2026-07-15 血泪）**：Tauri 把前端 JS/HTML 资源**压缩**后嵌进二进制，命令名字符串搜不到是正常的；**命令注册是编译期保证**（在 `generate_handler!` 里且能编译 = 已注册、能路由）。别拿 byte-scan 当「命令是否注册」的 oracle——曾据此误判「release LTO 把某命令 strip 了」并做了无效"修复"，被打包 `.app` 上真实的授权流程当场证伪。**要验命令能否路由，只能跑打包 app 触发它。**
+- **`tauri dev` 借的是终端（父进程）的 TCC 身份，不是 app 自己的（2026-07-15 现场确认）**：dev 二进制（`cargo run`/`tauri dev` 从终端拉起、未签名）没有独立代码身份，屏幕录制等 TCC 权限归到「负责进程」= 终端（如 ghostty）。所以 dev 下「截图能截到真内容」用的是终端的授权，**授权引导态（未授权分支）根本测不出**。⇒ **TCC 类功能必须 `tauri:build` 打成 `.app`、从 Finder/Dock 启动**（才有独立 ad-hoc 身份、才在系统「屏幕录制」列表里以 app 名出现、首次截图才弹真授权框）才测得准。从 Terminal/dev 里测的是终端的权限。
 
 ## 13. 桌面组件测试（vitest + jsdom）
 

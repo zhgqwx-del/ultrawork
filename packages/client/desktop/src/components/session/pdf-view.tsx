@@ -1,16 +1,13 @@
 import { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { ExternalLink } from "lucide-react"
-import * as pdfjsLib from "pdfjs-dist"
-// ?worker (vs ?url) lets Vite instantiate the worker itself — more reliable in
-// the Tauri webview, where loading a module worker from a plain ?url can fail to
-// fetch/instantiate. No asset-protocol scope needed (the workspace can live
-// anywhere on disk); bytes are read via the scope-free `read_file_bytes` command.
-// A single shared workerPort is fine: pdf.js reuses it across documents and does
-// not terminate an externally-provided port on loadingTask.destroy().
-import PdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker"
-
-pdfjsLib.GlobalWorkerOptions.workerPort = new PdfjsWorker()
+// pdf.js + its worker live in @/lib/pdfjs — the composer's PDF page count needs them too,
+// and GlobalWorkerOptions.workerPort is global, so two setters would just spawn two workers.
+// No asset-protocol scope needed (the workspace can live anywhere on disk); bytes are read
+// via the scope-free `read_file_bytes` command.
+import { getPdfjs } from "@/lib/pdfjs"
+// Type-only: erased at build time, so it does not pull pdf.js (or its worker) in eagerly.
+import type * as pdfjsLib from "pdfjs-dist"
 
 /** Render PDF pages to canvases via pdf.js — no webview PDF viewer dependency. */
 export function PdfView({ absPath, t }: { absPath: string; t: (key: string) => string }) {
@@ -29,7 +26,7 @@ export function PdfView({ absPath, t }: { absPath: string; t: (key: string) => s
       try {
         const buf = await invoke<ArrayBuffer>("read_file_bytes", { path: absPath })
         if (cancelled) return
-        loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buf) })
+        loadingTask = getPdfjs().getDocument({ data: new Uint8Array(buf) })
         const doc = await loadingTask.promise
         if (cancelled) return
         const target = containerRef.current

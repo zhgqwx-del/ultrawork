@@ -26,6 +26,11 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+# In-app screenshot (ADR-056): Windows `ms-screenclip:` writes ONLY to the
+# clipboard (no file, no callback), so the Windows capture path reads the image
+# back through this plugin and polls for a change. Cross-platform plugin; the
+# clipboard read itself is only compiled on Windows (lib.rs `capture_windows`).
+tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
@@ -47,6 +52,11 @@ sha2 = "0.10"
 # buttons rather than custom labels (see webview_runtime.rs).
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.16", default-features = false }
+# In-app screenshot (ADR-056): ms-screenclip hands us a raw RGBA image off the
+# clipboard; encode it to a PNG file so the Windows path returns the same "temp
+# PNG path" contract as macOS/Linux. Pure-Rust, no system deps — Windows-only
+# because that is the only path that reads a clipboard image.
+png = "0.17"
 
 # Unix-only: catch SIGINT/SIGTERM/SIGHUP and clean up sidecars on non-graceful
 # exits that RunEvent::Exit doesn't cover. (SIGKILL is uncatchable — that path

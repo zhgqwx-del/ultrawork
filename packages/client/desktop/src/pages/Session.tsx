@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useParams, useLocation, useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 import { TopBar } from "@/components/layout/top-bar"
 import { handleDrag } from "@/components/layout/drag-region"
 import { useSidebar } from "@/components/layout/sidebar-context"
@@ -15,6 +16,8 @@ import { useSessionPermission } from "@/lib/use-session-permission"
 import { useSessionScroll } from "@/lib/use-session-scroll"
 import { ChatInput, MessageList, ModelSelector, AgentSelector, AgentAvatar } from "@/components/chat"
 import { useConnector } from "@/lib/sse-context"
+import { useAttachments } from "@/lib/use-attachments"
+import { useScreenshot } from "@/lib/use-screenshot"
 import { ExecutionStatus } from "@/components/chat/execution-status"
 import { PermissionDock } from "@/components/chat/permission-dock"
 import { QuestionDock } from "@/components/chat/question-dock"
@@ -159,6 +162,34 @@ export function SessionPage() {
   // so the workspace tree, artifacts scan, and preview all resolve paths.
   const workspaceDir = session?.directory ?? teamEntry?.workspace
 
+  // Composer attachments. ACP/Team backends declare capabilities.image = false and their
+  // prompt() throws on attachments, so the entry point is disabled there rather than
+  // letting the user attach a file that would only blow up on send.
+  const attach = useAttachments(currentModel)
+  const shot = useScreenshot(attach.add)
+  // Read the BACKEND's image capability live per render (same pattern as `supportsModel`
+  // above), NOT inside the memo keyed on `connector`/`id`. Switching a fresh session's agent
+  // (opencode→ACP) via the in-session AgentSelector flips the backend without changing `id`
+  // or `connector` identity, so a memo keyed on those would go stale and leave attachments
+  // enabled on a text-only ACP backend — whose prompt() throws on attachments (the exact
+  // silent-drop/blow-up this feature exists to prevent).
+  const backendAcceptsAttachments = connector.capabilitiesOf(id).image
+  // True while attachments are being materialised (a document copy can take seconds).
+  const [preparing, setPreparing] = useState(false)
+  const attachmentSlot = useMemo(
+    () => ({
+      items: attach.items,
+      add: attach.add,
+      addPaths: attach.addPaths,
+      remove: attach.remove,
+      blocker: attach.blocker,
+      checking: attach.checking,
+      disabled: !backendAcceptsAttachments,
+      screenshot: shot,
+    }),
+    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, backendAcceptsAttachments, shot],
+  )
+
   // Artifacts (ADR-048 D5): derived at session level, not inside the sidebar
   // panel, because the unread badge and the preview's prev/next navigation both
   // need them while the sidebar is closed.
@@ -229,12 +260,39 @@ export function SessionPage() {
     toggleRight()
   }, [rightOpen, toggleRight])
 
-  const handleSend = () => {
-    if (!input.trim()) return
-    sendMessage(input.trim(), currentModel)
-    setInput("")
-    // Force scroll to bottom after sending, even if user was viewing history
-    forceScrollToBottom()
+  const handleSend = async () => {
+    // An attachment with no text is a legitimate turn ("look at this screenshot").
+    if (!id || (!input.trim() && attach.items.length === 0)) return
+    // `checking` matters as much as `blocker`: the gate awaits a 4 MB GET /provider, and
+    // pasting an image then hitting Enter immediately would otherwise sail straight past a
+    // check that simply had not finished computing yet.
+    if (attach.blocker || attach.checking || preparing) return
+
+    // Documents are copied into the workspace here (not at attach time) and their paths
+    // appended to the prompt, since OpenCode can't inline them (discussions/039 §3.2).
+    // That copy can take seconds for a large file — hence `preparing`, which disables the
+    // composer. Without it a second Enter starts a SECOND materialize: the file gets copied
+    // into the workspace twice (uniquified), and the second send is then swallowed by
+    // sendMessage's own guard, leaving an orphaned copy nothing refers to.
+    setPreparing(true)
+    try {
+      const { attachments, noteText } = await attach.materialize(id, workspaceDir)
+      const text = input.trim() + noteText
+      // Every attachment can fail to materialise (no workspace, copy failed, file vanished).
+      // sendMessage would then find nothing to send and return SILENTLY — while we cleared the
+      // composer, which reads exactly like a successful send. Keep the user's input and say so.
+      if (!text.trim() && attachments.length === 0) {
+        toast.error(t("attachment.nothingToSend"))
+        return
+      }
+      sendMessage(text, currentModel, attachments)
+      setInput("")
+      attach.clear()
+      // Force scroll to bottom after sending, even if user was viewing history
+      forceScrollToBottom()
+    } finally {
+      setPreparing(false)
+    }
   }
 
   // The row that chat / preview / sidebar share. Measured (not derived from
@@ -394,10 +452,11 @@ export function SessionPage() {
               value={input}
               onChange={setInput}
               onSend={handleSend}
+              attachments={attachmentSlot}
               onStop={stopGeneration}
               placeholder={t("placeholder.reply")}
-              disabled={isAgentActive}
-              loading={isAgentActive}
+              disabled={isAgentActive || preparing}
+              loading={isAgentActive || preparing}
               variant="reply"
               leftSlot={
                 <div className="flex items-center gap-1">

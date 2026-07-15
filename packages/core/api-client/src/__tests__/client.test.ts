@@ -256,6 +256,38 @@ describe("ApiClient", () => {
       expect(body.agent).toBeUndefined()
     })
 
+    it("promptAsync - with attachments (text part first, then file parts)", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 204, statusText: "No Content" })
+      await client.promptAsync("s1", "看这张图", {
+        attachments: [
+          { type: "file", mime: "image/png", filename: "shot.png", url: "data:image/png;base64,AAA" },
+        ],
+      })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.parts).toEqual([
+        { type: "text", text: "看这张图" },
+        { type: "file", mime: "image/png", filename: "shot.png", url: "data:image/png;base64,AAA" },
+      ])
+    })
+
+    it("promptAsync - attachment-only prompt omits the text part entirely", async () => {
+      // "Paste a screenshot and hit enter" is a first-class action. The server accepts a
+      // file-only parts array (verified against a live sidecar, discussions/039 §5), but an
+      // empty text part would be junk — assert we never emit one.
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 204, statusText: "No Content" })
+      await client.promptAsync("s1", "", {
+        attachments: [{ type: "file", mime: "image/png", url: "data:image/png;base64,AAA" }],
+      })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.parts).toEqual([{ type: "file", mime: "image/png", url: "data:image/png;base64,AAA" }])
+      expect(body.parts.some((p: { type: string }) => p.type === "text")).toBe(false)
+    })
+
+    it("promptAsync - refuses a prompt with neither text nor attachments", async () => {
+      await expect(client.promptAsync("s1", "")).rejects.toThrow(/no text and no attachments/)
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
     it("promptAsync - with agent", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

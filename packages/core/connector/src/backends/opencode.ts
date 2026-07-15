@@ -222,6 +222,12 @@ export class OpenCodeBackend implements AgentBackend {
     await this.api.promptAsync(sessionId, text, {
       agent: opts?.agent,
       model: opts?.model,
+      attachments: opts?.attachments?.map((a) => ({
+        type: "file" as const,
+        mime: a.mime,
+        filename: a.filename,
+        url: a.url,
+      })),
       // Isolation closure (017 拍板 #4): every opencode prompt that doesn't
       // explicitly manage tools is denied the delegate MCP tools. Callers
       // that pass a map (orchestrator children, Team-page Leader) own it.

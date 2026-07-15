@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText, Bot, Users, Cpu } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
+import { useAttachments } from "@/lib/use-attachments"
+import { useScreenshot } from "@/lib/use-screenshot"
 import { useAgents } from "@/lib/agent-context"
 import { useApi } from "@/lib/use-api"
 import { useWorkspace } from "@/lib/workspace-context"
@@ -64,6 +66,34 @@ export function HomePage() {
   const connector = useConnector()
   const { t } = useI18n()
   const { currentModel, setModel } = useModel()
+
+  // Team mode runs on ACP (text-only prompts), so the attach entry point is hidden there.
+  const attach = useAttachments(currentModel)
+  const shot = useScreenshot(attach.add)
+  const attachmentSlot = useMemo(
+    () => ({
+      items: attach.items,
+      add: attach.add,
+      addPaths: attach.addPaths,
+      remove: attach.remove,
+      blocker: attach.blocker,
+      checking: attach.checking,
+      disabled: mode === "team",
+      screenshot: shot,
+    }),
+    [attach.items, attach.add, attach.addPaths, attach.remove, attach.blocker, attach.checking, mode, shot],
+  )
+  // Switching to Team mode after attaching: Team runs on ACP, which takes text only. The
+  // disabled slot only greys out the ➕ button — the already-attached files would still sit
+  // in the composer and then be dropped without a word by handleTeamSend. Drop them here,
+  // visibly, and say so.
+  useEffect(() => {
+    if (mode === "team" && attach.items.length > 0) {
+      attach.clear()
+      toast.info(t("attachment.clearedForTeam"))
+    }
+  }, [mode, attach, t])
+
   const isACP = isACPAgentId(agentId)
 
   // Default member selection: everyone, until the user edits the picker.
@@ -104,7 +134,20 @@ export function HomePage() {
     try {
       const session = await createSession()
       bindSessionAgent(session.id, agentId)
+      // Attachments can only be materialised now: documents are copied into the session's
+      // workspace, and on Home there was no session (and no workspace) until this moment.
+      const { attachments, noteText } = await attach.materialize(session.id, session.directory)
+      const prompt = text + noteText
+      // Every attachment can fail to materialise. Sending a prompt with neither text nor
+      // attachments would be refused downstream anyway — but we have already created and are
+      // about to navigate into a session, so say what happened instead of stranding the user
+      // in an empty conversation that looks like it swallowed their message.
+      if (!prompt.trim() && attachments.length === 0) {
+        toast.error(t("attachment.nothingToSend"))
+        return
+      }
       setInput("")
+      attach.clear()
       // Navigate immediately for instant UX; the prompt call is fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
@@ -115,7 +158,11 @@ export function HomePage() {
       // Dispatched by the binding frozen above (ACP backends lazily create the
       // agent-side session in the workspace directory before prompting).
       connector
-        .prompt(session.id, text, { model: currentModel || undefined, directory: session.directory })
+        .prompt(session.id, prompt, {
+          model: currentModel || undefined,
+          directory: session.directory,
+          attachments,
+        })
         .catch((err) => {
           console.error("Failed to send message:", err)
           // No turn ever ran, so no idle will ever arrive to consume the entry — it would
@@ -197,7 +244,13 @@ export function HomePage() {
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || sending) return
+    // An attachment with no text is a complete turn — don't require typing.
+    if ((!text && attach.items.length === 0) || sending) return
+    // `checking` matters as much as `blocker`: the gate awaits a 4 MB GET /provider, and
+    // paste-then-Enter would otherwise outrun a check that simply hadn't finished.
+    if (attach.blocker || attach.checking) return
+    // Team mode runs on ACP, which is text-only; the composer already hides the attach
+    // button there, so this is belt-and-braces rather than a reachable path.
     if (mode === "team") await handleTeamSend(text)
     else await handleSingleSend(text)
   }
@@ -249,6 +302,7 @@ export function HomePage() {
               value={input}
               onChange={setInput}
               onSend={handleSend}
+              attachments={attachmentSlot}
               placeholder={mode === "team" ? t("team.inputPlaceholder") : t("placeholder.askAnything")}
               disabled={sending}
               loading={sending}
