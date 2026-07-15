@@ -201,8 +201,12 @@ function GeneralSection() {
       {/* Language */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-[var(--color-fg)]">{t("general.language")}</label>
-        <div className="grid grid-cols-2 gap-2">
-          {([{ value: "en", label: "English" }, { value: "zh", label: "简体中文" }] as const).map((lang) => (
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { value: "en", label: "English" },
+            { value: "zh-Hans", label: "简体中文" },
+            { value: "zh-Hant", label: "繁體中文" },
+          ] as const).map((lang) => (
             <button
               key={lang.value}
               className={cn(
@@ -211,7 +215,7 @@ function GeneralSection() {
                   ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
                   : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
               )}
-              onClick={() => updateConfig({ language: lang.value as "en" | "zh" })}
+              onClick={() => updateConfig({ language: lang.value })}
             >
               {lang.label}
             </button>

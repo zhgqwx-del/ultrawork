@@ -28,7 +28,7 @@ UltraWork（无影）是一款桌面 AI Agent 应用，基于 OpenCode Server �
 | 后端 | OpenCode Server (TypeScript/Bun，`bun build --compile` 编译为 sidecar binary) |
 | 状态管理 | React Context |
 | 路由 | react-router-dom v7 |
-| 国际化 | 自研 i18n (I18nProvider + `t()`) |
+| 国际化 | 自研 i18n (I18nProvider + `t()`)；English / 简体 / 繁体（zh-Hant 构建期 opencc 生成，ADR-058） |
 
 ## 架构
 

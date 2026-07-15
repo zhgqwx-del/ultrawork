@@ -80,12 +80,32 @@ describe("ConfigStorage", () => {
     it("merges stored config with defaults", () => {
       localStorage.setItem(
         "ultrawork-config",
-        JSON.stringify({ theme: "dark", language: "zh", apiPassword: "stored-pw" })
+        JSON.stringify({ theme: "dark", language: "zh-Hans", apiPassword: "stored-pw" })
       )
       const config = ConfigStorage.load()
       expect(config.theme).toBe("dark")
-      expect(config.language).toBe("zh")
+      expect(config.language).toBe("zh-Hans")
       expect(config.apiPassword).toBe("stored-pw")
+    })
+
+    // ADR-058 D2: old builds persisted "zh" (Simplified). Existing users must
+    // land on zh-Hans with zero perceived change.
+    it("migrates legacy language \"zh\" to \"zh-Hans\"", () => {
+      localStorage.setItem("ultrawork-config", JSON.stringify({ language: "zh" }))
+      expect(ConfigStorage.load().language).toBe("zh-Hans")
+    })
+
+    it("keeps explicit zh-Hant / zh-Hans / en untouched", () => {
+      for (const lang of ["zh-Hant", "zh-Hans", "en"] as const) {
+        localStorage.setItem("ultrawork-config", JSON.stringify({ language: lang }))
+        expect(ConfigStorage.load().language).toBe(lang)
+      }
+    })
+
+    it("falls back to a detected default for an unknown language value", () => {
+      localStorage.setItem("ultrawork-config", JSON.stringify({ language: "fr" }))
+      // jsdom navigator.language is en-US → "en".
+      expect(ConfigStorage.load().language).toBe("en")
     })
 
     it("preserves empty credentials so ConfigProvider can fill them from Tauri", () => {
@@ -110,12 +130,12 @@ describe("ConfigStorage", () => {
       const config: AppConfig = {
         ...DEFAULT_CONFIG,
         theme: "dark",
-        language: "zh",
+        language: "zh-Hans",
       }
       ConfigStorage.save(config)
       const stored = JSON.parse(localStorage.getItem("ultrawork-config")!)
       expect(stored.theme).toBe("dark")
-      expect(stored.language).toBe("zh")
+      expect(stored.language).toBe("zh-Hans")
     })
   })
 

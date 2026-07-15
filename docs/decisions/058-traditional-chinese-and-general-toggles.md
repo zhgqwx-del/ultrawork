@@ -1,6 +1,6 @@
 # ADR-058：繁体中文（构建期简→繁生成）+ 通用页布尔项改 toggle 开关
 
-- 状态：已接受（Accepted — **方案已定档，未实现**；先出决策文档后编码，用户拍板）
+- 状态：已接受（Accepted — **✅ 已实现**：D1 toggle + D2/D3 繁体中文构建期生成，desktop 632 测试 + typecheck + check-docs §9 漂移守卫全绿；**繁体全局视觉走查待用户执行**，Win/Linux CI 兜底）
 - 日期：2026-07-15
 - 背景调研：`docs/discussions/041-traditional-chinese-and-general-toggles.md`（含 opencc-js 调研实证）
 - 相关：ADR-037（跨平台）· ADR-053（通知项即当前 4 个布尔项之三）· ADR-048（planAutoReveal）

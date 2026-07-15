@@ -12,6 +12,7 @@
  *      （不扫 CHANGELOG——只追加的历史记录，未来章节重编号不应让不可改的历史条目炸门禁）
  *   7. requirements.md 新鲜度（warning）：落后 decisions/ 最新提交超 45 天提示回填（git 时间，取不到则跳过）
  *   8. 版本一致性：root/desktop package.json、tauri.conf.json、Cargo.toml、app-version.ts 五处版本号相同
+ *   9. 繁体中文生成产物新鲜度：i18n-zh-hant.generated.ts == gen-zh-hant.ts 从 zh-Hans 复算结果（ADR-058 D3）
  *
  * 用法：bun run --bun scripts/check-docs.ts
  * 退出码：0 = 通过；1 = 有硬性漂移（CI / pre-commit 可据此拦截；CI job 见 .github/workflows/ci.yml docs）。
@@ -276,6 +277,34 @@ if (await memFile.exists()) {
   }
 } else {
   warnings.push(`未定位到 auto-memory MEMORY.md（${memPath}）；跳过行数检查。`)
+}
+
+// ── 9. 繁体中文生成产物漂移（ADR-058 D3）────────────────────────────
+// zh-Hant 词典由 scripts/gen-zh-hant.ts 从 zh-Hans 源构建期生成。若有人改了
+// 简体源却忘了重新生成，committed 产物会 stale——用 --check 复算比对兜底。
+// 生成器依赖 devDep opencc-js；本 job（CI docs）刻意不 `bun install`，所以
+// opencc 不可解析时**跳过并告警**（不误判为漂移）。真正的 CI 强制在装了依赖的
+// node job 里显式跑 `gen-zh-hant.ts --check`（三平台），本地 wrap-up 亦有依赖。
+{
+  const gen = path.join(rootDir, "scripts/gen-zh-hant.ts")
+  const opencc = path.join(rootDir, "node_modules/opencc-js/package.json")
+  if (!(await Bun.file(gen).exists())) {
+    // generator absent → nothing to guard
+  } else if (!(await Bun.file(opencc).exists())) {
+    warnings.push("opencc-js 未安装（依赖未装环境）→ 跳过 zh-Hant 生成产物漂移检查（CI node job 会强制）。")
+  } else {
+    // Use the running bun binary (process.execPath), not a bare "bun" that
+    // assumes PATH — check-docs may itself be launched via an absolute bun path.
+    const proc = Bun.spawnSync([process.execPath, "run", "--bun", gen, "--check"], { cwd: rootDir })
+    if (!proc.success) {
+      const tail = (proc.stderr?.toString() || proc.stdout?.toString() || "").trim().split("\n").pop()
+      errors.push(
+        "i18n-zh-hant.generated.ts 与 zh-Hans 源漂移（改了简体词典未重新生成繁体）→ " +
+          "运行 `bun run --bun scripts/gen-zh-hant.ts` 并提交。" +
+          (tail ? ` (${tail})` : ""),
+      )
+    }
+  }
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────
