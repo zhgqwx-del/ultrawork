@@ -148,7 +148,7 @@ function HoverLabelButton({
  * Replaces the former global ModelDialog modal.
  */
 export function ModelsSection() {
-  const { currentModel, setModel } = useModel()
+  const { currentModel, setModel, freeTrialConsent, revokeFreeTrial } = useModel()
   const [providers, setProviders] = useState<Provider[]>([])
   const [authInfos, setAuthInfos] = useState<ProviderAuthInfo[]>([])
   const [search, setSearch] = useState("")
@@ -942,6 +942,19 @@ export function ModelsSection() {
           className="w-full rounded-lg border border-[var(--color-border)] bg-transparent py-2.5 pl-10 pr-4 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
         />
       </div>
+
+      {/* Free-trial status + revoke (ADR-057) — only while the trial is active. */}
+      {freeTrialConsent && (
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-brand)]/5 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-[var(--color-fg)]">{t("freeTrial.settingsLabel")}</p>
+            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">{t("freeTrial.settingsDesc")}</p>
+          </div>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => void revokeFreeTrial()}>
+            {t("freeTrial.disable")}
+          </Button>
+        </div>
+      )}
 
       {/* Provider list */}
       {loading ? (

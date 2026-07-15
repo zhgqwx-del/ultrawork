@@ -3042,6 +3042,96 @@ fn get_global_config_dir() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Free-trial consent (ADR-057)
+//
+// Records whether the user explicitly opted into the free OpenCode Zen "trial"
+// default model, plus which `provider/model` values we seeded. The seeded values
+// let a later revoke clear the default ONLY if the user hasn't since chosen their
+// own model — the actual model/small_model live in opencode.json, written by the
+// sidecar (frontend `patchGlobalConfig`); this file only remembers what WE put there.
+//
+// Deliberately a plain JSON file, separate from opencode.json:
+//  - it must not pollute opencode's config schema, and
+//  - the sidecar never touches it, so (unlike opencode.json) there is no
+//    cross-process writer to race with — a plain read-modify-write is safe.
+// Not sensitive, so no 0600 requirement (contrast sidecar-auth.json).
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreeTrialConsent {
+    /// True once the user explicitly enabled the free trial.
+    consented: bool,
+    /// The `provider/model` we seeded as `model`, or None if not seeded.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    seeded_model: Option<String>,
+    /// The `provider/model` we seeded as `small_model`, or None.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    seeded_small_model: Option<String>,
+}
+
+fn free_trial_consent_path() -> PathBuf {
+    global_config_dir().join("free-trial-consent.json")
+}
+
+// Path-parameterized core (testable without touching the real config dir).
+fn read_free_trial_consent_at(path: &std::path::Path) -> FreeTrialConsent {
+    // Missing or corrupt file → treat as "never consented" (the safe default:
+    // privacy-off). A parse error must never read as "consented".
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => FreeTrialConsent::default(),
+    }
+}
+
+fn write_free_trial_consent_at(
+    path: &std::path::Path,
+    consent: &FreeTrialConsent,
+) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+        }
+    }
+    let mut json = serde_json::to_string_pretty(consent)
+        .map_err(|e| format!("Failed to serialize free-trial consent: {}", e))?;
+    json.push('\n');
+    std::fs::write(path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+#[tauri::command]
+fn get_free_trial_consent() -> FreeTrialConsent {
+    read_free_trial_consent_at(&free_trial_consent_path())
+}
+
+/// Persist consent + the seeded model values. The frontend calls this AFTER it has
+/// seeded `model`/`small_model` via `patchGlobalConfig`, passing the same values so
+/// revoke can later verify they are still ours.
+#[tauri::command]
+fn set_free_trial_consent(
+    seeded_model: Option<String>,
+    seeded_small_model: Option<String>,
+) -> Result<(), String> {
+    write_free_trial_consent_at(
+        &free_trial_consent_path(),
+        &FreeTrialConsent {
+            consented: true,
+            seeded_model,
+            seeded_small_model,
+        },
+    )
+}
+
+/// Reset to the privacy-off default (consented:false, no seeded values). The
+/// frontend is responsible for clearing `model`/`small_model` in opencode.json
+/// first — but only when they still equal the seeded values (revoke-with-protection).
+#[tauri::command]
+fn clear_free_trial_consent() -> Result<(), String> {
+    write_free_trial_consent_at(&free_trial_consent_path(), &FreeTrialConsent::default())
+}
+
+// ---------------------------------------------------------------------------
 // Sidecar credentials — random per-install password persisted to
 // ~/.config/ultrawork/sidecar-auth.json with 0600 perms.
 //
@@ -6502,6 +6592,9 @@ pub fn run() {
             write_mcp_config,
             remove_mcp_config,
             get_global_config_dir,
+            get_free_trial_consent,
+            set_free_trial_consent,
+            clear_free_trial_consent,
             get_sidecar_path,
             get_sidecar_credentials,
             get_sidecar_ports,
@@ -6598,6 +6691,92 @@ mod search_probe_tests {
     fn unknown_provider_rejected() {
         assert!(build_search_probe_with("exa", None).is_err());
         assert!(build_search_probe_with("", None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod free_trial_consent_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("uw-consent-{}-{}", tag, n)).join("free-trial-consent.json")
+    }
+
+    #[test]
+    fn missing_file_reads_as_not_consented() {
+        let path = unique_tmp("missing");
+        let c = read_free_trial_consent_at(&path);
+        assert!(!c.consented);
+        assert_eq!(c.seeded_model, None);
+        assert_eq!(c.seeded_small_model, None);
+    }
+
+    #[test]
+    fn corrupt_file_reads_as_not_consented() {
+        // A parse error must never be mistaken for consent (privacy-off default).
+        let path = unique_tmp("corrupt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{ not valid json").unwrap();
+        assert!(!read_free_trial_consent_at(&path).consented);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn write_then_read_roundtrips_seeded_values() {
+        let path = unique_tmp("roundtrip");
+        let written = FreeTrialConsent {
+            consented: true,
+            seeded_model: Some("opencode/big-pickle".into()),
+            seeded_small_model: Some("opencode/big-pickle".into()),
+        };
+        write_free_trial_consent_at(&path, &written).unwrap();
+        let read = read_free_trial_consent_at(&path);
+        assert!(read.consented);
+        assert_eq!(read.seeded_model.as_deref(), Some("opencode/big-pickle"));
+        assert_eq!(read.seeded_small_model.as_deref(), Some("opencode/big-pickle"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn default_write_clears_consent() {
+        let path = unique_tmp("clear");
+        write_free_trial_consent_at(
+            &path,
+            &FreeTrialConsent {
+                consented: true,
+                seeded_model: Some("opencode/big-pickle".into()),
+                seeded_small_model: None,
+            },
+        )
+        .unwrap();
+        // Simulate clear_free_trial_consent()
+        write_free_trial_consent_at(&path, &FreeTrialConsent::default()).unwrap();
+        let read = read_free_trial_consent_at(&path);
+        assert!(!read.consented);
+        assert_eq!(read.seeded_model, None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn serializes_camel_case_for_frontend() {
+        // Frontend expects camelCase keys (project convention).
+        let path = unique_tmp("camel");
+        write_free_trial_consent_at(
+            &path,
+            &FreeTrialConsent {
+                consented: true,
+                seeded_model: Some("opencode/big-pickle".into()),
+                seeded_small_model: Some("opencode/big-pickle".into()),
+            },
+        )
+        .unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"seededModel\""), "expected camelCase key, got: {raw}");
+        assert!(raw.contains("\"seededSmallModel\""));
+        assert!(!raw.contains("seeded_model"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
 

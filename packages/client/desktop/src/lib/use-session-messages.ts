@@ -4,8 +4,15 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
+import { useModelOptional } from "@/lib/model-context"
+import { classifyZenError, isZenModelId } from "@/lib/free-model"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { PromptAttachment, SSEEvent } from "@agent/connector"
+
+// Belt-and-braces cap on transparent free-trial fallbacks per session mount (ADR-057 P4): the
+// natural terminator is candidate exhaustion (advanceFreeTrialModel → null), but this bounds a
+// pathological loop if a working model's turns were ever misclassified as auth failures.
+const MAX_FREE_TRIAL_FALLBACKS = 6
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -150,6 +157,11 @@ export function useSessionMessages(
   const { sessions, activeSessionIds, updateSession, markSessionActive, markSessionIdle } = useSessionsContext()
   const connector = useConnector()
   const { t } = useI18n()
+  // Optional: absent in isolated unit tests (no ModelProvider) → free-trial fallback simply off.
+  const modelCtx = useModelOptional()
+  const freeTrialConsent = modelCtx?.freeTrialConsent ?? false
+  const modelCtxCurrent = modelCtx?.currentModel ?? ""
+  const advanceFreeTrialModel = modelCtx?.advanceFreeTrialModel ?? (async () => null)
 
   // Backend behavior differences are capability-declared (ADR-030 D-5);
   // the connector dispatches every call by the session's agent binding.
@@ -186,6 +198,20 @@ export function useSessionMessages(
   const activeIdsRef = useRef(activeSessionIds)
   activeIdsRef.current = activeSessionIds
   const prefetchUntilRef = useRef(0)
+  // --- Free-trial fallback state (ADR-057 P4), read/written synchronously in SSE callbacks ---
+  const freeTrialConsentRef = useRef(freeTrialConsent)
+  freeTrialConsentRef.current = freeTrialConsent
+  const modelCtxCurrentRef = useRef(modelCtxCurrent)
+  modelCtxCurrentRef.current = modelCtxCurrent
+  const advanceFreeTrialModelRef = useRef(advanceFreeTrialModel)
+  advanceFreeTrialModelRef.current = advanceFreeTrialModel
+  // The last user-sent turn (text + attachments), so a fallback can resend it on the next idle.
+  const lastUserSendRef = useRef<{ text: string; attachments?: PromptAttachment[] } | null>(null)
+  // Model to resend with, staged by session.error and fired by the next session idle.
+  const freeTrialResendModelRef = useRef<string | null>(null)
+  const freeTrialFallbackCountRef = useRef(0)
+  // Distinguishes our own fallback resend from a genuine user send (which resets the counter).
+  const isFallbackResendRef = useRef(false)
   // Home→Session optimistic-send safety timer. Fires once if the navigated send
   // never produces a turn; MUST be cancelled the moment real SSE activity proves
   // the turn is live, otherwise it force-clears `sending` mid-turn at 8s and any
@@ -648,6 +674,35 @@ export function useSessionMessages(
           const { sessionID: errSid, error } = event.properties as { sessionID?: string; error?: { name?: string; data?: { message?: string } } }
           if ((!errSid || errSid === sessionId) && error) {
             const msg = error.data?.message || error.name || t("error.unknown")
+            // Free-trial model failure (ADR-057 P4): replace the raw gateway error with actionable
+            // guidance, and transparently fall back to the next free candidate on an auth failure.
+            if (freeTrialConsentRef.current && isZenModelId(modelCtxCurrentRef.current)) {
+              const kind = classifyZenError(error.data?.message || error.name)
+              if (kind === "quota") {
+                // The shared anonymous allowance is spent — a different free model won't help.
+                toast.error(t("freeTrial.quotaExceeded"))
+                break
+              }
+              if (kind === "auth") {
+                if (freeTrialFallbackCountRef.current >= MAX_FREE_TRIAL_FALLBACKS) {
+                  toast.error(t("freeTrial.unavailable"))
+                  break
+                }
+                freeTrialFallbackCountRef.current += 1
+                advanceFreeTrialModelRef.current().then((next) => {
+                  if (idRef.current !== sessionId) return
+                  if (!next) {
+                    toast.error(t("freeTrial.unavailable"))
+                    return
+                  }
+                  // Resend on the NEXT idle: sending is still true here, so an immediate resend
+                  // would be swallowed by sendMessage's busy guard.
+                  freeTrialResendModelRef.current = next
+                  toast.message(t("freeTrial.switching"))
+                })
+                break
+              }
+            }
             toast.error(msg)
           }
           break
@@ -672,6 +727,10 @@ export function useSessionMessages(
             sendingRef.current = false
             setSending(false)
             markSessionIdle(statusSid)
+            // NB: the free-trial fallback resend is NOT fired here — at this synchronous moment
+            // setSending(false)/markSessionIdle are still-unflushed setState, so sendMessage's busy
+            // guard (`sending` / activeIdsRef) would swallow it. It fires from an effect keyed on
+            // `sending` (below), which runs after those flush.
           }
           break
         }
@@ -771,6 +830,15 @@ export function useSessionMessages(
     // app-level busy check a second prompt could slip past the UI's disabled
     // state and collide with the in-flight turn (discussions/022).
     if (!sessionId || !hasContent || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
+    // Remember this turn so a free-trial fallback can resend it (ADR-057 P4). A genuine user send
+    // (not our own resend) resets the fallback counter and cancels any pending stale resend.
+    lastUserSendRef.current = { text, attachments }
+    if (isFallbackResendRef.current) {
+      isFallbackResendRef.current = false
+    } else {
+      freeTrialFallbackCountRef.current = 0
+      freeTrialResendModelRef.current = null
+    }
     sendingRef.current = true
     markSessionActive(sessionId)
     // The desktop user started this turn ⇒ they are owed a notification when it ends.
@@ -845,6 +913,22 @@ export function useSessionMessages(
       })
       .catch(handleSendError)
   }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])
+
+  // Deferred free-trial fallback resend (ADR-057 P4). Staged by the session.error auth branch
+  // (freeTrialResendModelRef), fired HERE rather than inline in the idle handler: an effect keyed
+  // on `sending` runs after setSending(false)/markSessionIdle have flushed, so sendMessage's busy
+  // guard (`sending` closure + activeIdsRef) is clear and the resend actually dispatches. Firing it
+  // inline (same synchronous SSE tick) is swallowed by that guard. sendMessage is a dep, so this
+  // closure always holds the freshest one (with `sending === false`).
+  useEffect(() => {
+    if (sending) return
+    const model = freeTrialResendModelRef.current
+    const last = lastUserSendRef.current
+    if (!model || !last) return
+    freeTrialResendModelRef.current = null
+    isFallbackResendRef.current = true
+    sendMessage(last.text, model, last.attachments)
+  }, [sending, sendMessage])
 
   return {
     messages: displayMessages,

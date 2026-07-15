@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **首启默认免费模型 = OpenCode Zen 试用入口（ADR-057，discussions/040）**：全新安装原本无被选中的默认模型（选择器显示 "no model"、须先手动配 key）。现提供「零门槛试用入口」——首次在无可用模型时发消息弹一次性**同意卡片**，点「启用免费试用」即用 OpenCode Zen 的免费模型开始对话，无需 API key。定位是**试用入口而非可靠免费层**（免费访问由第三方决定、不受我们控制）。
+  - **实证根基**：vendor `opencode` provider 在无 key 时用匿名 `apiKey:"public"` 自动加载免费模型（`provider.ts:178-198`，**无需 vendor patch**），空配置真跑 sidecar 的 `/provider` 已列出 6 个免费模型；线上实测 `big-pickle` 等 5 个可匿名跑通且支持工具调用。
+  - **隐私默认关**：同意前**不派发任何请求到 Zen**——拦截在三处发送入口（`Session`/`Home` 单发/团队）的**派发之前**（否则 opencode 服务端默认解析会自动挑免费模型发出去，绕过隐私门）；同意卡片明示「输入可能被第三方用于改进模型」。
+  - **探活即真实消息（乐观 seed + 透明回退）**：点「启用」直接 seed 偏好序第一名（不额外探活）；首条消息若 401/无 provider，经 `session.error` SSE 捕获 → 换下一候选、延迟到会话 idle 自动重发（避开 busy 门）；候选耗尽撤销 seed + 引导配 key。配额耗尽（`FreeUsageLimitError`）明确提示不静默挂。
+  - **辅助模型一并切**：seed 同写 `small_model`（opencode 的标题模型默认 `gpt-5-nano` 匿名 401，`getSmallModel` 优先读 `small_model` 覆盖之）。
+  - **撤销带保护**：设置页开关关闭时，仅当 `model`/`small_model` 仍等于当初 seed 值才清除，已被用户改过则保留其选择。
+  - **新增**：`lib/free-model.ts`（选型/分类纯函数）· `lib/free-trial.ts` + `free-trial-store.ts`（同意状态机 + Tauri/api 适配）· `FreeTrialConsentDialog` 组件 · 选择器「免费」徽标 · Rust `get/set/clear_free_trial_consent` 命令（独立 `free-trial-consent.json`）· `useModelOptional()`（不破坏隔离单测）· `scripts/verify-free-zen.ts`（vendor bump 后复验的诊断脚本）· `e2e/free-trial-consent.e2e.ts`（真浏览器 + 真 opencode + **真 Zen 网关** e2e，7/7 PASS）。
+  - **验证**：desktop **624** 测试（约 40 新，含三路对抗审查后补的集成+回退回归）· Rust **147** · 全 monorepo typecheck 8/8 · 跨包无回归 · `verify-free-zen.ts` 全过。**真机手动验收（卡片/自动重发/徽标/撤销/回退）待用户执行**——原生 UI e2e 结构上够不着。
 - **发布版本护栏：git tag 必须等于安装包版本**：`v*` tag 与 `tauri.conf.json` 版本不一致时快速失败。此前 release 流水线不从 tag 派生版本——安装包/关于页读的是 `tauri.conf.json`/`app-version.ts`（由 `check-docs.ts §2f` 保持五文件互等），tag 只决定 Release 页标题，二者漂移无护栏。现两处拦截：① `release.yml` 新增前置 `guard` job（`build needs: guard`，在三平台构建前快速失败；`workflow_dispatch` 无 tag 时跳过）；② `scripts/build-release.ts` 脚本开头同样校验（CI 读 `GITHUB_REF_NAME`、本地读 `git describe --exact-match`），覆盖本地在 tagged commit 上 `bun run release` 的场景；不在 tag 上则跳过，不打扰 dev 构建。
 - **输入框多模态附件（图片 / PDF / 文本 / Office 文件）— P0+P1（discussions/039）**：➕ 按钮、原生拖拽、粘贴三个入口；对齐钉钉/微信/飞书体验。
   - **管道拓宽（P0）**：`text: string` 焊死的四层（输入框→hook→connector→api-client）拓成 `parts[]`；`promptAsync` 新增 `attachments`，用户气泡不再丢弃 file part。后端 opencode 的 `FilePartInput` 契约本就支持，零改动。

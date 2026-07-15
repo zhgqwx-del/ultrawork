@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
+import { OPENCODE_ZEN_PROVIDER_ID, isFreeZenModel } from "@/lib/free-model"
 import type { Provider, ProviderModel } from "@agent/api-client"
 
 interface ModelSelectorProps {
@@ -19,6 +20,8 @@ interface FlatModel {
   id: string // "provider/model"
   name: string
   providerName: string
+  /** Free experimental OpenCode Zen model (ADR-057) — badged in the list. */
+  isFree?: boolean
 }
 
 // Module-level TTL cache to avoid ~2.1MB /provider fetch on every popover open
@@ -36,6 +39,7 @@ function flattenProviders(providers: Provider[]): FlatModel[] {
         id: `${provider.id}/${modelId}`,
         name: modelInfo?.name || modelId,
         providerName: provider.name,
+        isFree: provider.id === OPENCODE_ZEN_PROVIDER_ID && isFreeZenModel(modelInfo),
       })
     }
   }
@@ -150,7 +154,14 @@ export function ModelSelector({ currentModel, onModelChange, onOpenModelDialog, 
                 )}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="truncate font-medium text-[var(--color-fg)]">{model.name}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-medium text-[var(--color-fg)]">{model.name}</span>
+                    {model.isFree && (
+                      <span className="shrink-0 rounded-sm bg-[var(--color-brand)]/15 px-1 py-0.5 text-[10px] font-medium leading-none text-[var(--color-brand)]">
+                        {t("freeTrial.free")}
+                      </span>
+                    )}
+                  </div>
                   <div className="truncate text-[var(--color-fg-muted)]">{model.providerName}</div>
                 </div>
                 {currentModel === model.id && (
