@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Team 协作模式启动期偶发不可用（ACP 冷启动竞态自愈，discussions/042，仅 CHANGELOG 无 ADR）**：真机启动后偶尔 Team 段禁用、hover「外部 Agent 服务未运行（:4099）」，且**点一下主 agent 下拉即恢复**。
+  - **根因（代码确证）**：`acpAvailable` 原本只由 `AgentProvider` mount 时**一次性** `health()` 探测确定；而 ACP sidecar 在渲染门（等 opencode 健康）开启后才于非阻塞后台线程 spawn（`src-tauri/lib.rs`），首探必然输给冷启动竞态 → false。旧的 4s 状态轮询自锁在 `if(!acpAvailable) return`，永不自愈；唯一恢复口是打开 agent 下拉触发的 `refreshAgents()` 重探。
+  - **修法**：`lib/agent-context.tsx` 把「mount 一次性探测 + 自锁轮询」合并为**单个自调度 `setTimeout` 循环**——未连时几何退避重探 `health()`（`nextAgentPollDelay`：1s 起 `×2` 封顶 30s，成功回 4s 稳态），**自动拉起** `acpAvailable`（冷启动 Team 自己变亮、无需点下拉）；已连时用 `listAgents()` 兼作存活信号刷新状态点，连续 2 次失败才降级（去抖，不闪断）。状态迁移抽成纯 reducer `reduceAcpPoll`。
+  - **顺带修复对偶缺陷**：旧稳态轮询吞掉 `listAgents` 异常、从不降级 → ACP 中途崩溃时 Team 错误保持可用；现双向自愈。稳态分支从「status-only merge」改为**全量 reconcile**（服务端增删的 agent 也反映，修一处既存 F2）；`refreshAgents` 改为先填 roster 再置 available（避免 available=true 但 roster 空）+ 重排移入 `try/finally`（异常不停摆自愈循环）。
+  - **设置页去重**：`components/settings/agents-section.tsx` 删掉本地重复的 `available` 探测，改用共享 `acpAvailable`，一并修掉设置页同源冷启动 bug。
+  - **兼容性**：纯 renderer React/TS 改动，无路径/进程/OS/硬编码，mac/win/linux 一致；单 agent 模式不受 `acpAvailable` 约束（不受影响）；附件/粘贴/截图与本改动零交叉（`chat-input.tsx` 不引用 agent-context，AgentSelector 未改）。
+  - **验证**：`nextAgentPollDelay`/`reduceAcpPoll` 纯函数单测（10 例）+ **provider 级 fake-timer 集成测试**（5 例，虚拟时钟驱动真实循环：冷启动 false→自动翻 true、去抖不闪、越阈降级、reconcile 增删、卸载无泄漏）+ 两独立对抗 reviewer（抓修 F1/F2/F3 三缺陷，无 HIGH 回归）+ typecheck + desktop **661** 全绿。**macOS 真机验收通过**（临时给 ACP 线程加 15s sleep 放大竞态，肉眼确认 Team「灰→自动亮」完整过渡、全程不碰下拉）。
+
 ## [0.3.0] - 2026-07-16
 
 ### Added
