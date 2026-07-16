@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-16
+
 ### Added
 
 - **繁体中文语言支持（ADR-058 D2/D3，discussions/041）**：设置页语言选择新增「繁體中文」，`Language` 从 `"en"|"zh"` 扩为 `"en"|"zh-Hans"|"zh-Hant"`。

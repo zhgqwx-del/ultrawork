@@ -1,6 +1,6 @@
 [package]
 name = "ultrawork"
-version = "0.2.8"
+version = "0.3.0"
 description = "Desktop Agent"
 authors = ["Ultrawork Team"]
 edition = "2021"
