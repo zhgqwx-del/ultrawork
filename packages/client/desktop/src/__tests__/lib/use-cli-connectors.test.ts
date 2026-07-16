@@ -21,7 +21,7 @@ vi.mock("sonner", () => ({
   },
 }))
 vi.mock("@/lib/i18n-context", () => ({
-  useI18n: () => ({ language: "zh", t: (k: string) => k, setLanguage: () => {} }),
+  useI18n: () => ({ language: "zh-Hans", t: (k: string) => k, setLanguage: () => {} }),
 }))
 
 import { useCliConnectors, type CliConnectorStatus } from "@/lib/use-cli-connectors"

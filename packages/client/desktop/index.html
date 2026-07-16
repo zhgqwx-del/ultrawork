@@ -34,19 +34,32 @@
         document.documentElement.style.setProperty("--boot-fg", dark ? "#a1a1aa" : "#71717a")
         document.documentElement.style.setProperty("--boot-track", dark ? "#34343a" : "#ececee")
 
-        // Same language resolution as ConfigStorage: the persisted choice, else the
-        // system locale. The app is English by default outside zh, and the splash is
-        // up for the whole of the slowest launch — it must not be the one screen that
-        // is always Chinese.
-        var zh = "zh"
+        // Same language resolution as ConfigStorage (config.ts): the persisted
+        // choice, else the system locale. Splitting zh into Simplified/Traditional
+        // (ADR-058); legacy "zh" means Simplified. The app is English outside zh, and
+        // the splash is up for the whole slowest launch — it must not be the one
+        // screen stuck in the wrong Chinese.
+        var bootLang = "en"
         try {
-          var lang = raw && JSON.parse(raw).language
-          if (lang !== "zh" && lang !== "en") lang = null
-          zh = (lang || navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh" : "en"
+          var lang = raw ? JSON.parse(raw).language : null
+          if (lang === "zh-Hant") {
+            bootLang = "zh-Hant"
+          } else if (lang === "zh" || lang === "zh-Hans") {
+            bootLang = "zh-Hans"
+          } else if (lang === "en") {
+            bootLang = "en"
+          } else {
+            var loc = (navigator.language || "").toLowerCase()
+            // Same precedence as config.ts / boot-splash.ts: script subtag > region.
+            if (loc.indexOf("zh") !== 0) bootLang = "en"
+            else if (/\bhant\b/.test(loc)) bootLang = "zh-Hant"
+            else if (/\bhans\b/.test(loc)) bootLang = "zh-Hans"
+            else bootLang = /\b(tw|hk|mo)\b/.test(loc) ? "zh-Hant" : "zh-Hans"
+          }
         } catch (e) {
-          zh = "en"
+          bootLang = "en"
         }
-        document.documentElement.setAttribute("data-boot-lang", zh)
+        document.documentElement.setAttribute("data-boot-lang", bootLang)
       })()
     </script>
 
@@ -147,10 +160,11 @@
 
     <!-- First line, before the bundle exists to say anything. -->
     <script>
-      document.getElementById("boot-splash-stage").textContent =
-        document.documentElement.getAttribute("data-boot-lang") === "zh"
-          ? "正在启动…"
-          : "Starting…"
+      ;(function () {
+        var bl = document.documentElement.getAttribute("data-boot-lang")
+        document.getElementById("boot-splash-stage").textContent =
+          bl === "zh-Hant" ? "正在啟動…" : bl === "zh-Hans" ? "正在启动…" : "Starting…"
+      })()
     </script>
 
     <script type="module" src="/src/main.tsx"></script>

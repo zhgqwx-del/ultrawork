@@ -31,6 +31,7 @@ export {
   TooltipProvider,
 } from "./tooltip"
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./tabs"
+export { Toggle } from "./toggle"
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from "./popover"
 export {
   Select,

@@ -50,10 +50,11 @@ export function SettingsPopover({ children }: SettingsPopoverProps) {
           <DropdownMenuSubContent>
             <DropdownMenuRadioGroup
               value={config.language}
-              onValueChange={(v) => updateConfig({ language: v as "en" | "zh" })}
+              onValueChange={(v) => updateConfig({ language: v as "en" | "zh-Hans" | "zh-Hant" })}
             >
               <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="zh">简体中文</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="zh-Hans">简体中文</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="zh-Hant">繁體中文</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>

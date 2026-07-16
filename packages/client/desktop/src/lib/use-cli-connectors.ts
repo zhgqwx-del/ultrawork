@@ -142,7 +142,11 @@ export function useCliConnectors(): CliConnectorsApi {
       setPhase(id, "configuring")
       const gen = nextGen(id)
       try {
-        const url = await invoke<string>("start_office_cli_config", { id, lang: language })
+        // The office CLIs' `--lang` speaks a coarse locale vocabulary ("zh"/"en"),
+        // not our UI's Hans/Hant split — collapse both Chinese variants to "zh"
+        // (unchanged from before ADR-058, when language was already just "zh"/"en").
+        const cliLang = language === "en" ? "en" : "zh"
+        const url = await invoke<string>("start_office_cli_config", { id, lang: cliLang })
         // A newer flow may have superseded us while the invoke waited for the
         // URL (its Rust side killed our child) — don't clobber its state.
         if (curGen(id) !== gen) return

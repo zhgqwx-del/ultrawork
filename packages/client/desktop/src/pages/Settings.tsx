@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2, Layers, Plug} from "lucide-react"
 import { TabsContent } from "@/components/ui/tabs"
+import { Toggle } from "@/components/ui/toggle"
 import { SectionTabs, type SectionTab } from "@/components/settings/section-tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AgentsSection } from "@/components/settings/agents-section"
@@ -200,8 +201,12 @@ function GeneralSection() {
       {/* Language */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-[var(--color-fg)]">{t("general.language")}</label>
-        <div className="grid grid-cols-2 gap-2">
-          {([{ value: "en", label: "English" }, { value: "zh", label: "简体中文" }] as const).map((lang) => (
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { value: "en", label: "English" },
+            { value: "zh-Hans", label: "简体中文" },
+            { value: "zh-Hant", label: "繁體中文" },
+          ] as const).map((lang) => (
             <button
               key={lang.value}
               className={cn(
@@ -210,7 +215,7 @@ function GeneralSection() {
                   ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
                   : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)] hover:bg-[var(--color-accent)]"
               )}
-              onClick={() => updateConfig({ language: lang.value as "en" | "zh" })}
+              onClick={() => updateConfig({ language: lang.value })}
             >
               {lang.label}
             </button>
@@ -222,16 +227,17 @@ function GeneralSection() {
       {/* Auto-reveal the side panel on the session's first task plan (ADR-048 D1).
           Every auto-behaviour needs a kill switch; turning this off leaves the
           manual toggle and the artifact badge working. */}
-      <div className="space-y-2">
-        <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
-          <input
-            type="checkbox"
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="settings-planAutoReveal" className="text-sm font-medium text-[var(--color-fg)]">
+            {t("settings.planAutoReveal")}
+          </label>
+          <Toggle
+            id="settings-planAutoReveal"
             checked={config.planAutoReveal}
-            onChange={(e) => updateConfig({ planAutoReveal: e.target.checked })}
-            className="size-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+            onChange={(v) => updateConfig({ planAutoReveal: v })}
           />
-          {t("settings.planAutoReveal")}
-        </label>
+        </div>
         <p className="text-xs text-[var(--color-fg-muted)]">{t("settings.planAutoRevealHint")}</p>
       </div>
 
@@ -248,16 +254,17 @@ function GeneralSection() {
           { key: "notifyFlash", label: "settings.notifyFlash", hint: "settings.notifyFlashHint" },
         ] as const).map((row) => (
           <div key={row.key} className="space-y-1">
-            <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-fg)]">
-              <input
-                type="checkbox"
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor={`settings-${row.key}`} className="text-sm font-medium text-[var(--color-fg)]">
+                {t(row.label)}
+              </label>
+              <Toggle
+                id={`settings-${row.key}`}
                 checked={config[row.key]}
-                onChange={(e) => updateConfig({ [row.key]: e.target.checked })}
-                className="size-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                onChange={(v) => updateConfig({ [row.key]: v })}
               />
-              {t(row.label)}
-            </label>
-            <p className="pl-6 text-xs text-[var(--color-fg-muted)]">{t(row.hint)}</p>
+            </div>
+            <p className="text-xs text-[var(--color-fg-muted)]">{t(row.hint)}</p>
           </div>
         ))}
       </div>

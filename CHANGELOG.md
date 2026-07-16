@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **繁体中文语言支持（ADR-058 D2/D3，discussions/041）**：设置页语言选择新增「繁體中文」，`Language` 从 `"en"|"zh"` 扩为 `"en"|"zh-Hans"|"zh-Hant"`。
+  - **构建期生成，非运行时转换**：简体词典（`i18n-translations.ts` 的 `zhHans`）是唯一手写 SSOT；繁体 `i18n-zh-hant.generated.ts` 由 `scripts/gen-zh-hant.ts` 用 `opencc-js`（`s2twp` = 简→繁台湾用词，`界面→介面`/`默认→預設`/`任务栏→工作列`）**构建期生成**。opencc 仅 devDependency、**不进 renderer bundle**、零运行时开销、繁体产物入库可 review。
+  - **调研修正**：原方案（discussions/041 §六）为运行时转换，调研 opencc-js 后改为构建期生成——opencc `twp` 预设本身覆盖台式词汇，手维护术语表基本多余（`OVERRIDES` 近空）。
+  - **旧配置无感迁移**：既有用户持久化的 `"zh"` 读取时归一到 `"zh-Hans"`，保持简体不变；`detectDefaultLanguage` 识别 `zh-TW/HK/MO/Hant` → 繁体。
+  - **启动 splash 同步**：`boot-splash.ts` + `index.html` 内联脚本（React 挂载前）加 zh-Hant 桶与 locale 解析。
+  - **漂移守卫**：`check-docs.ts` §9 重跑生成器 `--check` 比对，改了简体忘重生成即 CI 失败（A/B 验证过）。
+  - 办公 CLI 连接器的 `--lang` 收窄到 `"zh"/"en"`（外部 CLI 词汇，不认 Hans/Hant），行为与改动前一致。
+  - **新增**：`lib/i18n-translations.ts`（抽离的纯数据词典）· `lib/i18n-zh-hant.generated.ts`（生成产物）· `scripts/gen-zh-hant.ts` · devDep `opencc-js`/`@types/opencc-js`。
+  - **验证**：desktop **632** 测试（Toggle 3 + 语言迁移/detect 3 + i18n 键完整性覆盖三语）· typecheck 干净 · check-docs §9 A/B 通过。**繁体全局视觉走查待用户执行**。
+
+### Changed
+
+- **通用设置页布尔项 checkbox → toggle 开关（ADR-058 D1）**：4 个即时生效项（出现规划自动展开侧栏 + 提示音/系统通知/图标提醒）从原生 checkbox 改为共享 `Toggle` 组件（`role=switch` 无障碍受控），语义匹配「开/关立即生效」。主题选择器与其它设置页 checkbox 本轮不动。
+
 - **首启默认免费模型 = OpenCode Zen 试用入口（ADR-057，discussions/040）**：全新安装原本无被选中的默认模型（选择器显示 "no model"、须先手动配 key）。现提供「零门槛试用入口」——首次在无可用模型时发消息弹一次性**同意卡片**，点「启用免费试用」即用 OpenCode Zen 的免费模型开始对话，无需 API key。定位是**试用入口而非可靠免费层**（免费访问由第三方决定、不受我们控制）。
   - **实证根基**：vendor `opencode` provider 在无 key 时用匿名 `apiKey:"public"` 自动加载免费模型（`provider.ts:178-198`，**无需 vendor patch**），空配置真跑 sidecar 的 `/provider` 已列出 6 个免费模型；线上实测 `big-pickle` 等 5 个可匿名跑通且支持工具调用。
   - **隐私默认关**：同意前**不派发任何请求到 Zen**——拦截在三处发送入口（`Session`/`Home` 单发/团队）的**派发之前**（否则 opencode 服务端默认解析会自动挑免费模型发出去，绕过隐私门）；同意卡片明示「输入可能被第三方用于改进模型」。

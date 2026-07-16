@@ -103,48 +103,23 @@ describe("i18n translations", () => {
 })
 
 describe("translation key parity", () => {
-  it("verifies en and zh dictionaries have matching keys", async () => {
-    // Read the actual source file to extract keys
-    // We'll use a regex-based approach to parse the translation keys
-    const fs = await import("fs")
-    const path = await import("path")
+  // Import the real dictionaries rather than regex-scraping source (ADR-058:
+  // en + zh-Hans are hand-written in i18n-translations.ts; zh-Hant is generated).
+  it("en, zh-Hans and zh-Hant have identical key sets", async () => {
+    const { translations } = await import("@/lib/i18n-context")
+    const keysOf = (l: "en" | "zh-Hans" | "zh-Hant") => Object.keys(translations[l]).sort()
+    const en = keysOf("en")
 
-    const filePath = path.resolve(__dirname, "../../lib/i18n-context.tsx")
-    const content = fs.readFileSync(filePath, "utf-8")
+    // zh-Hans must mirror en (hand-written parity).
+    expect(keysOf("zh-Hans")).toEqual(en)
+    // zh-Hant is generated from zh-Hans → must have exactly the same keys.
+    expect(keysOf("zh-Hant")).toEqual(en)
+  })
 
-    // Extract key-value pairs from en and zh sections
-    const enMatch = content.match(/en:\s*\{([\s\S]*?)\n\s*\},\s*\n\s*zh:/)
-    const zhMatch = content.match(/zh:\s*\{([\s\S]*?)\n\s*\},?\s*\n\s*\}/)
-
-    expect(enMatch).not.toBeNull()
-    expect(zhMatch).not.toBeNull()
-
-    const extractKeys = (block: string): string[] => {
-      const keyRegex = /"([^"]+)":\s*"/g
-      const keys: string[] = []
-      let match
-      while ((match = keyRegex.exec(block)) !== null) {
-        keys.push(match[1])
-      }
-      return keys.sort()
-    }
-
-    const enKeys = extractKeys(enMatch![1])
-    const zhKeys = extractKeys(zhMatch![1])
-
-    // Find keys in en but not in zh
-    const missingInZh = enKeys.filter((k) => !zhKeys.includes(k))
-    // Find keys in zh but not in en
-    const missingInEn = zhKeys.filter((k) => !enKeys.includes(k))
-
-    if (missingInZh.length > 0) {
-      console.warn("Keys in en but missing in zh:", missingInZh)
-    }
-    if (missingInEn.length > 0) {
-      console.warn("Keys in zh but missing in en:", missingInEn)
-    }
-
-    expect(missingInZh).toEqual([])
-    expect(missingInEn).toEqual([])
+  it("zh-Hant is populated (generated file wired in)", async () => {
+    const { translations } = await import("@/lib/i18n-context")
+    // Sanity that the generated dict is real Traditional text, not a stub.
+    expect(translations["zh-Hant"]["general.theme.system"]).toBe("跟隨系統")
+    expect(Object.keys(translations["zh-Hant"]).length).toBeGreaterThan(100)
   })
 })

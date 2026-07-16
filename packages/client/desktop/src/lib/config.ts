@@ -1,4 +1,5 @@
 import { opencodeBaseUrl } from "./sidecar-ports"
+import type { Language } from "./i18n-translations"
 
 /** Stored `apiBaseUrl` meaning "whatever port the host actually bound". */
 export const AUTO_API_BASE_URL = "auto"
@@ -14,7 +15,7 @@ export interface AppConfig {
   apiPassword: string
   apiUsername?: string
   theme: "light" | "dark" | "system"
-  language: "en" | "zh"
+  language: Language
   /**
    * Auto-reveal the right sidebar the first time a turn produces a task plan
    * (ADR-048 D1). The kill switch every auto-behaviour needs — and turning it off
@@ -52,12 +53,27 @@ export function isAutoApiBaseUrl(apiBaseUrl: string): boolean {
 }
 
 // Detect the user's preferred UI language from the browser/system locale.
-// Falls back to "en" when navigator isn't available (SSR/tests) or the
-// locale isn't Chinese.
-function detectDefaultLanguage(): "en" | "zh" {
+// Falls back to "en" when navigator isn't available (SSR/tests) or the locale
+// isn't Chinese. Taiwan/Hong Kong/Macau/explicit-Hant locales → Traditional
+// (zh-Hant); any other Chinese locale → Simplified (zh-Hans). (ADR-058 D2)
+function detectDefaultLanguage(): Language {
   if (typeof navigator === "undefined") return "en"
   const lang = (navigator.language || (navigator.languages?.[0] ?? "")).toLowerCase()
-  return lang.startsWith("zh") ? "zh" : "en"
+  if (!lang.startsWith("zh")) return "en"
+  // BCP-47 precedence: an explicit script subtag wins over region — `zh-Hans-HK`
+  // is Simplified despite the HK region. Fall back to region only when unscripted.
+  if (/\bhant\b/.test(lang)) return "zh-Hant"
+  if (/\bhans\b/.test(lang)) return "zh-Hans"
+  return /\b(tw|hk|mo)\b/.test(lang) ? "zh-Hant" : "zh-Hans"
+}
+
+// Old builds persisted the language as "zh" (Simplified). Map it forward to the
+// explicit "zh-Hans" tag so existing users stay on Simplified with zero change.
+// (ADR-058 D2)
+function migrateLanguage(language: unknown): Language {
+  if (language === "zh") return "zh-Hans"
+  if (language === "en" || language === "zh-Hans" || language === "zh-Hant") return language
+  return detectDefaultLanguage()
 }
 
 // apiPassword/apiUsername default to empty; ConfigProvider fetches the
@@ -96,6 +112,7 @@ export class ConfigStorage {
           ...DEFAULT_CONFIG,
           ...parsed,
           apiBaseUrl: migrateApiBaseUrl(parsed.apiBaseUrl),
+          language: migrateLanguage(parsed.language),
         }
       }
     } catch (err) {

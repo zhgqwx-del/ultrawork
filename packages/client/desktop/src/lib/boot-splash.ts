@@ -35,13 +35,23 @@ const TERMINAL: readonly string[] = ["ready", "failed"]
  * not mounted yet, so this reads the same persisted config the inline script in
  * index.html does.
  */
-const STAGE_TEXT: Record<"zh" | "en", Record<BootStage, string>> = {
-  zh: {
+// Splash-only strings (pre-React, can't use the i18n bundle). zh-Hant is
+// hand-maintained here — too few strings to wire the build-time generator to
+// (ADR-058 D3). Keep in sync with the Simplified copy above it.
+const STAGE_TEXT: Record<"zh-Hans" | "zh-Hant" | "en", Record<BootStage, string>> = {
+  "zh-Hans": {
     preparing: "正在准备组件…",
     skills: "正在安装内置技能…",
     engine: "正在启动引擎…",
     ready: "就绪",
     failed: "启动引擎失败，应用可能无法正常工作",
+  },
+  "zh-Hant": {
+    preparing: "正在準備元件…",
+    skills: "正在安裝內建技能…",
+    engine: "正在啟動引擎…",
+    ready: "就緒",
+    failed: "啟動引擎失敗，應用可能無法正常運作",
   },
   en: {
     preparing: "Preparing components…",
@@ -52,15 +62,23 @@ const STAGE_TEXT: Record<"zh" | "en", Record<BootStage, string>> = {
   },
 }
 
-function splashLanguage(): "zh" | "en" {
+function splashLanguage(): "zh-Hans" | "zh-Hant" | "en" {
   try {
     const raw = localStorage.getItem("ultrawork-config")
     const stored = raw ? (JSON.parse(raw) as { language?: string }).language : undefined
-    if (stored === "zh" || stored === "en") return stored
+    if (stored === "zh-Hant") return "zh-Hant"
+    // Legacy "zh" (pre-ADR-058) and explicit "zh-Hans" both mean Simplified.
+    if (stored === "zh" || stored === "zh-Hans") return "zh-Hans"
+    if (stored === "en") return "en"
   } catch {
     // unreadable config — fall through to the locale
   }
-  return navigator.language?.toLowerCase().startsWith("zh") ? "zh" : "en"
+  const loc = navigator.language?.toLowerCase() ?? ""
+  if (!loc.startsWith("zh")) return "en"
+  // Same precedence as config.ts detectDefaultLanguage: script subtag > region.
+  if (/\bhant\b/.test(loc)) return "zh-Hant"
+  if (/\bhans\b/.test(loc)) return "zh-Hans"
+  return /\b(tw|hk|mo)\b/.test(loc) ? "zh-Hant" : "zh-Hans"
 }
 
 const STAGES = STAGE_TEXT[splashLanguage()]

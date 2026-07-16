@@ -14,7 +14,7 @@ const CONNECTOR_IDS = ["lark", "dingtalk", "wecom"] as const
 const PER_ID_KEYS = ["title", "desc", "toastInstalled", "toastConnected", "configHint", "authHint"] as const
 
 describe("cli connector i18n completeness", () => {
-  for (const lang of ["en", "zh"] as const) {
+  for (const lang of ["en", "zh-Hans", "zh-Hant"] as const) {
     it(`${lang}: every connector has all six cliConnector.<id>.* keys`, () => {
       const missing = CONNECTOR_IDS.flatMap((id) =>
         PER_ID_KEYS.filter((k) => !translations[lang][`cliConnector.${id}.${k}`]).map(

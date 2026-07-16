@@ -51,6 +51,12 @@ jobs:
       - run: bun install
       - name: Typecheck
         run: bun run --bun turbo run typecheck
+      # zh-Hant dictionary is generated from zh-Hans at build time (ADR-058 D3).
+      # Fail if someone edited the Simplified source without regenerating — runs
+      # here (not the dep-free docs job) because it needs the opencc-js devDep,
+      # and on all three OSes to confirm the generator is cross-platform.
+      - name: zh-Hant dictionary drift guard
+        run: bun run --bun scripts/gen-zh-hant.ts --check
       # Unit tests run on macOS + Linux. Skipped on Windows: several timer-heavy
       # sidecar suites (ACP idle-guard / keepalive watchdogs) leave open handles
       # that make bun/vitest hang on process exit on Windows — a test-harness
