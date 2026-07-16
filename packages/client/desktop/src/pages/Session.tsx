@@ -720,7 +720,7 @@ export function SessionPage() {
             >
               {repliedWhileHidden ? (
                 <>
-                  <span className="size-1.5 rounded-full bg-blue-500" />
+                  <span className="size-1.5 rounded-full bg-[var(--color-brand)]" />
                   {t("session.repliedWhileHidden")}
                 </>
               ) : (
