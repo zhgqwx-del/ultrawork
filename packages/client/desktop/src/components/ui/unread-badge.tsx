@@ -17,7 +17,7 @@ export function UnreadBadge({
     <span
       {...rest}
       className={cn(
-        "flex min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-medium leading-4 text-white",
+        "flex min-w-4 items-center justify-center rounded-full bg-[var(--color-brand)] px-1 text-[10px] font-medium leading-4 text-[var(--color-brand-fg)]",
         className,
       )}
     >

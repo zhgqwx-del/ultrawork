@@ -686,7 +686,7 @@ export function SessionItem({
             <span
               aria-label={t("sidebar.unread")}
               title={t("sidebar.unread")}
-              className="ml-auto size-2 shrink-0 rounded-full bg-[var(--color-primary)]"
+              className="ml-auto size-2 shrink-0 rounded-full bg-[var(--color-brand)]"
             />
           )}
         </p>
