@@ -21,7 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- **未读/有新内容指示统一到品牌主色橘红（仅 CHANGELOG，无 ADR）**：三处「未读/有新内容」指示原本各用蓝色，与品牌视觉不一致——① 会话列表未读圆点（`left-sidebar.tsx`，`var(--color-primary)` `#2563eb`）② 产物/右侧栏数字 badge（`ui/unread-badge.tsx`，`bg-blue-500`/`text-white`）③ transcript 隐藏 banner 的「隐藏期间已回复」圆点（`pages/Session.tsx`，`bg-blue-500`）。现统一到 `var(--color-brand)`（`#ea580c`，数字 badge 文字用 `var(--color-brand-fg)`），亮/暗色随变量。纯 renderer 改动（className），无测试锁定旧色、无孤儿。第三处经独立对抗复审补漏发现。视觉观感待用户真机确认。
+- **未读/有新内容指示统一到品牌主色橘红（仅 CHANGELOG，无 ADR）**：三处「未读/有新内容」指示原本各用蓝色，与品牌视觉不一致——① 会话列表未读圆点（`left-sidebar.tsx`，`var(--color-primary)` `#2563eb`）② 产物/右侧栏数字 badge（`ui/unread-badge.tsx`，`bg-blue-500`/`text-white`）③ transcript 隐藏 banner 的「隐藏期间已回复」圆点（`pages/Session.tsx`，`bg-blue-500`）。现统一到 `var(--color-brand)`（`#ea580c`，数字 badge 文字用 `var(--color-brand-fg)`），亮/暗色随变量。纯 renderer 改动（className），无测试锁定旧色、无孤儿。第三处经独立对抗复审补漏发现。**真机验证**：三处指示在真 Chrome（②③ 用真 Qwen 模型驱动）里 `getComputedStyle` 读到的背景色均 = `rgb(234, 88, 12)`（= `#ea580c`），确非旧蓝；`e2e:sidebar-channel` 未读圆点行为 10/10 仍绿。视觉观感由用户手测确认。
 
 - **IM 渠道徽标冷启动延迟修复（`channel-sessions-context.tsx`，仅 CHANGELOG，无 ADR）**：gateway(4097) 在渲染门开启后于非阻塞后台线程启动，`ChannelSessionsProvider` 首次 fetch `/channel/sessions` 必然早于 gateway `listen()` → 一次 `ECONNREFUSED`（良性，catch+退避）。但退避从 30s 起跳、首失败即 `×2` → 冷启动配了 IM 渠道时徽标要等约 **60s** 才出现（gateway 其实 1~2s 就 ready）。修法：退避改为从 `BOOT_RETRY_MS=1s` 几何增长（1s/2s/4s…）、封顶 5min，成功回 30s 常规轮询——徽标 1~3s 内出现，真正没 gateway 时仍在几次廉价重试后落到 5min 慢轮询、不永久锤端口。抽出纯函数 `nextChannelPollDelay(failures)` + 4 例单测锁死三条节奏（稳态 30s / 启动快重试 / 5min 封顶）。那行 vite 代理噪声无法消除（除非让 gateway 阻塞启动、拖慢首屏，不值得）。
 
