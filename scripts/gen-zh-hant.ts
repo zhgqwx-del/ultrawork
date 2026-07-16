@@ -61,7 +61,13 @@ if (import.meta.main) {
   const check = process.argv.includes("--check")
   if (check) {
     const current = (await Bun.file(OUT).exists()) ? await Bun.file(OUT).text() : ""
-    if (current !== content) {
+    // Compare line-ending-agnostically: on Windows CI (`core.autocrlf`) the
+    // committed LF file is checked out as CRLF, and this generator's own source
+    // (the header template literal) may likewise be CRLF — a raw byte compare
+    // would then spuriously report drift on Windows only. Normalizing both sides
+    // makes the guard about content, not EOL. (.gitattributes also pins LF.)
+    const normalize = (s: string) => s.replace(/\r\n/g, "\n")
+    if (normalize(current) !== normalize(content)) {
       console.error(
         "gen-zh-hant --check: i18n-zh-hant.generated.ts is stale. " +
           "Run `bun run --bun scripts/gen-zh-hant.ts` and commit the result.",

@@ -1,0 +1,8 @@
+# Keep the build-time zh-Hant dictionary and its generator LF on every platform,
+# so the drift guard (`scripts/gen-zh-hant.ts --check`, run by check-docs / the
+# CI node job) compares byte-identical on Windows too. Without this, the default
+# `core.autocrlf` on the Windows runner checks these committed LF files out as
+# CRLF, and the guard reports spurious drift (green on macOS/Linux, red on
+# Windows). The guard also normalizes EOL defensively; this pins the on-disk form.
+*.generated.ts text eol=lf
+scripts/gen-zh-hant.ts text eol=lf
