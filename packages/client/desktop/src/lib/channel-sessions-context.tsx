@@ -21,10 +21,29 @@ export type { ChannelSessionEntry }
  *  global SSE and is already live; this only backfills the badge. */
 const POLL_MS = 30_000
 
+/** First retry after a failure. The gateway is spawned in a non-blocking background
+ *  thread AFTER the renderer gate opens (opencode-gated, not gateway-gated), so at
+ *  cold boot this provider's first fetch reliably beats the gateway to `listen()` and
+ *  gets ECONNREFUSED. Retrying from 1s (not straight to 30s) means a gateway that is
+ *  merely still starting is picked up within a second or two, so IM badges appear
+ *  promptly instead of after a full poll interval. */
+const BOOT_RETRY_MS = 1_000
+
 /** Back off when the gateway is unreachable. Most users configure no IM channel at
  *  all, and the provider is mounted app-wide — without this it would hammer a dead
- *  port every 30s for the entire life of the app. Resets on any success. */
+ *  port for the entire life of the app. The retry delay grows geometrically from
+ *  BOOT_RETRY_MS and is capped here, so a genuinely-absent gateway still settles to a
+ *  slow poll after a handful of cheap early retries. Resets on any success. */
 const MAX_BACKOFF_MS = 5 * 60_000
+
+/** Next poll delay given the count of consecutive failures. No failures → steady
+ *  {@link POLL_MS}. Otherwise a geometric retry from {@link BOOT_RETRY_MS}
+ *  (1s, 2s, 4s…) capped at {@link MAX_BACKOFF_MS}. Extracted (and exported) so the
+ *  cadence can be locked deterministically without driving the async timer loop. */
+export function nextChannelPollDelay(failures: number): number {
+  if (failures <= 0) return POLL_MS
+  return Math.min(BOOT_RETRY_MS * 2 ** (failures - 1), MAX_BACKOFF_MS)
+}
 
 interface ChannelSessionsValue {
   entries: ChannelSessionEntry[]
@@ -61,7 +80,7 @@ export function ChannelSessionsProvider({ children }: { children: React.ReactNod
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
-    let delay = POLL_MS
+    let failures = 0
 
     let warned = false
     const tick = async () => {
@@ -69,7 +88,7 @@ export function ChannelSessionsProvider({ children }: { children: React.ReactNod
         const list = await fetchChannelSessions()
         if (cancelled) return
         setEntries(list)
-        delay = POLL_MS
+        failures = 0
       } catch (err) {
         // Degrading silently is right for a gateway that is simply down, but it is
         // also how a wrong URL hid: the badge just never appeared and nothing said
@@ -78,9 +97,10 @@ export function ChannelSessionsProvider({ children }: { children: React.ReactNod
           warned = true
           console.warn("[channel-sessions] registry unreachable — sidebar stays badge-less:", err)
         }
-        delay = Math.min(delay * 2, MAX_BACKOFF_MS)
+        failures += 1
       }
-      if (!cancelled) timer = setTimeout(tick, delay)
+      if (cancelled) return
+      timer = setTimeout(tick, nextChannelPollDelay(failures))
     }
 
     void tick()
