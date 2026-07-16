@@ -21,6 +21,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **未读指示统一到品牌主色橘红（仅 CHANGELOG，无 ADR）**：会话列表未读圆点（`left-sidebar.tsx`）与产物/右侧栏数字 badge（`ui/unread-badge.tsx`）原本各用蓝色（`var(--color-primary)` `#2563eb` / `bg-blue-500`），与品牌视觉不一致；现统一到 `var(--color-brand)`（`#ea580c`，数字 badge 文字用 `var(--color-brand-fg)`），亮/暗色随变量。纯 renderer 改动（两处 className），无测试锁定旧色、无孤儿。视觉观感待用户真机确认。
+
 - **左侧栏会话列表单行化（仅 CHANGELOG，无 ADR）**：每个会话条目从两行（标题 + 相对时间第二行）改为**单行只显标题**，对齐主流 agent 侧栏（ChatGPT/Claude 单行标题、时间靠日期分组头），列表更紧凑、一屏信息量更大。
   - **时间维度不丢**：粗粒度仍在现有「今天/昨天/本周/更早」分组头；精确相对时间移到**整行 hover tooltip**——内容为「完整标题 + 相对时间」两行，标题超 60 字符截断加 `…` 避免 tooltip 过长。
   - `formatTime` 与 i18n `time.justNow/mAgo/hAgo/dAgo` 因 tooltip 仍在引用、**无孤儿代码**；`i18n.test.ts` 不受影响。
