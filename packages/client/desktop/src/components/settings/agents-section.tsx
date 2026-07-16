@@ -84,10 +84,13 @@ const STATUS_STYLE: Record<ACPAgentInfo["status"], string> = {
 
 export function AgentsSection() {
   const { t } = useI18n()
-  const { refreshAgents } = useAgents()
+  // discussions/042: availability is owned by AgentContext's self-healing poll
+  // (this page kept its own one-shot `health()` probe, which had the same
+  // cold-start race — false forever until reload). We keep only the richer
+  // per-agent config list here and drive its fetch off the shared `acpAvailable`.
+  const { refreshAgents, acpAvailable } = useAgents()
   const connector = useConnector()
   const acpHttp = connector.getBackend<ACPBackend>(ACP_BACKEND_KIND)!.http
-  const [available, setAvailable] = useState(false)
   const [agents, setAgents] = useState<ACPAgentInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -99,21 +102,26 @@ export function AgentsSection() {
   const refresh = async () => {
     setLoading(true)
     try {
-      const healthy = await acpHttp.health()
-      setAvailable(healthy)
-      setAgents(healthy ? await acpHttp.listAgents() : [])
+      setAgents(await acpHttp.listAgents())
     } catch {
       setAgents([])
     } finally {
       setLoading(false)
     }
+    // Also nudge the shared availability probe (e.g. the manual refresh button).
     void refreshAgents()
   }
 
+  // Fetch (or clear) the config list as shared availability flips.
   useEffect(() => {
+    if (!acpAvailable) {
+      setAgents([])
+      setLoading(false)
+      return
+    }
     void refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [acpAvailable])
 
   const withBusy = async (id: string, fn: () => Promise<void>) => {
     setBusyId(id)
@@ -204,7 +212,7 @@ export function AgentsSection() {
               setTemplateKey(null)
               setForm(EMPTY_FORM)
             }}
-            disabled={!available}
+            disabled={!acpAvailable}
             className="flex items-center gap-1.5 rounded-lg bg-[var(--color-brand)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             <Plus className="size-4" />
@@ -213,13 +221,13 @@ export function AgentsSection() {
         </div>
       </div>
 
-      {!available && !loading && (
+      {!acpAvailable && !loading && (
         <div className="rounded-lg border border-[var(--color-border)] px-4 py-6 text-center text-sm text-[var(--color-fg-muted)]">
           {t("agent.sidecarUnavailable")}
         </div>
       )}
 
-      {available && (
+      {acpAvailable && (
         <div className="space-y-2">
           {agents.map((agent) => (
             <div

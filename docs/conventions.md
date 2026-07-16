@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-11 -->
+<!-- last-synced: 2026-07-16 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -142,6 +142,15 @@ Agent 活跃时（`sending || streamingMessageId !== null`）每 3s 轮询 permi
 
 ### SSE 重连
 30s 心跳超时 → `forceReconnect()`，最多 3 次；收到事件重置计数。`connect()` 用局部 `controller` 变量防旧连接 finally 覆盖新连接。
+
+### 非 opencode sidecar 可用性 = 自愈轮询，不能只 mount 探一次（discussions/042，2026-07-16 实测）
+**gateway(4097)/knowledge(4098)/acp(4099) 都在渲染门（`get_sidecar_ports` 等 opencode 健康）开启之后、于非阻塞后台线程才 spawn**（`src-tauri/lib.rs`）。因此任何 provider 若在 mount 时**一次性**探测这些 sidecar 的可用性，首探必然输给冷启动竞态、得到 false，而后若无重试就**永久卡 false**（`ChannelSessionsProvider` 徽标、`AgentProvider` 的 `acpAvailable`/Team 模式都栽过）。正确模式 = **单个自调度 `setTimeout(tick, delay)` 循环**（不是 `setInterval`，间隔要随失败数变）：
+- 未连时以**几何退避**重探（`nextXxxPollDelay(failures)`：`BOOT_RETRY_MS=1s` 起 `×2` 封顶，成功回稳态间隔），抽成**导出纯函数**用单测锁 cadence；
+- 已连时用轻量列表调用兼作存活信号，**连续 N 次失败才降级**（去抖，`DOWN_THRESHOLD`），避免单次抖动闪断；
+- 状态迁移抽成**纯 reducer**（如 `reduceAcpPoll(state, ok)`）让 effect 真正调用它，单测锁的是真代码而非副本；
+- 重排放进 `try/finally`（`!cancelled` 守卫），异常绝不能让"恢复机制"自己停摆；
+- 手动触发（下拉/设置刷新）**只升不降**，降级独占给去抖循环，避免用户操作触发瞬时闪断。
+- 验证：纯函数/reducer 单测 + **provider 级 fake-timer 集成测试**（虚拟时钟驱动真实循环，证明 false→自动恢复）。**启动竞态本身 Playwright 复现不了**（无被 sidecar 阻塞的主线程），最终"自动恢复"过渡靠真机人工验（可临时给 sidecar 线程加 `sleep` 放大竞态）。参考实现：`lib/channel-sessions-context.tsx`、`lib/agent-context.tsx`。
 
 ## 4. OpenCode API 约定
 
