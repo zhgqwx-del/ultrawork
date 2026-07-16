@@ -21,7 +21,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- **通用设置页布尔项 checkbox → toggle 开关（ADR-058 D1）**：4 个即时生效项（出现规划自动展开侧栏 + 提示音/系统通知/图标提醒）从原生 checkbox 改为共享 `Toggle` 组件（`role=switch` 无障碍受控），语义匹配「开/关立即生效」。主题选择器与其它设置页 checkbox 本轮不动。
+- **左侧栏会话列表单行化（仅 CHANGELOG，无 ADR）**：每个会话条目从两行（标题 + 相对时间第二行）改为**单行只显标题**，对齐主流 agent 侧栏（ChatGPT/Claude 单行标题、时间靠日期分组头），列表更紧凑、一屏信息量更大。
+  - **时间维度不丢**：粗粒度仍在现有「今天/昨天/本周/更早」分组头；精确相对时间移到**整行 hover tooltip**——内容为「完整标题 + 相对时间」两行，标题超 60 字符截断加 `…` 避免 tooltip 过长。
+  - `formatTime` 与 i18n `time.justNow/mAgo/hAgo/dAgo` 因 tooltip 仍在引用、**无孤儿代码**；`i18n.test.ts` 不受影响。
+  - **纯 renderer 改动**（`String.slice` + 模板串 + 原生 `title` 属性），无路径/进程/OS 命令，三平台一致、无本机硬编码；单 agent / team 协作 / IM 渠道三类会话走同一 `SessionItem`、一致生效（team 皇冠徽标、未读红点、运行 spinner、置顶边框均保留在标题行）。
+  - **新增**：导出 `SessionItem` + `session-item.test.tsx`（4 例，jsdom 隔离渲染机器断言单行/tooltip 内容/长标题截断/team 徽标）。desktop **640** 测试全绿、typecheck 干净。真机 hover/密度手动验收已过。：4 个即时生效项（出现规划自动展开侧栏 + 提示音/系统通知/图标提醒）从原生 checkbox 改为共享 `Toggle` 组件（`role=switch` 无障碍受控），语义匹配「开/关立即生效」。主题选择器与其它设置页 checkbox 本轮不动。
 
 - **首启默认免费模型 = OpenCode Zen 试用入口（ADR-057，discussions/040）**：全新安装原本无被选中的默认模型（选择器显示 "no model"、须先手动配 key）。现提供「零门槛试用入口」——首次在无可用模型时发消息弹一次性**同意卡片**，点「启用免费试用」即用 OpenCode Zen 的免费模型开始对话，无需 API key。定位是**试用入口而非可靠免费层**（免费访问由第三方决定、不受我们控制）。
   - **实证根基**：vendor `opencode` provider 在无 key 时用匿名 `apiKey:"public"` 自动加载免费模型（`provider.ts:178-198`，**无需 vendor patch**），空配置真跑 sidecar 的 `/provider` 已列出 6 个免费模型；线上实测 `big-pickle` 等 5 个可匿名跑通且支持工具调用。

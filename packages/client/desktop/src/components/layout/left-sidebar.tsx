@@ -509,7 +509,7 @@ function ChannelBadge({ entry }: { entry: ChannelSessionEntry }) {
   )
 }
 
-function SessionItem({
+export function SessionItem({
   session,
   teamEntry,
   channelEntry,
@@ -544,6 +544,13 @@ function SessionItem({
   // Registry title is the legacy fallback — new team leaders are roots and
   // get the opencode auto-title in session.title like any chat.
   const title = session.title || teamEntry?.title || `Session ${session.id.slice(0, 8)}`
+
+  // Rows are single-line (title only) to match mainstream agent sidebars and
+  // stay compact; the relative time that used to live on a second line now
+  // rides on the row's hover tooltip together with the full title. The title is
+  // capped so a very long name doesn't produce an unwieldy tooltip.
+  const tooltipTitle = title.length > 60 ? `${title.slice(0, 60)}…` : title
+  const rowTooltip = `${tooltipTitle}\n${formatTime(session.time.updated, t)}`
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -640,6 +647,7 @@ function SessionItem({
   return (
     <div
       onClick={onNavigate}
+      title={rowTooltip}
       className={cn(
         "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[13px] transition-all duration-150",
         isActive
@@ -682,7 +690,6 @@ function SessionItem({
             />
           )}
         </p>
-        <p className="truncate text-xs opacity-60">{formatTime(session.time.updated, t)}</p>
       </div>
 
       {/* Three-dot menu */}
