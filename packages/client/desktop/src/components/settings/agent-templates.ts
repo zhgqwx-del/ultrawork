@@ -4,7 +4,7 @@
 // claude-only; whether a binary exists varies per machine.
 
 export interface AgentTemplate {
-  key: "claude" | "gemini" | "qoder" | "hermes"
+  key: "claude" | "gemini" | "qoder" | "hermes" | "codex"
   id: string
   label: string
   description: string
@@ -59,5 +59,27 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     // --setup`); no env needed by default.
     command: "hermes",
     args: ["acp", "--accept-hooks"],
+  },
+  {
+    key: "codex",
+    id: "codex",
+    label: "Codex CLI",
+    description: "OpenAI Codex via @agentclientprotocol/codex-acp",
+    // Codex CLI speaks MCP, not ACP natively (openai/codex#9085) — the official
+    // npm bridge wraps the codex runtime as an ACP-stdio agent. No --bun: the
+    // bridge bundles @openai/codex (heavy runtime), same call as gemini.
+    // Verified (ADR-060, 5 spike rounds): our 0.25 client negotiates protocol
+    // v1 with the 1.x-SDK bridge; auth reuses the local ~/.codex login (ChatGPT
+    // or API key) — no key needed here.
+    command: "bunx",
+    args: ["@agentclientprotocol/codex-acp"],
+    // NO_BROWSER: never pop a browser login from the headless sidecar (auth
+    // comes from ~/.codex; run `codex login` in a terminal first if unset).
+    // INITIAL_AGENT_MODE=agent: workspace-write sandbox + on-request approval —
+    // in-workspace edits auto-run, out-of-sandbox/network actions escalate to
+    // Ultrawork's permission prompt (proven round-trip) or are sandbox-blocked.
+    // Change INITIAL_AGENT_MODE to read-only in this field to gate every file
+    // write behind an approval prompt (ADR-060 follow-up: a mode selector).
+    env: { NO_BROWSER: "1", INITIAL_AGENT_MODE: "agent" },
   },
 ]
