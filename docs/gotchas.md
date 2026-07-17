@@ -370,7 +370,7 @@
 - **不要用 `importOriginal` 部分 mock 大 barrel（如 `@/components/chat`）**：`importOriginal()` 会实例化整个桶文件的真实依赖树（markdown/代码高亮栈），转换耗时数分钟拖垮 worker。要保留个别真实组件时精确单文件导入：`vi.mock("@/components/chat", async () => ({ CopyButton: (await import("@/components/chat/copy-button")).CopyButton, ChatInput: () => null, ... }))`。（同上）
 
 - **e2e 的工作区不能建在系统 tmpdir**（ADR-048 踩坑）。macOS 的 `tmpdir()` 是 `/var/folders/…`，而产物识别的 `TEMP_PATH_RE`（`artifacts-panel.tsx`）**刻意把它当临时路径过滤掉** —— agent 在那里写的文件永远进不了产物列表，测试会莫名其妙地「没有产物」。把沙箱 HOME 留在 tmp，但**工作区放到 `homedir()` 下的临时目录**。
-- **产物行的选择器要限定在 `[data-testid="artifacts-panel"]` 内**。「执行活动」面板排在产物区之上、同样默认展开、且会列出同一个文件的绝对路径 —— 无限定的文本匹配会点到那一行惰性文本上，表现为「点了没反应」。
+- **产物行的选择器要限定在 `[data-testid="artifacts-panel"]` 内**。「工作区」面板排在产物区之上、同样默认展开、且其文件树会列出同一个文件 —— 无限定的文本匹配会点到那一行惰性文本上，表现为「点了没反应」。（ADR-059 前排在上方的是「执行活动」段，现已移除，但「工作区」段仍在其上、限定依旧必要。）
 
 - **`vi.restoreAllMocks()` 不会清理 `vi.stubEnv()`** —— 必须显式 `vi.unstubAllEnvs()`。曾实际中招：一条「阈值设 0 关闭功能」的测试把 env **泄漏给了后面所有测试**，导致 `/resume` 的用例根本没发生轮转，却以「看起来合理」的方式失败（ADR-051）。
 - **给纯函数加「必填参数」比加测试更能防漏传**：`groupSessionsByDate(sessions, t, frozen)` 的 `frozen` **刻意不给默认值**——排序与分组必须读同一个 key，而一个默认值会让调用方静默丢掉它（行在 hover 时跳组），同时单测因为直接传参**保持全绿**。让 tsc 抓，别指望测试（ADR-051）。

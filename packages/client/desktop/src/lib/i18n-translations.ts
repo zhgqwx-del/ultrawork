@@ -223,11 +223,8 @@ export const en: Record<string, string> = {
 
     // Session right sidebar
     "session.rightSidebar.plan": "Task Plan",
-    "session.rightSidebar.activity": "Activity",
     "session.rightSidebar.workspace": "Workspace",
     "session.rightSidebar.artifacts": "Artifacts",
-    "session.rightSidebar.mcp": "Connectors",
-    "session.rightSidebar.skills": "Skills",
 
     // Settings
 
@@ -333,7 +330,6 @@ export const en: Record<string, string> = {
     "message.workspaceTitle": "Workspace",
     "message.workingDirectory": "Working Directory",
     "message.noArtifacts": "No artifacts yet",
-    "message.noSteps": "No steps yet",
     "message.noPlan": "No task plan — simple tasks don't need one",
     "message.turnEnded": "Turn ended",
     "message.aiTyping": "AI is typing...",
@@ -681,12 +677,7 @@ export const en: Record<string, string> = {
     "mcp.browser.toastSwitched": "Switched to {mode} mode",
 
     // Skills / Commands
-    "skills.noItems": "No skills available",
     "skills.empty": "No skills available. Add skills in Settings.",
-    "skills.manage": "Manage Skills",
-    "skills.group.command": "Built-in",
-    "skills.group.mcp": "MCP",
-    "skills.group.skill": "Project Skills",
     "skills.settingsTitle": "Skills",
     "skills.settingsDescription": "Manage commands and skills that extend agent capabilities.",
     "skills.searchPlaceholder": "Search skills...",
@@ -1073,11 +1064,8 @@ export const zhHans: Record<string, string> = {
 
     // Session right sidebar
     "session.rightSidebar.plan": "任务规划",
-    "session.rightSidebar.activity": "执行活动",
     "session.rightSidebar.workspace": "工作区",
     "session.rightSidebar.artifacts": "产物",
-    "session.rightSidebar.mcp": "连接器",
-    "session.rightSidebar.skills": "技能",
 
     // Settings
 
@@ -1183,7 +1171,6 @@ export const zhHans: Record<string, string> = {
     "message.workspaceTitle": "工作区",
     "message.workingDirectory": "工作目录",
     "message.noArtifacts": "暂无产物",
-    "message.noSteps": "暂无步骤",
     "message.noPlan": "暂无任务规划（简单任务无需规划）",
     "message.turnEnded": "回合已结束",
     "message.aiTyping": "AI 正在输入...",
@@ -1529,12 +1516,7 @@ export const zhHans: Record<string, string> = {
     "mcp.browser.toastSwitched": "已切换到{mode}模式",
 
     // Skills / Commands
-    "skills.noItems": "暂无技能",
     "skills.empty": "暂无可用技能，前往设置添加。",
-    "skills.manage": "管理技能",
-    "skills.group.command": "内置",
-    "skills.group.mcp": "MCP",
-    "skills.group.skill": "项目技能",
     "skills.settingsTitle": "技能",
     "skills.settingsDescription": "管理扩展 Agent 能力的命令和技能。",
     "skills.searchPlaceholder": "搜索技能...",

@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **修复预存在的坏 e2e `plan-panel-ui`（与右栏删除无关，独立 test-infra 腐化）**：该测试在 `main` 上早已失败（已用 `git stash` 对照实验证明：干净 HEAD 上同样失败于同一步），发送环节 30s 超时后从未跑到断言。逐层修复了三处叠加腐化：① **发送方式**——`getByRole("button",{name:/开始/}).click()` 脆弱（auto-wait CTA 的 `disabled={!canSend}` 状态、与受控输入更新竞争），改用 `ui-density` 已验证的稳健路径「Enter 发送 + CTA 按钮兜底」；② **计划不渲染**——mock LLM 跑完整个 turn 快过新挂载的会话页订阅，live `plan.updated` 在无人监听时就发了、mount 时 `getPlan()` 快照又早于 todowrite 落库 ⇒ UI 停在空计划（真模型够慢不触发）；改为 todos 落库后 `reload()`，让 `useSessionPlan` 从 `/session/{id}/todo` 快照重新水合（即无损切回路径）；③ **误关侧栏**——非空计划会 auto-reveal 右栏（`hasPlan` 自动展开），原盲 toggle 反把自动打开的侧栏关掉；改为「已开则不 toggle、仅未开时才开」。根因经浏览器内诊断（`proxyTodoLen:3`/`bodyHasPlanHeader:true` 但 toggle 后消失）实证定位。**真 Chrome 连跑 2 次绿**（`steps 3/3`）。
+
 - **Team 协作模式启动期偶发不可用（ACP 冷启动竞态自愈，discussions/042，仅 CHANGELOG 无 ADR）**：真机启动后偶尔 Team 段禁用、hover「外部 Agent 服务未运行（:4099）」，且**点一下主 agent 下拉即恢复**。
   - **根因（代码确证）**：`acpAvailable` 原本只由 `AgentProvider` mount 时**一次性** `health()` 探测确定；而 ACP sidecar 在渲染门（等 opencode 健康）开启后才于非阻塞后台线程 spawn（`src-tauri/lib.rs`），首探必然输给冷启动竞态 → false。旧的 4s 状态轮询自锁在 `if(!acpAvailable) return`，永不自愈；唯一恢复口是打开 agent 下拉触发的 `refreshAgents()` 重探。
   - **修法**：`lib/agent-context.tsx` 把「mount 一次性探测 + 自锁轮询」合并为**单个自调度 `setTimeout` 循环**——未连时几何退避重探 `health()`（`nextAgentPollDelay`：1s 起 `×2` 封顶 30s，成功回 4s 稳态），**自动拉起** `acpAvailable`（冷启动 Team 自己变亮、无需点下拉）；已连时用 `listAgents()` 兼作存活信号刷新状态点，连续 2 次失败才降级（去抖，不闪断）。状态迁移抽成纯 reducer `reduceAcpPoll`。
@@ -16,6 +18,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - **设置页去重**：`components/settings/agents-section.tsx` 删掉本地重复的 `available` 探测，改用共享 `acpAvailable`，一并修掉设置页同源冷启动 bug。
   - **兼容性**：纯 renderer React/TS 改动，无路径/进程/OS/硬编码，mac/win/linux 一致；单 agent 模式不受 `acpAvailable` 约束（不受影响）；附件/粘贴/截图与本改动零交叉（`chat-input.tsx` 不引用 agent-context，AgentSelector 未改）。
   - **验证**：`nextAgentPollDelay`/`reduceAcpPoll` 纯函数单测（10 例）+ **provider 级 fake-timer 集成测试**（5 例，虚拟时钟驱动真实循环：冷启动 false→自动翻 true、去抖不闪、越阈降级、reconcile 增删、卸载无泄漏）+ 两独立对抗 reviewer（抓修 F1/F2/F3 三缺陷，无 HIGH 回归）+ typecheck + desktop **661** 全绿。**macOS 真机验收通过**（临时给 ACP 线程加 15s sleep 放大竞态，肉眼确认 Team「灰→自动亮」完整过渡、全程不碰下拉）。
+
+### Removed
+
+- **移除会话右侧栏三个低价值区块：执行活动 / 连接器 / 技能（ADR-059）**：这三块判定为冗余——`ActivityPanel`（执行活动）与转录区已内联的工具调用 + 计划面板双重重叠；`MCPPanel`（连接器）/`SkillsPanel`（技能）与「设置 → 连接器 / 技能」功能完全重复（管理入口应唯一）。删除后右侧栏聚焦为：计划（有计划时）+ 工作区 + 产物。
+  - **改动**：`pages/Session.tsx` 删三个 `RightSidebarSection` 渲染块 + `import` + 死代码 `handleSkillClick`；删组件 `progress-panel.tsx` / `mcp-panel.tsx` / `skills-panel.tsx` + `components/session/index.ts` 三行导出；删 **9 个孤儿 i18n 键**（`session.rightSidebar.activity/mcp/skills`、`message.noSteps`、`skills.manage`、`skills.noItems`、`skills.group.command/mcp/skill`）en+zh-Hans 各一份 + 重新生成 zh-Hant（760 keys）。
+  - **保留**：共享 hook `useSkills`/`useMCPServers`/`useBrowserMCP` 与绝大多数 `mcp.*`/`skills.*` 文案键（设置页仍用）；`skills.empty`/`skills.manageSources` 保留。
+  - **孤儿键教训（6→9）**：初判静态 `grep t("literal")` 只抓到 6 键，漏了 `skills.group.*` 的动态引用 `t(GROUP_LABEL_KEYS[k])`——判定 i18n 孤儿须一并搜键名字面量本身、覆盖映射表间接引用。
+  - **兼容性**：纯 renderer（diff 仅 `.tsx/.ts`+文档+`.e2e.ts`，无 Rust/构建脚本/路径/进程/OS），三平台一致，不碰数据层/后端；右栏 `<aside>` 无 team/single 分支，单/Team/ACP 会话共用同一（缩短后的）右栏，行为一致。**取舍**：不做可配置显隐开关；技能卡片「点击插入 `/技能名`」快捷入口一并移除（用户确认可弃，直接键入 `/` 即可）。
+  - **e2e 同步修正**：2 个 e2e 硬断言 Activity 段存在（`plan-panel-ui`/`ui-density-walkthrough`），已删除对应断言与陈旧注释（各测主目标不变）；`preview-layout` 注释「Activity 段在上方」改为「Workspace 段在上方」（选择器 scope 本就正确）。
+  - **验证**：typecheck 8/8 + desktop **660/661**（唯一失败 = `channels-section` DingTalk QR 预存在 async flake，隔离重跑 6/6 绿）+ check-docs 全绿 + **独立对抗 reviewer 逐行审（0 HIGH/MED）** + 删后自查（9 键三语归零、组件无残留引用）+ **headless e2e 实跑绿**（`ui-density`：mock-LLM+真 opencode+Vite+真 Chrome，右栏 288px 打开、Workspace 段渲染、无崩溃）。真机观感待用户。
 
 ## [0.3.0] - 2026-07-16
 

@@ -210,9 +210,9 @@ try {
 
   await page.locator('[data-testid="toggle-right"]').click()
   await page.waitForTimeout(400)
-  // Scope to the artifacts panel: the Activity section sits above it, is also open
-  // by default, and lists the same file (as a full absolute path) — an unscoped
-  // text match lands on that inert row instead.
+  // Scope to the artifacts panel: the Workspace section sits above it, is also open
+  // by default, and lists the same file (in its file tree) — an unscoped text match
+  // lands on that inert row instead.
   const artifactRow = page.locator('[data-testid="artifacts-panel"]').getByText(ARTIFACT, { exact: false }).first()
   const artifactVisible = await artifactRow.isVisible().catch(() => false)
   if (!artifactVisible) {

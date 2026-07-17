@@ -29,7 +29,7 @@ import { buildLeaderSystemPrompt } from "@/lib/team-leader-prompt"
 import { isACPAgentId } from "@agent/connector"
 import { cn } from "@/lib/utils"
 import { PanelRight, Crown, ArrowDown } from "lucide-react"
-import { PlanPanel, ActivityPanel, ArtifactsPanel, WorkspacePanel, MCPPanel, SkillsPanel, ArtifactPreview, TeamHeader } from "@/components/session"
+import { PlanPanel, ArtifactsPanel, WorkspacePanel, ArtifactPreview, TeamHeader } from "@/components/session"
 import { RightSidebarSection } from "@/components/session/right-sidebar-section"
 import { UnreadBadge } from "@/components/ui/unread-badge"
 import type { Artifact } from "@/components/session"
@@ -345,10 +345,6 @@ export function SessionPage() {
       }
     : undefined
 
-  const handleSkillClick = useCallback((name: string) => {
-    setInput(`/${name} `)
-  }, [])
-
   const previewOpen = previewMode !== "closed" && !!selectedArtifact
   const maximized = previewMode === "full" && !!selectedArtifact
 
@@ -658,9 +654,6 @@ export function SessionPage() {
                   <PlanPanel steps={planSteps} active={isAgentActive} />
                 </RightSidebarSection>
               )}
-              <RightSidebarSection title={t("session.rightSidebar.activity")} defaultOpen>
-                <ActivityPanel messages={allMessages} />
-              </RightSidebarSection>
               <RightSidebarSection title={t("session.rightSidebar.workspace")} defaultOpen>
                 <WorkspacePanel directory={workspaceDir} refreshKey={workspaceRefreshKey} onFileClick={handleFileTreeClick} />
               </RightSidebarSection>
@@ -684,12 +677,6 @@ export function SessionPage() {
                   onArtifactClick={handleArtifactClick}
                   selectedPath={selectedArtifact?.path}
                 />
-              </RightSidebarSection>
-              <RightSidebarSection title={t("session.rightSidebar.mcp")}>
-                <MCPPanel />
-              </RightSidebarSection>
-              <RightSidebarSection title={t("session.rightSidebar.skills")}>
-                <SkillsPanel onSkillClick={handleSkillClick} />
               </RightSidebarSection>
             </div>
           </aside>

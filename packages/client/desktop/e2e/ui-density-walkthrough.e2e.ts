@@ -122,7 +122,6 @@ try {
       searchFont: cs(searchInput)?.fontSize ?? null,
       footerFont: cs(footerUser)?.fontSize ?? null,
       colMaxW,
-      activityOpen: /执行活动|Activity/.test(bodyText),
       workspaceOpen: /工作区|Workspace/.test(bodyText),
     }
   })
@@ -138,7 +137,6 @@ try {
     ["session row = 13px", m.sessFont === "13px"],
     ["sidebar search input = 13px", m.searchFont === "13px"],
     ["sidebar footer username = 13px", m.footerFont === "13px"],
-    ["right panel Activity section present", m.activityOpen],
     ["right panel Workspace section present", m.workspaceOpen],
   ]
   const failed = checks.filter(([, ok]) => !ok)

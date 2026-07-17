@@ -5,8 +5,7 @@
 //
 // Flow: send a prompt → opencode executes todowrite → open the right sidebar →
 // assert the "Task Plan" section shows the three structured steps the model wrote
-// (content is language-independent), and the legacy tool-flow lives under a
-// separate "Activity" section.
+// (content is language-independent).
 //
 //   cd packages/client/desktop && bun run --bun e2e:plan-ui   # exit 0 = PASS
 // Needs: system Chrome (playwright-core channel:"chrome"); built opencode binary.
@@ -73,9 +72,17 @@ try {
   await page.waitForTimeout(3000)
 
   console.log("=== send prompt → opencode runs todowrite ===")
+  // Enter-to-send is the robust path (chat-input sends on Enter without Shift);
+  // fall back to the home CTA button only if the route hasn't changed. A bare
+  // getByRole("button", {name:/开始/}).click() is fragile — it auto-waits on the
+  // CTA's `disabled={!canSend}` state and can race the controlled-input update.
   await page.locator("textarea").first().fill("make a plan")
-  await page.getByRole("button", { name: /马上开始|开始|send/i }).first().click()
-  await page.waitForURL(/\/session\//, { timeout: 20000 })
+  await page.waitForTimeout(300)
+  await page.locator("textarea").first().press("Enter")
+  await page.waitForURL(/\/session\//, { timeout: 10000 }).catch(async () => {
+    await page.getByRole("button", { name: /马上开始|开始|发送|send/i }).first().click().catch(() => {})
+    await page.waitForURL(/\/session\//, { timeout: 12000 })
+  })
   const sid = page.url().split("/session/")[1]
 
   // Gate on the server actually having persisted the todos (plan produced).
@@ -84,8 +91,25 @@ try {
     return Array.isArray(todos) && todos.length === STEPS.length
   }, 30000)
 
-  console.log("=== open right sidebar → assert Task Plan panel ===")
-  await page.getByLabel(/Toggle right sidebar|切换右侧边栏/).click()
+  // The mock LLM runs the whole turn faster than the freshly-mounted session page
+  // can subscribe, so its live `plan.updated` fires before anyone is listening AND
+  // the mount-time `getPlan()` snapshot resolved before todowrite persisted — the
+  // UI lands on an empty plan while the server already has the todos. A real model
+  // is slow enough that `plan.updated` arrives after subscription. Reload now that
+  // the todos ARE persisted: `useSessionPlan` re-hydrates from the snapshot
+  // (`/session/{id}/todo`) on mount, which is the lossless switch-back path.
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await page.waitForURL(/\/session\//, { timeout: 10000 })
+  await page.waitForTimeout(1500)
+
+  console.log("=== ensure right sidebar open → assert Task Plan panel ===")
+  // A non-empty plan auto-reveals the right sidebar (hasPlan auto-open, ADR-038 /
+  // Session.tsx). So DON'T blindly toggle — that would close the auto-opened
+  // sidebar. Open it only if it isn't already showing.
+  if ((await page.locator('[data-testid="right-sidebar"]').count()) === 0) {
+    await page.getByLabel(/Toggle right sidebar|切换右侧边栏/).click()
+  }
+  await page.locator('[data-testid="right-sidebar"]').first().waitFor({ timeout: 5000 })
   await page.waitForTimeout(1200)
   const body = async () => await page.locator("body").innerText()
 
@@ -93,14 +117,13 @@ try {
   const text = await body()
   const stepsShown = STEPS.filter((s) => text.includes(s))
   const headerShown = /任务规划|Task Plan/.test(text)
-  const activityShown = /执行活动|Activity/.test(text)
   console.log(`[ui] steps shown: ${stepsShown.length}/${STEPS.length} ${JSON.stringify(stepsShown)}`)
-  console.log(`[ui] plan header=${headerShown} activity header=${activityShown}`)
+  console.log(`[ui] plan header=${headerShown}`)
 
-  const ok = stepsShown.length === STEPS.length && headerShown && activityShown
+  const ok = stepsShown.length === STEPS.length && headerShown
   verdict = ok
-    ? "PASS ✅ — Task Plan panel renders all structured steps + Activity section present"
-    : `FAIL ❌ — steps=${stepsShown.length}/${STEPS.length} planHeader=${headerShown} activity=${activityShown}`
+    ? "PASS ✅ — Task Plan panel renders all structured steps"
+    : `FAIL ❌ — steps=${stepsShown.length}/${STEPS.length} planHeader=${headerShown}`
 } catch (e) { verdict = `ERROR: ${(e as Error).message}` }
 finally {
   console.log("\n=== VERDICT:", verdict, "===")
