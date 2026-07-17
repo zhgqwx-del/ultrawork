@@ -28,7 +28,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 | `@agent/client-desktop` | ✅ Done | Tauri desktop app (React 19 + Vite 7 + Tailwind 4) |
 | `@agent/channel-gateway` | ✅ Done | IM channel gateway (DingTalk Stream SDK + WeChat ilink + Hono on Bun.serve, sidecar :4097) |
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
-| `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder/hermes 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
+| `@agent/acp-client` | ✅ 阶段1（claude/gemini/qoder/hermes/codex 达标） | ACP Client Sidecar：spawn 外部 agent（stdio JSON-RPC）+ turn 整形成 opencode SSE 形状 + 权限回环 + 历史持久化, sidecar :4099 |
 | `@agent/connector` | ✅ 阶段2（ADR-030） | 控制+事件统一层：可插拔 backend adapter（OpenCodeBackend/ACPBackend）+ 统一 SSE transport + 会话绑定（sidecar 持久化 hydration）+ capabilities 门控 |
 | `@agent/orchestrator` | ✅ 阶段3 全量（ADR-031 + 017 Team 页） | 编排层：spawn/await/steer/cancel 原语 + 治理护栏 + DAG 调度（Pipeline/Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（阻塞 D-2 契约）+ QueueOwner；宿主 = ACP sidecar :4099（`/orchestration/*` + team 注册表 + delegate-mcp stdio shim）；产品面 = 主聊天流统一入口（018：Home segmented + 侧栏混排徽标 + Session 页合流；Leader=ROOT 会话）+ `/orchestration` 纯流水线页 |
 
@@ -112,7 +112,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/settings/channels-section.tsx` — 消息渠道设置页 section（ChannelQRLogin 泛化扫码流 + type 驱动手动表单，从 Settings.tsx 拆出）
 - `src/components/settings/models-section.tsx` — 模型管理设置页 section（provider 卡片列表 + 配置流程 + **自定义 provider 表单/删除**；取代旧的全局 ModelDialog，由 Settings 页 `models` section 渲染，Home/Session「管理模型」深链至此；含 DashScope 模型行「联网搜索」`enable_search` toggle，ADR-042）
 - `src/components/settings/search-tools-section.tsx` — 设置页「工具」分区（BYOK 联网搜索：Tavily/IQS key 卡 + 测试连接〔Rust `test_search_provider`〕+ 默认服务商 + Exa 高级开关，ADR-042）；外链常量在 `src/lib/external-links.ts`
-- `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes + thoughtLevel select）
+- `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes/codex + thoughtLevel select）
 - `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
 
 **Desktop — hooks / lib**
@@ -186,7 +186,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `acp-manager.ts`（连接/会话注册 + clientSessionId 映射 + SSE 分发 + session/load 懒恢复）, `acp-server.ts`（Hono :4099 REST+SSE）, `agents-config.ts`（agents.json 读写）
 - `config-paths.ts` — **sidecar config 目录 SSOT**：`resolveConfigDir`/`configFile` 镜像 Rust `global_config_dir()`（XDG_CONFIG_HOME 隔离）；agents.json / gemini-acp-settings.json（`acp-connection.ts`）/ sidecar-auth.json（`opencode-credentials.ts`）全经此解析（gotchas §8/§11）
 - `session-store.ts` — W4b 会话历史持久化：event-fold reducer（与前端同构）+ 落盘 `~/.local/share/ultrawork/acp-sessions/`
-- `packages/agent/acp-client/scripts/mock-acp-agent.ts`（确定性测试 agent）, `packages/agent/acp-client/scripts/spike-claude.ts`（真实 claude → desktop fixture）
+- `packages/agent/acp-client/scripts/mock-acp-agent.ts`（确定性测试 agent）, `packages/agent/acp-client/scripts/spike-claude.ts`（真实 claude → desktop fixture）, `spike-hermes.ts` / `spike-codex.ts`（codex 经 `@agentclientprotocol/codex-acp` 桥；tool/escape/perm 三模式，ADR-060）
 
 **Knowledge Sidecar（`packages/knowledge/sidecar/src/`）**
 - `store.ts`（SQLite + FTS5 + 迁移）, `chunker.ts`（Parent-Child 分块）, `indexer.ts`（增量索引）, `retriever.ts`（BM25 + TF-IDF + RRF）
@@ -210,7 +210,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (59 ADRs, 001–059)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (60 ADRs, 001–060)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

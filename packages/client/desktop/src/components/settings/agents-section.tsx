@@ -12,7 +12,7 @@ import { useAgents } from "@/lib/agent-context"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AGENT_TEMPLATES, type AgentTemplate } from "./agent-templates"
 
-interface FormState {
+export interface FormState {
   id: string
   label: string
   description: string
@@ -38,7 +38,7 @@ const EMPTY_FORM: FormState = {
 
 const THOUGHT_LEVELS = ["default", "low", "medium", "high"] as const
 
-function toForm(config: ACPAgentConfig): FormState {
+export function toForm(config: ACPAgentConfig): FormState {
   return {
     id: config.id,
     label: config.label,
@@ -54,7 +54,7 @@ function toForm(config: ACPAgentConfig): FormState {
   }
 }
 
-function fromForm(form: FormState): ACPAgentConfig {
+export function fromForm(form: FormState): ACPAgentConfig {
   const env: Record<string, string> = {}
   for (const line of form.env.split("\n")) {
     const trimmed = line.trim()

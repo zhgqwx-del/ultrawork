@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Team 外部 Agent 接入 OpenAI Codex CLI（ADR-060）**：Team 协作模式的外部 Agent 现支持 OpenAI Codex CLI，加入 claude/gemini/qoder/hermes 行列。Codex 原生不说 ACP（只支持 MCP，openai/codex#9085），经官方 npm 桥 `@agentclientprotocol/codex-acp` 走既有 bunx 路径接入——用户在「设置 → 外部 Agent」一键添加即可。
+  - **接入形态**：`command:bunx`、`args:[@agentclientprotocol/codex-acp]`（不带 `--bun`，桥自带 @openai/codex 重运行时）、`env:{NO_BROWSER:"1", INITIAL_AGENT_MODE:"agent"}`。认证**零配置复用本机 `~/.codex/auth.json`**（ChatGPT 或 API key 登录），无需再填 key；首次未登录先在终端 `codex login`。
+  - **安全 / 审批**：默认 `agent` 模式（workspace-write 沙箱 + on-request 审批）——工作区内编辑自动执行，越界/联网动作由 codex 沙箱拦截；codex escalate 时经 ACP 浮到 **Ultrawork 现有权限弹窗**（与 claude/gemini 同一条 `permission.asked`），无人应答 300s 兜底拒绝，**无相互等待死锁**（5 轮真机 spike 中 read-only 审批往返实测打通、批准后文件真落盘）。模板 `envHint` 提示可改 `INITIAL_AGENT_MODE=read-only` 让每个文件写都需批准。
+  - **改动**：`agent-templates.ts` 扩 `key` 联合类型 + codex 模板条目；归档 `scripts/spike-codex.ts`（tool/escape/perm 三模式复验台）+ `acp-codex-turn.json` fixture；`acp-turn-shaping.test.ts` +3 例 codex shaping 测试（镜像 hermes 块）。sidecar 注册表（通用 ACP-over-stdio）无需改动，`DEFAULT_AGENTS` 保持 claude-only。
+  - **取舍（follow-up）**：默认 `agent` 模式下越界 `apply_patch` 写被 codex 硬拒且暂无 UI「允许」入口（非死锁）；session mode 选择器（read-only/agent/full-access 暴露到设置）留后续。Windows/Linux 真机待验（bunx 路径与 claude 同构，风险低）。
+  - **验证**：typecheck **8/8** + desktop **664**（基线 661 + 3 codex）+ 5 轮真机 spike + 桥源码核验。真机走查 / Team 视觉待用户。
+
 ### Changed
 
 - **左侧栏会话列表更紧凑（仅 CHANGELOG 无 ADR）**：`SessionItem` 行垂直 padding `py-2 → py-1`（正常态 + 重命名编辑态两处同步，避免进重命名时行高跳动），分组头「今天/昨天/本周/更早」`py-1 → py-0.5`。单行行高约 35px → 27px，每行省 8px，一屏可多显数条会话、列表信息密度更高。行间 `space-y-0.5`（2px）与组间 `space-y-4` 保持不动——「间隔大」的主因是每行自身的垂直 padding 而非行间距。纯 renderer、三平台一致，单/Team/IM/ACP 四类会话共用同一组件一处生效；测试不锁间距（`session-item.test.tsx` 只断言标题/tooltip/badge/单行），无回归。落档过程：先上温和的 A 档（`py-1.5`）真机看，再进 B 档（`py-1` + 分组头收窄）定稿。**验证**：typecheck 8/8 + desktop **661** 全绿 + macOS 真机密度走查通过。
