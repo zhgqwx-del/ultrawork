@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **左侧栏会话列表更紧凑（仅 CHANGELOG 无 ADR）**：`SessionItem` 行垂直 padding `py-2 → py-1`（正常态 + 重命名编辑态两处同步，避免进重命名时行高跳动），分组头「今天/昨天/本周/更早」`py-1 → py-0.5`。单行行高约 35px → 27px，每行省 8px，一屏可多显数条会话、列表信息密度更高。行间 `space-y-0.5`（2px）与组间 `space-y-4` 保持不动——「间隔大」的主因是每行自身的垂直 padding 而非行间距。纯 renderer、三平台一致，单/Team/IM/ACP 四类会话共用同一组件一处生效；测试不锁间距（`session-item.test.tsx` 只断言标题/tooltip/badge/单行），无回归。落档过程：先上温和的 A 档（`py-1.5`）真机看，再进 B 档（`py-1` + 分组头收窄）定稿。**验证**：typecheck 8/8 + desktop **661** 全绿 + macOS 真机密度走查通过。
+
 ### Fixed
 
 - **修复预存在的坏 e2e `plan-panel-ui`（与右栏删除无关，独立 test-infra 腐化）**：该测试在 `main` 上早已失败（已用 `git stash` 对照实验证明：干净 HEAD 上同样失败于同一步），发送环节 30s 超时后从未跑到断言。逐层修复了三处叠加腐化：① **发送方式**——`getByRole("button",{name:/开始/}).click()` 脆弱（auto-wait CTA 的 `disabled={!canSend}` 状态、与受控输入更新竞争），改用 `ui-density` 已验证的稳健路径「Enter 发送 + CTA 按钮兜底」；② **计划不渲染**——mock LLM 跑完整个 turn 快过新挂载的会话页订阅，live `plan.updated` 在无人监听时就发了、mount 时 `getPlan()` 快照又早于 todowrite 落库 ⇒ UI 停在空计划（真模型够慢不触发）；改为 todos 落库后 `reload()`，让 `useSessionPlan` 从 `/session/{id}/todo` 快照重新水合（即无损切回路径）；③ **误关侧栏**——非空计划会 auto-reveal 右栏（`hasPlan` 自动展开），原盲 toggle 反把自动打开的侧栏关掉；改为「已开则不 toggle、仅未开时才开」。根因经浏览器内诊断（`proxyTodoLen:3`/`bodyHasPlanHeader:true` 但 toggle 后消失）实证定位。**真 Chrome 连跑 2 次绿**（`steps 3/3`）。

@@ -343,7 +343,7 @@ export function LeftSidebar() {
 
                       return (
                         <div key={group.label} className="space-y-0.5">
-                          <h3 className="px-2 py-1 text-xs font-medium tracking-wider text-[var(--sidebar-fg-muted)] opacity-70">
+                          <h3 className="px-2 py-0.5 text-xs font-medium tracking-wider text-[var(--sidebar-fg-muted)] opacity-70">
                             {group.label}
                           </h3>
                           {pinnedSessions.map((session) => (
@@ -601,7 +601,7 @@ export function SessionItem({
     return (
       <div
         className={cn(
-          "group relative flex items-center gap-2 rounded-lg px-3 py-2 text-[13px]",
+          "group relative flex items-center gap-2 rounded-lg px-3 py-1 text-[13px]",
           isActive
             ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
             : "bg-[var(--sidebar-accent-hover)] text-[var(--sidebar-fg)]"
@@ -649,7 +649,7 @@ export function SessionItem({
       onClick={onNavigate}
       title={rowTooltip}
       className={cn(
-        "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[13px] transition-all duration-150",
+        "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-1 text-[13px] transition-all duration-150",
         isActive
           ? "bg-[var(--sidebar-accent)] font-medium text-[var(--sidebar-fg)]"
           : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent-hover)] hover:text-[var(--sidebar-fg)]",
