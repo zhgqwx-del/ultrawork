@@ -33,6 +33,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **deckcraft 合并前全分支对抗审查（四路：完备/跨平台/打包/双模式）修 3 门禁/健壮性缺陷 + Windows 命令加固（ADR-061）**：均非 P3 引入、属 deckcraft 脚本遗留，各配 selftest 负样本锁定。
+  - **[MED] validate_deck 样式门洞**：`style="…"` 正则只匹配双引号，`style='…'`（单引号）/ `style = "…"`（等号带空格）完全逃逸 E1/E2/E4/E9（字面色/字号/渐变/隐藏内容）——Chrome 渲染一致、是能过门的真页面。放宽为 `style\s*=\s*["']([^"']*)["']` + 3 selftest 负样本。
+  - **[LOW-MED] probe/extract 的 `<script>JSON</script>` 提取崩溃**：可见文本含字面闭合 script 标签（讲 Web 开发、代码样例的 deck）→ `--dump-dom` 序列化提前闭合 JSON 块 → json.loads `JSONDecodeError`（probe 是必过门）。注入侧转义小于号为 JSON unicode（`fromCharCode` 避多层反斜杠转义）+ 1 selftest。**血泪：首版修复的注释里含字面标签、内联进页面自身触发同一 bug，经 Chrome dump 实测定位——注释/源码都不能出现该字面序列**（gotchas §10 ⑫）。
+  - **[LOW] extract_layout 死代码**：`opacityOf(el)` 传 DOM 元素而非 computed style → NaN → 恒 1（被后续覆盖前无人读），删除并把声明移到真实首用处。
+  - **[Windows] SKILL.md python 启动器加固**：内联命令写死 `python3`，只装 python.org Python 的 Windows 机上不识别（只有 `python`）、徽标却绿——把「先试 python3 失败落 python、一次确定全程沿用」升级为醒目 IMPORTANT 规则 + Phase 1 首步实测点提示（点明徽标绿≠命令名存在）。
+  - **验证**：deckcraft-selftest **44→48/0** · 门禁链 0 errors/findings 无字节漂移 · sentinel 重算。审查同时确认：打包给客户正确（vendor cjs 运行时实测返回 PptxGenJS、无 node_modules、无硬编码路径、老用户升级无孤儿）· 单/Team 技能发现/产物/徽标 mode-agnostic。**已知限制（defer）**：Team 委派下 deckcraft 两轮 question 不可达（`delegate.ts` 只中继 permission 不中继 question，子会话 600s 超时；单 agent 正常）——gotchas §10 ⑪ + Pending。
+
 - **修复预存在的坏 e2e `plan-panel-ui`（与右栏删除无关，独立 test-infra 腐化）**：该测试在 `main` 上早已失败（已用 `git stash` 对照实验证明：干净 HEAD 上同样失败于同一步），发送环节 30s 超时后从未跑到断言。逐层修复了三处叠加腐化：① **发送方式**——`getByRole("button",{name:/开始/}).click()` 脆弱（auto-wait CTA 的 `disabled={!canSend}` 状态、与受控输入更新竞争），改用 `ui-density` 已验证的稳健路径「Enter 发送 + CTA 按钮兜底」；② **计划不渲染**——mock LLM 跑完整个 turn 快过新挂载的会话页订阅，live `plan.updated` 在无人监听时就发了、mount 时 `getPlan()` 快照又早于 todowrite 落库 ⇒ UI 停在空计划（真模型够慢不触发）；改为 todos 落库后 `reload()`，让 `useSessionPlan` 从 `/session/{id}/todo` 快照重新水合（即无损切回路径）；③ **误关侧栏**——非空计划会 auto-reveal 右栏（`hasPlan` 自动展开），原盲 toggle 反把自动打开的侧栏关掉；改为「已开则不 toggle、仅未开时才开」。根因经浏览器内诊断（`proxyTodoLen:3`/`bodyHasPlanHeader:true` 但 toggle 后消失）实证定位。**真 Chrome 连跑 2 次绿**（`steps 3/3`）。
 
 - **Team 协作模式启动期偶发不可用（ACP 冷启动竞态自愈，discussions/042，仅 CHANGELOG 无 ADR）**：真机启动后偶尔 Team 段禁用、hover「外部 Agent 服务未运行（:4099）」，且**点一下主 agent 下拉即恢复**。

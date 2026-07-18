@@ -69,7 +69,13 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 | `${SKILL_DIR}/assets/icons/tabler-outline/` | 5039 个内联 SVG 图标（用法见 assets/icons/README.md：grep 检索 → 内联 → currentColor） |
 | `${SKILL_DIR}/references/` | 按需精读：content-engineering / modes / outline-schema / spec-lock-format / design-styles/ / typography-cjk / content-guidelines / visual-review / checklist |
 
-> Windows：`python3` 失败时改用 `python` 重试。
+> [!IMPORTANT]
+> **跨平台 python 启动器（Phase 1 开工第一步先确定，之后所有命令照用）**：本文所有命令写作
+> `python3 …`，但 **Windows 上只装了 python.org 版 Python 时没有 `python3` 命令（只有 `python`）**。
+> 第一步先跑 `python3 --version`；若报「不是内部或外部命令 / command not found」就改用 `python`，
+> 并把本文后续**每一条** `python3 …` 一律替换为 `python …`（一次确定、全程沿用）。
+> ⚠️ 依赖徽标显示 `python3.10+` 就绪 **不代表** `python3` 这个命令名在 PATH 上存在——徽标是 Rust
+> 探针解析到的解释器，命令名可用性要靠上面这步实测。macOS/Linux 用 `python3`。
 > Linux：导出中文 deck 需系统装有 CJK 字体（如 `fonts-noto-cjk`），否则 PDF/截图中文渲染为方块（各门禁量的是盒子不是字形，拦不住）——交付前提醒用户。
 
 ## 工作流
@@ -78,10 +84,12 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 
 🚧 GATE：意图属于本技能（见路由边界）。
 
+**先确定 python 启动器**（见上「跨平台 python 启动器」）：跑 `python3 --version`，Windows 上失败就全程用 `python`。下面这条建目录命令是首个实测点——它失败多半就是命令名问题，换 `python` 重试。
+
 ```bash
 python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parents=True, exist_ok=True) for d in ('pages','research','images','export')]"
 ```
-<!-- 用 python 建目录而非 mkdir -p：Windows 默认 shell 是 PowerShell，mkdir -p 多参数会失败 -->
+<!-- 用 python 建目录而非 mkdir -p：Windows 默认 shell 是 PowerShell，mkdir -p 多参数会失败；命令名 python3 vs python 见上方启动器规则 -->
 
 > **所有中间文件必须落在 `.deckcraft/<name>/` 里**（outline.json / spec_lock.md / tokens.css /
 > research/ / pages/ / images/ / export/ 无一例外）——产物面板对点目录下的文件全部隐藏，
