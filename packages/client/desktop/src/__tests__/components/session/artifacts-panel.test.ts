@@ -79,6 +79,44 @@ describe("mergeScannedPaths — filesystem scan integration", () => {
     const merged = mergeScannedPaths([], ["/tmp/scratch.txt", "/other/root/x.csv", `${WS}/keep.csv`], WS)
     expect(merged.map((a) => a.path)).toEqual(["keep.csv"])
   })
+
+  it("rejects files inside a dot-directory (skill scratch dirs like .deckcraft/)", () => {
+    // symmetric with the Rust fs scanner's dotdir skip — a skill's intermediates
+    // written via the Write tool into .deckcraft/ must not leak into the panel
+    const merged = mergeScannedPaths(
+      [],
+      [`${WS}/.deckcraft/opencode/spec_lock.md`, `${WS}/.deckcraft/opencode/research/research.md`,
+       `${WS}/opencode.html`],
+      WS,
+    )
+    expect(merged.map((a) => a.path)).toEqual(["opencode.html"])
+  })
+})
+
+describe("extractArtifacts — dot-directory filtering", () => {
+  it("drops Write-tool files inside .deckcraft/ but keeps published deliverables", () => {
+    const msgs = [
+      assistant([
+        { type: "tool", tool: "write", state: { status: "completed",
+          input: { filePath: `${WS}/.deckcraft/opencode/tokens.css` }, output: "" } },
+        { type: "tool", tool: "write", state: { status: "completed",
+          input: { filePath: `${WS}/.deckcraft/opencode/pages/page-01.html` }, output: "" } },
+        { type: "tool", tool: "write", state: { status: "completed",
+          input: { filePath: `${WS}/opencode.html` }, output: "" } },
+      ]),
+    ]
+    expect(extractArtifacts(msgs, WS).map((a) => a.path)).toEqual(["opencode.html"])
+  })
+
+  it("keeps files in a normal (non-dot) subdirectory", () => {
+    const msgs = [
+      assistant([
+        { type: "tool", tool: "write", state: { status: "completed",
+          input: { filePath: `${WS}/out/deck.html` }, output: "" } },
+      ]),
+    ]
+    expect(extractArtifacts(msgs, WS).map((a) => a.path)).toEqual(["out/deck.html"])
+  })
 })
 
 describe("classifyArtifacts — deliverables vs working files", () => {

@@ -88,11 +88,18 @@ function isValidArtifactPath(filePath: string, workspaceRoot?: string): boolean 
   if (filePath.length > 500) return false
   // If workspace root is known, only accept paths within it or relative paths
   if (workspaceRoot) {
-    if (isAbsolutePath(filePath)) {
-      return withinRoot(filePath, workspaceRoot)
+    if (isAbsolutePath(filePath) && !withinRoot(filePath, workspaceRoot)) {
+      return false
     }
-    // Relative paths are fine (e.g. "google.png")
-    return true
+  }
+  // Reject anything inside a dot-directory (skill scratch dirs like .deckcraft/).
+  // The fs scanner already skips dotdirs (lib.rs collect_changed_files), but the
+  // tool-call extractor feeds this same gate — without a symmetric filter, files
+  // an agent Write-s into a dotdir leak into the panel. Checked on the workspace-
+  // relative form so a root that itself lives under a dotdir (~/.ultrawork/…) is fine.
+  const rel = toRelative(filePath, workspaceRoot)
+  if (rel.split(/[\\/]/).slice(0, -1).some((seg) => seg.startsWith("."))) {
+    return false
   }
   return true
 }

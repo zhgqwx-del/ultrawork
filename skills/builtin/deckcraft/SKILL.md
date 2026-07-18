@@ -27,6 +27,7 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge]
 > 5. **首页门后再扇出**：并行生成放大系统性错误——先过首页门（Phase 5.1）再批量。每批 3-4 页；运行环境有并行子任务工具可整批并行。
 > 6. **门禁按序全过**：validate_outline → validate_deck → probe_overflow → 视觉审查，任一非零必须修复后重跑；视觉回炉 ≤1 轮、结构返工 ≤2 轮，超限如实报告。
 > 7. **产物纯净**：调试标记/生成器署名/占位残留禁止进产物（门禁硬拦）。
+> 8. **开工先建任务清单**：第一步用 `todowrite` 工具把六个 Phase 建成任务清单，每完成一个 Phase 就更新状态——让用户在「任务规划」面板看到进度。这是多阶段流水线，必须显式跟踪。
 
 ## 路由边界（先于一切判断）
 
@@ -67,11 +68,13 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 ```
 <!-- 用 python 建目录而非 mkdir -p：Windows 默认 shell 是 PowerShell，mkdir -p 多参数会失败 -->
 
-> **工作目录必须是点目录**（`.deckcraft/`）：产物面板的文件扫描会整体跳过点目录，
-> 中间产物（页面片段/截图/qa_report 等几十个文件）才不会淹没用户的产物列表；
-> 最终交付物由 Phase 6 的 `--publish` 拷到工作区可见位置。
+> **所有中间文件必须落在 `.deckcraft/<name>/` 里**（outline.json / spec_lock.md / tokens.css /
+> research/ / pages/ / images/ / export/ 无一例外）——产物面板对点目录下的文件全部隐藏，
+> 它们才不会淹没用户的产物列表。**工作区根只允许出现 Phase 6 `--publish` 拷出的最终交付物**
+> （`<name>.html/.pdf/.pptx`）。绝不要把 spec_lock.md / tokens.css / research.md 等写到工作区根或
+> 非点目录——一旦写到点目录外，就会污染产物面板。
 
-有源文档：用 `source_to_md/` 转换，产物放 `sources/`。
+有源文档：用 `source_to_md/` 转换，产物放 `.deckcraft/<name>/sources/`。
 
 **无源文档（只给了主题）→ Research 阶段 MANDATORY**：Read `references/content-engineering.md` §一，
 把主题拆 3-6 个检索问题，用联网工具至少 3 轮检索，写 `research/research.md` + `research/facts.json`
