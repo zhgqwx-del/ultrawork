@@ -61,7 +61,14 @@ function measure(){
   }
   var node = document.createElement('script');
   node.type = 'application/json'; node.id = '__probe__';
-  node.textContent = JSON.stringify(out);
+  // Escape every less-than sign to its JSON unicode form so a slide whose visible
+  // text contains a literal closing-script tag can't prematurely close this JSON
+  // block in the --dump-dom serialization (which would truncate the Python-side
+  // regex extraction and crash json.loads). fromCharCode(92)=backslash avoids
+  // Python/JS backslash double-escaping; json.loads reads it back to the character.
+  // (NOTE: keep the literal closing-script character sequence OUT of this comment —
+  // it would itself close this inlined script mid-parse. Meta, but real.)
+  node.textContent = JSON.stringify(out).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
   document.body.appendChild(node);
 }
 // this script is inlined mid-body, so it always runs during parse (before load);

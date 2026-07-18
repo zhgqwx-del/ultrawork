@@ -175,7 +175,6 @@ function measure(){
     var b = box(el);
     if(b.w < 2 || b.h < 2) return;
     var tag = el.tagName.toLowerCase();
-    var op = opacityOf(el);
     if(tag === 'svg'){ out.push({ type:'raster', box:b, tag:'svg', textLost:0 }); return; }
     if(tag === 'img'){
       var isrc = el.getAttribute('src') || '';
@@ -192,7 +191,7 @@ function measure(){
       // so the delivery report can disclose it honestly (see export_deck NOTE)
       out.push({ type:'raster', box:b, tag:'bg-image', textLost: textLeafCount(el) }); return;
     }
-    op = opacityOf(cs);
+    var op = opacityOf(cs);
     var bg = hex(cs.backgroundColor);
     var radius = parseFloat(cs.borderTopLeftRadius) || 0;
     // uniform + rounded border stays a single rounded outline ON the fill rect
@@ -246,7 +245,11 @@ function measure(){
 function emit(obj){
   var node = document.createElement('script');
   node.type = 'application/json'; node.id = '__layout__';
-  node.textContent = JSON.stringify(obj);
+  // Escape every less-than sign to its JSON unicode form so element text containing
+  // a literal closing-script tag can't prematurely close this JSON block in
+  // --dump-dom (same guard as probe_overflow; keep the literal tag OUT of this
+  // comment — it would itself close this inlined script mid-parse).
+  node.textContent = JSON.stringify(obj).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
   document.body.appendChild(node);
 }
 window.addEventListener('load', measure);

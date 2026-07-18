@@ -183,7 +183,11 @@ def main() -> int:
         n = page_no(p)
         t = p.read_text(encoding="utf-8")
         body = re.sub(r"<!--.*?-->", "", t, flags=re.S)
-        style_text = " ".join(re.findall(r'style="([^"]*)"', body))
+        # Match single- OR double-quoted style attrs, with optional spaces around
+        # `=` — Chrome renders `style='…'` and `style = "…"` identically, so a
+        # double-quote-only regex would let literal colors / font-sizes / gradients /
+        # opacity:0 hides silently escape E1/E2/E4/E9 (a real gate-dodge).
+        style_text = " ".join(re.findall(r'style\s*=\s*["\']([^"\']*)["\']', body))
         visible = re.sub(r"<[^>]+>", " ", body)
 
         # E8 fragment shape — export splitting and shell styling both rely on it.

@@ -123,6 +123,11 @@ def main() -> int:
     deck_case("E8 stray close tag", '<div>x</div></section><section class="slide">', "E8")
     deck_case("E9 display:none", '<div style="display:none">hidden</div>', "E9")
     deck_case("E9 opacity:0", '<div style="opacity:0">hidden</div>', "E9")
+    # single-quote / spaced-`=` style attrs must NOT escape the style gates —
+    # Chrome renders them identically, so a double-quote-only regex was a hole.
+    deck_case("E1 single-quote hex", "<div style='color:#ff0000'>x</div>", "E1")
+    deck_case("E2 spaced-eq font-size", '<div style = "font-size:2.5em">x</div>', "E2")
+    deck_case("E9 single-quote opacity:0", "<div style='opacity:0'>hidden</div>", "E9")
 
     # ── false-positive guards: legit input the gates must NOT flag
     deck_nofire("E9 opacity:0.5 allowed", '<div style="opacity:0.5">dim</div>', "E9")
@@ -349,6 +354,21 @@ def editable_cases() -> None:
             except (json.JSONDecodeError, KeyError, IndexError):
                 ok = False
         expect("layout.json schema", 0 if ok else 1, out, "", want_fail=False)
+
+    # 3a) a literal </script> in visible text must NOT break the <script>JSON</script>
+    #     extraction — guarded by the injection-side '<' → < escape (extract + probe).
+    #     Without it, --dump-dom would close the JSON block early → json.loads crash.
+    with tempfile.TemporaryDirectory() as td:
+        proj = project(td, {1: page('<h1>Web</h1><p>code sample: &lt;/script&gt; here</p>')})
+        run("build_deck.py", str(proj))
+        code, out = run("extract_layout.py", str(proj))
+        ok = False
+        if code == 0:
+            try:
+                ok = "</script>" in json.dumps(json.loads(out))
+            except json.JSONDecodeError:
+                ok = False
+        expect("extract survives </script> in visible text", 0 if ok else 1, out, "", want_fail=False)
 
     # 3b) presenter-view parity: the editable pptx must carry outline speaker_notes
     #     (the image-type pptx does; choosing editable must not silently drop them)
