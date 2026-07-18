@@ -1,13 +1,14 @@
 ---
 name: deckcraft
 description: >
-  Fast HTML-first presentation generator (validation period — explicit triggers only).
-  Use ONLY when the user explicitly says "deckcraft" / "快速PPT" / "快速幻灯片" /
-  "用 deckcraft 做PPT". Produces a styled single-file HTML deck plus PDF, image-type
-  PPTX (with speaker notes) and — optionally — an editable PPTX (text/shapes native
-  in PowerPoint) from a topic or source documents (PDF/DOCX/XLSX/PPTX/URL/Markdown).
-  Do NOT trigger on generic "做PPT/create presentation" requests while ppt-master is
-  installed — those route to ppt-master until deckcraft graduates.
+  HTML-first presentation generator — the default skill for making slide decks.
+  Use whenever the user wants to 做PPT / 生成PPT / 制作演示文稿 / 做幻灯片 or create a
+  presentation / slides / deck / slideshow, either from a topic or from source
+  documents (PDF/DOCX/XLSX/PPTX/URL/Markdown). Produces a styled single-file HTML deck
+  plus PDF, an image-type PPTX (with speaker notes) and — optionally — an editable PPTX
+  (text/shapes native in PowerPoint). Not for beautifying/templating an EXISTING .pptx
+  1:1 or building reusable template packs — for those, ppt-master can be installed from
+  设置 → 技能 (see routing table below).
 x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 ---
 
@@ -33,8 +34,8 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 
 | 用户意图 | 归属 |
 |---|---|
-| 从主题/文档生成新 deck（HTML / PDF / 图片型 pptx / 可编辑 pptx 交付） | ✅ 本技能 |
-| 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 | ❌ 非本技能范围：`ppt-master` 已安装则交给它；未安装则告知用户可在「设置 → 技能」安装 ppt-master 处理此类需求，并停止本技能 |
+| 做PPT / 生成PPT / 演示文稿 / 幻灯片 / slides / deck——从主题或文档生成新 deck（HTML / PDF / 图片型 pptx / 可编辑 pptx 交付） | ✅ 本技能（做 PPT 的默认技能） |
+| 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 | ❌ 非本技能范围：告知用户可在「设置 → 技能」安装 `ppt-master` 处理此类需求（安装后同名遮蔽会让它接管这些意图），并停止本技能 |
 
 **「生成后还想改」有两条路，先讲清再选交付形态**：
 - **想让 AI 继续改**（换措辞/调版式/加页/改配色）→ 不需要可编辑 pptx。HTML 是唯一真相源，

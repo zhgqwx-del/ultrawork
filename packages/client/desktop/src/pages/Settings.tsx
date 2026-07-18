@@ -1724,8 +1724,10 @@ const INSTALLABLE_SKILLS: { name: string; descKey: string; repo: string; path: s
   { name: "webapp-testing", descKey: "skills.catalog.webappTesting", repo: "anthropics/skills", path: "skills/webapp-testing" },
   { name: "frontend-design", descKey: "skills.catalog.frontendDesign", repo: "anthropics/skills", path: "skills/frontend-design" },
   { name: "algorithmic-art", descKey: "skills.catalog.algorithmicArt", repo: "anthropics/skills", path: "skills/algorithmic-art" },
-  // Self-update channel for the builtin ppt-master (ADR-040 phase 2): installing
-  // the upstream latest permanently shadows the builtin copy until removed.
+  // ppt-master long-tail retreat: it was removed from the bundle in P3 (ADR-061 /
+  // discussions/043 §18.5) now that deckcraft is the default deck skill, but stays
+  // installable from here for its 1:1-beautify / template-pack niche. Installing it
+  // registers a user skill under ~/.config/ultrawork/skills (no builtin copy to shadow).
   { name: "ppt-master", descKey: "skills.catalog.pptMaster", repo: "hugohe3/ppt-master", path: "skills/ppt-master", method: "git" },
 ]
 

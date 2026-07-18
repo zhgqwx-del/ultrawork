@@ -9,8 +9,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 
 const STATUS = {
-  bundled: ["ppt-master", "doc-edit"],
-  shadowed: ["ppt-master"],
+  bundled: ["deckcraft", "doc-edit"],
+  shadowed: ["deckcraft"],
   changed: false,
 }
 
@@ -69,10 +69,10 @@ describe("useBuiltinShadow", () => {
     mockInvoke.mockResolvedValue(restored)
     let returned: unknown
     await act(async () => {
-      returned = await result.current.removeOverride("ppt-master")
+      returned = await result.current.removeOverride("deckcraft")
     })
 
-    expect(mockInvoke).toHaveBeenLastCalledWith("remove_user_skill_override", { name: "ppt-master" })
+    expect(mockInvoke).toHaveBeenLastCalledWith("remove_user_skill_override", { name: "deckcraft" })
     expect(result.current.status).toEqual(restored)
     expect(returned).toEqual(restored)
   })
@@ -83,7 +83,7 @@ describe("useBuiltinShadow", () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mockInvoke.mockResolvedValue(null)
-    await expect(result.current.removeOverride("ppt-master")).rejects.toThrow("malformed")
+    await expect(result.current.removeOverride("deckcraft")).rejects.toThrow("malformed")
     // Status untouched — a success toast over a stale card is impossible.
     expect(result.current.status).toEqual(STATUS)
   })

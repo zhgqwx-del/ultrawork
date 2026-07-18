@@ -61,7 +61,7 @@ describe("SkillsSection tabs", () => {
   })
 
   it("hides the tab bar while loading, even with skills already in hand", () => {
-    skillsApi.allItems = [skill("ppt-master", true)]
+    skillsApi.allItems = [skill("deckcraft", true)]
     skillsApi.totalCount = 1
     skillsApi.loading = true
     render(<SkillsSection />)
@@ -69,7 +69,7 @@ describe("SkillsSection tabs", () => {
   })
 
   it("hides the tab bar on a fetch error and shows the error banner", () => {
-    skillsApi.allItems = [skill("ppt-master", true)]
+    skillsApi.allItems = [skill("deckcraft", true)]
     skillsApi.totalCount = 1
     skillsApi.error = "boom"
     render(<SkillsSection />)
@@ -79,7 +79,7 @@ describe("SkillsSection tabs", () => {
 
   it("shows the no-search-results hint inside a tab the query emptied", async () => {
     const user = userEvent.setup()
-    skillsApi.allItems = [skill("ppt-master", true)]
+    skillsApi.allItems = [skill("deckcraft", true)]
     skillsApi.totalCount = 1
     render(<SkillsSection />)
 
@@ -88,7 +88,7 @@ describe("SkillsSection tabs", () => {
   })
 
   it("renders three tabs in registry order with entry-count badges", () => {
-    skillsApi.allItems = [skill("ppt-master", true), skill("my-skill", false)]
+    skillsApi.allItems = [skill("deckcraft", true), skill("my-skill", false)]
     skillsApi.totalCount = 2
     render(<SkillsSection />)
 
@@ -103,9 +103,9 @@ describe("SkillsSection tabs", () => {
   it("counts a shadowed builtin under the builtin tab, not just live items", () => {
     // A user copy shadows the builtin: it lives in customItems, while the
     // builtin tab shows an explanatory shadow card — both must be counted.
-    skillsApi.allItems = [skill("ppt-master", false)]
+    skillsApi.allItems = [skill("deckcraft", false)]
     skillsApi.totalCount = 1
-    shadowApi.status = { bundled: ["ppt-master"], shadowed: ["ppt-master"], changed: false }
+    shadowApi.status = { bundled: ["deckcraft"], shadowed: ["deckcraft"], changed: false }
     render(<SkillsSection />)
 
     const [builtinTab, , customTab] = screen.getAllByRole("tab")
@@ -117,38 +117,40 @@ describe("SkillsSection tabs", () => {
   const cardName = (name: string) => `/${name}`
 
   it("defaults to the builtin tab; other panels stay unmounted", () => {
-    skillsApi.allItems = [skill("ppt-master", true), skill("my-skill", false)]
+    skillsApi.allItems = [skill("deckcraft", true), skill("my-skill", false)]
     skillsApi.totalCount = 2
     render(<SkillsSection />)
 
-    expect(screen.getByText(cardName("ppt-master"))).toBeInTheDocument()
+    expect(screen.getByText(cardName("deckcraft"))).toBeInTheDocument()
     // No forceMount on this section: nothing here holds in-flight local state.
     expect(screen.queryByText(cardName("my-skill"))).toBeNull()
   })
 
   it("switches to the custom tab", async () => {
     const user = userEvent.setup()
-    skillsApi.allItems = [skill("ppt-master", true), skill("my-skill", false)]
+    skillsApi.allItems = [skill("deckcraft", true), skill("my-skill", false)]
     skillsApi.totalCount = 2
     render(<SkillsSection />)
 
     await user.click(screen.getByRole("tab", { name: /zone\.custom/ }))
     expect(screen.getByText(cardName("my-skill"))).toBeInTheDocument()
-    expect(screen.queryByText(cardName("ppt-master"))).toBeNull()
+    expect(screen.queryByText(cardName("deckcraft"))).toBeNull()
   })
 
   it("narrows every tab's count by the search query", async () => {
     const user = userEvent.setup()
-    skillsApi.allItems = [skill("ppt-master", true), skill("my-skill", false)]
+    skillsApi.allItems = [skill("deckcraft", true), skill("my-skill", false)]
     skillsApi.totalCount = 2
     render(<SkillsSection />)
 
     // Query the full name: under the verbatim-`t` mock a bare "ppt" would also
     // match the catalog's `skills.catalog.webappTesting` key ("weba-ppt-esting").
+    // Post-P3 ppt-master is catalog-only (no longer a builtin), so this query
+    // isolates the installable tab while builtin (deckcraft) and custom empty out —
+    // proving each tab's count narrows independently.
     await user.type(screen.getByPlaceholderText("skills.searchPlaceholder"), "ppt-master")
-    // builtin keeps its match; catalog keeps ppt-master; custom drops to 0
     const [builtinTab, installableTab, customTab] = screen.getAllByRole("tab")
-    expect(builtinTab.textContent).toContain("1")
+    expect(builtinTab.textContent).toContain("0")
     expect(installableTab.textContent).toContain("1")
     expect(customTab.textContent).toContain("0")
   })

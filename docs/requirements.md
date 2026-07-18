@@ -196,7 +196,7 @@ Monorepo 结构：
 
 ### 2026-06 中旬 ~ 07 月主线 ✅（摘要；detail 是各 ADR + CHANGELOG，此处不复制）
 
-- [x] 内置技能体系 — 5 技能打包+依赖检测（ADR-032）→ ppt-master + curated 自助更新 + 确定性遮蔽（ADR-040）→ zip 分发+首启解压（ADR-041）✅ 2026-06-14 ~ 07-03
+- [x] 内置技能体系 — 5 技能打包+依赖检测（ADR-032）→ ppt-master + curated 自助更新 + 确定性遮蔽（ADR-040）→ zip 分发+首启解压（ADR-041）→ 自研 HTML-first PPT 技能 deckcraft 毕业为默认、删内置 ppt-master 转 curated 长尾（ADR-061 / discussions/043 §18.5）✅ 2026-06-14 ~ 07-18
 - [x] 产物识别改文件系统真相 + PDF 内嵌预览（ADR-033）✅ 2026-06-16
 - [x] LLM 流式 idle 看门狗，根治静默挂死（ADR-034）✅ 2026-06-24
 - [x] 会话切换一致性 — 切回不丢流式 + 多 Team 委派按发起会话过滤（ADR-035）✅ 2026-06-25

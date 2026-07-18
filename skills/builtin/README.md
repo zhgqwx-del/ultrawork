@@ -6,8 +6,8 @@
 `~/.config/ultrawork/skills/builtin/`（staging+rename 原子落地），被 OpenCode sidecar
 自动发现（`{skill,skills}/**/SKILL.md`）。详见 ADR-041 / docs/gotchas.md §10。
 
-**不要手改本目录**——`skill-creator/skill-installer/pdf/markdown-exporter/ppt-master` 由
-`scripts/fetch-builtin-skills.ts` 从上游拉取并打补丁；重跑该脚本会覆盖。`doc-edit` 为自写，可直接改。
+**不要手改本目录**——`skill-creator/skill-installer/pdf/markdown-exporter` 由
+`scripts/fetch-builtin-skills.ts` 从上游拉取并打补丁；重跑该脚本会覆盖。`deckcraft` 与 `doc-edit` 为自写，可直接改。
 改动后 `.builtin-version` 哈希会变，构建期重打 zip、桌面端据此触发升级重装。
 
 ## 技能与许可证
@@ -18,6 +18,7 @@
 | `skill-installer` | openai/skills `.system/skill-installer`（改安装目标） | Apache-2.0 | python3, git |
 | `pdf` | openai/skills `.curated/pdf` | Apache-2.0 | python3, pdftoppm(poppler) |
 | `markdown-exporter` | bowenliang123/md_exporter（仅 SKILL.md，按 pip 模式） | Apache-2.0 | markdown-exporter(pip), pandoc |
+| `deckcraft` | **ultrawork 自写**（HTML-first PPT，做 PPT 的默认技能，ADR-061） | 同仓库；vendored pptxgenjs MIT | python3.10+, python-pptx, chrome-or-edge（可编辑 pptx 另需 Node，OPTIONAL） |
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
 | `feishu-assistant` | **ultrawork 自写**（薄路由到 lark-cli 内嵌官方技能） | 同仓库 | lark-cli（设置→连接器→办公 CLI 安装） |
 | `dingtalk-assistant` | **ultrawork 自写**（薄路由到连接器 materialize 的 dws 官方 mono 技能） | 同仓库 | dws（设置→连接器→办公 CLI 安装） |

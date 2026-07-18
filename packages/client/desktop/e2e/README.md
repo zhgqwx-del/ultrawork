@@ -122,13 +122,18 @@ Isolated: temp `HOME`/`XDG`, non-standard port 4302.
 
 ## `builtin-shadow-ui.e2e.ts` — shadow-state Settings UI + restore flow
 
-Real React app (Chrome + Vite + real opencode). The two Tauri commands are
+Real React app (Chrome + Vite + real opencode). Fixture = the `pdf` builtin
+(Apache upstream + ultrawork patch — the shadow card's "raw upstream without the
+built-in copy's bundled patches" copy fits it). The two Tauri commands are
 shimmed onto a local helper HTTP server (port 4977) that performs REAL fs
 mutations mirroring the Rust reconcile, so the restore flow exercises a real
 opencode rescan: shadow card (overridden badge + raw-upstream copy + restore
-button) → custom tab shows the user copy → catalog Installed→Install round-trip
-→ confirm dialog → fs truth asserted → builtin card back → install prompt
-mandates `--method git`.
+button) → custom tab shows the user copy → confirm dialog → fs truth asserted →
+builtin card back with the upstream description. (The catalog Installed→Install /
+`--method git` cross-checks were dropped in P3 — ppt-master, the only skill that
+was both bundled AND a curated catalog entry, left the bundle, so that dual-role
+scenario no longer exists; catalog rendering is covered by settings-skills.test.tsx
++ settings-tabs-ui-walkthrough.e2e.ts.)
 
 ```bash
 cd packages/client/desktop
@@ -136,7 +141,25 @@ bun run --bun e2e:builtin-shadow-ui   # exit 0 = PASS, 1 = FAIL
 ```
 
 Standard ports 4096/1420 (kill a running dev instance first, like
-builtin-ppt-ui).
+builtin-deckcraft-ui).
+
+## `deckcraft-routing-realmodel.e2e.ts` — REAL-MODEL: 做PPT routes to deckcraft (ADR-061 P3)
+
+Pure HTTP against a real opencode + real qwen3.7-max (DashScope; needs a `myqwen`
+key in `~/.local/share/ultrawork/auth.json`, like the other `*-realmodel` tests).
+Proves the P3 core claim that structural tests can't: given a plain "做PPT" prompt
+(no skill name), a real model — reading deckcraft's widened description in the
+`skill` tool's list — actually calls `skill({name:"deckcraft"})`. Asserts GET /skill
+lists deckcraft and NOT ppt-master, then stops at the routing decision (does not run
+the full deck pipeline). Override the intent with `ROUTE_PROMPT="..."` to spot-check
+trigger breadth (中文 PPT / English slide deck / 幻灯片 all route to deckcraft).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:deckcraft-routing   # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, port 4306 (override `ROUTE_PORT`).
 
 ## `websearch-byok.e2e.ts` — BYOK websearch ladder against real opencode (ADR-042)
 

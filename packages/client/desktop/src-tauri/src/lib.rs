@@ -4289,8 +4289,8 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
         );
     }
 
-    // ppt-master hard-requires Python >= 3.10 (module-level `X | None` unions)
-    // and python-pptx for the PPTX export step (svg_to_pptx.py).
+    // deckcraft hard-requires Python >= 3.10 (its source_to_md converters use
+    // module-level `X | None` unions) and python-pptx for the PPTX export step.
     let mut ver = false;
     let mut pptx = false;
     // The interpreter the verdict is about — surfaced in the badge tooltip so a
@@ -7586,9 +7586,9 @@ mod builtin_skills_tests {
         let (config, _src, target) = shadow_fixture("shadow-collect");
         // builtin/ content must never count as a user skill.
         // Dot-dir (staging leftover) must be skipped.
-        let stg = config.join("skills").join(".builtin.staging").join("ppt-master");
+        let stg = config.join("skills").join(".builtin.staging").join("deckcraft");
         std::fs::create_dir_all(&stg).unwrap();
-        std::fs::write(stg.join("SKILL.md"), "---\nname: ppt-master\ndescription: x\n---\n").unwrap();
+        std::fs::write(stg.join("SKILL.md"), "---\nname: deckcraft\ndescription: x\n---\n").unwrap();
         // A stray SKILL.md at the skills ROOT must not be reported (deleting a
         // "skill" that is the root itself would nuke every user skill).
         std::fs::write(config.join("skills").join("SKILL.md"), "---\nname: root\ndescription: x\n---\n").unwrap();
@@ -7612,7 +7612,7 @@ mod builtin_skills_tests {
         assert!(!names.contains(&"root"), "root SKILL.md must not be reported");
         assert!(!names.contains(&"lower"), "lowercase skill.md must not be reported");
         assert!(
-            !names.contains(&"ppt-master") && !names.contains(&"doc-edit"),
+            !names.contains(&"deckcraft") && !names.contains(&"doc-edit"),
             "builtin/ and dot-dir content leaked into user skills: {:?}",
             names
         );
@@ -7642,8 +7642,8 @@ mod builtin_skills_tests {
 
     #[test]
     fn check_skill_dependencies_includes_python_probes() {
-        // The command must always report the python probe entries (ppt-master)
-        // and the export-browser probe (deckcraft) — regardless of host state.
+        // The command must always report the python probe entries + the
+        // export-browser probe (all consumed by deckcraft) — regardless of host state.
         let deps = check_skill_dependencies();
         // "node" is deckcraft's optional P2b dep (editable pptx) — always reported
         // so the badge can show it, but OPTIONAL_DEPS keeps it from gating readiness.

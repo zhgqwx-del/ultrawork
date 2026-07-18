@@ -45,6 +45,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Removed
 
+- **删除内置 ppt-master，deckcraft 接管做 PPT 全触发面（P3，ADR-061 / discussions/043 §18.5）**：deckcraft 经 P0/P1/P1.5/P2b 验证成熟后毕业为做 PPT 的默认技能，内置 ppt-master（上游 MIT，pin v2.12.0，53MB/12086 文件）整树删除。
+  - **删除面**：`skills/builtin/ppt-master/` 整树；`scripts/fetch-builtin-skills.ts` 的 SOURCES 条目 + `applyPptMasterPatches` 函数 + `X_REQUIRES["ppt-master"]`；`use-skill-deps.ts` 的 `BUILTIN_DEP_MAP["ppt-master"]` 行（`python3.10+`/`python-pptx` 探针 deckcraft 仍用，保留）。
+  - **测试迁移（引用 ppt-master 的 5 个 e2e + 3 个单测 + lib.rs）**：① `builtin-ppt-master.e2e.ts`（发现）/ `builtin-ppt-ui.e2e.ts`（UI）改指 deckcraft 并重命名 `builtin-deckcraft*.e2e.ts`（deckcraft 同一 dep-badge 画像，保住「真 opencode 发现内置 + dep 徽标引导」两条 e2e 保证）；② `builtin-skill-shadowing.e2e.ts`（HTTP 遮蔽机制）改指 deckcraft；③ `builtin-shadow-ui.e2e.ts`（遮蔽卡 UI）改指 `pdf`（patched-upstream，「上游原版无补丁」文案对它成立）并删去 catalog「已安装/自更新」交叉核对（那正是 P3 消解的 ppt-master 双重身份——post-P3 无技能既 bundled 又 cataloged）；④ `settings-tabs-ui-walkthrough.e2e.ts`（mock）ppt-master→deckcraft，搜索断言 Recommended1→Recommended0；⑤ 单测 `skills-builtin`/`use-builtin-shadow`/`settings-skills` fixture 迁移 + lib.rs 陈旧注释与遮蔽 fixture 改指 deckcraft。**5 个 e2e 全部真机重跑绿**（真 opencode/Chrome/fs）。顺带修 i18n `skills.shadowedDetail` 悬空例子（「.env 位置警告」是已删的 `applyPptMasterPatches`→改 skill-installer 安装目标）。
+  - **保留（长尾退路）**：`INSTALLABLE_SKILLS` 的 ppt-master 条目（curated `method:"git"` 自装，美化已有 pptx/模板包场景）+ `reconcile_builtin_shadowing` 通用同名遮蔽机制（对全部 builtin 生效）。
+  - **体积回归**：`skills-builtin.zip` 12.7MB→**3.0MB**（17257→5171 文件），源树 **−53MB**；`.builtin-version` 重算 `8437f449aea2c314`（`skills/builtin/` 与 `resources/builtin-skills/` 两份一致）。安装包压缩后约 −9.7MB。
+  - **触发面放宽**：deckcraft SKILL.md description 从验证期窄触发（「deckcraft/快速PPT」）放宽到接管「做PPT/生成PPT/演示文稿/幻灯片/slides/deck」全意图；路由边界表「ppt-master 已装则交给它」→「可在设置→技能安装 ppt-master」。ADR-040 的「两 tab 同见 ppt-master」混合形态随之消解。
+  - **真模型路由验证（新增 committed e2e）**：`e2e/deckcraft-routing-realmodel.e2e.ts`（纯 HTTP，真 opencode + 真 qwen3.7-max）证明结构测试证不到的核心主张——纯「做PPT」意图（不提技能名）经真模型读 deckcraft 放宽后的 description → 调 `skill({name:"deckcraft"})`；三种措辞（中文 PPT 演示文稿 / 英文 slide deck / 中文幻灯片）**全部路由到 deckcraft**，GET /skill 确认 ppt-master 已无。
+  - **验证**：deckcraft-selftest + examples 门禁链绿 + typecheck 8/8 + desktop vitest（3 迁移测试 27/27）+ cargo test + check-docs 绿 + sentinel 重算（8437f449）+ **5 结构 e2e + 1 真模型路由 e2e 真机全绿**。deck 视觉质量 + Win/Linux 真机待用户。
+
 - **移除会话右侧栏三个低价值区块：执行活动 / 连接器 / 技能（ADR-059）**：这三块判定为冗余——`ActivityPanel`（执行活动）与转录区已内联的工具调用 + 计划面板双重重叠；`MCPPanel`（连接器）/`SkillsPanel`（技能）与「设置 → 连接器 / 技能」功能完全重复（管理入口应唯一）。删除后右侧栏聚焦为：计划（有计划时）+ 工作区 + 产物。
   - **改动**：`pages/Session.tsx` 删三个 `RightSidebarSection` 渲染块 + `import` + 死代码 `handleSkillClick`；删组件 `progress-panel.tsx` / `mcp-panel.tsx` / `skills-panel.tsx` + `components/session/index.ts` 三行导出；删 **9 个孤儿 i18n 键**（`session.rightSidebar.activity/mcp/skills`、`message.noSteps`、`skills.manage`、`skills.noItems`、`skills.group.command/mcp/skill`）en+zh-Hans 各一份 + 重新生成 zh-Hant（760 keys）。
   - **保留**：共享 hook `useSkills`/`useMCPServers`/`useBrowserMCP` 与绝大多数 `mcp.*`/`skills.*` 文案键（设置页仍用）；`skills.empty`/`skills.manageSources` 保留。

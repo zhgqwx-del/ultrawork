@@ -1,6 +1,6 @@
 # ADR-061: 自研 HTML-first PPT 生成技能 deckcraft（分阶段替换内置 ppt-master）
 
-- 状态：Accepted（✅ P0 spike + P1 MVP + P1.5 完备度增强 + P2b 可编辑 pptx 已实现；验证期与 ppt-master 并存，P2b 真机验收通过后按 P3 删除内置 ppt-master——见 043 §十八）
+- 状态：Accepted（✅ P0 spike + P1 MVP + P1.5 完备度增强 + P2b 可编辑 pptx + **P3 已删内置 ppt-master** 全部实现，2026-07-18）——deckcraft 毕业为做 PPT 的默认技能、放宽接管全触发面；内置 ppt-master 整树删除、转 `INSTALLABLE_SKILLS` curated 长尾退路。可编辑 pptx 的 WPS/Win/Linux 真机验收待用户（mac 单 agent 已过）。详见 043 §十八
 - 日期：2026-07-18
 - 关联：discussions/043（完整方案、spike 数据、四项目对照、路线图 SSOT）、ADR-040/041（被本决策分阶段替代）、ADR-033（产物识别）、ADR-037（跨平台）
 
@@ -26,11 +26,12 @@
 项目目录 `.deckcraft/<name>/`（ADR-033 扫描整体跳过 dotdir，页面片段/截图/qa_report 等中间文件不进产物面板）；`export_deck.py --publish` 把 `<name>.html/.pdf/.pptx` 拷到工作区可见位置——产物面板只见最终交付物。
 
 ### D6 — 范围与 ppt-master 两步走删除（拒绝长期并存）
-精简快线：只做「主题/文档 → deck」热路径；美化已有 pptx/模板填充/建模板/TTS/动画不重建（curated 自装 ppt-master 兜底；「美化」有明确扩展路径=IR beautify 1:1 锁定模式，依赖可编辑导出前置，见 043 §十四）。验证期 deckcraft **窄触发**（仅 deckcraft/快速PPT）与 ppt-master 并存；复走查通过后整体删除内置 ppt-master（043 §十五清单）——拒绝长期并存的决定因素：两技能 description 抢「做PPT」的触发冲突是结构性缺陷。`examples/ai-coding-pilot/` 为契约活样例 + 回归基准（门禁链全绿）。
+精简快线：只做「主题/文档 → deck」热路径；美化已有 pptx/模板填充/建模板/TTS/动画不重建（curated 自装 ppt-master 兜底；「美化」有明确扩展路径=IR beautify 1:1 锁定模式，依赖可编辑导出前置，见 043 §十四）。~~验证期 deckcraft 窄触发与 ppt-master 并存~~；**P3 已落地（2026-07-18）**：内置 ppt-master 整树删除、deckcraft 放宽 description 接管「做PPT/生成PPT/演示文稿/幻灯片/slides/deck」全触发面、ppt-master 转 `INSTALLABLE_SKILLS` curated 长尾退路（美化/模板包场景按需自装，`reconcile_builtin_shadowing` 通用遮蔽机制保留）——拒绝长期并存的决定因素：两技能 description 抢「做PPT」的触发冲突是结构性缺陷。P3 执行清单 SSOT=043 §18.5。`examples/ai-coding-pilot/` 为契约活样例 + 回归基准（门禁链全绿）。
 
 ## 影响
 
-- 新增 `skills/builtin/deckcraft/`（SKILL.md 117 行 + references×10 + scripts×7 + 版式/图标/样例；MIT 来源入 NOTICE，AGPL 项目仅思路零代码）；zip 17252 文件/12.5MB。
+- 新增 `skills/builtin/deckcraft/`（SKILL.md 117 行 + references×10 + scripts×7 + 版式/图标/样例；MIT 来源入 NOTICE，AGPL 项目仅思路零代码）。
 - app 侧：Rust `detect_export_browser` + `check_skill_dependencies` 推 `chrome-or-edge`；`use-skill-deps.ts`/DEP_HINTS/测试/e2e mock 对应更新；`pack-builtin-skills.ts` JUNK 集 +`__pycache__`。
+- **P3（2026-07-18，删内置 ppt-master，执行清单 043 §18.5）**：`skills/builtin/ppt-master/` 整树删（53MB/12086 文件）；`fetch-builtin-skills.ts` 删 SOURCES/`applyPptMasterPatches`/`X_REQUIRES` 条目；`use-skill-deps.ts` 删 `ppt-master` 依赖行（`python3.10+`/`python-pptx`/`chrome-or-edge`/`node` deckcraft 仍用）；deckcraft SKILL.md description 放宽全触发面 + 路由表改「设置安装 ppt-master」；两个 ppt-master e2e（发现/UI）改指 deckcraft；单测 fixture 迁移。**bundle 体积回归：zip 12.7MB→3.0MB（17257→5171 文件）、源树 −53MB**；`.builtin-version` 重算 `8437f449aea2c314`。`INSTALLABLE_SKILLS` 的 ppt-master 条目 + `reconcile_builtin_shadowing` 遮蔽机制保留。
 - 质量：P1 对抗审查 10 findings（9 CONFIRMED）全修（PDF transform 污染/依赖声明不足/双清单漂移/split 脆弱/字典序乱序/validate 误报族等）；套件 typecheck 8/8 · cargo 147 · desktop 671。
 - 成功判据余项：token ≤1/3、墙钟 ≤1/2 的真机同题对比在复走查中定案。

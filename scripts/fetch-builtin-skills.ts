@@ -33,7 +33,7 @@ interface Source {
   drop?: string[]
   /** 若设置，只保留这些顶层文件/目录（优先于 drop） */
   keepOnly?: string[]
-  /** 用 git sparse checkout 只拉 subdir（整仓 tarball 过大的仓库用，如 ppt-master 含 581M examples） */
+  /** 用 git sparse checkout 只拉 subdir（整仓 tarball 过大的仓库用，避免下几百 MB examples） */
   sparse?: boolean
   notice: string
 }
@@ -79,22 +79,6 @@ const SOURCES: Source[] = [
       "Distributed as the PyPI package `md-exporter` (CLI `markdown-exporter`); only SKILL.md + LICENSE are " +
       "bundled — the tool itself is installed on demand via `pip install md-exporter` (see SKILL.md / dependency badges).",
   },
-  {
-    // pin release tag（非 main）：上游约周更，bump 时改 ref 重跑本脚本即可（复核项见 discussions/025 §9）。
-    // sparse 必开：整仓 tarball ≈ 700MB（examples/ 占 581M），sparse checkout 只拉 skill 子目录。
-    dest: "ppt-master",
-    repo: "hugohe3/ppt-master",
-    ref: "v2.12.0",
-    subdir: "skills/ppt-master",
-    sparse: true,
-    drop: ["references/ai-image-comparison"],
-    notice:
-      "Derived from hugohe3/ppt-master `skills/ppt-master` (MIT). AI-driven presentation generation: " +
-      "source docs -> Strategist design spec -> per-page hand-written SVG -> editable PPTX export. " +
-      "Trimmed for bundling: references/ai-image-comparison (43MB of AI-image-provider comparison PNGs, " +
-      "documentation-only) is dropped. Requires python3 (>=3.10); per-feature pip deps in requirements.txt " +
-      "(python-pptx needed for PPTX export). See docs/discussions/025-builtin-ppt-master-skill.md.",
-  },
 ]
 
 /** x-requires frontmatter 注入（人读文档用；与前端 BUILTIN_DEP_MAP 保持一致） */
@@ -103,7 +87,6 @@ const X_REQUIRES: Record<string, string[]> = {
   "skill-installer": ["python3", "git"],
   pdf: ["python3", "pdftoppm"],
   "markdown-exporter": ["python3", "pandoc"],
-  "ppt-master": ["python3.10+", "python-pptx"],
 }
 
 /** 把取到的源目录整理进落地目录（keepOnly/drop 共用逻辑）。 */
@@ -195,36 +178,6 @@ function applyInstallerPatches(dir: string) {
   }
 }
 
-/** ppt-master 落地补丁：.env 存放引导 + 被裁目录的悬空引用清理 */
-function applyPptMasterPatches(dir: string) {
-  // ① builtin 目录会在 app 升级时被 sentinel 刷新整体重建（ADR-032）——用户把真实
-  //    API key 放这里会被静默清掉。上游 image_gen.py 原生支持 ~/.ppt-master/.env
-  //    （user-level）与 CWD ./.env，引导用户放那里。
-  const envExample = join(dir, ".env.example")
-  if (existsSync(envExample)) {
-    const warn = [
-      "# ⚠️ ultrawork 用户注意 / NOTE FOR ULTRAWORK USERS:",
-      "# 本目录（skills/builtin/）会在 app 升级时被整体重建，放在这里的 .env 会被清掉。",
-      "# 请把真实配置放到 `~/.ppt-master/.env`（用户级，upstream 原生支持）或工作区的 `./.env`。",
-      "# This directory is rebuilt on app upgrades — a real .env placed here WILL be wiped.",
-      "# Put your config in `~/.ppt-master/.env` (user-level) or the workspace `./.env` instead.",
-      "#",
-      "",
-    ].join("\n")
-    writeFileSync(envExample, warn + readFileSync(envExample, "utf8"))
-  }
-  // ② references/ai-image-comparison 已被 drop（43M 纯说明图）——清掉指向它的两处
-  //    "see ... for matching PNGs" 指引，避免模型按图索骥吃 ENOENT。
-  const strategist = join(dir, "references", "strategist.md")
-  if (existsSync(strategist)) {
-    const s = readFileSync(strategist, "utf8").replaceAll(
-      "> Reference images: see references/ai-image-comparison/ for matching PNGs by name.",
-      "> (Reference image gallery not bundled in ultrawork — rely on the textual descriptors above.)",
-    )
-    writeFileSync(strategist, s)
-  }
-}
-
 /** 给 SKILL.md frontmatter 注入 x-requires（若缺） */
 function injectXRequires(dir: string, deps: string[]) {
   const p = join(dir, "SKILL.md")
@@ -239,7 +192,7 @@ function injectXRequires(dir: string, deps: string[]) {
 
 async function main() {
   console.log(`内置技能目录: ${BUILTIN_DIR}`)
-  // 可选按名过滤：`bun run scripts/fetch-builtin-skills.ts ppt-master` 只刷新指定技能，
+  // 可选按名过滤：`bun run scripts/fetch-builtin-skills.ts pdf` 只刷新指定技能，
   // 避免顺带把 pin 在 main 的其它技能拉到未审内容。缺省全量。sentinel 始终全目录重算。
   const only = process.argv.slice(2)
   const unknown = only.filter((n) => !SOURCES.some((s) => s.dest === n))
@@ -250,7 +203,6 @@ async function main() {
     process.stdout.write(`• ${src.dest} <- ${src.repo}/${src.subdir} ... `)
     await fetchSubdir(src, into)
     if (src.dest === "skill-installer") applyInstallerPatches(into)
-    if (src.dest === "ppt-master") applyPptMasterPatches(into)
     injectXRequires(into, X_REQUIRES[src.dest])
     writeFileSync(join(into, "NOTICE"), src.notice + "\n")
     console.log("ok")

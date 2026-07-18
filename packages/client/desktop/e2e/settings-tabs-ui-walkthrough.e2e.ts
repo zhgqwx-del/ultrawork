@@ -52,7 +52,7 @@ async function poll(label: string, fn: () => Promise<boolean>, ms = 60000) {
 // Deterministic fixtures for the two route-stubbed sections. `builtin` is
 // DERIVED from the location matching /skills/builtin/ (isBuiltinLocation).
 const SKILLS = [
-  { name: "ppt-master", description: "Build slide decks", location: "/res/skills/builtin/ppt-master/SKILL.md" },
+  { name: "deckcraft", description: "Build slide decks", location: "/res/skills/builtin/deckcraft/SKILL.md" },
   { name: "my-skill", description: "A user skill", location: "/home/u/.config/ultrawork/skills/my-skill/SKILL.md" },
 ]
 const KB_SOURCES = [
@@ -112,8 +112,8 @@ try {
       check_directory_exists: () => true, ensure_default_workspace: () => ws, login_shell_path: () => "",
       scan_workspace_changes: () => [], get_sidecar_credentials: () => ({ username: "opencode", password: pw }),
       check_cli_connectors: () => [],
-      // ppt-master is bundled and NOT shadowed → it lands in the builtin tab.
-      refresh_builtin_skills: () => ({ bundled: ["ppt-master"], shadowed: [], changed: false }),
+      // deckcraft is bundled and NOT shadowed → it lands in the builtin tab.
+      refresh_builtin_skills: () => ({ bundled: ["deckcraft"], shadowed: [], changed: false }),
       check_skill_dependencies: () => [],
       detect_browser_env: () => ({
         node_path: "/usr/bin/node", node_version: "v20.0.0", node_embedded: false, chrome_path: null,
@@ -200,7 +200,7 @@ try {
   const skOverflow = await overflow()
   if (skOverflow > 0) throw new Error(`Skills tab strip overflows by ${skOverflow}px`)
   // Default tab shows the builtin skill; the custom one is unmounted.
-  await page.getByText("/ppt-master", { exact: true }).waitFor({ timeout: 5000 })
+  await page.getByText("/deckcraft", { exact: true }).waitFor({ timeout: 5000 })
   if (await page.getByText("/my-skill", { exact: true }).count()) throw new Error("custom skill leaked into the builtin tab")
   await page.getByRole("tab", { name: /^Custom/ }).click()
   await page.getByText("/my-skill", { exact: true }).waitFor({ timeout: 5000 })
@@ -208,13 +208,15 @@ try {
   checks.push(`Skills: 3 tabs, switch works, no overflow (${skOverflow}px) ✓`)
 
   console.log("=== 5. Skills: the search box narrows every tab's count badge ===")
-  await page.getByPlaceholder(/Search skills/i).fill("ppt-master")
+  // Post-P3 deckcraft is a builtin but NOT a catalog entry (ppt-master left the
+  // bundle and lives only in the catalog), so this query hits the builtin tab only.
+  await page.getByPlaceholder(/Search skills/i).fill("deckcraft")
   await page.waitForTimeout(300)
   const searched = await page.getByRole("tab").allTextContents()
-  const expectSearch = ["Built-in1", "Recommended1", "Custom0"]
+  const expectSearch = ["Built-in1", "Recommended0", "Custom0"]
   if (JSON.stringify(searched) !== JSON.stringify(expectSearch))
     throw new Error(`Skills search counts mismatch: got ${JSON.stringify(searched)} want ${JSON.stringify(expectSearch)}`)
-  checks.push('Skills: search "ppt-master" narrows badges to Built-in1 / Recommended1 / Custom0 ✓')
+  checks.push('Skills: search "deckcraft" narrows badges to Built-in1 / Recommended0 / Custom0 ✓')
 
   console.log("=== 6. Connectors: same container; MCP forceMount round-trip still holds ===")
   await nav(/^Connectors$/)

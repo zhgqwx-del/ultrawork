@@ -648,7 +648,7 @@ export const zhHant: Record<string, string> = {
   "skills.installPromptGit": "使用 skill-installer 技能，從 {repo} 安裝 \"{name}\" 技能（路徑：{path}）。必須傳 `--method git`（只 sparse checkout 技能子目錄）——不要用預設 auto 模式：該倉庫 zip 包有數百 MB，git sparse checkout 只拉技能子目錄。",
   "skills.builtinUpdateHint": "應用已內建該技能——此處安裝 = 獲取上游最新版，安裝後將持續覆蓋內建版（應用更新也不回退），直到手動移除。",
   "skills.shadowedBadge": "已被使用者安裝版本覆蓋",
-  "skills.shadowedDetail": "使用者安裝的「{name}」（上游原版，不含內建版的打包適配補丁，如 .env 存放位置警告）會持續覆蓋內建版——即使應用更新攜帶了更新的內建版——直到手動移除。使用者版本在「自定義」標籤頁中。",
+  "skills.shadowedDetail": "使用者安裝的「{name}」（上游原版，不含內建版的打包適配補丁，如 skill-installer 的 ultrawork 安裝目標改寫）會持續覆蓋內建版——即使應用更新攜帶了更新的內建版——直到手動移除。使用者版本在「自定義」標籤頁中。",
   "skills.restoreBuiltin": "移除使用者版本，恢復內建",
   "skills.restoreConfirmTitle": "恢復內建技能？",
   "skills.restoreConfirmBody": "將刪除使用者安裝的「{name}」技能目錄（位於應用技能目錄下），並恢復內建版本。使用者目錄中的本地改動會丟失。",

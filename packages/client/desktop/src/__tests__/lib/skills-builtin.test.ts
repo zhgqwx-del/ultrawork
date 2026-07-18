@@ -26,9 +26,11 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all ten built-in skills", () => {
+  it("covers all nine built-in skills", () => {
+    // ppt-master was removed from the bundle in P3 (ADR-061 / discussions/043 §18.5);
+    // it lives on only as a curated INSTALLABLE_SKILLS entry, not a builtin dep-map key.
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
+      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
     )
   })
 
@@ -65,15 +67,10 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     expect(missingDeps("markdown-exporter", present("pandoc"))).toEqual(["markdown-exporter"])
   })
 
-  it("ppt-master requires a version-gated python plus the import-probed python-pptx", () => {
-    expect(missingDeps("ppt-master", present("python3.10+", "python-pptx"))).toEqual([])
-    // Old interpreter (3.9): python3 present but the version probe fails.
-    expect(missingDeps("ppt-master", present("python3"))).toEqual(["python3.10+", "python-pptx"])
-    expect(missingDeps("ppt-master", present("python3.10+"))).toEqual(["python-pptx"])
-    expect(missingDeps("ppt-master", present())).toEqual(["python3.10+", "python-pptx"])
-  })
-
-  it("returns no requirements for unknown skill names", () => {
+  it("returns no requirements for unknown skill names (incl. the removed builtin ppt-master)", () => {
     expect(missingDeps("totally-unknown", present())).toEqual([])
+    // ppt-master is no longer in BUILTIN_DEP_MAP — the dep-badge machinery treats it
+    // as unknown (its curated-catalog install carries its own deps at install time).
+    expect(missingDeps("ppt-master", present())).toEqual([])
   })
 })
