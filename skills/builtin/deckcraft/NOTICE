@@ -10,5 +10,14 @@ Copyright (c) 2025-2026 Hugo He, MIT License (see LICENSE-ppt-master):
   - assets/icons/tabler-outline/  (Tabler Icons, MIT, https://tabler.io/icons —
     copied via ppt-master's icon library, unmodified)
 
+The editable-pptx export (P2b, --pptx-editable) bundles:
+  - scripts/html2pptx/vendor/pptxgen.vendor.cjs — pptxgenjs
+    (https://github.com/gitbrent/PptxGenJS), Copyright (c) 2015-2023 Brent Ely,
+    MIT License, with its jszip dependency (MIT) inlined via esbuild. This is a
+    redistributed build; regeneration is documented in that dir's README.md.
+
 Design-system methodology draws on published MIT-licensed projects
-(frontend-slides, huashu-design) — ideas only, no code copied.
+(frontend-slides, huashu-design) — ideas only, no code copied. The
+html2pptx element-translation approach (getComputedStyle + getBoundingClientRect
+per element → pptxgenjs primitives) is informed by huashu-design's method; no
+code was copied.

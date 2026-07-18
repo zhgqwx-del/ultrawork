@@ -1,6 +1,6 @@
 # ADR-061: 自研 HTML-first PPT 生成技能 deckcraft（分阶段替换内置 ppt-master）
 
-- 状态：Accepted（✅ P0 spike + P1 MVP + P1.5 完备度增强已实现；验证期与 ppt-master 并存，真机复走查通过后按 P3 删除内置 ppt-master）
+- 状态：Accepted（✅ P0 spike + P1 MVP + P1.5 完备度增强 + P2b 可编辑 pptx 已实现；验证期与 ppt-master 并存，P2b 真机验收通过后按 P3 删除内置 ppt-master——见 043 §十八）
 - 日期：2026-07-18
 - 关联：discussions/043（完整方案、spike 数据、四项目对照、路线图 SSOT）、ADR-040/041（被本决策分阶段替代）、ADR-033（产物识别）、ADR-037（跨平台）
 
@@ -20,7 +20,7 @@
 两轮 question 封顶（澄清含 mode 确认 + 设计确认，文字描述式候选、推荐项置顶），question-dock 逐条渲染。代价=无色卡视觉预览，以「token 化主题换肤便宜 + 事后重渲染」对冲。
 
 ### D4 — 依赖面与资产
-依赖 = `python3.10+`（source_to_md 拷贝件用 PEP604 注解）+ `python-pptx`（图片型导出）+ `chrome-or-edge`（headless 导出引擎，Rust `detect_export_browser` 探针；**同步义务：find_chrome.py 候选集 ⊇ Rust 清单**，绿徽标必须蕴含脚本可用）。资产：tabler-outline 图标 5039 个（grep 检索 + 内联 currentColor 走变量门禁）、`fetch_assets.py`（logo：simpleicons→favicon 链；真图：Wikimedia + 许可 manifest）。AI 生图/SVG 图表/可编辑 pptx（html2pptx）刻意暂缓（043 记档）。
+依赖 = `python3.10+`（source_to_md 拷贝件用 PEP604 注解）+ `python-pptx`（图片型导出）+ `chrome-or-edge`（headless 导出引擎，Rust `detect_export_browser` 探针；**同步义务：find_chrome.py 候选集 ⊇ Rust 清单**，绿徽标必须蕴含脚本可用）+ `node`（**可编辑 pptx `--pptx-editable` 专属，OPTIONAL 不 gate 就绪**；嵌入式 `~/.ultrawork/node` 优先、系统 node≥18 回退，`find_node.py`⇌Rust `get_node_path_internal` 同步）。资产：tabler-outline 图标 5039 个（grep 检索 + 内联 currentColor 走变量门禁）、`fetch_assets.py`（logo：simpleicons→favicon 链；真图：Wikimedia + 许可 manifest）。**P2b 可编辑 pptx（html2pptx）已实现**（Chrome 抽取 layout.json + Node/pptxgenjs 组装，无法翻译元素栅格化并诚实明示，043 §十八）；AI 生图/SVG 图表刻意暂缓（043 记档）。
 
 ### D5 — 工作目录点目录 + publish 交付（产物面板纯净）
 项目目录 `.deckcraft/<name>/`（ADR-033 扫描整体跳过 dotdir，页面片段/截图/qa_report 等中间文件不进产物面板）；`export_deck.py --publish` 把 `<name>.html/.pdf/.pptx` 拷到工作区可见位置——产物面板只见最终交付物。

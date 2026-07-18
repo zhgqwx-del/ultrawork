@@ -3,12 +3,12 @@ name: deckcraft
 description: >
   Fast HTML-first presentation generator (validation period — explicit triggers only).
   Use ONLY when the user explicitly says "deckcraft" / "快速PPT" / "快速幻灯片" /
-  "用 deckcraft 做PPT". Produces a styled single-file HTML deck plus PDF and
-  image-type PPTX (with speaker notes) from a topic or source documents
-  (PDF/DOCX/XLSX/PPTX/URL/Markdown). Do NOT trigger on generic "做PPT/create
-  presentation" requests while ppt-master is installed — those route to
-  ppt-master until deckcraft graduates.
-x-requires: [python3.10+, python-pptx, chrome-or-edge]
+  "用 deckcraft 做PPT". Produces a styled single-file HTML deck plus PDF, image-type
+  PPTX (with speaker notes) and — optionally — an editable PPTX (text/shapes native
+  in PowerPoint) from a topic or source documents (PDF/DOCX/XLSX/PPTX/URL/Markdown).
+  Do NOT trigger on generic "做PPT/create presentation" requests while ppt-master is
+  installed — those route to ppt-master until deckcraft graduates.
+x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 ---
 
 # deckcraft — HTML-first 快速演示文稿
@@ -33,10 +33,23 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge]
 
 | 用户意图 | 归属 |
 |---|---|
-| 从主题/文档生成新 deck（HTML / PDF / 图片型 pptx 交付） | ✅ 本技能 |
-| 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 / 必须交**可编辑** .pptx | ❌ 非本技能范围：`ppt-master` 已安装则交给它；未安装则告知用户可在「设置 → 技能」安装 ppt-master 处理此类需求，并停止本技能 |
+| 从主题/文档生成新 deck（HTML / PDF / 图片型 pptx / 可编辑 pptx 交付） | ✅ 本技能 |
+| 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 | ❌ 非本技能范围：`ppt-master` 已安装则交给它；未安装则告知用户可在「设置 → 技能」安装 ppt-master 处理此类需求，并停止本技能 |
 
-**交付形态明示**：本技能的 pptx 是**图片型**（每页一张高清截图 + speaker notes，演讲者视图可用），文字在 PowerPoint 里不可二次编辑——交付时必须向用户说明这一点。
+**「生成后还想改」有两条路，先讲清再选交付形态**：
+- **想让 AI 继续改**（换措辞/调版式/加页/改配色）→ 不需要可编辑 pptx。HTML 是唯一真相源，
+  改 `.deckcraft/<name>/pages/page-NN.html`（或 spec_lock/tokens.css）重跑 build+门禁+export 即可。**这是首选**。
+- **想脱离本工具、自己在 PowerPoint/WPS 里手改** → 才需要**可编辑 pptx**（`--pptx-editable`）。
+
+**交付形态明示（两种 pptx，按用户选择）**：
+- **图片型**（`--pptx`）：每页一张高清截图 + speaker notes，演讲者视图可用；文字**不可**在 PowerPoint 里编辑。
+- **可编辑**（`--pptx-editable`）：DOM 元素逐个译成 PowerPoint 原生文本框/形状，**文字/形状可二次编辑**。
+  尽力而为：渐变/内联 SVG 图标等无法翻译的元素会**栅格化为图片**（不可编辑），导出会逐页报告
+  「第 N 页含 M 个不可编辑元素」——交付时必须如实转达，**绝不宣称全部可编辑**。需要内置 Node 运行时
+  （缺失会明确报错引导，不静默失败）。**可编辑输出是排版起点、非像素级复刻**：字体在无对应字库的
+  PowerPoint（尤其 Windows）可能回退（单行文字已锁定不重新换行、避免「01」竖排；多行长文本的换行点
+  可能与 HTML 略有出入）、复合透明度/旋转变换为近似——细节由用户在 PPT 里微调；追求像素级一致就用
+  HTML/PDF 或图片型 pptx。
 
 ## 脚本与资源
 
@@ -48,7 +61,8 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge]
 | `${SKILL_DIR}/scripts/build_deck.py <project>` | shell + tokens.css + pages/ → deck.html |
 | `${SKILL_DIR}/scripts/validate_deck.py <project> [--single]` | 结构门禁（--single 供首页门） |
 | `${SKILL_DIR}/scripts/probe_overflow.py <project> [--page N]` | **物理溢出探针**（Chrome 实测裁切/出界） |
-| `${SKILL_DIR}/scripts/export_deck.py <project> [--pdf] [--shots] [--pptx]` | 导出（--pptx 隐含 2x 截图 + notes 写入） |
+| `${SKILL_DIR}/scripts/export_deck.py <project> [--pdf] [--shots] [--pptx] [--pptx-editable] [--publish <dir>]` | 导出（--pptx=图片型隐含 2x 截图+notes；--pptx-editable=可编辑，见交付形态） |
+| `${SKILL_DIR}/scripts/extract_layout.py <project> [--page N]` | （export 内部调用）deck.html → layout.json，供可编辑 pptx 组装 |
 | `${SKILL_DIR}/assets/templates/shell.html` | 文档骨架（结构层，**禁止改动**） |
 | `${SKILL_DIR}/assets/templates/layouts.html` | S01–S10 版式骨架登记表 |
 | `${SKILL_DIR}/assets/icons/tabler-outline/` | 5039 个内联 SVG 图标（用法见 assets/icons/README.md：grep 检索 → 内联 → currentColor） |
@@ -83,7 +97,7 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 ### Phase 2 — 澄清 + 大纲 IR（内容的主战场）
 
 1. Read `references/outline-schema.md` + `references/modes.md`。
-2. **第 1 轮 question（3-5 问，一次调用）**：受众与目的 / 叙事 mode（按 modes.md 推荐表给推荐项）/ 页数档位 / 交付形态（HTML / +PDF / +图片型 pptx）/ 内容侧重。源材料能推断的不问。
+2. **第 1 轮 question（3-5 问，一次调用）**：受众与目的 / 叙事 mode（按 modes.md 推荐表给推荐项）/ 页数档位 / 交付形态（HTML / +PDF / +图片型 pptx / +可编辑 pptx——若选可编辑，提示「用于脱离本工具在 PowerPoint 手改；想让 AI 继续改无需它」）/ 内容侧重。源材料能推断的不问。
 3. 写 `outline.json`：逐页 layout/rhythm + **正文页必填 takeaway（断言句）/ evidence（引用 fact_id 或标 scenario）/ confidence / speaker_notes**。
 4. **大纲门禁**：`python3 ${SKILL_DIR}/scripts/validate_outline.py .deckcraft/<name>` —— exit 0 才进 Phase 3；报错按条修大纲（内容不够 → 回 Research 补检索，不是硬编）。
 
@@ -119,8 +133,8 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 
 1. `export_deck.py --shots` → Read `references/visual-review.md`，截图交**独立评审**（不带生成上下文的子代理；无子代理则新视角逐页过 rubric R1-R8），结果进 `qa_report.json`；`fix` 页只改定位/间距，回炉 ≤1 轮。
 2. 概念终审（换名测试，一票否决——失败回大纲层补内容）。
-3. 导出 + 发布：`export_deck.py .deckcraft/<name> --pdf --pptx --publish .`（按用户选的形态；`--publish .` 把 `<name>.html/.pdf/.pptx` 拷到工作区根——**只有这几个文件应出现在产物面板**）。
-4. 交付报告：published 路径 + qa_report 摘要 + low-confidence 页清单 + scenario 页声明 + 「pptx 为图片型」明示。
+3. 导出 + 发布：`export_deck.py .deckcraft/<name> --pdf --pptx --publish .`（按用户选的形态；可编辑 pptx 用 `--pptx-editable` 取代 `--pptx`；`--publish .` 把 `<name>.html/.pdf/.pptx` 拷到工作区根——**只有这几个文件应出现在产物面板**）。
+4. 交付报告：published 路径 + qa_report 摘要 + low-confidence 页清单 + scenario 页声明 + pptx 形态明示（图片型「文字不可编辑」/ 可编辑型逐页转述「第 N 页含 M 个不可编辑元素」，若为 0 则说明全部可编辑）。
 
 ## Progressive disclosure（省上下文）
 

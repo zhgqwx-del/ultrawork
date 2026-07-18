@@ -4319,6 +4319,18 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
         available: browser.is_some(),
         path: browser,
     });
+
+    // deckcraft's editable-pptx export (P2b, --pptx-editable) needs a Node
+    // runtime for the pptxgenjs assembler. OPTIONAL: absence must NOT mark the
+    // skill "not ready" — HTML/PDF/image-pptx work without it (see
+    // OPTIONAL_DEPS in use-skill-deps.ts). Prefers the embedded Node, falls
+    // back to a system node >= 18 (mirrors find_node.py).
+    let node = get_node_path_internal().ok();
+    deps.push(DepStatus {
+        name: "node".into(),
+        available: node.is_some(),
+        path: node.map(|n| n.path),
+    });
     deps
 }
 
@@ -7633,7 +7645,9 @@ mod builtin_skills_tests {
         // The command must always report the python probe entries (ppt-master)
         // and the export-browser probe (deckcraft) — regardless of host state.
         let deps = check_skill_dependencies();
-        for name in ["python3", "python3.10+", "python-pptx", "chrome-or-edge"] {
+        // "node" is deckcraft's optional P2b dep (editable pptx) — always reported
+        // so the badge can show it, but OPTIONAL_DEPS keeps it from gating readiness.
+        for name in ["python3", "python3.10+", "python-pptx", "chrome-or-edge", "node"] {
             assert!(
                 deps.iter().any(|d| d.name == name),
                 "missing dep entry: {}",

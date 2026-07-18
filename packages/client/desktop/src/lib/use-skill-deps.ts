@@ -35,7 +35,9 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // python-pptx: the image-type .pptx export (export_deck.py --pptx).
   // chrome-or-edge is the headless export engine — probed by install location
   // (Rust detect_export_browser), not PATH.
-  deckcraft: ["python3.10+", "python-pptx", "chrome-or-edge"],
+  // node: OPTIONAL (see OPTIONAL_DEPS) — only the editable-pptx export
+  // (--pptx-editable, P2b) needs it; HTML/PDF/image-pptx work without it.
+  deckcraft: ["python3.10+", "python-pptx", "chrome-or-edge", "node"],
   // Official Feishu/Lark CLI (installed via 设置 → 连接器 → 办公 CLI, or any
   // user install on PATH). The badge only reflects binary presence; auth state
   // lives in the connector card (use-cli-connectors).
@@ -47,7 +49,11 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
 }
 
 /** Tools that are not required but recommended; absence shouldn't mark "not ready". */
-export const OPTIONAL_DEPS = new Set<string>([])
+export const OPTIONAL_DEPS = new Set<string>([
+  // deckcraft's editable-pptx export (P2b) needs Node; the skill's core
+  // deliverables (HTML/PDF/image-pptx) don't, so a missing Node must not gate it.
+  "node",
+])
 
 /** Required tools for a skill that are currently missing (empty = ready). */
 export function missingDeps(skillName: string, deps: DepMap): string[] {

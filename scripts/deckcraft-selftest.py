@@ -244,8 +244,225 @@ def main() -> int:
                 code, out = run("probe_overflow.py", str(proj))
                 expect("probe oversized image", code, out, "out-of-canvas")
 
+    if not no_chrome:
+        editable_cases()
+
     print(f"\ndeckcraft-selftest: {PASS} passed · {FAIL} failed")
     return 1 if FAIL else 0
+
+
+def node_available() -> bool:
+    code, _ = run("find_node.py")
+    return code == 0
+
+
+def editable_cases() -> None:
+    """P2b --pptx-editable: text/shape translation, raster degrade, no leak.
+    Node-gated (skipped with a note when no runtime is present — the export path
+    fails fast with guidance in that case, which we assert separately)."""
+    global PASS, FAIL
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    if not node_available():
+        # The export path fails fast with install guidance when Node is absent
+        # (asserted here); the translation cases below need a real runtime.
+        with tempfile.TemporaryDirectory() as td:
+            proj = project(td, {1: page('<h1>x</h1>')})
+            run("build_deck.py", str(proj))
+            code, out = run("export_deck.py", str(proj), "--pptx-editable")
+            expect("editable no-node guided fail", code, out, "Node.js runtime")
+        print("SKIP  editable-pptx translation cases (no Node runtime)")
+        return
+
+    def build_editable(td: str, inner: str) -> "Presentation | None":
+        proj = project(td, {1: page(inner)})
+        code, out = run("build_deck.py", str(proj))
+        if code != 0:
+            expect("editable build_deck", code, out, "", want_fail=False)
+            return None
+        code, out = run("export_deck.py", str(proj), "--pptx-editable")
+        pptx_f = proj / "export" / "deck-editable.pptx"
+        if code != 0 or not pptx_f.is_file():
+            expect("editable export", 1, out, "", want_fail=False)
+            return None
+        # nothing may leak outside export/ — intermediates stay in the dot-safe export dir
+        strays = [p.name for p in proj.iterdir()
+                  if p.name not in {"pages", "tokens.css", "export", "deck.html", "outline.json"}]
+        expect("editable no stray files", 1 if strays else 0,
+               f"strays: {strays}", "", want_fail=False)
+        return Presentation(str(pptx_f))
+
+    # 1) text + shape → editable text box (exact text) + a shape, positioned right
+    with tempfile.TemporaryDirectory() as td:
+        prs = build_editable(td,
+            '<div style="position:absolute;left:120px;top:200px;width:400px">'
+            '可编辑正文 Hello</div>'
+            '<div style="position:absolute;left:640px;top:120px;width:200px;'
+            'height:150px;background:var(--c-primary)"></div>')
+        if prs:
+            s = prs.slides[0]
+            from pptx.util import Emu
+            txts = [sh for sh in s.shapes if sh.has_text_frame and sh.text_frame.text.strip()]
+            hit = next((sh for sh in txts if "Hello" in sh.text_frame.text), None)
+            expect("editable text box present", 0 if hit else 1, "", "", want_fail=False)
+            if hit:
+                x_in = Emu(hit.left).inches
+                # left:120px → 120/96 = 1.25in, tolerate metric/padding drift
+                expect("editable text positioned", 0 if abs(x_in - 1.25) < 0.4 else 1,
+                       f"x={x_in:.2f}in (want ~1.25)", "", want_fail=False)
+            shapes = [sh for sh in s.shapes if sh.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+                      and not (sh.has_text_frame and sh.text_frame.text.strip())]
+            expect("editable shape present", 0 if shapes else 1, "", "", want_fail=False)
+
+    # 2) inline SVG → honest raster: a picture + the delivery NOTE, text still editable
+    with tempfile.TemporaryDirectory() as td:
+        proj = project(td, {1: page(
+            '<p>可编辑文字</p>'
+            '<svg viewBox="0 0 24 24" width="80" height="80" stroke="currentColor" '
+            'fill="none"><circle cx="12" cy="12" r="9"/></svg>')})
+        code, _ = run("build_deck.py", str(proj))
+        code, out = run("export_deck.py", str(proj), "--pptx-editable")
+        expect("raster degrade reported", 0 if ("栅格化" in out and code == 0) else 1,
+               out, "", want_fail=False)
+        pptx_f = proj / "export" / "deck-editable.pptx"
+        if pptx_f.is_file():
+            s = Presentation(str(pptx_f)).slides[0]
+            pics = [sh for sh in s.shapes if sh.shape_type == MSO_SHAPE_TYPE.PICTURE]
+            txts = [sh for sh in s.shapes if sh.has_text_frame and sh.text_frame.text.strip()]
+            expect("raster produced a picture", 0 if pics else 1, "", "", want_fail=False)
+            expect("raster kept text editable", 0 if txts else 1, "", "", want_fail=False)
+
+    # 3) layout.json schema shape
+    with tempfile.TemporaryDirectory() as td:
+        proj = project(td, {1: page('<h1>甲</h1><p>乙</p>')})
+        run("build_deck.py", str(proj))
+        code, out = run("extract_layout.py", str(proj))
+        ok = False
+        if code == 0:
+            try:
+                d = json.loads(out)
+                pg = d["pages"][0]
+                ok = (d["canvas"]["w"] == 1280 and pg["index"] == 1
+                      and all("type" in e and "box" in e for e in pg["elements"])
+                      and any(e["type"] == "text" for e in pg["elements"]))
+            except (json.JSONDecodeError, KeyError, IndexError):
+                ok = False
+        expect("layout.json schema", 0 if ok else 1, out, "", want_fail=False)
+
+    # 3b) presenter-view parity: the editable pptx must carry outline speaker_notes
+    #     (the image-type pptx does; choosing editable must not silently drop them)
+    with tempfile.TemporaryDirectory() as td:
+        proj = project(td, {1: page('<h1>标题</h1><p>正文</p>')},
+                       {"title": "t", "slides": [slide(1)]})
+        run("build_deck.py", str(proj))
+        run("export_deck.py", str(proj), "--pptx-editable")
+        pptx_f = proj / "export" / "deck-editable.pptx"
+        has = False
+        if pptx_f.is_file():
+            sl = Presentation(str(pptx_f)).slides[0]
+            has = sl.has_notes_slide and "讲稿" in sl.notes_slide.notes_text_frame.text
+        expect("editable carries speaker notes", 0 if has else 1, "", "", want_fail=False)
+
+    # 4) classification at the extract seam (adversarial-review HIGH-2 + MED-3):
+    #    a non-data <img> must become a RASTER (never a path the assembler can't
+    #    resolve → silent drop); a data: <img> stays an embeddable image; a
+    #    background-image container reports the editable text it swallows (textLost).
+    px = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+          "AAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "proj"
+        proj.mkdir()
+        (proj / "deck.html").write_text(
+            '<html><head><style>.slide{width:1280px;height:720px;position:relative}'
+            '</style></head><body><div class="stage">'
+            '<section class="slide" data-layout="S03" data-rhythm="dense">'
+            f'<div style="background-image:url({px});width:300px;height:200px">'
+            '<h3>卡标题</h3><span>卡文字</span></div>'
+            '<img src="pics/logo.png" width="120" height="60">'
+            f'<img src="{px}" width="40" height="40">'
+            '</section></div></body></html>', encoding="utf-8")
+        code, out = run("extract_layout.py", str(proj))
+        ok = False
+        if code == 0:
+            try:
+                els = json.loads(out)["pages"][0]["elements"]
+                rasters = [e for e in els if e["type"] == "raster"]
+                images = [e for e in els if e["type"] == "image"]
+                bg = next((e for e in rasters if e.get("tag") == "bg-image"), None)
+                ok = (any(e.get("tag") == "img" for e in rasters)  # relative <img> → raster
+                      and len(images) == 1                          # data: <img> → image
+                      and bg is not None and bg.get("textLost") == 2)  # swallowed text counted
+            except (json.JSONDecodeError, KeyError, IndexError):
+                ok = False
+        expect("img/bg-image raster classification + textLost", 0 if ok else 1, out, "", want_fail=False)
+
+    # 5) fidelity at the extract seam (adversarial-review H1/M1/M5): inline caption
+    #    span keeps its own smaller size + opacity; a single-side border becomes a
+    #    thin rect (not dropped); a padded text leaf is inset to its content box.
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "proj"
+        proj.mkdir()
+        (proj / "deck.html").write_text(
+            '<html><head><style>.slide{width:1280px;height:720px;position:relative}'
+            '</style></head><body><div class="stage">'
+            '<section class="slide" data-layout="S03" data-rhythm="dense">'
+            '<p style="position:absolute;left:96px;top:96px;font-size:24px">大<span '
+            'style="font-size:12px;opacity:.5">小</span></p>'
+            '<div style="position:absolute;left:96px;top:240px;width:400px;height:100px;'
+            'border-top:8px solid #C75B12"></div>'
+            '<div style="position:absolute;left:600px;top:240px;width:300px;font-size:18px;'
+            'padding-left:32px;color:#111111">缩进</div>'
+            '</section></div></body></html>', encoding="utf-8")
+        code, out = run("extract_layout.py", str(proj))
+        ok = False
+        if code == 0:
+            try:
+                els = json.loads(out)["pages"][0]["elements"]
+                big = next(e for e in els if e["type"] == "text"
+                           and any("大" in r.get("text", "") for r in e["runs"]))
+                cap = next(r for r in big["runs"] if "小" in r.get("text", ""))
+                stripe = [e for e in els if e["type"] == "rect"
+                          and e.get("fill") == "C75B12" and e["box"]["h"] == 8]
+                pad = next(e for e in els if e["type"] == "text"
+                           and any("缩进" in r.get("text", "") for r in e["runs"]))
+                ok = (cap["fontPx"] == 12 and abs(cap["opacity"] - 0.5) < 0.01      # H1
+                      and len(stripe) == 1                                          # M1
+                      and pad["box"]["x"] == 632)                                   # M5 (600+32)
+            except (json.JSONDecodeError, KeyError, IndexError, StopIteration):
+                ok = False
+        expect("per-run font/opacity + single-side border + padding inset",
+               0 if ok else 1, out, "", want_fail=False)
+
+    # 6) no spurious re-wrap (real-machine finding): a browser-single-line number/
+    #    label must be marked wrap:false (PowerPoint's wider font would otherwise
+    #    stack "01"→"0"/"1"); a genuinely multi-line paragraph keeps wrap:true.
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "proj"
+        proj.mkdir()
+        (proj / "deck.html").write_text(
+            '<html><head><style>.slide{width:1280px;height:720px;position:relative}'
+            '.para{width:360px;font-size:20px;line-height:1.6}</style></head>'
+            '<body><div class="stage">'
+            '<section class="slide" data-layout="S02" data-rhythm="dense">'
+            '<div style="position:absolute;left:760px;top:230px;font-size:40px">01</div>'
+            '<div class="para" style="position:absolute;left:96px;top:400px">这是一段明显'
+            '需要换行的正文，它在浏览器里就跨了多行，pptx 也应保持换行不能挤成一行。</div>'
+            '</section></div></body></html>', encoding="utf-8")
+        code, out = run("extract_layout.py", str(proj))
+        ok = False
+        if code == 0:
+            try:
+                els = json.loads(out)["pages"][0]["elements"]
+                num = next(e for e in els if e["type"] == "text"
+                           and any(r.get("text") == "01" for r in e["runs"]))
+                para = next(e for e in els if e["type"] == "text"
+                            and any("这是一段" in r.get("text", "") for r in e["runs"]))
+                ok = num.get("wrap") is False and para.get("wrap") is True
+            except (json.JSONDecodeError, KeyError, IndexError, StopIteration):
+                ok = False
+        expect("single-line number wrap:false, multi-line para wrap:true",
+               0 if ok else 1, out, "", want_fail=False)
 
 
 if __name__ == "__main__":

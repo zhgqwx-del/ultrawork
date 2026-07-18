@@ -30,6 +30,7 @@ import tempfile
 from pathlib import Path
 
 from find_chrome import find_browser
+from find_node import find_node
 
 from console_encoding import configure_utf8_stdio
 
@@ -37,6 +38,13 @@ configure_utf8_stdio()
 
 CHROME_BASE = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check"]
 TIMEOUT_S = 120
+
+NODE_MISSING_MSG = (
+    "ERROR: --pptx-editable needs a Node.js runtime and none was found.\n"
+    "  The editable-pptx export uses the app's embedded Node — install it via\n"
+    "  Settings → Browser dependencies (it downloads a private Node runtime).\n"
+    "  Or export an image-type pptx instead: export_deck.py <project> --pptx"
+)
 
 
 def run_chrome(browser: str, args: list[str]) -> None:
@@ -75,11 +83,14 @@ def main() -> int:
     ap.add_argument("--pdf", action="store_true")
     ap.add_argument("--shots", action="store_true")
     ap.add_argument("--pptx", action="store_true")
+    ap.add_argument("--pptx-editable", dest="pptx_editable", action="store_true",
+                    help="editable .pptx (P2b): DOM elements → text boxes/shapes "
+                         "via Node+pptxgenjs; needs a Node runtime")
     ap.add_argument("--out", default=None)
     ap.add_argument("--publish", default=None)
     a = ap.parse_args()
     if a.pptx:
-        a.shots = True  # pptx is assembled from the per-page screenshots
+        a.shots = True  # image pptx is assembled from the per-page screenshots
 
     proj = Path(a.project_dir)
     deck = proj / "deck.html"
@@ -94,7 +105,7 @@ def main() -> int:
     out_dir = Path(a.out) if a.out else proj / "export"
     out_dir.mkdir(parents=True, exist_ok=True)
     # explicit --pdf, or no action flag at all → default to PDF
-    do_pdf = a.pdf or not a.shots
+    do_pdf = a.pdf or not (a.shots or a.pptx_editable)
 
     if a.pptx:  # fail fast BEFORE spending ~1s/page on screenshots
         try:
@@ -102,6 +113,13 @@ def main() -> int:
         except ImportError:
             print("ERROR: --pptx needs the python-pptx library (pip install python-pptx)",
                   file=sys.stderr)
+            return 1
+
+    node_bin = None
+    if a.pptx_editable:  # fail fast on missing Node BEFORE any Chrome work
+        node_bin = find_node()
+        if not node_bin:
+            print(NODE_MISSING_MSG, file=sys.stderr)
             return 1
 
     if do_pdf:
@@ -141,6 +159,16 @@ def main() -> int:
                                     speaker_notes(proj), expected=n_pages)
         print(f"OK: {pptx_out} (image-type — text not editable in PowerPoint)")
 
+    if a.pptx_editable:
+        edit_out, raster_report, text_lost = build_editable_pptx(proj, out_dir, browser, node_bin)
+        n_raster = sum(raster_report.values())
+        print(f"OK: {edit_out} (editable — text/shapes are PowerPoint-native)")
+        if n_raster:
+            pages = ", ".join(f"第 {i} 页 {c} 个" for i, c in sorted(raster_report.items()))
+            extra = f"，其中约 {text_lost} 处原本可编辑的文字一并被栅格化" if text_lost else ""
+            print(f"NOTE: {n_raster} 个元素无法翻译为可编辑对象，已栅格化为图片（{pages}）{extra}"
+                  f"——这些元素在 PowerPoint 里不可编辑。")
+
     if a.publish:
         dest = Path(a.publish)
         dest.mkdir(parents=True, exist_ok=True)
@@ -152,7 +180,13 @@ def main() -> int:
         candidates = [(deck, ".html")]
         if do_pdf:
             candidates.append((out_dir / "deck.pdf", ".pdf"))
-        if a.pptx:
+        # editable pptx claims the plain <name>.pptx; if the user also built the
+        # image type this run, it publishes under <name>-image.pptx so neither is lost
+        if a.pptx_editable:
+            candidates.append((out_dir / "deck-editable.pptx", ".pptx"))
+            if a.pptx:
+                candidates.append((out_dir / "deck.pptx", "-image.pptx"))
+        elif a.pptx:
             candidates.append((out_dir / "deck.pptx", ".pptx"))
         published = []
         for src, ext in candidates:
@@ -165,6 +199,115 @@ def main() -> int:
         for t in published:
             print(f"PUBLISHED: {t}")
     return 0
+
+
+def _shoot_pages_2x(browser: str, head: str, sections: list[str],
+                    indices: list[int], td: Path) -> dict[int, Path]:
+    """Screenshot the given 1-based pages at 2x device pixels (2560x1440) into
+    `td`, returning {index: png_path}. Used only to crop rasterized regions —
+    same per-page isolation as the main shots path (drops the screen-fit script)."""
+    flat = "<style>.stage{margin:0}.slide{margin:0}</style>"
+    out: dict[int, Path] = {}
+    for i in indices:
+        page = td / f"crop-p{i:02d}.html"
+        page.write_text(head + flat + sections[i - 1] + "</div></body></html>",
+                        encoding="utf-8")
+        png = td / f"crop-p{i:02d}.png"
+        run_chrome(browser, ["--window-size=1280,720", "--force-device-scale-factor=2",
+                             f"--screenshot={png}", page.resolve().as_uri()])
+        out[i] = png
+    return out
+
+
+def build_editable_pptx(proj: Path, out_dir: Path, browser: str,
+                        node_bin: str) -> tuple[Path, dict[int, int], int]:
+    """Extract deck.html into positioned primitives and assemble an editable
+    .pptx via Node+pptxgenjs. Elements that cannot be translated faithfully
+    (inline SVG, remote/relative images, background-image) are rasterized from a
+    2x screenshot and reported. Returns (pptx_path, {page_index: rasterized_count},
+    total_text_boxes_lost_to_rasterization).
+
+    All intermediates (layout.json, raster/) live under out_dir (the export/
+    dir, which pack/git already exclude) so they never leak into the artifacts
+    panel or the committed example baseline."""
+    # lazy import avoids the extract_layout ↔ export_deck circular import at module load
+    from extract_layout import extract
+
+    layout = extract(proj, browser)
+    # carry speaker notes so the editable pptx keeps presenter-view parity with the
+    # image-type pptx (both read outline.json); empty when there's no outline
+    notes = speaker_notes(proj)
+    for pg in layout["pages"]:
+        note = notes.get(pg["index"], "")
+        if note:
+            pg["notes"] = note
+    rasters = [(pg, el) for pg in layout["pages"]
+               for el in pg["elements"] if el["type"] == "raster"]
+    raster_report: dict[int, int] = {}
+    text_lost = 0
+
+    if rasters:
+        try:
+            from PIL import Image
+        except ImportError:
+            raise SystemExit(
+                "ERROR: rasterizing non-editable elements needs Pillow "
+                "(pip install Pillow — it also ships with python-pptx)")
+        raster_dir = out_dir / "raster"
+        if raster_dir.is_dir():
+            shutil.rmtree(raster_dir)
+        raster_dir.mkdir(parents=True)
+        head, sections = split_pages((proj / "deck.html").read_text(encoding="utf-8"))
+        pages_with_raster = sorted({pg["index"] for pg, _ in rasters})
+        # group by page so each 2x screenshot is opened exactly once, not per element
+        by_page: dict[int, list] = {}
+        for pg, el in rasters:
+            by_page.setdefault(pg["index"], []).append((pg, el))
+        counters: dict[int, int] = {}
+        dropped: list = []  # off-canvas elements — removed so none is left as raster
+        with tempfile.TemporaryDirectory() as td:
+            shots = _shoot_pages_2x(browser, head, sections, pages_with_raster, Path(td))
+            for idx, entries in by_page.items():
+                with Image.open(shots[idx]) as img:
+                    w, h = img.width, img.height
+                    for pg, el in entries:
+                        b = el["box"]
+                        left, top = max(0, int(b["x"] * 2)), max(0, int(b["y"] * 2))
+                        right, bottom = min(w, int((b["x"] + b["w"]) * 2)), min(h, int((b["y"] + b["h"]) * 2))
+                        if right <= left or bottom <= top:
+                            # (partly) outside the 1280x720 canvas — only reachable if
+                            # the overflow gate was skipped; drop it so it is neither a
+                            # crash (inverted crop box) nor a fatal "unresolved raster"
+                            dropped.append((pg, el))
+                            continue
+                        k = counters.get(idx, 0)
+                        counters[idx] = k + 1
+                        png = raster_dir / f"p{idx:02d}-e{k}.png"
+                        img.crop((left, top, right, bottom)).save(png)
+                        text_lost += int(el.get("textLost") or 0)
+                        # rewrite the raster element in-place into an image the assembler places
+                        el.clear()
+                        el.update({"type": "image", "box": b,
+                                   "src": str(png.resolve()), "rasterized": True})
+                        raster_report[idx] = raster_report.get(idx, 0) + 1
+        for pg, el in dropped:
+            pg["elements"].remove(el)
+
+    layout_path = out_dir / "layout.json"
+    layout_path.write_text(json.dumps(layout, ensure_ascii=False), encoding="utf-8")
+
+    out_pptx = out_dir / "deck-editable.pptx"
+    assemble = Path(__file__).resolve().parent / "html2pptx" / "assemble.mjs"
+    kwargs = {}
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW (ADR-054)
+    r = subprocess.run([node_bin, str(assemble), str(layout_path), str(out_pptx)],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=180, **kwargs)
+    if r.returncode != 0:
+        raise SystemExit(f"ERROR: pptx assembler failed (exit {r.returncode}):\n"
+                         f"{r.stdout}{r.stderr}")
+    return out_pptx, raster_report, text_lost
 
 
 def speaker_notes(proj: Path) -> dict[int, str]:

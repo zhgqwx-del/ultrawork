@@ -1,6 +1,6 @@
 # 043 — 自研 HTML-first PPT 技能（替换内置 ppt-master）
 
-> 状态：**P0 spike ✅ · P1 MVP ✅（对抗审查 10 findings 全修）· P1.5 完备度增强 ✅（四项目对照，见 §十七）· 00/09 蓝图终审 ✅（examples/ + line-break 补齐）· 产物面板纯净化 ✅（.deckcraft 点目录 + --publish）· ADR-061 已转正 · 待真机复走查** · 2026-07-18
+> 状态：**P0 spike ✅ · P1 MVP ✅（对抗审查 10 findings 全修）· P1.5 完备度增强 ✅（四项目对照，见 §十七）· 00/09 蓝图终审 ✅ · 产物面板纯净化 ✅ · 真机复走查 ✅ · P2b 可编辑 pptx ✅（对抗审查 2 HIGH+2 MED 全修，见 §十八，待真机 PowerPoint/WPS 验收）· ADR-061 已转正 · 下一步 P3 删 ppt-master** · 2026-07-18
 > 关联：ADR-040/041（ppt-master 内置与 zip 分发）· [discussions/025](./025-builtin-ppt-master-skill.md)（ppt-master 打包调研）· ADR-033（产物识别）· ADR-037（跨平台）
 > 外部调研输入：本地文档集 `~/Desktop/skill_research/`（00 全景 + 01~07 七项目深度拆解 + 09 完备技术实现方案；调研 24+ 个 PPT skill 项目、五条技术路线坐标系）——**本地资料，不入 git**（public 仓库），本文引用其结论时自包含复述。
 > 已拍板：主形态=HTML 为源 + pptx 导出分叉 · 范围=精简快线 · 确认交互=原生 question（文字描述式）· ppt-master=两步走删除（先并存验证后删干净，curated 自装保留为长尾退路）。
@@ -275,8 +275,13 @@ html2pptx 拆成两段，把「新依赖」压到最小：
 
 ### 18.6 状态
 
-- [ ] P2b 实施（18.1–18.4）
-- [ ] P2b 真机验收（PowerPoint/WPS 可编辑）
+- [x] **P2b 实施（18.1–18.4）✅ 2026-07-18**（四路对抗审查：通用 + 跨平台/打包 + 单/Team 模式 + 保真度，findings 全处置）。架构落地=Chrome 抽取（`extract_layout.py` 注入脚本，模式同 probe）+ Node 组装（`html2pptx/assemble.mjs`，pptxgenjs）。
+  - **跨平台/打包审查**：全绿（路径卫生/CREATE_NO_WINDOW/node 双清单/assembler 相对解析/Chrome 探测/vendor 入 zip）；唯一提示=P2b 新文件当前**未 git add**（pack 走文件系统故本机绿，但干净 checkout/CI 只有 tracked 文件 → 合并前必须显式 `git add` 4 个新路径 + sentinel，否则打包漏可编辑引擎）。
+  - **单/Team 模式审查**：P2b **完全 mode-agnostic**（无一处 branch on mode）；deckcraft 单 agent 原生、Team 经 delegate 到 `opencode:default` 可达，均为**既有属性、P2b 未改**。node 徽标/产物面板两模式一致。
+  - **保真度审查 + 修复**：补 run 级 fontSize/opacity（内联 caption 不再被容器字号/透明度吞）+ 递归内联嵌套（`<span><b>` 保内层粗体/色）+ 单边 border→薄 rect（accent bar/divider 不再消失）+ text-leaf padding 内缩到 content box + 松散文本节点经 Range 捕获（不再静默丢）+ 元素 opacity→transparency + rgb 空格/斜杠语法 hardening + textAlign end→right。**残留（已在 SKILL.md 诚实披露）**：字体在无字库 PowerPoint 回退、度量差异致换行、复合透明度/旋转为近似——「排版起点非像素级复刻」。
+  - **补 speaker notes 平价**：可编辑 pptx 现与图片型一样携带 outline speaker_notes（演讲者视图），selftest 锁定。
+  - **真机走查修（用户在 PowerPoint 对照 html 发现）**：浏览器单行的数字/标题/标签在 pptx 里被重新换行（「01」竖排成「0」「1」、CJK 标签末字掉行）——根因=文本框宽度取浏览器精确渲染宽度，但 PowerPoint 替换字体略宽 → 溢出重排。修=抽取侧判定「浏览器单行」文本（盒高 < 1.6×行高）标 `wrap:false`，assembler 关掉该框自动换行（多行段落仍 `wrap:true`）。selftest 锁定（单行数字 wrap:false / 多行段落 wrap:true）。残留=多行长文本换行点仍可能与 html 略有出入（字体度量差异，best-effort）。**关键实证纠错**：pptxgenjs 官方 `dist/pptxgen.bundle.js` 在 Node `require()` 下返回的是 **JSZip 不是 PptxGenJS**（那是浏览器 `<script>` 包）——改用 **esbuild 自打包 CJS 单文件**（`vendor/pptxgen.vendor.cjs`，pptxgenjs 3.12 + jszip 内联，MIT，748KB，`require()` 正确产出类）。承载=vendor 单文件（零 node_modules/零 npm/离线；`node_modules` 不在 pack JUNK 排除集，走 npm 会污染 sentinel——单文件避开）。运行时=嵌入式 Node（`~/.ultrawork/node`，复用 `download_node`），缺失**报错引导不静默**（`find_node.py` + `NODE_MISSING_MSG`，真机验过 guided-fail）。栅格化归属=Python/Chrome 侧用 Pillow（python-pptx 硬依赖，装了就有）从 2x 整页截图裁剪，Node 保持纯净。降级=`raster` 元素吞子树→图片，交付逐页报「第 N 页含 M 个不可编辑元素」。两 pptx 并存 `--pptx`/`--pptx-editable`。依赖徽标：Rust `check_skill_dependencies` 加 `node`（OPTIONAL，不 gate 就绪）+ `use-skill-deps.ts` 对齐。**验证**：deckcraft-selftest +7 例（文本/位置读回、SVG→栅格化+报告、layout schema、no-node guided-fail、无泄漏）40/0 · 例子 10 页全译为可编辑（99 文本框+15 形状，0 栅格化，python-pptx 读回位置正确）· 例子字节基准不变 · typecheck 8/8 · desktop 674 · cargo（node dep 断言）· check-docs 绿 · sentinel 重算 `ad3d756813b564e8`（17257 files/12.7MB）。**已知最佳努力边界**（记档）：opacity<1 文本/形状在 pptx 变全不透明；复杂 stacking context 叠放近似；文本框度量 pptxgenjs≠浏览器有轻微错位——均属"可编辑最佳努力"、用户真机微调。
+- [ ] P2b 真机验收（PowerPoint/WPS 可编辑）← **下一步：用户真机**
 - [ ] P3 执行（18.5）
 - [ ] P3 真机 + CI 验收
 
