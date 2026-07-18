@@ -210,6 +210,78 @@ P1 实现期 follow-up（对抗审查产出，未阻塞）：
 
 ---
 
+## 十八、P2b（可编辑 pptx）+ P3（删 ppt-master）实施方案（2026-07-18，真机复走查通过后拟）
+
+> 复走查通过（PDF 不缩水、产物面板泄漏已修、todowrite 面板指示已加）。据此推进 P2b + P3。
+> **本节是新窗口开工的权威方案**；实施时逐条对照，改动回写本节状态。
+
+### 18.0 先厘清「继续修改」的两条路（避免 P2b 过度设计）
+
+用户要「对生成的 PPT 不满足时能继续修改」，其实是**两个不同需求、两条不同路**：
+
+| 需求 | 走哪条路 | 是否需要 P2b |
+|---|---|---|
+| **AI 继续改**（换措辞/调版式/加页/改配色） | 改 HTML 单源（`.deckcraft/<name>/pages/page-NN.html` 或 spec_lock/tokens.css）→ 重跑 build+门禁+export | **不需要**——HTML 是唯一真相源，AI 改源重导出即可，今天就支持 |
+| **人在 PowerPoint/WPS 里手改** | 需要文字/形状可二次编辑的 .pptx | **需要 P2b**（图片型 pptx 打开只有图，改不了） |
+
+**结论**：P2b 的唯一目标是「交付一份人能在 PPT 软件里编辑的 .pptx」。AI 续改路径已成立，不在 P2b 范围——SKILL.md 应显式告诉用户/agent 这一点（不满意优先让 AI 改 HTML 源重导，要脱离本工具手改才用可编辑 pptx）。
+
+### 18.1 P2b 架构：Chrome 抽取（现有依赖）+ Node 组装（唯一新依赖）
+
+html2pptx 拆成两段，把「新依赖」压到最小：
+
+1. **浏览器侧抽取器（复用现有 Chrome，零新依赖）**：headless Chrome 渲染 deck.html，注入一段翻译脚本（模式同 `probe_overflow.py` 的 `--dump-dom` 注入），对每页 `.slide` 内元素用 `getComputedStyle`+`getBoundingClientRect` 逐元素抽成一份 `layout.json`（每元素：类型/绝对定位/尺寸/文字/字体/字号/字重/颜色/对齐/背景/圆角/边框）。这一段吃掉 P2b 最难的「视觉保真」部分，且不引入新运行时。
+2. **Node 侧组装器（唯一新依赖 = Node + pptxgenjs）**：读 `layout.json` → pptxgenjs 逐元素译成文本框/形状/图片 → 写 `<name>.pptx`。
+
+**Node 依赖决策**：系统 Node v14 太旧不可用（见 MEMORY）。用**嵌入式 Node**（`~/.ultrawork/node/`，Browser MCP 已铺好下载/管理，见 ADR-046 相关）。P2b 探针：无嵌入式 Node 时降级——明确告诉用户「可编辑 pptx 需要 Node 运行时，请先在设置装 Browser MCP 依赖 / 或退回图片型 pptx」，绝不静默失败。
+
+### 18.2 P2b 保真度与转换模式（huashu-design 借鉴，MIT）
+
+- 借鉴 `huashu-design` ~1200 行（getComputedStyle+getBoundingClientRect 逐元素译 pptxgenjs）。**只借思路/算法，不整段拷贝 AGPL**；MIT 部分入 NOTICE。
+- **4 条 HTML 硬约束**（deckcraft 模板本就克制，天然接近）：① 元素绝对可定位（避免复杂 flow）；② 文字在叶子节点；③ 渐变/滤镜/复杂 SVG → 栅格化成图片贴上（无法译成形状的诚实降级）；④ 无 JS 运行期改 DOM。
+- **转换率与诚实降级**：视觉驱动的花哨页转换率可能 <70%，无法译的元素栅格化为图片块并在交付报告标注「第 N 页含 M 个栅格化元素（不可编辑）」。**绝不假装全可编辑**。
+- 两种 pptx 并存，交付时按用户选择：`export_deck.py --pptx`（图片型，现有）/ `--pptx-editable`（P2b，best-effort + 降级明示）。
+
+### 18.3 P2b 任务分解
+
+1. 嵌入式 Node 探针 + `use-skill-deps.ts` 加 `node` 依赖行（P2b 专属，非硬依赖，缺失可退图片型）+ Rust 探针复用 Browser MCP 的 node 定位。
+2. `scripts/extract_layout.py`（或内联进 export）：Chrome `--dump-dom` 注入抽取脚本 → `layout.json`。
+3. `scripts/html2pptx/`（Node）：`package.json`（pptxgenjs pin）+ 组装器；skill 打包时**不带 node_modules**，首次用嵌入式 Node `npm i` 到 `~/.<skill>/`（同 Browser MCP 模式），或评估 vendor pptxgenjs 单文件 bundle 进技能树。
+4. `export_deck.py --pptx-editable`：串起 extract→node 组装；数量/尺寸校验；降级路径。
+5. SKILL.md：交付形态问答加「可编辑 pptx」选项 + 18.0 的「AI 续改走 HTML 源」说明 + 转换率降级明示义务。
+6. `deckcraft-selftest.py` 加负样本：栅格化降级触发、layout.json schema、pptx 可打开（python-pptx 读回校验形状数）。
+
+### 18.4 P2b 验证
+
+- 合成用例：一页纯文本+形状 → 译出的 pptx 用 python-pptx 读回，断言文本框数/文字内容/位置误差 <阈值。
+- 降级用例：一页含渐变 → 断言栅格化为图片且交付报告标注。
+- 真机：PowerPoint + WPS 三平台打开无损、文字可选中可改（自动化够不着，用户验收）。
+- typecheck / vitest / cargo / check-docs 全绿；sentinel 重算。
+
+### 18.5 P3 执行清单（细化 §十五，建议 P2b 通过后做）
+
+**排序**：P2b 先、P3 后。理由——删 ppt-master 会放宽 deckcraft 接管「做 PPT」全触发面，若此时 deckcraft 还不能出可编辑 pptx，是对现状的能力回退；P2b 落地后 deckcraft 才是完整替代。（curated `INSTALLABLE_SKILLS` 的 ppt-master 长尾退路始终保留，故 P3 不是不可逆。）
+
+有序步骤：
+1. `skills/builtin/ppt-master/` 整树删（~53MB / 1.2 万文件）；`pack-builtin-skills.ts` 自动重打（sentinel 变、存量重装）。
+2. `scripts/fetch-builtin-skills.ts`：删 ppt-master 条目 + `applyPptMasterPatches` + `X_REQUIRES` 条目。
+3. `use-skill-deps.ts`：删 `"ppt-master"` 行；**保留 `python3.10+`**（deckcraft 用）；`python-pptx` 保留（P2a/P2b 用）；P2b 后 `node` 行已在。
+4. deckcraft `SKILL.md` frontmatter description + 路由边界表：删「ppt-master 已安装则交给它」措辞→改「可在设置→技能安装 ppt-master」，**放宽触发面**接管「做PPT/生成PPT/演示文稿/slides/deck」全意图（去掉验证期窄触发限定）。
+5. curated `INSTALLABLE_SKILLS` 的 ppt-master 条目**保留**（长尾退路）；`reconcile_builtin_shadowing` 通用机制保留。
+6. 文档收尾：gotchas §10 ①（窄触发→已毕业）复核、`requirements.md`/`architecture-phase1.md` 状态表、`document-map.md` 计数、CHANGELOG、本文档状态、ADR-061 状态转「已删 ppt-master」。
+7. 设置页两个 tab 同见 ppt-master 的「混合形态」自然消解（ADR-040 预期）。
+
+**P3 验收**：check-docs 绿 + CI 三平台绿 + 安装包体积回归（约 −7MB 压缩后，源树 −53MB）+ 真机确认「做PPT」路由到 deckcraft、ppt-master 仍可从设置安装。
+
+### 18.6 状态
+
+- [ ] P2b 实施（18.1–18.4）
+- [ ] P2b 真机验收（PowerPoint/WPS 可编辑）
+- [ ] P3 执行（18.5）
+- [ ] P3 真机 + CI 验收
+
+---
+
 ## 附录：ADR 草稿（✅ 已转正为 [`decisions/061-deckcraft-html-first-ppt-skill.md`](../decisions/061-deckcraft-html-first-ppt-skill.md)，以正式版为准；下文为定稿时的历史草稿）
 
 ```markdown
