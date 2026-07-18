@@ -2216,6 +2216,7 @@ const DEP_HINTS: Record<string, string> = isWindows
       "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+      "chrome-or-edge": "winget install Google.Chrome / google.com/chrome（已装 Edge 亦可）",
     }
   : isMacOS
     ? {
@@ -2231,6 +2232,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        "chrome-or-edge": "brew install --cask google-chrome / google.com/chrome",
       }
     : {
         python3: "apt/dnf install python3",
@@ -2245,6 +2247,7 @@ const DEP_HINTS: Record<string, string> = isWindows
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
+        "chrome-or-edge": "apt/dnf install google-chrome-stable / chromium",
       }
 
 function DepBadge({

@@ -1,0 +1,6 @@
+[
+  { "fact_id": "F1", "claim": "示例事实：主流编码 agent 在某内部评测集通过率一年内 41% → 74%（本 example 为演示用虚构语料）",
+    "source_url": "https://example.com/demo-eval-report", "date": "2026-07-17" },
+  { "fact_id": "F2", "claim": "示例事实：同行业两家头部企业已完成编码助手全员铺开（演示用虚构语料）",
+    "source_url": "https://example.com/demo-industry-note", "date": "2026-07-17" }
+]

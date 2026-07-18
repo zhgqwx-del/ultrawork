@@ -26,10 +26,17 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all nine built-in skills", () => {
+  it("covers all ten built-in skills", () => {
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
+      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "ppt-master", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
     )
+  })
+
+  it("deckcraft requires python 3.10+, python-pptx and a Chromium export browser", () => {
+    expect(missingDeps("deckcraft", present("python3.10+", "python-pptx", "chrome-or-edge"))).toEqual([])
+    expect(missingDeps("deckcraft", present("python3.10+", "python-pptx"))).toEqual(["chrome-or-edge"])
+    // plain python3 is NOT enough — the copied converters need 3.10+ unions
+    expect(missingDeps("deckcraft", present("python3", "python-pptx", "chrome-or-edge"))).toEqual(["python3.10+"])
   })
 
   it("feishu-assistant requires only the lark-cli binary (auth state lives in the connector card)", () => {

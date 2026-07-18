@@ -28,6 +28,14 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // svg_to_pptx.py). Neither is PATH-probeable; both come from Rust probe_python_ok.
   // Other pip deps are per-feature and error gracefully in-skill (error_helper.py).
   "ppt-master": ["python3.10+", "python-pptx"],
+  // HTML-first deck generator (discussions/043). python3.10+ (not plain
+  // python3): the source_to_md converters copied from ppt-master use module/
+  // signature-level `X | None` unions without `from __future__ import
+  // annotations` — same 3.9-TypeError trap that forced ppt-master's probe.
+  // python-pptx: the image-type .pptx export (export_deck.py --pptx).
+  // chrome-or-edge is the headless export engine — probed by install location
+  // (Rust detect_export_browser), not PATH.
+  deckcraft: ["python3.10+", "python-pptx", "chrome-or-edge"],
   // Official Feishu/Lark CLI (installed via 设置 → 连接器 → 办公 CLI, or any
   // user install on PATH). The badge only reflects binary presence; auth state
   // lives in the connector card (use-cli-connectors).

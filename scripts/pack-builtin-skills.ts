@@ -42,7 +42,7 @@ const hash = createHash("sha256")
 const files: string[] = [] // 相对路径，zip 统一 '/' 分隔
 // 本地垃圾（Finder/资源管理器浏览产生）不进 hash 也不进 zip——否则会解压进用户 config 目录，
 // 且本机 hash 偏离 git 提交的 sentinel。刻意与 fetch 脚本略有分歧（fetch 在干净 CI/审查后提交）。
-const JUNK = new Set([".DS_Store", "Thumbs.db"])
+const JUNK = new Set([".DS_Store", "Thumbs.db", "__pycache__"])
 const walk = (dir: string, rel: string) => {
   for (const name of readdirSync(dir).sort()) {
     if (name === ".builtin-version" || JUNK.has(name)) continue

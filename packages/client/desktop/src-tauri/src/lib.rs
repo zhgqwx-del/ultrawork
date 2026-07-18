@@ -2719,6 +2719,35 @@ fn detect_chrome() -> Option<String> {
         .map(|p| p.to_string())
 }
 
+/// Headless-export browser for the deckcraft skill: any Chromium engine works,
+/// so fall back to Microsoft Edge when Chrome is absent (every Windows machine
+/// with WebView2 has Edge). Kept separate from `detect_chrome()` — the browser
+/// MCP feature intentionally targets Chrome only (Playwright channel `chrome`).
+///
+/// SYNC OBLIGATION: every path probed here (incl. detect_chrome's list) must
+/// also appear in the skill's runtime probe
+/// `skills/builtin/deckcraft/scripts/find_chrome.py` — the badge this feeds
+/// must never show green on a machine where that script then fails.
+fn detect_export_browser() -> Option<String> {
+    if let Some(chrome) = detect_chrome() {
+        return Some(chrome);
+    }
+    let edges: Vec<&str> = if cfg!(target_os = "macos") {
+        vec!["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    } else if cfg!(target_os = "windows") {
+        vec![
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ]
+    } else {
+        vec!["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"]
+    };
+    edges
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .map(|p| p.to_string())
+}
+
 // ── Browser process cleanup ────────────────────────────────────────
 
 /// Command-line fragments that identify a browser-MCP process: the MCP server
@@ -4281,6 +4310,15 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
     }
     deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: probed.clone() });
     deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: probed });
+
+    // deckcraft exports via a headless Chromium engine (Chrome or Edge) — not
+    // PATH-probeable on macOS/Windows, so probe the known install locations.
+    let browser = detect_export_browser();
+    deps.push(DepStatus {
+        name: "chrome-or-edge".into(),
+        available: browser.is_some(),
+        path: browser,
+    });
     deps
 }
 
@@ -7592,10 +7630,10 @@ mod builtin_skills_tests {
 
     #[test]
     fn check_skill_dependencies_includes_python_probes() {
-        // The command must always report the two python probe entries (frontend
-        // BUILTIN_DEP_MAP requires them for ppt-master) — regardless of host state.
+        // The command must always report the python probe entries (ppt-master)
+        // and the export-browser probe (deckcraft) — regardless of host state.
         let deps = check_skill_dependencies();
-        for name in ["python3", "python3.10+", "python-pptx"] {
+        for name in ["python3", "python3.10+", "python-pptx", "chrome-or-edge"] {
             assert!(
                 deps.iter().any(|d| d.name == name),
                 "missing dep entry: {}",

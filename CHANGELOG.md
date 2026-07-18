@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **自研 HTML-first PPT 技能 deckcraft（ADR-061 / discussions/043）**：分阶段替换内置 ppt-master，治两大痛点——逐页手写 SVG 的慢与贵（架构性，几十万 token/deck）+ :5050 确认页外弹系统浏览器。验证期窄触发（「deckcraft/快速PPT」）与 ppt-master 并存，真机复走查通过后按 043 §十五删除内置 ppt-master。
+  - **管线**：`源材料/Research → 大纲 IR(evidence) → 大纲门禁 → spec_lock → 首页门 → 分批/并行生成 HTML → 结构门禁+物理溢出探针 → 独立视觉评审 → HTML/PDF/图片型 pptx(2x+讲稿 notes)`。P0 spike 实证并行一致性成立（10 页 ≤70s、契约 0 违规 vs ppt-master 式串行外推 ~11min）。
+  - **内容工程（P1.5，治真机暴露的「空心 deck」）**：无源文档时 Research MANDATORY（联网检索 → `facts.json` fact_id 溯源）；正文页强制 takeaway 断言/evidence(≥2)/confidence/speaker_notes；`validate_outline.py` 硬门禁（弱标题 lint/空话黑名单/编造数据拦截，scenario 数据页强制可见标注）；mode 叙事轴 ×5 与视觉风格 ×4 正交。
+  - **质量闭环**：结构校验 E1-E8 + Chrome `--dump-dom` 物理溢出探针 + R1-R8 独立评审 rubric + 概念换名一票否决 + qa_report receipt 等式；`examples/ai-coding-pilot/` 契约活样例兼回归基准。
+  - **交互/交付**：全程原生 question-dock（禁本地 web 服务）；工作目录 `.deckcraft/` 点目录（中间文件不进产物面板）+ `--publish` 只交付 `<name>.html/.pdf/.pptx`；图标库 tabler-outline 5039 个 + `fetch_assets.py`（logo 链/Wikimedia 真图带许可 manifest）。
+  - **app 侧**：Rust `detect_export_browser`（Chrome→Edge）+ `chrome-or-edge` 依赖徽标、DEP_HINTS 三平台、`pack-builtin-skills.ts` JUNK +`__pycache__`；deckcraft 依赖 = python3.10+ / python-pptx / chrome-or-edge。
+  - **验证**：P1 对抗审查 8 角度 35 候选 → 10 findings（9 CONFIRMED）全修（含 sips 实证的「PDF 被 inline transform 缩 60%」）；typecheck 8/8 + cargo 147 + desktop 671 + 门禁链合成用例全绿 + fetch_assets 真网络冒烟。
+
 - **Team 外部 Agent 接入 OpenAI Codex CLI（ADR-060）**：Team 协作模式的外部 Agent 现支持 OpenAI Codex CLI，加入 claude/gemini/qoder/hermes 行列。Codex 原生不说 ACP（只支持 MCP，openai/codex#9085），经官方 npm 桥 `@agentclientprotocol/codex-acp` 走既有 bunx 路径接入——用户在「设置 → 外部 Agent」一键添加即可。
   - **接入形态**：`command:bunx`、`args:[@agentclientprotocol/codex-acp]`（不带 `--bun`，桥自带 @openai/codex 重运行时）、`env:{NO_BROWSER:"1", INITIAL_AGENT_MODE:"agent"}`。认证**零配置复用本机 `~/.codex/auth.json`**（ChatGPT 或 API key 登录），无需再填 key；首次未登录先在终端 `codex login`。
   - **安全 / 审批**：默认 `agent` 模式（workspace-write 沙箱 + on-request 审批）——工作区内编辑自动执行，越界/联网动作由 codex 沙箱拦截；codex escalate 时经 ACP 浮到 **Ultrawork 现有权限弹窗**（与 claude/gemini 同一条 `permission.asked`），无人应答 300s 兜底拒绝，**无相互等待死锁**（5 轮真机 spike 中 read-only 审批往返实测打通、批准后文件真落盘）。模板 `envHint` 提示可改 `INITIAL_AGENT_MODE=read-only` 让每个文件写都需批准。

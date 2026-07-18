@@ -1,0 +1,270 @@
+{
+ "title": "AI 编程助手落地实践——从试点到规模化",
+ "audience": "研发中心管理层（技术 VP / 各团队 TL），关注投入产出与落地节奏",
+ "goal": "汇报试点结果，争取全员推广的预算与授权",
+ "mode": "pyramid",
+ "language": "zh",
+ "note": "本 example 全部数据为演示用虚构值（scenario）；facts.json 亦为示例语料",
+ "slides": [
+  {
+   "index": 1,
+   "layout": "S01",
+   "rhythm": "anchor",
+   "title": "AI 编程助手落地实践",
+   "content": {
+    "kicker": "ENGINEERING PRODUCTIVITY REVIEW",
+    "subtitle": "从 12 人试点到 300 人规模化的路径与数据",
+    "meta": "研发效能组 · 2026 年 7 月"
+   },
+   "speaker_notes": "开场：一句话交代为什么今天讲这个——交付压力与工具成熟度同时到达临界点。"
+  },
+  {
+   "index": 2,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "为什么是现在",
+   "takeaway": "吞吐 +38% 对人力 +6% 的剪刀差，加上工具通过率一年 41%→74%，窗口就在当下",
+   "evidence": [
+    {
+     "fact_id": "F1"
+    },
+    {
+     "fact_id": "F2"
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "high",
+   "content": {
+    "points": [
+     {
+      "h": "交付压力持续上升",
+      "p": "季度需求吞吐同比 +38%，人力仅 +6%"
+     },
+     {
+      "h": "重复劳动占比过高",
+      "p": "样板代码、测试脚手架、文档占开发时间约三成"
+     },
+     {
+      "h": "工具已跨过可用线",
+      "p": "主流编码 agent 在内部评测集通过率一年内 41% → 74%"
+     },
+     {
+      "h": "竞对已在行动",
+      "p": "同行业两家头部已完成全员铺开"
+     }
+    ]
+   },
+   "speaker_notes": "逐条展开四个信号，重点讲第三条：可用线是今年才跨过的，去年试点失败不代表今天。"
+  },
+  {
+   "index": 3,
+   "layout": "S02",
+   "rhythm": "breathing",
+   "title": "试点怎么做的",
+   "content": {
+    "section_no": "01"
+   },
+   "speaker_notes": "过渡：先讲我们怎么设计试点，让数据可信。"
+  },
+  {
+   "index": 4,
+   "layout": "S04",
+   "rhythm": "dense",
+   "title": "试点设计：两组对照，真实需求",
+   "takeaway": "12 人试点组与同构对照组用同一需求池，让差异只来自工具",
+   "evidence": [
+    {
+     "scenario": true
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "high",
+   "content": {
+    "col_a": {
+     "h": "试点组 · 12 人",
+     "points": [
+      "两个业务团队各 6 人，自愿报名",
+      "全量接入编码 agent + 代码评审助手",
+      "每周记录使用时长与产出"
+     ]
+    },
+    "col_b": {
+     "h": "对照组 · 12 人",
+     "points": [
+      "同业务线、同职级分布",
+      "维持原工具链不变",
+      "同一需求池、同一评审标准"
+     ]
+    }
+   },
+   "speaker_notes": "预答质疑：自愿报名会不会有选择偏差——职级分布对齐过，且对照组同池取需求。"
+  },
+  {
+   "index": 5,
+   "layout": "S06",
+   "rhythm": "dense",
+   "title": "八周试点节奏",
+   "takeaway": "8 周分 4 段推进，每 2 周一个可检查的里程碑",
+   "evidence": [
+    {
+     "scenario": true
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "high",
+   "content": {
+    "nodes": [
+     {
+      "h": "第 1-2 周",
+      "p": "接入与培训，建立使用基线"
+     },
+     {
+      "h": "第 3-4 周",
+      "p": "日常需求全量使用，每周复盘"
+     },
+     {
+      "h": "第 5-6 周",
+      "p": "扩展到测试与文档场景"
+     },
+     {
+      "h": "第 7-8 周",
+      "p": "数据回收，成本核算，访谈"
+     }
+    ]
+   },
+   "speaker_notes": "强调节奏设计的意图：前两周不看产出只建基线，避免把学习曲线算进结论。"
+  },
+  {
+   "index": 6,
+   "layout": "S05",
+   "rhythm": "anchor",
+   "title": "试点组交付效率显著领先对照组",
+   "takeaway": "试点组吞吐 +31%、返工 -24%，83% 成员不愿回到旧流程",
+   "evidence": [
+    {
+     "scenario": true
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "medium",
+   "content": {
+    "stats": [
+     {
+      "n": "+31%",
+      "p": "需求吞吐（story point/人周）"
+     },
+     {
+      "n": "-24%",
+      "p": "评审返工轮次"
+     },
+     {
+      "n": "83%",
+      "p": "成员表示「不愿回到旧流程」"
+     }
+    ],
+    "footnote": "口径：8 周试点期均值，n=24；数据为演示用虚构值（scenario）"
+   },
+   "speaker_notes": "只讲三个数，每个数配一句口径；主动说明 n=24 样本量的局限，所以 confidence 标 medium。"
+  },
+  {
+   "index": 7,
+   "layout": "S04",
+   "rhythm": "dense",
+   "title": "规模化两条路线的取舍",
+   "takeaway": "分梯队滚动推广能在 8 个月覆盖全员且风险可控，优于一次性铺开",
+   "evidence": [
+    {
+     "scenario": true
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "high",
+   "content": {
+    "col_a": {
+     "h": "直接全员铺开",
+     "points": [
+      "一次性覆盖 300 人",
+      "管理成本低、见效快",
+      "风险：培训稀释，低频用户流失"
+     ]
+    },
+    "col_b": {
+     "h": "分梯队滚动推广（推荐）",
+     "points": [
+      "每月一梯队，每梯队配种子用户",
+      "试点组成员作为各团队教练",
+      "风险可控，8 个月完成全员"
+     ]
+    }
+   },
+   "speaker_notes": "论证推荐项：教练密度是关键变量，试点组 12 人正好支撑每月一个梯队。"
+  },
+  {
+   "index": 8,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "三个已识别的风险与对策",
+   "takeaway": "安全、技能、度量三类风险各有已验证的对策",
+   "evidence": [
+    {
+     "scenario": true
+    },
+    {
+     "scenario": true
+    }
+   ],
+   "confidence": "high",
+   "content": {
+    "points": [
+     {
+      "h": "代码安全与合规",
+      "p": "私有部署推理网关，敏感仓库默认关闭上传"
+     },
+     {
+      "h": "新人技能空心化",
+      "p": "一年内新人保留无助手结对时段"
+     },
+     {
+      "h": "度量失真",
+      "p": "只考核交付结果指标，禁止考核使用时长"
+     }
+    ]
+   },
+   "speaker_notes": "第三条重点展开：一旦考核使用时长，数据立刻失真——这是别家踩过的坑。"
+  },
+  {
+   "index": 9,
+   "layout": "S07",
+   "rhythm": "breathing",
+   "title": "试点成员引言",
+   "content": {
+    "quote": "「它不是替我写代码，是把我从不想做的那 30% 里解放出来。」",
+    "attribution": "—— 试点组后端工程师，入职 4 年"
+   },
+   "speaker_notes": "停一拍，让引言自己说话；这句是访谈原话（演示语料）。"
+  },
+  {
+   "index": 10,
+   "layout": "S08",
+   "rhythm": "anchor",
+   "title": "收尾",
+   "content": {
+    "statement_prefix": "把试点的确定性，变成",
+    "statement_accent": "全员的生产力",
+    "cta": "申请：Q3 启动分梯队推广，预算 ¥86 万/年",
+    "sign": "ENGINEERING PRODUCTIVITY GROUP"
+   },
+   "speaker_notes": "收在明确的 ask 上：预算数字、启动时间、需要的决策，一句话说完。"
+  }
+ ]
+}

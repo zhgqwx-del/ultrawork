@@ -1,0 +1,132 @@
+<!-- deckcraft 版式骨架登记（S01–S10）。生成器以骨架为基础做本页内容排版：
+     可调内部细节（间距/条目数/局部结构），但结构家族必须可辨识、data-layout 必须准确。
+     铁律：颜色只用 var(--c-*)，字号只用 var(--fs-*)，间距 8px 模数（线宽/对位偏移不受限）。
+     结构层类名（.slide/.kicker/.pagenum/h1-h3/.accent/.num/.bar）由 shell.html 提供，不要重复定义。 -->
+
+<!-- S01 封面（anchor，深色底）：kicker + display 主题 + 副题 + 底部 meta -->
+<section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">KICKER 一行</div>
+    <div style="font-size:var(--fs-display);font-weight:700;line-height:1.2;margin-top:24px">主题标题<br>可两行</div>
+    <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85">一句副题</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px;font-size:var(--fs-caption);opacity:.55">出品方 · 日期</div>
+</section>
+
+<!-- S02 章节页（breathing）：巨编号 + 章节题，大量留白，正文 ≤40 字 -->
+<section class="slide" data-layout="S02" data-rhythm="breathing">
+  <div style="display:flex;align-items:center;height:100%;gap:48px">
+    <div class="num" style="color:var(--c-accent)">01</div>
+    <div style="border-left:2px solid var(--c-muted);padding-left:48px">
+      <div class="kicker">SECTION</div>
+      <h1 style="margin-top:16px">章节标题</h1>
+    </div>
+  </div>
+</section>
+
+<!-- S03 要点页（dense）：左标题区（accent bar + 可选 kicker 摘要行），右条目列（≤4 条，编号 + h3 + 一句说明） -->
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0">
+      <div class="bar"></div>
+      <h1 style="margin-top:24px">页标题</h1>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:40px">
+      <li style="display:flex;gap:24px">
+        <span style="font-size:var(--fs-caption);color:var(--c-muted);font-weight:500;padding-top:8px">01</span>
+        <div><h3 style="color:var(--c-primary)">条目标题</h3><p style="margin-top:8px;color:var(--c-muted)">一句说明</p></div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- S04 两栏（dense）：页题 + 左右两栏（各带栏头），并列或对比；推荐栏可加 accent 顶线 + 徽标 -->
+<section class="slide" data-layout="S04" data-rhythm="dense">
+  <h1>页标题</h1>
+  <div style="display:flex;gap:48px;margin-top:48px;height:432px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px">
+      <div class="kicker">GROUP A</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">栏头 A</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:16px"><li>要点</li></ul>
+    </div>
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+      <div class="kicker">GROUP B</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">栏头 B</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:16px"><li>要点</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- S05 数据带（anchor，深色底）：结论句标题 + 2-4 个大数字（各配一行释义）+ 底部来源/口径注脚 -->
+<section class="slide" data-layout="S05" data-rhythm="anchor" data-dark>
+  <h1 style="color:var(--c-on-dark)">结论句式标题（可含一处 accent 强调）</h1>
+  <div style="display:flex;gap:64px;margin-top:80px">
+    <div style="flex:1"><div class="num" style="color:var(--c-accent)">42%</div><p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">释义一行</p></div>
+  </div>
+  <div style="position:absolute;bottom:40px;left:64px;font-size:var(--fs-caption);opacity:.5">数据来源/口径注脚</div>
+</section>
+
+<!-- S06 水平时间线（dense）：页题 + 3-5 节点（圆点、阶段标签、节点题、一句说明）；末节点可 accent -->
+<section class="slide" data-layout="S06" data-rhythm="dense">
+  <h1>页标题</h1>
+  <div style="display:flex;margin-top:96px;position:relative">
+    <div style="position:absolute;top:11px;left:0;right:0;height:2px;background:var(--c-muted);opacity:.4"></div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px">PHASE 1</div>
+      <h3 style="margin-top:8px">节点题</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);max-width:none">说明</p>
+    </div>
+  </div>
+</section>
+
+<!-- S07 引言页（breathing）：accent bar + 大引句 + 署名，大量留白 -->
+<section class="slide" data-layout="S07" data-rhythm="breathing">
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%;max-width:880px">
+    <div class="bar"></div>
+    <h1 style="margin-top:40px;font-weight:500;line-height:1.5">「引言正文一句」</h1>
+    <p style="margin-top:40px;color:var(--c-muted)">—— 署名，身份</p>
+  </div>
+</section>
+
+<!-- S08 收尾（anchor）：主张句（含 accent 强调词）+ 行动号召一行 + 落款 -->
+<section class="slide" data-layout="S08" data-rhythm="anchor">
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <h1 style="font-size:var(--fs-display);line-height:1.25;margin-top:40px">收尾主张<span class="accent">强调词</span></h1>
+    <p style="margin-top:40px">行动号召一行</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px" class="kicker">落款</div>
+</section>
+
+<!-- S09 议程/目录（dense 偏 breathing）：页题 + 编号章节列（≤6 条，编号 + 章节题），单列大留白 -->
+<section class="slide" data-layout="S09" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0">
+      <div class="bar"></div>
+      <h1 style="margin-top:24px">议程</h1>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:32px">
+      <li style="display:flex;align-items:baseline;gap:32px;border-bottom:1px solid var(--c-bg2);padding-bottom:16px">
+        <span style="font-size:var(--fs-h2);color:var(--c-muted);font-weight:300">01</span>
+        <h3>章节题</h3>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- S10 简表（dense）：页题 + 结构化表格（表头 primary、行分隔细线、≤5 行 ≤4 列；数字右对齐 tabular） -->
+<section class="slide" data-layout="S10" data-rhythm="dense">
+  <h1>页标题</h1>
+  <table style="width:100%;margin-top:48px;border-collapse:collapse;font-size:var(--fs-body)">
+    <thead><tr style="border-bottom:2px solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">列头</th>
+      <th style="text-align:right;padding:16px 8px;font-weight:700;color:var(--c-primary)">数值列</th>
+    </tr></thead>
+    <tbody><tr style="border-bottom:1px solid var(--c-bg2)">
+      <td style="padding:16px 8px;font-weight:300">行项</td>
+      <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">123</td>
+    </tr></tbody>
+  </table>
+</section>

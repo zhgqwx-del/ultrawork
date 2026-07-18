@@ -98,6 +98,7 @@ const DEPS = [
   { name: "git", available: true, path: "/usr/bin/git" },
   { name: "markdown-exporter", available: true, path: "/usr/bin/markdown-exporter" },
   { name: "python3.10+", available: true, path: "/usr/local/bin/python3" },
+  { name: "chrome-or-edge", available: true, path: "/usr/bin/google-chrome" },
   { name: "python-pptx", available: true, path: "/usr/local/bin/python3" },
   { name: "lark-cli", available: true, path: "/usr/local/bin/lark-cli" },
 ]

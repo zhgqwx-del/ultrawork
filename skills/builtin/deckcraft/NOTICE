@@ -1,0 +1,14 @@
+deckcraft — self-built HTML-first presentation skill for Ultrawork.
+
+Portions of this skill are adapted from ppt-master (https://github.com/hugohe3/ppt-master),
+Copyright (c) 2025-2026 Hugo He, MIT License (see LICENSE-ppt-master):
+  - scripts/source_to_md/  (document → Markdown converters)
+    Local modifications: doc_to_md.py adds CREATE_NO_WINDOW to the pandoc
+    subprocess (ADR-054 convention); web_to_md.py docstring no longer points
+    at the un-shipped Node.js fallback script.
+  - scripts/console_encoding.py (unmodified)
+  - assets/icons/tabler-outline/  (Tabler Icons, MIT, https://tabler.io/icons —
+    copied via ppt-master's icon library, unmodified)
+
+Design-system methodology draws on published MIT-licensed projects
+(frontend-slides, huashu-design) — ideas only, no code copied.

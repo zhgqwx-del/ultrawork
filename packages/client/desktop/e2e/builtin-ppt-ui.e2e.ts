@@ -44,6 +44,9 @@ const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
 
 // Controlled host picture: everything present EXCEPT the two ppt-master probes —
 // exactly what a stock macOS (python 3.9, no pip libs) looks like.
+// NOTE: deckcraft shares the python3.10+ probe, so its card also renders a
+// missing badge under this fixture — card-scoped assertions must not assume
+// "only the ppt-master card is unready".
 const DEPS = [
   { name: "python3", available: true, path: "/usr/bin/python3" },
   { name: "node", available: true, path: "/usr/bin/node" },
@@ -54,6 +57,7 @@ const DEPS = [
   { name: "markdown-exporter", available: true, path: "/usr/bin/markdown-exporter" },
   { name: "python3.10+", available: false, path: null },
   { name: "python-pptx", available: false, path: null },
+  { name: "chrome-or-edge", available: true, path: "/usr/bin/google-chrome" },
 ]
 
 let browser: Browser | undefined

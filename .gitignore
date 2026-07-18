@@ -66,3 +66,7 @@ docs/discussions/002-commercialization.md
 
 # e2e 走查截图（本地产物，不入库）
 packages/client/desktop/e2e/*.png
+
+# Python bytecode (local script runs must never enter the skill tree / pack hash)
+__pycache__/
+*.pyc
