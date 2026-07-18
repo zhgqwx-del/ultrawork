@@ -37,6 +37,7 @@
     "e2e:builtin-deckcraft": "bun run --bun e2e/builtin-deckcraft.e2e.ts",
     "e2e:builtin-deckcraft-ui": "bun run --bun e2e/builtin-deckcraft-ui.e2e.ts",
     "e2e:deckcraft-routing": "bun run --bun e2e/deckcraft-routing-realmodel.e2e.ts",
+    "e2e:deckcraft-fullpipeline": "bun run --bun e2e/deckcraft-fullpipeline-realmodel.e2e.ts",
     "e2e:builtin-shadowing": "bun run --bun e2e/builtin-skill-shadowing.e2e.ts",
     "e2e:builtin-shadow-ui": "bun run --bun e2e/builtin-shadow-ui.e2e.ts",
     "e2e:websearch": "bun run --bun e2e/websearch-byok.e2e.ts",

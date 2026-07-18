@@ -161,6 +161,24 @@ bun run --bun e2e:deckcraft-routing   # exit 0 = PASS, 1 = FAIL
 
 Isolated: temp `HOME`/`XDG`, port 4306 (override `ROUTE_PORT`).
 
+## `deckcraft-fullpipeline-realmodel.e2e.ts` — REAL-MODEL end-to-end deck build (ADR-061)
+
+The full model-authored flow the routing test stops short of: drives real qwen3.7-max
+from a plain "做PPT" prompt through skill-load → project → the two question rounds →
+outline → gates → per-page generation → `deck.html`, while a background autopilot
+auto-approves every permission and auto-answers each question (picks the first option).
+Asserts a valid multi-page `deck.html` is produced. Verifies FLOW + STRUCTURE, not
+visual quality (human judgment) and not the final --pdf/--pptx export (covered by
+deckcraft-selftest + the examples gate chain). SLOW — drives a real model through a
+whole deck (minutes). Needs the same `myqwen` key as the other `*-realmodel` tests.
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:deckcraft-fullpipeline   # exit 0 = PASS, 1 = FAIL
+```
+
+Isolated: temp `HOME`/`XDG`, port 4311 (override `ROUTE_PORT`).
+
 ## `websearch-byok.e2e.ts` — BYOK websearch ladder against real opencode (ADR-042)
 
 Real (patched) opencode + in-process stub Tavily/IQS HTTP server (endpoints
