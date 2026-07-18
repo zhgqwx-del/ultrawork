@@ -25,6 +25,7 @@ import { createHash } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
+import { JUNK, isGeneratedDir } from "./builtin-skills-exclude"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const BUILTIN_DIR = join(ROOT, "skills", "builtin")
@@ -40,9 +41,8 @@ if (!existsSync(join(BUILTIN_DIR, "README.md"))) {
 // （树未被手改时 == 提交在 git 的 skills/builtin/.builtin-version，便于对账）
 const hash = createHash("sha256")
 const files: string[] = [] // 相对路径，zip 统一 '/' 分隔
-// 本地垃圾（Finder/资源管理器浏览产生）不进 hash 也不进 zip——否则会解压进用户 config 目录，
-// 且本机 hash 偏离 git 提交的 sentinel。刻意与 fetch 脚本略有分歧（fetch 在干净 CI/审查后提交）。
-const JUNK = new Set([".DS_Store", "Thumbs.db", "__pycache__"])
+// 排除规则（JUNK 本地垃圾 + example 回归链现生成的 export/）由 builtin-skills-exclude.ts
+// 单一来源提供，与 fetch-builtin-skills.ts 的 sentinel walk 共享——保证对账不变式不靠人肉同步。
 const walk = (dir: string, rel: string) => {
   for (const name of readdirSync(dir).sort()) {
     if (name === ".builtin-version" || JUNK.has(name)) continue
@@ -58,8 +58,10 @@ const walk = (dir: string, rel: string) => {
       throw new Error(`文件名含 ':' 或 '\\'，Rust 解压会整体拒绝，请改名: ${fp}`)
     }
     const relPath = rel ? `${rel}/${name}` : name
-    if (st.isDirectory()) walk(fp, relPath)
-    else {
+    if (st.isDirectory()) {
+      if (isGeneratedDir(relPath)) continue
+      walk(fp, relPath)
+    } else {
       // 喂相对路径 + \0 分隔而非裸 basename：目录改名/同名跨目录移动也改变 hash
       // （裸 basename 对纯结构调整失明 → 可能发布陈旧 zip / 存量用户永不重装）。
       // 与 fetch-builtin-skills.ts 的 sentinel 算法保持逐字节一致（同步修改）。

@@ -23,12 +23,17 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from find_chrome import find_browser
+
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
 
 CHROME_BASE = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check"]
 TIMEOUT_S = 120
@@ -39,8 +44,13 @@ def run_chrome(browser: str, args: list[str]) -> None:
     if sys.platform.startswith("win"):
         # GUI-subsystem parents must not flash console windows (app convention, ADR-054)
         kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-    subprocess.run([browser, *CHROME_BASE, *args], check=True, timeout=TIMEOUT_S,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+    try:
+        subprocess.run([browser, *CHROME_BASE, *args], check=True, timeout=TIMEOUT_S,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"ERROR: browser exited {e.returncode} for: {' '.join(args[:2])}")
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"ERROR: browser timed out after {TIMEOUT_S}s for: {' '.join(args[:2])}")
 
 
 def split_pages(deck_html: str) -> tuple[str, list[str]]:
@@ -99,9 +109,14 @@ def main() -> int:
         run_chrome(browser, [f"--print-to-pdf={pdf}", "--no-pdf-header-footer", deck.resolve().as_uri()])
         print(f"OK: {pdf}")
 
+    n_pages = 0
     if a.shots:
         shots = out_dir / "shots"
-        shots.mkdir(exist_ok=True)
+        # stale shots from a previous run (e.g. after dropping a page) would leak
+        # into the pptx and the visual QA — always start from an empty dir
+        if shots.is_dir():
+            shutil.rmtree(shots)
+        shots.mkdir(parents=True)
         html = deck.read_text(encoding="utf-8")
         head, sections = split_pages(html)
         if not sections:
@@ -118,23 +133,33 @@ def main() -> int:
                 page.write_text(head + flat + sec + "</div></body></html>", encoding="utf-8")
                 run_chrome(browser, ["--window-size=1280,720", *scale,
                                      f"--screenshot={shots / f'p{i:02d}.png'}", page.resolve().as_uri()])
-        print(f"OK: {shots} ({len(sections)} pages)")
+        n_pages = len(sections)
+        print(f"OK: {shots} ({n_pages} pages)")
 
     if a.pptx:
         pptx_out = build_image_pptx(out_dir / "shots", out_dir / "deck.pptx",
-                                    speaker_notes(proj))
+                                    speaker_notes(proj), expected=n_pages)
         print(f"OK: {pptx_out} (image-type — text not editable in PowerPoint)")
 
     if a.publish:
-        import shutil
         dest = Path(a.publish)
         dest.mkdir(parents=True, exist_ok=True)
-        # visible name = project dir name, minus a leading dot if present
+        # visible name = project dir name with any leading dots stripped, so a
+        # published deliverable is never itself a hidden dotfile
         name = proj.resolve().name.lstrip(".") or "deck"
+        # only deliverables THIS run produced — a stale deck.pptx from an earlier
+        # experiment must not ship when the user chose HTML+PDF this time
+        candidates = [(deck, ".html")]
+        if do_pdf:
+            candidates.append((out_dir / "deck.pdf", ".pdf"))
+        if a.pptx:
+            candidates.append((out_dir / "deck.pptx", ".pptx"))
         published = []
-        for src, ext in ((deck, ".html"), (out_dir / "deck.pdf", ".pdf"), (out_dir / "deck.pptx", ".pptx")):
+        for src, ext in candidates:
             if src.is_file():
                 target = dest / f"{name}{ext}"
+                if target.exists():
+                    print(f"WARN: overwriting existing {target}")
                 shutil.copyfile(src, target)
                 published.append(str(target))
         for t in published:
@@ -155,25 +180,36 @@ def speaker_notes(proj: Path) -> dict[int, str]:
         return {}
 
 
-def build_image_pptx(shots_dir: Path, out_path: Path, notes: dict[int, str]) -> Path:
+def build_image_pptx(shots_dir: Path, out_path: Path, notes: dict[int, str],
+                     expected: int = 0) -> Path:
     """Assemble a 16:9 image-type .pptx: one full-bleed screenshot per slide,
     speaker notes attached — presenter view stays fully usable even though
     the slide surface itself is an image."""
     from pptx import Presentation
     from pptx.util import Inches
 
-    shots = sorted(shots_dir.glob("p*.png"))
+    def shot_no(p: Path) -> int:
+        m = re.search(r"(\d+)", p.stem)
+        return int(m.group(1)) if m else 0
+
+    # numeric sort — lexicographic would misplace p100 before p11
+    shots = sorted(shots_dir.glob("p*.png"), key=shot_no)
     if not shots:
         raise SystemExit(f"ERROR: no screenshots in {shots_dir}")
+    if expected and len(shots) != expected:
+        raise SystemExit(f"ERROR: {len(shots)} screenshots != {expected} deck pages "
+                         f"in {shots_dir} — stale files?")
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]  # blank layout — no placeholders
-    for i, shot in enumerate(shots, 1):
+    for shot in shots:
         slide = prs.slides.add_slide(blank)
         slide.shapes.add_picture(str(shot), 0, 0,
                                  width=prs.slide_width, height=prs.slide_height)
-        note = notes.get(i, "")
+        # note alignment relies on validate_deck E5 enforcing contiguous 1..N page
+        # numbers == outline indices; the gate runs before export in the workflow
+        note = notes.get(shot_no(shot), "")
         if note:
             slide.notes_slide.notes_text_frame.text = note
     prs.save(str(out_path))

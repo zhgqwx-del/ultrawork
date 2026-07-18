@@ -54,6 +54,7 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge]
 | `${SKILL_DIR}/references/` | 按需精读：content-engineering / modes / outline-schema / spec-lock-format / design-styles/ / typography-cjk / content-guidelines / visual-review / checklist |
 
 > Windows：`python3` 失败时改用 `python` 重试。
+> Linux：导出中文 deck 需系统装有 CJK 字体（如 `fonts-noto-cjk`），否则 PDF/截图中文渲染为方块（各门禁量的是盒子不是字形，拦不住）——交付前提醒用户。
 
 ## 工作流
 
@@ -62,8 +63,9 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge]
 🚧 GATE：意图属于本技能（见路由边界）。
 
 ```bash
-mkdir -p .deckcraft/<name>/pages .deckcraft/<name>/research .deckcraft/<name>/images .deckcraft/<name>/export
+python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parents=True, exist_ok=True) for d in ('pages','research','images','export')]"
 ```
+<!-- 用 python 建目录而非 mkdir -p：Windows 默认 shell 是 PowerShell，mkdir -p 多参数会失败 -->
 
 > **工作目录必须是点目录**（`.deckcraft/`）：产物面板的文件扫描会整体跳过点目录，
 > 中间产物（页面片段/截图/qa_report 等几十个文件）才不会淹没用户的产物列表；
@@ -80,7 +82,7 @@ mkdir -p .deckcraft/<name>/pages .deckcraft/<name>/research .deckcraft/<name>/im
 1. Read `references/outline-schema.md` + `references/modes.md`。
 2. **第 1 轮 question（3-5 问，一次调用）**：受众与目的 / 叙事 mode（按 modes.md 推荐表给推荐项）/ 页数档位 / 交付形态（HTML / +PDF / +图片型 pptx）/ 内容侧重。源材料能推断的不问。
 3. 写 `outline.json`：逐页 layout/rhythm + **正文页必填 takeaway（断言句）/ evidence（引用 fact_id 或标 scenario）/ confidence / speaker_notes**。
-4. **大纲门禁**：`python3 ${SKILL_DIR}/scripts/validate_outline.py deck_projects/<name>` —— exit 0 才进 Phase 3；报错按条修大纲（内容不够 → 回 Research 补检索，不是硬编）。
+4. **大纲门禁**：`python3 ${SKILL_DIR}/scripts/validate_outline.py .deckcraft/<name>` —— exit 0 才进 Phase 3；报错按条修大纲（内容不够 → 回 Research 补检索，不是硬编）。
 
 ### Phase 3 — 设计锁定
 
@@ -90,8 +92,10 @@ mkdir -p .deckcraft/<name>/pages .deckcraft/<name>/research .deckcraft/<name>/im
 
 ### Phase 4 — 资产准备（按图片策略）
 
-- 品牌 logo：`fetch_assets.py logo <name> --out deck_projects/<name>/images`
-- 真图：`fetch_assets.py image "<query>" --out deck_projects/<name>/images`（credit 见 manifest，许可要求时页脚署名）
+- 品牌 logo：`fetch_assets.py logo <name> --out .deckcraft/<name>/images`
+- 真图：`fetch_assets.py image "<query>" --out .deckcraft/<name>/images`（credit 见 manifest，许可要求时页脚署名）
+- **弱网/无外网环境**（simpleicons/Wikimedia/favicon 均为外网源，超时约 8s/源）：失败即走诚实占位，
+  不要反复重试烧墙钟；可提示用户手动放图片进 `images/` 后引用
 - 图标：按 assets/icons/README.md 检索并内联（每页 ≤4 个，currentColor）
 - 取不到 → 诚实占位块（虚线框 +「图片待补」角标），绝不硬凑
 

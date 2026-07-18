@@ -25,11 +25,15 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 UA = "deckcraft/0.1 (+ultrawork desktop app; asset fetch for slide decks)"
 WIKI_API = "https://commons.wikimedia.org/w/api.php"
 
 
-def http_get(url: str, timeout: int = 20) -> bytes:
+def http_get(url: str, timeout: int = 8) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
@@ -53,6 +57,12 @@ def manifest_add(out_dir: Path, entry: dict) -> None:
 
 def fetch_logo(name: str, out_dir: Path) -> int:
     slug = slugify(name)
+    if not slug:
+        # CJK-only names slugify to "" → favicon would query the literal ".com"
+        # domain and save a junk "logo-.png"
+        print(f"ERROR: {name!r} has no ascii slug — pass the brand's latin name "
+              f"or domain, or use the honest placeholder block", file=sys.stderr)
+        return 1
     # ① simpleicons CDN — single-color SVG, recolorable via fill
     try:
         data = http_get(f"https://cdn.simpleicons.org/{urllib.parse.quote(slug)}")
@@ -69,6 +79,11 @@ def fetch_logo(name: str, out_dir: Path) -> int:
     try:
         domain = slug if "." in name else f"{slug}.com"
         data = http_get(f"https://www.google.com/s2/favicons?domain={domain}&sz=128")
+        # unknown domains get a generic globe served at tiny intrinsic size;
+        # anything under 64px would also just look blurry upscaled on a slide
+        png_w = int.from_bytes(data[16:20], "big") if data[:8] == b"\x89PNG\r\n\x1a\n" else 0
+        if png_w < 64:
+            raise ValueError(f"favicon intrinsic size {png_w}px < 64 — generic/low-res, not usable")
         if len(data) > 100:
             f = out_dir / f"logo-{slug}.png"
             f.write_bytes(data)

@@ -12,13 +12,62 @@ Output:
 """
 from __future__ import annotations
 
+import base64
 import html
 import json
+import mimetypes
 import re
 import sys
 from pathlib import Path
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
+
+# deck.html must be truly single-file: derivatives (shots/probe/pptx) render
+# split pages from a temp dir and --publish copies one file — any images/
+# relative reference breaks in all of those, so local images get inlined here.
+# Match src=/href=/xlink:href= and url(), with an optional ./ prefix.
+_IMG_REF = re.compile(
+    r'''((?:src|(?:xlink:)?href)\s*=\s*["']|url\(["']?)(?:\./)?(images/[^"')]+)''')
+# any surviving local images/ reference after inlining (a spelling the regex
+# above didn't catch) is a silent single-file breakage — caught as an error
+_RESIDUAL_IMG = re.compile(r'''(?:src|href|url\(["']?)\s*=?\s*["']?[^"')]*?\bimages/''')
+
+
+def inline_images(frag: str, proj: Path, errors: list[str]) -> str:
+    cache: dict[str, str] = {}  # rel -> data URI: encode each file once, not per reference
+
+    def repl(m: re.Match) -> str:
+        prefix, rel = m.group(1), m.group(2)
+        f = proj / rel
+        if not f.is_file():
+            errors.append(f"missing image file: {rel} (referenced but not in {proj}/images/)")
+            return m.group(0)
+        uri = cache.get(rel)
+        if uri is None:
+            mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            data = base64.b64encode(f.read_bytes()).decode("ascii")
+            if len(data) > 2_500_000:  # ~1.9MB binary — likely an unresized original
+                print(f"WARNING: {rel} inlines to {len(data)//1024}KB; consider downscaling",
+                      file=sys.stderr)
+            uri = cache[rel] = f"data:{mime};base64,{data}"
+        return f"{prefix}{uri}"
+    out = _IMG_REF.sub(repl, frag)
+    # strip the inlined data: URIs before scanning — a base64 body could by
+    # chance contain the literal "images/" and cause a false positive
+    scan = re.sub(r"data:[^\"')]+", "", out)
+    if _RESIDUAL_IMG.search(scan):
+        errors.append("a local images/ reference survived inlining (unsupported "
+                      "spelling e.g. absolute path) — deck.html would not be self-contained")
+    return out
+
+
+def page_no(p: Path) -> int | None:
+    m = re.search(r"(\d+)", p.stem)
+    return int(m.group(1)) if m else None
 
 
 def main() -> int:
@@ -45,18 +94,28 @@ def main() -> int:
 
     # numeric sort — lexicographic order would silently put page-10 after
     # page-1 when the model skips zero-padding
-    pages = sorted(pages_dir.glob("page-*.html"),
-                   key=lambda p: int(re.search(r"(\d+)", p.stem).group(1)))
+    all_pages = list(pages_dir.glob("page-*.html"))
+    unnumbered = [p.name for p in all_pages if page_no(p) is None]
+    if unnumbered:
+        print(f"ERROR: page files without a number (want page-NN.html): {unnumbered}",
+              file=sys.stderr)
+        return 1
+    pages = sorted(all_pages, key=page_no)
     if not pages:
         print(f"ERROR: no page-*.html fragments in {pages_dir}", file=sys.stderr)
         return 1
     frags = []
+    img_errors: list[str] = []
     for p in pages:
         t = p.read_text(encoding="utf-8").strip()
         if "<section" not in t:
             print(f"ERROR: {p.name} contains no <section> fragment", file=sys.stderr)
             return 1
-        frags.append(t)
+        frags.append(inline_images(t, proj, img_errors))
+    if img_errors:
+        for e in img_errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     shell = shell_f.read_text(encoding="utf-8")
     tokens = tokens_f.read_text(encoding="utf-8").strip()

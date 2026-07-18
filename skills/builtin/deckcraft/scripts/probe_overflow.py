@@ -26,9 +26,17 @@ from pathlib import Path
 from export_deck import CHROME_BASE, split_pages
 from find_chrome import find_browser
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 PROBE_JS = """
 <script>
 (function(){
+// Measure only after the load event: a synchronous snapshot would run before
+// images decode, so an oversized image could never be caught (false negative).
+// --virtual-time-budget advances headless Chrome past load before --dump-dom.
+function measure(){
   var out = [];
   var els = document.querySelectorAll('.slide *');
   for (var i = 0; i < els.length; i++) {
@@ -55,6 +63,10 @@ PROBE_JS = """
   node.type = 'application/json'; node.id = '__probe__';
   node.textContent = JSON.stringify(out);
   document.body.appendChild(node);
+}
+// this script is inlined mid-body, so it always runs during parse (before load);
+// waiting for load guarantees images have decoded before we measure
+window.addEventListener('load', measure);
 })();
 </script>
 """
@@ -81,6 +93,11 @@ def main() -> int:
         return 2
     flat = "<style>.stage{margin:0}.slide{margin:0}</style>"
 
+    if a.page is not None and not 1 <= a.page <= len(sections):
+        print(f"ERROR: --page {a.page} out of range (deck has {len(sections)} pages)",
+              file=sys.stderr)
+        return 2
+
     findings: dict[str, list] = {}
     targets = [(a.page, sections[a.page - 1])] if a.page else list(enumerate(sections, 1))
     kwargs = {}
@@ -93,7 +110,8 @@ def main() -> int:
             r = subprocess.run(
                 [browser, *CHROME_BASE, "--window-size=1280,720", "--virtual-time-budget=3000",
                  "--dump-dom", page.resolve().as_uri()],
-                capture_output=True, text=True, timeout=120, **kwargs)
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=120, **kwargs)
             m = re.search(r'<script type="application/json" id="__probe__">(.*?)</script>',
                           r.stdout, re.S)
             if not m:

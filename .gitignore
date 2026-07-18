@@ -70,3 +70,7 @@ packages/client/desktop/e2e/*.png
 # Python bytecode (local script runs must never enter the skill tree / pack hash)
 __pycache__/
 *.pyc
+
+# deckcraft example regression-chain output (2MB+ of pdf/pptx/png per run) —
+# also excluded from the builtin-skills zip by pack/fetch-builtin-skills.ts
+skills/builtin/*/examples/*/export/

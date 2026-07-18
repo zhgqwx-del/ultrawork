@@ -17,6 +17,10 @@ python3 ${SKILL_DIR}/scripts/probe_overflow.py $EX       # 物理探针（0 find
 python3 ${SKILL_DIR}/scripts/export_deck.py $EX --pdf --pptx   # 派生物
 ```
 
+（Windows：`python3` 不存在时改用 `python`。）
+
 注意：本 example 的 facts.json 与全部数据均为**演示用虚构语料**（scenario），
-数据页页脚带可见标注——这也是 scenario 规则的示范。
-产物（deck.html/qa_report.json/export/）由上面命令现生成，不入库。
+数据页带可见「示意数据/虚构」标注（validate_deck E10 硬校验）——这也是 scenario 规则的示范。
+`deck.html` 与 `qa_report.json` **已入库作为字节级基准**：重跑上面的链应当不产生 git diff，
+出现 diff 即说明脚本行为变了（这本身就是回归信号）。`export/` 目录不入库，
+打包脚本（pack/fetch-builtin-skills）也按相对路径排除它——不会进分发 zip。

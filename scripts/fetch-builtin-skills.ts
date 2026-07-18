@@ -17,6 +17,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
+import { JUNK, isGeneratedDir } from "./builtin-skills-exclude"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const BUILTIN_DIR = join(ROOT, "skills", "builtin")
@@ -257,16 +258,19 @@ async function main() {
 
   // sentinel：基于全部内置内容（含自写 doc-edit）的哈希，内容变即触发桌面端刷新。
   // 喂相对路径 + \0 分隔（非裸 basename）：目录改名/文件搬家也改变 hash。
-  // ⚠️ 与 scripts/pack-builtin-skills.ts 的 hash 算法必须逐字节一致（对账不变式），改一处必须同步另一处。
+  // ⚠️ hash 算法须与 scripts/pack-builtin-skills.ts 逐字节一致（对账不变式）；排除规则
+  // （JUNK/GENERATED）已抽到 builtin-skills-exclude.ts 共享，不再手抄。
   const hash = createHash("sha256")
   const walk = (d: string, rel: string) => {
     for (const name of readdirSync(d).sort()) {
-      if (name === ".builtin-version") continue
+      if (name === ".builtin-version" || JUNK.has(name)) continue
       const fp = join(d, name)
       const st = statSync(fp)
       const relPath = rel ? `${rel}/${name}` : name
-      if (st.isDirectory()) walk(fp, relPath)
-      else {
+      if (st.isDirectory()) {
+        if (isGeneratedDir(relPath)) continue
+        walk(fp, relPath)
+      } else {
         hash.update(relPath + "\0")
         hash.update(readFileSync(fp))
         hash.update("\0")

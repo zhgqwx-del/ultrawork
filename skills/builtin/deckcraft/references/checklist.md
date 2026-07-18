@@ -1,5 +1,7 @@
 # QA checklist（能 grep 的规范才是能强制的规范；门禁按序全过）
 
+> Windows：`python3` 不存在时改用 `python`（python.org 安装器只装 python.exe）。
+
 ## P0 — 硬门禁链（任一失败必须修复后重跑；顺序不可换）
 
 ```bash

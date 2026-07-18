@@ -18,6 +18,10 @@ import shutil
 import sys
 from pathlib import Path
 
+from console_encoding import configure_utf8_stdio
+
+configure_utf8_stdio()
+
 
 def _candidates() -> list[str]:
     if sys.platform == "darwin":
@@ -28,7 +32,9 @@ def _candidates() -> list[str]:
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
         ]
     if sys.platform.startswith("win"):
-        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        # ProgramW6432: 32-bit python on 64-bit Windows sees ProgramFiles = x86 dir,
+        # which would hide 64-bit Chrome/Edge from us (Rust probe checks both roots).
+        pf = os.environ.get("ProgramW6432") or os.environ.get("ProgramFiles", r"C:\Program Files")
         pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
         cands: list[str] = []
         local = os.environ.get("LOCALAPPDATA", "")
@@ -51,6 +57,9 @@ def _candidates() -> list[str]:
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
         "/snap/bin/chromium",
+        "/opt/google/chrome/chrome",
+        "/var/lib/flatpak/exports/bin/org.chromium.Chromium",
+        str(Path.home() / ".local/share/flatpak/exports/bin/org.chromium.Chromium"),
     ]
 
 
