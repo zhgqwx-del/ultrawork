@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **产物预览：HTML 应用内浏览器预览 + 预览/源码切换 + 打开按钮类型化（ADR-062 / discussions/045）**：治「HTML 产物点开是带行号的代码视图而非网页」。
+  - **应用内预览**：分派链加 `isHtml` 分支，渲染 `<iframe srcDoc={content} sandbox="allow-scripts">`（不带 `allow-same-origin` → 不透明源、脚本可跑但够不到父页面/Tauri IPC，实测 `window.parent.document`/`__TAURI__` 均 SecurityError；比现状外弹浏览器更收敛）。可行前提均核验：deckcraft deck 自包含（srcdoc 无 base URL 也整渲）、前端已持 HTML 全文、`csp:null` 不拦、无需 assetProtocol。
+  - **预览/源码切换**：HTML 头部加 `Code`/`Eye` 钮，默认预览、可切原始源码（覆盖非自包含 HTML 相对资源失效的退路）。
+  - **打开按钮推广 + 类型化图标**：「用默认应用打开」从仅 PDF/HTML 放宽到所有 `file` 型产物（`open_file_with_system` 三平台）；图标由固定 `AppWindow` 改为按类型给 lucide 语义图标（html→Globe、文档→FileText、图片→Image、代码→FileCode…兜底 AppWindow）。**否决**取 OS 真实应用图标（三套原生 + 不可 headless 验 + Linux 不稳，纯装饰性，详见 discussions/045）。
+  - **验证**：jsdom 单测 10 例（iframe/srcDoc/sandbox/toggle/打开按钮/7 类型图标）+ 双引擎 Playwright e2e `html-preview-iframe.e2e.ts`（Chromium=WebView2 / WebKit=WKWebView+WebKitGTK：真 deck 渲染/沙箱隔离/fit 脚本运行/居中/对照组）+ typecheck 0 + desktop **683** + check-docs 绿。macOS 真机验收通过。纯 renderer、三平台一致、单/Team 共用同一 `ArtifactPreview`。
+  - **已知（独立记档）**：跨会话产物泄漏（共享 workspace + mtime 时间窗归属，与本改动无关）→ discussions/044。
+
 - **自研 HTML-first PPT 技能 deckcraft（ADR-061 / discussions/043）**：分阶段替换内置 ppt-master，治两大痛点——逐页手写 SVG 的慢与贵（架构性，几十万 token/deck）+ :5050 确认页外弹系统浏览器。验证期窄触发（「deckcraft/快速PPT」）与 ppt-master 并存，真机复走查通过后按 043 §十五删除内置 ppt-master。
   - **管线**：`源材料/Research → 大纲 IR(evidence) → 大纲门禁 → spec_lock → 首页门 → 分批/并行生成 HTML → 结构门禁+物理溢出探针 → 独立视觉评审 → HTML/PDF/图片型 pptx(2x+讲稿 notes)`。P0 spike 实证并行一致性成立（10 页 ≤70s、契约 0 违规 vs ppt-master 式串行外推 ~11min）。
   - **内容工程（P1.5，治真机暴露的「空心 deck」）**：无源文档时 Research MANDATORY（联网检索 → `facts.json` fact_id 溯源）；正文页强制 takeaway 断言/evidence(≥2)/confidence/speaker_notes；`validate_outline.py` 硬门禁（弱标题 lint/空话黑名单/编造数据拦截，scenario 数据页强制可见标注）；mode 叙事轴 ×5 与视觉风格 ×4 正交。
@@ -32,6 +39,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **左侧栏会话列表更紧凑（仅 CHANGELOG 无 ADR）**：`SessionItem` 行垂直 padding `py-2 → py-1`（正常态 + 重命名编辑态两处同步，避免进重命名时行高跳动），分组头「今天/昨天/本周/更早」`py-1 → py-0.5`。单行行高约 35px → 27px，每行省 8px，一屏可多显数条会话、列表信息密度更高。行间 `space-y-0.5`（2px）与组间 `space-y-4` 保持不动——「间隔大」的主因是每行自身的垂直 padding 而非行间距。纯 renderer、三平台一致，单/Team/IM/ACP 四类会话共用同一组件一处生效；测试不锁间距（`session-item.test.tsx` 只断言标题/tooltip/badge/单行），无回归。落档过程：先上温和的 A 档（`py-1.5`）真机看，再进 B 档（`py-1` + 分组头收窄）定稿。**验证**：typecheck 8/8 + desktop **661** 全绿 + macOS 真机密度走查通过。
 
 ### Fixed
+
+- **deckcraft deck 在窄视口（半屏预览）不居中、整体右偏（ADR-062 / discussions/045）**：根因是 deck fit 脚本（`shell.html`）`.stage{margin:0 auto}` + `transform-origin:top center` 仅在视口≥1280px 才居中——视口 <1280 时 `margin:auto` 退化为 0、stage 左对齐溢出，缩放锚点钉在 stage 自身中心 x=640 ≠ 视口中心 → 右偏（把独立浏览器拉窄同样偏，是 deck 潜在缺陷；应用内半屏预览恒 <1280 故每次触发）。修法：`.stage{margin:0}` + `transform-origin:top left` + `transform:translateX((vw-1280*s)/2) scale(s)`，脚本独占水平居中。重生成示例 deck + 重跑 `pack-builtin-skills.ts` + 同步两 `.builtin-version`（`c7d2c72d`）。print 路径 `transform:none!important` 照旧、`extract_layout.py` 绕过 fit 脚本 → PDF/pptx 导出零影响。**验证**：真实重生成 deck 两引擎 320→2560+边界+实时 resize 全 0px 偏移且左右对称（旧版 52/304px 横向溢出滚动条一并消除）、垂直零变化；deckcraft-selftest 48/0；常驻 e2e 加 sub-1280 居中断言。**仅对新生成 deck 生效**（旧 deck 内嵌旧脚本）。
 
 - **deckcraft 合并前全分支对抗审查（四路：完备/跨平台/打包/双模式）修 3 门禁/健壮性缺陷 + Windows 命令加固（ADR-061）**：均非 P3 引入、属 deckcraft 脚本遗留，各配 selftest 负样本锁定。
   - **[MED] validate_deck 样式门洞**：`style="…"` 正则只匹配双引号，`style='…'`（单引号）/ `style = "…"`（等号带空格）完全逃逸 E1/E2/E4/E9（字面色/字号/渐变/隐藏内容）——Chrome 渲染一致、是能过门的真页面。放宽为 `style\s*=\s*["']([^"']*)["']` + 3 selftest 负样本。

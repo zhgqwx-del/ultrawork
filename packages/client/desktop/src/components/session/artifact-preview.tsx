@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { X, FileDiff, Copy, Check, FolderOpen, ExternalLink, ChevronLeft, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
+import { X, FileDiff, Copy, Check, FolderOpen, ExternalLink, ChevronLeft, ChevronRight, Maximize2, Minimize2, AppWindow, Code, Eye, Globe, FileText, FileCode, FileSpreadsheet, Presentation, FileVideo, FileAudio, FileArchive, Image as ImageIcon } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -67,6 +68,38 @@ function isHtml(path: string): boolean {
 
 function isPdf(path: string): boolean {
   return /\.pdf$/i.test(path)
+}
+
+// The "open with default app" button hints at WHAT kind of app will open the
+// file, by file type (not the actual installed app's icon — that needs 3 native
+// impls and can't be headless-tested; ADR/discussions note). Fixed AppWindow is
+// the fallback for anything unmapped.
+const CODE_EXTS = new Set([
+  "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "go", "rs", "c", "cpp", "cc", "h", "hpp",
+  "java", "kt", "rb", "php", "swift", "sh", "bash", "zsh", "json", "jsonc", "yaml", "yml",
+  "toml", "xml", "css", "scss", "less", "sql", "csv", "vue", "svelte",
+])
+const SHEET_EXTS = new Set(["xls", "xlsx"])
+const SLIDE_EXTS = new Set(["ppt", "pptx", "key"])
+const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "webm"])
+const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a"])
+const ARCHIVE_EXTS = new Set(["zip", "tar", "gz", "rar", "7z", "bz2", "xz"])
+const DOC_EXTS = new Set(["doc", "docx", "rtf", "odt", "txt"])
+
+/** Icon for the "open with default app" button, chosen by file type. */
+function openAppIcon(path: string, mime?: string): LucideIcon {
+  if (isHtml(path)) return Globe // opens in a browser
+  if (isImage(mime, path)) return ImageIcon
+  if (isPdf(path) || isMarkdown(path)) return FileText
+  const ext = extractExtension(path)
+  if (CODE_EXTS.has(ext)) return FileCode
+  if (SHEET_EXTS.has(ext)) return FileSpreadsheet
+  if (SLIDE_EXTS.has(ext)) return Presentation
+  if (VIDEO_EXTS.has(ext)) return FileVideo
+  if (AUDIO_EXTS.has(ext)) return FileAudio
+  if (ARCHIVE_EXTS.has(ext)) return FileArchive
+  if (DOC_EXTS.has(ext)) return FileText
+  return AppWindow // generic fallback
 }
 
 function DiffView({ content }: { content: string }) {
@@ -162,6 +195,9 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  /** HTML artifacts render as an in-app browser preview (iframe) by default;
+      this toggles to the raw source (CodeMirror). Reset per-artifact below. */
+  const [htmlSourceView, setHtmlSourceView] = useState(false)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   /** MIME type resolved from API response (fallback for file-tree clicks with no mime) */
   const [resolvedMime, setResolvedMime] = useState<string | undefined>(artifact.mime)
@@ -173,6 +209,7 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
   // content fetch — the backend returns empty content for pdf, which would
   // otherwise fall through to a blank "no content" state.
   const pdf = artifact.type === "file" && isPdf(artifact.path)
+  const html = artifact.type === "file" && isHtml(artifact.path)
 
   const cmExtensions = useMemo(() => {
     const ext = extractExtension(artifact.path)
@@ -191,6 +228,7 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
     setError(null)
     setContent(null)
     setResolvedMime(artifact.mime)
+    setHtmlSourceView(false)
 
     // Skip loading for binary files (info card) and PDFs (pdf.js reads bytes).
     if (binary || pdf) {
@@ -298,27 +336,33 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
           </div>
         )}
 
-        {/* Open with system app — for PDFs (Preview.app, etc.) */}
-        {pdf && (
+        {/* Preview ⇄ source toggle — HTML renders as an in-app browser preview
+            (iframe) by default; this flips to the raw source and back. */}
+        {html && (
           <button
-            onClick={handleOpenWithApp}
+            onClick={() => setHtmlSourceView((v) => !v)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
-            title={t("artifact.openWithApp")}
+            title={htmlSourceView ? t("artifact.viewPreview") : t("artifact.viewSource")}
           >
-            <ExternalLink className="size-3" />
+            {htmlSourceView ? <Eye className="size-3" /> : <Code className="size-3" />}
           </button>
         )}
 
-        {/* Open in browser — for HTML files */}
-        {artifact.type === "file" && isHtml(artifact.path) && (
-          <button
-            onClick={handleOpenWithApp}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
-            title={t("artifact.openInBrowser")}
-          >
-            <ExternalLink className="size-3" />
-          </button>
-        )}
+        {/* Open with the system default app — any file (HTML → browser, code →
+            editor, image → Preview, etc.). open_file_with_system is 3-platform.
+            Icon hints at the file type (openAppIcon); AppWindow is the fallback. */}
+        {artifact.type === "file" && (() => {
+          const OpenIcon = openAppIcon(artifact.path, resolvedMime)
+          return (
+            <button
+              onClick={handleOpenWithApp}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-accent)] hover:text-[var(--color-fg)]"
+              title={isHtml(artifact.path) ? t("artifact.openInBrowser") : t("artifact.openWithApp")}
+            >
+              <OpenIcon className="size-3" />
+            </button>
+          )
+        })()}
 
         {/* Reveal in Finder — for all non-patch artifacts */}
         {artifact.type === "file" && (
@@ -403,6 +447,19 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
           <div className="prose prose-sm max-w-none p-4 dark:prose-invert">
             <ReactMarkdown remarkPlugins={MD_REMARK_PLUGINS} components={MARKDOWN_LINK_ONLY}>{content}</ReactMarkdown>
           </div>
+        ) : html && !htmlSourceView ? (
+          // In-app browser preview. deckcraft decks are self-contained (inlined
+          // CSS/JS, data-URI images), so srcDoc renders them fully with no base
+          // URL. sandbox="allow-scripts" (no allow-same-origin) lets the deck's
+          // fit script run while keeping an opaque origin — the frame can't reach
+          // the parent page or Tauri IPC. The source toggle is the escape hatch
+          // for non-self-contained HTML whose relative assets won't resolve here.
+          <iframe
+            srcDoc={content}
+            sandbox="allow-scripts"
+            title={basename(artifact.path)}
+            className="size-full border-0 bg-white"
+          />
         ) : (
           <CodeMirror
             value={content}

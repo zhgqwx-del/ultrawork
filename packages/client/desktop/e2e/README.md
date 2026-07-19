@@ -218,3 +218,26 @@ bun run --bun e2e:websearch-ui   # exit 0 = PASS, 1 = FAIL
 ```
 
 Standard ports 4096/1420 (kill a running dev instance first) + stub on 8095.
+
+## `html-preview-iframe.e2e.ts` — in-app HTML preview iframe, both shipping engines
+
+Engine-level proof for the artifact preview's in-app HTML rendering: a REAL
+self-contained deckcraft `deck.html` fed to the exact `<iframe srcDoc={content}
+sandbox="allow-scripts">` markup the component emits, run on **both** engines
+Tauri ships — Chromium (Windows WebView2) and WebKit (macOS WKWebView / Linux
+WebKitGTK) — so the two together cover all three platforms' renderers. Asserts:
+deck renders (all slides) → the deck's inline fit script RAN under
+`allow-scripts` (no `allow-same-origin` needed) → sandbox isolation holds (opaque
+origin; parent DOM + a parent-exposed `window.__TAURI__` both throw
+SecurityError) → control with `sandbox=""` proves the fit-script assertion
+discriminates. The vitest `artifact-preview-html.test.tsx` covers the
+complementary half (the real component emits that iframe + the preview⇄source
+toggle).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:html-preview   # exit 0 = PASS, 1 = FAIL
+```
+
+Self-contained — NO opencode server, NO model, NO auth key. Needs system Chrome
+and/or the bundled WebKit; each engine is skipped (not failed) if it can't launch.

@@ -751,6 +751,8 @@ export const en: Record<string, string> = {
     "artifact.revealInFinder": "Show in Finder",
     "artifact.openInBrowser": "Open in Browser",
     "artifact.openWithApp": "Open with App",
+    "artifact.viewSource": "View source",
+    "artifact.viewPreview": "View preview",
 
     // Workspace selector
     "workspace.selectTitle": "Select Workspace",
@@ -1590,6 +1592,8 @@ export const zhHans: Record<string, string> = {
     "artifact.revealInFinder": "在 Finder 中显示",
     "artifact.openInBrowser": "在浏览器中打开",
     "artifact.openWithApp": "用应用打开",
+    "artifact.viewSource": "查看源码",
+    "artifact.viewPreview": "查看预览",
 
     // Workspace selector
     "workspace.selectTitle": "选择工作区",

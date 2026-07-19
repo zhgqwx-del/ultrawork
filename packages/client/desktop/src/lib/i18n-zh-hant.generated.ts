@@ -674,6 +674,8 @@ export const zhHant: Record<string, string> = {
   "artifact.revealInFinder": "在 Finder 中顯示",
   "artifact.openInBrowser": "在瀏覽器中開啟",
   "artifact.openWithApp": "用應用開啟",
+  "artifact.viewSource": "檢視原始碼",
+  "artifact.viewPreview": "檢視預覽",
   "workspace.selectTitle": "選擇工作區",
   "workspace.selectSubtitle": "所有會話產物將儲存在此目錄",
   "workspace.current": "當前工作區",
