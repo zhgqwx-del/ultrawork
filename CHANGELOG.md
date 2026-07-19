@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-19
+
 ### Added
 
 - **产物预览：HTML 应用内浏览器预览 + 预览/源码切换 + 打开按钮类型化（ADR-062 / discussions/045）**：治「HTML 产物点开是带行号的代码视图而非网页」。
