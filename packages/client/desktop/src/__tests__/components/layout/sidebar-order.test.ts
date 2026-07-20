@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import type { Session } from "@agent/api-client"
 import {
   orderSessions,
@@ -22,13 +22,29 @@ function session(id: string, created: number, updated: number): Session {
   } as Session
 }
 
-/** Grouping keys off wall-clock day boundaries, so anchor fixtures to "now". */
-const now = Date.now()
+// Grouping keys off wall-clock day boundaries: `groupSessionsByDate` reads the
+// LIVE clock (`new Date()`), so fixtures and the code under test must agree on
+// "now". Pin BOTH: a fixed midday `now` (12:00, safely mid-day so a `now-60_000`
+// "just active" fixture stays inside today) AND `setSystemTime(now)` per test so
+// the source sees the same instant. Anchoring to real `Date.now()` opened a
+// ~60s/day flake: run in the first minute after local midnight and `now-60_000`
+// fell into yesterday, so a session expected under 「today」 grouped under 「昨天」.
+// Note: `now` is computed at module load, before beforeEach — it MUST be a fixed
+// literal, not Date.now(), or it would desync from the faked system clock.
+const now = new Date(2026, 0, 15, 12, 0, 0).getTime()
 const todayStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()).getTime()
 
 const t = (key: string) => key
 
 describe("sidebar order (P0)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it("sorts by last activity, not by creation", () => {
     // The channel session: created weeks ago, woken by an IM message a minute ago.
     const channel = session("channel", now - 30 * DAY, now - 60_000)

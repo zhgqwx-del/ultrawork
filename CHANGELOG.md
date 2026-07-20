@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **消除 `sidebar-order.test.ts` 的挂钟 flaky + 澄清「config JSON parse 失败」误判（discussions/046）**：溯源历史结论「唯一 1 个失败 sidebar-order.test.ts（config JSON parse）」——实为**误读**（那行 `JSON Parse error` 来自 `config.test.ts` 的负路径用例 `returns DEFAULT_CONFIG on invalid JSON`，vitest 已把 stderr 归属到正确文件，是读交错日志时的人为误判；sidebar-order 6/6、全套 683/683 全绿）。顺修两处：
+  - **隐患二（真 flaky，已修）**：`groupSessionsByDate` 读真实挂钟算 `todayStart`，而 `sidebar-order.test.ts` 用真实 `Date.now()` 造 `updated=now-60_000` 断言 `today` → 本地零点后 0–1 分钟窗口里 `now-60_000` 落到昨天、分组成 `yesterday` 致断言失败（穷举全套中招面精确=1 条；`session-item` 相对文案不受影响）。改法=**钉双时钟**：模块级 `now` 由 `Date.now()` 换成固定午间字面量 + `beforeEach` `vi.setSystemTime(now)`/`afterEach` `useRealTimers()`，让源码 `new Date()` 与 fixture 同一时刻（坑：`now` 在模块加载期算，天真 `useFakeTimers` 会让源码/测试时钟 desync 更糟）。**纯测试确定性，产品源码 `left-sidebar.tsx` 一字未动**。
+  - **隐患一（洁净度，已降噪）**：`config.test.ts` 的 invalid-JSON 负路径用例把预期 `console.error` 泄漏到 stderr（正是这次误判的来源）→ 局部 `vi.spyOn(console,"error")` 静音并升级为正向断言 `toHaveBeenCalledTimes(1)`。
+  - 验证：两文件 27/27、全套 desktop **683** 不变、typecheck 0、check-docs 无漂移。改动仅测试 + 文档，无逻辑代码。
+
 ## [0.3.1] - 2026-07-19
 
 ### Added

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import {
   AUTO_API_BASE_URL,
   ConfigStorage,
@@ -11,6 +11,9 @@ import {
 describe("ConfigStorage", () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   describe("DEFAULT_CONFIG", () => {
@@ -119,9 +122,14 @@ describe("ConfigStorage", () => {
     })
 
     it("returns DEFAULT_CONFIG on invalid JSON", () => {
+      // load() catches the parse error and logs it; silence the expected
+      // console.error so it can't be misread as a failure in the interleaved
+      // test output, and assert it fired (the log IS the observable behaviour).
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
       localStorage.setItem("ultrawork-config", "not-json{{{")
       const config = ConfigStorage.load()
       expect(config).toEqual(DEFAULT_CONFIG)
+      expect(errorSpy).toHaveBeenCalledTimes(1)
     })
   })
 
