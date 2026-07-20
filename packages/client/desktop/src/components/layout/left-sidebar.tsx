@@ -248,7 +248,11 @@ export function LeftSidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          "flex h-full shrink-0 flex-col bg-[var(--sidebar-bg)] transition-all duration-300",
+          // select-none: the whole left sidebar is navigational chrome, not
+          // readable copy — pressing a row and dragging down should never start a
+          // cross-row text selection (mainstream agent sidebars behave the same).
+          // The two <input>s below opt back in with select-text.
+          "flex h-full shrink-0 flex-col select-none bg-[var(--sidebar-bg)] transition-all duration-300",
           effectiveOpen ? "w-64" : isMacOS ? "w-[68px]" : "w-12"
         )}
       >
@@ -314,7 +318,7 @@ export function LeftSidebar() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoFocus
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-9 pr-3 text-[13px] text-[var(--sidebar-fg)] placeholder:text-[var(--sidebar-fg-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                    className="w-full select-text rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-9 pr-3 text-[13px] text-[var(--sidebar-fg)] placeholder:text-[var(--sidebar-fg-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
                   />
                 </div>
               </div>
@@ -615,7 +619,7 @@ export function SessionItem({
           onChange={(e) => setEditValue(e.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={handleSaveEdit}
-          className="min-w-0 flex-1 bg-transparent outline-none"
+          className="min-w-0 flex-1 select-text bg-transparent outline-none"
           onClick={(e) => e.stopPropagation()}
         />
         <div className="flex shrink-0 items-center gap-1">

@@ -17,6 +17,7 @@
 - CSS 变量 token 体系（见 `index.css`）
 - 只在用户要求时使用 emoji
 - i18n `t(key, params)` 插值用 `split/join` 而非 `String.replace`（replace 会解释替换值里的 `$&`/`$'` 序列——文件路径参数如 `{location}` 可能含）；同一占位符只写一次
+- **可点击 chrome（侧栏行/导航项等「像按钮的 div」）加 `select-none`**：这类元素是导航 affordance、不是可读正文，默认可选会让「按住往下拖」触发跨行文本选区（主流 agent 侧栏均禁选）。落点选**祖先容器**（如 `<aside>`），靠继承覆盖整棵子树；子树里真正需要选中的 `<input>`/正文用 `select-text` **显式 opt-in**（WebKit 下祖先为 `none` 时框内拖选会被抑制，opt-in 是必需而非可选）。产物 CSS 由 Lightning CSS 自动补 `-webkit-user-select` 前缀，无需手写。回归护栏见 `e2e/sidebar-select.e2e.ts`（真引擎，jsdom 无选区引擎测不了）。
 
 ### TypeScript
 - 构建顺序：修改 `api-client` 类型后，必须先 `tsc --build` 再检查 client
@@ -387,7 +388,11 @@ setTimeout(() => fetchSources(), 500)
 
 **测试模式（三层）**：① mock ACP agent（`packages/agent/acp-client/scripts/mock-acp-agent.ts`，stdin JSON-RPC 确定性回放，`bun test src` 离线跑）→ ② 真实 agent spike 脚本落盘 fixture（`packages/agent/acp-client/scripts/spike-claude.ts`）→ ③ desktop vitest 用 fixture 喂真实 `buildTurnModel`/`groupIntoTurns` 断言渲染契约。
 
-**真机 UI 验证（不依赖 Tauri 壳）**：Chrome（playwright-core `channel:"chrome"`）驱动 Vite :1420，`addInitScript` 预埋 localStorage——`ultrawork-config`（凭证取自 `~/.config/ultrawork/sidecar-auth.json`）+ `workspace_path`；WorkspaceSelector 的「继续」按钮纯 JS 可点，之后整个 app 流程可自动化（建会话/选 agent/发消息/断言渲染/截图）。
+**真机 UI 验证（不依赖 Tauri 壳）**：Chrome（playwright-core `channel:"chrome"`）驱动 Vite :1420，`addInitScript` 预埋 localStorage——`ultrawork-config`（凭证取自 `~/.config/ultrawork/sidecar-auth.json`）+ `workspace_path`；WorkspaceSelector 的「继续」按钮纯 JS 可点，之后整个 app 流程可自动化（建会话/选 agent/发消息/断言渲染/截图）。**双引擎**：`E2E_ENGINE=webkit` 切 WKWebView 引擎（= macOS/Linux 打包壳同款），凡是 CSS/选区/布局类改动两引擎都要过。
+
+两个已被真机验证咬过的 e2e 桩坑（`sidebar-select.e2e.ts` 血泪，2026-07-20）：
+- **Tauri 桩必须完整**：`__TAURI_INTERNALS__.invoke` 的 handlers 至少含 `get_sidecar_credentials`（ConfigProvider 靠它拿鉴权，缺了 app 连不上 opencode → 侧栏列表恒空）；且 `window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }` 必须存在（`@tauri-apps/api/event` cleanup 时调它，否则 pageerror 刷屏并可能打断 provider）。完整桩以 `about-legal-ui-walkthrough.e2e.ts` / `sidebar-select.e2e.ts` 为准。
+- **macOS 临时工作区必须 `realpathSync`**：`mkdtemp` 落在 `/var/folders`（→ `/private/var` 软链）。opencode 对 `?directory=` **LIST 查询**做 realpath 规范化、却按**创建时 header 原样路径**存会话，未规范化的 temp dir 会让侧栏列表恒空（会话确实存在、`GET /session` 带 header 无 query 能查到，一加 `?directory=` 就 0）。用 `realpathSync(mkdtempSync(...))` 消除。真实用户工作区（`/Users/...`）非软链，只有测试临时目录会中招。凡依赖**侧栏会话列表**的 e2e 必踩；直接导航 `/session/:id` 的（如 `session-scroll`）绕过列表故从未暴露。
 
 ## 12. 内置技能 authoring（`skills/builtin/`，ADR-032）
 

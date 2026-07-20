@@ -16,6 +16,7 @@
     "e2e:sidebar-channel": "bun run --bun e2e/sidebar-channel-ui.e2e.ts",
     "e2e:channel-rotation": "bun run --bun e2e/channel-session-rotation.e2e.ts",
     "e2e:scroll": "bun run --bun e2e/session-scroll.e2e.ts",
+    "e2e:sidebar-select": "bun run --bun e2e/sidebar-select.e2e.ts",
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
     "e2e:add-source-auth": "bun run --bun e2e/add-source-auth.e2e.ts",
