@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useSyncExternalStore, type ComponentType, type ReactNode } from "react"
 import { toast } from "sonner"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, Code2, Users, Twitter, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2, Layers, Plug} from "lucide-react"
+import { Settings, Shield, Cpu, Info, CheckCircle2, XCircle, Loader2, Globe, MessageSquare, Sparkles, ExternalLink, Server, Plus, RefreshCw, X, AlertCircle, Search, Terminal, Radio, ChevronDown, FileJson, Trash2, BookOpen, FolderOpen, Database, Bot, Package, Download, Wrench, AlertTriangle, SlidersHorizontal, Building2, Layers, Plug, FileText} from "lucide-react"
 import { TabsContent } from "@/components/ui/tabs"
 import { Toggle } from "@/components/ui/toggle"
 import { SectionTabs, type SectionTab } from "@/components/settings/section-tabs"
@@ -42,6 +42,7 @@ import { openUrl } from "@tauri-apps/plugin-opener"
 import { openExternal } from "@/lib/external-url"
 import type { SkillSource, SkillItem } from "@/lib/use-skills"
 import { APP_VERSION } from "@/lib/app-version"
+import { OssLicensesView, LegalDocView, LegalEntryButton } from "@/components/settings/about-legal"
 
 type SettingsSection = "general" | "models" | "privacy" | "capabilities" | "agents" | "services" | "tools" | "channels" | "knowledge" | "skills" | "about"
 
@@ -2347,14 +2348,24 @@ function SettingsSkillCard({ item, depBadge }: { item: SkillItem; depBadge?: Rea
 
 function AboutSection() {
   const { t } = useI18n()
+  // About root vs. one of the three legal/compliance sub-views (独立整页, ADR/047).
+  const [view, setView] = useState<"root" | "oss" | "eula" | "privacy">("root")
 
   const LINKS = [
     { icon: Globe, labelKey: "about.website", href: "https://ultrawork.ai" },
-    { icon: Code2, labelKey: "about.sourceCode", href: "https://github.com/anthropics/ultrawork" },
-    { icon: Users, labelKey: "about.community", href: "https://discord.gg/ultrawork" },
-    { icon: Twitter, labelKey: "about.followUs", href: "https://x.com/ultrawork" },
     { icon: MessageSquare, labelKey: "about.feedback", href: "https://github.com/anthropics/ultrawork/issues" },
   ]
+
+  // Compliance entries (mirror the reference product's About footer row).
+  const LEGAL_ENTRIES = [
+    { key: "oss" as const, icon: Package, labelKey: "about.legal.thirdParty" },
+    { key: "eula" as const, icon: FileText, labelKey: "about.legal.terms" },
+    { key: "privacy" as const, icon: Shield, labelKey: "about.legal.privacy" },
+  ]
+
+  if (view === "oss") return <OssLicensesView onBack={() => setView("root")} />
+  if (view === "eula") return <LegalDocView doc="eula" onBack={() => setView("root")} />
+  if (view === "privacy") return <LegalDocView doc="privacy" onBack={() => setView("root")} />
 
   return (
     <div className="space-y-6">
@@ -2394,7 +2405,9 @@ function AboutSection() {
         <InfoRow label={t("about.opencode")} value={`localhost:${sidecarPorts().opencode}`} />
       </div>
 
-      {/* Quick links */}
+      {/* Bottom action row — website, feedback + the three compliance views, all
+          in ONE row (mirrors the reference product's About footer). External
+          links carry a ↗ glyph; the in-app views carry a › chevron. */}
       <div className="flex flex-wrap gap-2">
         {LINKS.map((link) => (
           <button
@@ -2408,6 +2421,9 @@ function AboutSection() {
             {t(link.labelKey)}
             <ExternalLink className="size-3 text-[var(--color-fg-muted)]" />
           </button>
+        ))}
+        {LEGAL_ENTRIES.map((e) => (
+          <LegalEntryButton key={e.key} icon={e.icon} label={t(e.labelKey)} onClick={() => setView(e.key)} />
         ))}
       </div>
 

@@ -114,6 +114,10 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/components/settings/search-tools-section.tsx` — 设置页「工具」分区（BYOK 联网搜索：Tavily/IQS key 卡 + 测试连接〔Rust `test_search_provider`〕+ 默认服务商 + Exa 高级开关，ADR-042）；外链常量在 `src/lib/external-links.ts`
 - `src/components/settings/agents-section.tsx` + `agent-templates.ts` — 外部 Agent CRUD 表单（预置模板 chips：claude/gemini/qoder/hermes/codex + thoughtLevel select）
 - `src/components/knowledge/add-source-dialog.tsx` — 添加知识源对话框（类型 → IMA 凭证向导 → 测试 → 选库）
+- `src/components/settings/about-legal.tsx` — 关于页三合规子视图（ADR-063）：`OssLicensesView`（第三方开源软件表格：来源筛选 chips + 搜索 + 经典翻页每页 50 + 行内展开许可全文；数据 dynamic import `@/generated/licenses.json`+`license-texts.json` 不进启动包）· `LegalDocView`（渲 `@/generated/legal.json` 的 EULA/隐私草稿，含 `【】` 占位符自动显草稿横幅）· `LegalEntryButton`。`AboutSection`（`Settings.tsx`）底部一行 5 入口切 sub-view
+- `src/generated/{licenses,license-texts,legal}.json` — **构建期生成产物**（ADR-063，`scripts/gen-notices.ts` 产），提交快照；依赖 bump 后须 `bun run gen:notices` 重生成。同时产根 `NOTICES.txt`（合规全量）
+- `scripts/gen-notices.ts` — 第三方 NOTICES 生成器：聚合 npm(`node_modules/.bun`) + opencode 内嵌(`vendor/opencode/bun.lock`) + cargo(`cargo metadata`) + 捆绑/vendored 四类来源。坑：bun.lock 是 JSONC（仅尾逗号，`//` 剥离会误伤 `https://`）
+- `docs/legal/{user-service-agreement,privacy-policy,README}.md` — EULA/隐私政策草稿 SSOT（ADR-063 / discussions/047），含占位符替换清单；`gen-notices` 剥 HTML 注释后打进 `legal.json`。**商用前须法务定稿 + 填占位符 + 真实注册主体**
 
 **Desktop — hooks / lib**
 - `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
@@ -210,7 +214,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (62 ADRs, 001–062)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (63 ADRs, 001–063)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

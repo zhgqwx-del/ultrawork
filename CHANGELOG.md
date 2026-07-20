@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **「设置-关于」第三方开源软件声明 + 用户服务协议 / 隐私政策入口（ADR-063 / discussions/047）**：为后续商业售卖补齐署名义务展示与合规入口，参考同类产品关于页形态。
+  - **构建期 NOTICES 生成器**（`scripts/gen-notices.ts`，`bun run gen:notices`）：聚合四类来源 → `licenses.json`(元数据) + `license-texts.json`(许可全文) + `legal.json`(协议正文) + 根 `NOTICES.txt`(合规全量)。**覆盖 3751 组件**：npm 依赖树 626（含本地许可全文）+ **opencode 内嵌树 2564**（解析 `vendor/opencode/bun.lock`，闭合「捆绑二进制内嵌依赖未声明」这一最大缺口）+ cargo 559（`cargo metadata` SPDX+repo）+ 捆绑 2（opencode 标注**已修改**、vendored pptxgenjs 补回被 esbuild 剥掉的 MIT 版权头）。
+  - **关于页新增「法律与合规」入口三连**：第三方开源软件 / 用户服务协议 / 隐私政策，点击进**独立整页**子视图（`about-legal.tsx`）。开源声明视图=可搜索表格（序号/名称+版本/许可协议/是否修改/网址）+ 行内展开许可全文（按需 dynamic import，2.6MB 全文与 620KB 清单**均独立异步 chunk、不进启动包**，vite build 实证拆包）+ 分页加载。协议视图=渲染 `docs/legal/` 草稿，含占位符时自动显「草稿未生效」提示条。
+  - **法律草稿**（`docs/legal/`）：用户服务协议(EULA) + 隐私政策 + 替换清单/免责说明。以参考产品为**结构骨架**、按本产品真实形态（本地优先 + BYOK 直连第三方、经代码实证无第一方遥测/收集后端）**重写实质条款**，避免照抄云服务条款造成虚假陈述。法律事实留占位符（【产品名】【公司主体】【管辖法院】等），商用前须注册真实主体 + 法务定稿。
+  - **UI 打磨（三轮真机反馈迭代）**：① 开源列表由「加载更多」改为**经典翻页**（每页 50 + 上一页/下一页 + 第 X/Y 页），DOM 与页高恒定；② 顶部加**来源筛选 chips**（全部 3751 / npm 626 / opencode 内嵌 2564 / cargo 559 / 捆绑 2，默认全部，一键收窄，NOTICES.txt 仍全量）；③ 关于页底部 5 项（官网/问题反馈/第三方开源软件/用户服务协议/隐私政策）合并为**单一行**，移除「查看源码/加入社区/关注我们」；④ 修法律文档顶部 HTML 注释被 react-markdown 渲染成可见文字（生成器剥离注释）。
+  - **许可合规结论**：全树协议均宽松/商用友好（MIT/BSD-2/3/ISC/Apache-2.0/0BSD/Zlib/Unlicense/MPL-2.0/CC-BY-4.0 等），**无 GPL-only/AGPL/SSPL/BUSL 阻断项**；opencode 内嵌依赖不可省（其代码物理打进二进制、随分发保留署名）。
+  - **验证**：typecheck 0 · desktop **690**（+7 单测：清单渲染/是否修改徽标/搜索/来源筛选/翻页边界/空态/许可全文懒加载/返回）· 真实 `vite build` 拆包成功 · **真 Chrome+Vite+Playwright 走查 10/10**（真实 3751 清单 + 筛选 + 翻页 + 懒加载全文 + 协议 markdown + 草稿横幅 + 响应式 640/1680 + 0 console 错误）· check-docs 绿 · macOS 真机验收通过。
+  - **已知 follow-up**（loud，未静默）：opencode 内嵌树 2564 个多为仅 SPDX+链接（无本地全文，需 build-opencode 时 populate node_modules 补全文）；生成产物暂为提交快照，尚未接入 beforeBuildCommand + check-docs 漂移门禁（依赖 bump 后需手动 `bun run gen:notices`）；EULA/隐私政策正文待法务提供 + 占位符替换 + 真实注册主体；`gen-notices.ts` 的 ROOT 取自 `import.meta.url.pathname`，Windows CI 上重跑需修（构建工具层面，不影响交付物）。
+
 ### Fixed
 
 - **消除 `sidebar-order.test.ts` 的挂钟 flaky + 澄清「config JSON parse 失败」误判（discussions/046）**：溯源历史结论「唯一 1 个失败 sidebar-order.test.ts（config JSON parse）」——实为**误读**（那行 `JSON Parse error` 来自 `config.test.ts` 的负路径用例 `returns DEFAULT_CONFIG on invalid JSON`，vitest 已把 stderr 归属到正确文件，是读交错日志时的人为误判；sidebar-order 6/6、全套 683/683 全绿）。顺修两处：
