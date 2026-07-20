@@ -15,6 +15,10 @@ import {
   Search,
   Star,
   Crown,
+  Plug,
+  Sparkles,
+  Wrench,
+  Radio,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useNavigate, useLocation } from "react-router-dom"
@@ -52,6 +56,24 @@ const CHANNEL_TYPE_ICONS: Record<string, ComponentType<{ className?: string }>> 
   wecom: WeComIcon,
   feishu: FeishuIcon,
 }
+
+/**
+ * Quick-access entries for the four capability-extension settings sections that
+ * are otherwise buried under the settings gear. Pure navigation shortcuts — they
+ * deep-link into `/settings` via router history `state` (the same pattern the
+ * settings popover / model picker already use). `section` matches SettingsSection
+ * in pages/Settings.tsx; kept as a local literal because that type isn't exported.
+ */
+export const EXTENSION_ENTRIES: {
+  section: "services" | "skills" | "tools" | "channels"
+  icon: ComponentType<{ className?: string }>
+  labelKey: string
+}[] = [
+  { section: "channels", icon: Radio, labelKey: "settingsPage.channels" },
+  { section: "services", icon: Plug, labelKey: "settingsPage.services" },
+  { section: "skills", icon: Sparkles, labelKey: "settingsPage.skills" },
+  { section: "tools", icon: Wrench, labelKey: "settingsPage.tools" },
+]
 
 function formatTime(timestamp: number, t: (key: string) => string): string {
   const now = Date.now()
@@ -272,13 +294,16 @@ export function LeftSidebar() {
               </button>
             </div>
 
-            {/* Action buttons */}
+            {/* Action buttons: new-task, then the capability-extension shortcuts
+                (Connectors / Skills / Tools / Channels), with search last (a
+                low-frequency utility). Six size-8 icons fit the w-64 rail; the
+                extensions deep-link into /settings via router state — pure nav. */}
             <nav className="flex shrink-0 items-center gap-1 px-3">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleNewChat}
-                    className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                    className="flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
                   >
                     <Plus className="size-4" />
                   </button>
@@ -286,12 +311,27 @@ export function LeftSidebar() {
                 <TooltipContent side="bottom">{t("sidebar.newTask")}</TooltipContent>
               </Tooltip>
 
+              {EXTENSION_ENTRIES.map((entry) => (
+                <Tooltip key={entry.section}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => navigate("/settings", { state: { section: entry.section } })}
+                      aria-label={t(entry.labelKey)}
+                      className="flex size-8 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                    >
+                      <entry.icon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t(entry.labelKey)}</TooltipContent>
+                </Tooltip>
+              ))}
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => setShowSearch(!showSearch)}
                     className={cn(
-                      "flex size-9 items-center justify-center rounded-lg transition-colors",
+                      "flex size-8 items-center justify-center rounded-lg transition-colors",
                       showSearch
                         ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-fg)]"
                         : "text-[var(--sidebar-fg-muted)] hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
@@ -465,6 +505,22 @@ export function LeftSidebar() {
                   <TooltipContent side="right">{t("session.sessions")}</TooltipContent>
                 </Tooltip>
               )}
+
+              {/* Extensions: collapsed-rail parity with the expanded list. */}
+              {EXTENSION_ENTRIES.map((entry) => (
+                <Tooltip key={entry.section}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => navigate("/settings", { state: { section: entry.section } })}
+                      aria-label={t(entry.labelKey)}
+                      className="flex size-9 items-center justify-center rounded-lg text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                    >
+                      <entry.icon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{t(entry.labelKey)}</TooltipContent>
+                </Tooltip>
+              ))}
               {/* 019 后续：折叠态「自动化」入口同步下线（见展开态注释 / 019 §7）。 */}
             </div>
 

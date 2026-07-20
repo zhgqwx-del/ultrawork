@@ -80,7 +80,7 @@ const NAV_GROUPS: { titleKey: string; items: NavItem[] }[] = [
   {
     titleKey: "settingsPage.group.integration",
     items: [
-      { key: "services", icon: Server, labelKey: "settingsPage.services" },
+      { key: "services", icon: Plug, labelKey: "settingsPage.services" },
       { key: "tools", icon: Wrench, labelKey: "settingsPage.tools" },
       { key: "channels", icon: Radio, labelKey: "settingsPage.channels" },
     ],

@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **左侧栏顶部「连接器 / 技能 / 工具 / 渠道」快捷入口（无 ADR，纯 UI/UE，复用既有深链）**：四个高价值的能力扩展设置分区此前只藏在设置齿轮里，层级过深。现在把它们提升为侧栏顶部「操作图标行」的一员——展开态一排为 `＋新任务 · 📡渠道 · 🔌连接器 · ✨技能 · 🔧工具 · 🔍搜索`（渠道置第二、搜索降为末位低频项），折叠态图标列同源对等。
+  - **零逻辑改动**：入口经 `navigate("/settings", { state: { section } })` 深链到对应设置分区，与设置弹层 / 模型选择器 / Home / Session 用的是**同一套已验证的 router history state 模式**；无新状态、无后端、无 vendor patch。入口数据抽为模块级 `EXTENSION_ENTRIES` 注册表，展开/折叠两态共用。
+  - **顺带一致化**：设置页左导航「连接器」图标由 `Server` 改为 `Plug`，与侧栏入口统一为 🔌（MCP 子标签/空态的 `Server` 图标保留——它们语义确为「服务器」）。
+  - **容纳 6 图标**：操作行按钮由 `size-9` 收为 `size-8`；实测 `w-64`(256px) 内 `overflow=0`、全部图标在 `<aside>` 边界内、宽度不随视口回流（1280×800 与 900×600 一致）；折叠态 600px 矮窗不裁切（`maxBottom=588 ≤ 600`）。
+  - **跨平台 / 双模式**：纯 renderer chrome，零 `node:path`/`process.env`/`fs`/平台命令；`LeftSidebar` 在 `root-layout` 只挂载一次、单 agent 与 Team 共用、无模式门控。
+  - **护栏**：新增 `sidebar-extensions.test.ts`（4 例：入口集合/合法 section/labelKey 解析/无重复）+ `e2e/sidebar-extensions.e2e.ts`（`bun run e2e:sidebar-extensions`）——真 opencode+Vite+双 WebView 引擎（Chromium=WebView2 家族 / WebKit=mac·Linux WKWebView）各 15 项：横排顺序、点每个入口深链到正确 section（按激活项 computed font-weight 判定 + 负向对照防假绿）、无横向溢出、折叠态矮窗不裁切。验证 typecheck 0 · desktop **694** · 双引擎 e2e ALL PASS。i18n 无新增运行键（复用 `settingsPage.*`）。
 - **「设置-关于」第三方开源软件声明 + 用户服务协议 / 隐私政策入口（ADR-063 / discussions/047）**：为后续商业售卖补齐署名义务展示与合规入口，参考同类产品关于页形态。
   - **构建期 NOTICES 生成器**（`scripts/gen-notices.ts`，`bun run gen:notices`）：聚合四类来源 → `licenses.json`(元数据) + `license-texts.json`(许可全文) + `legal.json`(协议正文) + 根 `NOTICES.txt`(合规全量)。**覆盖 3751 组件**：npm 依赖树 626（含本地许可全文）+ **opencode 内嵌树 2564**（解析 `vendor/opencode/bun.lock`，闭合「捆绑二进制内嵌依赖未声明」这一最大缺口）+ cargo 559（`cargo metadata` SPDX+repo）+ 捆绑 2（opencode 标注**已修改**、vendored pptxgenjs 补回被 esbuild 剥掉的 MIT 版权头）。
   - **关于页新增「法律与合规」入口三连**：第三方开源软件 / 用户服务协议 / 隐私政策，点击进**独立整页**子视图（`about-legal.tsx`）。开源声明视图=可搜索表格（序号/名称+版本/许可协议/是否修改/网址）+ 行内展开许可全文（按需 dynamic import，2.6MB 全文与 620KB 清单**均独立异步 chunk、不进启动包**，vite build 实证拆包）+ 分页加载。协议视图=渲染 `docs/legal/` 草稿，含占位符时自动显「草稿未生效」提示条。
