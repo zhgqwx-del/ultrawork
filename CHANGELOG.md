@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **左侧栏会话列表「按住往下拖」误触发跨行文本选区**：会话行是可点击导航项（`cursor-pointer` + `onClick`），但侧栏无 `user-select: none`，鼠标在某行按下往下拖被 WebView 当成选文本、画出一片蓝色跨行选区（主流桌面 agent 侧栏均禁选）。修复=`<aside>` 加 `select-none`（继承覆盖整棵子树），搜索框与重命名框用 `select-text` 显式 opt-in（WebKit 下祖先 `none` 会抑制框内拖选）。纯 3 处 Tailwind class、无逻辑改动、layout-neutral（不影响尺寸/响应式），对单 agent/Team 会话行一视同仁。
+  - **回归护栏**：新增 `e2e/sidebar-select.e2e.ts`（`bun run e2e:sidebar-select`）——驱动**真实渲染的 LeftSidebar**（防 class 漂移）在真 Chromium + 真 WebKit 双引擎各跑 7 项：拖真实行选区为空 / 行·aside computed `user-select`==none / 两 input==text 且仍可拖选 / 自包含负向对照（注入节点拖动确实选中，排除「假绿」）。jsdom 无选区引擎，此类只能真浏览器验。
+  - 验证：typecheck 0 · desktop **690** 不变 · 双引擎 e2e 7/7 全过 · 产物 CSS 实证含 `-webkit-user-select` 前缀。正向模式固化 → `conventions.md §1`；两个 e2e 桩坑（Tauri stub 完整性 + macOS `/var` realpath）→ `conventions.md §11`。
 - **消除 `sidebar-order.test.ts` 的挂钟 flaky + 澄清「config JSON parse 失败」误判（discussions/046）**：溯源历史结论「唯一 1 个失败 sidebar-order.test.ts（config JSON parse）」——实为**误读**（那行 `JSON Parse error` 来自 `config.test.ts` 的负路径用例 `returns DEFAULT_CONFIG on invalid JSON`，vitest 已把 stderr 归属到正确文件，是读交错日志时的人为误判；sidebar-order 6/6、全套 683/683 全绿）。顺修两处：
   - **隐患二（真 flaky，已修）**：`groupSessionsByDate` 读真实挂钟算 `todayStart`，而 `sidebar-order.test.ts` 用真实 `Date.now()` 造 `updated=now-60_000` 断言 `today` → 本地零点后 0–1 分钟窗口里 `now-60_000` 落到昨天、分组成 `yesterday` 致断言失败（穷举全套中招面精确=1 条；`session-item` 相对文案不受影响）。改法=**钉双时钟**：模块级 `now` 由 `Date.now()` 换成固定午间字面量 + `beforeEach` `vi.setSystemTime(now)`/`afterEach` `useRealTimers()`，让源码 `new Date()` 与 fixture 同一时刻（坑：`now` 在模块加载期算，天真 `useFakeTimers` 会让源码/测试时钟 desync 更糟）。**纯测试确定性，产品源码 `left-sidebar.tsx` 一字未动**。
   - **隐患一（洁净度，已降噪）**：`config.test.ts` 的 invalid-JSON 负路径用例把预期 `console.error` 泄漏到 stderr（正是这次误判的来源）→ 局部 `vi.spyOn(console,"error")` 静音并升级为正向断言 `toHaveBeenCalledTimes(1)`。
