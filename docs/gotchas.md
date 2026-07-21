@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-18 -->
+<!-- last-synced: 2026-07-21 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -447,3 +447,13 @@
 全屏预览期间 chat 列是 `visibility:hidden`（布局盒仍在）。**WebKit 上 agent 回复会让隐藏的视图漂离底部约 122px**；Chromium 有原生 scroll anchoring，表现不同。
 
 所以**不要建立在「隐藏期间会一直贴底」这个前提上**。正确语义是：**进入隐藏前若贴底，退出时就贴底** —— 在进入那一刻用 ref 快照 `isAtBottom`（不能放进 effect 依赖，否则隐藏期间的漂移会把快照污染掉），退出时按快照 `forceScrollToBottom()`。
+
+## 16. OpenCode 系统提示组装 / 注入点（ADR-064 / discussions/048，2026-07-21）
+
+想给默认会话改「主提示」（身份、输出风格、护栏）时，注入点选错会静默牵连别的模型。三条实测契约：
+
+- **`agent.<name>.prompt` 是「整体替换」，且对所有模型无条件生效**（`session/llm.ts:232`：`input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(model)`）。而 `provider()` 按模型分流（`session/system.ts:20-33`：Claude→anthropic.txt / GPT→gpt·beast.txt / Gemini→gemini.txt / Kimi→kimi.txt / **其余含 qwen→default.txt**）。所以给 `build` agent 设一段静态 `prompt`，会把 Claude/GPT/Gemini 的**模型专属调优提示一并丢掉**——本 app 是 BYOK 多 provider（ADR-042），这是真降级。**别用 `agent.prompt`/`OPENCODE_CONFIG_CONTENT` 整体替换来加通用指令。**
+- **正确注入点＝插件钩子 `experimental.chat.system.transform`**（`llm.ts:244` 对所有已注册插件无条件 fire，`output.system` 是已组装的提示数组）。**追加**而非替换 → 保留每模型基座；要中和某个基座的措辞（如 default.txt 的 `fewer than 4 lines`）就**子串探测后追加一段 override**，别正则删基座（脆、且会误伤别的模型）。范例＝`plugin/rich-output.ts`（ADR-064）与 `plugin/tool-disclosure.ts`（ADR-036）。
+- **缓存与重复追加**：`system.transform` 是**每 step** fire，但 `llm.ts:228` 每 step 重建 `system` 数组 → 追加**不会跨 step 累积**；且追加内容须**静态**（`llm.ts:249` 靠 header 稳定维持 2-part 结构保前缀缓存，动态内容会破缓存）。
+- **`environment()`（`system.ts:40`）始终注入 `You are powered by the model named <id>. The exact model ID is <provider>/<id>`**，任何 `agent.prompt`/`system.transform` 都**改不掉它**（它是独立段）。所以「不泄露 model/provider」只能是**软护栏**（叮嘱模型别说，但上下文里真信息还在）；要真藏得 patch 掉这行。
+- **默认 primary agent = `build`**（`agent/agent.ts:109`）；前端普通会话不指定 agent 即走它。plan/title/compaction/summary 各有独立 prompt，`build` 的改动不影响它们；**Team/ACP 子进程**（Claude Code/Gemini/Codex）更是各自的 system prompt，opencode 侧改动完全够不到（但 **opencode 后端的 Team Leader** 走的是 `build`，会被 `system.transform` 触及）。

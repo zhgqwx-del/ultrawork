@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-16 -->
+<!-- last-synced: 2026-07-21 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -550,3 +550,9 @@ const byTurn = attributeArtifactsToTurns({ messages, ordered /* SSOT，first-win
 ### 配套：per-turn 的 memo 不能依赖每 token 变化的 `messages`
 
 `messages` 每个 `message.part.delta` 都换新数组引用。实测归属表的成本约等于整个既有产物管线（per-delta +105%，120 turn 时约 14ms 同步 JS/delta = 掉帧），而流式期间卡片压根不显示 ⇒ **全是废功**。`active` 时复用上次的表，**缓存按 sessionID 分键**（否则切会话会把上一个 session 的卡片挂到另一个 session 的 turn 下）。
+
+## 18. 给默认会话加通用系统提示：用 `system.transform` 追加，别用 `agent.prompt` 整替（ADR-064）
+
+想给默认会话统一加身份/输出风格/护栏时的**正向做法**：写（或扩展）一个 opencode 内置插件，钩 `experimental.chat.system.transform`，往 `output.system` **追加**品牌段——保留每个模型的基座提示，跨模型都受益且不降级。需要中和某个基座的措辞（如 default.txt 的极简子句）就子串探测后追加一段强优先级 override，别删基座。范例 `vendor/.../plugin/rich-output.ts`（默认 ON，`experimental.rich_output` kill switch）。
+
+**反面**：`agent.<name>.prompt` / `OPENCODE_CONFIG_CONTENT` 整体替换 `provider()` 会丢掉非 qwen 模型的专属调优提示（BYOK 多 provider 下是真降级）。为什么、以及缓存/软护栏等契约，见 `docs/gotchas.md §16`（SSOT）。
