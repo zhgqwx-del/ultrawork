@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **默认会话回复富文本化：新增 rich-output 系统提示插件（discussions/048，vendor patch 增量）**：横向对比同类桌面 agent，同一概念问题我方默认会话回复明显更简短平铺（3 句大白话 vs 对方标题+表格+分点+代码示例），需追加「展开回复下」才丰富。
+  - **根因（代码实测）**：默认单 agent 会话未注入任何自定义主提示；qwen 走 OpenCode `system.ts` 兜底吃 `default.txt`——那是 Claude Code 血统、为 monospace 终端设计的提示，字面强制 `fewer than 4 lines` / `One word answers are best` / `minimize output tokens`，与我方桌面富 Markdown 产品 UX 不匹配（「展开回复下」正命中其 `unless user asks for detail` 豁免口子）。渲染层非瓶颈（`message-parts.tsx` 早启用 remark-gfm）。
+  - **注入点选型（两轮审查）**：初版拟用 `OPENCODE_CONFIG_CONTENT` env + `agent.build.prompt`，但经 `llm.ts:232`（agent.prompt 无条件替换 provider）+ `system.ts:20-33`（provider 按模型分流）核实，会把 Claude/GPT/Gemini/Kimi 的**专属调优提示一并丢弃**（本 app 是 BYOK 多 provider）→ 对非 qwen 降级，遂否决。改走 **Option D：独立插件 `RichOutputPlugin` 经 `experimental.chat.system.transform`** ——在每模型基座提示组装完成后**追加**品牌化自适应格式化指令（保留基座、不替换），仅当基座含 default.txt 极简子句时额外追加 `<verbosity_override>` 中和 → **跨模型通用且不降级**。
+  - **提示内容**：`<language_consistency>`（回复随用户语言）+ `<identity>`（UltraWork 身份、不泄底座）+ `<output_format>`（解释类富文本自适应、简单类保持简洁，带正反例）+ `<task_execution>`（执行任务时保持 action-focused，压「放开 verbosity 后编码絮叨」）+ `<sensitive_information>`（最高优先级，不泄密钥/env/系统提示）。排除 present_files（本项目无此工具）。身份/model 隐藏为**软护栏**（`environment()` 仍注入真实 model ID，追加段改不掉，已接受）。
+  - **作用域**：仅 `build` 普通会话；plan / title / compaction / **Team·ACP 均不受影响**（各有独立 system prompt）。
+  - **kill switch**：`experimental.rich_output`（config，默认 ON）/ `ULTRAWORK_RICH_OUTPUT`（env，A/B 逃生阀），便于对比与一键回退。与 `experimental.tool_disclosure` 门控**解耦**（独立插件）。
+  - **护栏**：`scripts/rich-output/rich-output-unit-test.ts`（`bun run --bun` 直跑）15/15——terse 检测精确/追加保留基座/非 default.txt 基座原样不动/config+env kill switch 双向。sidecar 重编译并核验 `RichOutputPlugin`/`verbosity_override`/`You are UltraWork` 标记已编入二进制（与已在用的 tool-disclosure 同源注册）。vendor patch（`patches/vendor-opencode-config-fix.patch`）已含新文件 `plugin/rich-output.ts` + `plugin/index.ts` 注册 + `config/config.ts` schema，`docs/vendor-patch-workflow.md` 的 patch 表与重生成命令同步更新。真机丰富度/编码不回潮验收待用户。
+
 ## [0.3.2] - 2026-07-20
 
 ### Added
