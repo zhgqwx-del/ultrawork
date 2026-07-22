@@ -13,12 +13,17 @@
 // Asserts, per engine:
 //   1. the self-contained deck renders (all 10 slides present)
 //   2. the deck's inline "fit" script RAN under sandbox="allow-scripts"
-//      (side effect: #stage gets an inline transform:scale(...)) — confirms
-//      scripts work WITHOUT needing allow-same-origin
+//      (side effect: #stage gets an inline zoom:<s<1>) — confirms scripts work
+//      WITHOUT needing allow-same-origin
 //   3. sandbox isolation: opaque origin; the frame CANNOT reach the parent DOM
 //      or a parent-exposed window.__TAURI__ IPC (both throw SecurityError)
 //   4. control: with sandbox="" (scripts blocked) the fit script does NOT run —
 //      proving assertion #2 actually discriminates.
+//   5. fit correctness at a sub-1280 width (real half-panel): deck is CENTERED and
+//      leaves NO empty scroll space below the last slide. The old transform:scale +
+//      negative-margin fit left (1-s)*h of dark scrollable space at the bottom
+//      because scrollHeight ignores negative margins; the zoom fit makes
+//      body.scrollHeight == visual height (discussions/050).
 //
 // Run:  cd packages/client/desktop && bun run --bun e2e/html-preview-iframe.e2e.ts
 // Needs: system Chrome (playwright-core channel:"chrome") and/or the bundled
@@ -89,11 +94,13 @@ async function runEngine(kind: BrowserType, engine: string) {
       const slides = await frame.evaluate(() => document.querySelectorAll(".slide").length)
       check(engine, `self-contained deck rendered (${EXPECTED_SLIDES} slides)`, slides === EXPECTED_SLIDES, `got ${slides}`)
 
-      const transform = await frame.evaluate(() => {
+      const zoom = await frame.evaluate(() => {
         const st = document.getElementById("stage")
-        return st ? st.style.transform : "(no #stage)"
+        return st ? st.style.zoom : "(no #stage)"
       })
-      check(engine, "fit script RAN under allow-scripts (#stage has inline scale)", /scale\(/.test(transform), `transform="${transform}"`)
+      // width defaults to 1280 → s = (1280-32)/1280 = 0.975; a run leaves a numeric
+      // fraction in (0,1], a no-run leaves "" (parseFloat → NaN → fails).
+      check(engine, "fit script RAN under allow-scripts (#stage has inline zoom)", parseFloat(zoom) > 0 && parseFloat(zoom) <= 1, `zoom="${zoom}"`)
 
       const origin = await frame.evaluate(() => window.origin)
       check(engine, "opaque origin (sandbox isolation)", origin === "null", `origin=${origin}`)
@@ -113,21 +120,29 @@ async function runEngine(kind: BrowserType, engine: string) {
     }
     await page.close()
 
-    // ---------- centering: at a sub-1280 width (the real half-panel), the deck's
-    // fit script must center it. The old script used transform-origin:top center,
-    // which drifts the deck right whenever the viewport is narrower than the
-    // 1280px stage (shell.html fix: top-left origin + translateX). ----------
+    // ---------- fit correctness at a sub-1280 width (the real half-panel): the deck
+    // must be CENTERED and leave NO empty scroll space below the last slide. zoom
+    // scales layout+paint so margin:0 auto centers and body.scrollHeight collapses
+    // to the visual height; the old transform:scale + negative-margin left a big
+    // (1-s)*h dark scrollable gap at the bottom (discussions/050). ----------
     const cen = await browser.newPage()
     await mountDeckFrame(cen, "allow-scripts", 1145)
     const cframe2 = frameOf(cen)
     if (cframe2) {
       const m = await cframe2.evaluate(() => {
-        const slide = document.querySelector(".slide") as HTMLElement
+        const slides = [...document.querySelectorAll(".slide")] as HTMLElement[]
+        const first = slides[0], last = slides[slides.length - 1]
         const vw = document.documentElement.clientWidth
-        const r = slide.getBoundingClientRect()
-        return { off: Math.round(r.left + r.width / 2 - vw / 2), left: Math.round(r.left), right: Math.round(vw - r.right) }
+        const r = first.getBoundingClientRect()
+        return {
+          off: Math.round(r.left + r.width / 2 - vw / 2),
+          left: Math.round(r.left), right: Math.round(vw - r.right),
+          gap: Math.round(document.body.scrollHeight - last.getBoundingClientRect().bottom),
+        }
       })
       check(engine, "deck centered at sub-1280 width (1145 ≈ half panel)", Math.abs(m.off) <= 3 && Math.abs(m.left - m.right) <= 3, `off=${m.off}px L=${m.left} R=${m.right}`)
+      // old fit left ~950px here; zoom leaves only the last slide's bottom margin (≤24px).
+      check(engine, "no empty scroll space below last slide (zoom fit, discussions/050)", Math.abs(m.gap) <= 30, `gap=${m.gap}px`)
     }
     await cen.close()
 
@@ -136,11 +151,11 @@ async function runEngine(kind: BrowserType, engine: string) {
     await mountDeckFrame(ctl, "")
     const cframe = frameOf(ctl)
     if (cframe) {
-      const cTransform = await cframe.evaluate(() => {
+      const cZoom = await cframe.evaluate(() => {
         const st = document.getElementById("stage")
-        return st ? st.style.transform : "(no #stage)"
+        return st ? st.style.zoom : "(no #stage)"
       })
-      check(engine, "control: scripts blocked → fit script did NOT run (transform empty)", !/scale\(/.test(cTransform), `transform="${cTransform}"`)
+      check(engine, "control: scripts blocked → fit script did NOT run (zoom unset)", cZoom === "", `zoom="${cZoom}"`)
       const cSlides = await cframe.evaluate(() => document.querySelectorAll(".slide").length)
       check(engine, "control: static content still renders without scripts", cSlides === EXPECTED_SLIDES, `got ${cSlides}`)
     }

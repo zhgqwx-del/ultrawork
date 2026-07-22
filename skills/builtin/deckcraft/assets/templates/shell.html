@@ -13,7 +13,7 @@
 *{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
 html,body{background:#3a3a3a}
 body{font-family:var(--font-stack);color:var(--c-text)}
-.stage{width:1280px;margin:0}
+.stage{width:1280px;margin:0 auto}
 .slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
 .slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
 .kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
@@ -32,9 +32,9 @@ ul{list-style:none}
   html,body{background:none}
   .slide{margin:0;page-break-after:always;break-after:page}
   .slide:last-child{page-break-after:auto;break-after:auto}
-  /* !important 压过屏幕适配脚本写下的 inline transform/margin——否则 headless
-     print-to-pdf（默认 800px 视口先跑了 fit()）会把整份 PDF 缩到 ~60% 并错位 */
-  #stage{transform:none!important;margin-bottom:0!important}
+  /* !important 压过屏幕适配脚本写下的 inline zoom——否则 headless print-to-pdf
+     （默认 800px 视口先跑了 fit()、写下 zoom≈0.6）会把整份 PDF 缩到 ~60% 并错位 */
+  #stage{zoom:1!important}
 }
 </style>
 </head>
@@ -43,23 +43,16 @@ ul{list-style:none}
 {{SLIDES}}
 </div>
 <script>
-/* 屏幕预览：整体缩放适配窗口宽度。打印路径由 @media print 的 !important 规则
-   压制（inline style 打不过 stylesheet !important），PDF 始终原尺寸。 */
+/* 屏幕预览：用 zoom 整体缩放适配窗口宽度。zoom 同时缩放布局与绘制，
+   scrollHeight 随之等于视觉高度——不像 transform:scale（不缩布局盒）+ 负 marginBottom
+   （改不动 scrollHeight）那样在末尾留下 (1-s)*h 的空白可滚动区（见 discussions/050）。
+   横向居中交给 .stage 的 margin:0 auto；打印路径由 @media print 的 #stage{zoom:1!important}
+   压制（stylesheet !important 打得过 inline），PDF 始终原尺寸。 */
 (function(){
   var st = document.getElementById("stage");
-  var h = 0; // scrollHeight 在加载后是常量（transform 不参与布局），缓存避免 resize 反复强制 reflow
   function fit(){
-    if (!h) h = st.scrollHeight;
     var vw = document.documentElement.clientWidth;
-    var s = Math.min(1, (vw - 32) / 1280);
-    // Center the SCALED stage in the viewport. transform-origin:top center pins
-    // the stage box's own center (x=640), which only equals the viewport center
-    // at vw>=1280 — below that the stage overflows and the deck drifts right.
-    // top-left + translateX((vw-1280*s)/2) centers correctly at ANY width (e.g.
-    // a half-width in-app preview panel), matching margin:0 auto at vw>=1280.
-    st.style.transformOrigin = "top left";
-    st.style.transform = "translateX(" + ((vw - 1280 * s) / 2) + "px) scale(" + s + ")";
-    st.style.marginBottom = (-(1 - s) * h) + "px";
+    st.style.zoom = Math.min(1, (vw - 32) / 1280);
   }
   var pending = 0;
   window.addEventListener("resize", function(){
