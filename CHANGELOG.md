@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **聊天正文内联图片渲染成破图 `❓`（ADR-065 / discussions/049）**：让默认会话模型「画个章鱼/虎鲸」后，回复里出现破损缩略图 `❓`。
+  - **根因（真实会话 DB + 端点实测双证）**：qwen 纯文本不能出图，于是把 SVG/PNG 写进工作区文件、正文用 markdown `![alt](本地路径)` 引用（DB 原文 `![章鱼](/Users/…/octopus.svg)` 绝对 / `![帅气虎鲸](orca_preview.png)` 相对）。而聊天 markdown 组件表 `MARKDOWN_COMPONENTS` **无 `img` 覆盖** → react-markdown 直接吐 `<img src=本地路径>`，WebView origin（Vite/`tauri://`）解析成 404 破图；全仓无 `convertFileSrc`、未配 `assetProtocol`。与产物面板/归属无关（那条走另一通道，本身没坏）。
+  - **修复**：新增 `MarkdownImage` 组件按 src 协议分派——远程 `http(s)` / `data:image` base64 直出；本地路径经 `getFileContent → base64 → data:URI` 渲染（复用产物预览同一通道）。**绝对路径先经 `toWorkspaceRelative` 剥 workspace 前缀转相对**（vendor `File.read` 只认 workspace 相对路径、`path.join` 会拼坏绝对路径，实测坐实）；workspace 外 / 加载失败 / 空 / 非图 → 可点开的兜底 chip 而非破图；流式未完成 → alt 占位。点击内联图 → 复用现有 `ArtifactPreview` 放大（零新 UI）。module 级缓存 data URI（PNG 可达 ~600KB base64，避免流式每 token 重拉）。经 `MarkdownImageContext` 透传 `workspaceDir`/`onArtifactClick`（`about-legal` 无上下文时惰性、不受影响）；协议白名单与 `MarkdownLink` 一致（拒 `javascript:` 等）。
+  - **`urlTransform` 缺陷修复（复审发现）**：react-markdown 的默认 `urlTransform` 会在 src 到达组件**之前**把 `data:` URI 和 Windows 盘符路径（`C:\`，因 `c:` 被当 scheme）**清空为 `""`**——若不处理，base64 图与 Windows 本地图**根本不显示**。给聊天 `MarkdownContent` 加自定义 `urlTransform`：保留 `data:image/` 与 Windows 盘符路径，其余仍交默认（`javascript:`/`data:text/html` 照旧拦截）；链接安全不受影响（`MarkdownLink` 经 `isOpenableUrl` 再过滤）。同修 `classify` 把 `C:\`/`C:/` 判为 local（在 scheme 拦截前）。
+  - **已知边界（markdown 固有）**：markdown 把 `\` 视作转义符，故 `![](C:\a\b.png)` 这类**纯反斜杠路径**在解析阶段就被破坏（renderer 层无法挽回）→ 优雅降级为兜底 chip。可存活形态=相对路径（`chart.svg`/`assets/x.png`）与正斜杠绝对（`C:/…`），rich-output 引导正是推模型用相对路径。
+  - **rich-output 插件引导（软手段）**：把提示里「local file paths are supported」改为引导 workspace **相对**路径、勿用绝对路径；并加一句引导「生成 SVG/图片后直接引用该文件，勿为展示而整页截屏（会把浏览器白边烤进图）」——窄范围、不禁一般截图（渲染结果本身是重点时截图仍 OK）。缘由：实测 `orca_preview.png` 是模型整页截屏（2640×1326 vs SVG 1000×600，右/下边缘像素 255,255,255 纯白烤进文件），非渲染 bug。vendor patch 增量、走 `experimental.rich_output` 开关；已重编译并核验 `WORKSPACE-RELATIVE`/`full-page screenshot` 标记入二进制。
+  - **作用域**：单 agent（`session.directory`）+ Team 主会话/Leader（`teamEntry.workspace`）经 `Session.tsx` 统一透传 `workspaceDir`，均完整支持。DelegateDock 子会话 / OrchestrationRun 视图暂未透传 → 内联本地图落兜底 chip（图仍在父会话正常显示），列为后续增强。
+  - **响应式**：内联图 `max-h-[70vh] max-w-full object-contain`、兜底 chip `max-w-[240px] truncate`，各屏宽 overflow-safe。
+  - **护栏**：`markdown-image.test.tsx`（11）+ `markdown-image-wiring.test.tsx`（7：**真 `MarkdownContent` 管线**证 `img` 已接线 + `urlTransform` 保住 data:/Windows正斜杠 + 反斜杠优雅降级 + `javascript:` 拒）+ `path-utils.toWorkspaceRelative`（+7，含 Windows）+ `transcript-links` 安全不回归。**新增真 Playwright 双引擎 e2e** `e2e/inline-image-render.e2e.ts`（`bun run e2e:inline-image` / `:webkit`）：`mock-llm-image → 真 opencode（真 /file/content 服务真 octopus.svg）→ Vite → 真 Chromium+WebKit → 真 MarkdownImage`，断言本地相对+绝对解析成 `data:image/svg+xml`、base64 经 urlTransform 存活、远程直出、**负向对照**（工作区外路径不成 img、降级文本），**Chromium+WebKit 各 6/6 PASS**。验证 typecheck 8/8 · desktop **719**（694→719）· rich-output 单测 15/15 · react-markdown `urlTransform` 实测 · **真机双引擎 e2e 全绿**。真机 UI 观感待用户。
+
 ### Changed
 
 - **默认会话回复富文本化：新增 rich-output 系统提示插件（discussions/048，vendor patch 增量）**：横向对比同类桌面 agent，同一概念问题我方默认会话回复明显更简短平铺（3 句大白话 vs 对方标题+表格+分点+代码示例），需追加「展开回复下」才丰富。

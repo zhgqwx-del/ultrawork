@@ -294,7 +294,14 @@ export const AssistantTurn = memo(function AssistantTurn({
           const key = "id" in part && part.id ? (part.id as string) : `answer-${i}`
           switch (part.type) {
             case "text":
-              return <MarkdownContent key={key} text={(part as { text?: string }).text || ""} />
+              return (
+                <MarkdownContent
+                  key={key}
+                  text={(part as { text?: string }).text || ""}
+                  workspaceDir={workspaceDir}
+                  onArtifactClick={onArtifactClick}
+                />
+              )
             case "file":
               return <FileBlock key={key} part={part as FilePart} onArtifactClick={onArtifactClick} />
             case "patch":

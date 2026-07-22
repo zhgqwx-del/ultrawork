@@ -1,5 +1,5 @@
-import { memo } from "react"
-import ReactMarkdown from "react-markdown"
+import { memo, useMemo } from "react"
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown"
 import type { Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { FileText, FileDiff } from "lucide-react"
@@ -7,6 +7,7 @@ import type { FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { useI18n } from "@/lib/i18n-context"
 import { MarkdownLink } from "@/components/ui/markdown-link"
+import { MarkdownImage, MarkdownImageContext } from "./markdown-image"
 import { CodeBlock } from "./code-block"
 
 // Shared part renderers used by both the per-turn answer area (AssistantTurn)
@@ -47,6 +48,7 @@ const MARKDOWN_COMPONENTS: Components = {
     </blockquote>
   ),
   a: MarkdownLink,
+  img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
   table: ({ children }) => (
     <div className="my-4 overflow-x-auto">
       <table className="min-w-full border-collapse border border-[var(--color-border)]">{children}</table>
@@ -64,13 +66,46 @@ const MARKDOWN_COMPONENTS: Components = {
 
 const REMARK_PLUGINS = [remarkGfm]
 
-export const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+/**
+ * react-markdown's `defaultUrlTransform` blanks any `data:` URI and any URL
+ * whose scheme isn't http/https/mailto/… — which silently includes image
+ * `data:` URIs AND Windows drive paths (`C:\…`, because `c:` reads as a scheme).
+ * Both are legitimate image `src`s the model emits; blanking them here would
+ * defeat MarkdownImage before it ever runs (verified: default transform returns
+ * "" for both). Preserve exactly those two and defer everything else to the
+ * default, so `javascript:`, `data:text/html`, … stay blocked. Links are
+ * unaffected — MarkdownLink re-gates every href through isOpenableUrl
+ * (http/https/mailto/tel only), so a passed-through `data:`/`C:\` href still
+ * renders as inert text.
+ */
+function chatUrlTransform(url: string): string {
+  if (/^data:image\//i.test(url)) return url
+  if (/^[A-Za-z]:[\\/]/.test(url)) return url // Windows drive path
+  return defaultUrlTransform(url)
+}
+
+export const MarkdownContent = memo(function MarkdownContent({
+  text,
+  workspaceDir,
+  onArtifactClick,
+}: {
+  text: string
+  /** Workspace root — lets inline `![](local-path)` images resolve. Omitted by
+   *  non-chat callers (e.g. the legal-docs viewer), where local images stay inert. */
+  workspaceDir?: string
+  onArtifactClick?: (artifact: Artifact) => void
+}) {
+  // Stable object identity so the Provider doesn't re-render image consumers on
+  // every parent render. `onArtifactClick` is a useCallback upstream (Session).
+  const imgCtx = useMemo(() => ({ workspaceDir, onArtifactClick }), [workspaceDir, onArtifactClick])
   return (
-    <div className="chat-md prose prose-sm max-w-none dark:prose-invert">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {text}
-      </ReactMarkdown>
-    </div>
+    <MarkdownImageContext.Provider value={imgCtx}>
+      <div className="chat-md prose prose-sm max-w-none dark:prose-invert">
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} urlTransform={chatUrlTransform} components={MARKDOWN_COMPONENTS}>
+          {text}
+        </ReactMarkdown>
+      </div>
+    </MarkdownImageContext.Provider>
   )
 })
 

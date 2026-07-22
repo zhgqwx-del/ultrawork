@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-21 -->
+<!-- last-synced: 2026-07-22 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -457,3 +457,13 @@
 - **缓存与重复追加**：`system.transform` 是**每 step** fire，但 `llm.ts:228` 每 step 重建 `system` 数组 → 追加**不会跨 step 累积**；且追加内容须**静态**（`llm.ts:249` 靠 header 稳定维持 2-part 结构保前缀缓存，动态内容会破缓存）。
 - **`environment()`（`system.ts:40`）始终注入 `You are powered by the model named <id>. The exact model ID is <provider>/<id>`**，任何 `agent.prompt`/`system.transform` 都**改不掉它**（它是独立段）。所以「不泄露 model/provider」只能是**软护栏**（叮嘱模型别说，但上下文里真信息还在）；要真藏得 patch 掉这行。
 - **默认 primary agent = `build`**（`agent/agent.ts:109`）；前端普通会话不指定 agent 即走它。plan/title/compaction/summary 各有独立 prompt，`build` 的改动不影响它们；**Team/ACP 子进程**（Claude Code/Gemini/Codex）更是各自的 system prompt，opencode 侧改动完全够不到（但 **opencode 后端的 Team Leader** 走的是 `build`，会被 `system.transform` 触及）。
+
+## 17. 聊天正文内联 markdown 图片（ADR-065 / discussions/049，2026-07-22）
+
+模型「画图」= 把 SVG/PNG 写进工作区、正文用 markdown 图片语法 `![alt]（路径）` 引用。要让这类内联图显示，四条实测契约（渲染器 `MarkdownImage`/`message-parts.tsx`）：
+
+- **react-markdown 默认 `urlTransform` 会把 `data:` URI 和 Windows 盘符路径 `C:\` 清空为 `""`**（`c:` 被当 scheme；实测：`data:image/png…`→`""`、`C:\…`→`""`，而 `C:/…`、`/Users/…`、相对路径存活）。→ 直接用默认 `img` 渲染，base64 图与 Windows 本地图**根本不显示**。必须给 `MarkdownContent` 传自定义 `urlTransform`（保 `data:image/` + `^[A-Za-z]:[\\/]`，其余交 `defaultUrlTransform`，`javascript:` 仍拦）。链接不受影响（`MarkdownLink` 经 `isOpenableUrl` 再过滤）。
+- **opencode `/file/content`（vendor `File.read`，`file/index.ts:513`）只认 workspace 相对路径**：`path.join(Instance.directory, file)` + `containsPath` 禁逃逸。绝对路径（`/Users/…/ws/x.svg`）会被 `path.join` 拼坏→返回空。→ 前端必须先 `toWorkspaceRelative`（`@/lib/path-utils`）剥 workspaceDir 前缀转相对再取；workspace 外的图取不到（安全边界），降级兜底。图片扩展名走 base64 分支返回 `{mimeType, encoding:"base64"}`，前端拼 `data:${mime};base64,${content}`（与产物预览同通道）。
+- **markdown 把 `\` 当转义符** → `![]（C:\a\b.png）` 纯反斜杠路径解析阶段即被破坏（renderer 无法挽回）。可存活形态＝相对路径 + 正斜杠绝对（`C:/…`）；rich-output 引导推模型用相对路径。
+- **`useApi` 必须返回稳定引用**：`MarkdownImage` 的解析 `useEffect` 依赖 `api`；若 mock/实现每渲染返回新对象 → 每渲染重跑 effect+setState → **无限渲染循环**（e2e 单测踩过）。生产 `useApi` 由 connector 记忆化，稳定。
+- **本机验证陷阱（非产品）**：① 新编译的 sidecar 二进制带 `com.apple.provenance` xattr → macOS 静默杀（`--version` 零输出 exit 0），bash 直接 spawn 起不来；`xattr -c` + `codesign --force --sign -` 恢复（打包正式签名不受影响）。② e2e 连跑双引擎时前一轮 opencode 偶尔没及时释放端口，需按端口清理。
