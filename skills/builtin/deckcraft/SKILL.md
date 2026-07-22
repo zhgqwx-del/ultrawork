@@ -106,7 +106,7 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 ### Phase 2 — 澄清 + 大纲 IR（内容的主战场）
 
 1. Read `references/outline-schema.md` + `references/modes.md`。
-2. **第 1 轮 question（3-5 问，一次调用）**：受众与目的 / 叙事 mode（按 modes.md 推荐表给推荐项）/ 页数档位 / 交付形态（HTML / +PDF / +图片型 pptx / +可编辑 pptx——若选可编辑，提示「用于脱离本工具在 PowerPoint 手改；想让 AI 继续改无需它」）/ 内容侧重。源材料能推断的不问。
+2. **第 1 轮 question（3-5 问，一次调用）**：受众与目的 / 叙事 mode（按 modes.md 推荐表给推荐项）/ **消费距离 `delivery_purpose`**（远观投影→`presentation` / 近读文档讲义→`document` / 缺省 `balanced`——按用户描述的信号推荐，**不由 mode 推定**；详见 outline-schema.md + content-engineering §五）/ 页数档位 / 交付形态（HTML / +PDF / +图片型 pptx / +可编辑 pptx——若选可编辑，提示「用于脱离本工具在 PowerPoint 手改；想让 AI 继续改无需它」）/ 内容侧重。源材料能推断的不问。写入 outline.json 顶层 `delivery_purpose`（缺省 balanced）。
 3. 写 `outline.json`：逐页 layout/rhythm + **正文页必填 takeaway（断言句）/ evidence（引用 fact_id 或标 scenario）/ confidence / speaker_notes**。
 4. **大纲门禁**：`python3 ${SKILL_DIR}/scripts/validate_outline.py .deckcraft/<name>` —— exit 0 才进 Phase 3；报错按条修大纲（内容不够 → 回 Research 补检索，不是硬编）。
 

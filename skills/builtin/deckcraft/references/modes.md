@@ -1,7 +1,9 @@
 # Mode 叙事骨架（怎么论证）— 与视觉风格正交的第二轴
 
-Mode 决定**页序、标题语气、讲稿语域**；视觉风格决定长相。两轴独立组合。
-在第 1 轮 question 里按下表推荐并确认（不单独加轮次）。
+Mode 决定**页序、标题语气、讲稿语域**；视觉风格决定长相；**内容密度是第三条正交轴**，
+由 `delivery_purpose`（消费距离，见 `content-engineering.md §五` / `outline-schema.md`）驱动。
+**mode 绝不碰密度**——不存在"教学 mode 就该密、发布 mode 就该疏"；投影版通风、讲义版密集
+是同一份内容的两个 `delivery_purpose`。三轴独立组合，在第 1 轮 question 里各自推荐并确认（不单独加轮次）。
 
 ## Auto-selection
 
