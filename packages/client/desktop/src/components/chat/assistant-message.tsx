@@ -27,7 +27,7 @@ export const AssistantMessage = memo(function AssistantMessage({ parts, isStream
           const key = ('id' in part && part.id) ? part.id : `part-${i}`
           switch (part.type) {
             case "text":
-              return <MarkdownContent key={key} text={part.text || ""} />
+              return <MarkdownContent key={key} text={part.text || ""} onArtifactClick={onArtifactClick} />
             case "reasoning":
               return <ReasoningBlock key={key} text={part.text || ""} />
             case "tool":

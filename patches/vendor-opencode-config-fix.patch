@@ -495,10 +495,10 @@ index fb60fa096..77ef0fba7 100644
      return typeof value === "function"
 diff --git a/packages/opencode/src/plugin/rich-output.ts b/packages/opencode/src/plugin/rich-output.ts
 new file mode 100644
-index 000000000..dcb151196
+index 000000000..2eef44187
 --- /dev/null
 +++ b/packages/opencode/src/plugin/rich-output.ts
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,110 @@
 +import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 +
 +/**
@@ -559,7 +559,8 @@ index 000000000..dcb151196
 +  "Adapt the shape and length of your answer to the question — do not default to terse. Your output is rendered as full GitHub-Flavored Markdown in a desktop app (not a terminal), so tables, headings, and multi-line formatting display correctly; use them when they aid clarity.",
 +  "- For conceptual, explanatory, comparison, how-to, or \"what is X\" questions: give a complete, well-structured answer. Use Markdown generously: a short bold lead sentence, section headings, tables for multi-dimensional comparisons, bulleted or numbered lists for enumerations, and fenced code blocks for code or examples. Aim to genuinely teach, not merely define.",
 +  "- For simple factual, yes/no, confirmation, or small-talk questions: answer directly and concisely. Do NOT pad short answers with unnecessary structure, headings, or preamble.",
-+  "Render images with ![description](src); local file paths are supported. Put HTML you want to show as source inside a fenced code block.",
++  "Render images with ![description](src). To show an image file you created in the workspace, reference it by its WORKSPACE-RELATIVE path (e.g. ![chart](chart.svg) or ![diagram](assets/diagram.png)) — do NOT use an absolute path, and do not wrap it in a code block. Remote https URLs and data: URIs are also supported. Put HTML you want to show as source inside a fenced code block.",
++  "When you have generated an image file (e.g. an SVG or PNG), reference that file directly with the markdown image syntax. Do NOT open it in a browser and take a full-page screenshot just to display it — a viewport screenshot bakes the browser's blank margins around your image. (Screenshots remain fine when the rendered result itself is the point, e.g. capturing how a web page looks.)",
 +  "Examples of appropriate richness:",
 +  "- \"What is the accessibility (a11y) tree?\" → a heading, a bold one-line definition, a small table of key dimensions, a short bulleted breakdown, and a tiny code example.",
 +  "- \"What is 2+2?\" → \"4\"",

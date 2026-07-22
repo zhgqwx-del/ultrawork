@@ -74,6 +74,38 @@ export function shortenPath(
 }
 
 /**
+ * Resolve a model-supplied image/file reference to a WORKSPACE-RELATIVE path,
+ * or `null` if it escapes the workspace.
+ *
+ * The opencode `/file/content` endpoint reads `path.join(Instance.directory,
+ * file)` and rejects anything outside the project dir (`containsPath`). So an
+ * ABSOLUTE path the model wrote (`/Users/…/workspace/octopus.svg`) must be
+ * stripped back to a relative one before it can be fetched — passing the
+ * absolute path straight through makes `path.join` mangle it into a
+ * non-existent location (the endpoint then returns empty content).
+ *
+ * @returns a normalized relative path (no leading `./`, no `..`) when inside
+ *   `dir`; `null` when the path escapes `dir`, equals `dir`, or is a `..`
+ *   traversal.
+ */
+export function toWorkspaceRelative(p: string, dir: string): string | null {
+  if (!p) return null
+  if (!isAbsolutePath(p)) {
+    // Already relative — refuse parent traversal, strip a leading "./" or "/".
+    if (p.split(SEP_RE).includes("..")) return null
+    const rel = p.replace(/^\.[\\/]/, "").replace(/^[\\/]+/, "")
+    return rel || null
+  }
+  if (!dir) return null
+  const d = dir.replace(/[\\/]+$/, "")
+  if (!d || p === d) return null
+  // Match either separator at the workspace boundary.
+  if (p.startsWith(d + "/")) return p.slice(d.length + 1)
+  if (p.startsWith(d + "\\")) return p.slice(d.length + 1)
+  return null // absolute but outside the workspace
+}
+
+/**
  * Extract the last segment of a path (the project/folder/file name).
  * Tolerates trailing separators and both `/` and `\`.
  */
