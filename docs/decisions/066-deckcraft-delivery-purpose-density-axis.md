@@ -41,6 +41,15 @@
 - **前向生效**：仅新生成的 deck 与新 example 受益；老 deck 需重跑门禁链。
 - **committed sentinel**：新增 example 改变内置技能内容 → `skills/builtin/.builtin-version` 经 pack 权威 hash 重生成（对账不变式恢复，顺带治愈 Phase A 遗留漂移）。
 
+## 全面性复核（2026-07-23 补，回答「放宽预算是否让门禁变弱」）
+
+放宽上界与泛化断言检测天然带来「漏检」嫌疑，故做了 A/B 实证：
+
+- **规则集只增不减**：改动前 O1–O6/O8 → 现在 O1–O6/O8 **+ O9**，无任何规则被删除或降级；反 slop 黑名单未缩水。
+- **O3 泛化是严格增强，不是放水**：拿 14 条本该被拦的裸标签（「市场概览」「背景介绍」「技术架构」「Overview」「Next steps」…）跑新旧检测器 A/B —— **新增漏检 0 条**；同时修好旧版对 2 条真实断言的误杀（「内容敏感用 ETag，成本敏感用 Last-Modified」「强缓存不回源，协商缓存回源验证」）。即召回未降、精确率提升。
+- **预存在缺口（非本次引入）**：「风险与挑战」在**新旧两版都放行**，属旧有判定缺口，本次未加剧、亦未修。
+- **上界放宽仍由物理探针兜底**：三个 document 档样例（最密档位）`probe_overflow` 全部 0 findings，`deckcraft-selftest` 的「超大图必被逮」用例仍绿 —— 放宽的是审美上界，物理防线未动。
+
 ## 验证
 
 `scripts/test-deckcraft-validate.py` 26/26 · 真 Chrome A/B 证 S04 `min-height` 堵门禁洞（旧 `height` 令过量内容溢出卡片外、`overflow:visible` 使 probe 静默放行）· 三档 example 门禁链全绿 + 独立视觉审查 7/7×3 · `pack-builtin-skills.ts` 实跑重打（5213 文件 3.0MB zip，sentinel 变→客户可达）· deck.html 重建幂等。跨平台（`zoom`/`min-height` 三 WebView 通用）/ 单 agent ✅。真机密度 A/B（document 讲义 vs presentation 投影两版）验收交用户。

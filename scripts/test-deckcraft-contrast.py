@@ -35,6 +35,13 @@ SKILL = ROOT / "skills" / "builtin" / "deckcraft"
 PROBE = SKILL / "scripts" / "probe_overflow.py"
 sys.path.insert(0, str(SKILL / "scripts"))
 import probe_overflow as P  # noqa: E402
+from console_encoding import configure_utf8_stdio  # noqa: E402
+
+# This file prints '·' and echoes the probe's CJK-bracketed labels. Without this a
+# Windows console on a legacy code page raises UnicodeEncodeError mid-run and the
+# suite dies for a reason that has nothing to do with the gate. (probe_overflow.py
+# does the same on import for the same reason.)
+configure_utf8_stdio()
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -99,14 +106,28 @@ p{font-size:var(--fs-body);font-weight:300;line-height:1.65}
 """
 
 
+# A palette from the other end of the skill's style range: tech-dark, where the page
+# background itself is dark. None of the four shipped examples is a dark-first deck, so
+# without this the thresholds would only be evidenced against light palettes — and the
+# skill lets the model pick its own HEX per deck, so "works on our examples" is not the
+# claim that matters. Values follow references/design-styles/tech-dark.md (deep bg with
+# a colour temperature, second bg half a step up, warm-white on-dark, muted lifted
+# brighter than the light-scheme would use, one high-saturation accent).
+DARK_HEAD = HEAD.replace(
+    "--c-bg:#F6F8FA; --c-bg2:#E8EDF2; --c-primary:#1B3A57; --c-accent:#0E7490;\n"
+    "  --c-muted:#5A6B7B; --c-text:#15202B; --c-on-dark:#F3F8FC;",
+    "--c-bg:#0E1419; --c-bg2:#18222B; --c-primary:#22303C; --c-accent:#22D3EE;\n"
+    "  --c-muted:#9FB0BE; --c-text:#F2EFEA; --c-on-dark:#F2EFEA;")
+
+
 def slide(body: str, dark: bool = False) -> str:
     return f'<section class="slide"{" data-dark" if dark else ""}>{body}</section>\n'
 
 
-def build(project: Path, sections: list[str]) -> None:
+def build(project: Path, sections: list[str], head: str = HEAD) -> None:
     project.mkdir(parents=True, exist_ok=True)
     (project / "deck.html").write_text(
-        HEAD + "".join(sections) + "</div></body></html>", encoding="utf-8")
+        head + "".join(sections) + "</div></body></html>", encoding="utf-8")
 
 
 DUMP_RE = re.compile(
@@ -207,6 +228,39 @@ SKIPPED = slide(
     f'<p style="color:{LO}">ON-IMAGE</p>'
     "</div></div>")
 
+# 7. Light text over an absolutely positioned dark block that is a SIBLING, not an
+#    ancestor. It reads perfectly on screen. An ancestor-only backdrop walk scores it
+#    against the light page background and fails it — the false positive that would
+#    block a legitimate design. Requires hit-testing the real paint stack.
+OVERLAY = slide(
+    '<div style="position:relative;height:300px">'
+    '<div style="position:absolute;inset:0;background:#12303f"></div>'
+    '<p style="position:absolute;top:20px;left:20px;color:var(--c-on-dark)">OVERLAY-TEXT</p>'
+    "</div>")
+
+# 7b/8b. Rendered against DARK_HEAD. The whole page is dark, so the "correct" and
+#    "defective" colours swap roles relative to the light examples: warm-white body copy
+#    is right, and a same-family dark primary on the dark background is the mirror image
+#    of the defect this gate was built for.
+DARK_OK = slide(
+    '<div class="kicker" style="color:var(--c-muted)">TD-KICKER</div>'
+    '<h2 style="color:var(--c-on-dark)">TD-HEAD</h2>'
+    '<p style="color:var(--c-text)">TD-BODY</p>'
+    '<p style="color:var(--c-muted)">TD-MUTED</p>'
+    '<p style="color:var(--c-accent);font-size:76px;font-weight:700">TD-NUM</p>'
+    '<div style="background:var(--c-bg2);padding:32px;margin-top:24px">'
+    '<h2 style="color:var(--c-on-dark)">TD-CARD-HEAD</h2>'
+    '<p style="color:var(--c-muted)">TD-CARD-MUTED</p></div>')
+DARK_BAD = slide('<h2 style="color:var(--c-primary)">TD-PRIMARY-ON-DARK</h2>')
+
+# 8. A colour syntax the probe cannot parse must be counted and announced, never
+#    silently dropped — otherwise "0 low-contrast" could mean "0 elements examined".
+UNREADABLE = slide(
+    '<div style="background:#ffffff;padding:40px">'
+    '<p style="color:oklch(0.95 0.01 250)">OKLCH-TEXT</p>'
+    '<p style="color:rgb(20 20 20 / 90%)">MODERN-RGB</p>'
+    "</div>")
+
 
 def main() -> int:
     if not PROBE.is_file():
@@ -217,7 +271,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as td:
         dirty = Path(td) / "dirty"
-        build(dirty, [DEFECT, CONTROL, DARK, BOUNDARY, LARGE, SKIPPED])
+        build(dirty, [DEFECT, CONTROL, DARK, BOUNDARY, LARGE, SKIPPED, OVERLAY, UNREADABLE])
         code, out = run_probe(dirty, dump=True)
         got = measurements(out)
         hit = gated(out)
@@ -225,7 +279,7 @@ def main() -> int:
         # --- 0. the harness itself saw everything it built
         want = {"DEFECT-HEAD", "CONTROL-HEAD", "CONTROL-MUTED", "DARK-HEAD",
                 "BOUND-2.0", "BOUND-2.6", "BOUND-3.0", "LARGE-2.0", "SMALL-2.0",
-                "ON-IMAGE"}
+                "ON-IMAGE", "OVERLAY-TEXT", "MODERN-RGB"}
         check("all fixture text elements measured", want <= set(got),
               f"missing {sorted(want - set(got))}" if not want <= set(got) else "")
         if not want <= set(got):
@@ -239,6 +293,10 @@ def main() -> int:
         check("defect: matches the 1.1:1 measured in discussions/052",
               abs(d["ratio"] - 1.10) < 0.05, f"{d['ratio']}:1")
         check("defect: reported by the gate, not just measured", "CONTRAST p1" in out)
+        # The gate's own premise is that reference docs do not reliably reach the model,
+        # so a failure must carry its remedy rather than assume anyone re-reads them.
+        check("defect: the failure tells you how to fix it",
+              "FIX:" in out and "--c-primary" in out and "data-dark" in out)
         check("defect: sibling body text on the same card stays clean",
               got["DEFECT-BODY"]["ratio"] > 10)
 
@@ -279,14 +337,41 @@ def main() -> int:
         check("gate fired only on the pages that deserve it",
               hit == {"DEFECT-HEAD", "BOUND-2.0", "SMALL-2.0"}, f"gated: {sorted(hit)}")
 
+        # --- 5b. real paint stack, not just the ancestor chain
+        ov = got["OVERLAY-TEXT"]
+        check("overlay: backdrop resolved to the painted sibling block, not the ancestor",
+              ov["bg"] == "#12303f", ov["bg"])
+        check("overlay: light-on-dark over a positioned sibling passes (no false positive)",
+              "OVERLAY-TEXT" not in hit and ov["ratio"] > 9, f"{ov['ratio']}:1")
+
+        # --- 5c. unreadable colour syntax is counted and announced, never silent
+        check("unreadable: oklch text is not silently measured", "OKLCH-TEXT" not in got)
+        check("unreadable: it is announced on stdout", "unreadable-colour" in out
+              and "NOT checked" in out)
+        check("unreadable: modern rgb()/alpha syntax still parses",
+              got["MODERN-RGB"]["ratio"] > 10, f"{got['MODERN-RGB']['ratio']}:1")
+
         # --- 6. JS luminance math agrees with an independent Python implementation
+        #
+        # Compared against the reported hex, which is an 8-bit rounding of what the gate
+        # actually judged. For an opaque foreground the hex is exact and the two agree to
+        # rounding noise; for an alpha-composited one (e.g. rgb(20 20 20 / 90%) lands on
+        # channel 43.5) half a level of quantisation moves the ratio by ~1% — the gate is
+        # right, the label is lossy. Hence a relative bound, with an absolute floor so
+        # low-ratio values are still held tightly.
         drift = []
         for label, m in got.items():
             expect = ratio(m["fg"], m["bg"])
-            if abs(expect - m["ratio"]) > 0.02:
+            if abs(expect - m["ratio"]) > max(0.02, 0.01 * expect):
                 drift.append(f"{label}: js {m['ratio']} vs py {expect:.2f}")
         check("WCAG math: injected JS agrees with Python reference", not drift,
               "; ".join(drift))
+        # The claim above is only meaningful if opaque foregrounds — where the hex is
+        # exact — agree tightly. If they ever stop doing so, that IS a math bug.
+        tight = [lbl for lbl, m in got.items()
+                 if abs(ratio(m["fg"], m["bg"]) - m["ratio"]) <= 0.02]
+        check("WCAG math: the large majority agree to within 0.02 (exact-hex cases)",
+              len(tight) >= len(got) - 1, f"{len(tight)}/{len(got)}")
 
         # --- 7. exit code + qa_report wiring
         check("dirty deck exits non-zero", code == 1, f"exit={code}")
@@ -298,6 +383,8 @@ def main() -> int:
               and con.get("threshold_large") == P.MIN_CONTRAST_LARGE)
         check("qa_report counts every measured element",
               con.get("elements_measured", 0) >= len(want))
+        check("qa_report records the unreadable-colour count",
+              con.get("elements_unreadable_color", 0) >= 1)
         check("qa_report findings are keyed by page", "1" in con.get("findings", {}))
         check("qa_report keeps the overflow section intact", "overflow" in rep)
 
@@ -307,6 +394,22 @@ def main() -> int:
         code2, out2 = run_probe(clean)
         check("clean deck exits 0", code2 == 0, f"exit={code2} {out2.strip()}")
         check("clean deck reports 0 low-contrast", "0 low-contrast" in out2)
+
+        # --- 8b. generality: a dark-first palette the calibration never saw
+        dark = Path(td) / "darkpalette"
+        build(dark, [DARK_OK, DARK_BAD], head=DARK_HEAD)
+        code3, out3 = run_probe(dark, dump=True)
+        dgot, dhit = measurements(out3), gated(out3)
+        weakest = min((dgot[k]["ratio"] for k in dgot if k.startswith("TD-")
+                       and k != "TD-PRIMARY-ON-DARK"), default=0)
+        check("dark palette: every correct element passes (no false positive)",
+              dhit == {"TD-PRIMARY-ON-DARK"}, f"gated: {sorted(dhit)}")
+        check("dark palette: the weakest correct element still clears with margin",
+              weakest >= P.MIN_CONTRAST * 1.5, f"weakest {weakest}:1")
+        check("dark palette: dark-on-dark is caught (mirror of the light-card defect)",
+              dgot["TD-PRIMARY-ON-DARK"]["ratio"] < P.MIN_CONTRAST_LARGE,
+              f"{dgot['TD-PRIMARY-ON-DARK']['ratio']}:1")
+        check("dark palette: deck fails as a whole", code3 == 1, f"exit={code3}")
 
     # --- 9. no false positives on anything actually shipped
     for name in ("ai-coding-pilot", "http-caching-primer",

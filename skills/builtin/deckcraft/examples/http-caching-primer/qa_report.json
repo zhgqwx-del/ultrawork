@@ -91,6 +91,7 @@
   "threshold": 2.3,
   "threshold_large": 1.8,
   "elements_measured": 93,
+  "elements_unreadable_color": 0,
   "findings": {}
  }
 }

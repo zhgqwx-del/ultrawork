@@ -15,7 +15,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - **双档阈值由实测标定**：`2.3:1` 正文 / `1.8:1` large（≥24px 或 ≥18.66px bold，借 WCAG large-text 宽限形状）。对四个内置 example **Chrome 真正绘制的 369 个文本元素**逐一实测：缺陷 1.10 · 合法 large 最低 **2.57**（showcase 大号装饰数字）· 合法正文最低 3.12 · 正确栏头 9.96。**discussions/052 手算表预测的合法最低 3.61 偏高——照抄定单档 2.3 会误杀那个装饰数字**，实测这一步是必需的。阈值刻意远低于 WCAG AA 4.5：门禁只拦「几乎不可见」，不与技能自身 muted/accent 风格争论。
   - **判不了的不判**：透明字（`background-clip:text` 一类绘制技巧）不测量；祖先带 `background-image`/渐变时合成背景非真值，照常测量并标记但**绝不据此判负**（宁可漏报，不拿猜测拦人）。
   - 与 overflow 同一条命令 / 同一个 `qa_report.json`（新增 `contrast` 段，`overflow` 段结构不动）/ 同一个退出码，**门禁链仍是四步**；新增 `--dump-contrast` 逐元素打印供标定与排障。引导同步硬化：`SKILL.md` 明写「`--c-on-dark` 仅限 `data-dark` 页、浅底标题用 `--c-primary`」，`visual-review.md` R4 补机器门禁指针并把评审职责收窄到门禁放行范围内的观感。
-  - **验证**：新增 `scripts/test-deckcraft-contrast.py` **34/34**——真实缺陷复现（实测 1.1:1）· `data-dark` 页上同一颜色判为正确（10.98:1，证明合成背景真解析到深底而非默认白）· 阈值边界 2.0 判负 / 2.6 / 3.0 放行 · large 宽限（同色 40px 放行、14px 判负，缺陷 1.1 仍被逮）· 透明字与图片底跳过 · **注入 JS 的亮度算法与独立 Python 实现逐元素对账** · 四个内置 example 零误报 exit 0；`deckcraft-selftest.py` **48/0** 无回归。不碰 vendor patch / 业务 TS、无新依赖。
+  - **合成背景取真实绘制栈**（`elementsFromPoint`）而非仅祖先链：浅字绝对定位压在**兄弟**深色块上时观感完全可读，祖先链只看到卡片浅底会误杀（自测抓出的假阳性，已修；命中测试看不到元素时退回祖先链降级）。栈中位于文字**之上**的元素不参与——遮挡问题本门禁不回答。
+  - **读不懂的颜色语法**（`oklch()`/`color()`/`lab()`）**计数并播报**，写进 `qa_report.contrast.elements_unreadable_color`：首版是静默跳过，会让「0 low-contrast」实际等于「一个都没检查」——门禁唯一不能有的失败模式。
+  - **通用性实证（非只对内置样例成立）**：调色板由模型每份 deck 现场生成，故补 `tech-dark`**整份深底**调色板实测并固化为回归用例 —— 正确元素最弱 7.24:1 零误报，**深底上同色系深色 1.37:1 被逮住**（原缺陷的镜像形态）。深底上误用暗 muted 3.38:1 放行属**设计边界**：阈值刻意远低于 WCAG AA，只拦「几乎不可见」，不替风格指南执法。
+  - **性能无衰退**：页面内直接计时 `measure()` 做 A/B —— 仅溢出 11.6 ms/页 → 溢出+对比度 17.3 ms/页，**增量 +5.7 ms/页 = 每页 Chrome 启动渲染开销的 0.38%**。
+  - **失败自带处方**：报 `CONTRAST` 时同时打印 `FIX:` 行（浅底标题用 `--c-primary`、正文用 `--c-text`、`--c-on-dark` 仅限 `[data-dark]` 页、改完重跑直到 exit 0）。本 ADR 的前提就是「引导写在 reference 文件里不可靠」——那把补救办法也写在文档里同样不可靠，必须让失败信息自解释。
+  - **真模型端到端**（`deckcraft-fullpipeline-realmodel.e2e.ts` 两轮，抽取打包后的 zip）：真 qwen 从一句「做PPT」跑完整管线均 PASS，新门禁未造成卡死或返工循环；日志可见模型被问到**消费距离**（ADR-066 新问题轮在真模型下生效）。第二轮保留产物后对**模型亲手生成、非样例**的 deck 跑门禁——模型**自选深色调色板**（`--c-bg:#0F172A`，HEX 与所有样例及合成用例均不同），**75 元素 0 误报 exit 0**，最弱合法元素 4.46:1。
+  - **验证**：新增 `scripts/test-deckcraft-contrast.py` **46/46**——真实缺陷复现（实测 1.1:1）· `data-dark` 页上同一颜色判为正确（10.98:1，证明合成背景真解析到深底而非默认白）· 绝对定位兄弟色块上的浅字放行（12.92:1）· 阈值边界 2.0 判负 / 2.6 / 3.0 放行 · large 宽限（同色 40px 放行、14px 判负，缺陷 1.1 仍被逮）· 透明字与图片底跳过 · 读不懂的颜色被计数播报 · **注入 JS 的亮度算法与独立 Python 实现逐元素对账** · 四个内置 example 零误报 exit 0。算法改绘制栈后**重新标定**：369 个元素逐条比对与旧算法完全一致，阈值依据未移动。`deckcraft-selftest.py` **48/0** · `test-deckcraft-validate.py` **26/26** 无回归。**客户机安装模拟**（zip 解压到无关目录后独立运行，相对/绝对路径两种调用）通过。不碰 vendor patch / 业务 TS、无新依赖。
 
 - **deckcraft 内容密度双边带 + `delivery_purpose` 消费距离旋钮（通用化，ADR-066 / discussions/051）**：治用户反馈「产出内容稍显单薄」+「整条管线为高管说服型调优、处处上界没有下界、不通用」。
   - **根因（五重实证，非猜测）**：内容单薄的绑定瓶颈是 `validate_outline.py` 的 IR 字符预算——一套比物理现实紧约 2x 的**审美上界**，无差别套用所有 mode/style，且**只有上界、无内容下界**。物理探针反证：教学正文「超预算 2x」仍零溢出——26 是审美常数、非物理必需。ADR-061 删掉本带 depth 机制的 ppt-master 后，deckcraft 成唯一默认技能，密集型 deck 既被压薄又无退路。
@@ -23,6 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - **补内容下界（与上界对称）**：O9 dense 页 **≥3 主列表项 且 ≥3 evidence**（`validate_outline` WARNING + `visual-review R3` 判负，锚条目/证据数非字数、防 thin→bloated）；O3 断言检测器泛化，接纳教学/通报式结论（`looks_like_assertion`，如「内容敏感用 ETag，成本敏感用 Last-Modified」不再误判裸标签）。
   - **补三档多样化 example，去 few-shot 高管偏**：原仅 1 example（高管说服）→ 补 `http-caching-primer`（instructional × document，全真实标准 RFC 9111/9110/5861 + MDN、`fact_id` 溯源）+ `platform-migration-brief`（briefing × document，全 scenario、每数据页 E10「示意数据」页脚）+ `product-launch-showcase`（showcase × presentation，明确虚构产品）——覆盖 mode × delivery_purpose × evidence 契约两端。
   - **验证**：`scripts/test-deckcraft-validate.py` **26/26** · 三档 example 门禁链全绿（validate_outline 0 error / **0 O9 warning** · validate_deck 0/0（W1 8px 模数 clean）· probe **0 findings**）· 独立视觉审查（无生成上下文）**7/7 × 3** · `pack-builtin-skills.ts` 实跑重打（5213 文件 3.0MB zip，客户可达）· deck.html 重建幂等 · committed `.builtin-version` 经 pack 权威 hash 重生成（对账不变式恢复）。不碰 vendor patch / 业务 TS；单 agent + 跨平台 ✅；Team 委派 question 门是既有正交缺口（gotchas §10⑪）未加剧未修。真机密度 A/B（document 讲义 vs presentation 投影两版）验收交用户。
+
+- **deckcraft 待优化清单（`docs/discussions/053-deckcraft-backlog.md`）**：把散落在 ADR-061/066/067 与 gotchas 里的 deckcraft 遗留项收敛成**单一待办入口**——主观 rubric 未机器化的部分（R2 重叠/R5 对齐，与 O9/对比度门禁同构）、提问轮行为（第 2 轮会被整轮跳过，**需先定产品语义**）、既有架构缺口（Team 委派 question 不可达）、工程项（每页一个 Chrome 进程是耗时大头）、以及**明确不需要做**的四条（免得后人重复评估）。
 
 ### Changed
 
