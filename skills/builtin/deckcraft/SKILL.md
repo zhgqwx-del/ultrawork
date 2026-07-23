@@ -61,7 +61,7 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 | `${SKILL_DIR}/scripts/validate_outline.py <project>` | **大纲内容门禁**（takeaway/evidence/空话黑名单，exit 0 才可进设计） |
 | `${SKILL_DIR}/scripts/build_deck.py <project>` | shell + tokens.css + pages/ → deck.html |
 | `${SKILL_DIR}/scripts/validate_deck.py <project> [--single]` | 结构门禁（--single 供首页门） |
-| `${SKILL_DIR}/scripts/probe_overflow.py <project> [--page N]` | **物理溢出探针**（Chrome 实测裁切/出界） |
+| `${SKILL_DIR}/scripts/probe_overflow.py <project> [--page N] [--dump-contrast]` | **物理探针**（Chrome 实测）：裁切/出界 + 文本对比度下界（`--dump-contrast` 逐元素打印，调试用） |
 | `${SKILL_DIR}/scripts/export_deck.py <project> [--pdf] [--shots] [--pptx] [--pptx-editable] [--publish <dir>]` | 导出（--pptx=图片型隐含 2x 截图+notes；--pptx-editable=可编辑，见交付形态） |
 | `${SKILL_DIR}/scripts/extract_layout.py <project> [--page N]` | （export 内部调用）deck.html → layout.json，供可编辑 pptx 组装 |
 | `${SKILL_DIR}/assets/templates/shell.html` | 文档骨架（结构层，**禁止改动**） |
@@ -133,7 +133,9 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 
 **5.2 扇出**：其余页按批生成（每批前重读 spec_lock）。每页一个
 `<section class="slide" data-layout="Sxx" data-rhythm="...">` 片段：颜色只用 `var(--c-*)`、
-字号只用 `var(--fs-*)`；scenario 数据页页脚必须有可见「示意数据」标注；
+字号只用 `var(--fs-*)`——**`--c-on-dark` 是深底页专用浅字，只能出现在 `data-dark` 页内**，
+放到浅卡片上会近乎隐形（对比度门禁硬拦）；浅底上的标题/栏头用 `--c-primary`；
+scenario 数据页页脚必须有可见「示意数据」标注；
 首次生成前 Read `references/content-guidelines.md`。
 
 **5.3 结构门禁**：`build_deck.py` → `validate_deck.py` → `probe_overflow.py`，全部 exit 0。

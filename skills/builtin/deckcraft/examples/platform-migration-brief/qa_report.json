@@ -77,5 +77,20 @@
    "rename_test": "pass",
    "note": "全部为演示用虚构数据（scenario），每个数据页带可见「示意数据」页脚；示范 briefing×document 档的高密度事实通报形态"
   }
+ },
+ "contrast": {
+  "pages_probed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "threshold": 2.3,
+  "threshold_large": 1.8,
+  "elements_measured": 96,
+  "findings": {}
  }
 }

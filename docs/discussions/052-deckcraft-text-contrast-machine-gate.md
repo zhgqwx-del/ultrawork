@@ -1,6 +1,7 @@
 # 052 — deckcraft 文本对比度：主观 R4 缺机器下界（真机暴露的浅字缺陷）
 
-> 状态：🟡 **已记档 / 暂不改码**（用户选先 follow-up，2026-07-23）。根因 + probe 校准数据 + 三方案已定，实施待排期。
+> 状态：✅ **已实现**（2026-07-23，ADR-067，分支 `feat/deckcraft-contrast-gate`）—— 采方案①机器对比度门禁，双档阈值 2.3:1 / 1.8:1(large)，`scripts/test-deckcraft-contrast.py` 34/34。
+> ⚠️ **本文 §2.1 的手算校准表已被实测取代**：对四例 369 个文本元素实测，合法最低值是 **2.57:1**（showcase 大号装饰数字），低于本文预测的 3.61 —— 若照本文把阈值定单档 2.3 会误杀它。权威校准数据见 ADR-067 D2。
 > 日期：2026-07-23
 > 触发：discussions/051（密度双边带 + delivery_purpose）Phase B **真机验收**时，A2（presentation 档《HTTP 缓存机制入门》）某页出现栏头浅字近乎隐形。
 > 关联：discussions/051（同一「有主观检查、无机器下界」结构缺口——密度侧已补 O9/R3，对比度侧尚缺）· `references/visual-review.md` R4 · ADR-066

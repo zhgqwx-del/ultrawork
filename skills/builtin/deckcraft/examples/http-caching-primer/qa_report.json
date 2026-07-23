@@ -77,5 +77,20 @@
    "rename_test": "pass",
    "note": "内容为真实 HTTP 标准，换成别家产品即不成立——非空心模板"
   }
+ },
+ "contrast": {
+  "pages_probed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "threshold": 2.3,
+  "threshold_large": 1.8,
+  "elements_measured": 93,
+  "findings": {}
  }
 }
