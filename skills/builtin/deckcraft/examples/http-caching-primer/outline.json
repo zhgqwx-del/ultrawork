@@ -1,0 +1,160 @@
+{
+ "title": "HTTP 缓存机制入门（讲义版）",
+ "audience": "有一定 Web 基础、想系统搞懂 HTTP 缓存的工程师，会对着屏幕逐页细读",
+ "goal": "让读者能读懂缓存头、区分强缓存与协商缓存、避开三个常见误区",
+ "mode": "instructional",
+ "delivery_purpose": "document",
+ "language": "zh",
+ "note": "本 example 全部事实引用真实 Web 标准（RFC 9111/9110/5861 + MDN），非 scenario；delivery_purpose=document 示范近读讲义档的高密度承载",
+ "slides": [
+  {
+   "index": 1,
+   "layout": "S01",
+   "rhythm": "anchor",
+   "title": "HTTP 缓存机制入门",
+   "content": {
+    "kicker": "HTTP CACHING · 讲义版",
+    "subtitle": "面向工程师的 HTTP 缓存细读讲义",
+    "meta": "RFC 9111 / 9110 / 5861 · MDN · 2026"
+   },
+   "speaker_notes": "开场点题：缓存不是玄学，是一组可读的契约头。今天按「强缓存→协商缓存→速查表→决策流程→误区」五步走，讲义版可留着对屏细读。"
+  },
+  {
+   "index": 2,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "四个关键缓存指令",
+   "takeaway": "max-age 定新鲜期，no-store / no-cache / s-maxage 各管一件事",
+   "evidence": [
+    { "fact_id": "F2" },
+    { "fact_id": "F3" },
+    { "fact_id": "F4" },
+    { "fact_id": "F10" }
+   ],
+   "confidence": "high",
+   "content": {
+    "points": [
+     { "h": "max-age", "p": "响应在指定秒数内视为新鲜，缓存直接复用不回源" },
+     { "h": "no-store", "p": "完全不存储任何副本，用于敏感或永不复用的内容" },
+     { "h": "no-cache", "p": "允许存储，但每次复用前必须回源重新验证" },
+     { "h": "s-maxage", "p": "只对 CDN 等共享缓存生效，并覆盖 max-age" }
+    ]
+   },
+   "speaker_notes": "四个指令是缓存策略的主开关。重点纠一个误解：no-cache 不是不缓存，见第 6 页误区页详展开。"
+  },
+  {
+   "index": 3,
+   "layout": "S04",
+   "rhythm": "dense",
+   "title": "强缓存 vs 协商缓存",
+   "takeaway": "命中快用强缓存，怕过期就叠加协商缓存回源验证",
+   "evidence": [
+    { "fact_id": "F2" },
+    { "fact_id": "F5" },
+    { "fact_id": "F6" }
+   ],
+   "confidence": "high",
+   "content": {
+    "col_a": {
+     "h": "强缓存 · 不回源",
+     "points": [
+      "靠 max-age / Expires 判定新鲜期",
+      "新鲜期内浏览器直接读本地，零网络请求",
+      "命中最快，但更新有延迟风险"
+     ]
+    },
+    "col_b": {
+     "h": "协商缓存 · 回源验证",
+     "points": [
+      "过期后带 ETag / Last-Modified 回源",
+      "未变返回 304 无响应体，仅省流量",
+      "多一次往返，但保证内容最新"
+     ]
+    }
+   },
+   "speaker_notes": "两者不是二选一而是分层：先用强缓存拿命中速度，过期后落到协商缓存保新鲜。讲清「304 无响应体」为什么仍比 200 省——省的是响应体流量。"
+  },
+  {
+   "index": 4,
+   "layout": "S10",
+   "rhythm": "dense",
+   "title": "常用缓存头速查表",
+   "takeaway": "六个头覆盖强缓存、协商缓存与变体三类判定",
+   "evidence": [
+    { "fact_id": "F2" },
+    { "fact_id": "F6" },
+    { "fact_id": "F7" },
+    { "fact_id": "F11" }
+   ],
+   "confidence": "high",
+   "content": {
+    "headers": ["响应头", "作用", "典型取值"],
+    "rows": [
+     ["Cache-Control", "强 / 协商缓存总开关", "max-age=3600"],
+     ["ETag", "内容校验器（强 / 弱）", "\"a1b2c3\""],
+     ["Last-Modified", "日期校验器（秒级）", "Wed, 21 Oct 2015 07:28:00 GMT"],
+     ["Vary", "声明缓存变体维度", "Accept-Encoding"],
+     ["Age", "已在缓存停留秒数", "120"],
+     ["Expires", "旧式绝对过期时间", "被 max-age 覆盖"]
+    ]
+   },
+   "speaker_notes": "速查表当讲义手边卡片用。强调 Vary 那行——最常被漏，漏了会把 gzip 变体发给不支持的客户端。"
+  },
+  {
+   "index": 5,
+   "layout": "S06",
+   "rhythm": "dense",
+   "title": "一次请求的缓存决策",
+   "takeaway": "本地命中 → 新鲜度判定 → 回源验证 → 取 304/200 四步决定复用",
+   "evidence": [
+    { "fact_id": "F1" },
+    { "fact_id": "F2" },
+    { "fact_id": "F5" }
+   ],
+   "confidence": "high",
+   "content": {
+    "nodes": [
+     { "h": "查本地", "p": "浏览器先查本地缓存有无该资源的副本" },
+     { "h": "看新鲜度", "p": "在 max-age 新鲜期内则直接命中，不发请求" },
+     { "h": "回源验证", "p": "已过期则带 ETag 发条件请求问源站是否更新" },
+     { "h": "取 304 或 200", "p": "未变收 304 复用副本，已变收 200 换新内容" }
+    ]
+   },
+   "speaker_notes": "把这四步画成一条决策线，学员卡壳最多在第二步与第三步的边界——「新鲜」与「过期后验证」是两个阶段，不是一件事。"
+  },
+  {
+   "index": 6,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "三个常见误区与纠正",
+   "takeaway": "no-cache 会验证、日期校验不精确、漏设 Vary 会串变体",
+   "evidence": [
+    { "fact_id": "F4" },
+    { "fact_id": "F7" },
+    { "fact_id": "F11" }
+   ],
+   "confidence": "high",
+   "content": {
+    "points": [
+     { "h": "no-cache 陷阱", "p": "它不是不缓存，而是每次复用前必须回源验证" },
+     { "h": "只用日期校验", "p": "Last-Modified 秒级分辨率，同秒多改会漏判，应加 ETag" },
+     { "h": "忘设 Vary", "p": "内容随请求头变化时漏设 Vary，缓存会返回错误变体" }
+    ]
+   },
+   "speaker_notes": "三个坑都来自「以为设了就对了」。逐条给纠正动作：no-cache 要配校验器、日期校验要叠 ETag、内容协商要显式声明 Vary。"
+  },
+  {
+   "index": 7,
+   "layout": "S08",
+   "rhythm": "anchor",
+   "title": "把缓存当契约来设计",
+   "content": {
+    "statement_prefix": "读懂缓存头，就是读懂",
+    "statement_accent": "性能与新鲜度的取舍",
+    "cta": "下一步：给你的接口写一份缓存策略表",
+    "sign": "HTTP CACHING PRIMER"
+   },
+   "speaker_notes": "收在一个可执行动作上：让读者回去给自己负责的接口列一张「该用强缓存还是协商缓存」的策略表，把讲义变成 checklist。"
+  }
+ ]
+}

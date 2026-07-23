@@ -1,0 +1,157 @@
+{
+ "title": "内部平台迁移季度进展通报（Q2）",
+ "audience": "平台迁移相关的技术负责人与协作团队，需快速掌握进度、风险与协调项",
+ "goal": "同步本季迁移进展、暴露需跨组协调的阻塞项、明确下季目标",
+ "mode": "briefing",
+ "delivery_purpose": "document",
+ "language": "zh",
+ "note": "本 example 全部数据为演示用虚构值（scenario），不对应真实系统；每个数据页页脚带可见「示意数据」标注",
+ "slides": [
+  {
+   "index": 1,
+   "layout": "S01",
+   "rhythm": "anchor",
+   "title": "平台迁移季度通报",
+   "content": {
+    "kicker": "PLATFORM MIGRATION · Q2 通报",
+    "subtitle": "核心服务迁移至新平台的季度进展",
+    "meta": "平台工程组 · 2026 Q2 · 示意数据"
+   },
+   "speaker_notes": "开场交代通报范围：只讲本季度核心服务迁移的进度、风险与协调项，数据均为示意。控制在 30 秒内进入正题。"
+  },
+  {
+   "index": 2,
+   "layout": "S05",
+   "rhythm": "anchor",
+   "title": "本季迁移完成六成，进度符合预期",
+   "takeaway": "六成核心服务已迁移、三个关键子系统切流、零 P0 事故",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" }
+   ],
+   "confidence": "high",
+   "content": {
+    "stats": [
+     { "n": "61%", "p": "核心服务迁移完成度" },
+     { "n": "3/5", "p": "关键子系统已切流" },
+     { "n": "0", "p": "迁移相关 P0 事故" }
+    ],
+    "footnote": "口径：本季度累计，示意数据（scenario）· 全部为演示用虚构值"
+   },
+   "speaker_notes": "TL;DR 页只给三个数：完成度、切流子系统数、事故数。每个数配一句口径，主动说明是示意数据。"
+  },
+  {
+   "index": 3,
+   "layout": "S10",
+   "rhythm": "dense",
+   "title": "各业务域迁移进度",
+   "takeaway": "订单与风控已切流，支付库存灰度中，搜索报表待启动",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "high",
+   "content": {
+    "headers": ["业务域", "状态", "完成度", "负责人"],
+    "rows": [
+     ["订单", "已切流", "100%", "王工"],
+     ["支付", "灰度中", "70%", "李工"],
+     ["库存", "灰度中", "55%", "张工"],
+     ["风控", "已切流", "100%", "赵工"],
+     ["搜索", "待启动", "10%", "陈工"],
+     ["报表", "待启动", "0%", "周工"]
+    ]
+   },
+   "speaker_notes": "逐域过一遍进度表。重点停在支付与库存两个灰度中的域——它们是本季能否达标的关键，后面风险页会展开。"
+  },
+  {
+   "index": 4,
+   "layout": "S06",
+   "rhythm": "dense",
+   "title": "季度迁移里程碑",
+   "takeaway": "四个月按月推进，两域已切流、两域灰度、两域待启动",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "high",
+   "content": {
+    "nodes": [
+     { "h": "4 月", "p": "完成新平台容量评估与灰度框架搭建" },
+     { "h": "5 月", "p": "订单、风控两域首批切流并稳定运行" },
+     { "h": "6 月", "p": "支付库存进入灰度，搜索完成依赖梳理" },
+     { "h": "7 月", "p": "计划完成支付切流，启动搜索迁移" }
+    ]
+   },
+   "speaker_notes": "时间线强调节奏：前两月搭底座，中间两月首批切流，当前在灰度爬坡。7 月是承上启下的关键节点。"
+  },
+  {
+   "index": 5,
+   "layout": "S04",
+   "rhythm": "dense",
+   "title": "已完成 vs 待协调项",
+   "takeaway": "本季完成三项，另有三项需跨组协调排期",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "medium",
+   "content": {
+    "col_a": {
+     "h": "本季已完成",
+     "points": [
+      "订单、风控两域全量切流稳定",
+      "灰度框架与回滚预案就位",
+      "新平台容量评估通过压测"
+     ]
+    },
+    "col_b": {
+     "h": "需跨组协调",
+     "points": [
+      "支付切流需财务系统配合对账",
+      "搜索迁移依赖数据组索引重建",
+      "报表域需与 BI 团队排期"
+     ]
+    }
+   },
+   "speaker_notes": "左栏是已经落地的确定性，右栏是需要别的团队配合才能推进的项。协调项才是今天通报要争取的资源。"
+  },
+  {
+   "index": 6,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "三个风险与协调项",
+   "takeaway": "支付对账、搜索索引、报表口径三项是本季主要风险",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "medium",
+   "content": {
+    "points": [
+     { "h": "支付对账窗口", "p": "切流窗口需与财务月结错开，避免对账冲突" },
+     { "h": "搜索索引重建", "p": "依赖数据组重建索引，排期未定影响 7 月计划" },
+     { "h": "报表口径迁移", "p": "新旧平台报表口径需对齐，待 BI 团队确认" }
+    ]
+   },
+   "speaker_notes": "三个风险都不是技术卡点，而是跨组协调卡点。每条都给出需要对方做什么、什么时候前要回复。"
+  },
+  {
+   "index": 7,
+   "layout": "S08",
+   "rhythm": "anchor",
+   "title": "下季目标：完成核心域迁移",
+   "content": {
+    "statement_prefix": "下季度收尾",
+    "statement_accent": "支付与搜索两域迁移",
+    "cta": "目标：Q3 末核心域迁移完成度达 95%",
+    "sign": "PLATFORM ENGINEERING · 示意数据"
+   },
+   "speaker_notes": "收在明确的下季目标上：具体到哪两个域、完成度目标数字、需要各协作组在何时前给出排期。"
+  }
+ ]
+}

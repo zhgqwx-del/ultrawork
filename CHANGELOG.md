@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **deckcraft 内容密度双边带 + `delivery_purpose` 消费距离旋钮（通用化，ADR-066 / discussions/051）**：治用户反馈「产出内容稍显单薄」+「整条管线为高管说服型调优、处处上界没有下界、不通用」。
+  - **根因（五重实证，非猜测）**：内容单薄的绑定瓶颈是 `validate_outline.py` 的 IR 字符预算——一套比物理现实紧约 2x 的**审美上界**，无差别套用所有 mode/style，且**只有上界、无内容下界**。物理探针反证：教学正文「超预算 2x」仍零溢出——26 是审美常数、非物理必需。ADR-061 删掉本带 depth 机制的 ppt-master 后，deckcraft 成唯一默认技能，密集型 deck 既被压薄又无退路。
+  - **两正交旋钮**：① 字符/条目预算改 **floor+cap 双边带**，上界 probe 校准、随 `delivery_purpose` 取档（`p` presentation 26 / balanced 32 / document 42；S03/S04 条数、S10 行数同随档）；② 顶层 **`delivery_purpose`**（`presentation`/`balanced`(缺省)/`document`）= 消费距离，**与 `mode` 正交**（任何 deck 都有的属性，mode 绝不碰密度、不由 mode 推定，第 1 轮 question 按消费距离信号推荐）。
+  - **补内容下界（与上界对称）**：O9 dense 页 **≥3 主列表项 且 ≥3 evidence**（`validate_outline` WARNING + `visual-review R3` 判负，锚条目/证据数非字数、防 thin→bloated）；O3 断言检测器泛化，接纳教学/通报式结论（`looks_like_assertion`，如「内容敏感用 ETag，成本敏感用 Last-Modified」不再误判裸标签）。
+  - **补三档多样化 example，去 few-shot 高管偏**：原仅 1 example（高管说服）→ 补 `http-caching-primer`（instructional × document，全真实标准 RFC 9111/9110/5861 + MDN、`fact_id` 溯源）+ `platform-migration-brief`（briefing × document，全 scenario、每数据页 E10「示意数据」页脚）+ `product-launch-showcase`（showcase × presentation，明确虚构产品）——覆盖 mode × delivery_purpose × evidence 契约两端。
+  - **验证**：`scripts/test-deckcraft-validate.py` **26/26** · 三档 example 门禁链全绿（validate_outline 0 error / **0 O9 warning** · validate_deck 0/0（W1 8px 模数 clean）· probe **0 findings**）· 独立视觉审查（无生成上下文）**7/7 × 3** · `pack-builtin-skills.ts` 实跑重打（5213 文件 3.0MB zip，客户可达）· deck.html 重建幂等 · committed `.builtin-version` 经 pack 权威 hash 重生成（对账不变式恢复）。不碰 vendor patch / 业务 TS；单 agent + 跨平台 ✅；Team 委派 question 门是既有正交缺口（gotchas §10⑪）未加剧未修。真机密度 A/B（document 讲义 vs presentation 投影两版）验收交用户。
+
+### Changed
+
+- **deckcraft S04 两栏骨架 `height:432px` → `min-height:432px`（ADR-066 / discussions/051）**：固定高物理封顶 4 点且令过量内容溢出卡片外、`overflow:visible` 使物理探针静默放行（门禁洞）；改 `min-height` 后 document 档放开到 5 点 0 溢出，同时 `validate_outline` 补 S04 `points` 字符预算与每栏条目数堵漏。实测判定**无需新增密集承载版式**（S03/S06/S10 现有骨架都装得下远超旧 cap 的密集内容）。
+
 ### Fixed
 
 - **deckcraft deck 应用内预览底部大片可滚动空白（discussions/050）**：deckcraft 生成的 deck 在应用内 HTML 预览时，末页下方出现大片深色可滚动空白（真机 lhopital 14 页实测预览面板 1188px 宽时达 983px），而直接打开文件、独立 HTML 均正常。

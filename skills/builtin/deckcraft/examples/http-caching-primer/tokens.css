@@ -1,0 +1,7 @@
+:root{
+  --c-bg:#F6F8FA; --c-bg2:#E8EDF2; --c-primary:#1B3A57; --c-accent:#0E7490;
+  --c-muted:#5A6B7B; --c-text:#15202B; --c-on-dark:#F3F8FC;
+  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --fs-display:60px; --fs-h1:42px; --fs-h2:28px; --fs-h3:23px;
+  --fs-body:21px; --fs-num:76px; --fs-caption:14px;
+}

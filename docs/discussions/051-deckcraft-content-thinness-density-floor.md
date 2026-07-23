@@ -1,7 +1,9 @@
 # 051 — deckcraft 内容单薄 / "只有上界没有下界" 根因与密度轴方案
 
-> 状态：🟡 **Phase A（引擎+文档）已实现并三层验证、git 工作树未提交；Phase B（3 examples）+ 收尾 pending**
+> 状态：✅ **已实现（Phase A 引擎+文档 commit `ce1847ff` + Phase B 三档 example + 收尾，ADR-066）**
 > 日期：2026-07-22
+>
+> **Phase B 落地（2026-07-22）**：补三档多样化 example 去 few-shot 高管偏——`examples/http-caching-primer`（instructional × **document**，全**真实**标准 RFC 9111/9110/5861 + MDN、`fact_id` 溯源，密度「密」端）、`examples/platform-migration-brief`（briefing × document，全 **scenario**、每数据页 E10「示意数据」页脚）、`examples/product-launch-showcase`（showcase × **presentation**，明确**虚构产品** Lumo，密度「疏」端）。三例各 7 页、门禁链全绿（validate_outline 0 error / **0 O9 warning** · validate_deck 0/0（W1 clean）· probe **0 findings**）+ 独立视觉审查（无生成上下文）**7/7 × 3** + deck.html 重建幂等 + `qa_report.json` visual 段字节稳定。`pack-builtin-skills.ts` 实跑重打（5213 文件 3.0MB zip，客户可达）；committed `skills/builtin/.builtin-version` 经 pack 权威 hash（`52ca1f324acb2b38`）重生成（对账不变式恢复，顺带治愈 Phase A 遗留漂移）。连同 `ai-coding-pilot`（pyramid × balanced）现有 4 个 example 覆盖 mode × delivery_purpose × evidence 契约两端。ADR-066 记双轴决策。
 >
 > **Phase A 落地（2026-07-22）**：已改 7 文件（全 `skills/builtin/deckcraft/`）——`scripts/validate_outline.py`（双边带按 `delivery_purpose` 取档 + S04 补 `points` 预算与条目数堵洞 + O3 泛化 `looks_like_assertion` + O9 dense 下界 warning）、`assets/templates/layouts.html`（S04 `height:432px`→`min-height:432px`）、`references/{outline-schema,content-engineering,modes,visual-review}.md`、`SKILL.md`（Phase 2 第 1 轮 question 增 `delivery_purpose`）。**三个开放决策已定**：① delivery_purpose 全局默认 `balanced` + 由消费距离信号推荐、**不绑 mode**；② 补 instructional+briefing+showcase 三例；③ O9 下界 = dense 页 ≥3 主列表项 且 ≥3 evidence → `validate` warning（band 无关，保持现状）+ `visual-review R3` 判负。**验证**：`scripts/test-deckcraft-validate.py` 26/26 · 真 Chrome 物理 A/B 证 min-height 堵门禁洞（旧 `height` 令过量内容溢出卡片外、`overflow:visible` 使 probe 静默放行）· `pack-builtin-skills.ts` 实跑重打（sentinel 变→客户可达）。跨平台/打包/单 agent 均 ✅；Team 委派 question 门是**既有**正交缺口（gotchas §10⑪）本次未加剧未修。**Phase B 待做**见 §四.四。
 > 关联：ADR-061（删 ppt-master、deckcraft 升为唯一默认做 PPT 技能）· discussions/050（deckcraft 预览）· skill_research/01-04（4 库调研）· skill_research/09（被砍 depth 的综合方案）

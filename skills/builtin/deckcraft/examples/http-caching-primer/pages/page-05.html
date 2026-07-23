@@ -1,0 +1,33 @@
+<section class="slide" data-layout="S06" data-rhythm="dense">
+  <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+  <div class="kicker" style="margin-top:24px">REQUEST DECISION</div>
+  <h1 style="margin-top:8px">一次请求的缓存决策</h1>
+  <div style="display:flex;margin-top:96px;position:relative">
+    <div style="position:absolute;top:11px;left:0;right:32px;height:2px;background:var(--c-muted);opacity:.5"></div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 1</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">查本地</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">浏览器先查本地缓存<br>有无该资源的副本</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 2</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">看新鲜度</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">在 max-age 新鲜期内<br>则直接命中，不发请求</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 3</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">回源验证</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">已过期则带 ETag 发<br>条件请求问源站是否更新</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-accent);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 4</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">取 304 或 200</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">未变收 304 复用副本，<br>已变收 200 换新内容</p>
+    </div>
+  </div>
+  <div class="pagenum">5 / 7</div>
+</section>

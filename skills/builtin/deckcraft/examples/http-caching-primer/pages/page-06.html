@@ -1,0 +1,33 @@
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
+      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <h1 style="margin-top:24px">三个常见<br>误区与纠正</h1>
+      <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">以为设了就对了</p>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:40px">
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">01</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">no-cache 陷阱</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">它不是不缓存，而是每次复用前必须回源验证</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">02</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">只用日期校验</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">Last-Modified 秒级分辨率，同秒多改会漏判，应加 ETag</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">03</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">忘设 Vary</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">内容随请求头变化时漏设 Vary，缓存会返回错误变体</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <div class="pagenum">6 / 7</div>
+</section>

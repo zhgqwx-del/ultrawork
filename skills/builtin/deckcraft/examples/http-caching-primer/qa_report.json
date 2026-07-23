@@ -1,0 +1,81 @@
+{
+ "structure": {
+  "mode": "full",
+  "pages": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "layouts": [
+   "S01",
+   "S03",
+   "S04",
+   "S10",
+   "S06",
+   "S03",
+   "S08"
+  ],
+  "errors": [],
+  "warnings": []
+ },
+ "overflow": {
+  "pages_probed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "findings": {}
+ },
+ "visual": {
+  "reviewer": "independent (no generation context)",
+  "verdicts": [
+   {
+    "page": 1,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 2,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 3,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 4,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 5,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 6,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 7,
+    "verdict": "pass",
+    "findings": []
+   }
+  ],
+  "concept_check": {
+   "rename_test": "pass",
+   "note": "内容为真实 HTTP 标准，换成别家产品即不成立——非空心模板"
+  }
+ }
+}

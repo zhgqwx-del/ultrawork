@@ -1,0 +1,81 @@
+{
+ "structure": {
+  "mode": "full",
+  "pages": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "layouts": [
+   "S01",
+   "S05",
+   "S10",
+   "S06",
+   "S04",
+   "S03",
+   "S08"
+  ],
+  "errors": [],
+  "warnings": []
+ },
+ "overflow": {
+  "pages_probed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "findings": {}
+ },
+ "visual": {
+  "reviewer": "independent (no generation context)",
+  "verdicts": [
+   {
+    "page": 1,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 2,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 3,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 4,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 5,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 6,
+    "verdict": "pass",
+    "findings": []
+   },
+   {
+    "page": 7,
+    "verdict": "pass",
+    "findings": []
+   }
+  ],
+  "concept_check": {
+   "rename_test": "pass",
+   "note": "全部为演示用虚构数据（scenario），每个数据页带可见「示意数据」页脚；示范 briefing×document 档的高密度事实通报形态"
+  }
+ }
+}

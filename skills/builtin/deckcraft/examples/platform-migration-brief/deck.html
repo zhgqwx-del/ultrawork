@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<!-- deckcraft shell — build_deck.py 装配最终 deck.html：
+     TITLE 占位 ← outline.title · TOKENS 占位 ← tokens.css · SLIDES 占位 ← pages/*.html 按序拼接
+     （占位符本体不能出现在本注释里——build 的全局替换会把内容塞进注释） -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>内部平台迁移季度进展通报（Q2）</title>
+<style>
+/* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
+:root{
+  --c-bg:#F7F7F5; --c-bg2:#EAEAE6; --c-primary:#2A3B4D; --c-accent:#2F7D5B;
+  --c-muted:#66707A; --c-text:#1A1E22; --c-on-dark:#F4F6F5;
+  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --fs-display:60px; --fs-h1:42px; --fs-h2:28px; --fs-h3:23px;
+  --fs-body:21px; --fs-num:76px; --fs-caption:14px;
+}
+/* ==== 结构层（风格无关，禁止手改） ==== */
+*{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
+html,body{background:#3a3a3a}
+body{font-family:var(--font-stack);color:var(--c-text)}
+.stage{width:1280px;margin:0 auto}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
+.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
+h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
+.accent{color:var(--c-accent);font-weight:700}
+.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
+.bar{width:48px;height:8px;background:var(--c-accent)}
+ul{list-style:none}
+/* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
+@page{size:1280px 720px;margin:0}
+@media print{
+  html,body{background:none}
+  .slide{margin:0;page-break-after:always;break-after:page}
+  .slide:last-child{page-break-after:auto;break-after:auto}
+  /* !important 压过屏幕适配脚本写下的 inline zoom——否则 headless print-to-pdf
+     （默认 800px 视口先跑了 fit()、写下 zoom≈0.6）会把整份 PDF 缩到 ~60% 并错位 */
+  #stage{zoom:1!important}
+}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">PLATFORM MIGRATION · Q2 通报</div>
+    <div style="font-size:var(--fs-display);font-weight:700;line-height:1.2;margin-top:24px">平台迁移<br>季度通报</div>
+    <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85">核心服务迁移至新平台的季度进展</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px;font-size:var(--fs-caption);opacity:.55">平台工程组 · 2026 Q2 · 示意数据</div>
+</section>
+<section class="slide" data-layout="S05" data-rhythm="anchor" data-dark>
+  <h1 style="color:var(--c-on-dark)">本季迁移完成六成，进度符合预期</h1>
+  <div style="display:flex;gap:64px;margin-top:80px">
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-on-dark)">61%</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">核心服务迁移完成度</p>
+    </div>
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-on-dark)">3/5</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">关键子系统已切流</p>
+    </div>
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-on-dark)">0</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">迁移相关 P0 事故</p>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:40px;left:64px;font-size:var(--fs-caption);opacity:.5">口径：本季度累计，示意数据（scenario）· 全部为演示用虚构值</div>
+</section>
+<section class="slide" data-layout="S10" data-rhythm="dense">
+  <h1>各业务域迁移进度</h1>
+  <table style="width:100%;margin-top:40px;border-collapse:collapse;font-size:var(--fs-body)">
+    <thead><tr style="border-bottom:2px solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">业务域</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">状态</th>
+      <th style="text-align:right;padding:16px 8px;font-weight:700;color:var(--c-primary)">完成度</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">负责人</th>
+    </tr></thead>
+    <tbody>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">订单</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-accent)">已切流</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">100%</td>
+        <td style="padding:16px 8px;font-weight:300">王工</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">支付</td>
+        <td style="padding:16px 8px;font-weight:300">灰度中</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">70%</td>
+        <td style="padding:16px 8px;font-weight:300">李工</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">库存</td>
+        <td style="padding:16px 8px;font-weight:300">灰度中</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">55%</td>
+        <td style="padding:16px 8px;font-weight:300">张工</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">风控</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-accent)">已切流</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">100%</td>
+        <td style="padding:16px 8px;font-weight:300">赵工</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">搜索</td>
+        <td style="padding:16px 8px;font-weight:300">待启动</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">10%</td>
+        <td style="padding:16px 8px;font-weight:300">陈工</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">报表</td>
+        <td style="padding:16px 8px;font-weight:300">待启动</td>
+        <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">0%</td>
+        <td style="padding:16px 8px;font-weight:300">周工</td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 非实测</div>
+  <div class="pagenum">3 / 7</div>
+</section>
+<section class="slide" data-layout="S06" data-rhythm="dense">
+  <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+  <div class="kicker" style="margin-top:24px">QUARTER MILESTONES</div>
+  <h1 style="margin-top:8px">季度迁移里程碑</h1>
+  <div style="display:flex;margin-top:96px;position:relative">
+    <div style="position:absolute;top:11px;left:0;right:32px;height:2px;background:var(--c-muted);opacity:.5"></div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 1</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">4 月</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">完成新平台容量评估<br>与灰度框架搭建</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 2</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">5 月</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">订单、风控两域首批<br>切流并稳定运行</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 3</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">6 月</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">支付库存进入灰度，<br>搜索完成依赖梳理</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-accent);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 4</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">7 月</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">计划完成支付切流，<br>启动搜索迁移</p>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 非实测</div>
+  <div class="pagenum">4 / 7</div>
+</section>
+<section class="slide" data-layout="S04" data-rhythm="dense">
+  <div class="kicker">DONE vs TO COORDINATE</div>
+  <h1 style="margin-top:16px">已完成 vs 待协调项</h1>
+  <div style="display:flex;gap:48px;margin-top:40px;min-height:432px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px">
+      <div class="kicker">COMPLETED</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">本季已完成</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>订单、风控两域全量切流稳定</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>灰度框架与回滚预案就位</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>新平台容量评估通过压测</span></li>
+      </ul>
+    </div>
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+      <div class="kicker" style="color:var(--c-accent)">TO COORDINATE</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">需跨组协调</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>支付切流需财务系统配合对账</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>搜索迁移依赖数据组索引重建</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>报表域需与 BI 团队排期</span></li>
+      </ul>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 非实测</div>
+  <div class="pagenum">5 / 7</div>
+</section>
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
+      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <h1 style="margin-top:24px">三个风险<br>与协调项</h1>
+      <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">卡点都在跨组协调</p>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:40px">
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">01</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">支付对账窗口</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">切流窗口需与财务月结错开，避免对账冲突</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">02</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">搜索索引重建</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">依赖数据组重建索引，排期未定影响 7 月计划</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">03</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">报表口径迁移</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">新旧平台报表口径需对齐，待 BI 团队确认</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 非实测</div>
+  <div class="pagenum">6 / 7</div>
+</section>
+<section class="slide" data-layout="S08" data-rhythm="anchor">
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <h1 style="font-size:var(--fs-display);line-height:1.25;margin-top:40px">下季度收尾<br><span class="accent">支付与搜索两域迁移</span></h1>
+    <p style="margin-top:40px">目标：Q3 末核心域迁移完成度达 95%</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px" class="kicker">PLATFORM ENGINEERING · 示意数据</div>
+</section>
+</div>
+<script>
+/* 屏幕预览：用 zoom 整体缩放适配窗口宽度。zoom 同时缩放布局与绘制，
+   scrollHeight 随之等于视觉高度——不像 transform:scale（不缩布局盒）+ 负 marginBottom
+   （改不动 scrollHeight）那样在末尾留下 (1-s)*h 的空白可滚动区（见 discussions/050）。
+   横向居中交给 .stage 的 margin:0 auto；打印路径由 @media print 的 #stage{zoom:1!important}
+   压制（stylesheet !important 打得过 inline），PDF 始终原尺寸。 */
+(function(){
+  var st = document.getElementById("stage");
+  function fit(){
+    var vw = document.documentElement.clientWidth;
+    st.style.zoom = Math.min(1, (vw - 32) / 1280);
+  }
+  var pending = 0;
+  window.addEventListener("resize", function(){
+    if (pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; fit(); });
+  });
+  fit();
+})();
+</script>
+</body>
+</html>
