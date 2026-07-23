@@ -15,8 +15,10 @@ paints. (a) backstops the IR character budget; (b) backstops visual-review R4
 a real deck — see docs/discussions/052.
 
   --page N          probe only page N (used by the first-page gate)
-  --dump-contrast   print every measured text element (ratio, fg, bg) instead of
-                    only failures — the calibration/debug view, exit 0
+  --dump-contrast   also print every measured text element (ratio, fg, bg), not just
+                    the failures — the calibration/debug view. A view flag only: the
+                    exit code still reports the gate, so leaving it on cannot mask a
+                    failure.
 
 Output: one line per finding + a JSON summary appended to <project>/qa_report.json
 (sections "overflow" and "contrast"). Exit 0 = clean, 1 = finding, 2 = setup problem.
@@ -72,21 +74,38 @@ function hex(c){
   function h(x){ var s = Math.round(x).toString(16); return s.length < 2 ? '0'+s : s; }
   return '#' + h(c.r) + h(c.g) + h(c.b);
 }
-// The painted background under `el`: composite every ancestor's background-color
-// from the outermost inward over an opaque white base. This is what makes a
-// [data-dark] page resolve to its dark section colour rather than to white, and
-// what makes a translucent card blend instead of being read as its own alpha.
-function effectiveBg(el){
-  var chain = [], n = el;
-  while (n && n.nodeType === 1) { chain.push(n); n = n.parentElement; }
+// Composite a list of elements (ordered bottom-most last) over an opaque white base.
+function compositeStack(list){
   var base = { r: 255, g: 255, b: 255, a: 1 }, imaged = false;
-  for (var i = chain.length - 1; i >= 0; i--) {
-    var cs = getComputedStyle(chain[i]);
+  for (var i = list.length - 1; i >= 0; i--) {
+    var cs = getComputedStyle(list[i]);
     if (cs.backgroundImage && cs.backgroundImage !== 'none') imaged = true;
     var bc = parseColor(cs.backgroundColor);
     if (bc && bc.a > 0) base = over(bc, base);
   }
   return { color: base, imaged: imaged };
+}
+// The background actually painted under `el`'s glyphs.
+//
+// Hit-testing the element's centre is what makes this correct: elementsFromPoint
+// returns the whole paint stack at that point — ancestors AND anything overlapping —
+// topmost first. An ancestor-only walk would miss an absolutely positioned block laid
+// over the card, and would then score light-on-dark text against the card's light
+// colour and fail a page that reads perfectly (a false positive, the costly kind here).
+// We keep everything from `el` downwards; anything above it is painted over the text,
+// which is an occlusion question this gate does not answer.
+//
+// Fallback to the ancestor chain when the hit test cannot see `el` (e.g. an ancestor
+// sets pointer-events:none), so the measurement degrades instead of disappearing.
+function effectiveBg(el, r){
+  var chain = [], n = el;
+  while (n && n.nodeType === 1) { chain.push(n); n = n.parentElement; }
+  var cx = Math.min(1279, Math.max(0, r.left + r.width / 2));
+  var cy = Math.min(719, Math.max(0, r.top + r.height / 2));
+  var stack = document.elementsFromPoint ? (document.elementsFromPoint(cx, cy) || []) : [];
+  var at = stack.indexOf(el);
+  if (at < 0) return compositeStack(chain);
+  return compositeStack(stack.slice(at));
 }
 // Only the element that directly owns the characters, so a wrapper div does not
 // get scored for text its child paints (that would double-count and mis-attribute
@@ -110,7 +129,7 @@ function cumulativeOpacity(el){
 }
 
 function measure(){
-  var out = [], con = [];
+  var out = [], con = [], unparsed = 0;
   var els = document.querySelectorAll('.slide *');
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
@@ -136,14 +155,17 @@ function measure(){
     var own = ownText(el);
     if (!own) continue;
     if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    // A colour syntax we cannot read (oklch/color()/lab…) must be COUNTED, not
+    // silently dropped: a quiet skip would let "0 low-contrast" mean "we looked at
+    // nothing", which is the one failure mode a gate must never have.
     var fgRaw = parseColor(cs.color);
-    if (!fgRaw) continue;
+    if (!fgRaw) { unparsed++; continue; }
     // Fully transparent glyphs are a paint technique (background-clip:text
     // gradients), not a legibility defect this gate can reason about.
     if (fgRaw.a === 0) continue;
     var op = cumulativeOpacity(el);
     if (op < 0.05) continue;                    // effectively not painted
-    var bg = effectiveBg(el);
+    var bg = effectiveBg(el, r);
     // Fold inherited opacity into the glyph alpha. Approximation: an ancestor's
     // opacity also fades that ancestor's own background, but in this skill's
     // templates the faded thing is the text layer, and the error is conservative
@@ -167,7 +189,7 @@ function measure(){
   // Python/JS backslash double-escaping; json.loads reads it back to the character.
   // (NOTE: keep the literal closing-script character sequence OUT of this comment —
   // it would itself close this inlined script mid-parse. Meta, but real.)
-  node.textContent = JSON.stringify({ o: out, c: con }).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
+  node.textContent = JSON.stringify({ o: out, c: con, u: unparsed }).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
   document.body.appendChild(node);
 }
 // this script is inlined mid-body, so it always runs during parse (before load);
@@ -234,6 +256,7 @@ def main() -> int:
     findings: dict[str, list] = {}
     low: dict[str, list] = {}
     measured = 0
+    unreadable = 0
     targets = [(a.page, sections[a.page - 1])] if a.page else list(enumerate(sections, 1))
     kwargs = {}
     if sys.platform.startswith("win"):
@@ -254,6 +277,7 @@ def main() -> int:
                 return 2
             payload = json.loads(m.group(1))
             hits, texts = payload["o"], payload["c"]
+            unreadable += payload.get("u", 0)
             if hits:
                 findings[str(i)] = hits
                 for h in hits:
@@ -286,13 +310,29 @@ def main() -> int:
     report["overflow"] = {"pages_probed": probed, "findings": findings}
     report["contrast"] = {"pages_probed": probed, "threshold": MIN_CONTRAST,
                           "threshold_large": MIN_CONTRAST_LARGE,
-                          "elements_measured": measured, "findings": low}
+                          "elements_measured": measured,
+                          "elements_unreadable_color": unreadable, "findings": low}
     report_f.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
 
     n_over = sum(len(v) for v in findings.values())
     n_low = sum(len(v) for v in low.values())
+    if low:
+        # The whole premise of this gate (ADR-067) is that guidance sitting in a
+        # reference file does not reliably reach the model. So the failure has to
+        # carry its own remedy instead of assuming anyone re-reads the docs.
+        print("FIX: 上述文本在它实际所处的背景上几乎不可见。改前景色，不要改阈值——"
+              "浅底上的标题/栏头用 var(--c-primary)、正文用 var(--c-text)；"
+              "var(--c-on-dark) 只能用在 [data-dark] 深底页内。"
+              "改完重跑本命令直到 exit 0。")
+    if unreadable:
+        # Not a gate failure (we cannot judge what we cannot read), but it must be
+        # visible — otherwise "0 low-contrast" would quietly mean "0 examined".
+        print(f"NOTE: {unreadable} text element(s) use a colour syntax this probe "
+              f"cannot read (oklch/color()/lab…) and were NOT checked — "
+              f"deck tokens should be HEX/rgb.")
     print(f"probe: {len(targets)} pages · {n_over} overflow · {n_low} low-contrast "
-          f"(of {measured} text elements, floor {MIN_CONTRAST}:1 / {MIN_CONTRAST_LARGE}:1 large)")
+          f"(of {measured} text elements checked, {unreadable} unreadable-colour, "
+          f"floor {MIN_CONTRAST}:1 / {MIN_CONTRAST_LARGE}:1 large)")
     return 1 if (findings or low) else 0
 
 
