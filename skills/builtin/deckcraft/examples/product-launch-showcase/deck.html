@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<!-- deckcraft shell — build_deck.py 装配最终 deck.html：
+     TITLE 占位 ← outline.title · TOKENS 占位 ← tokens.css · SLIDES 占位 ← pages/*.html 按序拼接
+     （占位符本体不能出现在本注释里——build 的全局替换会把内容塞进注释） -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Lumo 口袋投影仪发布（虚构产品演示）</title>
+<style>
+/* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
+:root{
+  --c-bg:#FAFAFA; --c-bg2:#EFEFF2; --c-primary:#111318; --c-accent:#E8590C;
+  --c-muted:#71717A; --c-text:#18181B; --c-on-dark:#FAFAFA;
+  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --fs-display:68px; --fs-h1:44px; --fs-h2:30px; --fs-h3:24px;
+  --fs-body:21px; --fs-num:84px; --fs-caption:14px;
+}
+/* ==== 结构层（风格无关，禁止手改） ==== */
+*{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
+html,body{background:#3a3a3a}
+body{font-family:var(--font-stack);color:var(--c-text)}
+.stage{width:1280px;margin:0 auto}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
+.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
+h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
+.accent{color:var(--c-accent);font-weight:700}
+.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
+.bar{width:48px;height:8px;background:var(--c-accent)}
+ul{list-style:none}
+/* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
+@page{size:1280px 720px;margin:0}
+@media print{
+  html,body{background:none}
+  .slide{margin:0;page-break-after:always;break-after:page}
+  .slide:last-child{page-break-after:auto;break-after:auto}
+  /* !important 压过屏幕适配脚本写下的 inline zoom——否则 headless print-to-pdf
+     （默认 800px 视口先跑了 fit()、写下 zoom≈0.6）会把整份 PDF 缩到 ~60% 并错位 */
+  #stage{zoom:1!important}
+}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">NEW · 2026 秋季发布</div>
+    <div style="font-size:var(--fs-display);font-weight:700;line-height:1.15;margin-top:24px">Lumo<br>口袋投影仪</div>
+    <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85">把影院装进口袋</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px;font-size:var(--fs-caption);opacity:.55">Lumo Labs · 虚构产品演示</div>
+</section>
+<section class="slide" data-layout="S05" data-rhythm="anchor" data-dark>
+  <h1 style="color:var(--c-on-dark)">掌心大小，影院尺寸</h1>
+  <div style="display:flex;gap:64px;margin-top:80px">
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-on-dark)">260g</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">整机重量</p>
+    </div>
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-accent)">4h</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">单次续航播放</p>
+    </div>
+    <div style="flex:1">
+      <div class="num" style="color:var(--c-on-dark)">1080P</div>
+      <p style="margin-top:16px;color:var(--c-on-dark);opacity:.8">原生分辨率</p>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:40px;left:64px;font-size:var(--fs-caption);opacity:.5">示意数据 · 虚构产品规格（scenario）</div>
+</section>
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
+      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <h1 style="margin-top:24px">三个<br>大升级</h1>
+      <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">对焦 · 校正 · 续航</p>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:48px">
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">01</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">自动对焦</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">开机秒对焦，画面即刻清晰</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">02</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">梯形校正</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">任意角度摆放自动校正</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">03</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">内置电池</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">拔掉电源也能连播四小时</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 虚构产品</div>
+  <div class="pagenum">3 / 7</div>
+</section>
+<section class="slide" data-layout="S07" data-rhythm="breathing">
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%;max-width:880px">
+    <div class="bar"></div>
+    <h1 style="margin-top:40px;font-weight:500;line-height:1.5">「装进背包，出差时酒店墙面就是我的 100 寸屏。」</h1>
+    <p style="margin-top:40px;color:var(--c-muted)">—— 早期体验用户（示意）</p>
+  </div>
+</section>
+<section class="slide" data-layout="S04" data-rhythm="dense">
+  <div class="kicker">OLD vs LUMO</div>
+  <h1 style="margin-top:16px">告别笨重投影</h1>
+  <div style="display:flex;gap:48px;margin-top:40px;min-height:432px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px">
+      <div class="kicker">TRADITIONAL</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">传统投影仪</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>笨重，得固定安装接电</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>手动对焦，换位置就糊</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>离不开插座</span></li>
+      </ul>
+    </div>
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+      <div class="kicker" style="color:var(--c-accent)">LUMO</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">Lumo 口袋款</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>260 克，随手放哪都行</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>自动对焦加梯形校正</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>内置电池连播四小时</span></li>
+      </ul>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 虚构产品</div>
+  <div class="pagenum">5 / 7</div>
+</section>
+<section class="slide" data-layout="S10" data-rhythm="dense">
+  <h1>规格一览</h1>
+  <table style="width:100%;margin-top:48px;border-collapse:collapse;font-size:var(--fs-body)">
+    <thead><tr style="border-bottom:2px solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">规格项</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">参数</th>
+    </tr></thead>
+    <tbody>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">亮度</td>
+        <td style="padding:16px 8px;font-weight:300">500 流明</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">分辨率</td>
+        <td style="padding:16px 8px;font-weight:300">1080P 原生</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">续航</td>
+        <td style="padding:16px 8px;font-weight:300">4 小时（内置电池）</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">重量</td>
+        <td style="padding:16px 8px;font-weight:300">260 克</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">接口</td>
+        <td style="padding:16px 8px;font-weight:300">HDMI / USB-C / 无线投屏</td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="position:absolute;bottom:24px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">示意数据 · 虚构产品</div>
+  <div class="pagenum">6 / 7</div>
+</section>
+<section class="slide" data-layout="S08" data-rhythm="anchor" data-dark>
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <h1 style="font-size:var(--fs-display);line-height:1.25;margin-top:40px;color:var(--c-on-dark)">把影院<span class="accent">装进口袋</span></h1>
+    <p style="margin-top:40px;color:var(--c-on-dark);opacity:.85">9 月开启预订，首发价 ¥1,299</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px;color:var(--c-on-dark);opacity:.55" class="kicker">LUMO LABS · 虚构产品</div>
+</section>
+</div>
+<script>
+/* 屏幕预览：用 zoom 整体缩放适配窗口宽度。zoom 同时缩放布局与绘制，
+   scrollHeight 随之等于视觉高度——不像 transform:scale（不缩布局盒）+ 负 marginBottom
+   （改不动 scrollHeight）那样在末尾留下 (1-s)*h 的空白可滚动区（见 discussions/050）。
+   横向居中交给 .stage 的 margin:0 auto；打印路径由 @media print 的 #stage{zoom:1!important}
+   压制（stylesheet !important 打得过 inline），PDF 始终原尺寸。 */
+(function(){
+  var st = document.getElementById("stage");
+  function fit(){
+    var vw = document.documentElement.clientWidth;
+    st.style.zoom = Math.min(1, (vw - 32) / 1280);
+  }
+  var pending = 0;
+  window.addEventListener("resize", function(){
+    if (pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; fit(); });
+  });
+  fit();
+})();
+</script>
+</body>
+</html>

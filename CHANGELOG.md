@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **deckcraft 文本对比度机器门禁（ADR-067 / discussions/052）**：把 `visual-review` R4「对比可读」从**主观评审**升级为**物理门禁**——补上 ADR-066 真机验收暴露的那类缺陷（S04 栏头被染成深底专用浅字 `--c-on-dark` 却留在浅卡片上，对比度 **1.10:1 几乎隐形**）。
+  - **根因不是引导缺失**：模板与三个内置 example 的 S04 栏头**全部**是正确的 `--c-primary`（9.96:1），模型仍偶发偏离；本该拦它的 R4 是评审子代理的主观判断、真机那轮漏掉。与密度侧「有 R3 主观、无机器下界」是同一类结构缺口（ADR-066 用 O9 补了密度轴，本次补对比度轴）。
+  - **测 painted 真值**：扩 `probe_overflow.py`（本就在 headless Chrome 渲染每页），逐文本元素取 computed 前景色 + **由祖先 `background-color` 由外向内合成的背景**，算 WCAG 对比度。合成背景是关键——只有它能区分「同一个 on-dark 色在 `data-dark` 深底页上正确、在浅卡片上是缺陷」，静态 lint 做不到。
+  - **双档阈值由实测标定**：`2.3:1` 正文 / `1.8:1` large（≥24px 或 ≥18.66px bold，借 WCAG large-text 宽限形状）。对四个内置 example **Chrome 真正绘制的 369 个文本元素**逐一实测：缺陷 1.10 · 合法 large 最低 **2.57**（showcase 大号装饰数字）· 合法正文最低 3.12 · 正确栏头 9.96。**discussions/052 手算表预测的合法最低 3.61 偏高——照抄定单档 2.3 会误杀那个装饰数字**，实测这一步是必需的。阈值刻意远低于 WCAG AA 4.5：门禁只拦「几乎不可见」，不与技能自身 muted/accent 风格争论。
+  - **判不了的不判**：透明字（`background-clip:text` 一类绘制技巧）不测量；祖先带 `background-image`/渐变时合成背景非真值，照常测量并标记但**绝不据此判负**（宁可漏报，不拿猜测拦人）。
+  - 与 overflow 同一条命令 / 同一个 `qa_report.json`（新增 `contrast` 段，`overflow` 段结构不动）/ 同一个退出码，**门禁链仍是四步**；新增 `--dump-contrast` 逐元素打印供标定与排障。引导同步硬化：`SKILL.md` 明写「`--c-on-dark` 仅限 `data-dark` 页、浅底标题用 `--c-primary`」，`visual-review.md` R4 补机器门禁指针并把评审职责收窄到门禁放行范围内的观感。
+  - **验证**：新增 `scripts/test-deckcraft-contrast.py` **34/34**——真实缺陷复现（实测 1.1:1）· `data-dark` 页上同一颜色判为正确（10.98:1，证明合成背景真解析到深底而非默认白）· 阈值边界 2.0 判负 / 2.6 / 3.0 放行 · large 宽限（同色 40px 放行、14px 判负，缺陷 1.1 仍被逮）· 透明字与图片底跳过 · **注入 JS 的亮度算法与独立 Python 实现逐元素对账** · 四个内置 example 零误报 exit 0；`deckcraft-selftest.py` **48/0** 无回归。不碰 vendor patch / 业务 TS、无新依赖。
+
+- **deckcraft 内容密度双边带 + `delivery_purpose` 消费距离旋钮（通用化，ADR-066 / discussions/051）**：治用户反馈「产出内容稍显单薄」+「整条管线为高管说服型调优、处处上界没有下界、不通用」。
+  - **根因（五重实证，非猜测）**：内容单薄的绑定瓶颈是 `validate_outline.py` 的 IR 字符预算——一套比物理现实紧约 2x 的**审美上界**，无差别套用所有 mode/style，且**只有上界、无内容下界**。物理探针反证：教学正文「超预算 2x」仍零溢出——26 是审美常数、非物理必需。ADR-061 删掉本带 depth 机制的 ppt-master 后，deckcraft 成唯一默认技能，密集型 deck 既被压薄又无退路。
+  - **两正交旋钮**：① 字符/条目预算改 **floor+cap 双边带**，上界 probe 校准、随 `delivery_purpose` 取档（`p` presentation 26 / balanced 32 / document 42；S03/S04 条数、S10 行数同随档）；② 顶层 **`delivery_purpose`**（`presentation`/`balanced`(缺省)/`document`）= 消费距离，**与 `mode` 正交**（任何 deck 都有的属性，mode 绝不碰密度、不由 mode 推定，第 1 轮 question 按消费距离信号推荐）。
+  - **补内容下界（与上界对称）**：O9 dense 页 **≥3 主列表项 且 ≥3 evidence**（`validate_outline` WARNING + `visual-review R3` 判负，锚条目/证据数非字数、防 thin→bloated）；O3 断言检测器泛化，接纳教学/通报式结论（`looks_like_assertion`，如「内容敏感用 ETag，成本敏感用 Last-Modified」不再误判裸标签）。
+  - **补三档多样化 example，去 few-shot 高管偏**：原仅 1 example（高管说服）→ 补 `http-caching-primer`（instructional × document，全真实标准 RFC 9111/9110/5861 + MDN、`fact_id` 溯源）+ `platform-migration-brief`（briefing × document，全 scenario、每数据页 E10「示意数据」页脚）+ `product-launch-showcase`（showcase × presentation，明确虚构产品）——覆盖 mode × delivery_purpose × evidence 契约两端。
+  - **验证**：`scripts/test-deckcraft-validate.py` **26/26** · 三档 example 门禁链全绿（validate_outline 0 error / **0 O9 warning** · validate_deck 0/0（W1 8px 模数 clean）· probe **0 findings**）· 独立视觉审查（无生成上下文）**7/7 × 3** · `pack-builtin-skills.ts` 实跑重打（5213 文件 3.0MB zip，客户可达）· deck.html 重建幂等 · committed `.builtin-version` 经 pack 权威 hash 重生成（对账不变式恢复）。不碰 vendor patch / 业务 TS；单 agent + 跨平台 ✅；Team 委派 question 门是既有正交缺口（gotchas §10⑪）未加剧未修。真机密度 A/B（document 讲义 vs presentation 投影两版）验收交用户。
+
+### Changed
+
+- **deckcraft S04 两栏骨架 `height:432px` → `min-height:432px`（ADR-066 / discussions/051）**：固定高物理封顶 4 点且令过量内容溢出卡片外、`overflow:visible` 使物理探针静默放行（门禁洞）；改 `min-height` 后 document 档放开到 5 点 0 溢出，同时 `validate_outline` 补 S04 `points` 字符预算与每栏条目数堵漏。实测判定**无需新增密集承载版式**（S03/S06/S10 现有骨架都装得下远超旧 cap 的密集内容）。
+
 ### Fixed
 
 - **deckcraft deck 应用内预览底部大片可滚动空白（discussions/050）**：deckcraft 生成的 deck 在应用内 HTML 预览时，末页下方出现大片深色可滚动空白（真机 lhopital 14 页实测预览面板 1188px 宽时达 983px），而直接打开文件、独立 HTML 均正常。

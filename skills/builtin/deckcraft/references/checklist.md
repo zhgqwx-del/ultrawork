@@ -12,8 +12,10 @@ python3 ${SKILL_DIR}/scripts/validate_outline.py <project_dir>
 python3 ${SKILL_DIR}/scripts/build_deck.py <project_dir>
 python3 ${SKILL_DIR}/scripts/validate_deck.py <project_dir>
 
-# 3. 物理溢出探针（Chrome 实测裁切/出界，覆盖字符预算兜不住的情况）
+# 3. 物理探针（Chrome 实测）：裁切/出界 + 文本对比度下界（覆盖字符预算与主观 R4 兜不住的情况）
 python3 ${SKILL_DIR}/scripts/probe_overflow.py <project_dir>
+#    报 CONTRAST 行 = 该文本几乎不可见（多为 --c-on-dark 浅字放到了浅底上），改用 --c-primary/--c-text
+#    python3 ${SKILL_DIR}/scripts/probe_overflow.py <project_dir> --dump-contrast   # 逐元素实测值，调试用
 
 # 4. 残留兜底
 grep -rniE "lorem|ipsum|待补充|\[insert" <project_dir>/pages/   # 应无输出

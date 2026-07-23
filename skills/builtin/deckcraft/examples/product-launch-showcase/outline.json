@@ -1,0 +1,145 @@
+{
+ "title": "Lumo 口袋投影仪发布（虚构产品演示）",
+ "audience": "发布会现场与直播观众，远观投影、只需记住产品是什么、亮点在哪、怎么买",
+ "goal": "让观众记住 Lumo 是一台掌心大小的口袋投影仪，并在秋季开启预订",
+ "mode": "showcase",
+ "delivery_purpose": "presentation",
+ "language": "zh",
+ "note": "本 example 为明确虚构产品（Lumo 口袋投影仪 / Lumo Labs），全部规格价格为演示用虚构值（scenario）；每个数据页页脚带可见「示意数据/虚构产品」标注",
+ "slides": [
+  {
+   "index": 1,
+   "layout": "S01",
+   "rhythm": "anchor",
+   "title": "Lumo 口袋投影仪",
+   "content": {
+    "kicker": "NEW · 2026 秋季发布",
+    "subtitle": "把影院装进口袋",
+    "meta": "Lumo Labs · 虚构产品演示"
+   },
+   "speaker_notes": "开场只留一句话在屏上：把影院装进口袋。停一拍让产品名和这句话落地，再进入规格冲击。"
+  },
+  {
+   "index": 2,
+   "layout": "S05",
+   "rhythm": "anchor",
+   "title": "掌心大小，影院尺寸",
+   "takeaway": "260 克、4 小时续航、1080P，口袋里的完整影院",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" }
+   ],
+   "confidence": "high",
+   "content": {
+    "stats": [
+     { "n": "260g", "p": "整机重量" },
+     { "n": "4h", "p": "单次续航播放" },
+     { "n": "1080P", "p": "原生分辨率" }
+    ],
+    "footnote": "示意数据 · 虚构产品规格（scenario）"
+   },
+   "speaker_notes": "三个数字砸下来：重量、续航、分辨率。每个数字停一拍，不解释——数字自己说话。这是 presentation 档的冲击开场。"
+  },
+  {
+   "index": 3,
+   "layout": "S03",
+   "rhythm": "dense",
+   "title": "三个大升级",
+   "takeaway": "自动对焦、梯形校正、内置电池，随手一放就能看",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "high",
+   "content": {
+    "points": [
+     { "h": "自动对焦", "p": "开机秒对焦，画面即刻清晰" },
+     { "h": "梯形校正", "p": "任意角度摆放自动校正" },
+     { "h": "内置电池", "p": "拔掉电源也能连播四小时" }
+    ]
+   },
+   "speaker_notes": "三大亮点每个一句话，节奏短促。重点是「随手一放就能看」——不用调、不用接线，这是和传统投影仪最大的体验差。"
+  },
+  {
+   "index": 4,
+   "layout": "S07",
+   "rhythm": "breathing",
+   "title": "早期用户怎么说",
+   "content": {
+    "quote": "「装进背包，出差时酒店墙面就是我的 100 寸屏。」",
+    "attribution": "—— 早期体验用户（示意）"
+   },
+   "speaker_notes": "留白一页，让一句用户原话替产品说话。停顿要够长，别急着翻页——这是情绪节奏的换气点。"
+  },
+  {
+   "index": 5,
+   "layout": "S04",
+   "rhythm": "dense",
+   "title": "告别笨重投影",
+   "takeaway": "同样看大屏，Lumo 把笨重、布线、对焦三件事都省了",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "medium",
+   "content": {
+    "col_a": {
+     "h": "传统投影仪",
+     "points": [
+      "笨重，得固定安装接电",
+      "手动对焦，换位置就糊",
+      "离不开插座"
+     ]
+    },
+    "col_b": {
+     "h": "Lumo 口袋款",
+     "points": [
+      "260 克，随手放哪都行",
+      "自动对焦加梯形校正",
+      "内置电池连播四小时"
+     ]
+    }
+   },
+   "speaker_notes": "左右对比一眼看懂差别。不逐条念，让观众自己扫——右栏每条都是左栏痛点的正解。"
+  },
+  {
+   "index": 6,
+   "layout": "S10",
+   "rhythm": "dense",
+   "title": "规格一览",
+   "takeaway": "500 流明、1080P、260 克，规格全部装进掌心",
+   "evidence": [
+    { "scenario": true },
+    { "source": "user-doc" },
+    { "scenario": true }
+   ],
+   "confidence": "high",
+   "content": {
+    "headers": ["规格项", "参数"],
+    "rows": [
+     ["亮度", "500 流明"],
+     ["分辨率", "1080P 原生"],
+     ["续航", "4 小时（内置电池）"],
+     ["重量", "260 克"],
+     ["接口", "HDMI / USB-C / 无线投屏"]
+    ]
+   },
+   "speaker_notes": "规格页快速带过，presentation 档只列核心五项——细节留给产品官网。给现场一个可拍照记录的定格。"
+  },
+  {
+   "index": 7,
+   "layout": "S08",
+   "rhythm": "anchor",
+   "title": "秋季见",
+   "content": {
+    "statement_prefix": "把影院",
+    "statement_accent": "装进口袋",
+    "cta": "9 月开启预订，首发价 ¥1,299",
+    "sign": "LUMO LABS · 虚构产品"
+   },
+   "speaker_notes": "收在明确的购买动作上：开启预订的时间、首发价。一句话说完，把画面停在预订信息上不要翻页。"
+  }
+ ]
+}

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<!-- deckcraft shell — build_deck.py 装配最终 deck.html：
+     TITLE 占位 ← outline.title · TOKENS 占位 ← tokens.css · SLIDES 占位 ← pages/*.html 按序拼接
+     （占位符本体不能出现在本注释里——build 的全局替换会把内容塞进注释） -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>HTTP 缓存机制入门（讲义版）</title>
+<style>
+/* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
+:root{
+  --c-bg:#F6F8FA; --c-bg2:#E8EDF2; --c-primary:#1B3A57; --c-accent:#0E7490;
+  --c-muted:#5A6B7B; --c-text:#15202B; --c-on-dark:#F3F8FC;
+  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --fs-display:60px; --fs-h1:42px; --fs-h2:28px; --fs-h3:23px;
+  --fs-body:21px; --fs-num:76px; --fs-caption:14px;
+}
+/* ==== 结构层（风格无关，禁止手改） ==== */
+*{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
+html,body{background:#3a3a3a}
+body{font-family:var(--font-stack);color:var(--c-text)}
+.stage{width:1280px;margin:0 auto}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
+.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
+h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
+.accent{color:var(--c-accent);font-weight:700}
+.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
+.bar{width:48px;height:8px;background:var(--c-accent)}
+ul{list-style:none}
+/* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
+@page{size:1280px 720px;margin:0}
+@media print{
+  html,body{background:none}
+  .slide{margin:0;page-break-after:always;break-after:page}
+  .slide:last-child{page-break-after:auto;break-after:auto}
+  /* !important 压过屏幕适配脚本写下的 inline zoom——否则 headless print-to-pdf
+     （默认 800px 视口先跑了 fit()、写下 zoom≈0.6）会把整份 PDF 缩到 ~60% 并错位 */
+  #stage{zoom:1!important}
+}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">HTTP CACHING · 讲义版</div>
+    <div style="font-size:var(--fs-display);font-weight:700;line-height:1.2;margin-top:24px">HTTP 缓存机制<br>入门</div>
+    <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85">面向工程师的 HTTP 缓存细读讲义</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px;font-size:var(--fs-caption);opacity:.55">RFC 9111 / 9110 / 5861 · MDN · 2026</div>
+</section>
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
+      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <h1 style="margin-top:24px">四个关键<br>缓存指令</h1>
+      <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">存储 · 复用 · 验证 · 共享</p>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:24px">
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">01</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">max-age</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">响应在指定秒数内视为新鲜，缓存直接复用不回源</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">02</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">no-store</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">完全不存储任何副本，用于敏感或永不复用的内容</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">03</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">no-cache</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">允许存储，但每次复用前必须回源重新验证</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">04</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">s-maxage</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">只对 CDN 等共享缓存生效，并覆盖 <span style="color:var(--c-accent);font-weight:700">max-age</span></p>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <div class="pagenum">2 / 7</div>
+</section>
+<section class="slide" data-layout="S04" data-rhythm="dense">
+  <div class="kicker">STRONG vs REVALIDATE</div>
+  <h1 style="margin-top:16px">强缓存 vs 协商缓存</h1>
+  <div style="display:flex;gap:48px;margin-top:40px;min-height:432px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px">
+      <div class="kicker">STRONG CACHE</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">强缓存 · 不回源</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>靠 max-age / Expires 判定新鲜期</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>新鲜期内浏览器直接读本地，零网络请求</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>命中最快，但更新有延迟风险</span></li>
+      </ul>
+    </div>
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+      <div class="kicker" style="color:var(--c-accent)">REVALIDATE</div>
+      <h2 style="color:var(--c-primary);margin-top:8px">协商缓存 · 回源验证</h2>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>过期后带 ETag / Last-Modified 回源</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>未变返回 304 无响应体，仅省流量</span></li>
+        <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>多一次往返，但保证内容最新</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="pagenum">3 / 7</div>
+</section>
+<section class="slide" data-layout="S10" data-rhythm="dense">
+  <h1>常用缓存头速查表</h1>
+  <table style="width:100%;margin-top:40px;border-collapse:collapse;font-size:var(--fs-body)">
+    <thead><tr style="border-bottom:2px solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">响应头</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">作用</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">典型取值</th>
+    </tr></thead>
+    <tbody>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Cache-Control</td>
+        <td style="padding:16px 8px;font-weight:300">强 / 协商缓存总开关</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">max-age=3600</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">ETag</td>
+        <td style="padding:16px 8px;font-weight:300">内容校验器（强 / 弱）</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">"a1b2c3"</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Last-Modified</td>
+        <td style="padding:16px 8px;font-weight:300">日期校验器（秒级）</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">Wed, 21 Oct 2015 07:28:00 GMT</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Vary</td>
+        <td style="padding:16px 8px;font-weight:300">声明缓存变体维度</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">Accept-Encoding</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Age</td>
+        <td style="padding:16px 8px;font-weight:300">已在缓存停留秒数</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">120</td>
+      </tr>
+      <tr style="border-bottom:1px solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Expires</td>
+        <td style="padding:16px 8px;font-weight:300">旧式绝对过期时间</td>
+        <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">被 max-age 覆盖</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="pagenum">4 / 7</div>
+</section>
+<section class="slide" data-layout="S06" data-rhythm="dense">
+  <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+  <div class="kicker" style="margin-top:24px">REQUEST DECISION</div>
+  <h1 style="margin-top:8px">一次请求的缓存决策</h1>
+  <div style="display:flex;margin-top:96px;position:relative">
+    <div style="position:absolute;top:11px;left:0;right:32px;height:2px;background:var(--c-muted);opacity:.5"></div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 1</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">查本地</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">浏览器先查本地缓存<br>有无该资源的副本</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 2</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">看新鲜度</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">在 max-age 新鲜期内<br>则直接命中，不发请求</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 3</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">回源验证</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">已过期则带 ETag 发<br>条件请求问源站是否更新</p>
+    </div>
+    <div style="flex:1;position:relative;padding-right:32px">
+      <div style="width:24px;height:24px;background:var(--c-accent);border-radius:50%;position:relative"></div>
+      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">STEP 4</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">取 304 或 200</h3>
+      <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">未变收 304 复用副本，<br>已变收 200 换新内容</p>
+    </div>
+  </div>
+  <div class="pagenum">5 / 7</div>
+</section>
+<section class="slide" data-layout="S03" data-rhythm="dense">
+  <div style="display:flex;height:100%;gap:64px">
+    <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
+      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <h1 style="margin-top:24px">三个常见<br>误区与纠正</h1>
+      <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">以为设了就对了</p>
+    </div>
+    <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:40px">
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">01</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">no-cache 陷阱</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">它不是不缓存，而是每次复用前必须回源验证</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">02</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">只用日期校验</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">Last-Modified 秒级分辨率，同秒多改会漏判，应加 ETag</p>
+        </div>
+      </li>
+      <li style="display:flex;gap:24px;align-items:baseline">
+        <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-accent);width:32px;flex-shrink:0">03</span>
+        <div>
+          <h3 style="font-weight:700;color:var(--c-primary)">忘设 Vary</h3>
+          <p style="margin-top:8px;color:var(--c-muted)">内容随请求头变化时漏设 Vary，缓存会返回错误变体</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <div class="pagenum">6 / 7</div>
+</section>
+<section class="slide" data-layout="S08" data-rhythm="anchor">
+  <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
+    <div class="bar"></div>
+    <h1 style="font-size:var(--fs-display);line-height:1.25;margin-top:40px">读懂缓存头，就是读懂<br><span class="accent">性能与新鲜度的取舍</span></h1>
+    <p style="margin-top:40px">下一步：给你的接口写一份缓存策略表</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:64px" class="kicker">HTTP CACHING PRIMER</div>
+</section>
+</div>
+<script>
+/* 屏幕预览：用 zoom 整体缩放适配窗口宽度。zoom 同时缩放布局与绘制，
+   scrollHeight 随之等于视觉高度——不像 transform:scale（不缩布局盒）+ 负 marginBottom
+   （改不动 scrollHeight）那样在末尾留下 (1-s)*h 的空白可滚动区（见 discussions/050）。
+   横向居中交给 .stage 的 margin:0 auto；打印路径由 @media print 的 #stage{zoom:1!important}
+   压制（stylesheet !important 打得过 inline），PDF 始终原尺寸。 */
+(function(){
+  var st = document.getElementById("stage");
+  function fit(){
+    var vw = document.documentElement.clientWidth;
+    st.style.zoom = Math.min(1, (vw - 32) / 1280);
+  }
+  var pending = 0;
+  window.addEventListener("resize", function(){
+    if (pending) return;
+    pending = requestAnimationFrame(function(){ pending = 0; fit(); });
+  });
+  fit();
+})();
+</script>
+</body>
+</html>
