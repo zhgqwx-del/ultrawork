@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **deckcraft 形式丰富度轴（ADR-068 / discussions/054）** —— 治「不同 prompt 做的 ppt 除了颜色都长一样」。
+  - **风格库 4 → 10 套**，按温度体系让「大胆」档占多数（bold-poster / duotone-vivid / noir-luxe / mono-terminal / blueprint-tech / paper-craft）；每套自带骨相 token 表与 Signature 招牌笔触。
+  - **版式库 10 → 20 个**（S11–S20：图文混排 / 三栏卡片 / 2×2 矩阵 / 流程链 / **条形图** / KPI 网格 / 全幅图叠字 / 漏斗 / 引言+人像 / 代码终端）；`layouts.html` 拆为 `layouts/` 目录 + `_index.md` 选型索引，新增 `Sxx.html` 自动生效。
+  - **`scripts/pick_variants.py`**：确定性 hash 打乱风格/字体配对候选并强制跨温度档（随机化必须落脚本——写进文档不可靠）。
+  - **12 个骨相 token + `--font-display` 字体配对**：让风格产生"骨相"差异而非仅"皮肤"差异。
+  - **`--c-head` 语义 token**：修 `--c-primary` 在深色风格下「深色底」与「标题墨色」角色互斥的既有缺陷。
+  - **O10 预算几何折算 / O11 图表数值安全层 / W3 多样性观测 / W4 Signature 存在性 / W5 素材感知 / E7 比例式多样性**。
+  - **E4 反-slop 黑名单从全局硬门禁降为风格级默认**：`shadow` / `gradient` 可经 spec_lock 白名单逐项放开。
+  - 四个 example 去同质（覆盖四风格 × 三字体族 × 深浅两极），首次各带 `spec_lock.md` 填写样例。
+
+
 - **deckcraft 文本对比度机器门禁（ADR-067 / discussions/052）**：把 `visual-review` R4「对比可读」从**主观评审**升级为**物理门禁**——补上 ADR-066 真机验收暴露的那类缺陷（S04 栏头被染成深底专用浅字 `--c-on-dark` 却留在浅卡片上，对比度 **1.10:1 几乎隐形**）。
   - **根因不是引导缺失**：模板与三个内置 example 的 S04 栏头**全部**是正确的 `--c-primary`（9.96:1），模型仍偶发偏离；本该拦它的 R4 是评审子代理的主观判断、真机那轮漏掉。与密度侧「有 R3 主观、无机器下界」是同一类结构缺口（ADR-066 用 O9 补了密度轴，本次补对比度轴）。
   - **测 painted 真值**：扩 `probe_overflow.py`（本就在 headless Chrome 渲染每页），逐文本元素取 computed 前景色 + **由祖先 `background-color` 由外向内合成的背景**，算 WCAG 对比度。合成背景是关键——只有它能区分「同一个 on-dark 色在 `data-dark` 深底页上正确、在浅卡片上是缺陷」，静态 lint 做不到。
@@ -37,6 +48,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **deckcraft S04 两栏骨架 `height:432px` → `min-height:432px`（ADR-066 / discussions/051）**：固定高物理封顶 4 点且令过量内容溢出卡片外、`overflow:visible` 使物理探针静默放行（门禁洞）；改 `min-height` 后 document 档放开到 5 点 0 溢出，同时 `validate_outline` 补 S04 `points` 字符预算与每栏条目数堵漏。实测判定**无需新增密集承载版式**（S03/S06/S10 现有骨架都装得下远超旧 cap 的密集内容）。
 
 ### Fixed
+
+- **deckcraft 对比度探针视口只有 1280×633**（`--window-size` 设的是外窗）—— `elementsFromPoint` 在每页底部 12% 返回空栈、静默退回祖先链，恰是脚注/页码/来源标注区。改窗口 + **加视口自检，装不下画布即报错退出**。
+- **deckcraft 对比度探针认不出 `<img>` 背景**（`backgroundImage` 只反映 CSS 背景）—— 图上叠字页的"不可判"标记不一致。
+- **deckcraft 渐变底会整页关闭对比度门禁** —— 改为解析渐变色标、两端各算一次、按更差端判（ADR-068 D6）。
+- **deckcraft S15 条形图满 6 条时末条与页脚重叠**（ADR-068 深度 review 视觉走查抓到，溢出探针盲区）—— 收紧 bar 列间距，pad64 最坏几何下间隙恢复 83px。
+- **deckcraft 对比度探针视口装饰是固定开销（macOS 87px），--window-size 提到 1280,1400**（原 900 余量偏窄且 Windows/Linux 装饰量不可本机测）—— 加足余量让任何平台装饰都无法侵入 720 画布，视口自检兜底。
 
 - **deckcraft deck 应用内预览底部大片可滚动空白（discussions/050）**：deckcraft 生成的 deck 在应用内 HTML 预览时，末页下方出现大片深色可滚动空白（真机 lhopital 14 页实测预览面板 1188px 宽时达 983px），而直接打开文件、独立 HTML 均正常。
   - **根因（真实产物 + 真 Chrome/WebKit 双引擎测量）**：`shell.html` 屏幕适配（fit）脚本用 `transform:scale(s)` 缩放整个舞台 + 负 `marginBottom` 补偿，但 `transform` 不缩布局盒、`scrollHeight` 仍是未缩放全高，而负 margin **改不动 `scrollHeight`**（只减 body 高度、盒子溢出仍计入滚动区）→ 可滚动高度停在 `h`、视觉只到 `s·h`，末尾残留 `(1−s)·h` 空白。预览面板 <1312px → s<1 才现空白；直接开文件因窗口 ≥1312→s=1 不缩放故正常。`scrollHeight==offsetHeight` 排除 margin-collapse。

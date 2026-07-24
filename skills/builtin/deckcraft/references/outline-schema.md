@@ -29,7 +29,7 @@
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `index` | ✅ | 1 起連续整数，与 `pages/page-NN.html` 对应 |
-| `layout` | ✅ | `S01`–`S10`（见 assets/templates/layouts.html 登记表） |
+| `layout` | ✅ | `S01`–`S20`（见 assets/templates/layouts/_index.md 选型索引） |
 | `rhythm` | ✅ | `anchor`（结论/主张页）/ `dense`（信息密集页）/ `breathing`（留白页，禁卡片网格） |
 | `title` | ✅ | 页标题（正文页 = takeaway 断言句的短版；收尾/封面页为主张句） |
 | `content` | ✅ | 版式对应的结构化内容（见下表） |
@@ -38,7 +38,7 @@
 | `confidence` | 正文页✅ | `high`/`medium`/`low`（自报；low 页在交付摘要列给用户） |
 | `speaker_notes` | ✅ | 讲稿（说页面上没有的话；随 pptx notes 与 speaker-notes.md 交付） |
 
-> 正文页 = 非 S01 封面 / S02 章节 / S07 引言 / S08 收尾 的页。`validate_outline.py` 硬校验以上契约。
+> 正文页 = 非 S01 封面 / S02 章节 / S07 引言 / S08 收尾 / **S17 全幅图** / **S19 人像引言** 的页（后两个同属"一句主张压在图上"家族，页面本身不承载论证）。`validate_outline.py` 硬校验以上契约。**`speaker_notes` 不在豁免之列——每一页都要有讲稿。**
 
 ### content 结构按版式
 
@@ -54,6 +54,16 @@
 | S08 收尾 | `{statement_prefix, statement_accent, cta, sign}` |
 | S09 议程 | `{items:[标题]}`，≤6 条 |
 | S10 简表 | `{headers:[], rows:[[]]}`，行数见字符预算表（随档位 5–8）、≤4 列 |
+| S11 图文混排 | `{points:[{h,p}]}` 2–4 条 · **需素材**（`images/` 里要有真图，否则 W5 提醒会渲成占位框） |
+| S12 三栏卡片 | `{cards:[{h, points:[]}]}` **恰 3 张**，每张 2–3 条要点 |
+| S13 四象限 | `{quadrants:[{h,p}]}` **恰 4 个** + 两轴标签写在页面上 |
+| S14 流程链 | `{steps:[{h,p}]}` 3–5 步 |
+| S15 条形图 | `{bars:[{label, value}], footnote}` 2–6 条；`value` 必须是**有限非负数**且不全为 0（O11 数值安全层硬校验）——条宽 = `value/max×100%` |
+| S16 KPI 网格 | `{stats:[{n,h,p}]}` 4–6 个 |
+| S17 全幅图叠字 | `{statement, sub}` · **需素材** · 与 S01/S07 同属"一句主张"家族，**免 takeaway/evidence** |
+| S18 漏斗/金字塔 | `{levels:[{h,n}]}` 3–5 层 |
+| S19 引言+人像 | `{quote, attribution}` · **需素材** · **免 takeaway/evidence** |
+| S20 代码/终端 | `{code, notes:[]}` 注解 1–4 条；`code` 用 `<pre>` 承载、保留换行 |
 
 ## 字符预算（防溢出在 IR 层硬拦，validate_outline O8 按此表执行；按视觉宽度：全角记 1、半角记 0.5）
 
@@ -81,6 +91,11 @@
 | S04 每栏要点条数（骨架已 `height`→`min-height`，放开到 5 点 0 溢出） | ≤ 4 | ≤ 4 | ≤ 5 |
 | S06 时间线节点数 | 3–5 | 3–5 | 3–5 |
 | S10 表格行数 | ≤ 5 | ≤ 6 | ≤ 8 |
+| S11 要点条数 / S14 步骤数 / S18 层级数 | 2–4 / 3–5 / 3–5 | 同左 | 同左 |
+| S12 卡片数（固定）/ S13 象限数（固定） | 3 / 4 | 3 / 4 | 3 / 4 |
+| S15 条目数 | 2–6 | 2–6 | 2–6 |
+| S16 指标数 | 4–6 | 4–6 | 4–6 |
+| S20 注解条数 | 1–4 | 1–4 | 1–4 |
 | S10 表格列数 | ≤ 4 | ≤ 4 | ≤ 4 |
 
 > 上界均带 ~20% 头寸以吸收 Linux CJK 字体差异（门禁量盒不量字形）。数值 probe 校准记录见 `docs/discussions/051 §4.1.1`。

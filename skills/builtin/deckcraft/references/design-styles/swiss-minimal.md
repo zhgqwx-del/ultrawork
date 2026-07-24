@@ -21,3 +21,21 @@
 ## CJK 适配
 - 黑体族（Source Han Sans / 苹方 / 雅黑）；标题 700、正文 300 的字重对比是层级主轴
 - kicker 用西文全大写 + 字距；对应中文标签用小号 muted，不加字距
+
+## 骨相 token（写进 tokens.css §Structure；值即本风格的"骨"）
+
+| 变量 | 值 | 为什么是它 |
+|---|---|---|
+| --sl-pad | 64px | 标准版心，网格的基准 |
+| --bar-w / --bar-h | 48px / 8px | **招牌**：短促粗实的 accent bar |
+| --kicker-transform / --kicker-spacing | uppercase / .25em | 西文标签全大写拉字距，是瑞士系统的口音 |
+| --fw-head / --fw-sub / --fw-body | 700 / 500 / 300 | 700 压 300 的极端字重对比 = 层级主轴 |
+| --lh-body | 1.65 | 正文行距宽松 |
+| --measure | 36em | 中文 28-32 字最舒适 |
+| --radius / --rule-w | 0 / 1px | 直角 + 最细分隔线；圆角与本风格互斥 |
+
+## Signature（非可选）
+
+`data-signature="accent-bar"` —— **每页标题区一条 48×8px accent bar**。
+少了它就不是这套系统：整份 deck 的"响"处只有这一笔和 accent 色本身。
+放在标题上方（封面/章节页）或标题左侧，全 deck 位置统一。

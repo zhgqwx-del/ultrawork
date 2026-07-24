@@ -1,0 +1,14 @@
+<!-- S11 图文混排（dense，**需素材**）：左图右文，图占 5/12；无真图时整块退化为占位框 -->
+<section class="slide" data-layout="S11" data-rhythm="dense">
+  <h1>页标题</h1>
+  <div style="display:flex;gap:48px;margin-top:40px;align-items:flex-start">
+    <img src="images/subject.jpg" alt="图注描述" style="width:480px;height:400px;object-fit:cover;border-radius:var(--radius);flex-shrink:0">
+    <div style="flex:1">
+      <div class="kicker">CONTEXT</div>
+      <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
+        <li><h3 style="color:var(--c-head)">要点标题</h3><p style="margin-top:8px;color:var(--c-muted)">一句说明</p></li>
+      </ul>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:40px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">图片来源 / credit</div>
+</section>

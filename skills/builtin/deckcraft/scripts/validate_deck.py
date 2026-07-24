@@ -18,16 +18,27 @@ Checks (ERROR fails the gate, WARN is advisory):
   E3 var() reference not defined in tokens.css
   E4 forbidden styling: gradient (incl. SVG <linearGradient>/<radialGradient>),
      box-shadow, italic, underline decoration; <script>/<style> tags
-  E5 data-layout/data-rhythm missing, unknown (registry = layouts.html), or
+  E5 data-layout/data-rhythm missing, unknown (registry = assets/templates/layouts/), or
      mismatching outline.json; page numbers not contiguous 1..N or != outline
   E6 placeholder residue / generator signatures in visible text
-  E7 layout diversity: >=8 pages need >=6 distinct; 3+ consecutive same layout
+  E7 layout diversity: distinct layouts >= 60% of page count (floor 3);
+     3+ consecutive pages sharing one layout
   E8 fragment shape: not exactly one <section> (open AND close), "slide" class
   E9 hidden content (display:none/visibility:hidden/opacity:0) — nothing on a
      static 1280x720 slide may be invisible (also defeats hiding gate-dodges)
   E10 scenario pages (per outline evidence) must carry a VISIBLE 「示意」 label
   W1 style margin/padding/gap not on the 8px module (border widths exempt)
   W2 breathing page unusually text-heavy (> 120 visible chars)
+  W5 a 需素材 layout (per layouts/_index.md) used on a page with no image reference
+     — it will render an honest placeholder; say so rather than ship it silently.
+  W4 spec_lock declares a Signature id but no page carries data-signature="<id>" —
+     the style's non-optional treatment was dropped. Advisory: whether it READS right
+     is visual-review R8's call; a gate can only prove it exists.
+  W3 form diversity: >=6 of the 13 骨相 token (+ --font-display) missing from
+     tokens.css, i.e. left to shell.html's fallbacks — the deck never engaged the
+     skeleton axis and differs from the built-in look by little more than colour.
+     Advisory by construction: sameness is a cross-deck property and this gate sees
+     one deck. qa_report["form"] records the receipts.
 
 Exit 0 = pass (warnings allowed), 1 = errors found, 2 = usage/setup problem.
 """
@@ -58,12 +69,30 @@ PLACEHOLDER_RES = [
                r"|由\s*(?:AI|GPT|Claude|大模型|deckcraft)\s*生成", re.I),
 ]
 # Style-attribute-scoped forbidden rules (E4).
+# E4 — (regex, label, allowance-key). allowance-key None = never waivable.
+#
+# ADR-068 D4 turned the anti-slop denylist from a GLOBAL hard gate into a per-style
+# default: a style may waive a listed item by declaring it in spec_lock
+# (`<!-- deckcraft:allow shadow -->`). Whitelist, itemised, no wildcard.
+#
+# Never waivable, and not for aesthetic reasons:
+#   italic    — CJK has no italic; the browser mechanically slants glyphs. Correctness.
+#   underline — reads as a hyperlink on every platform.
+#   literal colour / font-size — they defeat spec_lock, the anti-drift mechanism itself.
 FORBIDDEN_STYLE = [
-    (re.compile(r"gradient", re.I), "gradient"),
-    (re.compile(r"box-shadow"), "box-shadow"),
-    (re.compile(r"font-style:\s*italic"), "italic (CJK 禁假斜体)"),
-    (re.compile(r"text-decoration:\s*underline"), "underline decoration"),
+    (re.compile(r"gradient", re.I), "gradient", "gradient"),
+    (re.compile(r"box-shadow"), "box-shadow", "shadow"),
+    (re.compile(r"font-style:\s*italic"), "italic (CJK 禁假斜体)", None),
+    (re.compile(r"text-decoration:\s*underline"), "underline decoration", None),
 ]
+# Waivers a style may claim. `gradient` was held back until probe_overflow could
+# actually MEASURE a gradient backdrop: an unreadable backdrop exempts every text
+# element above it, so waiving gradients before that landed would have switched
+# ADR-067's contrast floor off on exactly the pages that used them. ADR-068 D6 added
+# colour-stop sampling (both extremes scored, worse one kept), so it is measurable
+# now and may be waived. Anything not listed here is an error, not a silent pass.
+ALLOWABLE = {"shadow", "gradient"}
+PENDING_ALLOWANCE: dict[str, str] = {}
 FORBIDDEN_TAGS = [
     (re.compile(r"<script", re.I), "script tag"),
     (re.compile(r"<style", re.I), "style tag (tokens live in tokens.css only)"),
@@ -130,15 +159,88 @@ def named_color_hits(style_text: str) -> list[str]:
     return hits
 
 
+# W3 — form-diversity observability (ADR-068 D7). shell.html carries a var()
+# fallback for each of these, so a deck that omits them still renders — it just
+# renders the built-in skeleton. Omission is therefore the signal: the deck never
+# engaged the axis.
+#
+# Deliberately NOT "differs from the default VALUES": swiss-minimal's skeleton is
+# legitimately identical to the fallbacks, and a gate that fires on a correct,
+# deliberate choice teaches people to ignore it. Writing the block out — even to
+# the same numbers — is the act of choosing, and it also makes tokens.css a
+# self-documenting record of the deck's skeleton.
+#
+# WARNING and never an error, by construction: "looks like other decks" is a
+# cross-deck property, this gate sees one deck, and deckcraft holds no
+# cross-session state. Whether a deck *should* use the built-in skeleton is a
+# product question, not a defect. Observe, record, never block. Copy-the-numbers
+# sameness is out of reach here — qa_report["form"] exists so it stays checkable
+# after the fact instead of merely suspected.
+SKELETON_TOKENS = (
+    "--sl-pad", "--bar-w", "--bar-h", "--kicker-transform", "--kicker-spacing",
+    "--fw-head", "--fw-sub", "--fw-body", "--lh-body", "--measure",
+    "--radius", "--rule-w", "--font-display",
+)
+W3_MISSING_LIMIT = 6  # more than half of the 13 left to fallbacks
+
+
+def read_tokens(css: str) -> dict[str, str]:
+    """Declarations only. CSS comments are stripped first: tokens.css carries a
+    documentation header, and a line like `/* --radius: 圆角用 */` would otherwise
+    read as a real declaration — silently widening E3's allow-list here and, in
+    validate_outline, fabricating an out-of-band geometry error."""
+    css = re.sub(r"/\*.*?\*/", " ", css, flags=re.S)
+    return {m.group(1): m.group(2).strip()
+            for m in re.finditer(r"(--[\w-]+)\s*:\s*([^;}]+)", css)}
+
+
+def skeleton_report(tokens: dict[str, str]) -> tuple[dict, list[str]]:
+    """(machine-readable skeleton summary, names left to shell.html fallbacks)."""
+    set_vals, missing = {}, []
+    for name in SKELETON_TOKENS:
+        raw = tokens.get(name)
+        if raw is None:
+            missing.append(name)
+            set_vals[name] = None
+        else:
+            set_vals[name] = raw
+    return set_vals, missing
+
+
 def valid_layouts() -> set[str]:
-    """Layout registry SSOT is layouts.html — parse it so adding S11 there
-    can never desync this hard gate. Fallback: S01–S10."""
+    """Layout registry SSOT is assets/templates/layouts/ — one Sxx.html per layout,
+    so dropping a new skeleton in makes it legal with zero code change and this hard
+    gate can never desync from the library. Falls back to the pre-split single
+    layouts.html, then to the built-in S01–S10, so an older tree still validates."""
+    d = SKILL_DIR / "assets" / "templates" / "layouts"
+    if d.is_dir():
+        found = {f.stem for f in d.glob("S*.html") if re.fullmatch(r"S\d{2}", f.stem)}
+        if found:
+            return found
     reg = SKILL_DIR / "assets" / "templates" / "layouts.html"
     if reg.is_file():
         found = set(re.findall(r'data-layout="(S\d{2})"', reg.read_text(encoding="utf-8")))
         if found:
             return found
     return {f"S{i:02d}" for i in range(1, 11)}
+
+
+def media_layouts() -> set[str]:
+    """Layouts that need a real image, read from the layout index's 需素材 column.
+
+    Used by W5: with no picture to place, these render an honest placeholder box.
+    That is correct behaviour, not a defect — but it should be said out loud rather
+    than shipped silently, and E7's diversity requirement must never be the reason
+    a deck reached for one."""
+    idx = SKILL_DIR / "assets" / "templates" / "layouts" / "_index.md"
+    if not idx.is_file():
+        return set()
+    out = set()
+    for line in idx.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\|\s*`(S\d{2})`\s*\|[^|]*\|[^|]*\|\s*✅\s*\|", line)
+        if m:
+            out.add(m.group(1))
+    return out
 
 
 def page_no(p: Path) -> int:
@@ -159,7 +261,8 @@ def main() -> int:
         print(f"ERROR: need {proj}/pages/page-*.html and tokens.css", file=sys.stderr)
         return 2
 
-    allowed_vars = set(re.findall(r"(--[\w-]+)\s*:", tokens_f.read_text(encoding="utf-8")))
+    tokens_map = read_tokens(tokens_f.read_text(encoding="utf-8"))
+    allowed_vars = set(tokens_map)
     layouts_registry = valid_layouts()
     outline = {}
     outline_f = proj / "outline.json"
@@ -178,6 +281,25 @@ def main() -> int:
     errors: list[str] = []
     warns: list[str] = []
     layouts: list[str] = []
+
+    # spec_lock is the style SSOT; variants.json carries the picker's seed. Both are
+    # optional here — a missing one records as null rather than failing the gate.
+    style_id, allowances, signature = None, [], None
+    lock_f = proj / "spec_lock.md"
+    if lock_f.is_file():
+        lock = lock_f.read_text(encoding="utf-8")
+        m = re.search(r"^-?\s*风格[：:]\s*`?([a-z0-9-]+)`?", lock, re.M)
+        style_id = m.group(1) if m else None
+        m = re.search(r"<!--\s*deckcraft:allow\s+([a-z, ]+?)\s*-->", lock)
+        allowances = sorted({x.strip() for x in m.group(1).split(",") if x.strip()}) if m else []
+        m = re.search(r"^-?\s*Signature\s*id[：:]\s*`?([a-z0-9-]+)`?", lock, re.M)
+        signature = m.group(1) if m else None
+    unknown = [a for a in allowances if a not in ALLOWABLE]
+    for a in unknown:
+        why = PENDING_ALLOWANCE.get(a)
+        errors.append(
+            f"E4 spec_lock claims allowance {a!r}, which is not currently waivable"
+            + (f" — {why}" if why else f" (waivable today: {sorted(ALLOWABLE)})"))
 
     for p in pages:
         n = page_no(p)
@@ -219,7 +341,9 @@ def main() -> int:
         for m in re.findall(r"var\((--[\w-]+)\)", style_text):
             if m not in allowed_vars:
                 errors.append(f"E3 {p.name}: unknown var {m}")
-        for rx, label in FORBIDDEN_STYLE:
+        for rx, label, key in FORBIDDEN_STYLE:
+            if key is not None and key in allowances:
+                continue
             if rx.search(style_text):
                 errors.append(f"E4 {p.name}: forbidden {label}")
         for rx, label in FORBIDDEN_TAGS:
@@ -271,16 +395,67 @@ def main() -> int:
         nums = [page_no(p) for p in pages]
         if nums != list(range(1, len(pages) + 1)):
             errors.append(f"E5 page numbers not contiguous 1..{len(pages)}: {nums}")
-        # schema contract: >=8 pages need >=6 distinct layouts (small decks are
-        # free to repeat — forcing variety on a 5-pager degrades, not improves)
+        # Diversity scales with deck length instead of the old flat ">=8 pages need
+        # >=6 distinct". With a 10-layout library that flat rule quietly meant "use
+        # most of the vocabulary", which is one of the six forces that made every
+        # deck look alike (discussions/054 §四①). Proportional keeps the
+        # anti-laziness intent without turning the library into a checklist.
         distinct = len(set(layouts))
-        if len(pages) >= 8 and distinct < 6:
-            errors.append(f"E7 layout diversity: {distinct} distinct < 6 required for {len(pages)} pages")
+        need = min(len(pages), max(3, round(len(pages) * 0.6)))
+        if distinct < need:
+            errors.append(f"E7 layout diversity: {distinct} distinct < {need} required "
+                          f"for {len(pages)} pages (60% of page count, floor 3)")
         run = max(len(list(g)) for _, g in itertools.groupby(layouts))
         if run >= 3:
             errors.append(f"E7 {run} consecutive pages share one layout (max 2)")
         if outline and set(nums) != set(outline):
             errors.append(f"E5 page numbers {sorted(set(nums))} != outline indexes {sorted(outline)}")
+
+    # W3 — form diversity (advisory; see SKELETON_TOKENS for why never an error)
+    skeleton, missing_skel = skeleton_report(tokens_map)
+    if len(missing_skel) >= W3_MISSING_LIMIT:
+        warns.append(
+            f"W3 form diversity: {len(missing_skel)}/{len(SKELETON_TOKENS)} 骨相 token "
+            f"left to shell.html fallbacks ({', '.join(missing_skel)}) — this deck differs "
+            f"from the built-in look by little more than its colours. Write the chosen "
+            f"style's 骨相 token block into tokens.css (spec-lock-format.md §Structure); "
+            f"writing a value equal to the fallback is fine, omitting it is the problem.")
+
+    variant_seed = None
+    var_f = proj / "variants.json"
+    if var_f.is_file():
+        try:
+            variant_seed = json.loads(var_f.read_text(encoding="utf-8")).get("seed_digest")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+    # W5 — a media-hungry layout with nothing to place. The page still validates
+    # (an honest placeholder is the documented fallback) but shipping it unsaid is
+    # how "图片待补" boxes reach a user.
+    media = media_layouts()
+    if media:
+        no_img = [page_no(p) for p, lay in zip(pages, layouts)
+                  if lay in media and "images/" not in p.read_text(encoding="utf-8")
+                  and "data:image" not in p.read_text(encoding="utf-8")]
+        if no_img:
+            warns.append(
+                f"W5 media layouts without an image: pages {no_img} use "
+                f"{sorted(media)} but reference no picture — they will render as "
+                f"「图片待补」placeholders. Either place a real image (fetch_assets.py) "
+                f"or pick a layout that does not need one; never let E7's diversity "
+                f"requirement be the reason.")
+
+    # W4 — Signature Treatment presence (ADR-068 D3). Whether the signature actually
+    # reads right is a visual judgment (visual-review R8); all a gate can prove is
+    # that it was not forgotten outright. Silent when spec_lock declares none.
+    if signature:
+        carried = sum(1 for p in pages
+                      if f'data-signature="{signature}"' in p.read_text(encoding="utf-8"))
+        if carried == 0:
+            warns.append(
+                f"W4 signature: spec_lock declares Signature {signature!r} but no page carries "
+                f'data-signature="{signature}" — the style\'s non-optional treatment is missing '
+                f"(design-styles/<style>.md §Signature says what it is and where it goes).")
 
     for w in warns:
         print("WARN ", w)
@@ -302,6 +477,19 @@ def main() -> int:
         "layouts": layouts,
         "errors": errors,
         "warnings": warns,
+    }
+    # ADR-068 D7 — the observability half of the diversity axis. A single deck can
+    # never prove it looks unlike other decks, but recording what it actually chose
+    # makes sameness checkable after the fact instead of merely suspected.
+    report["form"] = {
+        "style_id": style_id,
+        "allowances": allowances,
+        "signature": signature,
+        "variant_seed": variant_seed,
+        "layouts": layouts,
+        "skeleton": skeleton,
+        "skeleton_missing": missing_skel,
+        "skeleton_signals": len(SKELETON_TOKENS),
     }
     report_f.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
 

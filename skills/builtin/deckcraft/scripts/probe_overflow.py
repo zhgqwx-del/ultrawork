@@ -75,13 +75,55 @@ function hex(c){
   return '#' + h(c.r) + h(c.g) + h(c.b);
 }
 // Composite a list of elements (ordered bottom-most last) over an opaque white base.
-function compositeStack(list){
+// ADR-068 D6 — a gradient IS readable. Chrome normalises every colour inside a
+// computed background-image to rgb()/rgba(), so the stops can be pulled out and
+// each one treated as a candidate flat backdrop. Sampling both extremes and judging
+// the WORSE of the two is exact, not a guess: the text really does sit over every
+// stop somewhere along the gradient.
+//
+// Without this, allowing gradients would have switched ADR-067's contrast floor OFF
+// for the whole page — `imaged` exempts every text element above an unreadable
+// backdrop, and a gradient on .slide is under all of them. That is why `gradient`
+// could not join E4's waivable set until this landed.
+function gradientStops(bgImage){
+  if (!bgImage || bgImage === 'none') return null;
+  if (bgImage.indexOf('url(') >= 0) return null;      // a bitmap: not readable
+  if (bgImage.indexOf('gradient(') < 0) return null;
+  var found = bgImage.match(/rgba?\([^)]*\)/g) || [];
+  var stops = [];
+  for (var i = 0; i < found.length; i++) {
+    var c = parseColor(found[i]);
+    if (c) stops.push(c);
+  }
+  return stops.length ? stops : null;                  // syntax we cannot read
+}
+// `pick` selects which gradient stop to composite: 'lo' = darkest, 'hi' = lightest.
+// Two passes over the same stack bracket the real painted backdrop exactly.
+function compositeStack(list, pick){
   var base = { r: 255, g: 255, b: 255, a: 1 }, imaged = false;
   for (var i = list.length - 1; i >= 0; i--) {
-    var cs = getComputedStyle(list[i]);
-    if (cs.backgroundImage && cs.backgroundImage !== 'none') imaged = true;
+    var el = list[i], cs = getComputedStyle(el);
     var bc = parseColor(cs.backgroundColor);
     if (bc && bc.a > 0) base = over(bc, base);
+    var stops = gradientStops(cs.backgroundImage);
+    if (stops) {
+      var best = stops[0];
+      for (var k = 1; k < stops.length; k++) {
+        var lb = lum(over(stops[k], base)), lc = lum(over(best, base));
+        if (pick === 'hi' ? lb > lc : lb < lc) best = stops[k];
+      }
+      base = over(best, base);
+    } else if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+      imaged = true;                                   // a bitmap or unreadable syntax
+    }
+    // A replaced element is a backdrop getComputedStyle cannot describe at all —
+    // background-image stays 'none' for an <img>. Bracketing it white-to-black would
+    // be guessing, and a guess that fails is a false positive, the costly kind here
+    // (ADR-067 D3). So it stays a DECLARED blind spot: reported, never judged.
+    // The layouts that do this (S11/S17/S19) say so in layouts/_index.md, and
+    // visual-review R4 is the binding check on them.
+    var tag = el.tagName;
+    if (tag === 'IMG' || tag === 'SVG' || tag === 'VIDEO' || tag === 'CANVAS') imaged = true;
   }
   return { color: base, imaged: imaged };
 }
@@ -104,8 +146,8 @@ function effectiveBg(el, r){
   var cy = Math.min(719, Math.max(0, r.top + r.height / 2));
   var stack = document.elementsFromPoint ? (document.elementsFromPoint(cx, cy) || []) : [];
   var at = stack.indexOf(el);
-  if (at < 0) return compositeStack(chain);
-  return compositeStack(stack.slice(at));
+  var list = at < 0 ? chain : stack.slice(at);
+  return { lo: compositeStack(list, 'lo'), hi: compositeStack(list, 'hi') };
 }
 // Only the element that directly owns the characters, so a wrapper div does not
 // get scored for text its child paints (that would double-count and mis-attribute
@@ -165,20 +207,29 @@ function measure(){
     if (fgRaw.a === 0) continue;
     var op = cumulativeOpacity(el);
     if (op < 0.05) continue;                    // effectively not painted
-    var bg = effectiveBg(el, r);
-    // Fold inherited opacity into the glyph alpha. Approximation: an ancestor's
-    // opacity also fades that ancestor's own background, but in this skill's
-    // templates the faded thing is the text layer, and the error is conservative
-    // (a faded glyph reads as lower contrast, which is what the eye sees).
-    var fg = over({ r: fgRaw.r, g: fgRaw.g, b: fgRaw.b, a: fgRaw.a * op }, bg.color);
+    var cand = effectiveBg(el, r);
     var size = parseFloat(cs.fontSize) || 0;
     var weight = parseInt(cs.fontWeight, 10) || 400;
+    // A gradient makes the backdrop a RANGE, so score both ends and keep the worse
+    // one — that is the pixel a reader can actually land on. With no gradient the
+    // two ends are identical and this collapses to the old single measurement.
+    var worst = null;
+    ['lo', 'hi'].forEach(function (k) {
+      var bgc = cand[k].color;
+      // Fold inherited opacity into the glyph alpha. Approximation: an ancestor's
+      // opacity also fades that ancestor's own background, but in this skill's
+      // templates the faded thing is the text layer, and the error is conservative
+      // (a faded glyph reads as lower contrast, which is what the eye sees).
+      var fg = over({ r: fgRaw.r, g: fgRaw.g, b: fgRaw.b, a: fgRaw.a * op }, bgc);
+      var ratio = contrast(fg, bgc);
+      if (!worst || ratio < worst.ratio) worst = { ratio: ratio, fg: fg, bg: bgc, imaged: cand[k].imaged };
+    });
     con.push({ el: name, text: own.slice(0, 24),
-               ratio: Math.round(contrast(fg, bg.color) * 100) / 100,
-               fg: hex(fg), bg: hex(bg.color), size: Math.round(size),
+               ratio: Math.round(worst.ratio * 100) / 100,
+               fg: hex(worst.fg), bg: hex(worst.bg), size: Math.round(size),
                // WCAG "large text": >=24px, or >=18.66px when bold
                large: size >= 24 || (size >= 18.66 && weight >= 700),
-               imaged: bg.imaged });
+               imaged: worst.imaged });
   }
   var node = document.createElement('script');
   node.type = 'application/json'; node.id = '__probe__';
@@ -189,7 +240,7 @@ function measure(){
   // Python/JS backslash double-escaping; json.loads reads it back to the character.
   // (NOTE: keep the literal closing-script character sequence OUT of this comment —
   // it would itself close this inlined script mid-parse. Meta, but real.)
-  node.textContent = JSON.stringify({ o: out, c: con, u: unparsed }).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
+  node.textContent = JSON.stringify({ o: out, c: con, u: unparsed, vh: document.documentElement.clientHeight, vw: document.documentElement.clientWidth }).split(String.fromCharCode(60)).join(String.fromCharCode(92) + 'u003c');
   document.body.appendChild(node);
 }
 // this script is inlined mid-body, so it always runs during parse (before load);
@@ -266,7 +317,20 @@ def main() -> int:
             page = Path(td) / f"p{i:02d}.html"
             page.write_text(head + flat + sec + PROBE_JS + "</div></body></html>", encoding="utf-8")
             r = subprocess.run(
-                [browser, *CHROME_BASE, "--window-size=1280,720", "--virtual-time-budget=3000",
+                # 1280x1400, not 720: --window-size sets the OUTER window, and headless
+                # Chrome reserves a FIXED chrome band that the inner viewport loses —
+                # measured at exactly 87px on macOS regardless of window height (720→633,
+                # 1400→1313). Every elementsFromPoint below the viewport returns EMPTY, so
+                # the contrast probe would fall back to an ancestor-only walk on the bottom
+                # of the canvas — where footnotes, page numbers and source credits live.
+                # The band is fixed per platform but its size is platform-dependent and we
+                # cannot measure Windows/Linux here, so instead of trimming to a tight
+                # margin we make the window so much taller than the 720 canvas that no
+                # plausible band (macOS 87px, headless Linux ~0) can reach into it. Layout
+                # is unaffected (the slide is a fixed 720px box; the extra height is blank
+                # backdrop), so the taller window costs nothing. The viewport self-check
+                # below still fails loudly if some platform ever exceeds even this.
+                [browser, *CHROME_BASE, "--window-size=1280,1400", "--virtual-time-budget=3000",
                  "--dump-dom", page.resolve().as_uri()],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=120, **kwargs)
@@ -276,6 +340,16 @@ def main() -> int:
                 print(f"ERROR: probe script produced no report for page {i}", file=sys.stderr)
                 return 2
             payload = json.loads(m.group(1))
+            # Fail loudly rather than measure 88% of the canvas and report a clean run:
+            # a viewport shorter than the slide silently disables the hit test at the
+            # bottom (see the --window-size note above).
+            vh, vw = payload.get("vh", 0), payload.get("vw", 0)
+            if vh < 720 or vw < 1280:
+                print(f"ERROR: viewport {vw}x{vh} cannot hold the 1280x720 canvas — "
+                      f"elementsFromPoint would return empty below y={vh} and the "
+                      f"contrast measurement would silently degrade to an ancestor "
+                      f"walk. Raise --window-size.", file=sys.stderr)
+                return 2
             hits, texts = payload["o"], payload["c"]
             unreadable += payload.get("u", 0)
             if hits:
@@ -321,8 +395,11 @@ def main() -> int:
         # reference file does not reliably reach the model. So the failure has to
         # carry its own remedy instead of assuming anyone re-reads the docs.
         print("FIX: 上述文本在它实际所处的背景上几乎不可见。改前景色，不要改阈值——"
-              "浅底上的标题/栏头用 var(--c-primary)、正文用 var(--c-text)；"
-              "var(--c-on-dark) 只能用在 [data-dark] 深底页内。"
+              "标题/栏头/表头一律 var(--c-head)（它跟随风格深浅，不用你判断）、正文用 var(--c-text)；"
+              "var(--c-on-dark) 只能用在 [data-dark] 深底页内；"
+              "var(--c-primary) 只作背景与结构元素，不是墨色。"
+              "若报的是 data-dark 页上被 opacity 压暗的脚注、且主色高饱和 —— "
+              "去掉 opacity 用 100% on-dark、靠缩字号弱化，别靠降透明度。"
               "改完重跑本命令直到 exit 0。")
     if unreadable:
         # Not a gate failure (we cannot judge what we cannot read), but it must be

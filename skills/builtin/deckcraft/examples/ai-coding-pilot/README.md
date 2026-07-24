@@ -24,3 +24,11 @@ python3 ${SKILL_DIR}/scripts/export_deck.py $EX --pdf --pptx   # 派生物
 `deck.html` 与 `qa_report.json` **已入库作为字节级基准**：重跑上面的链应当不产生 git diff，
 出现 diff 即说明脚本行为变了（这本身就是回归信号）。`export/` 目录不入库，
 打包脚本（pack/fetch-builtin-skills）也按相对路径排除它——不会进分发 zip。
+
+## 形式轴（ADR-068）：`swiss-minimal` × `sans-neutral` × 浅底
+
+四个 example 覆盖**四套风格 × 三类字体族 × 深浅两极**，防 few-shot 把每份 deck 拉回同一个默认
+（旧版四例 `--font-stack` 逐字节相同、底色全部近白、无一使用 tech-dark——那本身就是收敛源）。
+本例是**基准档**：骨相恰是 shell.html 的兜底值（48×8 bar、全大写拉字距 kicker、直角、1px 细线），
+但 `tokens.css` 仍把 12 个骨相 token **全部写出**——写值 = 已选择，缺省 = 没选择（validate_deck W3）。
+`spec_lock.md` 是执行契约的**填写样例**（Structure 骨相表 + Allowances + Page Plan）。

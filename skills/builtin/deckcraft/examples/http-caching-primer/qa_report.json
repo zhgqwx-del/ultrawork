@@ -93,5 +93,37 @@
   "elements_measured": 93,
   "elements_unreadable_color": 0,
   "findings": {}
+ },
+ "form": {
+  "style_id": "academic-calm",
+  "allowances": [],
+  "signature": "serif-rule",
+  "variant_seed": "bc7c89206cc558ce",
+  "layouts": [
+   "S01",
+   "S03",
+   "S04",
+   "S10",
+   "S06",
+   "S03",
+   "S08"
+  ],
+  "skeleton": {
+   "--sl-pad": "64px",
+   "--bar-w": "56px",
+   "--bar-h": "4px",
+   "--kicker-transform": "none",
+   "--kicker-spacing": "normal",
+   "--fw-head": "700",
+   "--fw-sub": "500",
+   "--fw-body": "300",
+   "--lh-body": "1.75",
+   "--measure": "34em",
+   "--radius": "0",
+   "--rule-w": "2px",
+   "--font-display": "Georgia,Cambria,\"Source Han Serif SC\",\"Noto Serif SC\",\"Songti SC\",\"SimSun\",serif"
+  },
+  "skeleton_missing": [],
+  "skeleton_signals": 13
  }
 }

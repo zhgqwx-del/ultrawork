@@ -27,3 +27,9 @@ python3 ${SKILL_DIR}/scripts/export_deck.py $EX --shots
 `deck.html` 与 `qa_report.json` 已入库作为字节级基准，重跑上面的链不应产生 git diff。
 `qa_report.json` 的 `visual` 段记录独立评审（无生成上下文）逐页 R1-R8 结果 = 全 pass。
 `export/` 目录不入库（打包脚本按相对路径排除），不进分发 zip。
+
+## 形式轴（ADR-068）：`academic-calm` × `serif-display` × 浅底
+
+**衬线标题压黑体正文**——`--font-display` 与 `--font-stack` 分家，是风格辨识度最便宜的一档。
+骨相偏离基准处：bar 收窄成 56×4 细杠、kicker 不全大写不加字距（中文标签不喊叫）、分隔线 2px。
+与 `ai-coding-pilot`（基准骨相 + 同族字体）对照可见：**同一套版式，骨相一换就是另一副长相**。

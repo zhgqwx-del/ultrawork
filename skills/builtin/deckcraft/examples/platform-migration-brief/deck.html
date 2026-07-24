@@ -8,29 +8,46 @@
 <title>内部平台迁移季度进展通报（Q2）</title>
 <style>
 /* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
+/* platform-migration-brief — editorial-warm × serif-full
+   暖纸编辑部：全衬线、暖纸底、bar 拉成 88x3 的杂志式长细横线、kicker 只留一点字距。
+   骨相 token 全部写出（ADR-068 D3/D7）：写值=已选择，缺省=没选择（validate_deck W3）。
+   --sl-pad/--fw-body/--lh-body/--measure 与 validate_outline 的字符预算耦合（ADR-068 D5）：
+   只能取标定档位，且几何越宽松预算越紧——跑 validate_outline 看它打印的 geometry 行。 */
 :root{
-  --c-bg:#F7F7F5; --c-bg2:#EAEAE6; --c-primary:#2A3B4D; --c-accent:#2F7D5B;
-  --c-muted:#66707A; --c-text:#1A1E22; --c-on-dark:#F4F6F5;
-  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --c-bg:#FAF6EF; --c-bg2:#EFE7D9; --c-primary:#3B3226; --c-head:#3B3226; --c-accent:#94441C;
+  --c-muted:#6B6152; --c-text:#241F18; --c-on-dark:#F8F3EA;
+  --font-stack:Georgia,Cambria,"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
+  --font-display:Georgia,Cambria,"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
   --fs-display:60px; --fs-h1:42px; --fs-h2:28px; --fs-h3:23px;
   --fs-body:21px; --fs-num:76px; --fs-caption:14px;
+  --sl-pad:72px; --bar-w:88px; --bar-h:3px;
+  --kicker-transform:none; --kicker-spacing:.08em;
+  --fw-head:700; --fw-sub:500; --fw-body:300;
+  --lh-body:1.75; --measure:34em; --radius:0; --rule-w:1px;
 }
-/* ==== 结构层（风格无关，禁止手改） ==== */
+/* ==== 结构层（禁止手改）。骨相由 tokens.css 的结构 token 调（--sl-pad / --bar-w / --bar-h /
+       --kicker-transform / --kicker-spacing / --fw-head / --fw-sub / --fw-body / --lh-body /
+       --measure / --radius / --rule-w / --font-display，ADR-068 D3）；每个都带 CSS 变量兜底值
+       = 旧 deck 不写这些 token 也照常渲染。
+       注意：本文件整段会被塞进 deck.html 的 <style>，注释里绝不能出现连写的星号加斜杠
+       （会提前终止注释、把后面的结构层规则整段吃掉——ADR-068 实施期真踩过） ==== */
 *{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
 html,body{background:#3a3a3a}
 body{font-family:var(--font-stack);color:var(--c-text)}
 .stage{width:1280px;margin:0 auto}
-.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:var(--sl-pad,64px);margin:24px 0;line-break:strict}
 .slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
-.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.kicker{font-size:var(--fs-caption);letter-spacing:var(--kicker-spacing,.25em);color:var(--c-muted);text-transform:var(--kicker-transform,uppercase);font-weight:500}
 .pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
-h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
-h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
-h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
-p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
-.accent{color:var(--c-accent);font-weight:700}
-.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
-.bar{width:48px;height:8px;background:var(--c-accent)}
+/* 标题族可与正文族不同（字体配对，typography-cjk.md）；缺省回落到正文族 */
+h1,h2,.num{font-family:var(--font-display,var(--font-stack))}
+h1{font-size:var(--fs-h1);font-weight:var(--fw-head,700);line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:var(--fw-head,700);line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:var(--fw-sub,500);line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:var(--fw-body,300);line-height:var(--lh-body,1.65);max-width:var(--measure,36em)}
+.accent{color:var(--c-accent);font-weight:var(--fw-head,700)}
+.num{font-size:var(--fs-num);font-weight:var(--fw-head,700);line-height:1;letter-spacing:-.02em}
+.bar{width:var(--bar-w,48px);height:var(--bar-h,8px);background:var(--c-accent)}
 ul{list-style:none}
 /* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
 @page{size:1280px 720px;margin:0}
@@ -48,7 +65,7 @@ ul{list-style:none}
 <div class="stage" id="stage">
 <section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
   <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
-    <div class="bar"></div>
+    <div class="bar" data-signature="long-hairline"></div>
     <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">PLATFORM MIGRATION · Q2 通报</div>
     <div style="font-size:var(--fs-display);font-weight:700;line-height:1.2;margin-top:24px">平台迁移<br>季度通报</div>
     <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85">核心服务迁移至新平台的季度进展</p>
@@ -76,45 +93,45 @@ ul{list-style:none}
 <section class="slide" data-layout="S10" data-rhythm="dense">
   <h1>各业务域迁移进度</h1>
   <table style="width:100%;margin-top:40px;border-collapse:collapse;font-size:var(--fs-body)">
-    <thead><tr style="border-bottom:2px solid var(--c-primary)">
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">业务域</th>
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">状态</th>
-      <th style="text-align:right;padding:16px 8px;font-weight:700;color:var(--c-primary)">完成度</th>
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">负责人</th>
+    <thead><tr style="border-bottom:calc(var(--rule-w) * 2) solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">业务域</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">状态</th>
+      <th style="text-align:right;padding:16px 8px;font-weight:700;color:var(--c-head)">完成度</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">负责人</th>
     </tr></thead>
     <tbody>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">订单</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">订单</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-accent)">已切流</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">100%</td>
         <td style="padding:16px 8px;font-weight:300">王工</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">支付</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">支付</td>
         <td style="padding:16px 8px;font-weight:300">灰度中</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">70%</td>
         <td style="padding:16px 8px;font-weight:300">李工</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">库存</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">库存</td>
         <td style="padding:16px 8px;font-weight:300">灰度中</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">55%</td>
         <td style="padding:16px 8px;font-weight:300">张工</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">风控</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">风控</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-accent)">已切流</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">100%</td>
         <td style="padding:16px 8px;font-weight:300">赵工</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">搜索</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">搜索</td>
         <td style="padding:16px 8px;font-weight:300">待启动</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">10%</td>
         <td style="padding:16px 8px;font-weight:300">陈工</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">报表</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">报表</td>
         <td style="padding:16px 8px;font-weight:300">待启动</td>
         <td style="padding:16px 8px;text-align:right;font-variant-numeric:tabular-nums">0%</td>
         <td style="padding:16px 8px;font-weight:300">周工</td>
@@ -125,33 +142,33 @@ ul{list-style:none}
   <div class="pagenum">3 / 7</div>
 </section>
 <section class="slide" data-layout="S06" data-rhythm="dense">
-  <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+  <div class="bar" data-signature="long-hairline"></div>
   <div class="kicker" style="margin-top:24px">QUARTER MILESTONES</div>
   <h1 style="margin-top:8px">季度迁移里程碑</h1>
   <div style="display:flex;margin-top:96px;position:relative">
     <div style="position:absolute;top:11px;left:0;right:32px;height:2px;background:var(--c-muted);opacity:.5"></div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 1</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">4 月</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 1</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">4 月</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">完成新平台容量评估<br>与灰度框架搭建</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 2</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">5 月</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 2</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">5 月</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">订单、风控两域首批<br>切流并稳定运行</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 3</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">6 月</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 3</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">6 月</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">支付库存进入灰度，<br>搜索完成依赖梳理</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-accent);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 4</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">7 月</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 4</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">7 月</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6;max-width:none">计划完成支付切流，<br>启动搜索迁移</p>
     </div>
   </div>
@@ -162,18 +179,18 @@ ul{list-style:none}
   <div class="kicker">DONE vs TO COORDINATE</div>
   <h1 style="margin-top:16px">已完成 vs 待协调项</h1>
   <div style="display:flex;gap:48px;margin-top:40px;min-height:432px">
-    <div style="flex:1;background:var(--c-bg2);padding:40px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-radius:var(--radius)">
       <div class="kicker">COMPLETED</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">本季已完成</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">本季已完成</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>订单、风控两域全量切流稳定</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>灰度框架与回滚预案就位</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>新平台容量评估通过压测</span></li>
       </ul>
     </div>
-    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent);border-radius:var(--radius)">
       <div class="kicker" style="color:var(--c-accent)">TO COORDINATE</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">需跨组协调</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">需跨组协调</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>支付切流需财务系统配合对账</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>搜索迁移依赖数据组索引重建</span></li>
@@ -187,7 +204,7 @@ ul{list-style:none}
 <section class="slide" data-layout="S03" data-rhythm="dense">
   <div style="display:flex;height:100%;gap:64px">
     <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
-      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <div class="bar" data-signature="long-hairline"></div>
       <h1 style="margin-top:24px">三个风险<br>与协调项</h1>
       <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">卡点都在跨组协调</p>
     </div>
@@ -195,21 +212,21 @@ ul{list-style:none}
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">01</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">支付对账窗口</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">支付对账窗口</h3>
           <p style="margin-top:8px;color:var(--c-muted)">切流窗口需与财务月结错开，避免对账冲突</p>
         </div>
       </li>
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">02</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">搜索索引重建</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">搜索索引重建</h3>
           <p style="margin-top:8px;color:var(--c-muted)">依赖数据组重建索引，排期未定影响 7 月计划</p>
         </div>
       </li>
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">03</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">报表口径迁移</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">报表口径迁移</h3>
           <p style="margin-top:8px;color:var(--c-muted)">新旧平台报表口径需对齐，待 BI 团队确认</p>
         </div>
       </li>
@@ -220,7 +237,7 @@ ul{list-style:none}
 </section>
 <section class="slide" data-layout="S08" data-rhythm="anchor">
   <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
-    <div class="bar"></div>
+    <div class="bar" data-signature="long-hairline"></div>
     <h1 style="font-size:var(--fs-display);line-height:1.25;margin-top:40px">下季度收尾<br><span class="accent">支付与搜索两域迁移</span></h1>
     <p style="margin-top:40px">目标：Q3 末核心域迁移完成度达 95%</p>
   </div>

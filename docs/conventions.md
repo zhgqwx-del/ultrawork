@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-21 -->
+<!-- last-synced: 2026-07-24 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -401,6 +401,8 @@ setTimeout(() => fetchSources(), 500)
 **新增上游技能条目流程**（fetch 脚本 `SOURCES`）：核对 LICENSE 可再分发 → `ref` **pin release tag**（勿 main，bump 时改 tag 重跑）→ 大仓库（整仓 tarball 过大）设 `sparse: true`（blobless sparse clone 只拉 `subdir`；`--branch` 不接受 commit SHA）→ 用 `drop`/`keepOnly` 裁非功能大文件（纯文档图等）→ `X_REQUIRES` 与前端 `BUILTIN_DEP_MAP` 同步 → 专属适配写成 `applyXxxPatches`（先例：skill-installer 改安装目标、ppt-master 注 `.env` 警告+清悬空引用）→ 跑 `bun run --bun scripts/fetch-builtin-skills.ts <name>`（按名过滤）并提交产物。
 
 **自写技能脚本模式**（参考 `doc-edit/scripts/*.py`）：argv 驱动、`--json` 可选结构化输出、依赖缺失时 stderr 打印缺失库名 + `sys.exit(1)`（让 agent 据此提示安装）、无网络副作用、就地改默认/`--out` 另存。保持「薄」：只覆盖高频操作，复杂场景让 agent 直接写库 API 代码。
+
+**要模型「随机/多样地选」必须落脚本，写进 SKILL.md 无效**（ADR-068 D1）：① LLM 的伪随机有强偏向（让它「随机选」≈ 选它见得最多的那个）；② 更硬的证据——SKILL.md 明写的规则也会被整轮跳过（discussions/053 §2.1 实测 deckcraft 第 2 轮 question 被跳）。所以把「打乱候选顺序 / 强制跨档」这类抗收敛逻辑做成 CLI 脚本，让脚本决定顺序、模型只答后续问题（deckcraft `pick_variants.py`：`sha256(seed+id)` 排序做**确定性**打乱——可复现、跨平台稳定、无 PRNG 依赖，seed 取 `项目名|主题` 故跨机器同输入同结果；并强制候选跨 ≥2 个温度档，防「候选全是安静档＝没给选择」）。真机验证：真实模型确实先跑脚本、按 `variants.json` 顺序弹提问轮给用户选。**边界**：脚本纯随机不做主题-风格匹配（刻意，为破「总选 swiss」的收敛）——有交互时用户看信号表会选对；无交互 fallback 用 `variants[0]` 才可能不适配主题。
 
 **依赖徽标 SSOT**：技能→运行依赖映射唯一权威是 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（驱动设置页 `DepBadge`）；SKILL.md 的 `x-requires` 仅人读文档，两者改一处需对齐另一处。可探测的除 PATH 二进制（`check_skill_dependencies` 探 python3/node/pandoc/…）外，还支持 **python 内探针**（`run_python_feature_probe`：版本门 `python3.10+` + pip 库 import 探测如 `python-pptx`；探针防御与语义见 gotchas §10，改探针前必读）。**依赖缺失引导**：`DepBadge` 的 `onGuide` → `depGuidePrompt` handoff 新对话让 AI 按平台引导安装（与 curated 安装同一 `navigate("/",{state:{initialInput}})` 模式）；引导词必须写死**收敛标准**（如「`python3` 命令本身 ≥3.10」），否则 AI 装个版本化命令就交差、徽标不收敛。`DEP_HINTS` 按平台三分支（`isWindows`/`isMacOS`/Linux 兜底，`@/lib/platform` 模块级常量）。
 

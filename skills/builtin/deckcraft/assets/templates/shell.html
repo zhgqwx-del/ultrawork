@@ -9,22 +9,29 @@
 <style>
 /* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
 {{TOKENS}}
-/* ==== 结构层（风格无关，禁止手改） ==== */
+/* ==== 结构层（禁止手改）。骨相由 tokens.css 的结构 token 调（--sl-pad / --bar-w / --bar-h /
+       --kicker-transform / --kicker-spacing / --fw-head / --fw-sub / --fw-body / --lh-body /
+       --measure / --radius / --rule-w / --font-display，ADR-068 D3）；每个都带 CSS 变量兜底值
+       = 旧 deck 不写这些 token 也照常渲染。
+       注意：本文件整段会被塞进 deck.html 的 <style>，注释里绝不能出现连写的星号加斜杠
+       （会提前终止注释、把后面的结构层规则整段吃掉——ADR-068 实施期真踩过） ==== */
 *{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
 html,body{background:#3a3a3a}
 body{font-family:var(--font-stack);color:var(--c-text)}
 .stage{width:1280px;margin:0 auto}
-.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:var(--sl-pad,64px);margin:24px 0;line-break:strict}
 .slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
-.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.kicker{font-size:var(--fs-caption);letter-spacing:var(--kicker-spacing,.25em);color:var(--c-muted);text-transform:var(--kicker-transform,uppercase);font-weight:500}
 .pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
-h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
-h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
-h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
-p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
-.accent{color:var(--c-accent);font-weight:700}
-.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
-.bar{width:48px;height:8px;background:var(--c-accent)}
+/* 标题族可与正文族不同（字体配对，typography-cjk.md）；缺省回落到正文族 */
+h1,h2,.num{font-family:var(--font-display,var(--font-stack))}
+h1{font-size:var(--fs-h1);font-weight:var(--fw-head,700);line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:var(--fw-head,700);line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:var(--fw-sub,500);line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:var(--fw-body,300);line-height:var(--lh-body,1.65);max-width:var(--measure,36em)}
+.accent{color:var(--c-accent);font-weight:var(--fw-head,700)}
+.num{font-size:var(--fs-num);font-weight:var(--fw-head,700);line-height:1;letter-spacing:-.02em}
+.bar{width:var(--bar-w,48px);height:var(--bar-h,8px);background:var(--c-accent)}
 ul{list-style:none}
 /* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
 @page{size:1280px 720px;margin:0}

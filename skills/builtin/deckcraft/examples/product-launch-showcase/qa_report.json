@@ -93,5 +93,37 @@
   "elements_measured": 66,
   "elements_unreadable_color": 0,
   "findings": {}
+ },
+ "form": {
+  "style_id": "tech-dark",
+  "allowances": [],
+  "signature": "mono-caps",
+  "variant_seed": "66a0b47940af1e8b",
+  "layouts": [
+   "S01",
+   "S05",
+   "S03",
+   "S07",
+   "S04",
+   "S10",
+   "S08"
+  ],
+  "skeleton": {
+   "--sl-pad": "64px",
+   "--bar-w": "32px",
+   "--bar-h": "6px",
+   "--kicker-transform": "uppercase",
+   "--kicker-spacing": ".3em",
+   "--fw-head": "700",
+   "--fw-sub": "500",
+   "--fw-body": "400",
+   "--lh-body": "1.55",
+   "--measure": "32em",
+   "--radius": "0",
+   "--rule-w": "1px",
+   "--font-display": "ui-monospace,\"SF Mono\",Menlo,Consolas,\"Source Han Sans SC\",\"PingFang SC\",\"Microsoft YaHei\",monospace"
+  },
+  "skeleton_missing": [],
+  "skeleton_signals": 13
  }
 }

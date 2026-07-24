@@ -21,3 +21,21 @@
 ## CJK 适配
 - 标题宋体族 700 假粗（衬线中文粗体渲染发闷时，退回黑体 700 + 主色）
 - 正文黑体 300/400；数字 tabular；参考文献式 footnote 用 caption 字号
+
+## 骨相 token（写进 tokens.css §Structure；值即本风格的"骨"）
+
+| 变量 | 值 | 为什么是它 |
+|---|---|---|
+| --sl-pad | 64px | 标准版心 |
+| --bar-w / --bar-h | 56px / 4px | bar 收窄压扁成"细杠"——学术不喊叫 |
+| --kicker-transform / --kicker-spacing | none / normal | 中文标签不全大写、不加字距（方块字自带节奏） |
+| --fw-head / --fw-sub / --fw-body | 700 / 500 / 300 | 衬线标题已带性格，字重不必再拉极端 |
+| --lh-body | 1.75 | 论证型长句需要更宽的行距 |
+| --measure | 34em | 行长略收，利于逐行精读 |
+| --radius / --rule-w | 0 / 2px | 2px 分隔线承担论证段落的结构感 |
+
+## Signature（非可选）
+
+`data-signature="serif-rule"` —— **衬线标题压黑体正文 + 56×4 细杠**。
+两者缺一即散：只有衬线没有细杠会像普通文档，只有细杠没有衬线会退回瑞士系统。
+配对固定 `serif-display`（`--font-display` 衬线族、`--font-stack` 黑体族）。

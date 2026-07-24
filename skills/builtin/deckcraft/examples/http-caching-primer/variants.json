@@ -1,0 +1,24 @@
+{
+  "seed": "http-caching-primer|HTTP 缓存机制入门（讲义版）",
+  "seed_digest": "bc7c89206cc558ce",
+  "styles": [
+    "swiss-minimal",
+    "editorial-warm",
+    "tech-dark"
+  ],
+  "style_temperatures": {
+    "swiss-minimal": "中性",
+    "editorial-warm": "安静",
+    "tech-dark": "中性"
+  },
+  "font_pairings": [
+    "serif-display",
+    "sans-neutral",
+    "humanist-display"
+  ],
+  "registry_sizes": {
+    "styles": 4,
+    "font_pairings": 5
+  },
+  "generated_by": "pick_variants.py"
+}

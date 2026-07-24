@@ -30,3 +30,9 @@ python3 ${SKILL_DIR}/scripts/export_deck.py $EX --shots
 
 `deck.html` 与 `qa_report.json` 已入库作为字节级基准，重跑上面的链不应产生 git diff。
 `export/` 目录不入库，不进分发 zip。
+
+## 形式轴（ADR-068）：`editorial-warm` × `serif-full` × 暖浅底
+
+**全衬线**（标题与正文同族，靠字重与字号分层）+ 暖纸底。骨相偏离基准处：bar 拉成 88×3 的
+杂志式长细横线、kicker 只留 .08em 字距。Georgia/Cambria 跨平台可得性优于 Helvetica Neue，
+中文侧 Windows 会退到 SimSun（见 `references/typography-cjk.md` §跨平台诚实标注）。

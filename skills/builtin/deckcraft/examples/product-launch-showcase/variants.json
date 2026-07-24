@@ -1,0 +1,24 @@
+{
+  "seed": "product-launch-showcase|Lumo 口袋投影仪发布（虚构产品演示）",
+  "seed_digest": "66a0b47940af1e8b",
+  "styles": [
+    "editorial-warm",
+    "tech-dark",
+    "swiss-minimal"
+  ],
+  "style_temperatures": {
+    "editorial-warm": "安静",
+    "tech-dark": "中性",
+    "swiss-minimal": "中性"
+  },
+  "font_pairings": [
+    "sans-neutral",
+    "serif-display",
+    "humanist-display"
+  ],
+  "registry_sizes": {
+    "styles": 4,
+    "font_pairings": 5
+  },
+  "generated_by": "pick_variants.py"
+}

@@ -1,0 +1,18 @@
+<!-- S15 横向条形图（dense）：页题 + 2-6 条（标签 + 纯色条 + 数值）；条宽 = value/max×100%，由 outline 的数值算，见 O11 数值安全层 -->
+<section class="slide" data-layout="S15" data-rhythm="dense">
+  <h1>页标题</h1>
+  <!-- gap 随条数收紧到能容 6 条（满 cap）而不压页脚：6 条时 gap 用 16、≤4 条可回 32。
+       末条底必须留在 absolute 页脚之上（ADR-068 review 实测：gap:32 + 6 条会重叠页脚 9px）。 -->
+  <div style="margin-top:40px;display:flex;flex-direction:column;gap:16px">
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-size:var(--fs-h3);color:var(--c-head)">条目标签</span>
+        <span style="font-size:var(--fs-h3);color:var(--c-accent);font-variant-numeric:tabular-nums">42%</span>
+      </div>
+      <div style="margin-top:8px;height:20px;background:var(--c-bg2);border-radius:var(--radius)">
+        <div style="width:60%;height:100%;background:var(--c-accent);border-radius:var(--radius)"></div>
+      </div>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:40px;left:64px;font-size:var(--fs-caption);color:var(--c-muted)">口径 / 数据来源</div>
+</section>

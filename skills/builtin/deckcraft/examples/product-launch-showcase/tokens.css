@@ -1,7 +1,17 @@
+/* product-launch-showcase — tech-dark × mono-display
+   深色科技（本例是唯一深底样例）：--c-bg 深 ⇒ --c-head/--c-text/--c-muted 全部反转为浅色，--c-primary 留在底色家族只当 data-dark 页底；等宽标题 + 短促 32x6 bar + 更开的 kicker 字距。
+   骨相 token 全部写出（ADR-068 D3/D7）：写值=已选择，缺省=没选择（validate_deck W3）。
+   --sl-pad/--fw-body/--lh-body/--measure 与 validate_outline 的字符预算耦合（ADR-068 D5）：
+   只能取标定档位，且几何越宽松预算越紧——跑 validate_outline 看它打印的 geometry 行。 */
 :root{
-  --c-bg:#FAFAFA; --c-bg2:#EFEFF2; --c-primary:#111318; --c-accent:#E8590C;
-  --c-muted:#71717A; --c-text:#18181B; --c-on-dark:#FAFAFA;
-  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --c-bg:#12161C; --c-bg2:#1C222B; --c-primary:#0C1015; --c-head:#EEF3F8; --c-accent:#FF7A18;
+  --c-muted:#96A3B2; --c-text:#EEF3F8; --c-on-dark:#EEF3F8;
+  --font-stack:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-display:ui-monospace,"SF Mono",Menlo,Consolas,"Source Han Sans SC","PingFang SC","Microsoft YaHei",monospace;
   --fs-display:68px; --fs-h1:44px; --fs-h2:30px; --fs-h3:24px;
   --fs-body:21px; --fs-num:84px; --fs-caption:14px;
+  --sl-pad:64px; --bar-w:32px; --bar-h:6px;
+  --kicker-transform:uppercase; --kicker-spacing:.3em;
+  --fw-head:700; --fw-sub:500; --fw-body:400;
+  --lh-body:1.55; --measure:32em; --radius:0; --rule-w:1px;
 }

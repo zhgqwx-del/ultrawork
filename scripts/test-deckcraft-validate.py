@@ -160,6 +160,138 @@ check("shipped ai-coding-pilot exit 0", e == 0)
 _, o = run(deck(cover(1), s03(2, [{"h": "字" * 13, "p": "释义"} for _ in range(3)]), close_(3), delivery="document"))
 check("h budget stays fixed 12 in document band", "content.points[0].h" in o)
 
+# ── 12. ADR-068 D5 — skeleton geometry folds into the budgets ────────────────
+def run_with_tokens(outline, tokens_css, facts=None):
+    with tempfile.TemporaryDirectory() as td:
+        q = Path(td)
+        (q / "outline.json").write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+        (q / "tokens.css").write_text(tokens_css, encoding="utf-8")
+        r = subprocess.run([sys.executable, str(VALIDATE), str(q)],
+                           capture_output=True, text=True, encoding="utf-8")
+        return r.returncode, r.stdout + r.stderr
+
+
+BASE_CSS = (":root{--sl-pad:64px;--fw-body:300;--lh-body:1.65;--measure:36em;}")
+
+s, cs, geo, errs = V.geometry_scale({})
+check("D5 absent tokens.css → base geometry, scale 1.0", s == 1.0 and cs == 1.0 and not errs)
+
+s, cs, geo, errs = V.geometry_scale(V.read_css_tokens(BASE_CSS))
+check("D5 base values → scale 1.0", abs(s - 1.0) < 1e-9 and not errs)
+
+# wider page margin + looser leading must TIGHTEN, never loosen
+s, cs, _, errs = V.geometry_scale(V.read_css_tokens(
+    ":root{--sl-pad:80px;--lh-body:1.85;--fw-body:300;--measure:36em;}"))
+check("D5 roomier skeleton tightens char budget", s < 0.9 and not errs)
+check("D5 line-height also tightens item counts", cs < 1.0)
+
+# a narrower page must NOT buy extra characters (cap at 1.0)
+s, _, _, errs = V.geometry_scale(V.read_css_tokens(
+    ":root{--sl-pad:48px;--lh-body:1.45;--fw-body:300;--measure:44em;}"))
+check("D5 tighter skeleton never loosens budget (cap 1.0)", s == 1.0 and not errs)
+
+# out-of-band values are errors, not silent guesses
+_, _, _, errs = V.geometry_scale(V.read_css_tokens(":root{--sl-pad:96px;}"))
+check("D5 out-of-band --sl-pad is an O10 error", len(errs) == 1 and "O10" in errs[0])
+_, _, _, errs = V.geometry_scale(V.read_css_tokens(":root{--lh-body:2.4;}"))
+check("D5 out-of-band --lh-body is an O10 error", len(errs) == 1 and "O10" in errs[0])
+_, _, _, errs = V.geometry_scale(V.read_css_tokens(":root{--sl-pad:wide;}"))
+check("D5 non-numeric token is an O10 error", len(errs) == 1)
+
+# counts never tighten past the O9 content floor — an unsatisfiable cap is a
+# contradiction in the skeleton, not in the author's outline
+b = V.scaled_band(V.DELIVERY_BANDS["presentation"], 0.1, 0.1)
+check("D5 count caps floor at DENSE_MIN_ITEMS",
+      b["s03_points"] >= V.DENSE_MIN_ITEMS and b["s10_rows"] >= V.DENSE_MIN_ITEMS)
+
+# end-to-end: same outline, base geometry passes, roomy geometry rejects
+# 22 视觉宽：base 档 32 放行，roomy 档（scale 0.65 → 20）拒绝。夹具必须落在两档之间，
+# 取 20 会正好等于收紧后的上限而不越界（首版就踩了这个 off-by-one）。
+wide = deck(cover(1), s03(2, [{"h": "h", "p": "\u5b57" * 22} for _ in range(3)]), close_(3),
+            delivery="balanced")
+e_base, _ = run_with_tokens(wide, BASE_CSS)
+e_roomy, o_roomy = run_with_tokens(
+    wide, ":root{--sl-pad:80px;--fw-body:500;--lh-body:1.85;--measure:28em;}")
+check("D5 e2e: budget that passes at base geometry fails at roomy geometry",
+      e_base == 0 and e_roomy == 1 and "O8" in o_roomy)
+
+_, o = run_with_tokens(wide, BASE_CSS)
+check("D5 prints the geometry it used", "geometry: pad=64px" in o and "char\u00d71.00" in o)
+
+# 13. no-regression: every shipped example still exits 0 under its own geometry
+for ex in sorted((SKILL / "examples").iterdir()):
+    if not ex.is_dir():
+        continue
+    e = subprocess.run([sys.executable, str(VALIDATE), str(ex)],
+                       capture_output=True, text=True).returncode
+    check(f"shipped {ex.name} exit 0 with per-style geometry", e == 0)
+
+# ── 14. ADR-068 Phase C — layout registry is the directory; E4 allowances ─────
+sys.path.insert(0, str(SKILL / "scripts"))
+import validate_deck as VD  # noqa: E402
+
+reg = VD.valid_layouts()
+skel_dir = SKILL / "assets" / "templates" / "layouts"
+check("registry == layouts/ directory contents",
+      reg == {f.stem for f in skel_dir.glob("S*.html")} and len(reg) >= 10)
+check("every registered layout has an _index.md row",
+      all(f"`{s}`" in (skel_dir / "_index.md").read_text(encoding="utf-8") for s in sorted(reg)))
+
+# E4 waivers. `gradient` was gated on probe_overflow being able to MEASURE a
+# gradient backdrop (ADR-068 D6): an unreadable backdrop exempts every text element
+# above it, so waiving gradients earlier would have switched ADR-067's contrast
+# floor off on exactly the pages using them. Both are claimable now.
+check("E4 ALLOWABLE holds shadow", "shadow" in VD.ALLOWABLE)
+check("E4 gradient waivable now that D6 samples its colour stops",
+      "gradient" in VD.ALLOWABLE)
+check("E4 nothing left held back", VD.PENDING_ALLOWANCE == {})
+check("E4 an unknown waiver is still an error, not a silent pass",
+      "made-up" not in VD.ALLOWABLE)
+check("E4 italic/underline are never waivable",
+      all(k is None for _, lbl, k in VD.FORBIDDEN_STYLE if "italic" in lbl or "underline" in lbl))
+
+# every shipped style file declares a Signature id and a 骨相 token table
+styles = sorted((SKILL / "references" / "design-styles").glob("*.md"))
+named = [f for f in styles if f.stem != "_index"]
+idx = (SKILL / "references" / "design-styles" / "_index.md").read_text(encoding="utf-8")
+check(f"style library has >= 10 entries (has {len(named)})", len(named) >= 10)
+for f in named:
+    s = f.read_text(encoding="utf-8")
+    check(f"{f.stem}: registered in _index with a temperature",
+          f"`{f.stem}`" in idx)
+    check(f"{f.stem}: declares Signature + 骨相 token table",
+          "## Signature" in s and "data-signature=" in s and "## 骨相 token" in s)
+
+# ── 15. ADR-068 Phase D — new layouts, O11 numeric safety, E7 proportional, W5 ──
+check("registry grew to >= 20 layouts", len(VD.valid_layouts()) >= 20)
+check("media layouts declared in index", VD.media_layouts() == {"S11", "S17", "S19"})
+check("S17/S19 join the content-exempt family",
+      {"S17", "S19"} <= V.CONTENT_EXEMPT_LAYOUTS)
+for lay in ("S11", "S12", "S13", "S14", "S15", "S16", "S18", "S20"):
+    check(f"{lay} has a STRUCT_CAPS entry", lay in V.STRUCT_CAPS)
+
+# O11 — data→geometry is the one place arithmetic fails silently
+ok = [{"label": "a", "value": 10}, {"label": "b", "value": 0}]
+check("O11 accepts a finite non-negative series", V.check_bar_values(ok) == [])
+check("O11 rejects a non-number", any("not a number" in e
+      for e in V.check_bar_values([{"label": "a", "value": "十"}])))
+check("O11 rejects bool (isinstance(True, int) trap)", any("not a number" in e
+      for e in V.check_bar_values([{"label": "a", "value": True}])))
+check("O11 rejects negative", any("negative" in e
+      for e in V.check_bar_values([{"label": "a", "value": -1}])))
+check("O11 rejects an all-zero series (division by zero)", any("division by zero" in e
+      for e in V.check_bar_values([{"label": "a", "value": 0}, {"label": "b", "value": 0}])))
+check("O11 rejects infinity", any("finite" in e
+      for e in V.check_bar_values([{"label": "a", "value": float("inf")}])))
+check("O11 rejects an empty series", V.check_bar_values([]) != [])
+check("O11 rejects a missing value key", V.check_bar_values([{"label": "a"}]) != [])
+
+# primary_count must see the new layouts' main lists, else O9 silently skips them
+for lay, fld in (("S11", "points"), ("S12", "cards"), ("S13", "quadrants"),
+                 ("S14", "steps"), ("S15", "bars"), ("S16", "stats"),
+                 ("S18", "levels"), ("S20", "notes")):
+    check(f"O9 counts {lay}.{fld}", V.primary_count(lay, {fld: [1, 2, 3]}) == 3)
+
 print(f"\n=== {len(PASS)} passed, {len(FAIL)} failed ===")
 if FAIL:
     print("FAILED:", FAIL)
