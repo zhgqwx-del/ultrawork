@@ -1,39 +1,39 @@
 <section class="slide" data-layout="S10" data-rhythm="dense">
   <h1>常用缓存头速查表</h1>
   <table style="width:100%;margin-top:40px;border-collapse:collapse;font-size:var(--fs-body)">
-    <thead><tr style="border-bottom:2px solid var(--c-primary)">
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">响应头</th>
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">作用</th>
-      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-primary)">典型取值</th>
+    <thead><tr style="border-bottom:calc(var(--rule-w) * 2) solid var(--c-primary)">
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">响应头</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">作用</th>
+      <th style="text-align:left;padding:16px 8px;font-weight:700;color:var(--c-head)">典型取值</th>
     </tr></thead>
     <tbody>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Cache-Control</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">Cache-Control</td>
         <td style="padding:16px 8px;font-weight:300">强 / 协商缓存总开关</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">max-age=3600</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">ETag</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">ETag</td>
         <td style="padding:16px 8px;font-weight:300">内容校验器（强 / 弱）</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">"a1b2c3"</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Last-Modified</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">Last-Modified</td>
         <td style="padding:16px 8px;font-weight:300">日期校验器（秒级）</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">Wed, 21 Oct 2015 07:28:00 GMT</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Vary</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">Vary</td>
         <td style="padding:16px 8px;font-weight:300">声明缓存变体维度</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">Accept-Encoding</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Age</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">Age</td>
         <td style="padding:16px 8px;font-weight:300">已在缓存停留秒数</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">120</td>
       </tr>
-      <tr style="border-bottom:1px solid var(--c-bg2)">
-        <td style="padding:16px 8px;font-weight:500;color:var(--c-primary)">Expires</td>
+      <tr style="border-bottom:var(--rule-w) solid var(--c-bg2)">
+        <td style="padding:16px 8px;font-weight:500;color:var(--c-head)">Expires</td>
         <td style="padding:16px 8px;font-weight:300">旧式绝对过期时间</td>
         <td style="padding:16px 8px;font-weight:300;color:var(--c-muted)">被 max-age 覆盖</td>
       </tr>

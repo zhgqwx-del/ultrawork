@@ -1,7 +1,17 @@
+/* http-caching-primer — academic-calm × serif-display
+   学术沉稳：衬线标题压黑体正文、bar 收窄成 56x4 细杠、kicker 不喊叫（中文标签不全大写不加字距）、2px 论证式分隔线。
+   骨相 token 全部写出（ADR-068 D3/D7）：写值=已选择，缺省=没选择（validate_deck W3）。
+   --sl-pad/--fw-body/--lh-body/--measure 与 validate_outline 的字符预算耦合（ADR-068 D5）：
+   只能取标定档位，且几何越宽松预算越紧——跑 validate_outline 看它打印的 geometry 行。 */
 :root{
-  --c-bg:#F6F8FA; --c-bg2:#E8EDF2; --c-primary:#1B3A57; --c-accent:#0E7490;
-  --c-muted:#5A6B7B; --c-text:#15202B; --c-on-dark:#F3F8FC;
-  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --c-bg:#F6F8FA; --c-bg2:#E8EDF2; --c-primary:#1B3A57; --c-head:#1B3A57; --c-accent:#0E6E82;
+  --c-muted:#556676; --c-text:#15202B; --c-on-dark:#F3F8FC;
+  --font-stack:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-display:Georgia,Cambria,"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
   --fs-display:60px; --fs-h1:42px; --fs-h2:28px; --fs-h3:23px;
   --fs-body:21px; --fs-num:76px; --fs-caption:14px;
+  --sl-pad:64px; --bar-w:56px; --bar-h:4px;
+  --kicker-transform:none; --kicker-spacing:normal;
+  --fw-head:700; --fw-sub:500; --fw-body:300;
+  --lh-body:1.75; --measure:34em; --radius:0; --rule-w:2px;
 }

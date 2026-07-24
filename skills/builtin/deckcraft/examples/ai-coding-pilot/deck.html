@@ -8,29 +8,46 @@
 <title>AI 编程助手落地实践——从试点到规模化</title>
 <style>
 /* ==== tokens（来自 spec_lock，唯一 HEX 来源） ==== */
+/* ai-coding-pilot — swiss-minimal × sans-neutral
+   瑞士网格：招牌 48x8 accent bar、全大写拉字距 kicker、直角、1px 细线。
+   骨相 token 全部写出（ADR-068 D3/D7）：写值=已选择，缺省=没选择（validate_deck W3）。
+   --sl-pad/--fw-body/--lh-body/--measure 与 validate_outline 的字符预算耦合（ADR-068 D5）：
+   只能取标定档位，且几何越宽松预算越紧——跑 validate_outline 看它打印的 geometry 行。 */
 :root{
-  --c-bg:#FBF9F4; --c-bg2:#F1EDE3; --c-primary:#14424E; --c-accent:#C75B12;
-  --c-muted:#6E8887; --c-text:#1C1B18; --c-on-dark:#F7F4EC;
-  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --c-bg:#FAFAFA; --c-bg2:#EFEFF1; --c-primary:#1F2933; --c-head:#1F2933; --c-accent:#B23F0B;
+  --c-muted:#5C6773; --c-text:#111820; --c-on-dark:#F7F7F8;
+  --font-stack:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-display:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
   --fs-display:64px; --fs-h1:44px; --fs-h2:30px; --fs-h3:24px;
   --fs-body:21px; --fs-num:80px; --fs-caption:14px;
+  --sl-pad:64px; --bar-w:48px; --bar-h:8px;
+  --kicker-transform:uppercase; --kicker-spacing:.25em;
+  --fw-head:700; --fw-sub:500; --fw-body:300;
+  --lh-body:1.65; --measure:36em; --radius:0; --rule-w:1px;
 }
-/* ==== 结构层（风格无关，禁止手改） ==== */
+/* ==== 结构层（禁止手改）。骨相由 tokens.css 的结构 token 调（--sl-pad / --bar-w / --bar-h /
+       --kicker-transform / --kicker-spacing / --fw-head / --fw-sub / --fw-body / --lh-body /
+       --measure / --radius / --rule-w / --font-display，ADR-068 D3）；每个都带 CSS 变量兜底值
+       = 旧 deck 不写这些 token 也照常渲染。
+       注意：本文件整段会被塞进 deck.html 的 <style>，注释里绝不能出现连写的星号加斜杠
+       （会提前终止注释、把后面的结构层规则整段吃掉——ADR-068 实施期真踩过） ==== */
 *{margin:0;padding:0;box-sizing:border-box;font-synthesis:none}
 html,body{background:#3a3a3a}
 body{font-family:var(--font-stack);color:var(--c-text)}
 .stage{width:1280px;margin:0 auto}
-.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:64px;margin:24px 0;line-break:strict}
+.slide{width:1280px;height:720px;background:var(--c-bg);overflow:hidden;position:relative;padding:var(--sl-pad,64px);margin:24px 0;line-break:strict}
 .slide[data-dark]{background:var(--c-primary);color:var(--c-on-dark)}
-.kicker{font-size:var(--fs-caption);letter-spacing:.25em;color:var(--c-muted);text-transform:uppercase;font-weight:500}
+.kicker{font-size:var(--fs-caption);letter-spacing:var(--kicker-spacing,.25em);color:var(--c-muted);text-transform:var(--kicker-transform,uppercase);font-weight:500}
 .pagenum{position:absolute;bottom:24px;right:32px;font-size:var(--fs-caption);color:var(--c-muted)}
-h1{font-size:var(--fs-h1);font-weight:700;line-height:1.25}
-h2{font-size:var(--fs-h2);font-weight:700;line-height:1.3}
-h3{font-size:var(--fs-h3);font-weight:500;line-height:1.35}
-p,li{font-size:var(--fs-body);font-weight:300;line-height:1.65;max-width:36em}
-.accent{color:var(--c-accent);font-weight:700}
-.num{font-size:var(--fs-num);font-weight:700;line-height:1;letter-spacing:-.02em}
-.bar{width:48px;height:8px;background:var(--c-accent)}
+/* 标题族可与正文族不同（字体配对，typography-cjk.md）；缺省回落到正文族 */
+h1,h2,.num{font-family:var(--font-display,var(--font-stack))}
+h1{font-size:var(--fs-h1);font-weight:var(--fw-head,700);line-height:1.25}
+h2{font-size:var(--fs-h2);font-weight:var(--fw-head,700);line-height:1.3}
+h3{font-size:var(--fs-h3);font-weight:var(--fw-sub,500);line-height:1.35}
+p,li{font-size:var(--fs-body);font-weight:var(--fw-body,300);line-height:var(--lh-body,1.65);max-width:var(--measure,36em)}
+.accent{color:var(--c-accent);font-weight:var(--fw-head,700)}
+.num{font-size:var(--fs-num);font-weight:var(--fw-head,700);line-height:1;letter-spacing:-.02em}
+.bar{width:var(--bar-w,48px);height:var(--bar-h,8px);background:var(--c-accent)}
 ul{list-style:none}
 /* ==== 打印/PDF：每页一张，精确 1280×720 ==== */
 @page{size:1280px 720px;margin:0}
@@ -48,7 +65,7 @@ ul{list-style:none}
 <div class="stage" id="stage">
 <section class="slide" data-layout="S01" data-rhythm="anchor" data-dark>
   <div style="display:flex;flex-direction:column;justify-content:center;height:100%">
-    <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+    <div class="bar" data-signature="accent-bar"></div>
     <div class="kicker" style="color:var(--c-on-dark);opacity:.6;margin-top:24px">ENGINEERING PRODUCTIVITY REVIEW</div>
     <div style="font-size:var(--fs-display);font-weight:700;line-height:1.2;margin-top:24px">AI 编程助手<br>落地实践</div>
     <p style="margin-top:32px;color:var(--c-on-dark);opacity:.85;font-weight:300">从 12 人试点到 300 人规模化的路径与数据</p>
@@ -58,7 +75,7 @@ ul{list-style:none}
 <section class="slide" data-layout="S03" data-rhythm="dense">
   <div style="display:flex;height:100%;gap:64px">
     <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
-      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <div class="bar" data-signature="accent-bar"></div>
       <h1 style="margin-top:24px">为什么<br>是现在</h1>
       <p style="margin-top:24px;color:var(--c-muted);font-size:var(--fs-caption);letter-spacing:.08em">压力 · 冗余 · 成熟度 · 竞争</p>
     </div>
@@ -66,28 +83,28 @@ ul{list-style:none}
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">01</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">交付压力持续上升</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">交付压力持续上升</h3>
           <p style="margin-top:8px;color:var(--c-muted)">季度需求吞吐同比 +38%，人力仅 +6%</p>
         </div>
       </li>
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">02</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">重复劳动占比过高</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">重复劳动占比过高</h3>
           <p style="margin-top:8px;color:var(--c-muted)">样板代码、测试脚手架、文档占开发时间约三成</p>
         </div>
       </li>
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">03</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">工具已跨过可用线</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">工具已跨过可用线</h3>
           <p style="margin-top:8px;color:var(--c-muted)">主流编码 agent 在内部评测集通过率一年内 <span style="color:var(--c-accent);font-weight:700">41% → 74%</span></p>
         </div>
       </li>
       <li style="display:flex;gap:24px;align-items:baseline">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);width:32px;flex-shrink:0">04</span>
         <div>
-          <h3 style="font-weight:700;color:var(--c-primary)">竞对已在行动</h3>
+          <h3 style="font-weight:700;color:var(--c-head)">竞对已在行动</h3>
           <p style="margin-top:8px;color:var(--c-muted)">同行业两家头部已完成全员铺开</p>
         </div>
       </li>
@@ -110,18 +127,18 @@ ul{list-style:none}
   <div class="kicker">PILOT DESIGN</div>
   <h1 style="margin-top:16px">试点设计：两组对照，真实需求</h1>
   <div style="display:flex;gap:48px;margin-top:48px;height:432px">
-    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:8px solid var(--c-accent)">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:8px solid var(--c-accent);border-radius:var(--radius)">
       <div class="kicker" style="color:var(--c-accent)">GROUP A</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">试点组 · 12 人</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">试点组 · 12 人</h2>
       <ul style="margin-top:32px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">01</span><span>两个业务团队各 6 人，自愿报名</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">02</span><span>全量接入编码 agent + 代码评审助手</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">03</span><span>每周记录使用时长与产出</span></li>
       </ul>
     </div>
-    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:8px solid var(--c-muted)">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:8px solid var(--c-muted);border-radius:var(--radius)">
       <div class="kicker">GROUP B</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">对照组 · 12 人</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">对照组 · 12 人</h2>
       <ul style="margin-top:32px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">01</span><span>同业务线、同职级分布</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">02</span><span>维持原工具链不变</span></li>
@@ -133,33 +150,33 @@ ul{list-style:none}
   <div class="pagenum">4 / 10</div>
 </section>
 <section class="slide" data-layout="S06" data-rhythm="dense">
-  <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+  <div class="bar" data-signature="accent-bar"></div>
   <div class="kicker" style="margin-top:24px">PILOT TIMELINE</div>
   <h1 style="margin-top:8px">八周试点节奏</h1>
   <div style="display:flex;margin-top:112px;position:relative">
     <div style="position:absolute;top:11px;left:0;right:32px;height:2px;background:var(--c-muted);opacity:.5"></div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 1</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">第 1-2 周</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 1</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">第 1-2 周</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6">接入与培训，<br>建立使用基线</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 2</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">第 3-4 周</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 2</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">第 3-4 周</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6">日常需求全量使用，<br>每周复盘</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-primary);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 3</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">第 5-6 周</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 3</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">第 5-6 周</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6">扩展到测试与<br>文档场景</p>
     </div>
     <div style="flex:1;position:relative;padding-right:32px">
       <div style="width:24px;height:24px;background:var(--c-accent);border-radius:50%;position:relative"></div>
-      <div class="kicker" style="margin-top:24px;color:var(--c-primary)">PHASE 4</div>
-      <h3 style="margin-top:8px;font-weight:700;color:var(--c-primary)">第 7-8 周</h3>
+      <div class="kicker" style="margin-top:24px;color:var(--c-head)">PHASE 4</div>
+      <h3 style="margin-top:8px;font-weight:700;color:var(--c-head)">第 7-8 周</h3>
       <p style="margin-top:8px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.6">数据回收，成本核算，<br>访谈</p>
     </div>
   </div>
@@ -190,23 +207,23 @@ ul{list-style:none}
   <div class="kicker">SCALE-UP STRATEGY</div>
   <h1 style="margin-top:16px">规模化两条路线的取舍</h1>
   <div style="display:flex;gap:48px;margin-top:40px;height:432px">
-    <div style="flex:1;background:var(--c-bg2);padding:40px;display:flex;flex-direction:column">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;display:flex;flex-direction:column;border-radius:var(--radius)">
       <div style="display:flex;align-items:baseline;gap:16px">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);letter-spacing:.15em">路线 A</span>
       </div>
-      <h2 style="color:var(--c-primary);margin-top:8px">直接全员铺开</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">直接全员铺开</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:16px">
         <li>一次性覆盖 300 人</li>
         <li>管理成本低、见效快</li>
       </ul>
       <p style="margin-top:auto;padding-top:16px;border-top:2px solid var(--c-muted);color:var(--c-muted);font-size:var(--fs-caption)">风险：培训稀释，低频用户流失</p>
     </div>
-    <div style="flex:1;background:var(--c-bg2);border-top:8px solid var(--c-accent);padding:32px 40px 40px;display:flex;flex-direction:column">
+    <div style="flex:1;background:var(--c-bg2);border-top:8px solid var(--c-accent);padding:32px 40px 40px;display:flex;flex-direction:column;border-radius:var(--radius)">
       <div style="display:flex;align-items:baseline;gap:16px">
         <span style="font-size:var(--fs-caption);font-weight:500;color:var(--c-muted);letter-spacing:.15em">路线 B</span>
         <span style="font-size:var(--fs-caption);font-weight:700;color:var(--c-accent);letter-spacing:.15em">推荐</span>
       </div>
-      <h2 style="color:var(--c-primary);margin-top:8px">分梯队滚动推广</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">分梯队滚动推广</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:16px">
         <li>每月一梯队，每梯队配种子用户</li>
         <li>试点组成员作为各团队教练</li>
@@ -220,9 +237,9 @@ ul{list-style:none}
 <section class="slide" data-layout="S03" data-rhythm="dense">
   <div style="display:flex;height:100%;gap:64px">
     <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column">
-      <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+      <div class="bar" data-signature="accent-bar"></div>
       <div class="kicker" style="margin-top:24px">RISK &amp; MITIGATION</div>
-      <h1 style="margin-top:16px;color:var(--c-primary)">三个已识别的<br>风险与对策</h1>
+      <h1 style="margin-top:16px;color:var(--c-head)">三个已识别的<br>风险与对策</h1>
       <p style="margin-top:32px;color:var(--c-muted);font-size:var(--fs-caption);line-height:1.65">对策均已纳入分梯队推广方案，随梯队节奏同步落地</p>
     </div>
     <ul style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:48px">
@@ -230,21 +247,21 @@ ul{list-style:none}
         <div style="width:48px;flex-shrink:0;font-size:var(--fs-h2);font-weight:300;line-height:1.1;color:var(--c-muted)">01</div>
         <div>
           <h3 style="font-weight:700;color:var(--c-text)">代码安全与合规</h3>
-          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-primary);font-weight:500">对策：</span>私有部署推理网关，敏感仓库默认关闭上传</p>
+          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-head);font-weight:500">对策：</span>私有部署推理网关，敏感仓库默认关闭上传</p>
         </div>
       </li>
       <li style="display:flex;gap:24px">
         <div style="width:48px;flex-shrink:0;font-size:var(--fs-h2);font-weight:300;line-height:1.1;color:var(--c-muted)">02</div>
         <div>
           <h3 style="font-weight:700;color:var(--c-text)">新人技能空心化</h3>
-          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-primary);font-weight:500">对策：</span>一年内新人保留无助手结对时段</p>
+          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-head);font-weight:500">对策：</span>一年内新人保留无助手结对时段</p>
         </div>
       </li>
       <li style="display:flex;gap:24px">
         <div style="width:48px;flex-shrink:0;font-size:var(--fs-h2);font-weight:300;line-height:1.1;color:var(--c-muted)">03</div>
         <div>
           <h3 style="font-weight:700;color:var(--c-text)">度量失真</h3>
-          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-primary);font-weight:500">对策：</span>只考核交付结果指标，禁止考核使用时长</p>
+          <p style="margin-top:8px;padding-left:16px;border-left:2px solid var(--c-muted)"><span style="color:var(--c-head);font-weight:500">对策：</span>只考核交付结果指标，禁止考核使用时长</p>
         </div>
       </li>
     </ul>
@@ -254,7 +271,7 @@ ul{list-style:none}
 </section>
 <section class="slide" data-layout="S07" data-rhythm="breathing">
   <div style="display:flex;flex-direction:column;justify-content:center;height:100%;max-width:880px">
-    <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+    <div class="bar" data-signature="accent-bar"></div>
     <div class="kicker" style="margin-top:40px">试点成员引言</div>
     <h1 style="margin-top:24px;font-weight:500;line-height:1.5">「它不是替我写代码，<br>是把我从不想做的那 <span class="accent">30%</span> 里解放出来。」</h1>
     <p style="margin-top:48px;color:var(--c-muted)">—— 试点组后端工程师，入职 4 年</p>
@@ -263,9 +280,9 @@ ul{list-style:none}
 </section>
 <section class="slide" data-layout="S08" data-rhythm="anchor">
   <div style="display:flex;flex-direction:column;justify-content:center;height:100%;padding-bottom:48px">
-    <div style="width:48px;height:8px;background:var(--c-accent)"></div>
+    <div class="bar" data-signature="accent-bar"></div>
     <h1 style="font-size:var(--fs-display);line-height:1.3;margin-top:40px;max-width:1000px">把试点的确定性，变成<br><span class="accent">全员的生产力</span></h1>
-    <p style="margin-top:48px;font-size:var(--fs-h3);font-weight:500;color:var(--c-primary)">申请：Q3 启动分梯队推广，预算 ¥86 万/年</p>
+    <p style="margin-top:48px;font-size:var(--fs-h3);font-weight:500;color:var(--c-head)">申请：Q3 启动分梯队推广，预算 ¥86 万/年</p>
   </div>
   <div style="position:absolute;bottom:64px;left:64px" class="kicker">ENGINEERING PRODUCTIVITY GROUP</div>
 </section>

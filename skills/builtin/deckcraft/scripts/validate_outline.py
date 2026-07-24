@@ -21,6 +21,10 @@ Validates <project>/outline.json against the evidence contract
      Caps are a floor+cap DOUBLE band selected by `delivery_purpose` (consumption
      distance), anchored to what a slot physically holds at 1280x720 (probe-calibrated,
      not an aesthetic 26). The physical probe stays as the second layer.
+  O11 numeric safety for S15 bar charts — value must be a finite, non-negative number
+     and the series must not be all-zero (width = value/max would divide by zero and
+     paint nothing). The physical probe cannot see this: a zero-width bar overflows
+     nothing. Data→geometry is the one place arithmetic can fail silently.
   O9 dense floor (advisory): a page whose rhythm is `dense` must not be near-empty —
      >=3 primary items AND >=3 evidence, else WARN to densify (add points / switch to a
      denser layout). Anchored on item/evidence COUNT, not字数 (guards thin→bloated).
@@ -35,6 +39,7 @@ Exit 0 = pass, 1 = errors, 2 = usage/setup problem.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -44,7 +49,10 @@ from console_encoding import configure_utf8_stdio
 
 configure_utf8_stdio()
 
-CONTENT_EXEMPT_LAYOUTS = {"S01", "S02", "S07", "S08"}  # cover/section/quote/closing
+# cover/section/quote/closing carry a statement, not evidence-bearing body content.
+# S17 (full-bleed hero) and S19 (portrait quote) are the Phase D members of that
+# family — one line of assertion over an image is the whole page.
+CONTENT_EXEMPT_LAYOUTS = {"S01", "S02", "S07", "S08", "S17", "S19"}
 VALID_RHYTHMS = {"anchor", "dense", "breathing"}
 VALID_MODES = {"pyramid", "narrative", "instructional", "showcase", "briefing"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -84,11 +92,107 @@ TITLE_BUDGET = 18       # 页标题
 COVER_TITLE_BUDGET = 16  # 封面主标题 / deck 标题
 # O8 — 每版式的条目数下限/上限 (field, min, max_or_None). max=None → resolved from band.
 STRUCT_CAPS = {"S03": ("points", 1, None), "S05": ("stats", 2, 4),
-               "S06": ("nodes", 3, 5), "S09": ("items", 1, 6)}
+               "S06": ("nodes", 3, 5), "S09": ("items", 1, 6),
+               # ADR-068 Phase D — counts are probe-calibrated at base geometry;
+               # geometry_scale() tightens them the same way it does S03/S04/S10.
+               "S11": ("points", 2, 4), "S12": ("cards", 3, 3),
+               "S13": ("quadrants", 4, 4), "S14": ("steps", 3, 5),
+               "S15": ("bars", 2, 6), "S16": ("stats", 4, 6),
+               "S18": ("levels", 3, 5), "S20": ("notes", 1, 4)}
 
 # O9 — dense-rhythm content floor (advisory / count-based, guards thin→bloated)
 DENSE_MIN_ITEMS = 3
 DENSE_MIN_EVIDENCE = 3
+
+# ── O10 — skeleton geometry → budget scaling (ADR-068 D5) ────────────────────
+# The DELIVERY_BANDS numbers above were probe-calibrated against ONE geometry:
+# 1280x720, page padding 64px, body 21px/300/1.65, measure 36em. ADR-068 D3 makes
+# four of those adjustable per style, so the bands are no longer geometry-free —
+# a deck with 80px padding has ~6% less column width and the same budget would be
+# optimistic. Optimism here is not a crash, it is churn: outline passes, probe
+# rejects, and validate_outline exists precisely to spend that round trip cheaply.
+#
+# Two rules keep this honest:
+#  1. Legal values are ENUMERATED, not free. An out-of-band value means "budgets
+#     were never calibrated for this" — an error, not a silent guess.
+#  2. Scale may only TIGHTEN (capped at 1.0). A roomier skeleton does not buy more
+#     characters: the caps are an aesthetic upper bound (ADR-066's finding), and
+#     `delivery_purpose` is the intended density knob. Loosening here would erode
+#     the ~20% headroom the caps carry for Linux CJK font variance.
+SKELETON_BANDS = {
+    "--sl-pad":   [48, 56, 64, 72, 80],                 # px, 8px module
+    "--fw-body":  [300, 400, 500],
+    "--lh-body":  [1.45, 1.5, 1.55, 1.6, 1.65, 1.75, 1.85],
+    "--measure":  [28, 30, 32, 34, 36, 38, 40, 42, 44],  # em
+}
+BASE_GEOMETRY = {"--sl-pad": 64, "--fw-body": 300, "--lh-body": 1.65, "--measure": 36}
+CANVAS_W = 1280
+# Latin advance widens with weight; CJK ideographs are fixed-advance, so the effect
+# on a 视觉宽度 budget is small. Conservative (over-tightening beats churn).
+FW_FACTOR = {300: 1.0, 400: 0.97, 500: 0.94}
+
+
+def read_css_tokens(css: str) -> dict[str, str]:
+    """Declarations only. CSS comments are stripped first: tokens.css carries a
+    documentation header, and a line like `/* --radius: 圆角用 */` would otherwise
+    read as a real declaration — silently widening E3's allow-list here and, in
+    validate_outline, fabricating an out-of-band geometry error."""
+    css = re.sub(r"/\*.*?\*/", " ", css, flags=re.S)
+    return {m.group(1): m.group(2).strip()
+            for m in re.finditer(r"(--[\w-]+)\s*:\s*([^;}]+)", css)}
+
+
+def _num(raw: str) -> float | None:
+    m = re.match(r"^\s*([\d.]+)", raw or "")
+    return float(m.group(1)) if m else None
+
+
+def geometry_scale(tokens: dict[str, str]) -> tuple[float, float, dict, list[str]]:
+    """(char-budget multiplier, item-count multiplier, resolved geometry, band errors).
+
+    Two multipliers because the two kinds of cap are bound by different axes: a
+    character budget is column WIDTH (padding, measure) plus how much vertical room
+    a line eats (line-height, and marginally weight); an item count is purely how
+    many lines fit, i.e. line-height. Padding does not change item counts — the
+    skeletons are flex columns that grow downward.
+
+    tokens.css is absent on the Phase 2 run (it is written in Phase 3), which is
+    why a missing file means base geometry rather than a failure — and why
+    SKILL.md re-runs this gate once tokens.css exists.
+    """
+    errs: list[str] = []
+    geo = dict(BASE_GEOMETRY)
+    for name, legal in SKELETON_BANDS.items():
+        raw = tokens.get(name)
+        if raw is None:
+            continue                      # shell.html fallback == base geometry
+        v = _num(raw)
+        if v is None:
+            errs.append(f"O10 {name}: {raw!r} is not a number — budgets uncalibrated")
+            continue
+        if not any(abs(v - c) < 1e-9 for c in legal):
+            errs.append(f"O10 {name}:{raw.strip()} outside the calibrated band {legal} "
+                        f"— the character budgets were never measured for this geometry; "
+                        f"pick a listed value (spec-lock-format.md §Structure)")
+            continue
+        geo[name] = v
+    width_f = (CANVAS_W - 2 * geo["--sl-pad"]) / (CANVAS_W - 2 * BASE_GEOMETRY["--sl-pad"])
+    measure_f = geo["--measure"] / BASE_GEOMETRY["--measure"]
+    lh_f = min(1.0, BASE_GEOMETRY["--lh-body"] / geo["--lh-body"])
+    fw_f = FW_FACTOR.get(int(geo["--fw-body"]), 1.0)
+    return min(1.0, width_f, measure_f) * lh_f * fw_f, lh_f, geo, errs
+
+
+def scaled_band(band: dict, char_scale: float, count_scale: float) -> dict:
+    """Apply geometry to a delivery band. Counts floor at DENSE_MIN_ITEMS so O8 can
+    never tighten past O9's content floor — a cap below the floor is unsatisfiable,
+    and that contradiction belongs to the skeleton, not to the author's outline."""
+    out = dict(band)
+    for k in ("p", "points_char"):
+        out[k] = math.floor(band[k] * char_scale)
+    for k in ("s03_points", "s04_col_points", "s10_rows"):
+        out[k] = max(DENSE_MIN_ITEMS, math.floor(band[k] * count_scale))
+    return out
 
 
 def vwidth(s: str) -> float:
@@ -141,7 +245,49 @@ def primary_count(lay: str, content) -> int | None:
     if lay == "S10":
         rw = content.get("rows")
         return len(rw) if isinstance(rw, list) else None
+    # ADR-068 Phase D layouts — same contract: the field that carries the page's
+    # primary list, so O9's thinness floor works on them without special-casing.
+    for l, field in (("S11", "points"), ("S12", "cards"), ("S13", "quadrants"),
+                     ("S14", "steps"), ("S15", "bars"), ("S16", "stats"),
+                     ("S18", "levels"), ("S20", "notes")):
+        if lay == l:
+            v = content.get(field)
+            return len(v) if isinstance(v, list) else None
     return None
+
+
+def check_bar_values(bars) -> list[str]:
+    """O11 — numeric safety for S15 (dashiAI chart-safety, applied at the IR).
+
+    A bar chart is the only layout where the model turns DATA into GEOMETRY
+    (width = value / max * 100%). Every classic way that arithmetic explodes has to
+    die here, before it becomes a rendered box: a non-number, a negative, an
+    infinity, or an all-zero series (division by zero → NaN width → a bar that
+    silently does not paint). The physical probe cannot catch these — a zero-width
+    div overflows nothing."""
+    errs: list[str] = []
+    if not isinstance(bars, list) or not bars:
+        return ["O11 S15: content.bars must be a non-empty list"]
+    vals = []
+    for i, b in enumerate(bars):
+        if not isinstance(b, dict) or "value" not in b:
+            errs.append(f"O11 S15: bars[{i}] needs a numeric 'value'")
+            continue
+        v = b["value"]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            errs.append(f"O11 S15: bars[{i}].value {v!r} is not a number")
+            continue
+        if v != v or v in (float("inf"), float("-inf")):
+            errs.append(f"O11 S15: bars[{i}].value is not finite")
+            continue
+        if v < 0:
+            errs.append(f"O11 S15: bars[{i}].value {v} is negative — bar width would be undefined")
+            continue
+        vals.append(v)
+    if vals and max(vals) == 0:
+        errs.append("O11 S15: every bar value is 0 — width = value/max is a division by zero; "
+                    "use a different layout when the data is all-zero")
+    return errs
 
 
 def iter_content_strings(obj, path=""):
@@ -199,7 +345,15 @@ def main() -> int:
         errors.append(f"O1 delivery_purpose {delivery!r} not in {sorted(VALID_DELIVERY)} "
                       f"— using {DEFAULT_DELIVERY!r} for budgets")
         delivery = DEFAULT_DELIVERY
-    band = DELIVERY_BANDS[delivery]
+    base_band = DELIVERY_BANDS[delivery]
+    # ADR-068 D5 — fold the deck's skeleton geometry into the budgets. tokens.css is
+    # absent on the Phase 2 run (written in Phase 3); base geometry is the answer then,
+    # and SKILL.md re-runs this gate once tokens.css exists.
+    tokens_f = proj / "tokens.css"
+    css_tokens = read_css_tokens(tokens_f.read_text(encoding="utf-8")) if tokens_f.is_file() else {}
+    char_scale, count_scale, geo, geo_errs = geometry_scale(css_tokens)
+    errors.extend(geo_errs)
+    band = scaled_band(base_band, char_scale, count_scale)
 
     # top-level "title" only feeds the HTML <title> tag (never rendered on the
     # 1280x720 canvas) — the visual cover-title budget applies to the S01 page title
@@ -240,6 +394,8 @@ def main() -> int:
             items = content.get(fld)
             if isinstance(items, list) and not lo <= len(items) <= hi:
                 errors.append(f"O8 p{i}: {lay} {fld} 条目数 {len(items)} 超出 [{lo},{hi}]")
+        if lay == "S15" and isinstance(content, dict):
+            errors.extend(f"p{i}: {e}" for e in check_bar_values(content.get("bars")))
         if lay == "S04" and isinstance(content, dict):
             cap = band["s04_col_points"]
             for col in ("col_a", "col_b"):
@@ -333,6 +489,11 @@ def main() -> int:
         print(f"NOTE  scenario (fictional) data pages: {scenario_pages} — MUST render a visible 「示意数据」 footnote")
     if low_conf:
         print(f"NOTE  low-confidence pages to disclose in the delivery summary: {low_conf}")
+    geo_note = (f"pad={geo['--sl-pad']:g}px lh={geo['--lh-body']:g} fw={geo['--fw-body']:g} "
+                f"measure={geo['--measure']:g}em → char×{char_scale:.2f} count×{count_scale:.2f}"
+                f"{'' if tokens_f.is_file() else '  (tokens.css absent → base geometry)'}")
+    print(f"geometry: {geo_note} · p<={band['p']} points<={band['points_char']} "
+          f"S03<={band['s03_points']} S04col<={band['s04_col_points']} S10rows<={band['s10_rows']}")
     print(f"validate-outline: {len(slides)} slides · delivery={delivery} · "
           f"{len(errors)} errors · {len(warns)} warnings")
     return 1 if errors else 0

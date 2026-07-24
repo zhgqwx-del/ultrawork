@@ -28,3 +28,13 @@ python3 ${SKILL_DIR}/scripts/export_deck.py $EX --shots
 
 `deck.html` 与 `qa_report.json` 已入库作为字节级基准，重跑上面的链不应产生 git diff。
 `export/` 目录不入库，不进分发 zip。
+
+## 形式轴（ADR-068）：`tech-dark` × `mono-display` × **深底（唯一深底样例）**
+
+**这是四例中唯一的深色底 deck**，也是它暴露了一个此前从未被验证过的缺口：
+`--c-primary` 原本同时承担「深色底」与「浅底上的标题墨色」两个角色，**深色风格下二者互相矛盾**
+（深字压深底 ≈ 隐形）。旧文档「深色风格把 `--c-bg` 设为深色即可」因此是错的——四例全浅底时无从发现。
+修法 = 新增 `--c-head` 语义 token（标题/栏头/表头墨色，跟随风格深浅），`--c-primary` 退回只当背景与结构元素。
+
+本例的深浅反转：`--c-bg`/`--c-primary` 深 ⇒ `--c-head`/`--c-text`/`--c-muted` **全部为浅色**。
+骨相偏离基准处：等宽标题族（汉字必然穿透到黑体，预期行为）、32×6 短促 bar、.3em 开阔 kicker 字距。

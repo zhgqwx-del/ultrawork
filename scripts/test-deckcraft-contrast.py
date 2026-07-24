@@ -220,11 +220,16 @@ LARGE = slide(
     "</div>")
 
 # 6. Paint this gate deliberately does not judge: glyphs with no alpha (a
-#    background-clip:text technique) and text over a gradient/image backdrop.
+#    background-clip:text technique) and text over a real BITMAP backdrop.
+#    A gradient used to live here too — ADR-068 D6 made gradients measurable
+#    (their colour stops can be read), so only genuinely unreadable paint is
+#    exempt now. A 1x1 transparent PNG stands in for a photo.
+PNG_1PX = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+           "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 SKIPPED = slide(
     '<div style="background:#ffffff;padding:40px">'
     '<p style="color:transparent">CLIP-TEXT</p>'
-    '<div style="background-image:linear-gradient(#fff,#eee);padding:20px">'
+    f'<div style="background-image:url({PNG_1PX});padding:20px">'
     f'<p style="color:{LO}">ON-IMAGE</p>'
     "</div></div>")
 
@@ -410,6 +415,47 @@ def main() -> int:
               dgot["TD-PRIMARY-ON-DARK"]["ratio"] < P.MIN_CONTRAST_LARGE,
               f"{dgot['TD-PRIMARY-ON-DARK']['ratio']}:1")
         check("dark palette: deck fails as a whole", code3 == 1, f"exit={code3}")
+
+    # --- 8b. ADR-068 D6 — a gradient backdrop is MEASURED, not exempted
+    # Before D6 any background-image marked the whole stack unreadable, so every text
+    # element above a gradient was skipped: waiving gradients would have silently
+    # switched this gate off. Both ends of the ramp are scored and the worse one kept.
+    with tempfile.TemporaryDirectory() as td:
+        g = Path(td) / "grad"
+        # light text over a dark→light ramp: fine at the dark end, invisible at the light
+        # Sized to stay INSIDE the padded canvas: an out-of-canvas element is
+        # reported as overflow and skipped by the contrast pass, so an oversized
+        # fixture would measure nothing at all (cost me a debugging round).
+        bad = slide('<div style="background:linear-gradient(90deg,#111111,#f5f5f5);'
+                    'height:560px;padding:24px">'
+                    '<h2 style="color:#f7f7f8">GRADIENT-BAD</h2></div>')
+        # same text over a dark→dark ramp: legible at both ends
+        ok = slide('<div style="background:linear-gradient(90deg,#111111,#2d2d2d);'
+                   'height:560px;padding:24px">'
+                   '<h2 style="color:#f7f7f8">GRADIENT-OK</h2></div>')
+        build(g, [bad, ok])
+        code, out = run_probe(g, dump=True)
+        got = measurements(out)
+        hit = gated(out)
+        check("D6 gradient page is measured, not exempted (no `I` flag)",
+              all(not m["imaged"] for m in got.values()),
+              f"imaged flags: {[k for k, m in got.items() if m['imaged']]}")
+        check("D6 light text on a dark→light ramp is judged by the LIGHT end",
+              "GRADIENT-BAD" in hit and got["GRADIENT-BAD"]["ratio"] < P.MIN_CONTRAST_LARGE,
+              f"{got.get('GRADIENT-BAD', {}).get('ratio')}:1 bg={got.get('GRADIENT-BAD', {}).get('bg')}")
+        check("D6 same text on a dark→dark ramp passes",
+              "GRADIENT-OK" not in hit and got["GRADIENT-OK"]["ratio"] > 8,
+              f"{got.get('GRADIENT-OK', {}).get('ratio')}:1")
+        check("D6 the gradient deck fails as a whole", code == 1, f"exit={code}")
+
+    # --- 8c. viewport self-check: the probe must refuse to measure a canvas it
+    # cannot fit, rather than silently degrade to an ancestor walk below the fold
+    # (ADR-068 Phase D: --window-size sets the OUTER window; 1280,720 left a
+    # 1280x633 viewport and elementsFromPoint returned empty on the bottom 12%).
+    src = (SKILL / "scripts" / "probe_overflow.py").read_text(encoding="utf-8")
+    check("probe asks for a window far taller than the canvas",
+          '"--window-size=1280,1400"' in src)
+    check("probe self-checks the resulting viewport", "cannot hold the 1280x720 canvas" in src)
 
     # --- 9. no false positives on anything actually shipped
     for name in ("ai-coding-pilot", "http-caching-primer",

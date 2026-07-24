@@ -93,5 +93,37 @@
   "elements_measured": 96,
   "elements_unreadable_color": 0,
   "findings": {}
+ },
+ "form": {
+  "style_id": "editorial-warm",
+  "allowances": [],
+  "signature": "long-hairline",
+  "variant_seed": "7740d25b52d7a9ef",
+  "layouts": [
+   "S01",
+   "S05",
+   "S10",
+   "S06",
+   "S04",
+   "S03",
+   "S08"
+  ],
+  "skeleton": {
+   "--sl-pad": "72px",
+   "--bar-w": "88px",
+   "--bar-h": "3px",
+   "--kicker-transform": "none",
+   "--kicker-spacing": ".08em",
+   "--fw-head": "700",
+   "--fw-sub": "500",
+   "--fw-body": "300",
+   "--lh-body": "1.75",
+   "--measure": "34em",
+   "--radius": "0",
+   "--rule-w": "1px",
+   "--font-display": "Georgia,Cambria,\"Source Han Serif SC\",\"Noto Serif SC\",\"Songti SC\",\"SimSun\",serif"
+  },
+  "skeleton_missing": [],
+  "skeleton_signals": 13
  }
 }

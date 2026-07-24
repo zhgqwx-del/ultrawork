@@ -21,3 +21,21 @@
 ## CJK 适配
 - 黑体为主即可成立；若想更「刊物」，标题可换宋体族（Source Han Serif）但正文保持黑体
 - 中文引句用「」直角引号，引号本身可 accent 色
+
+## 骨相 token（写进 tokens.css §Structure；值即本风格的"骨"）
+
+| 变量 | 值 | 为什么是它 |
+|---|---|---|
+| --sl-pad | 72px | 版心比标准更宽——刊物的留白感来自这里 |
+| --bar-w / --bar-h | 88px / 3px | **招牌**：拉长压薄成杂志式长细横线 |
+| --kicker-transform / --kicker-spacing | none / .08em | 只留一点字距，不喊叫 |
+| --fw-head / --fw-sub / --fw-body | 700 / 500 / 300 | |
+| --lh-body | 1.75 | 宽行距是本风格明确的 Do |
+| --measure | 34em | 刊物式窄栏 |
+| --radius / --rule-w | 0 / 1px | 细底线分隔；圆角是本风格明确的 Don't |
+
+## Signature（非可选）
+
+`data-signature="long-hairline"` —— **88×3 的长细横线 + 暖纸底**。
+横线一短、纸一冷，整套气质立刻散掉——这两者是同一笔的两半。
+横线用于标题区与深色节奏页的分隔，全 deck 长度统一。

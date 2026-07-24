@@ -1,0 +1,24 @@
+{
+  "seed": "ai-coding-pilot|AI 编程助手落地实践——从试点到规模化",
+  "seed_digest": "2ab1b9003ee3b423",
+  "styles": [
+    "tech-dark",
+    "academic-calm",
+    "swiss-minimal"
+  ],
+  "style_temperatures": {
+    "tech-dark": "中性",
+    "academic-calm": "安静",
+    "swiss-minimal": "中性"
+  },
+  "font_pairings": [
+    "humanist-display",
+    "serif-full",
+    "mono-display"
+  ],
+  "registry_sizes": {
+    "styles": 4,
+    "font_pairings": 5
+  },
+  "generated_by": "pick_variants.py"
+}

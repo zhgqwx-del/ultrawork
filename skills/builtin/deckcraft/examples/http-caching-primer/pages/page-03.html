@@ -2,18 +2,18 @@
   <div class="kicker">STRONG vs REVALIDATE</div>
   <h1 style="margin-top:16px">强缓存 vs 协商缓存</h1>
   <div style="display:flex;gap:48px;margin-top:40px;min-height:432px">
-    <div style="flex:1;background:var(--c-bg2);padding:40px">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-radius:var(--radius)">
       <div class="kicker">STRONG CACHE</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">强缓存 · 不回源</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">强缓存 · 不回源</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>靠 max-age / Expires 判定新鲜期</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>新鲜期内浏览器直接读本地，零网络请求</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>命中最快，但更新有延迟风险</span></li>
       </ul>
     </div>
-    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent)">
+    <div style="flex:1;background:var(--c-bg2);padding:40px;border-top:4px solid var(--c-accent);border-radius:var(--radius)">
       <div class="kicker" style="color:var(--c-accent)">REVALIDATE</div>
-      <h2 style="color:var(--c-primary);margin-top:8px">协商缓存 · 回源验证</h2>
+      <h2 style="color:var(--c-head);margin-top:8px">协商缓存 · 回源验证</h2>
       <ul style="margin-top:24px;display:flex;flex-direction:column;gap:24px">
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>过期后带 ETag / Last-Modified 回源</span></li>
         <li style="display:flex;gap:16px"><span style="color:var(--c-muted);font-weight:500;flex-shrink:0">·</span><span>未变返回 304 无响应体，仅省流量</span></li>

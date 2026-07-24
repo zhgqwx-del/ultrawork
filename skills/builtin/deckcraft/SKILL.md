@@ -58,6 +58,7 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 |---|---|
 | `${SKILL_DIR}/scripts/source_to_md/*.py` | PDF/DOCX/XLSX/PPTX/网页 → Markdown |
 | `${SKILL_DIR}/scripts/fetch_assets.py logo <name> / image <query>` | 品牌 logo（simpleicons→favicon 链）/ Wikimedia 真图（含许可 manifest） |
+| `${SKILL_DIR}/scripts/pick_variants.py <project> [--topic "<主题>"]` | **风格/字体配对候选**（确定性 hash 打乱顺序 + 强制跨温度档，写 `variants.json`；Phase 3 第一步） |
 | `${SKILL_DIR}/scripts/validate_outline.py <project>` | **大纲内容门禁**（takeaway/evidence/空话黑名单，exit 0 才可进设计） |
 | `${SKILL_DIR}/scripts/build_deck.py <project>` | shell + tokens.css + pages/ → deck.html |
 | `${SKILL_DIR}/scripts/validate_deck.py <project> [--single]` | 结构门禁（--single 供首页门） |
@@ -65,7 +66,7 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 | `${SKILL_DIR}/scripts/export_deck.py <project> [--pdf] [--shots] [--pptx] [--pptx-editable] [--publish <dir>]` | 导出（--pptx=图片型隐含 2x 截图+notes；--pptx-editable=可编辑，见交付形态） |
 | `${SKILL_DIR}/scripts/extract_layout.py <project> [--page N]` | （export 内部调用）deck.html → layout.json，供可编辑 pptx 组装 |
 | `${SKILL_DIR}/assets/templates/shell.html` | 文档骨架（结构层，**禁止改动**） |
-| `${SKILL_DIR}/assets/templates/layouts.html` | S01–S10 版式骨架登记表 |
+| `${SKILL_DIR}/assets/templates/layouts/_index.md` | **版式选型索引**（先读它）；骨架在同目录 `Sxx.html`，**只读要用的那几个，禁 glob 全目录** |
 | `${SKILL_DIR}/assets/icons/tabler-outline/` | 5039 个内联 SVG 图标（用法见 assets/icons/README.md：grep 检索 → 内联 → currentColor） |
 | `${SKILL_DIR}/references/` | 按需精读：content-engineering / modes / outline-schema / spec-lock-format / design-styles/ / typography-cjk / content-guidelines / visual-review / checklist |
 
@@ -112,9 +113,30 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 
 ### Phase 3 — 设计锁定
 
-1. Read `references/design-styles/_index.md` 选风格候选；只读选定风格的明细文件。
-2. **第 2 轮 question（2-3 问）**：风格方向（3-4 个文字候选含类比）/ 配色气质 / 图片策略（真图检索 fetch_assets / 图标为主 / 不配图）。
-3. Read `references/spec-lock-format.md` + `references/typography-cjk.md` + `references/content-engineering.md` §四（Concept 五问），写 `spec_lock.md`（含 Concept 段与逐页 Page Plan）+ `tokens.css`。
+0. **先跑候选脚本**（不可跳过，不可凭印象挑）：
+   ```bash
+   python3 ${SKILL_DIR}/scripts/pick_variants.py .deckcraft/<name> --topic "<主题>"
+   ```
+   它按 `项目名|主题` 的确定性 hash 打乱风格/字体配对候选并写 `variants.json`（含 seed，可复现）。
+   **模型对"安静极简"有确定性偏好——你自己挑的顺序会把每份 deck 拉回同一个默认。**
+1. Read `references/design-styles/_index.md`（选型解释表）；只读 `variants.json` 里被选中那一个风格的明细文件。
+2. **第 2 轮 question（2-3 问）**：风格方向（**按 `variants.json` 的 `styles` 顺序原样呈现**，含气质类比）/
+   字体配对（按 `font_pairings` 顺序）/ 图片策略（真图检索 fetch_assets / 图标为主 / 不配图）。
+   用户明确点名风格时以用户为准。
+   > **这一轮是标准路径、正常一律要问**（别拿"我觉得不用问"当借口跳过——设计确认是这轮的职责）。
+   > **唯一例外**：question 工具确实不可用时（例如被委派在无法交互的上下文、调用返回不可用），
+   > 退到 `variants.json` 的**第一个候选**风格 + 配对（脚本已按 seed 打乱，非固定值），
+   > 并在交付报告里注明「风格未经用户确认、按 seed 默认选定」。
+3. Read `references/spec-lock-format.md` + `references/typography-cjk.md` + `references/content-engineering.md` §四（Concept 五问），
+   写 `spec_lock.md`（含 Concept 段、Structure 骨相表、Allowances、逐页 Page Plan）+ `tokens.css`。
+   **tokens.css 必须写全 8 个 `--c-*`、7 个 `--fs-*`、`--font-stack`/`--font-display`、12 个骨相 token**
+   ——骨相缺省 = 这份 deck 只换了颜色（validate_deck W3）。填法照 `examples/*/spec_lock.md`（四例覆盖四风格、含唯一深底例）。
+4. **写完 tokens.css 立刻重跑一次大纲门禁**：
+   ```bash
+   python3 ${SKILL_DIR}/scripts/validate_outline.py .deckcraft/<name>
+   ```
+   Phase 2 那次跑的时候 tokens.css 还不存在，用的是基准几何；骨相定了之后**字符预算与条目上限会随之收紧**
+   （版心变宽/行距变大 ⇒ 预算下调，脚本会打印 `geometry: … → char×0.89 …`）。不重跑就会「大纲过了、探针打回」。
 
 ### Phase 4 — 资产准备（按图片策略）
 
@@ -131,12 +153,14 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 `build_deck.py` → `validate_deck.py --single` → `probe_overflow.py --page 1` → 截图看一眼。
 全绿才继续；有系统性问题（溢出/风格跑偏）先修 spec_lock/模板理解再扇出。
 
-**5.2 扇出**：其余页按批生成（每批前重读 spec_lock）。每页一个
+**5.2 扇出**：其余页按批生成（每批前重读 spec_lock）。**先读 `assets/templates/layouts/_index.md` 选型索引，
+再只读本批要用的那几个 `Sxx.html` 骨架——禁 glob 全目录**（版式库会持续扩容，整份读入的上下文成本随之线性增长）。每页一个
 `<section class="slide" data-layout="Sxx" data-rhythm="...">` 片段：颜色只用 `var(--c-*)`、
-字号只用 `var(--fs-*)`——**`--c-on-dark` 是深底页专用浅字，只能出现在 `data-dark` 页内**，
-放到浅卡片上会近乎隐形（对比度门禁硬拦）；浅底上的标题/栏头用 `--c-primary`；
-scenario 数据页页脚必须有可见「示意数据」标注；
-首次生成前 Read `references/content-guidelines.md`。
+字号只用 `var(--fs-*)`。**墨色三条铁律**（对比度门禁硬拦，见 gotchas / ADR-067·068）：
+① 标题/栏头/表头一律 `--c-head`——它跟随风格深浅，**不要自己判断该用 primary 还是浅字**；
+② `--c-primary` 只当**背景与结构元素**（`data-dark` 页底、分隔线），深色风格下它压根不是墨色；
+③ `--c-on-dark` 是 `data-dark` 页专用浅字，**只能出现在 `data-dark` 页内**，放到浅卡片上近乎隐形。
+scenario 数据页页脚必须有可见「示意数据」标注；首次生成前 Read `references/content-guidelines.md`。
 
 **5.3 结构门禁**：`build_deck.py` → `validate_deck.py` → `probe_overflow.py`，全部 exit 0。
 

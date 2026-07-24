@@ -1,7 +1,17 @@
+/* ai-coding-pilot — swiss-minimal × sans-neutral
+   瑞士网格：招牌 48x8 accent bar、全大写拉字距 kicker、直角、1px 细线。
+   骨相 token 全部写出（ADR-068 D3/D7）：写值=已选择，缺省=没选择（validate_deck W3）。
+   --sl-pad/--fw-body/--lh-body/--measure 与 validate_outline 的字符预算耦合（ADR-068 D5）：
+   只能取标定档位，且几何越宽松预算越紧——跑 validate_outline 看它打印的 geometry 行。 */
 :root{
-  --c-bg:#FBF9F4; --c-bg2:#F1EDE3; --c-primary:#14424E; --c-accent:#C75B12;
-  --c-muted:#6E8887; --c-text:#1C1B18; --c-on-dark:#F7F4EC;
-  --font-stack:"Helvetica Neue","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --c-bg:#FAFAFA; --c-bg2:#EFEFF1; --c-primary:#1F2933; --c-head:#1F2933; --c-accent:#B23F0B;
+  --c-muted:#5C6773; --c-text:#111820; --c-on-dark:#F7F7F8;
+  --font-stack:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-display:"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
   --fs-display:64px; --fs-h1:44px; --fs-h2:30px; --fs-h3:24px;
   --fs-body:21px; --fs-num:80px; --fs-caption:14px;
+  --sl-pad:64px; --bar-w:48px; --bar-h:8px;
+  --kicker-transform:uppercase; --kicker-spacing:.25em;
+  --fw-head:700; --fw-sub:500; --fw-body:300;
+  --lh-body:1.65; --measure:36em; --radius:0; --rule-w:1px;
 }

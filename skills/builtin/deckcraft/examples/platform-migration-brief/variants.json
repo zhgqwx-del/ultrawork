@@ -1,0 +1,24 @@
+{
+  "seed": "platform-migration-brief|内部平台迁移季度进展通报（Q2）",
+  "seed_digest": "7740d25b52d7a9ef",
+  "styles": [
+    "editorial-warm",
+    "academic-calm",
+    "swiss-minimal"
+  ],
+  "style_temperatures": {
+    "editorial-warm": "安静",
+    "academic-calm": "安静",
+    "swiss-minimal": "中性"
+  },
+  "font_pairings": [
+    "serif-display",
+    "serif-full",
+    "mono-display"
+  ],
+  "registry_sizes": {
+    "styles": 4,
+    "font_pairings": 5
+  },
+  "generated_by": "pick_variants.py"
+}

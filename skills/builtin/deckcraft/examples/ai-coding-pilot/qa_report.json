@@ -61,5 +61,40 @@
   "elements_measured": 114,
   "elements_unreadable_color": 0,
   "findings": {}
+ },
+ "form": {
+  "style_id": "swiss-minimal",
+  "allowances": [],
+  "signature": "accent-bar",
+  "variant_seed": "2ab1b9003ee3b423",
+  "layouts": [
+   "S01",
+   "S03",
+   "S02",
+   "S04",
+   "S06",
+   "S05",
+   "S04",
+   "S03",
+   "S07",
+   "S08"
+  ],
+  "skeleton": {
+   "--sl-pad": "64px",
+   "--bar-w": "48px",
+   "--bar-h": "8px",
+   "--kicker-transform": "uppercase",
+   "--kicker-spacing": ".25em",
+   "--fw-head": "700",
+   "--fw-sub": "500",
+   "--fw-body": "300",
+   "--lh-body": "1.65",
+   "--measure": "36em",
+   "--radius": "0",
+   "--rule-w": "1px",
+   "--font-display": "\"Helvetica Neue\",\"Segoe UI\",\"Source Han Sans SC\",\"Noto Sans SC\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif"
+  },
+  "skeleton_missing": [],
+  "skeleton_signals": 13
  }
 }

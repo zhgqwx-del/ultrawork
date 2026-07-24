@@ -6,6 +6,35 @@
 - **Windows 无苹方**：栈里必须带 `"Microsoft YaHei"`；Linux 桌面通常有 Noto CJK。
 - 衬线风格（学术/编辑部）可换 `"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun"` 一族，同样西前中后。
 
+## 字体配对（ADR-068 D1；`pick_variants.py` 解析本表，id 是 SSOT）
+
+`deck.html` 是**单文件自包含**——**没有任何外链字体**（webfont 会让 PDF/截图/离线预览三条路径同时不可靠）。
+所以"配对"选的不是买来的字体，是**系统已有字体族的组合**：`--font-display`（标题/大数字）
+× `--font-stack`（正文）。两者可同族（`sans-neutral`），也可异族——**异族是风格辨识度最便宜的一档**。
+
+| id | 气质 | --font-display | --font-stack（正文） |
+|---|---|---|---|
+| `sans-neutral` | 中性黑体，最稳；商务/技术通吃 | 同正文 | `"Helvetica Neue","Segoe UI","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif` |
+| `serif-display` | 衬线标题压黑体正文；学术/编辑部的经典配 | `Georgia,Cambria,"Source Han Serif SC","Noto Serif SC","Songti SC",serif` | 同 `sans-neutral` 正文栈 |
+| `serif-full` | 全衬线；长文讲义、人文叙事 | 同正文 | `Georgia,Cambria,"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif` |
+| `mono-display` | 等宽标题 + 黑体正文；技术分享、终端感 | `ui-monospace,"SF Mono",Menlo,Consolas,"Source Han Sans SC","PingFang SC","Microsoft YaHei",monospace` | 同 `sans-neutral` 正文栈 |
+| `humanist-display` | 人文无衬线标题，比中性黑体更有性格 | `"Avenir Next",Optima,"Gill Sans MT","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif` | 同 `sans-neutral` 正文栈 |
+
+**写进 tokens.css 时两个都要给**（`--font-display` 缺省回落到 `--font-stack`，见 shell.html）。
+
+### 跨平台诚实标注（选配对时必须知道）
+
+- **中文衬线在 Windows 会退到 SimSun**（无 Noto/思源宋），显示效果明显弱于 macOS 的 Songti SC；
+  `serif-full` 用于中文正文时尤其要留意。Linux 需装 `fonts-noto-cjk`（否则整份 deck 中文变方块，
+  各门禁量的是盒子不是字形、拦不住——见 SKILL.md Linux 提示）。
+- **`humanist-display` 的西文族基本是 macOS 专有**（Avenir Next / Optima），
+  Windows/Linux 会退回中性黑体 ⇒ 风格差异在这两个平台上会**打折**。要跨平台稳定就选前四个。
+- **等宽族不含 CJK**：`mono-display` 的汉字必然穿透到黑体，这是预期行为不是缺陷——
+  等宽性格由西文与数字承担。
+- **`font-synthesis:none` 是全局设置**（shell.html）⇒ 没有合成粗体。选配对时确认该族在目标平台
+  **有真实 700 字重**，否则 `--fw-head` 与 `--fw-body` 的层级对比会塌掉。中文族里
+  PingFang SC / Microsoft YaHei / Songti SC 都有真粗体，思源系需系统装齐字重。
+
 ## 假斜体与强调
 
 - `font-synthesis:none` 已在 shell.html 全局设置——中文没有斜体，浏览器机械倾斜极丑。**禁 `font-style:italic`**（validate 硬拦）。
