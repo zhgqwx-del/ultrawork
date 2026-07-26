@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **CI macOS 代码签名打通（release.yml）** —— 发版 `v0.3.3` 起 GitHub Actions 出**已签名+公证**的 macOS DMG。补上此前缺失的 `Import Apple Developer ID certificate` 步骤：从 `APPLE_CERTIFICATE`(base64 .p12) + `APPLE_CERTIFICATE_PASSWORD` 解出证书导入一次性 keychain，`set-key-partition-list` 放行 codesign 免交互取私钥。此前 workflow 虽设了 `APPLE_SIGNING_IDENTITY` 等 env 却从未导入证书，空 keychain 下签名必然失败/静默退回 unsigned。secret 缺失时 no-op 退回 `--unsigned`。
+
 - **deckcraft 形式丰富度轴（ADR-068 / discussions/054）** —— 治「不同 prompt 做的 ppt 除了颜色都长一样」。
   - **风格库 4 → 10 套**，按温度体系让「大胆」档占多数（bold-poster / duotone-vivid / noir-luxe / mono-terminal / blueprint-tech / paper-craft）；每套自带骨相 token 表与 Signature 招牌笔触。
   - **版式库 10 → 20 个**（S11–S20：图文混排 / 三栏卡片 / 2×2 矩阵 / 流程链 / **条形图** / KPI 网格 / 全幅图叠字 / 漏斗 / 引言+人像 / 代码终端）；`layouts.html` 拆为 `layouts/` 目录 + `_index.md` 选型索引，新增 `Sxx.html` 自动生效。
