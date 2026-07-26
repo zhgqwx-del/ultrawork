@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-24 -->
+<!-- last-synced: 2026-07-26 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -205,6 +205,8 @@
 
 - **系统 Node.js v14 太旧**：不支持 `??=` 等现代语法。所有脚本必须用 `bun run --bun` 执行，不要直接 `npx` / `node`。
 - **Universal DMG 构建**：`bun run release [-- --unsigned]`，跨编译双架构 sidecar + Tauri `universal-apple-darwin` lipo 合并。Apple Silicon 主机需先 `rustup target add x86_64-apple-darwin`。
+- **CI 上光设 `APPLE_*` env 不会签名 —— 必须先把证书导入 keychain（2026-07-26，ADR-069，A/B 实证）**：`release.yml` 早先只设了 `APPLE_SIGNING_IDENTITY` 等 env 就以为能签，但 GitHub runner 是干净 keychain，`codesign` 查不到身份 ⇒ 签名失败**或静默退回 unsigned 而 job 仍绿**。这是最阴的失败模式：「job success」≠「真的签了」。必须补一步把 `APPLE_CERTIFICATE`(base64 .p12) 解码导入一次性 keychain，且 **`security set-key-partition-list -S apple-tool:,apple:`**（否则 codesign 取私钥时会交互挂起/失败）。验证发布是否真签，查**事实**：mac job 日志里应有 `1 valid identities found` + `Notarization approved ✓` + `Stapled ✓`，而非只看 job 是否绿。完整流程 + 6 个 secret 见 [build-and-deploy §九](./build-and-deploy.md) / ADR-069。
+- **macOS 自带 LibreSSL 的 `openssl pkcs12` 无 `-legacy` 选项**：合成 `.p12` 时别照抄网上 OpenSSL 3.x 的 `-legacy`（会 `unknown option`）。LibreSSL 的 `pkcs12` **默认就用旧算法（3DES/RC2）**，本就是 keychain 能顺利导入的「legacy」格式，直接去掉 `-legacy` 即可。另：合成时必须 `-certfile` 打进 **Developer ID G2 中间证书**（`https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer`），否则 CI 上证书链不全、公证失败。
 - **Vendor patch apply 后必须重编译 sidecar**（`bun run build:opencode`）。完整流程（patch 内容表/重新生成命令）见 [`docs/vendor-patch-workflow.md`](./vendor-patch-workflow.md)。
 - **新 workspace 包别声明与 root hoisted 不同版本的依赖**：bun 会重解析 root 提升版本（实测 acp-client 声明 `vitest ^3.1.4` 把 root 的 4.0.18 降到 3.2.4，砸了 desktop 的 jest-dom matcher 注册）。新包不要自带测试框架版本，或与 root 对齐。
 - **Tauri `prepare_port` 会复用端口上健康的旧 sidecar 进程**（不重启）。`build-acp.ts` 在真正重编时会自动 kill :4099 旧进程，保证下次 app 启动跑新二进制；其它 sidecar（gateway 等）改完仍需手动重启 app（见 §4 第一条）。

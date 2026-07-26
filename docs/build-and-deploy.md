@@ -1,6 +1,6 @@
 # Ultrawork 桌面应用打包指南
 
-<!-- last-synced: 2026-07-03 -->
+<!-- last-synced: 2026-07-26 -->
 
 > 目标平台：macOS (ARM64 / x86_64) · Windows (x64) · Linux (x64/ARM64)
 > 技术栈：Tauri 2 + React 19 + Vite 7 + OpenCode Sidecar (Bun compiled binary)
@@ -629,7 +629,52 @@ jobs:
 
 ---
 
-## 九、CI/CD 自动打包（可选）
+## 九、CI/CD 自动打包（已落地 + macOS 签名）
+
+> 仓库已有可用的 `.github/workflows/release.yml`（tag `v*` 触发三平台出包 + 自动建 Release 页）。**macOS 签名+公证已打通**（ADR-069，v0.3.3 起）。下面是权威说明；本节末尾的 yaml 仅为历史示例，以真实文件为准。
+
+### 9.1 macOS 签名：6 个仓库级 Secret
+
+在 `Settings → Secrets and variables → Actions` 配置（[配置页](https://github.com/zhgqwx-del/ultrawork/settings/secrets/actions)）：
+
+| Secret | 内容 | 来源 |
+|---|---|---|
+| `APPLE_CERTIFICATE` | `.p12` 的 base64（`base64 -i certificate.p12 \| pbcopy`，别 print 到终端） | 本机合成 |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设的密码 | 本机自设 |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <名字> (<TEAMID>)` | 证书 subject CN |
+| `APPLE_ID` | 开发者 Apple ID 邮箱 | — |
+| `APPLE_PASSWORD` | App 专用密码（**非**登录密码，appleid.apple.com 生成） | Apple ID |
+| `APPLE_TEAM_ID` | 10 位 Team ID | 证书 / Membership |
+
+### 9.2 一次性生成 `.p12`（本机，openssl 全命令行）
+
+```bash
+mkdir -p ~/ultrawork-signing && cd ~/ultrawork-signing
+# 1. 私钥 + CSR
+openssl req -new -newkey rsa:2048 -nodes -keyout devid.key -out devid.csr \
+  -subj "/emailAddress=you@example.com/CN=Your Name/C=CN"
+chmod 600 devid.key
+# 2. 上传 devid.csr 到 developer.apple.com → Certificates → + → Developer ID Application
+#    下载 developerID_application.cer 放进本目录
+# 3. 转格式 + 下载 Apple Developer ID G2 中间证书（补全链，公证必需）
+openssl x509 -inform DER -in developerID_application.cer -out devid_leaf.pem
+curl -fsSL -o DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+openssl x509 -inform DER -in DeveloperIDG2CA.cer -out devid_intermediate.pem
+# 4. 读出签名身份字符串（= APPLE_SIGNING_IDENTITY）
+openssl x509 -in devid_leaf.pem -noout -subject
+# 5. 合成 .p12（LibreSSL 默认即 legacy 格式，别加 -legacy 会报 unknown option）
+openssl pkcs12 -export -inkey devid.key -in devid_leaf.pem \
+  -certfile devid_intermediate.pem -name "Developer ID Application: ..." -out certificate.p12
+chmod 600 certificate.p12
+```
+
+### 9.3 CI 里如何用（release.yml `Import Apple Developer ID certificate` 步骤）
+
+`APPLE_CERTIFICATE` base64 解码 → `security create-keychain` 建一次性 keychain（随机密码）→ `security import` → **`security set-key-partition-list -S apple-tool:,apple:`**（放行 codesign 免交互取私钥，缺了会挂）→ 加入搜索列表。secret 缺失时 no-op、构建退回 `--unsigned`。
+
+⚠️ **验证是否真签了，查事实不查 job 颜色**（job 绿也可能是 unsigned 回退）：mac job 日志应有 `1 valid identities found` + `Notarization approved ✓` + `Stapled ✓`。详见 gotchas §7。
+
+### 9.4 历史示例（以真实 release.yml 为准）
 
 GitHub Actions 示例：
 

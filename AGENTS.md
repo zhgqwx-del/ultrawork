@@ -204,7 +204,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `scripts/pack-builtin-skills.ts` — **内置技能构建期打包**（松散树→`skills-builtin.zip`+外置 sentinel，按内容 hash 惰性；fflate 保 unix exec bit；产物在 `src-tauri/resources/builtin-skills/`，gitignore、`.gitkeep` 保 `generate_context!` 编译；beforeDevCommand/beforeBuildCommand 自动跑，ADR-041）；e2e 侧共享 helper `packages/client/desktop/e2e/builtin-zip-helper.ts`
 - `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
 - `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）
-- `.github/workflows/release.yml` — tag 触发三平台出安装包（dmg/msi/nsis/deb/appimage）
+- `.github/workflows/release.yml` — tag `v*` 触发三平台出安装包（dmg/msi/nsis/deb/rpm）+ 自动建 Release 页；**macOS 签名+公证已打通**（ADR-069：`Import Apple Developer ID certificate` 步骤把 `APPLE_CERTIFICATE` base64 .p12 导入一次性 keychain；6 个 `APPLE_*` secret；缺失则退回 unsigned）；guard job 校验 tag==tauri.conf 版本
 - `packages/client/desktop/src-tauri/tauri.conf.json` — `bundle.targets:"all"`（Tauri 按平台产对应安装包）
 
 ## Key Documentation
@@ -214,7 +214,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (68 ADRs, 001–068)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (69 ADRs, 001–069)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history
