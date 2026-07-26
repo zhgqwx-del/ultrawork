@@ -83,6 +83,41 @@ jobs:
           bun install
           cd vendor/opencode && bun install
 
+      # Import the Developer ID Application cert into a throwaway keychain so
+      # `codesign` (invoked by `bun run release` → tauri) can find the signing
+      # identity. Without this, APPLE_SIGNING_IDENTITY names an identity that
+      # isn't in any keychain on the fresh runner and signing fails. No-op (and
+      # the next step falls back to --unsigned) when the secret is absent.
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "No APPLE_CERTIFICATE secret — skipping import; build will be unsigned."
+            exit 0
+          fi
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"   # no auto-lock for 6h
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -t cert -f pkcs12 -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -T /usr/bin/security
+          # Allow codesign to use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          # Add our keychain to the search list (prepend, keep the existing ones).
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | sed 's/[",]//g')
+          rm -f "$CERT_PATH"
+          echo "Imported signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       # macOS: signed+notarized when secrets exist, unsigned otherwise.
       - name: Release build (macOS)
         if: runner.os == 'macOS'
