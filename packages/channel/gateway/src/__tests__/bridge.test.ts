@@ -1721,3 +1721,114 @@ describe("idle rotation (ADR-051)", () => {
     })
   })
 })
+
+/**
+ * ADR-070 P2. The degradation lives in `send()` — the one funnel every outbound
+ * message passes through — rather than in the four adapters, so these tests
+ * assert it through the bridge's real reply path.
+ */
+describe("Bridge — LaTeX degradation on the way out (ADR-070 P2)", () => {
+  async function replyWith(text: string): Promise<IncomingMessage> {
+    const bridge = new Bridge()
+    const msg = createMessage()
+    await bridge.handleMessage(msg)
+
+    const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+    emitAssistantMessage(handleSSE)
+    handleSSE({
+      type: "message.part.updated",
+      properties: {
+        part: { type: "text", sessionID: "sess-1", messageID: "m1", id: "p1", content: text },
+      },
+    })
+    handleSSE({
+      type: "session.status",
+      properties: { sessionID: "sess-1", status: { type: "idle" } },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await bridge.shutdown()
+    return msg
+  }
+
+  it("sends Unicode instead of LaTeX source", async () => {
+    const msg = await replyWith("以概率 $\\frac{p(x^*)}{M \\cdot q(x^*)}$ 接受该样本")
+    expect(msg.reply).toHaveBeenCalledWith("以概率 p(x^(∗))/(M⋅q(x^(∗))) 接受该样本")
+  })
+
+  it("keeps a formula it cannot parse exactly as the model wrote it", async () => {
+    const src = "坏公式 $\\notacommand{x}$ 原样发出"
+    const msg = await replyWith(src)
+    expect(msg.reply).toHaveBeenCalledWith(src)
+  })
+
+  it("does not touch shell variables inside code", async () => {
+    const src = "```bash\necho $HOME  # $x^2$\n```"
+    const msg = await replyWith(src)
+    expect(msg.reply).toHaveBeenCalledWith(src)
+  })
+
+  it("degrades a question, both when first asked and when re-asked", async () => {
+    // The re-ask path replies to the answering message directly instead of going
+    // through send(), so it is the one place the degradation can silently fall
+    // out of step — the same question would look degraded, then raw.
+    const bridge = new Bridge()
+    const msg = createMessage()
+    await bridge.handleMessage(msg)
+
+    const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+    handleSSE({
+      type: "question.asked",
+      properties: {
+        id: "q1",
+        sessionID: "sess-1",
+        questions: [{
+          header: "阈值",
+          question: "接受率取 $\\frac{1}{M}$ 还是 $x_0$？",
+          options: [{ label: "A" }, { label: "B" }],
+        }],
+      },
+    })
+    await vi.advanceTimersByTimeAsync(0) // let the send chain settle
+    expect(msg.reply).toHaveBeenCalledWith(expect.stringContaining("接受率取 1/M 还是 x₀？"))
+
+    // Two picks for a single-choice question — the one input that really is
+    // unparsable (a bare number is a valid typed answer).
+    const bad = createMessage({ text: "1,2" })
+    await bridge.handleMessage(bad)
+    await vi.advanceTimersByTimeAsync(0)
+    const reasked = (bad.reply as ReturnType<typeof vi.fn>).mock.calls.map(([t]) => t).join("\n")
+    expect(reasked).toContain("接受率取 1/M 还是 x₀？")
+    expect(reasked).not.toContain("\\frac")
+    await bridge.shutdown()
+  })
+
+  it("degrades a streamed block, not just the final flush", async () => {
+    // Blocks go out as the agent produces them, so a formula in an early
+    // paragraph must be degraded there too — it never reaches the final flush.
+    const bridge = new Bridge()
+    const msg = createMessage()
+    await bridge.handleMessage(msg)
+
+    const handleSSE = (bridge as any).handleSSEEvent.bind(bridge)
+    emitAssistantMessage(handleSSE)
+    handleSSE({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "text",
+          sessionID: "sess-1",
+          messageID: "m1",
+          id: "p1",
+          // Long enough to clear the chunker's 200-char minimum, or nothing
+          // streams and the assertion would pass on the final flush instead.
+          content: `${"铺垫".repeat(120)}，其中 $x_0$ 是初值。\n\n第二段还在写`,
+        },
+      },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(msg.reply).toHaveBeenCalledWith(
+      `${"铺垫".repeat(120)}，其中 x₀ 是初值。`,
+    )
+    await bridge.shutdown()
+  })
+})

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-26 -->
+<!-- last-synced: 2026-07-27 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -481,4 +481,11 @@
 - **`strict` 必须设 `false`**：默认 `warn` 下，模型合法写出的中文变量名（`P(患病|阳性)`）会**按字符**刷 console 警告。`throwOnError` 同样必须 `false`，否则一条坏公式会掀掉整条消息。
 - **`$...$` 由 micromark 在强调解析之前夺取** —— 这正是 `$\frac{p(x^*)}{M \cdot q(x^*)}$` 的两个 `*` 不再被吃成 `<em>` 的机制。反过来说，**没有 math 插件时 markdown 会主动破坏公式源码**：`*` 被配成强调、`\{ \_ \%` 类反斜杠被 CommonMark 转义吞掉（而 `\cdot`/`\frac` 不受影响，因 `c`/`f` 不是可转义标点 ⇒ **损伤是选择性的**，更难排查）。下标 `_` 反而安全（CommonMark 禁 intraword 强调）。
 - **`\(...\)` / `\[...\]` 无解，别试图支持**：反斜杠在 markdown **解析期**就被吞掉（`\(a^2\)` → `(a^2)`），定界符信息彻底丢失 ⇒ 任何渲染后补救都不可能，**换 MathJax 也没用**（定界符由 remark-math 的**分词层**决定，不在渲染层）。qwen 实测 0 次使用；GPT 系有此习惯，只能靠 prompt 劝阻。
+- **IM 出站的 LaTeX→Unicode 降级（P2）必须用 KaTeX 的 MathML 树，不能取树的朴素文本**：`math-unicode.ts` 走 `katex.__renderToDomTree(tex, {output:"mathml"})` —— 它返回**树对象**，不用解析 XML 字符串（`renderToString` 会逼你回去写正则）。**朴素取文本会把分式拍平**：MathML 把分子分母平铺，`\frac{1}{M}` 的 `.toText()` 是 `"1M"`，**一个不同的数**。故 `mfrac / msup / msub / msubsup / munderover / mover / munder / msqrt / mroot / mtable` 全部要规则处理。另外 **`<annotation>` 子节点装着 LaTeX 原文，必须显式丢弃**，否则每条公式输出两遍（一遍降级、一遍原文）。
+- **降级的括号策略不能只看字符串，分母要看树**：`needsParens` 那类「扫描顶层运算符」的字符串判据对**并置乘法**完全失明 —— `\frac{1}{2\pi}` 的分母 `2π` 里一个运算符字符都没有，输出 `1/2π` 读作 `(1/2)·π`。判据必须落在**节点**上（分母是不是单个原子 / 已被括号包住 / 是函数调用 `Q(i)`），字符串层只够管分子。**这条是拿真实语料跑出来的**：`\frac{e^{z_i}}{\sum_j e^{z_j}}` 曾输出 `e^zᵢ/∑ⱼe^zⱼ`。
+- **`_` / `^` 的回退形式必须永远带括号**（`y_(ic)` 而不是 `y_ic`）：Unicode 没有下标 `c`，整组回退成 ASCII 时 `_`/`^` **没有闭合定界符**，`y_{ic}\log(...)` 会退成 `y_iclog(...)` —— 下标到哪结束无从判断。同理 **accent 要换成组合字符**：KaTeX 发的是**间隔**重音符（`\hat{y}` → `y` + U+005E `^`），直接拼出来的 `y^` 和指数无法区分，须映射到 U+0302 得 `ŷ`；`\underline` 发的是 `‾`（U+203E，overline 字形！）要按 munder 映射到 U+0332。
+- **KaTeX 不是「要么成功要么抛异常」—— 它认识但拒绝执行的命令会被渲染成命令名本身**：`\href` / `\url` / `\includegraphics` 这些被 `trust` 门控的命令，在 `throwOnError:true` 下**不抛**，而是把 `\href` 四个字符按 `errorColor` 上色输出，**`{点我}` 那部分内容直接消失**。桌面端至少还是红字有提示，降级成纯文本就是**静默内容丢失**。判据只能用 KaTeX 自己的信号（把 `errorColor` 设成哨兵色、树里遇到就当解析失败保留原文）——**不能扫输出里的反斜杠**：`a \backslash b` 合法地渲染成 `a\b`。
+- **降级扫描器必须跳过 URL，这不是可选项**：实测桌面管线（`remark-parse+gfm+math`）**保留** `[文档](https://ex.com/a$b$c)` 与裸 URL 里的 `$`（remark-math 不碰链接目标）。IM 侧若照常转换，`$b$` 会被吃掉、URL 静默变成 `.../abc` —— 一个**桌面端没有、IM 端独有**的链接损坏。代码围栏 / 行内 code 同理（`$PATH … $HOME` 会被当成一个 span 吞掉，改的是用户会去粘贴执行的命令）。
+- **降级只放在 `bridge.ts` 的 `send()` 一处**（四个 adapter 都不写）：那是所有出站消息的唯一漏斗，streamed block 和最终 flush 都过它。顺序上**先降级再截断** `MAX_REPLY_LENGTH`，否则可能从一个 span 中间切开、留下半截不再可解析的 LaTeX。
+- **降级后 `stripMarkdown` 的 `_` 规则要补 CommonMark 的 intraword 保护**：降级产物里 `_(...)` 是常客（Unicode 映射不了的下标），两处回退会被裸 `_(.+?)_` 配成一对、吃掉中间的正文。桌面端白拿这条保护（CommonMark 禁 intraword 强调），IM 的裸正则没有，得自己加 `(?<![^\s])_ … _(?![\p{L}\p{N}])`。
 - **IM 出站的 `stripMarkdown`（`wechat-adapter.ts`）必须把公式先占位再剥离强调**：裸正则 `_(.+?)_` 会**跨公式配对**，把 `$\sum_{i=1}^{n} a_i = b_i$` 改写成 `$\sum{i=1}^{n} ai = b_i$` —— 求和下标没了、`a_i` 变 `ai`，**数学含义被改变**（桌面端只是显示难看，IM 端是内容在出站前被篡改）。占位符要用 NUL 之类正文不可能出现的字符，但**源文件里必须写 `\u0000` 转义序列而非字面 NUL 字节** —— 后者会让 `grep` 把整个文件当二进制静默跳过（实际发生过）。

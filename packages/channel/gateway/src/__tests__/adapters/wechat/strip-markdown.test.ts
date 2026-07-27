@@ -48,6 +48,33 @@ describe("stripMarkdown — math must survive intact", () => {
   });
 });
 
+/**
+ * Since ADR-070 P2 the bridge degrades formulas before they get here, so most
+ * text reaching `stripMarkdown` no longer has `$…$` to park. What it does have
+ * is the degrader's fallback form for scripts KaTeX cannot map to Unicode —
+ * `lim_(n→∞)`, `D_KL` — and those underscores are bare.
+ */
+describe("stripMarkdown — emphasis only pairs at word boundaries", () => {
+  it("does not pair underscores that came from degraded formulas", () => {
+    // Two fallback subscripts in one message. Without the intraword rule
+    // `_(.+?)_` spans from the first to the second and deletes everything
+    // between — the same class of silent content change as the summation bug.
+    const out = stripMarkdown("当 lim_(n→∞)aₙ 收敛时 D_KL(P∥Q) 也收敛");
+    expect(out).toBe("当 lim_(n→∞)aₙ 收敛时 D_KL(P∥Q) 也收敛");
+  });
+
+  it("still strips underscore emphasis around whole words", () => {
+    expect(stripMarkdown("这是 _重点_ 内容")).toBe("这是 重点 内容");
+    expect(stripMarkdown("__加粗__")).toBe("加粗");
+  });
+
+  it("leaves snake_case identifiers intact", () => {
+    expect(stripMarkdown("调用 max_pool_size 和 min_batch_size")).toBe(
+      "调用 max_pool_size 和 min_batch_size",
+    );
+  });
+});
+
 describe("stripMarkdown — unchanged behaviour", () => {
   it("strips bold, italic, headers, links and images", () => {
     expect(stripMarkdown("# 标题")).toBe("标题");

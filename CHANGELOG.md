@@ -15,9 +15,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - `.katex-display{overflow-x:auto}`：KaTeX 自带 `white-space:nowrap` 却不带任何 overflow 规则，超宽块级公式会撑破正文列或被裁；顺带把流式期间的横向抖动一并消除（实测宽度 0 次变化）。
   - `.katex-mathml{user-select:none}`：KaTeX 把公式输出三份（MathML + annotation + 可视 HTML），拖蓝选中会复制到三重重复。「复制整条回答」按钮不受影响（走 `answerText` 原文）。
 
+- **IM 渠道 LaTeX → Unicode 降级（ADR-070 D5 / discussions/055 §十二）** —— 四家 IM（微信 / 钉钉 / 企微 / 飞书）都不渲染 LaTeX，公式此前以源码形态到达用户。现在出站前降级成 Unicode：`$M \cdot q(x) \geq p(x)$` → `M⋅q(x)≥p(x)`、`$\frac{1}{M}$` → `1/M`、`$\sum_{i=1}^{n} a_i$` → `∑ᵢ₌₁ⁿaᵢ`。
+  - 落在 `bridge.ts` 的 `send()` **一处**（所有出站消息的唯一漏斗），四个 adapter 一行不改。
+  - 转换用 **KaTeX 解析器**（`__renderToDomTree` 的 MathML 树）而非正则；`mfrac`/`msup`/`msub`/`msubsup`/`munderover`/`mover`/`munder`/`msqrt`/`mroot`/`mtable` 规则处理 —— 朴素取树文本会把 `\frac{1}{M}` 拍平成 `1M`（一个不同的数）。
+  - **解析失败保留原文**（安全失败，等于降级前的行为）；跳过代码围栏、行内 code、链接目标与裸 URL（实测桌面端保留 URL 里的 `$`，照转会静默改坏链接）。
+  - 真实语料回归：P0 的 24 个模型回答 / **279 个公式，279/279 转换成功、0 残留 `\command`**。gateway sidecar +468KB。
+  - **真机验收通过**（钉钉 + 企微，真模型）：同一行两个 `_` 的决定性用例 `D_(KL)(P∥Q)≠D_(KL)(Q∥P)` 在两家均完好，Unicode 下标/`∥`/`∈` 字形正常 ⇒ 两家都遵守 CommonMark intraword 规则，无需按渠道转义。
+  - 新增真端到端 e2e `e2e/im-math-degrade.e2e.ts`（`e2e:im-math`）：mock-llm-math → 真 opencode → 真 Bridge（真 SSE + 真 BlockChunker + 真 `send()`）→ 抓四家出站文本，14 项断言。与桌面 `e2e:math-real` 共用同一份 mock 回答，构成同一输入的真 A/B。
+  - 新增黑盒 e2e `e2e/im-math-sidecar-blackbox.e2e.ts`（`e2e:im-math-blackbox`）：把**编译后的 sidecar 二进制**指向本地 mock 微信服务器，断言它真实 POST 出去的报文 —— 不接触任何真实 IM 账号就覆盖了打包层。
+  - 修 `\href` / `\url` / `\includegraphics` 被静默吞内容：KaTeX 对 `trust` 门控的命令**不抛异常**而是渲染成命令名本身（`\href{...}{点我}` → `\href`，「点我」消失）。改用 KaTeX 自己的错误色哨兵判定，当作解析失败保留原文。
+  - 重新生成第三方开源声明（`bun run gen:notices`）：**katex / remark-math / rehype-katex 及其 16 个传递依赖此前全部缺失** —— P1 引入数学渲染依赖时漏了这一步，而 katex 现在同时进桌面包与 gateway sidecar 两个再分发产物，属法务归属必须覆盖的范围。
+  - 修问题重问时绕过降级漏斗：答案格式错误后的重新追问走 `msg.reply` 直发（必须回复那条入站消息，不能用 `send()` 的原始 reply），同一个问题会第一次降级、重问变回源码。
+
 ### Fixed
 
 - **IM 出站会篡改数学公式（既存缺陷，独立于上条）** —— `wechat-adapter.ts` 的 `stripMarkdown` 用裸正则剥离强调，`_(.+?)_` 会**跨公式配对**，把 `$\sum_{i=1}^{n} a_i = b_i$` 发成 `$\sum{i=1}^{n} ai = b_i$`：求和下标丢失、`a_i` 变 `ai`，**数学含义在出站前被改变**。修法是先把公式区段占位、剥离强调后再还原。桌面端那个只是显示难看，这个是内容错误。
+- **`stripMarkdown` 的 `_` 强调缺 CommonMark intraword 保护** —— 与上条同一个机制，触发源换成了降级产物：Unicode 映射不了的下标会退成 `x_(i+1)` 形式，两处会被裸 `_(.+?)_` 配成一对、吃掉中间正文。补上 `(?<![^\s])_ … _(?![\p{L}\p{N}])`，顺带让 `max_pool_size` 这类 snake_case 标识符不再被拆。
 
 
 ### Added

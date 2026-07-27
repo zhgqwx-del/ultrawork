@@ -8,6 +8,7 @@ import type {
 import type { WeixinMessage } from "./types.js";
 import { ITEM_TYPE_TEXT, ITEM_TYPE_VOICE, MSG_TYPE_USER } from "./types.js";
 import { ILinkApi } from "./ilink-api.js";
+import { MATH_SPAN } from "../../math-unicode.js";
 
 const CONSECUTIVE_FAIL_THRESHOLD = 3;
 const FAIL_BACKOFF_MS = 30_000;
@@ -297,11 +298,6 @@ export function createWeChatAdapter(
 
 // ---- Helpers ----
 
-/**
- * Matches a LaTeX math span: `$$…$$` first, then single `$…$` (single-line only,
- * mirroring how remark-math tokenises it on the desktop side).
- */
-const MATH_SPAN = /\$\$[\s\S]+?\$\$|\$(?!\$)[^\n$]+?\$/g;
 /** Placeholder token — control chars can't appear in a model's markdown reply. */
 const MATH_TOKEN = (i: number) => `\u0000M${i}\u0000`;
 
@@ -338,8 +334,15 @@ export function stripMarkdown(md: string): string {
     // Bold/italic
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/_(.+?)_/g, "$1")
+    // CommonMark's intraword rule, which the desktop gets for free and this
+    // regex pass does not: `_` only delimits emphasis at a word boundary. It
+    // matters more since the bridge started degrading formulas to Unicode
+    // (ADR-070 P2) — a script KaTeX cannot map falls back to `x_(i+1)`, and
+    // without the guard two such fallbacks in one message would pair up and the
+    // text between them would vanish. Parked formulas are already safe; this
+    // covers everything that reaches here as ordinary prose.
+    .replace(/(?<![^\s])__(.+?)__(?![\p{L}\p{N}])/gu, "$1")
+    .replace(/(?<![^\s])_(.+?)_(?![\p{L}\p{N}])/gu, "$1")
     // Images → remove (must be BEFORE links, since link regex matches inside image syntax)
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, "")
     // Links → display text
