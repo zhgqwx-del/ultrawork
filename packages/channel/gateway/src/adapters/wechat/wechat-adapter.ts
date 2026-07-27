@@ -297,8 +297,30 @@ export function createWeChatAdapter(
 
 // ---- Helpers ----
 
-/** Strip markdown formatting for plain text WeChat display */
-function stripMarkdown(md: string): string {
+/**
+ * Matches a LaTeX math span: `$$…$$` first, then single `$…$` (single-line only,
+ * mirroring how remark-math tokenises it on the desktop side).
+ */
+const MATH_SPAN = /\$\$[\s\S]+?\$\$|\$(?!\$)[^\n$]+?\$/g;
+/** Placeholder token — control chars can't appear in a model's markdown reply. */
+const MATH_TOKEN = (i: number) => `\u0000M${i}\u0000`;
+
+/**
+ * Strip markdown formatting for plain text WeChat display.
+ *
+ * Math spans are pulled out before emphasis stripping and put back afterwards.
+ * Without that, the emphasis regexes below reach *inside* formulas and silently
+ * rewrite them — `_(.+?)_` pairs across two separate subscripts, so
+ * `$\sum_{i=1}^{n} a_i = b_i$` went out as `$\sum{i=1}^{n} ai = b_i$`: the
+ * summation index and one subscript are gone and the formula now means
+ * something else. That is worse than the desktop bug this shipped alongside —
+ * there a formula merely looked bad, here the content is altered before it
+ * leaves the process. (discussions/055 §4.1)
+ *
+ * Exported for tests; not part of the adapter's public surface.
+ */
+export function stripMarkdown(md: string): string {
+  const math: string[] = [];
   return md
     // Code blocks → content only
     .replace(/```[\s\S]*?```/g, (match) => {
@@ -307,6 +329,12 @@ function stripMarkdown(md: string): string {
     })
     // Inline code
     .replace(/`([^`]+)`/g, "$1")
+    // Park math spans. Must run after the code rules (so `$PATH` inside code is
+    // never treated as math) and before every emphasis rule below.
+    .replace(MATH_SPAN, (m) => {
+      math.push(m);
+      return MATH_TOKEN(math.length - 1);
+    })
     // Bold/italic
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
@@ -324,6 +352,9 @@ function stripMarkdown(md: string): string {
     .replace(/^-{3,}$/gm, "")
     // Clean up extra blank lines
     .replace(/\n{3,}/g, "\n\n")
+    // Restore math verbatim. Function form on purpose: a `$…$` body containing
+    // `$1` would otherwise be read as a capture-group reference.
+    .replace(/\u0000M(\d+)\u0000/g, (_, i: string) => math[Number(i)])
     .trim();
 }
 

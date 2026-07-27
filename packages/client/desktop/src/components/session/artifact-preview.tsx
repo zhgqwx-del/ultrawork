@@ -4,6 +4,8 @@ import type { LucideIcon } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
 import CodeMirror from "@uiw/react-codemirror"
 import { githubLight, githubDark } from "@uiw/codemirror-theme-github"
 import { useApi } from "@/lib/use-api"
@@ -17,7 +19,10 @@ import { MARKDOWN_LINK_ONLY } from "@/components/ui/markdown-link"
 import { PdfView } from "./pdf-view"
 
 /** Module-level so ReactMarkdown doesn't re-parse on every render. */
-const MD_REMARK_PLUGINS = [remarkGfm]
+const MD_REMARK_PLUGINS = [remarkGfm, remarkMath]
+/** Kept in sync with the chat pipeline (message-parts.tsx) — see discussions/055. */
+type MdRehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>["rehypePlugins"]>
+const MD_REHYPE_PLUGINS: MdRehypePlugins = [[rehypeKatex, { throwOnError: false, strict: false }]]
 
 export interface Artifact {
   type: "file" | "patch"
@@ -445,7 +450,7 @@ export function ArtifactPreview({ artifact, directory, onClose, nav, maximized, 
           </div>
         ) : isMarkdown(artifact.path) ? (
           <div className="prose prose-sm max-w-none p-4 dark:prose-invert">
-            <ReactMarkdown remarkPlugins={MD_REMARK_PLUGINS} components={MARKDOWN_LINK_ONLY}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={MD_REMARK_PLUGINS} rehypePlugins={MD_REHYPE_PLUGINS} components={MARKDOWN_LINK_ONLY}>{content}</ReactMarkdown>
           </div>
         ) : html && !htmlSourceView ? (
           // In-app browser preview. deckcraft decks are self-contained (inlined
