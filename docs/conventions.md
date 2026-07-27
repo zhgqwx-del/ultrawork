@@ -558,3 +558,26 @@ const byTurn = attributeArtifactsToTurns({ messages, ordered /* SSOT，first-win
 想给默认会话统一加身份/输出风格/护栏时的**正向做法**：写（或扩展）一个 opencode 内置插件，钩 `experimental.chat.system.transform`，往 `output.system` **追加**品牌段——保留每个模型的基座提示，跨模型都受益且不降级。需要中和某个基座的措辞（如 default.txt 的极简子句）就子串探测后追加一段强优先级 override，别删基座。范例 `vendor/.../plugin/rich-output.ts`（默认 ON，`experimental.rich_output` kill switch）。
 
 **反面**：`agent.<name>.prompt` / `OPENCODE_CONFIG_CONTENT` 整体替换 `provider()` 会丢掉非 qwen 模型的专属调优提示（BYOK 多 provider 下是真降级）。为什么、以及缓存/软护栏等契约，见 `docs/gotchas.md §16`（SSOT）。
+
+## 19. 布局类断言必须自带「非空转」自检（ADR-070）
+
+只要断言依赖**尺寸关系**（溢出、换行、裁切、滚动），就必须再加一条断言，证明被测场景**确实触发了**那个条件。否则「通过」可能只是说明根本没测到。
+
+```ts
+// ❌ 这三条会在公式其实没溢出时全部"通过"
+expect(getComputedStyle(disp).overflowX).toBe("auto")
+expect(col.scrollWidth).toBeLessThanOrEqual(col.clientWidth)
+expect(document.body.scrollWidth).toBeLessThanOrEqual(document.body.clientWidth)
+
+// ✅ 先钉死场景成立，再断言保护生效
+expect(disp.scrollWidth).toBeGreaterThan(disp.clientWidth)   // 非空转自检
+expect(col.scrollWidth).toBeLessThanOrEqual(col.clientWidth)
+```
+
+**为什么值得单列一条**：ADR-070 里这个坑连踩两次 —— 第一次列宽 860px、公式自然宽 599px，三条断言全绿但什么都没验；改成 560px 才触发。修好后换到**真实 app**（列宽 812px）又是同一条公式，**再次全绿、再次空转**，加长到 925px 才真正触发。
+
+⇒ 两条推论：
+1. **非空转自检要逐场景各配一条**，不能因为「上一层验过了」就省。列宽在不同场景（独立页面 / 真实聊天列 / 产物预览打开时）都不同。
+2. 触发用的数据要**刻意做到极端**，别用「真实世界的典型值」—— 典型值恰恰是不触发的那一档。
+
+同理适用于：文本省略号截断、虚拟滚动、响应式断点、`ResizeObserver` 相关行为。

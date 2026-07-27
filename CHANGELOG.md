@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **数学公式（LaTeX）渲染（ADR-070 / discussions/055）** —— 此前聊天回答里的公式全部以源码形态显示（`$M \cdot q(x) \geq p(x)$`），对照同类产品明显落后。
+  - 管线加 `remark-math`（**默认配置**）+ `rehype-katex`（`throwOnError:false` + `strict:false`），落在 `message-parts.tsx`（聊天）与 `artifact-preview.tsx`（`.md` 产物预览）两处，**零启发式、对模型行为零依赖**。
+  - **顺带修好一个更隐蔽的问题**：没有 math 插件时，markdown 的内联规则会**主动破坏公式源码** —— `$\frac{p(x^*)}{M \cdot q(x^*)}$` 的两个 `*` 被配对成 `<em>`、星号消失（截图里显示成 `$\frac{p(x^)}{M |cdot q(x^)}$`）。math 在 micromark 层先于强调解析夺取 `$...$`，该损伤随之消失。
+  - `.katex-display{overflow-x:auto}`：KaTeX 自带 `white-space:nowrap` 却不带任何 overflow 规则，超宽块级公式会撑破正文列或被裁；顺带把流式期间的横向抖动一并消除（实测宽度 0 次变化）。
+  - `.katex-mathml{user-select:none}`：KaTeX 把公式输出三份（MathML + annotation + 可视 HTML），拖蓝选中会复制到三重重复。「复制整条回答」按钮不受影响（走 `answerText` 原文）。
+
+### Fixed
+
+- **IM 出站会篡改数学公式（既存缺陷，独立于上条）** —— `wechat-adapter.ts` 的 `stripMarkdown` 用裸正则剥离强调，`_(.+?)_` 会**跨公式配对**，把 `$\sum_{i=1}^{n} a_i = b_i$` 发成 `$\sum{i=1}^{n} ai = b_i$`：求和下标丢失、`a_i` 变 `ai`，**数学含义在出站前被改变**。修法是先把公式区段占位、剥离强调后再还原。桌面端那个只是显示难看，这个是内容错误。
+
+
+### Added
+
 - **CI macOS 代码签名打通（release.yml）** —— 发版 `v0.3.3` 起 GitHub Actions 出**已签名+公证**的 macOS DMG。补上此前缺失的 `Import Apple Developer ID certificate` 步骤：从 `APPLE_CERTIFICATE`(base64 .p12) + `APPLE_CERTIFICATE_PASSWORD` 解出证书导入一次性 keychain，`set-key-partition-list` 放行 codesign 免交互取私钥。此前 workflow 虽设了 `APPLE_SIGNING_IDENTITY` 等 env 却从未导入证书，空 keychain 下签名必然失败/静默退回 unsigned。secret 缺失时 no-op 退回 `--unsigned`。
 
 - **deckcraft 形式丰富度轴（ADR-068 / discussions/054）** —— 治「不同 prompt 做的 ppt 除了颜色都长一样」。

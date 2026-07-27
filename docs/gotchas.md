@@ -469,3 +469,16 @@
 - **markdown 把 `\` 当转义符** → `![]（C:\a\b.png）` 纯反斜杠路径解析阶段即被破坏（renderer 无法挽回）。可存活形态＝相对路径 + 正斜杠绝对（`C:/…`）；rich-output 引导推模型用相对路径。
 - **`useApi` 必须返回稳定引用**：`MarkdownImage` 的解析 `useEffect` 依赖 `api`；若 mock/实现每渲染返回新对象 → 每渲染重跑 effect+setState → **无限渲染循环**（e2e 单测踩过）。生产 `useApi` 由 connector 记忆化，稳定。
 - **本机验证陷阱（非产品）**：① 新编译的 sidecar 二进制带 `com.apple.provenance` xattr → macOS 静默杀（`--version` 零输出 exit 0），bash 直接 spawn 起不来；`xattr -c` + `codesign --force --sign -` 恢复（打包正式签名不受影响）。② e2e 连跑双引擎时前一轮 opencode 偶尔没及时释放端口，需按端口清理。
+
+## 18. 数学公式渲染（KaTeX，ADR-070 / discussions/055，2026-07-27）
+
+管线 = `remark-math`（默认配置）+ `rehype-katex`，加在 `message-parts.tsx` 与 `artifact-preview.tsx` 两处。**零启发式**是刻意的，下面每条都是实测结论。
+
+- **`singleDollarTextMath` 必须保持默认 `true`，别「为了防货币误伤」关掉它**。关掉后单 `$q(x)$` 不再渲染，渲染正确性就被绑死在「模型是否改用 `$$`」上 —— 而实测 qwen3.7-max **85% 的公式用单 `$`**，即使 prompt 明确要求 `$$` 也只到 82.4%、且 4/12 的回答混用两种定界符（同一条回答里一半渲染一半不渲染，比全不渲染更难看）。保留单 `$` 的已知代价是货币误配对（`$5 … $10` 会配成公式），但拿 **24 个真实模型回答 / 279 个公式**实测：**真实误伤 0**。别为一个实测不发生的风险付复杂度。
+- **两种「货币守卫」都别写，写了会更糟（各自实测失败）**：① mdast 层把「像货币」的 `inlineMath` 降级回 text —— **治不了混排**，因为 micromark 从左到右贪婪配对，`成本 $100 时，接受率为 $` 会先成对、把后面真公式的开定界符**偷走**，损伤发生在分词阶段、mdast 已太晚；② 分词前用字符串预处理转义货币 `$` —— 要同时跟踪代码围栏、行内 code、贪婪配对边界，**第一版实现就误杀了真公式并向界面漏出 `\5` 脏字符**。
+- **`.katex-display > .katex` 带 `white-space: nowrap`，而 katex.css 自己没有任何 overflow 规则** ⇒ 超过阅读列宽的块级公式会撑破正文列或被裁掉右半边（而修复前的源码形态是会折行、内容全可见的）。**必须自己加 `.katex-display { overflow-x: auto }`**。副作用是好的：公式外部宽度被锁在列宽内 —— 顺带**消除了流式期间的横向抖动**（实测块级公式流式全程宽度 0 次变化、仅高度变 3 次）。
+- **KaTeX 把同一条公式输出三份**（MathML 无障碍层 + `<annotation>` 里的 LaTeX 原文 + 可视 HTML 层）⇒ 拖蓝选中复制会得到 `M⋅q(x)≥p(x)M \cdot q(x) \geq p(x)M⋅q(x)≥p(x)`。修法是 `.katex-mathml { user-select: none }`（**不是 `display:none`**，MathML 要留在无障碍树里）。「复制整条回答」按钮不受影响 —— 它走 `answerText` 原始 markdown，不是 DOM。**写断言时别拿 `textContent` 判渲染结果**：annotation 让它必然含 `\cdot`，要断言就取 `.katex-html`。
+- **`strict` 必须设 `false`**：默认 `warn` 下，模型合法写出的中文变量名（`P(患病|阳性)`）会**按字符**刷 console 警告。`throwOnError` 同样必须 `false`，否则一条坏公式会掀掉整条消息。
+- **`$...$` 由 micromark 在强调解析之前夺取** —— 这正是 `$\frac{p(x^*)}{M \cdot q(x^*)}$` 的两个 `*` 不再被吃成 `<em>` 的机制。反过来说，**没有 math 插件时 markdown 会主动破坏公式源码**：`*` 被配成强调、`\{ \_ \%` 类反斜杠被 CommonMark 转义吞掉（而 `\cdot`/`\frac` 不受影响，因 `c`/`f` 不是可转义标点 ⇒ **损伤是选择性的**，更难排查）。下标 `_` 反而安全（CommonMark 禁 intraword 强调）。
+- **`\(...\)` / `\[...\]` 无解，别试图支持**：反斜杠在 markdown **解析期**就被吞掉（`\(a^2\)` → `(a^2)`），定界符信息彻底丢失 ⇒ 任何渲染后补救都不可能，**换 MathJax 也没用**（定界符由 remark-math 的**分词层**决定，不在渲染层）。qwen 实测 0 次使用；GPT 系有此习惯，只能靠 prompt 劝阻。
+- **IM 出站的 `stripMarkdown`（`wechat-adapter.ts`）必须把公式先占位再剥离强调**：裸正则 `_(.+?)_` 会**跨公式配对**，把 `$\sum_{i=1}^{n} a_i = b_i$` 改写成 `$\sum{i=1}^{n} ai = b_i$` —— 求和下标没了、`a_i` 变 `ai`，**数学含义被改变**（桌面端只是显示难看，IM 端是内容在出站前被篡改）。占位符要用 NUL 之类正文不可能出现的字符，但**源文件里必须写 `\u0000` 转义序列而非字面 NUL 字节** —— 后者会让 `grep` 把整个文件当二进制静默跳过（实际发生过）。

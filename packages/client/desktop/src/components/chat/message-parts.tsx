@@ -2,6 +2,8 @@ import { memo, useMemo } from "react"
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown"
 import type { Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
 import { FileText, FileDiff } from "lucide-react"
 import type { FilePart, PatchPart } from "@agent/api-client"
 import type { Artifact } from "@/components/session/artifact-preview"
@@ -64,7 +66,36 @@ const MARKDOWN_COMPONENTS: Components = {
   ),
 }
 
-const REMARK_PLUGINS = [remarkGfm]
+/**
+ * `remarkMath` keeps its default `singleDollarTextMath: true` on purpose
+ * (discussions/055 §8.2). Models overwhelmingly write inline math as `$x$`, not
+ * `$$x$$` — measured on qwen3.7-max, 85% of formulas used a single `$`, and
+ * prompting for `$$` only reached 82% with 4/12 answers mixing both. Accepting
+ * single `$` is what makes rendering independent of model behaviour.
+ *
+ * The known cost of single `$` is currency false-positives (`$5 … $10` pairing
+ * into a formula). Measured against 24 real model answers / 279 formulas: zero
+ * real false positives, so no heuristic guard is worth its complexity here — the
+ * two we prototyped both mangled real formulas (§3.2 / §3.3). Guard options are
+ * documented in §8.2.1 if a real case ever shows up.
+ *
+ * Math is claimed at the micromark level, i.e. BEFORE emphasis parsing, which is
+ * also what fixes `$\frac{p(x^*)}{M \cdot q(x^*)}$` — its two `*` used to be
+ * eaten as `<em>` and the formula silently lost them.
+ */
+const REMARK_PLUGINS = [remarkGfm, remarkMath]
+
+/**
+ * `throwOnError: false` renders an unparseable formula as inline red text
+ * instead of throwing (which would take the whole message down).
+ * `strict: false` silences the per-character `unicodeTextInMathMode` warning
+ * storm — models legitimately write CJK inside math (`P(患病|阳性)`), and the
+ * default `warn` level floods the console with one entry per character.
+ */
+// Typed off ReactMarkdown's own prop so we don't import `unified` directly (it
+// is only a transitive dependency here).
+type RehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>["rehypePlugins"]>
+const REHYPE_PLUGINS: RehypePlugins = [[rehypeKatex, { throwOnError: false, strict: false }]]
 
 /**
  * react-markdown's `defaultUrlTransform` blanks any `data:` URI and any URL
@@ -101,7 +132,12 @@ export const MarkdownContent = memo(function MarkdownContent({
   return (
     <MarkdownImageContext.Provider value={imgCtx}>
       <div className="chat-md prose prose-sm max-w-none dark:prose-invert">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} urlTransform={chatUrlTransform} components={MARKDOWN_COMPONENTS}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          urlTransform={chatUrlTransform}
+          components={MARKDOWN_COMPONENTS}
+        >
           {text}
         </ReactMarkdown>
       </div>

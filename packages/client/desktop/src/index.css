@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* KaTeX math rendering (discussions/055). Bundled locally — Vite inlines the
+   woff2 fonts as assets, so nothing is fetched at runtime. */
+@import "katex/dist/katex.min.css";
 
 /* Design tokens */
 :root {
@@ -165,6 +168,32 @@ body {
 .chat-md {
   font-size: var(--chat-body-size);
   line-height: 1.55;
+}
+
+/* --- KaTeX regressions the stock stylesheet leaves open (discussions/055 §七之前) --- */
+
+/* W1: KaTeX sets `.katex-display > .katex { white-space: nowrap }`, and ships no
+   overflow rule of its own. A long display formula (KL divergence, cross-entropy)
+   therefore blows past the reading column instead of wrapping — the raw source it
+   replaces used to fold normally and stay fully visible. Scroll the formula
+   instead of the page: the column itself must never scroll sideways.
+   `padding-bottom` keeps the scrollbar off the glyphs' descenders. */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.25rem;
+}
+
+/* W3: KaTeX emits the formula three times — MathML (for screen readers), the
+   `<annotation>` LaTeX source, and the visual HTML layer. A drag-select would
+   copy all three ("M⋅q(x)≥p(x)M \cdot q(x) \geq p(x)M⋅q(x)≥p(x)"). Excluding the
+   MathML branch from selection leaves exactly the visual text. Note this is
+   `user-select`, not `display:none` — the MathML must stay in the a11y tree.
+   The "copy whole answer" button is unaffected either way: it copies
+   `answerText`, the original markdown, not the DOM. */
+.katex-mathml {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Indeterminate progress bar animation */

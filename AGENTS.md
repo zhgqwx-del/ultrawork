@@ -102,7 +102,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 > main 分支文件。（旧 `feat/acp-support` 分支已被 `feat/agent-os-phase0` 的参考重写取代，ADR-027 B2。）
 
 **Desktop — chat / session 组件**
-- `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts, **turn-artifacts**（每轮回复下方的产物卡片，ADR-052）
+- `src/components/chat/` — reasoning-block, tool-call-block, step-indicator, execution-status, model-selector, permission-dock, question-dock, command-selector, assistant-turn, execution-flow, message-parts（markdown 渲染管线：gfm + **math/KaTeX**，ADR-070）, **turn-artifacts**（每轮回复下方的产物卡片，ADR-052）
 - `src/components/session/` — plan-panel（**任务规划**主区：渲 `PlanStep[]`，ADR-038）, artifacts-panel（产物识别=工具意图+`scan_workspace_changes` 文件系统真相；`classifyArtifacts` 分产物/工作文件，ADR-033）, workspace-panel, artifact-preview（pdf 走 `pdf-view.tsx`/pdf.js）, pdf-view.tsx（pdfjs-dist 渲 canvas，字节经 `read_file_bytes`）（右栏「执行活动/连接器/技能」三段已于 ADR-059 移除，对应 progress-panel/mcp-panel/skills-panel 组件已删）
 - `src/components/ui/` — file-icon.tsx（彩色扩展名徽章）, logo.tsx（棱镜 SVG + useId 防冲突）, select.tsx（shadcn 风格 `@radix-ui/react-select`，取代原生 `<select>`；坑：禁空串 value，见 conventions §5）, toggle.tsx（`role=switch` 受控开关，即时生效布尔项用，ADR-058 D1）
 - `src/lib/i18n-context.tsx` + `i18n-translations.ts` + `i18n-zh-hant.generated.ts` — i18n（ADR-058）：`i18n-translations.ts` 是**唯一手写源**（`en` + `zh-Hans`，纯数据无 React/tauri 依赖 → 供构建期生成器 import）；`zh-Hant` 由 `scripts/gen-zh-hant.ts`（opencc-js `s2twp`）从 `zh-Hans` **构建期生成**（devDep，不进 bundle），`t()` 三语同构无特殊路径；`config.ts` 存 `Language = "en"|"zh-Hans"|"zh-Hant"`（旧 `"zh"`→`"zh-Hans"` 迁移、detect 台港 locale→Hant）。改简体后须 `bun run --bun scripts/gen-zh-hant.ts` 重生成，check-docs §9 兜底防漂移
@@ -214,7 +214,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (69 ADRs, 001–069)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (70 ADRs, 001–070)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history
