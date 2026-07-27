@@ -241,3 +241,26 @@ bun run --bun e2e:html-preview   # exit 0 = PASS, 1 = FAIL
 
 Self-contained — NO opencode server, NO model, NO auth key. Needs system Chrome
 and/or the bundled WebKit; each engine is skipped (not failed) if it can't launch.
+
+## 数学公式三件套：`math-css-layout` / `math-render-realapp` / `im-math-degrade`（ADR-070）
+
+三个 harness 分别守住渲染链路的一段，缺一段就有验不到的东西：
+
+| harness | 覆盖 | 为什么单测不行 |
+|---|---|---|
+| `math-css-layout.e2e.ts`（`e2e:math-css`） | **真实打包 CSS** 下的字体请求、`.katex-display` 溢出（W1）、拖蓝选中不含 LaTeX 源码（W3） | jsdom 没有布局引擎、不加载字体 |
+| `math-render-realapp.e2e.ts`（`e2e:math-real`） | mock-llm-math → 真 opencode → 真 `MarkdownContent` → 真浏览器：一次真实流式回合里公式是否渲染、流式抖动幅度（W2） | 前者用手工 HTML，从没跑过 React 与真实 turn |
+| `im-math-degrade.e2e.ts`（`e2e:im-math`） | 同一份 mock 回答走 **IM 出站**：真 SSE → 真 BlockChunker → 真 `bridge.send()` → 抓到的四家 adapter 文本 | 单测直接调降级函数，不经过分块、串流与出站漏斗 |
+| `im-math-sidecar-blackbox.e2e.ts`（`e2e:im-math-blackbox`） | **编译后的 sidecar 二进制**（客户真正装到机器上的那个）：真 ChannelManager + 真微信 adapter + Bridge + `stripMarkdown`，断言打在它真实 POST 出去的 HTTP 报文上 | 前三个都 import 源码；`bun build --compile` 的打包层（依赖内联、正则特性、模块解析）从源码完全看不见 |
+
+后两个刻意共用 `mock-llm-math.ts` 的同一份回答，所以它们是**同一输入的真 A/B**：桌面端渲染成排版、IM 端降级成 Unicode，两边对同一份语料负责。
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:math-css      # 支持 E2E_ENGINE=webkit
+bun run --bun e2e:math-real     # 支持 E2E_ENGINE=webkit
+bun run --bun e2e:im-math       # 无浏览器，纯 gateway 链路（进程内 Bridge）
+bun run --bun e2e:im-math-blackbox  # 黑盒：跑编译后的 sidecar 二进制，抓真实出站报文
+```
+
+> **非空转自检是硬要求**（conventions §19）：三个 harness 里凡「X 不存在」类断言都配了前置的非空转门。`im-math-degrade` 首次运行时 opencode 少配了 `OPENCODE_APP_NAME`，回合直接报错，4 条断言在一句 51 字符的错误消息上全绿 —— 现在 check 0 不过就 `exit 1`，不给出绿色的假报告。

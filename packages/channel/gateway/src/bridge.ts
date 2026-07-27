@@ -12,6 +12,7 @@ import {
   QUESTION_SKIP_COMMAND,
 } from "./question-prompt.js";
 import { BlockChunker } from "./block-chunker.js";
+import { degradeMathToUnicode } from "./math-unicode.js";
 
 // Base URL is injected by the Tauri host alongside the password — opencode's
 // port is chosen at startup, not compile time. The fallback keeps a standalone
@@ -628,14 +629,22 @@ export class Bridge {
   private send(ctx: SessionContext, text: string): void {
     this.clearAck(ctx);
     ctx.saidSomething = true;
+    // Degrade LaTeX here rather than in each adapter (ADR-070 P2, the same
+    // "sanitising lives in bridge.ts" rule discussions/033 P0 set): not one of
+    // the four channels renders math, so a formula that the desktop shows as
+    // typeset would arrive as source code everywhere. Failure is a no-op — an
+    // unparseable span comes back untouched, which is exactly today's output.
+    const degraded = degradeMathToUnicode(text);
     // Every outbound message passes through here, so the platform cap is enforced
     // in one place. Streamed blocks need it as much as the final flush does: a
     // single 25k-char paragraph is a valid block, and the channels reject or
-    // silently truncate anything over their limit.
+    // silently truncate anything over their limit. Applied AFTER degradation:
+    // capping first could cut a span between its two `$`, leaving the head as
+    // raw LaTeX that no longer parses.
     const safe =
-      text.length > MAX_REPLY_LENGTH
-        ? text.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
-        : text;
+      degraded.length > MAX_REPLY_LENGTH
+        ? degraded.slice(0, MAX_REPLY_LENGTH) + "\n\n...(truncated)"
+        : degraded;
     const reply = ctx.reply;
     ctx.sendChain = ctx.sendChain.then(() =>
       reply(safe).catch((err) => {
@@ -959,8 +968,19 @@ export class Bridge {
     if (!parsed.ok) {
       // Keep waiting — a malformed answer must not fall through to promptAsync,
       // which opencode would reject with BusyError while the question blocks.
+      //
+      // This is the one place carrying agent-authored text that cannot go through
+      // `send()`: the re-ask must reply to THIS message (an adapter's `reply` is
+      // bound to the incoming message), while `send` uses the turn's original
+      // one. So the degradation (ADR-070 D5) is applied here by hand — without
+      // it the same question would show degraded when first asked and as raw
+      // LaTeX when re-asked.
       await msg
-        .reply(`${parsed.error}\n\n${renderQuestions(pending.questions)}`)
+        .reply(
+          degradeMathToUnicode(
+            `${parsed.error}\n\n${renderQuestions(pending.questions)}`,
+          ),
+        )
         .catch(() => {});
       return;
     }

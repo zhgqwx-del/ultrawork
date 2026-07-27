@@ -159,6 +159,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `bridge.ts`, `channel-manager.ts`, `gateway-server.ts`, `session-store.ts`
 - `session-store.ts` — chatId→session 绑定的持久化（`~/.ultrawork/session-map.json`，v2 schema：channelType/senderName/lastActiveAt/prevSessionId，key 带渠道命名空间）。**路径可注入**（测试绝不碰真实 home，ADR-051）；原子写=唯一临时名 + 串行化
 - `bridge.ts` 的 idle 轮转（ADR-051）：`getIdleRotateMs()`（env `ULTRAWORK_CHANNEL_IDLE_ROTATE_MS`，默认 60min）· `shouldRotate()`（in-flight 护栏）· `touchSession()`（活动时钟，只有真正处理了的消息才刷新）· `/resume`
+- `math-unicode.ts` — IM 出站 LaTeX→Unicode 降级（ADR-070 D5）：`degradeMathToUnicode()` 由 `bridge.ts` 的 `send()` **一处**调用（所有出站消息的唯一漏斗，四个 adapter 不改）；转换走 KaTeX `__renderToDomTree(output:"mathml")` 的**树对象**+ 规则处理（朴素取文本会把 `\frac{1}{M}` 拍平成 `1M`），解析失败保留原文；扫描器跳 fenced/inline code + 链接目标 + 裸 URL。`MATH_SPAN` 由本文件导出、`wechat-adapter.ts` 的 `stripMarkdown` 共用（定界符判据 SSOT）
 - `qr-registry.ts` — 扫码建渠道骨架（后台轮询 + 凭证到达即落盘 + 统一状态枚举 + 并发去重，ADR-044；接入模式 conventions §14）
 - `adapters/wechat/` — ilink-api.ts（HTTP 客户端）, wechat-adapter.ts（ChannelAdapter）, qr-provider.ts（ilink 扫码）
 - `adapters/dingtalk/` — dingtalk-adapter.ts（Stream 模式）, token-manager.ts, qr-provider.ts（registration 设备流）
