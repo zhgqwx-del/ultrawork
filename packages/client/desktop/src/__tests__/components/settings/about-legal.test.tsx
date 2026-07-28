@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
 // i18n: identity so assertions read on stable keys (mirrors other settings tests).
 vi.mock("@/lib/i18n-context", () => ({
@@ -30,6 +30,26 @@ vi.mock("@/generated/license-texts.json", () => ({ default: { 1: "MIT License �
 
 import { OssLicensesView } from "@/components/settings/about-legal"
 
+/**
+ * **Do not reach for `screen.getByRole("button", { name })` in this file.**
+ *
+ * A rendered page holds ~108 elements with the button role (50 expandable rows +
+ * their 50 link buttons + 5 chips + pagination + back), and a name-filtered role
+ * query computes an accessible name for *every* one of them. Measured in this
+ * exact DOM: **~1000 ms per call**, recurring after every mutation because the
+ * jsdom style caches it leans on are invalidated. Two tests were spending ~2 s
+ * each that way and intermittently blew the 5 s default timeout under full-suite
+ * load — a flake with no product cause at all.
+ *
+ * `hidden: true` does NOT help (measured: still ~1000 ms) — that only skips the
+ * visibility filter, not the name computation. The two things that do:
+ *   - pagination buttons carry their label as their only child, so `getByText`
+ *     returns the `<button>` itself for ~5 ms;
+ *   - chips need the count to disambiguate them from the 49 row source labels,
+ *     so scope the role query to the chip bar (5 candidates instead of 108).
+ */
+const chipBar = () => screen.getByText("about.oss.filterAll").closest("div")!
+
 describe("OssLicensesView", () => {
   beforeEach(() => openExternal.mockClear())
 
@@ -46,15 +66,16 @@ describe("OssLicensesView", () => {
     // Page 1 = rows 1..50 (opencode + pkg-1..pkg-49); pkg-49 in, pkg-50 out.
     expect(screen.getByText("pkg-49")).toBeInTheDocument()
     expect(screen.queryByText("pkg-50")).not.toBeInTheDocument()
-    // Previous is disabled on the first page.
-    expect(screen.getByRole("button", { name: "about.oss.prev" })).toBeDisabled()
+    // Previous is disabled on the first page. (getByText, not getByRole — see the
+    // note above the describe; the label is the button's only child.)
+    expect(screen.getByText("about.oss.prev")).toBeDisabled()
     // Next → page 2 (rows 51..85 = pkg-50..pkg-84); opencode gone, pkg-84 in.
-    fireEvent.click(screen.getByRole("button", { name: "about.oss.next" }))
+    fireEvent.click(screen.getByText("about.oss.next"))
     expect(await screen.findByText("pkg-84")).toBeInTheDocument()
     expect(screen.queryByText("opencode")).not.toBeInTheDocument()
     // Last page → Next disabled; Previous returns to page 1.
-    expect(screen.getByRole("button", { name: "about.oss.next" })).toBeDisabled()
-    fireEvent.click(screen.getByRole("button", { name: "about.oss.prev" }))
+    expect(screen.getByText("about.oss.next")).toBeDisabled()
+    fireEvent.click(screen.getByText("about.oss.prev"))
     expect(await screen.findByText("opencode")).toBeInTheDocument()
   })
 
@@ -71,11 +92,13 @@ describe("OssLicensesView", () => {
     await screen.findByText("opencode")
     // Mock counts: npm 84, vendored 1. Chips carry the count in their name
     // (rows show the source label WITHOUT a count) → exact name hits only the chip.
-    fireEvent.click(screen.getByRole("button", { name: "about.oss.source.npm 84" }))
+    // Scoped to the chip bar so the name computation runs over 5 candidates
+    // rather than all 108 — see the note above the describe.
+    fireEvent.click(within(chipBar()).getByRole("button", { name: "about.oss.source.npm 84" }))
     await waitFor(() => expect(screen.queryByText("opencode")).not.toBeInTheDocument())
     expect(screen.getByText("pkg-1")).toBeInTheDocument()
     // Click "vendored" → only opencode remains, npm rows gone.
-    fireEvent.click(screen.getByRole("button", { name: "about.oss.source.vendored 1" }))
+    fireEvent.click(within(chipBar()).getByRole("button", { name: "about.oss.source.vendored 1" }))
     await waitFor(() => expect(screen.queryByText("pkg-1")).not.toBeInTheDocument())
     expect(screen.getByText("opencode")).toBeInTheDocument()
   })
@@ -86,8 +109,8 @@ describe("OssLicensesView", () => {
     fireEvent.change(screen.getByPlaceholderText("about.oss.searchPlaceholder"), { target: { value: "zzz-nonexistent" } })
     expect(await screen.findByText("about.oss.noResults")).toBeInTheDocument()
     // single (empty) page → no Prev/Next controls
-    expect(screen.queryByRole("button", { name: "about.oss.prev" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "about.oss.next" })).not.toBeInTheDocument()
+    expect(screen.queryByText("about.oss.prev")).not.toBeInTheDocument()
+    expect(screen.queryByText("about.oss.next")).not.toBeInTheDocument()
   })
 
   it("lazily reveals license full text on row expand", async () => {
