@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **会话页 AI 生成内容提示** —— 会话输入框下方新增一行浅色提示「内容由 AI 生成，仅供参考」（三语），把 EULA 草稿 §3.2 / §3.5 的既有条款落到界面上。
+  - **只加在会话页**（`Session.tsx` 的 composer），Home 页输入框不加 —— 那里是发起任务的入口，上方没有 AI 输出。两页共用 `ChatInput` 但 `variant="reply"` 全仓库只此一处消费，天然隔离。
+  - 与输入框同生同灭：权限/提问 dock 弹起时输入框本就被抑制，提示随之隐藏；产物预览最大化时整个 composer 不渲染，同样不显示。
+  - **颜色档位是实测标定的，不是手感**：`opacity-70` 会把浅色主题压到 2.68:1（低于 WCAG 非正文 3:1），而这行字的目的正是合规上的显著提示。收敛到 `opacity-80` —— 浅色 3.20:1 / 暗色 4.45:1，是仍达标的最浅一档。标定表见 `conventions.md §20`。
+  - headless 走查（真 opencode → 真 Vite → Chrome）实测 12 项：Home 页 0 命中、会话页恰好 1 处、位于输入框下方且在 860px 阅读列内居中、三语文案各自正确、双主题对比度达标、600px 窄窗无横向溢出且不换行、回合结束仍贴底（距底 1px，ADR-047 无回归）。
+  - **已知覆盖缺口（有意未做，非缺陷）**：`/orchestration/run/:id` 流水线页渲染 AI 输出但无 composer 故无提示；IM 渠道出站消息未加（策略分析见本次会话，噪音与截断预算是主要制约）。
+
 - **数学公式（LaTeX）渲染（ADR-070 / discussions/055）** —— 此前聊天回答里的公式全部以源码形态显示（`$M \cdot q(x) \geq p(x)$`），对照同类产品明显落后。
   - 管线加 `remark-math`（**默认配置**）+ `rehype-katex`（`throwOnError:false` + `strict:false`），落在 `message-parts.tsx`（聊天）与 `artifact-preview.tsx`（`.md` 产物预览）两处，**零启发式、对模型行为零依赖**。
   - **顺带修好一个更隐蔽的问题**：没有 math 插件时，markdown 的内联规则会**主动破坏公式源码** —— `$\frac{p(x^*)}{M \cdot q(x^*)}$` 的两个 `*` 被配对成 `<em>`、星号消失（截图里显示成 `$\frac{p(x^)}{M |cdot q(x^)}$`）。math 在 micromark 层先于强调解析夺取 `$...$`，该损伤随之消失。

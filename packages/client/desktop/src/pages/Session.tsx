@@ -498,6 +498,14 @@ export function SessionPage() {
                 </div>
               }
             />
+            {/* AI-generated-content notice. Session only — Home's composer starts a
+                task and has no AI output above it to qualify. Deliberately inside
+                the same conditional as the input: while a dock is up the input is
+                gone anyway, and the transcript above still carries the notice's
+                context. */}
+            <p className="mt-1.5 text-center text-[11px] text-[var(--color-fg-muted)] opacity-80">
+              {t("session.aiDisclaimer")}
+            </p>
           </div>
         </div>
       )}
