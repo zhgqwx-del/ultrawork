@@ -30,6 +30,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - **IM 出站会篡改数学公式（既存缺陷，独立于上条）** —— `wechat-adapter.ts` 的 `stripMarkdown` 用裸正则剥离强调，`_(.+?)_` 会**跨公式配对**，把 `$\sum_{i=1}^{n} a_i = b_i$` 发成 `$\sum{i=1}^{n} ai = b_i$`：求和下标丢失、`a_i` 变 `ai`，**数学含义在出站前被改变**。修法是先把公式区段占位、剥离强调后再还原。桌面端那个只是显示难看，这个是内容错误。
+- **`about-legal.test.tsx` 的超时 flake（既有问题，与 LaTeX 无关）** —— 两个用例单跑 ~2s、满负载并跑 >5s，随机撞上 vitest 默认 5s 超时让 CI 变红。根因是带 `name` 的 role 查询会对页面上**全部 108 个** `button`/`role="button"` 元素逐个计算可访问名（**~1000ms，且每次 DOM 变动后重付一遍**；`hidden: true` 实测无效——它只跳过可见性过滤）。改用 `getByText`（标签是按钮唯一子节点）与 `within(chipBar)`（候选 108→5）：1994ms→119ms、1896ms→184ms，连跑 5 次全量 730/730 全绿。教训固化 testing.md §10。
 - **`stripMarkdown` 的 `_` 强调缺 CommonMark intraword 保护** —— 与上条同一个机制，触发源换成了降级产物：Unicode 映射不了的下标会退成 `x_(i+1)` 形式，两处会被裸 `_(.+?)_` 配成一对、吃掉中间正文。补上 `(?<![^\s])_ … _(?![\p{L}\p{N}])`，顺带让 `max_pool_size` 这类 snake_case 标识符不再被拆。
 
 

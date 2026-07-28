@@ -533,3 +533,26 @@ packages/knowledge/sidecar/
 **断言方向要成对。** 只写否定断言（「不杀陌生人」）的 suite，对「判定函数恒返回 false」这类回归**完全免疫**——判定函数退化成永远说"不是我的"，测试全绿。必须配一条肯定路径（「认得出并回收自家进程」）。收尾时做 A/B 反证：把判定函数分别退化为恒 `true` / 恒 `false`，**两个方向都要有测试变红**；只有一边红说明另一边没覆盖。
 
 同理适用于鉴权：`401 on missing credential` 单独存在时，`app.use(() => 401)` 也能过。必须补 `200 with the correct credential`，以及「预检 OPTIONS 不被 401」。
+
+## 10. `getByRole(..., { name })` 在大列表视图里是超时 flake 的来源（2026-07-27）
+
+**症状**：`about-legal.test.tsx` 的两个用例在**单跑时 ~2s、满负载并跑时 >5s**，随机撞上 vitest 默认 `testTimeout: 5000` 变红。产品代码没有任何问题，纯测试查询开销。
+
+**根因（实测，非推断）**：带 `name` 的 role 查询会对**每一个**匹配该 role 的元素计算可访问名（`computeAccessibleName`）。该页面渲染时有 **108 个** `button` / `role="button"` 元素（50 个可展开行 + 50 个链接按钮 + 5 个筛选 chip + 分页 + 返回）：
+
+| 查询 | 耗时 |
+|---|---|
+| `screen.getByRole("button", { name })` | **~1000ms**，且**每次 DOM 变动后重新付一遍**（它依赖的 jsdom 样式缓存被 mutation 打掉） |
+| 同上加 `hidden: true` | **~1000ms —— 没用**（只跳过可见性过滤，不跳过名字计算） |
+| `screen.getByText("标签")` | **5ms**（标签是按钮唯一子节点时直接返回该 `<button>`） |
+| `within(小容器).getByRole("button", { name })` | **31–84ms**（候选从 108 降到 5） |
+| `screen.getAllByRole("button")`（不带 name） | 21ms（role 匹配本身不贵，贵的是名字计算） |
+
+**处置**：
+- 标签就是按钮唯一子节点时 → `getByText`，拿到的就是 `<button>`，`toBeDisabled()` 照常可用。
+- 需要靠附加内容消歧时（如 chip 的 `标签 84` 要和 49 个同名行区分）→ `within(容器)` 缩小候选集，别改产品代码加 testid。
+- **不要靠调高 `testTimeout` 掩盖** —— 那只是把 flake 推后。
+
+**判断是否适用**：只在**渲染了大量同 role 元素**的视图里才需要在意（本仓库其余测试并跑时最慢单测 736ms，无风险）。小组件测试继续用 `getByRole` 是对的 —— 它的可访问性语义更强。
+
+> 修复效果：两个用例 1994ms→119ms、1896ms→184ms；文件总耗时 4.26s→0.59s；连跑 5 次全量 730/730 全绿。
