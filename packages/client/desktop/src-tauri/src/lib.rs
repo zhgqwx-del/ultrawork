@@ -7840,14 +7840,42 @@ mod lifecycle_tests {
             std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut child = sys_cmd(&exe)
-            .args(["lifecycle_tests::fake_sidecar_listener", "--exact", "--nocapture"])
-            .env("ULTRAWORK_TEST_FAKE_SIDECAR_PORT", port.to_string())
-            .spawn()
-            .expect("spawn fake sidecar");
+        // Retry ETXTBSY. `fs::copy` above has closed its write handle by the time it
+        // returns, but that is not enough on Linux: cargo test runs these lifecycle
+        // tests in parallel, and a sibling thread that forks while our copy is still
+        // open inherits that write fd. The child then execs a file the kernel still
+        // considers open-for-write and the spawn fails with ETXTBSY (26) — which is
+        // why this only ever failed on ubuntu, never on macOS or Windows (neither
+        // enforces ETXTBSY). The inherited fd is closed as soon as the sibling's
+        // exec completes, so the window is milliseconds; retrying rides it out
+        // without serialising the tests.
+        let spawn_deadline = std::time::Instant::now();
+        let mut child = loop {
+            match sys_cmd(&exe)
+                .args(["lifecycle_tests::fake_sidecar_listener", "--exact", "--nocapture"])
+                .env("ULTRAWORK_TEST_FAKE_SIDECAR_PORT", port.to_string())
+                .spawn()
+            {
+                Ok(child) => break child,
+                // raw_os_error, not ErrorKind: ErrorKind::ExecutableFileBusy is still
+                // unstable. Gated on unix because 26 is ETXTBSY only there — on
+                // Windows that number is an unrelated Win32 code, and retrying it
+                // would just delay a real failure by 5s.
+                Err(e)
+                    if cfg!(unix)
+                        && e.raw_os_error() == Some(26)
+                        && spawn_deadline.elapsed() < Duration::from_secs(5) =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => panic!("spawn fake sidecar: {e:?}"),
+            }
+        };
 
         // Wait for it to actually hold the port — and notice a child that died
-        // (e.g. failed to bind) instead of blocking for the full timeout.
+        // (e.g. failed to bind) instead of blocking for the full timeout. Timed
+        // from here, not from the spawn attempt: retries above must not eat into
+        // the bind window.
         let start = std::time::Instant::now();
         while !is_port_in_use(port) {
             if let Ok(Some(status)) = child.try_wait() {
