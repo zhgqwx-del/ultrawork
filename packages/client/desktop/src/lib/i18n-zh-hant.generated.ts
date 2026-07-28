@@ -777,6 +777,7 @@ export const zhHant: Record<string, string> = {
   "aria.unreadArtifacts": "新產物",
   "session.transcriptHidden": "會話已隱藏 — 點選展開",
   "session.repliedWhileHidden": "已回覆 — 點選檢視",
+  "session.aiDisclaimer": "內容由 AI 生成，僅供參考",
   "settings.planAutoReveal": "出現任務規劃時自動展開側欄",
   "settings.planAutoRevealHint": "只在會話首次出現規劃時展開；你手動關閉側欄後不再自動展開。產物始終只用徽標提示，不會打斷你。",
   "settings.notify": "通知提醒",
