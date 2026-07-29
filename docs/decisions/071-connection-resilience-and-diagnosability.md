@@ -116,7 +116,7 @@ review 中有两个方向经实测**证伪**，明确不做：
 
 **后续（同日）已用不含 Rust 的方案补回** —— `use-backend-liveness.ts`：横幅升起后探 `GET /global/health`，**只有明确的连接失败**才判定进程已退出；任何 HTTP 响应（含 401/500）都证明有进程在听，超时则判 `unknown`（端口可能开着只是服务卡住，此时指控进程死了是编造）。判定为已退出时连「重新连接」按钮也一并隐藏 —— 留着它就是那句谎话的按钮版。
 
-**探测必须两步走**（真机验收 C 组暴露，2026-07-29）：opencode 把 basicAuth 排在 cors **之前**，所以 401 响应没有 `Access-Control-Allow-Origin`，浏览器直接拒绝交给我们 —— **从 renderer 看，「密码错」与「端口没人听」完全相同**。单步探测因此把凭据失效误报成「后台服务已退出，请重启」，而重启毫无用处（坏密码在 localStorage 里）。补救是 `OPTIONS`：服务端明确放行未鉴权 preflight，它能走到 cors 中间件并带 ACAO 返回；**OPTIONS 通而 GET 不通 ⇒ 有人在听且在拒绝你**。详见 gotchas §20⑭。
+**探测必须两步走**（真机验收 C 组暴露，2026-07-29）：opencode 把 basicAuth 排在 cors **之前**，所以 401 响应没有 `Access-Control-Allow-Origin`，浏览器直接拒绝交给我们 —— **从 renderer 看，「密码错」与「端口没人听」完全相同**。单步探测因此把凭据失效误报成「后台服务已退出，请重启」，而重启毫无用处（坏密码在 localStorage 里）。补救是 `mode: "no-cors"` 的第二次请求：简单请求、无 preflight、任何状态码都回 `opaque`，**只有连接失败才 throw** ⇒ **可读 GET 不通而 no-cors 通 = 有人在听且在拒绝你**。（**先试过手动发 `OPTIONS`，被真 Chrome 否掉**：手写 OPTIONS 自身就是非简单请求、需要自己的 preflight，而服务端 `Allow-Methods` 不含 OPTIONS ⇒ 三种场景全被拦。）详见 gotchas §20⑭ · 常驻回归 `e2e/backend-liveness-cors.e2e.ts`。
 
 **已知边界**：`vite dev` 下请求走 dev-server 代理，目标拒绝时代理答 500 ⇒ 读作 `listening`，所以这个区分是生产环境专属；dev 拿到的仍是通用文案，与改动前一致、无回退。**因此 `tauri dev` 结构上验不了这条 —— 必须生产构建。**
 
