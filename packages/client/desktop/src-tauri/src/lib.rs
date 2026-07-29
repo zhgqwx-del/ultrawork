@@ -948,7 +948,7 @@ struct SpawnedSidecar {
 }
 
 /// Spawn a sidecar binary using ShellExt (works with App or AppHandle).
-fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Manager<tauri::Wry>>(
+fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
     shell_host: &T,
     name: &'static str,
     args: &[String],
@@ -969,8 +969,7 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Manager<ta
         .map_err(|e| format!("Failed to spawn {}: {}", name, e))?;
     let pid = child.pid();
     // Dropping CommandChild does not kill the OS process — it continues running.
-    let app = shell_host.app_handle().clone();
-    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx, Some(app)) })
+    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx) })
 }
 
 // ── Sidecar log capture ────────────────────────────────────────────
@@ -1133,20 +1132,6 @@ impl SidecarLog {
     }
 }
 
-/// Emitted when a sidecar process dies. The renderer surfaces it, because the
-/// app cannot heal from this on its own: sidecars are spawned once at boot and
-/// never supervised afterwards.
-const SIDECAR_EXITED_EVENT: &str = "sidecar-exited";
-
-fn notify_sidecar_exited(app: Option<&tauri::AppHandle>, name: &str, code: Option<i32>) {
-    use tauri::Emitter;
-    let Some(app) = app else { return };
-    let _ = app.emit(
-        SIDECAR_EXITED_EVENT,
-        serde_json::json!({ "name": name, "code": code }),
-    );
-}
-
 /// Drain the command's event stream on a dedicated thread, flipping a flag when the
 /// child exits, and mirroring everything the child prints into its log file.
 ///
@@ -1158,9 +1143,8 @@ fn notify_sidecar_exited(app: Option<&tauri::AppHandle>, name: &str, code: Optio
 fn watch_sidecar_exit(
     name: &'static str,
     rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
-    app: Option<tauri::AppHandle>,
 ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    watch_sidecar_exit_with(name, rx, SidecarLog::open(name), app)
+    watch_sidecar_exit_with(name, rx, SidecarLog::open(name))
 }
 
 /// Log sink injected so tests never touch the real home directory (ADR-051);
@@ -1169,7 +1153,6 @@ fn watch_sidecar_exit_with(
     name: &'static str,
     mut rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
     mut log: SidecarLog,
-    app: Option<tauri::AppHandle>,
 ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
     use std::sync::atomic::Ordering;
     use tauri_plugin_shell::process::CommandEvent;
@@ -1189,11 +1172,6 @@ fn watch_sidecar_exit_with(
                             name, payload.code, payload.signal
                         ),
                     );
-                    // Nothing restarts a sidecar once boot is over, so a death
-                    // here is permanent until the app is relaunched. Tell the
-                    // renderer: the only other symptom is a stream that quietly
-                    // stops, which is indistinguishable from an idle agent.
-                    notify_sidecar_exited(app.as_ref(), name, payload.code);
                     flag.store(true, Ordering::SeqCst);
                     break;
                 }
@@ -1301,9 +1279,7 @@ fn should_retry_on_new_port(outcome: &ReadyOutcome, fixed: bool, attempt: u32) -
 ///
 /// `args_for` / `env_for` take the chosen port because a retry changes it: the port
 /// has to be rebuilt into the child's argv and environment, not captured up front.
-fn start_sidecar<
-    T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<tauri::Wry> + tauri::Manager<tauri::Wry>,
->(
+fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<tauri::Wry>>(
     shell_host: &T,
     name: &'static str,
     preferred_port: u16,
@@ -9819,7 +9795,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn flags_exit_on_terminated() {
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit_with("acp-client", rx, log_into(&tmp_log_dir("terminated")), None);
+        let exited = watch_sidecar_exit_with("acp-client", rx, log_into(&tmp_log_dir("terminated")));
         assert!(!exited.load(Ordering::SeqCst));
 
         tauri::async_runtime::block_on(async {
@@ -9835,7 +9811,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn flags_exit_when_the_event_stream_ends() {
         let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(1);
-        let exited = watch_sidecar_exit_with("channel-gateway", rx, log_into(&tmp_log_dir("stream-end")), None);
+        let exited = watch_sidecar_exit_with("channel-gateway", rx, log_into(&tmp_log_dir("stream-end")));
         drop(tx);
         assert!(wait_for(&exited, true), "stream end must flip the exit flag");
     }
@@ -9846,7 +9822,7 @@ mod sidecar_exit_watch_tests {
     fn stdout_and_stderr_do_not_flag_an_exit() {
         let dir = tmp_log_dir("output");
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit_with("knowledge-sidecar", rx, log_into(&dir), None);
+        let exited = watch_sidecar_exit_with("knowledge-sidecar", rx, log_into(&dir));
 
         tauri::async_runtime::block_on(async {
             tx.send(CommandEvent::Stdout(b"listening on 127.0.0.1:4098\n".to_vec())).await.unwrap();
@@ -9881,7 +9857,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn keeps_draining_so_a_chatty_child_never_blocks() {
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit_with("opencode-server", rx, log_into(&tmp_log_dir("chatty")), None);
+        let exited = watch_sidecar_exit_with("opencode-server", rx, log_into(&tmp_log_dir("chatty")));
 
         tauri::async_runtime::block_on(async {
             for i in 0..200 {
