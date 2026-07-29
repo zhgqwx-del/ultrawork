@@ -523,8 +523,9 @@
 
 **⑦ sidecar 日志写盘绝不能重试。** shell 插件的事件通道容量为 1 且读端 `block_on(tx.send)` ⇒ 一个死磕重试的 logger 会把背压**顶回 sidecar 进程**。写失败即永久禁用（`SidecarLog.disabled`）。
 
-**⑧ ⚠️ `sidecar-auth.json` 被重新生成会把 app 永久锁死（既有隐患，未修）。**
-`config-context.tsx` 里 localStorage 一旦有密码就**永不重新拉取**。若用户删掉 `~/.config/ultrawork/` 重置，Rust 会生成新密码，前端却继续用旧的 ⇒ 永久 401，症状是「横幅一直显示断开、后台每 15s 重试一次」。
+**⑧ `sidecar-auth.json` 被重新生成曾会把 app 永久锁死（已修，2026-07-29）。**
+`config-context.tsx` 里 localStorage 一旦有密码就**永不重新拉取**。用户删掉 `~/.config/ultrawork/` 重置 ⇒ Rust 生成新密码、前端继续用旧的 ⇒ 永久 401。**症状与「重连失败」完全一样**（横幅常驻 + 点重连没用 + 后台每 15s 重试），排查时极易误判 —— 我真机测试时就踩了这个坑。
+现由 `use-credential-resync.ts` 恢复：探测到 **401/403** 且 base URL 是 **auto** 时向 Rust 重取一次。两条守卫都是承重的 —— 非 401 不动（普通断线与凭据无关），非 auto 不动（**用户在设置页指向自己的 opencode 时，那套凭据是他的，覆盖掉等于为了修一个他没有的问题而毁掉他的配置**）。
 
 **⑨ 服务端存的 session `directory` 是 realpath，而 `?directory=` 是精确匹配。**
 macOS 上 `/var` → `/private/var`。工作区路径若经软链接，侧栏会**一条会话都不显示**。既有行为；默认工作区不受影响。
