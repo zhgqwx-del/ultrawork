@@ -17,6 +17,7 @@ export const zhHant: Record<string, string> = {
   "sidebar.loadMore": "載入更早的會話",
   "connection.offline": "已與 Agent 服務斷開",
   "connection.retry": "重新連線",
+  "connection.sidecarExited": "後臺服務已退出，請重啟 Ultrawork 恢復。",
   "sidebar.unread": "有新訊息",
   "sidebar.user": "使用者",
   "settingsPopover.general": "通用設定",
