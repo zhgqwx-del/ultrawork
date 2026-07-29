@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **稳定性 review 第一轮：连接韧性、会话可达性、可诊断性（ADR-071 / discussions/057，真机验收通过）** —— 一轮系统性排查（无 QA、真机问题暴露不出来）挖出一条完整故障链，四段各自独立成缺陷：`sidecar 崩溃/卡住 → SSE 断流 → 重试耗尽后永久放弃 → 会话永久卡在「运行中」`。
+  - **🔴 SSE 断流后永久失联** —— `gave-up` 是终态（真实 HTTP 探针实测：后端恢复健康后服务端 accept 计数不再增长，transport 再不敲门）。改为快速重试耗尽后**转入 15s 后台慢重试**，状态仍报 `gave-up` 一次给 UI，但静默重试直到接上。`ACP_SSE_RETRY` 同步改造（单 agent 的 Claude/Gemini 与 team 的 ACP 成员此前同样会永久断流）。不设 `keepRetryingEveryMs` 时行为完全不变，gateway 的无限重试策略不受影响。
+  - **🔴 会话永久卡在「运行中」、输入框永久锁死** —— opencode `/event` **没有重放**，断流窗口内的 `session.status:idle` 永久丢失，而 `activeSessionIds` 纯事件驱动 ⇒ 侧栏一直转圈且 `sendMessage` 的 busy guard 把输入锁死，只能切工作区或重启。新增 `reconnectEpoch`（**只在重连时 +1，首连不算**），据此用 `GET /session/status` 从服务端重建 busy 集（该端点在会话转 idle 时删除条目 ⇒ **缺席即 idle**）。只对 opencode 绑定的会话下结论——ACP 自己会重放 busy 快照。
+  - **🔴 会话超过 50 个后永久不可达，且搜索是假的** —— 侧栏固定 `limit: 50` 无分页，搜索框只对已加载的 50 条做客户端过滤（`listSessions` 的 `search`/`start` 参数一直存在却没接）。**实测：本机 workspace2 的 140 个会话有 90 个打不开**，而搜索会让人以为「确实没有」。改为查询打到服务端 + 「加载更早的会话」逐页扩窗。
+  - **🔴 三个自研 sidecar 的日志全部丢弃** —— gateway/knowledge/acp-client 共 153 处 `console.*` 进 `/dev/null`，且它们自己不写日志文件 ⇒ 现场问题零信息。改为 Rust 侧集中捕获到 `<xdgData>/ultrawork/log/sidecar/<name>.log`（一处覆盖四个 sidecar，**连 panic 和启动期失败都能抓到**）；4MB 轮转保留一代 ⇒ 单 sidecar 磁盘硬上限 8MB；**写失败即永久禁用 logger**（通道容量为 1 且读端阻塞，重试会把背压顶回 sidecar）。
+  - **🔴 所有 REST 调用无超时** —— `api-client` 里 `signal|AbortSignal|timeout` 命中数为 0。opencode 单线程卡住（不是死）时 `fetchHistory` 永不 resolve ⇒ 永久骨架屏、无错误无重试。加 30s 默认上限（MCP 连接单独放宽到 180s）。**超时覆盖 body 读取而非只覆盖 header** —— 「发了 200 然后卡住」正是卡死的形态。用 `AbortController` 而非 `AbortSignal.timeout`（后者在 macOS 10.15 的 WKWebView 上不存在）。
+  - **🔴 产物扫描静默漏掉最新产物** —— `collect_changed_files` 是 LIFO DFS，`SCAN_WALK_MAX`/`SCAN_MAX_ENTRIES` 会在遍历完成前截断，**同一个新文件放 `d000` 找不到、放 `d199` 找得到**（确定性复现）。改为有界最小堆（「最新 500」全局成立、内存不靠截断遍历来兜）+ 子目录按 mtime 从新到旧遍历（只用于排序，绝不用于剪枝——原地改文件不动父目录 mtime）。顺带把条目上限 50k→200k（实测 80k 条目仅 14–150ms，原值过于保守却让静默截断更易发生）。
+  - **停止生成失败被静默吞** —— `cancel` 失败只 `setSending(false)`，而 `stoppedRef` 已挡掉之后所有 message 事件 ⇒ **后端继续跑继续烧 token，界面装作已停**。改为报错 + 解除本地冻结（光提示不够，不撤销冻结的话后续产出全被吞）。
+  - **知识库 watcher 大批量变更打成 re-index 风暴** —— flush 时对整批文件同时 fire-and-forget `reindexFile`，每个都要读+哈希+分块+嵌入。改为**单一顺序队列**；批量上限 500→2000 并只守记账（`indexFile` 会读取并哈希每个文件，对大文件夹做全量重扫反而更重——那是拿一种病换另一种病）。
+
+### Added
+
+- **断连常驻横幅 + 手动重连（ADR-071）** —— 取代原先一次性 toast（错过就再无线索，用户看到的是能打字但永远不回话的 app）。4s 宽限，普通秒级抖动不弹。Rust 侧新增 `sidecar-exited` 事件：**sidecar 死亡与网络断开文案不同**，前者没有任何东西会重启它，说「正在重试」是撒谎。
+- **`e2e/session-reachability.e2e.ts`** —— 130 个真实会话 + 真实 opencode + 真实 Chrome，先验服务端 `?search=` 契约再信 UI（单测 mock 了 `listSessions`，证不了服务端行为）。
+
 - **`/` 技能菜单：无界弹层 + 失效过滤 + 4 个功能性缺陷（discussions/056）** —— 真机截图暴露：Home 页敲 `/` 唤起的菜单越过主内容卡片顶部，9 个内置技能就已有约 60% 条目**渲染了却永远够不到**。排查后发现同一组件里还藏着与"列表太长"无关的功能缺陷。
   - **弹层无界** —— 缺 `max-h` + `overflow-y-auto`（同目录三个兄弟下拉全都有，只此一处漏写），且被 `root-layout` 的 `overflow-hidden` 硬裁。补上上限 + 滚动 + scroll-into-view（原 `listRef` 声明了却从未被读取）。
   - **描述不截断** —— skill 的 `description` 是写给模型做技能路由的（实测 163–605 字符，中位 315），却与命令名同行内流式换行。改为两行式 + 单行 `truncate`，全文保留在 `title` tooltip。

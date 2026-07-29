@@ -75,13 +75,33 @@ async function serve() {
   })
 
   console.log(`Knowledge Sidecar listening on 127.0.0.1:${server.port}`)
+  // Re-indexing runs through ONE sequential queue.
+  //
+  // A flush hands over every file in the batch at once, and each `reindexFile`
+  // reads, hashes, chunks and embeds. Firing them together — which is what
+  // fire-and-forget did — meant a single `git checkout` could put hundreds of
+  // embedding runs in flight simultaneously and wedge the sidecar. Serialising
+  // costs nothing in the common case (one or two edited files) and is the
+  // difference between "slower for a while" and "unresponsive".
+  let indexQueue: Promise<void> = Promise.resolve()
+  const enqueue = (label: string, work: () => Promise<unknown>) => {
+    indexQueue = indexQueue.then(() =>
+      work().then(
+        () => {},
+        (err) => console.error(`[watcher] ${label} failed:`, err),
+      ),
+    )
+  }
+
   watcher.onChange((folderPath, filePath, eventType) => {
     if (eventType === "change") {
-      indexer.reindexFile(folderPath, filePath).catch((err) => {
-        console.error(`[watcher] Re-index failed for ${filePath}:`, err)
-      })
+      enqueue(`re-index ${filePath}`, () => indexer.reindexFile(folderPath, filePath))
     } else if (eventType === "delete") {
       indexer.removeFile(filePath)
+    } else if (eventType === "rescan") {
+      // A burst too large to even track file-by-file (watcher MAX_BATCH_FILES).
+      // indexFolder is itself sequential and guarded against overlapping runs.
+      enqueue(`full re-index ${folderPath}`, () => indexer.indexFolder(folderPath))
     }
   })
 

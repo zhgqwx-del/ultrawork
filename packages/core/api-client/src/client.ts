@@ -38,6 +38,82 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The server accepted the connection but did not finish answering in time.
+ * Distinct from ApiError because there is no status to report and the UX differs:
+ * a timeout is "the backend is wedged", not "the backend said no".
+ */
+export class ApiTimeoutError extends Error {
+  constructor(
+    public readonly url: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`API request timed out after ${timeoutMs}ms: ${url}`)
+    this.name = "ApiTimeoutError"
+  }
+}
+
+/** Default per-request ceiling. Generous — every endpoint here is local. */
+const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * Connecting an MCP server spawns a process (often `npx`, which may download on
+ * first run), so it is legitimately slow in a way no other endpoint is.
+ */
+const MCP_TIMEOUT_MS = 180_000
+
+/**
+ * fetch + full body read under one hard ceiling.
+ *
+ * The deadline MUST span the body read, not just the headers: fetch resolves as
+ * soon as headers arrive, so a server that answers `200` and then stalls mid-body
+ * would still hang forever if the timer were cleared at that point. That is the
+ * exact shape of a wedged single-threaded opencode, so it is the case worth
+ * covering, not an edge case.
+ *
+ * Implemented with AbortController rather than `AbortSignal.timeout` because the
+ * app supports macOS 10.15, whose WKWebView predates that API
+ * (tauri.conf.json minimumSystemVersion).
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ response: Response; text: string }> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, timeoutMs)
+      : undefined
+
+  // Respect a caller-supplied signal too, so an explicit cancel still wins.
+  const caller = init.signal
+  const onCallerAbort = () => controller.abort()
+  caller?.addEventListener("abort", onCallerAbort)
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    // Read inside the try so a stalled body trips the same deadline. Failures
+    // carry no body we use (ApiError reports status/statusText), and 204 or
+    // explicitly-empty responses have nothing to read.
+    const skipBody =
+      !response.ok ||
+      response.status === 204 ||
+      response.headers.get("content-length") === "0"
+    return { response, text: skipBody ? "" : await response.text() }
+  } catch (err) {
+    if (timedOut) throw new ApiTimeoutError(url, timeoutMs)
+    throw err
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    caller?.removeEventListener("abort", onCallerAbort)
+  }
+}
+
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
 
@@ -64,12 +140,14 @@ export class ApiClient {
   private username?: string
   private password?: string
   private workingDirectory?: string
+  private timeoutMs: number
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl
     this.username = config.username
     this.password = config.password
     this.workingDirectory = config.workingDirectory
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
   getBaseUrl(): string {
@@ -108,54 +186,33 @@ export class ApiClient {
     return headers
   }
 
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
-    const headers = this.buildHeaders(options?.headers as Record<string, string>)
-
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers,
-    })
-
-    if (!response.ok) {
-      throw new ApiError(response.status, response.statusText)
-    }
-
-    // Handle empty responses (204 No Content, or empty body)
-    if (response.status === 204 || response.headers.get("content-length") === "0") {
-      return undefined as T
-    }
-
-    const text = await response.text()
-    if (!text) return undefined as T
-
-    try {
-      return JSON.parse(text) as T
-    } catch {
-      throw new Error(`Failed to parse API response as JSON: ${text.slice(0, 200)}`)
-    }
+  private async request<T>(path: string, options?: RequestInit, timeoutMs?: number): Promise<T> {
+    const { data } = await this.requestWithResponse<T>(path, options, timeoutMs)
+    return data
   }
 
   /**
    * Like request(), but also returns the raw Response object so callers
    * can read response headers (e.g. X-Next-Cursor for pagination).
    */
-  private async requestWithResponse<T>(path: string, options?: RequestInit): Promise<{ data: T; response: Response }> {
+  private async requestWithResponse<T>(
+    path: string,
+    options?: RequestInit,
+    timeoutMs?: number,
+  ): Promise<{ data: T; response: Response }> {
     const headers = this.buildHeaders(options?.headers as Record<string, string>)
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers,
-    })
+    const { response, text } = await fetchWithTimeout(
+      `${this.baseUrl}${path}`,
+      { ...options, headers },
+      timeoutMs ?? this.timeoutMs,
+    )
 
     if (!response.ok) {
       throw new ApiError(response.status, response.statusText)
     }
 
-    if (response.status === 204 || response.headers.get("content-length") === "0") {
-      return { data: undefined as T, response }
-    }
-
-    const text = await response.text()
+    // Empty responses (204 No Content, or empty body)
     if (!text) return { data: undefined as T, response }
 
     try {
@@ -187,6 +244,19 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(request),
     })
+  }
+
+  /**
+   * Busy/retrying sessions, keyed by id. The server DELETES a session's entry
+   * when it goes idle, so the key set IS the busy set and absence means idle.
+   *
+   * This is the authority used to re-derive local busy markers after an SSE
+   * reconnect: the event stream has no replay, so a `session.status:idle`
+   * emitted while the stream was down is gone for good, and a marker that
+   * missed its idle would otherwise keep the session spinning forever.
+   */
+  async getSessionStatuses(): Promise<Record<string, { type: string }>> {
+    return this.request<Record<string, { type: string }>>("/session/status")
   }
 
   async getSession(sessionId: string): Promise<Session> {
@@ -525,11 +595,18 @@ export class ApiClient {
       }
     }
 
-    const response = await fetch(`${this.baseUrl}/session/${sessionId}/prompt_async`, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(requestBody),
-    })
+    // Safe to bound: this endpoint hands the turn off and answers 204 immediately —
+    // the model's actual work streams back over SSE, not this response. Without a
+    // ceiling a wedged server leaves `sending` true forever with no error path.
+    const { response } = await fetchWithTimeout(
+      `${this.baseUrl}/session/${sessionId}/prompt_async`,
+      {
+        method: "POST",
+        headers: this.buildHeaders(),
+        body: JSON.stringify(requestBody),
+      },
+      this.timeoutMs,
+    )
 
     if (!response.ok) {
       throw new Error(`promptAsync failed: ${response.status} ${response.statusText}`)
@@ -543,17 +620,23 @@ export class ApiClient {
     return this.request<MCPStatusMap>("/mcp")
   }
 
+  // Creating/connecting an MCP server spawns a process (often `npx`, which can
+  // download on first run) — the one family of endpoints here that is legitimately
+  // slow, so it gets its own ceiling rather than the 30s default.
   async createMCP(name: string, config: MCPConfig): Promise<MCPStatusMap> {
-    return this.request<MCPStatusMap>("/mcp", {
-      method: "POST",
-      body: JSON.stringify({ name, config }),
-    })
+    return this.request<MCPStatusMap>(
+      "/mcp",
+      { method: "POST", body: JSON.stringify({ name, config }) },
+      MCP_TIMEOUT_MS,
+    )
   }
 
   async connectMCP(name: string): Promise<boolean> {
-    return this.request<boolean>(`/mcp/${encodeURIComponent(name)}/connect`, {
-      method: "POST",
-    })
+    return this.request<boolean>(
+      `/mcp/${encodeURIComponent(name)}/connect`,
+      { method: "POST" },
+      MCP_TIMEOUT_MS,
+    )
   }
 
   async disconnectMCP(name: string): Promise<boolean> {

@@ -503,3 +503,30 @@
 
 ⑤ **`--color-fg-muted × opacity-70` 是本项目已知的不达标组合**（浅色 2.68:1 / 暗色 3.73:1，AA 正文需 4.5:1），这是**第二次**踩（第一次见 `conventions.md §20`）。另外**强调背景上的 muted 更紧**：`--color-fg-muted` 落在 `--color-accent` 上只有 4.40:1，仍不达标 —— 选中行要改用 `--color-accent-fg`。
 
+
+## 20. SSE 断流 / sidecar 生命周期 / 会话状态端点（ADR-071 / discussions/057，2026-07-29）
+
+**① opencode `/event` 没有重放。** 路由订阅即开始（`Bus.subscribeAll`），无 Last-Event-ID、无缓冲。**断流窗口内的一切事件永久丢失** —— 包括 `session.status:idle` 和 `message.updated finish`。任何「靠折叠事件得出的状态」在重连后都必须**从服务端重新求值**，不能指望补发。
+
+**② `GET /session/status` 的语义是「非 idle 集合」。** 会话转 idle 时其条目被 **delete**（`session/status.ts` 的 `set`），所以 **key 集合就是 busy 集，缺席即 idle**。这是重连对账的权威依据。
+
+**③ ⚠️ opencode 按目录分实例 —— 不带 `x-opencode-directory` 的请求会被另一个实例回答。**
+`/event`、`/session/status` 都受此影响：不带头时订阅到的是默认实例的 Bus，**看不到任何事件、状态永远是 `{}`**。
+排查时踩过一次：以为端点坏了，其实是探针没带头。`ApiClient.buildHeaders()` 一直带，产品侧正确 —— 但**新增调用方务必走 ApiClient，别自己 `fetch`**（有测试守着 `getSessionStatuses`）。
+后果不是「查不到」而是「查到全 idle」⇒ 对账会**误清正在运行的会话**，比它要修的 bug 更糟。
+
+**④ 到 `gave-up` 的时间不是延迟相加。** `FINITE_SSE_RETRY` 的 1+2+4+8+16=31s 是错的，**实测 61s**：30 秒时心跳看门狗触发 `stalled` → `forceReconnect()` 把 `reconnectAttempts` 清零 → 又跑一轮完整预算（budget 3 ⇒ 最多约 4 轮）。别从延迟反推这个数字。
+
+**⑤ 断连横幅的出现时机分两种，不是一个数。** 杀进程（socket 断）**秒级**；冻住不响应（TCP 不断）**约 34 秒**（30s 心跳 + 4s 宽限）。心跳检测的固有代价，不是缺陷。
+
+**⑥ sidecar 崩溃后没有任何东西会重启它。** `spawn_sidecar` 只在启动阶段调用。所以 UI 上「sidecar 已退出」与「网络断开」必须是**两套文案** —— 对前者说「正在重试」是撒谎。
+
+**⑦ sidecar 日志写盘绝不能重试。** shell 插件的事件通道容量为 1 且读端 `block_on(tx.send)` ⇒ 一个死磕重试的 logger 会把背压**顶回 sidecar 进程**。写失败即永久禁用（`SidecarLog.disabled`）。
+
+**⑧ ⚠️ `sidecar-auth.json` 被重新生成会把 app 永久锁死（既有隐患，未修）。**
+`config-context.tsx` 里 localStorage 一旦有密码就**永不重新拉取**。若用户删掉 `~/.config/ultrawork/` 重置，Rust 会生成新密码，前端却继续用旧的 ⇒ 永久 401，症状是「横幅一直显示断开、后台每 15s 重试一次」。
+
+**⑨ 服务端存的 session `directory` 是 realpath，而 `?directory=` 是精确匹配。**
+macOS 上 `/var` → `/private/var`。工作区路径若经软链接，侧栏会**一条会话都不显示**。既有行为；默认工作区不受影响。
+
+**⑩ 测试绝不能写真实 home（复发过一次）。** `SidecarLog` 起初直接用真实日志目录，`cargo test` 把四个假 sidecar 的记录写进了用户的 `~/.local/share/ultrawork/log/sidecar/`。已改为注入式（ADR-051 同款）。**新增任何落盘功能，第一件事就是让路径可注入。**

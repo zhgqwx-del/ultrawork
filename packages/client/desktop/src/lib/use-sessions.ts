@@ -3,11 +3,16 @@ import type { Session } from "@agent/api-client"
 import { ApiError } from "@agent/api-client"
 import { useApi } from "./use-api"
 import { useWorkspace } from "./workspace-context"
-import { useConnector, useSSESubscribe } from "./sse-context"
+import { useConnector, useSSESubscribe, useSSEReconnectEpoch } from "./sse-context"
 import { useTeamSessions, type TeamSessionEntry } from "./team-sessions-context"
 import { deleteTeamSession } from "./orchestration-client"
 import { applyMessageEventToCache, forgetMessageCacheSession } from "./use-session-messages"
 import { forgetSessionRead } from "./use-unread"
+
+/** Sessions fetched per page, and grown by one page per "load more". */
+const SESSION_PAGE = 50
+/** Keystroke settle time before a search query goes to the server. */
+const SEARCH_DEBOUNCE_MS = 250
 
 /** Filter sessions to only those belonging to the current workspace */
 function filterByWorkspace(list: Session[], workspacePath: string | null): Session[] {
@@ -45,6 +50,11 @@ export function useSessions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeSessionIds, setActiveSessionIds] = useState<Set<string>>(new Set())
+  /** How many of the newest sessions to request. Grown by loadMore(). */
+  const [limit, setLimit] = useState(SESSION_PAGE)
+  /** Sent to the server so search covers EVERY session, not just the loaded window. */
+  const [search, setSearch] = useState("")
+  const [hasMore, setHasMore] = useState(false)
 
   // Team ids as a ref: the SSE handler reads them without resubscribing.
   const teamIdsRef = useRef<Set<string>>(new Set())
@@ -79,47 +89,119 @@ export function useSessions() {
     )
   }, [])
 
-  const refresh = useCallback(async () => {
-    try {
+  /** Ids already 补显-fetched, so the merge below cannot loop. Cleared on every
+   *  list replacement (see fetchSessions) and on workspace change. */
+  const legacyAttemptedRef = useRef<Set<string>>(new Set())
+
+  const fetchSessions = useCallback(
+    async (limit: number, search: string) => {
       // Pass directory for server-side filtering + client-side as safety net
       const list = await api.listSessions({
         roots: true,
-        limit: 50,
+        limit,
+        search: search || undefined,
         directory: workspacePath || undefined,
       })
+      // This REPLACES the list, dropping the legacy team sessions merged in
+      // below — and their attempted-set would then stop them being re-fetched,
+      // so they would vanish for good. Paging/searching refetch far more often
+      // than refresh() ever did, so clearing the guard here is what keeps 补显
+      // alive across a "load more".
+      legacyAttemptedRef.current = new Set()
       setSessions(filterByWorkspace(list, workspacePath))
+      // A full page came back, so the server may be holding more. Judged on the
+      // raw list, before the workspace safety-net filter — that filter can only
+      // shrink the array and would otherwise fake an end-of-list.
+      setHasMore(list.length >= limit)
       setError(null)
+    },
+    [api, workspacePath],
+  )
+
+  const refresh = useCallback(async () => {
+    try {
+      await fetchSessions(limit, search)
     } catch (err) {
       console.error("Failed to load sessions:", err)
       setError(err instanceof Error ? err.message : "Failed to load sessions")
     }
-  }, [api, workspacePath])
+  }, [fetchSessions, limit, search])
+
+  // A new query or workspace starts paging over: the window is "newest N", so a
+  // stale larger N would fetch more rows than the user asked to see.
+  useEffect(() => {
+    setLimit(SESSION_PAGE)
+  }, [search, workspacePath])
 
   useEffect(() => {
     let cancelled = false
-    api.listSessions({
-      roots: true,
-      limit: 50,
-      directory: workspacePath || undefined,
-    }).then(list => {
-      if (!cancelled) {
-        setSessions(filterByWorkspace(list, workspacePath))
-        setError(null)
-        setLoading(false)
-      }
-    }).catch(err => {
-      if (!cancelled) {
-        setError(err instanceof Error ? err.message : "Failed to load sessions")
-        setLoading(false)
-      }
-    })
-    return () => { cancelled = true }
-  }, [api, workspacePath])
+    // Debounce typing so a query isn't sent per keystroke; the initial load and
+    // clearing the box are not typing, so they go immediately.
+    const timer = setTimeout(() => {
+      fetchSessions(limit, search)
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load sessions")
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, search ? SEARCH_DEBOUNCE_MS : 0)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [fetchSessions, limit, search])
 
-  // Legacy team-session 补显 (018 A-4 fallback). attempted-set keyed per
-  // workspace prevents refetch loops; orphaned registry entries (the opencode
-  // session was deleted out-of-band) self-prune best-effort.
-  const legacyAttemptedRef = useRef<Set<string>>(new Set())
+  // --- Re-derive busy markers after an SSE recovery ---
+  // The opencode event stream has no replay, so a `session.status:idle` emitted
+  // while the stream was down is gone for good. Nothing else ever cleared the
+  // marker, so the session span forever in the sidebar AND sendMessage's busy
+  // guard kept the composer locked — with no way out but switching workspace or
+  // restarting. The server's own map is the authority: it DELETES a session's
+  // entry when it goes idle, so absence means idle.
+  const reconnectEpoch = useSSEReconnectEpoch()
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+
+  useEffect(() => {
+    if (reconnectEpoch === 0) return
+    let cancelled = false
+    api
+      .getSessionStatuses()
+      .then((statuses) => {
+        if (cancelled) return
+        const busy = new Set(Object.keys(statuses))
+        setActiveSessionIds((prev) => {
+          const next = new Set(prev)
+          // Only opencode-bound ids are this snapshot's business. ACP sessions
+          // live in another process and re-announce their own busy set when
+          // their stream reconnects (acp-manager.subscribeGlobal), so clearing
+          // them here would fight that.
+          for (const id of prev) {
+            if (connector.bindings.backendOf(id) !== "opencode") continue
+            if (!busy.has(id)) next.delete(id)
+          }
+          for (const id of busy) next.add(id)
+          if (next.size === prev.size && [...next].every((id) => prev.has(id))) return prev
+          return next
+        })
+      })
+      .catch((err) => {
+        console.error("Failed to re-derive session status after reconnect:", err)
+      })
+    // Titles and sessions born during the gap arrived as events too.
+    void refreshRef.current()
+    return () => { cancelled = true }
+  }, [reconnectEpoch, api, connector])
+
+  /** Widen the window by one page. The server sorts by recency and takes the top
+   *  N, so a larger N is a strict superset — no cursor, no gaps, no duplicates.
+   *  (The endpoint has no offset, and its `start` param is a lower time bound,
+   *  so it cannot page backwards; growing the window is the honest option here.) */
+  const loadMore = useCallback(() => {
+    setLimit((prev) => prev + SESSION_PAGE)
+  }, [])
+
+  // Legacy team-session 补显 (018 A-4 fallback). attempted-set (declared above,
+  // next to the fetch that clears it) prevents refetch loops; orphaned registry
+  // entries (the opencode session was deleted out-of-band) self-prune best-effort.
   useEffect(() => {
     legacyAttemptedRef.current = new Set()
   }, [workspacePath])
@@ -275,5 +357,5 @@ export function useSessions() {
     }
   }, [workspacePath, markSessionActive, markSessionIdle]))
 
-  return { sessions, loading, error, activeSessionIds, refresh, createSession, deleteSession, updateSession, renameSession, markSessionActive, markSessionIdle }
+  return { sessions, loading, error, activeSessionIds, search, setSearch, hasMore, loadMore, refresh, createSession, deleteSession, updateSession, renameSession, markSessionActive, markSessionIdle }
 }

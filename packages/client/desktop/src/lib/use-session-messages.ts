@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { useSessionsContext } from "@/lib/sessions-context"
-import { useConnector, useSessionSubscribe } from "@/lib/sse-context"
+import { useConnector, useSessionSubscribe, useSSEReconnectEpoch } from "@/lib/sse-context"
 import { useI18n } from "@/lib/i18n-context"
 import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
 import { useModelOptional } from "@/lib/model-context"
@@ -761,6 +761,24 @@ export function useSessionMessages(
     }
   }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // --- Re-derive `sending` after an SSE recovery ---
+  // The app-level busy map is rebuilt from the server on reconnect
+  // (use-sessions), because the stream has no replay and this turn's
+  // `session.status:idle` may have fallen in the gap. This hook's own `sending`
+  // is separate state fed by those same lost events, so it has to follow the
+  // map down — otherwise the spinner and the disabled composer outlive the turn
+  // that ended while we were disconnected.
+  const reconnectEpoch = useSSEReconnectEpoch()
+  useEffect(() => {
+    if (reconnectEpoch === 0 || !sessionId) return
+    // Runs again when the reconciliation lands (activeSessionIds is a dep), so
+    // an in-flight fetch does not race this into clearing a live turn.
+    if (activeSessionIds.has(sessionId) || !sendingRef.current) return
+    sendingRef.current = false
+    setSending(false)
+    setStreamingMessageId(null)
+  }, [reconnectEpoch, activeSessionIds, sessionId])
+
   // --- Actions ---
   const stopGeneration = useCallback(() => {
     setStopped(true)
@@ -811,11 +829,23 @@ export function useSessionMessages(
             return connector.revert(sessionId, lastUserMsg.info.id).catch(() => {})
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          // A failed cancel used to be swallowed: the UI froze the turn locally
+          // (stoppedRef blocks every later message event) while the agent kept
+          // running and kept spending tokens. Looking stopped and being stopped
+          // are not the same thing, and the user is the only one who can act on
+          // the difference — so say it, and undo the local freeze so whatever
+          // the agent does next is at least visible.
+          console.error("Failed to cancel generation:", err)
+          setStopped(false)
+          stoppedRef.current = false
+          frozenMessageIdsRef.current = new Set()
+          setStoppedAtMessageId(null)
           setSending(false)
+          toast.error(t("error.stopGeneration"))
         })
     }
-  }, [sessionId, connector, markSessionIdle])
+  }, [sessionId, connector, markSessionIdle, t])
 
   const sendMessage = useCallback((
     text: string,

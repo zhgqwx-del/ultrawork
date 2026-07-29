@@ -180,8 +180,17 @@ export function LeftSidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const { leftOpen, toggleLeft } = useSidebar()
-  const { sessions, loading, activeSessionIds, deleteSession, renameSession } = useSessionsContext()
-  const [searchQuery, setSearchQuery] = useState("")
+  const {
+    sessions,
+    loading,
+    activeSessionIds,
+    deleteSession,
+    renameSession,
+    search: searchQuery,
+    setSearch: setSearchQuery,
+    hasMore,
+    loadMore,
+  } = useSessionsContext()
   const [showSearch, setShowSearch] = useState(false)
   const { toggleFavorite, isFavorite } = useFavorites()
   const { entryOf } = useTeamSessions()
@@ -227,6 +236,10 @@ export function LeftSidebar() {
   const isSettings = isSettingsPath(location.pathname)
   const effectiveOpen = leftOpen && !isSettings
 
+  // The query also goes to the SERVER (useSessions), so results are no longer
+  // limited to the loaded window — this local pass only keeps the list responsive
+  // between a keystroke and the debounced round-trip. Same substring rule, so it
+  // can never hide a row the server chose to return.
   const filteredSessions = useMemo(
     () =>
       sessions.filter((session) =>
@@ -330,6 +343,10 @@ export function LeftSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => setShowSearch(!showSearch)}
+                    // Every sibling in this row carries one; this control had only
+                    // a tooltip, leaving it unnamed for assistive tech (and for
+                    // any test that asks for controls by name).
+                    aria-label={t("sidebar.search")}
                     className={cn(
                       "flex size-8 items-center justify-center rounded-lg transition-colors",
                       showSearch
@@ -427,6 +444,27 @@ export function LeftSidebar() {
                         </div>
                       )
                     })}
+                    {/* The list is a "newest N" window, and the endpoint has no
+                        cursor — so older sessions were simply unreachable before
+                        this, however many of them existed. */}
+                    {hasMore && (
+                      <button
+                        onClick={() => {
+                          // Thaw first. The freeze exists to stop BACKGROUND churn
+                          // (an IM message floating a session to the top) from
+                          // reshuffling rows under a cursor that is about to
+                          // click — but clicking here IS the user asking for more
+                          // rows, and `orderSessions` renders only the frozen id
+                          // set, so leaving it on makes the button appear to do
+                          // nothing until the pointer leaves the list.
+                          thawOrder()
+                          loadMore()
+                        }}
+                        className="w-full rounded-lg px-2 py-2 text-xs text-[var(--sidebar-fg-muted)] transition-colors hover:bg-[var(--sidebar-accent)] hover:text-[var(--sidebar-fg)]"
+                      >
+                        {t("sidebar.loadMore")}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -708,6 +746,9 @@ export function SessionItem({
     <div
       onClick={onNavigate}
       title={rowTooltip}
+      // Stable hook for e2e/session-reachability (mirrors the command menu's
+      // data-index). Class names here are layout, and layout churns.
+      data-session-row={session.id}
       className={cn(
         "group relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-1 text-[13px] transition-all duration-150",
         isActive

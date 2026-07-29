@@ -26,7 +26,26 @@ const FILE_DEBOUNCE = 2000
 /** Per-folder batch delay: after first change in a batch, wait this long before processing (ms) */
 const FOLDER_BATCH_DELAY = 5000
 
-export type WatchCallback = (folderPath: string, filePath: string, eventType: "change" | "delete") => void
+/**
+ * Distinct files one folder may accumulate in a batch window before we stop
+ * tracking them individually and re-walk the folder instead.
+ *
+ * This guards the BOOKKEEPING only — the timer map and the batch Set, both of
+ * which were unbounded. Re-index concurrency is bounded separately, by the
+ * sequential queue in index.ts; conflating the two would be a bad trade, because
+ * `indexFile` reads and hashes every file it is given, so a folder-wide pass
+ * over a large tree is far more I/O than the handful of files that actually
+ * changed. Hence a threshold high enough that ordinary bulk edits (a big
+ * checkout) stay incremental, and only a genuinely pathological burst escalates.
+ */
+const MAX_BATCH_FILES = 2000
+
+export type WatchCallback = (
+  folderPath: string,
+  filePath: string,
+  /** `rescan` carries the FOLDER path in both arguments — see MAX_BATCH_FILES. */
+  eventType: "change" | "delete" | "rescan",
+) => void
 
 /**
  * Watches indexed folders for file changes and triggers re-indexing.
@@ -37,6 +56,8 @@ export class FileWatcher {
   private fileTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private folderBatchTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private folderBatches = new Map<string, Set<string>>()
+  /** Folders whose current window overflowed and will be re-walked wholesale. */
+  private folderRescan = new Set<string>()
   private callback: WatchCallback | null = null
 
   /** Set the callback for file change events */
@@ -81,6 +102,7 @@ export class FileWatcher {
       this.folderBatchTimers.delete(folderPath)
     }
     this.folderBatches.delete(folderPath)
+    this.folderRescan.delete(folderPath)
   }
 
   /** Stop watching all folders */
@@ -96,6 +118,11 @@ export class FileWatcher {
   }
 
   private handleEvent(folderPath: string, filename: string, eventType: string): void {
+    // Already escalated: the whole folder gets re-walked, so per-file bookkeeping
+    // for it is wasted work — and creating a timer per file is exactly the
+    // unbounded growth the escalation exists to stop.
+    if (this.folderRescan.has(folderPath)) return
+
     const fullPath = join(folderPath, filename)
     const ext = extname(filename).toLowerCase()
 
@@ -124,12 +151,24 @@ export class FileWatcher {
   }
 
   private addToBatch(folderPath: string, filePath: string): void {
+    if (this.folderRescan.has(folderPath)) return
+
     let batch = this.folderBatches.get(folderPath)
     if (!batch) {
       batch = new Set()
       this.folderBatches.set(folderPath, batch)
     }
     batch.add(filePath)
+
+    if (batch.size >= MAX_BATCH_FILES) {
+      // Hand the whole folder to one sequential pass and drop the per-file list.
+      // The flush timer already scheduled below still fires and reads the flag.
+      console.log(
+        `[watcher] ${batch.size} files changed in ${folderPath} — escalating to a full re-index`,
+      )
+      this.folderRescan.add(folderPath)
+      this.folderBatches.delete(folderPath)
+    }
 
     // Start/restart folder batch timer
     const existing = this.folderBatchTimers.get(folderPath)
@@ -150,8 +189,16 @@ export class FileWatcher {
     this.folderBatchTimers.delete(folderPath)
     const batch = this.folderBatches.get(folderPath)
     this.folderBatches.delete(folderPath)
+    const rescan = this.folderRescan.delete(folderPath)
 
-    if (!batch || batch.size === 0 || !this.callback) return
+    if (!this.callback) return
+
+    if (rescan) {
+      this.callback(folderPath, folderPath, "rescan")
+      return
+    }
+
+    if (!batch || batch.size === 0) return
 
     console.log(`[watcher] ${batch.size} file(s) changed in ${folderPath}`)
 

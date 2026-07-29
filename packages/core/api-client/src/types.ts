@@ -5,6 +5,14 @@ export interface ApiClientConfig {
   username?: string
   password?: string
   workingDirectory?: string
+  /**
+   * Per-request ceiling in ms (default 30s). fetch has no timeout of its own, so
+   * without this a server that accepts the connection and then stops answering —
+   * opencode is single-threaded, so one heavy tool call does exactly that —
+   * leaves the promise pending forever: a permanent skeleton screen with no error
+   * and no retry. 0 disables the ceiling.
+   */
+  timeoutMs?: number
 }
 
 export interface SessionCreateRequest {

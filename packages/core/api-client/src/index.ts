@@ -1,4 +1,4 @@
-export { ApiClient, ApiError, createApiClient } from "./client"
+export { ApiClient, ApiError, ApiTimeoutError, createApiClient } from "./client"
 export { SEARCH_AUTH_IDS } from "./types"
 export type {
   WebsearchProviderId,

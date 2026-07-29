@@ -46,8 +46,15 @@ const CAPABILITIES: BackendCapabilities = {
   sessionStatus: false,
 }
 
-/** Legacy use-acp-sse.ts policy: 1s exponential, give up after 5, silent. */
-const ACP_SSE_RETRY = { baseDelayMs: 1000, maxAttempts: 5 }
+/**
+ * 1s exponential for 5 attempts, then quiet background retries — same shape as
+ * FINITE_SSE_RETRY, and deliberately so: the ACP sidecar is a local process with
+ * no supervisor either, so giving up for good stranded every ACP session
+ * (single-agent Claude/Gemini runs AND team members) exactly as it stranded
+ * opencode. Recovery is genuinely automatic here — the sidecar re-emits a busy
+ * snapshot to every new global subscriber (acp-manager.subscribeGlobal).
+ */
+const ACP_SSE_RETRY = { baseDelayMs: 1000, maxAttempts: 5, keepRetryingEveryMs: 15_000 }
 
 interface SharedConnection {
   transport: SseTransport
@@ -183,12 +190,11 @@ export class ACPBackend implements AgentBackend {
         for (const handler of handlers) handler(event)
       },
       onStatusChange: (status) => {
-        // The lifecycle stream giving up means busy/idle stops flowing; a
-        // transient drop self-heals because the sidecar re-emits a busy snapshot
-        // on reconnect (acp-manager.subscribeGlobal). Surface a permanent give-up
-        // so a stuck busy marker isn't completely silent (discussions/022 M2).
+        // Busy/idle stops flowing while down, but the sidecar re-emits a busy
+        // snapshot to each new subscriber (acp-manager.subscribeGlobal), so the
+        // background retry restores the markers by itself.
         if (status === "gave-up") {
-          console.warn("[acp] global lifecycle stream gave up — busy markers may be stale until reconnect")
+          console.warn("[acp] global lifecycle stream lost — retrying in the background; busy markers may be stale until it returns")
         }
       },
     })
@@ -209,13 +215,14 @@ export class ACPBackend implements AgentBackend {
         for (const handler of handlers) handler(event)
       },
       onStatusChange: (status) => {
-        // The per-session ACP stream has no global toast (unlike opencode's
-        // connectGlobal → gave-up → toast). When retries are exhausted, surface
-        // a session.error so the view doesn't silently freeze on the last frame.
+        // Fast retries are spent; the transport keeps knocking in the background.
+        // Say so rather than freezing on the last frame — but do NOT tell them to
+        // reopen the session, which was true when this was terminal and is a lie
+        // now that it recovers on its own.
         if (status === "gave-up") {
           const dead: ConnectorEvent = {
             type: "session.error",
-            properties: { sessionID: sessionId, error: "Lost connection to the agent stream. Reopen the session to retry." },
+            properties: { sessionID: sessionId, error: "Lost connection to the agent stream — reconnecting…" },
           }
           for (const handler of handlers) handler(dead)
         }

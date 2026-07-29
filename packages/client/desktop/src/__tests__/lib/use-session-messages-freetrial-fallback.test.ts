@@ -38,6 +38,8 @@ let capturedHandler: ((e: SSEEvent) => void) | null = null
 vi.mock("@/lib/sse-context", () => ({
   useConnector: () => connector,
   useSessionSubscribe: (_sid: string | undefined, handler: (e: SSEEvent) => void) => { capturedHandler = handler },
+  // No reconnect in this suite: the hook only re-derives `sending` after a recovery.
+  useSSEReconnectEpoch: () => 0,
 }))
 
 // The free-trial context: consented, on a Zen model, with a next candidate available.

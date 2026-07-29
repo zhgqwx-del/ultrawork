@@ -27,6 +27,17 @@ export interface SseRetryPolicy {
   maxDelayMs?: number
   /** undefined = retry forever (gateway). */
   maxAttempts?: number
+  /**
+   * What to do once `maxAttempts` is spent. Without it the transport stops for
+   * good: a desktop app that lost its backend for 31 seconds would never speak
+   * to it again, even after it came back healthy, until the user restarted.
+   *
+   * With it, the status still goes to "gave-up" exactly once (so the UI can say
+   * "disconnected"), and the transport keeps knocking at this interval in the
+   * background — silently, without churning the status between attempts — until
+   * it gets back in, at which point the status returns to "open".
+   */
+  keepRetryingEveryMs?: number
 }
 
 /**
@@ -75,6 +86,13 @@ class FetchSseTransport<T> implements SseTransport {
   private heartbeatReconnects = 0
   private status: TransportStatus = "idle"
   private shouldReconnect = true
+  /**
+   * True once the fast retry budget is spent and we are quietly knocking at
+   * `keepRetryingEveryMs`. Suppresses the per-attempt status churn so the UI's
+   * "disconnected" state stays put instead of flickering through
+   * connecting/error on every background attempt.
+   */
+  private slowRetrying = false
 
   constructor(private opts: SseTransportOptions<T>) {}
 
@@ -89,6 +107,7 @@ class FetchSseTransport<T> implements SseTransport {
 
   close(): void {
     this.shouldReconnect = false
+    this.slowRetrying = false
     if (this.abortController) {
       this.abortController.abort()
       this.abortController = null
@@ -107,6 +126,9 @@ class FetchSseTransport<T> implements SseTransport {
       this.reconnectTimer = null
     }
     this.reconnectAttempts = 0
+    // A deliberate retry (user pressed "reconnect") earns the full status
+    // narration again, even if we had settled into quiet background knocking.
+    this.slowRetrying = false
     this.run().catch((err) => {
       console.error("forceReconnect failed:", err)
     })
@@ -158,7 +180,9 @@ class FetchSseTransport<T> implements SseTransport {
       return
     }
 
-    this.setStatus("connecting")
+    // In slow-retry mode the consumer has already been told the connection is
+    // down; announcing every background attempt would only make the UI flicker.
+    if (!this.slowRetrying) this.setStatus("connecting")
 
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
@@ -179,7 +203,13 @@ class FetchSseTransport<T> implements SseTransport {
       }
 
       this.reconnectAttempts = 0
+      this.slowRetrying = false
       this.setStatus("open")
+      // Arm the watchdog on connect, not only on the first event: a stream that
+      // opens and then delivers nothing (half-open TCP right after the
+      // handshake) would otherwise never be checked, because the only place
+      // that armed it was the event handler.
+      this.armWatchdog()
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -223,7 +253,7 @@ class FetchSseTransport<T> implements SseTransport {
         return
       }
       console.error("SSE error:", err)
-      this.setStatus("error")
+      if (!this.slowRetrying) this.setStatus("error")
     } finally {
       // Only clean up if we're still the current connection (guard against forceReconnect race)
       if (this.abortController === controller) {
@@ -239,10 +269,26 @@ class FetchSseTransport<T> implements SseTransport {
   private scheduleReconnect(): void {
     if (!this.shouldReconnect) return
 
-    const { baseDelayMs, maxDelayMs, maxAttempts } = this.opts.retry
-    if (maxAttempts !== undefined && this.reconnectAttempts >= maxAttempts) {
-      console.error("Max reconnect attempts reached, giving up")
-      this.setStatus("gave-up")
+    const { baseDelayMs, maxDelayMs, maxAttempts, keepRetryingEveryMs } = this.opts.retry
+    const budgetSpent = maxAttempts !== undefined && this.reconnectAttempts >= maxAttempts
+
+    if (budgetSpent) {
+      if (!keepRetryingEveryMs) {
+        console.error("Max reconnect attempts reached, giving up")
+        this.setStatus("gave-up")
+        return
+      }
+      // Fast retries are spent. Tell the consumer once, then keep knocking
+      // quietly — a backend that comes back an hour later must still be picked
+      // up without the user restarting the app.
+      if (!this.slowRetrying) {
+        this.slowRetrying = true
+        console.warn(`Fast reconnects exhausted; retrying every ${keepRetryingEveryMs}ms in the background`)
+        this.setStatus("gave-up")
+      }
+      this.reconnectTimer = setTimeout(() => {
+        void this.run()
+      }, keepRetryingEveryMs)
       return
     }
 

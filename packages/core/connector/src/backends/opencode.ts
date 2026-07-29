@@ -45,8 +45,26 @@ function normalizeOpenCodeEvent(event: ConnectorEvent): ConnectorEvent {
   return event
 }
 
-/** Legacy desktop SSEClient policy: 1s exponential, give up after 5 attempts. */
-export const FINITE_SSE_RETRY: SseRetryPolicy = { baseDelayMs: 1000, maxAttempts: 5 }
+/**
+ * Desktop policy: 1s exponential for 5 attempts, then report "gave-up" so the UI
+ * can warn — and keep knocking every 15s in the background.
+ *
+ * The background half is not optional. The sidecar is a local process with no
+ * supervisor: if it crashes or is restarted, the fast budget is easily too
+ * short, and a transport that stopped for good left the app permanently deaf
+ * with no way back but restarting it.
+ *
+ * Measured end-to-end against the real sidecar: "gave-up" lands ~61s after the
+ * drop, not the ~31s the delays alone suggest — at 30s the heartbeat watchdog
+ * fires and forceReconnect() resets the attempt counter, buying another full
+ * round. Harmless (the banner keys on `connected`, not on this), but the arithmetic
+ * is not what it looks like, so don't re-derive it from the delays.
+ */
+export const FINITE_SSE_RETRY: SseRetryPolicy = {
+  baseDelayMs: 1000,
+  maxAttempts: 5,
+  keepRetryingEveryMs: 15_000,
+}
 /** Legacy gateway bridge policy: 1s exponential capped at 30s, retry forever. */
 export const UNLIMITED_SSE_RETRY: SseRetryPolicy = { baseDelayMs: 1000, maxDelayMs: 30_000 }
 
@@ -153,6 +171,17 @@ export class OpenCodeBackend implements AgentBackend {
   ready(): Promise<void> {
     this.connectGlobal()
     return this.readyPromise
+  }
+
+  /** User-initiated retry ("reconnect" in the disconnected banner). Resets the
+   *  retry budget and attempts immediately rather than waiting out the
+   *  background interval. */
+  reconnectGlobal(): void {
+    if (!this.sse) {
+      this.connectGlobal()
+      return
+    }
+    this.sse.forceReconnect()
   }
 
   status(): ConnectionStatus {
