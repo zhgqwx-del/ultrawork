@@ -87,14 +87,19 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
     expect(screen.getByText("channel.qr.manualInput")).toBeInTheDocument()
     expect(mockApi.requestChannelQR).toHaveBeenCalledWith("dingtalk", expect.any(String), "/tmp/ws")
 
-    // Manual fallback cancels the QR session and shows the credentials form
+    // Manual fallback cancels the QR session and shows the credentials form.
+    //
+    // Wait for the TOKEN to be in hand before clicking, not just for the panel:
+    // `abandonSession` is a no-op while the token is still empty
+    // (`if (token && ...) cancelQR(...)`), so clicking too early means the cancel
+    // never happens at all — no amount of waiting afterwards can recover it. That
+    // is what flaked on CI, and an earlier "assert later" fix did not touch it.
+    // `qr.openInBrowser` is gated on the same state as the token, so its
+    // appearance is the proof.
+    await screen.findByText("channel.qr.openInBrowser")
+
     fireEvent.click(screen.getByText("channel.qr.manualInput"))
     expect(await screen.findByText("channel.clientId")).toBeInTheDocument()
-    // waitFor, not a bare assert: the form rendering and the cancel call are two
-    // DIFFERENT async signals — switching the view is state, cancelling the QR
-    // session is a fire-and-forget request. Awaiting the form says nothing about
-    // the request having been dispatched, and asserting it synchronously flaked
-    // on CI (macos runner, under full-suite load).
     await waitFor(() =>
       expect(mockApi.cancelChannelQR).toHaveBeenCalledWith("dingtalk", "qr_1"),
     )
