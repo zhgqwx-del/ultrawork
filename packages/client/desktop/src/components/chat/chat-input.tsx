@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import type { Attachment } from "@/lib/attachments"
 import type { ScreenshotControl } from "@/lib/use-screenshot"
-import type { Command } from "@agent/api-client"
+import type { CommandMenuEntry } from "@/lib/command-menu"
 
 /** The composer's attachment surface. Absent ⇒ this composer takes no attachments. */
 export interface AttachmentSlot {
@@ -56,6 +56,12 @@ interface ChatInputProps {
    *  switch) — keeps the bottom toolbar uncrowded and the card height stable
    *  across modes. */
   topSlot?: React.ReactNode
+  /**
+   * Whether `/` opens the command menu. The list comes from the OpenCode
+   * backend unconditionally, so on an ACP-bound session it would advertise
+   * commands that never reach the agent receiving the message. Default true.
+   */
+  commandsEnabled?: boolean
 }
 
 function AttachButton({ onClick, disabled, label }: { onClick: () => void; disabled: boolean; label: string }) {
@@ -175,11 +181,13 @@ export function ChatInput({
   ctaLabel = "Start Now",
   leftSlot,
   topSlot,
+  commandsEnabled = true,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const compositionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const [isComposing, setIsComposing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [commandDismissed, setCommandDismissed] = useState(false)
 
   useEffect(() => {
     return () => { clearTimeout(compositionTimerRef.current) }
@@ -269,7 +277,14 @@ export function ChatInput({
     attachments?.addPaths(paths)
   }
   // Only show command selector while typing the command name (no space yet)
-  const showCommandSelector = value.startsWith("/") && !value.includes(" ") && !disabled && !loading
+  const showCommandSelector =
+    commandsEnabled && value.startsWith("/") && !value.includes(" ") && !disabled && !loading && !commandDismissed
+
+  // Esc dismisses for this token only; once the slash is gone the menu is armed
+  // again. Previously "closing" meant deleting the user's "/" (`/deck` → `deck`).
+  useEffect(() => {
+    if (!value.startsWith("/")) setCommandDismissed(false)
+  }, [value])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -282,27 +297,25 @@ export function ChatInput({
     textarea.style.height = `${newHeight}px`
   }, [value, variant])
 
-  const handleSelectCommand = (cmd: Command) => {
+  const handleSelectCommand = (cmd: CommandMenuEntry) => {
     // Replace input with /<command> and let user add arguments
     onChange(`/${cmd.name} `)
     textareaRef.current?.focus()
   }
 
   const handleCloseCommandSelector = () => {
-    // Remove the "/" prefix to dismiss the selector, keep other text if any
-    onChange(value.startsWith("/") ? value.slice(1) : value)
+    // Close the menu, never touch the text the user typed.
+    setCommandDismissed(true)
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Let CommandSelector handle arrow/tab/enter/escape when visible
-    if (showCommandSelector && ["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(e.key)) {
-      e.preventDefault() // Prevent cursor movement / focus change in textarea
-      return // CommandSelector's document-level handler will capture this
-    }
-    // Enter without Shift and not composing → send (or let CommandSelector handle if it has matches)
+    // No command-menu branches here on purpose: when the menu takes a key it
+    // stops the event in the capture phase, so this handler never sees it.
+    // Anything that reaches here is the composer's to act on — which is how a
+    // `/word` that matches nothing still sends instead of dead-ending.
+    // Enter without Shift and not composing → send.
     // Check both React state AND native isComposing — some browsers fire compositionEnd before keyDown
     if (e.key === "Enter" && !e.shiftKey && !isComposing && !e.nativeEvent.isComposing) {
-      if (showCommandSelector) return // Let CommandSelector handle Enter when it has matches
       e.preventDefault()
       if (canSend) {
         onSend()
@@ -355,6 +368,7 @@ export function ChatInput({
         onSelectCommand={handleSelectCommand}
         onClose={handleCloseCommandSelector}
         visible={showCommandSelector}
+        composing={isComposing}
       />
 
       {variant === "home" && topSlot && (

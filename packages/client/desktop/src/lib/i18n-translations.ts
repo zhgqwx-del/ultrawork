@@ -757,7 +757,11 @@ export const en: Record<string, string> = {
     "skills.restoreConfirmBody": "This deletes the user-installed \"{name}\" skill directory (in the app's skills directory) and restores the built-in copy. Local changes in the user copy are lost.",
     "skills.restoreDone": "Built-in skill restored",
     "skills.restoreFailed": "Failed to restore the built-in skill",
-    "command.title": "Commands",
+    "command.noMatch": "No matching command",
+    "command.descriptionMatch": "matched in description",
+    "command.group.command": "Commands",
+    "command.group.mcp": "MCP",
+    "command.group.skill": "Skills",
 
     // Artifact preview
     "artifact.preview": "Preview",
@@ -1627,7 +1631,11 @@ export const zhHans: Record<string, string> = {
     "skills.restoreConfirmBody": "将删除用户安装的「{name}」技能目录（位于应用技能目录下），并恢复内置版本。用户目录中的本地改动会丢失。",
     "skills.restoreDone": "已恢复内置技能",
     "skills.restoreFailed": "恢复内置技能失败",
-    "command.title": "命令",
+    "command.noMatch": "没有匹配的命令",
+    "command.descriptionMatch": "描述匹配",
+    "command.group.command": "命令",
+    "command.group.mcp": "MCP",
+    "command.group.skill": "技能",
 
     // Artifact preview
     "artifact.preview": "预览",

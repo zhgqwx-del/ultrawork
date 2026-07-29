@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText, Bot, Users, Cpu } from "lucide-react"
 import { useSessionsContext } from "@/lib/sessions-context"
+import { commandsAvailableFor } from "@/lib/command-menu"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAttachments } from "@/lib/use-attachments"
@@ -315,6 +316,9 @@ export function HomePage() {
               variant="home"
               className="w-full"
               ctaLabel={t("home.startNow")}
+              // The command list is OpenCode's; an ACP leader never sees it.
+              // In Team mode `agentId` IS the leader, so this covers both modes.
+              commandsEnabled={commandsAvailableFor(agentId)}
               topSlot={<ModeSwitch mode={mode} onModeChange={setMode} teamDisabled={!acpAvailable} />}
               leftSlot={
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
