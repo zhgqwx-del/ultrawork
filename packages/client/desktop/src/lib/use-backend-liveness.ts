@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { useConfig } from "./config-context"
 import { resolveApiBaseUrl } from "./config"
 
@@ -67,6 +67,25 @@ export async function probeBackend(
 }
 
 /**
+ * Basic-auth header, or none.
+ *
+ * `btoa` throws on anything outside Latin-1 and Settings lets the user type
+ * whatever they like into username/password. Building the header outside the
+ * probe's try/catch turned that into an unhandled rejection that killed the
+ * polling loop for good — the banner would then never learn anything again.
+ *
+ * A credential that cannot even be encoded cannot authenticate either, so going
+ * out bare is not a loss: the server answers 401 and `unauthorized` is truthful.
+ */
+function basicAuth(username: string, password: string): Record<string, string> {
+  try {
+    return { authorization: "Basic " + btoa(`${username}:${password}`) }
+  } catch {
+    return {}
+  }
+}
+
+/**
  * Probe while `enabled`; report `unknown` when not. Enable this only once the
  * stream has actually been down for a while — probing a healthy app would be
  * pure noise.
@@ -74,29 +93,33 @@ export async function probeBackend(
 export function useBackendLiveness(enabled: boolean): BackendLiveness {
   const { config } = useConfig()
   const [liveness, setLiveness] = useState<BackendLiveness>("unknown")
-  const cancelledRef = useRef(false)
 
   useEffect(() => {
     if (!enabled) {
       setLiveness("unknown")
       return
     }
-    cancelledRef.current = false
+    // Per-effect flag, NOT a ref: a ref is shared across effect runs, so the next
+    // run resets it to false before the previous run's await resumes — the old
+    // run then believes it is still current and schedules another tick, one the
+    // finished cleanup can no longer clear. Every config change made mid-probe
+    // leaked another polling loop.
+    let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const run = async () => {
-      const auth = "Basic " + btoa(`${config.apiUsername || "opencode"}:${config.apiPassword}`)
-      const verdict = await probeBackend(resolveApiBaseUrl(config.apiBaseUrl), {
-        authorization: auth,
-      })
-      if (cancelledRef.current) return
+      const verdict = await probeBackend(
+        resolveApiBaseUrl(config.apiBaseUrl),
+        basicAuth(config.apiUsername || "opencode", config.apiPassword),
+      )
+      if (cancelled) return
       setLiveness(verdict)
       timer = setTimeout(run, PROBE_INTERVAL_MS)
     }
     void run()
 
     return () => {
-      cancelledRef.current = true
+      cancelled = true
       if (timer !== undefined) clearTimeout(timer)
     }
   }, [enabled, config.apiBaseUrl, config.apiUsername, config.apiPassword])

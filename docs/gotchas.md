@@ -538,3 +538,11 @@ macOS 上 `/var` → `/private/var`。工作区路径若经软链接，侧栏会
 **机制未明**：`run()` 的 boot 线程早就在 move `AppHandle` 进 `std::thread` 并 `emit` 且一直是绿的 ⇒ 这不是充分条件。
 ⇒ **在 Rust 侧新增 emit 前先在 Windows CI 上验一次**；macOS/Linux 全绿说明不了任何事。
 该能力最终用**不含 Rust 的方式**补回（`use-backend-liveness.ts` 探 `/global/health`），见 ADR-071。
+
+**⑫ ⚠️ 用 `useRef` 当「取消标志」在 effect 里会漏循环。**
+ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一轮的 `await` 恢复 ⇒ 旧运行以为自己还有效，继续 `setState` 并**再排一个 timer**，而那一轮的 cleanup 早已跑完、清不掉它。每次依赖变化漏一个轮询循环。
+判据：**取消标志必须是 effect 内的局部变量**，不是 ref。
+复现要两个条件缺一不可：① 依赖变化时探测**仍在途**（立即 resolve 的 mock 看不到）；② 时钟推进**一整个间隔**（漏掉的循环下一跳在 10s 后，200ms 窗口什么都看不到）。实测计数 = 4（一次配置变化一个循环）。
+
+**⑬ `btoa` 遇非 Latin-1 抛异常，而设置页允许用户随便输用户名/密码。**
+把 Basic 头拼在 `try` 外面 ⇒ 变成 **unhandled rejection**，轮询循环直接静默死掉、之后再也不上报。凭据既然编码都编不出来就更认证不了，所以**裸发请求让服务端答 401** 才是诚实做法。
