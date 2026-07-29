@@ -54,10 +54,34 @@ function Harness({
 const rows = () => screen.queryAllByRole("button").filter((b) => b.hasAttribute("data-index"))
 const textarea = () => screen.getByRole("textbox") as HTMLTextAreaElement
 
-/** Open the menu and wait for the async command fetch to land. */
+const highlightedIndex = () =>
+  rows().findIndex((r) => r.className.includes("bg-[var(--color-accent)]"))
+
+/**
+ * Open the menu and wait until it actually OWNS THE KEYBOARD.
+ *
+ * Rows appear in the render phase, but the selector attaches its document-level
+ * keydown listener — and resets the selection to 0 — in effects keyed on `open`.
+ * A key fired in that window is either swallowed (no listener yet) or undone (the
+ * reset runs after it). A human cannot type that fast; a test can, and this file
+ * flaked on CI three separate ways because of it: arrows lost, then Escape lost.
+ *
+ * So probe instead of hoping: press ArrowDown until the highlight actually moves,
+ * then ArrowUp to put the selection back where it started. Once a key has visibly
+ * landed, every later key in the test lands too.
+ */
 async function openMenu(text = "/") {
   fireEvent.change(textarea(), { target: { value: text } })
   await waitFor(() => expect(rows().length).toBeGreaterThan(0))
+  // One row means the arrows are a no-op (selection wraps to itself), so there is
+  // nothing observable to probe with — and nothing to race, either.
+  if (rows().length < 2) return
+  await waitFor(() => {
+    fireEvent.keyDown(textarea(), { key: "ArrowDown" })
+    expect(highlightedIndex()).toBe(1)
+  })
+  fireEvent.keyDown(textarea(), { key: "ArrowUp" })
+  await waitFor(() => expect(highlightedIndex()).toBe(0))
 }
 
 beforeEach(() => {
@@ -240,18 +264,11 @@ describe("CommandSelector — selection", () => {
     render(<Harness />)
     await openMenu()
     const highlighted = () => rows().filter((r) => r.className.includes("bg-[var(--color-accent)]"))
-
-    // Press until it takes, rather than pressing twice and hoping. openMenu()
-    // returns as soon as the ROWS render, but the selector attaches its keydown
-    // listener AND resets the selection to 0 in effects keyed on `open` — so an
-    // arrow fired in that window is either swallowed (no listener yet) or undone
-    // (reset runs after it). A human cannot type inside that window; a test can,
-    // and this flaked on CI for exactly that reason. Selection wraps, so
-    // repeating always converges.
-    await waitFor(() => {
-      fireEvent.keyDown(textarea(), { key: "ArrowDown" })
-      expect(highlighted()[0]).toHaveTextContent("/markdown-exporter")
-    })
+    // Plain presses are safe again: openMenu() does not return until a key has
+    // been observed to land.
+    fireEvent.keyDown(textarea(), { key: "ArrowDown" })
+    fireEvent.keyDown(textarea(), { key: "ArrowDown" })
+    await waitFor(() => expect(highlighted()[0]).toHaveTextContent("/markdown-exporter"))
 
     fireEvent.change(textarea(), { target: { value: "" } })
     await waitFor(() => expect(rows()).toHaveLength(0))
