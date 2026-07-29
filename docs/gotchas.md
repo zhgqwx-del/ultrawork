@@ -564,4 +564,6 @@ ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一�
 
 **⚠️ 手动发 `OPTIONS` 是没用的**（我先试了这条，被真 Chrome 否掉）：手写的 OPTIONS 不是 preflight，它自己就是个**非简单请求、需要自己的 preflight**，而服务端答的是 `Allow-Methods: GET,HEAD,PUT,POST,DELETE,PATCH` —— **不含 OPTIONS**，所以三种场景全被拦，健康时也一样。
 
+**三种判定已在 WKWebView 真机闭环**（listening / unauthorized / absent 各一次，2026-07-29）—— Chrome 的 e2e 只能证明 Chromium 系（= Windows 的 WebView2），macOS/Linux 是 WebKit 系，属于另一个引擎。
+
 **两层验证都会骗你，必须上真浏览器**：① jsdom 的 fetch 完全不执行 CORS，401 会被正常读到；② 我在 node 里手写的「浏览器模拟」只检查了 ACAO 响应头、**没模拟 preflight 流程**，于是给 OPTIONS 方案发了通行证。常驻回归 = `e2e/backend-liveness-cors.e2e.ts`（真 Chrome + 真 sidecar）。
