@@ -57,6 +57,36 @@
       判据由 renderer 探 `/global/health` 得出（`use-backend-liveness.ts`）——
       **仅生产环境**：dev 下 vite 代理会把拒绝答成 500，读作「还活着」。
 
+## C-auth. 凭据失效的自愈（gotchas §20⑧⑭）— **✅ 已真机验收（2026-07-29）**
+
+**触发方式（不需要 devtools —— release 构建默认关闭它）**：删掉凭据文件，模拟用户
+重置配置目录。这比手改 localStorage 更贴近真实故障。
+
+```bash
+pkill -f Ultrawork; sleep 2
+rm ~/.config/ultrawork/sidecar-auth.json      # Rust 下次启动生成新的，localStorage 里还是旧的
+open .../Ultrawork.app
+```
+
+**判据不能只看横幅** —— 自愈只要 1–2 秒，横幅一闪而过甚至看不清。看**密码本身**：
+
+```bash
+# localStorage（WebKit 存的是 UTF-16LE BLOB）
+sqlite3 ~/Library/WebKit/com.ultrawork.desktop/WebsiteData/Default/*/*/LocalStorage/localstorage.sqlite3 \
+  "select hex(value) from ItemTable where key='ultrawork-config';"
+# 对照 ~/.config/ultrawork/sidecar-auth.json
+```
+
+启动前后两边都变成同一个新值 ⇒ 自愈成功。
+
+**⚠️ 归因时必须先看 `apiUsername`**：`config-context.tsx` 有一条既有逻辑
+（`if (config.apiPassword && config.apiUsername && !isLegacyDefault) return`），
+username 为空时它自己就会重取 —— 那样密码也会变，但**不是** `useCredentialResync`
+的功劳。实测本机 `apiUsername = 'opencode'` 非空 ⇒ 既有逻辑直接 return ⇒ 归因确定。
+
+**这一个事实同时证明两件事**：密码被改写 ⇒ `useCredentialResync` 跑了 ⇒ 探测必然
+返回了 `unauthorized` ⇒ `no-cors` 补救生效（旧的 OPTIONS 版本判 `absent`，守卫会挡住）。
+
 ## C. 断连横幅与恢复（F2 / F5）
 
 - [ ] **C1** 用防火墙/断网工具阻断 4096 端口（**不要杀进程**，那会走 B2 分支），
