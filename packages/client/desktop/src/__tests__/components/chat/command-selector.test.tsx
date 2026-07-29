@@ -239,10 +239,19 @@ describe("CommandSelector — selection", () => {
     // close/reopen, and the menu comes back selected on an off-screen row.
     render(<Harness />)
     await openMenu()
-    fireEvent.keyDown(textarea(), { key: "ArrowDown" })
-    fireEvent.keyDown(textarea(), { key: "ArrowDown" })
     const highlighted = () => rows().filter((r) => r.className.includes("bg-[var(--color-accent)]"))
-    await waitFor(() => expect(highlighted()[0]).toHaveTextContent("/markdown-exporter"))
+
+    // Press until it takes, rather than pressing twice and hoping. openMenu()
+    // returns as soon as the ROWS render, but the selector attaches its keydown
+    // listener AND resets the selection to 0 in effects keyed on `open` — so an
+    // arrow fired in that window is either swallowed (no listener yet) or undone
+    // (reset runs after it). A human cannot type inside that window; a test can,
+    // and this flaked on CI for exactly that reason. Selection wraps, so
+    // repeating always converges.
+    await waitFor(() => {
+      fireEvent.keyDown(textarea(), { key: "ArrowDown" })
+      expect(highlighted()[0]).toHaveTextContent("/markdown-exporter")
+    })
 
     fireEvent.change(textarea(), { target: { value: "" } })
     await waitFor(() => expect(rows()).toHaveLength(0))
