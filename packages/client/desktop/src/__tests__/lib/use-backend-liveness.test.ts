@@ -6,9 +6,16 @@
 // So the judgement is narrow on purpose, and these tests pin the narrowness —
 // especially the cases that must NOT be read as "the process died".
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { renderHook, act, waitFor } from "@testing-library/react"
 
-import { probeBackend } from "@/lib/use-backend-liveness"
+const cfg = vi.hoisted(() => ({
+  value: { apiBaseUrl: "auto", apiUsername: "opencode", apiPassword: "pw" } as Record<string, string>,
+}))
+vi.mock("@/lib/config-context", () => ({ useConfig: () => ({ config: cfg.value }) }))
+vi.mock("@/lib/config", () => ({ resolveApiBaseUrl: () => "http://127.0.0.1:4096" }))
+
+import { probeBackend, useBackendLiveness } from "@/lib/use-backend-liveness"
 
 const URL = "http://127.0.0.1:4096"
 const HEADERS = { authorization: "Basic x" }
@@ -75,5 +82,70 @@ describe("probeBackend", () => {
     const init = (f as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(init.headers).toMatchObject({ authorization: "Basic x" })
     expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe("useBackendLiveness — the probe loop itself", () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    cfg.value = { apiBaseUrl: "auto", apiUsername: "opencode", apiPassword: "pw" }
+    fetchMock = vi.fn(async () => new Response("", { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("survives credentials btoa cannot encode", async () => {
+    // Settings lets the user type anything into username/password. A non-Latin1
+    // value makes btoa throw, and building the header OUTSIDE the probe's
+    // try/catch turned that into an unhandled rejection that killed the loop for
+    // good — the banner would then never learn anything again.
+    cfg.value = { ...cfg.value, apiUsername: "用户" }
+    const { result } = renderHook(() => useBackendLiveness(true))
+    await waitFor(() => expect(result.current).not.toBe("unknown"))
+    // Any verdict is fine; silently dying is not.
+    expect(["listening", "absent", "unauthorized"]).toContain(result.current)
+  })
+
+  it("runs ONE loop, not one per config change", async () => {
+    // The cancel flag used to live in a ref shared across effect runs: the new
+    // run reset it to false before the old run's await resumed, so the old run
+    // never learned it had been cancelled and scheduled its own next tick — a
+    // timer the (already-finished) cleanup could no longer clear. Every config
+    // change made while a probe was IN FLIGHT leaked another loop.
+    //
+    // Two things are needed to see it, and missing either hides the bug:
+    //   · the probe must still be in flight when the config changes,
+    //   · and the clock must advance a WHOLE interval, because a leaked loop's
+    //     next tick is 10s out — a 200ms window shows nothing.
+    vi.useFakeTimers()
+    const slow = vi.fn(
+      () => new Promise<Response>((r) => setTimeout(() => r(new Response("", { status: 200 })), 40)),
+    )
+    vi.stubGlobal("fetch", slow)
+
+    const { rerender } = renderHook(() => useBackendLiveness(true))
+    for (const pw of ["a", "b", "c"]) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(10) }) // still in flight
+      cfg.value = { ...cfg.value, apiPassword: pw }
+      rerender()
+    }
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) }) // all settle
+    const settled = slow.mock.calls.length
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(11_000) }) // one interval
+    // One live loop fires once. Four would fire four times.
+    expect(slow.mock.calls.length - settled).toBeLessThanOrEqual(1)
+    vi.useRealTimers()
+  })
+
+  it("stops probing once disabled", async () => {
+    const { rerender } = renderHook(({ on }: { on: boolean }) => useBackendLiveness(on), {
+      initialProps: { on: true },
+    })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    rerender({ on: false })
+    const atDisable = fetchMock.mock.calls.length
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)) })
+    expect(fetchMock.mock.calls.length).toBe(atDisable)
   })
 })
