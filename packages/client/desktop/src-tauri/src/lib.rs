@@ -948,7 +948,7 @@ struct SpawnedSidecar {
 }
 
 /// Spawn a sidecar binary using ShellExt (works with App or AppHandle).
-fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
+fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Manager<tauri::Wry>>(
     shell_host: &T,
     name: &'static str,
     args: &[String],
@@ -969,11 +969,186 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
         .map_err(|e| format!("Failed to spawn {}: {}", name, e))?;
     let pid = child.pid();
     // Dropping CommandChild does not kill the OS process — it continues running.
-    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx) })
+    let app = shell_host.app_handle().clone();
+    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx, Some(app)) })
+}
+
+// ── Sidecar log capture ────────────────────────────────────────────
+//
+// The three in-house sidecars (channel-gateway / knowledge-sidecar / acp-client)
+// print their diagnostics to stdout/stderr and nowhere else, and this process is
+// their only reader. Discarding that — which is what we did — meant a failure in
+// any of them left no trace at all on a user's machine. Everything they print now
+// lands in a per-sidecar file next to the data those sidecars already write.
+// (opencode keeps its own log dir; capturing it here too is still worth it, since
+// a panic or a failed boot never reaches its logger.)
+
+/// Where the sidecars already keep their state (acp-sessions, orchestrator-runs).
+/// Mirrors the JS derivation in `acp-client/src/session-store.ts` so the logs sit
+/// beside the state they explain — same path on all three platforms.
+fn global_data_dir() -> PathBuf {
+    match std::env::var("XDG_DATA_HOME") {
+        Ok(val) if !val.is_empty() => PathBuf::from(val).join(OPENCODE_APP_NAME),
+        _ => dirs::home_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join(".local")
+            .join("share")
+            .join(OPENCODE_APP_NAME),
+    }
+}
+
+fn sidecar_log_dir() -> PathBuf {
+    global_data_dir().join("log").join("sidecar")
+}
+
+/// Rotate at this size, keeping one previous generation — so a sidecar costs at
+/// most 2x this on disk no matter how long the app runs or how chatty it gets.
+const SIDECAR_LOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Format epoch millis as `YYYY-MM-DDTHH:MM:SS.mmmZ`. Hand-rolled (days-from-civil,
+/// Howard Hinnant's algorithm) rather than pulling a date crate in for one line of
+/// output. A log whose timestamps can't be correlated with a user's report is only
+/// half a log, so this is not optional detail.
+fn format_utc_millis(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let millis = ms % 1000;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year,
+        month,
+        day,
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60,
+        millis
+    )
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Append-only, size-capped log file for one sidecar's output.
+struct SidecarLog {
+    dir: PathBuf,
+    name: String,
+    file: Option<std::fs::File>,
+    written: u64,
+    /// A full or read-only disk must never stall the child: the plugin's event
+    /// channel has capacity 1 and its stdout readers block on send, so a logger
+    /// that retried a failing write would back-pressure straight into the sidecar.
+    /// The first error disables logging for the rest of this process instead.
+    disabled: bool,
+}
+
+impl SidecarLog {
+    fn open_in(dir: PathBuf, name: &str) -> Self {
+        let mut log = Self {
+            dir,
+            name: name.to_string(),
+            file: None,
+            written: 0,
+            disabled: false,
+        };
+        if std::fs::create_dir_all(&log.dir).is_err() {
+            log.disabled = true;
+            return log;
+        }
+        log.reopen();
+        log
+    }
+
+    fn open(name: &str) -> Self {
+        Self::open_in(sidecar_log_dir(), name)
+    }
+
+    fn path(&self) -> PathBuf {
+        self.dir.join(format!("{}.log", self.name))
+    }
+
+    fn previous_path(&self) -> PathBuf {
+        self.dir.join(format!("{}.1.log", self.name))
+    }
+
+    fn reopen(&mut self) {
+        let path = self.path();
+        self.written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(f) => self.file = Some(f),
+            Err(_) => self.disabled = true,
+        }
+    }
+
+    fn rotate_if_needed(&mut self) {
+        if self.written < SIDECAR_LOG_MAX_BYTES {
+            return;
+        }
+        // Close before renaming: Windows refuses to rename a file with an open handle.
+        self.file = None;
+        let prev = self.previous_path();
+        let _ = std::fs::remove_file(&prev);
+        if std::fs::rename(self.path(), &prev).is_err() {
+            // Rotation failed — drop the current file rather than let it grow
+            // unbounded, which is the one outcome this cap exists to prevent.
+            let _ = std::fs::remove_file(self.path());
+        }
+        self.reopen();
+    }
+
+    /// `stream` tags the origin: `out` / `err` from the child, `app` for our own
+    /// lifecycle lines. `text` may hold several lines; each gets its own record so
+    /// the file stays greppable.
+    fn write(&mut self, stream: &str, text: &str) {
+        if self.disabled {
+            return;
+        }
+        self.rotate_if_needed();
+        let ts = format_utc_millis(now_millis());
+        let Some(file) = self.file.as_mut() else { return };
+        for line in text.lines() {
+            let record = format!("{} [{}] {}\n", ts, stream, line);
+            if std::io::Write::write_all(file, record.as_bytes()).is_err() {
+                self.disabled = true;
+                self.file = None;
+                return;
+            }
+            self.written += record.len() as u64;
+        }
+    }
+}
+
+/// Emitted when a sidecar process dies. The renderer surfaces it, because the
+/// app cannot heal from this on its own: sidecars are spawned once at boot and
+/// never supervised afterwards.
+const SIDECAR_EXITED_EVENT: &str = "sidecar-exited";
+
+fn notify_sidecar_exited(app: Option<&tauri::AppHandle>, name: &str, code: Option<i32>) {
+    use tauri::Emitter;
+    let Some(app) = app else { return };
+    let _ = app.emit(
+        SIDECAR_EXITED_EVENT,
+        serde_json::json!({ "name": name, "code": code }),
+    );
 }
 
 /// Drain the command's event stream on a dedicated thread, flipping a flag when the
-/// child exits.
+/// child exits, and mirroring everything the child prints into its log file.
 ///
 /// The draining is not optional. The plugin's channel has capacity 1 and its
 /// stdout/stderr readers `block_on(tx.send(..))`, so a receiver that is held but
@@ -982,7 +1157,19 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
 /// runtime, so `blocking_recv` here is safe.
 fn watch_sidecar_exit(
     name: &'static str,
+    rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
+    app: Option<tauri::AppHandle>,
+) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    watch_sidecar_exit_with(name, rx, SidecarLog::open(name), app)
+}
+
+/// Log sink injected so tests never touch the real home directory (ADR-051);
+/// `app` is None there too, since emitting needs a live Tauri app.
+fn watch_sidecar_exit_with(
+    name: &'static str,
     mut rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
+    mut log: SidecarLog,
+    app: Option<tauri::AppHandle>,
 ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
     use std::sync::atomic::Ordering;
     use tauri_plugin_shell::process::CommandEvent;
@@ -990,22 +1177,39 @@ fn watch_sidecar_exit(
     let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = exited.clone();
     std::thread::spawn(move || {
+        log.write("app", &format!("=== {} started ===", name));
         while let Some(event) = rx.blocking_recv() {
             match event {
                 CommandEvent::Terminated(payload) => {
                     println!("[sidecar] {} exited with {:?}", name, payload.code);
+                    log.write(
+                        "app",
+                        &format!(
+                            "=== {} exited (code {:?}, signal {:?}) ===",
+                            name, payload.code, payload.signal
+                        ),
+                    );
+                    // Nothing restarts a sidecar once boot is over, so a death
+                    // here is permanent until the app is relaunched. Tell the
+                    // renderer: the only other symptom is a stream that quietly
+                    // stops, which is indistinguishable from an idle agent.
+                    notify_sidecar_exited(app.as_ref(), name, payload.code);
                     flag.store(true, Ordering::SeqCst);
                     break;
                 }
-                CommandEvent::Error(e) => eprintln!("[sidecar] {} error: {}", name, e),
-                // Stdout/Stderr were discarded before this change too; keep draining
-                // them so the child never blocks on a full pipe.
+                CommandEvent::Error(e) => {
+                    eprintln!("[sidecar] {} error: {}", name, e);
+                    log.write("app", &format!("stream error: {}", e));
+                }
+                CommandEvent::Stdout(bytes) => log.write("out", &String::from_utf8_lossy(&bytes)),
+                CommandEvent::Stderr(bytes) => log.write("err", &String::from_utf8_lossy(&bytes)),
                 _ => {}
             }
         }
         // The sender is gone (or we stopped caring): if we never saw Terminated,
         // treat the stream ending as an exit so a caller waiting on the flag is
         // not stuck believing the child is alive.
+        log.write("app", &format!("=== {} event stream ended ===", name));
         flag.store(true, Ordering::SeqCst);
     });
     exited
@@ -1097,7 +1301,9 @@ fn should_retry_on_new_port(outcome: &ReadyOutcome, fixed: bool, attempt: u32) -
 ///
 /// `args_for` / `env_for` take the chosen port because a retry changes it: the port
 /// has to be rebuilt into the child's argv and environment, not captured up front.
-fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<tauri::Wry>>(
+fn start_sidecar<
+    T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<tauri::Wry> + tauri::Manager<tauri::Wry>,
+>(
     shell_host: &T,
     name: &'static str,
     preferred_port: u16,
@@ -2351,35 +2557,74 @@ const SCAN_IGNORE_DIRS: &[&str] = &[
 const SCAN_IGNORE_EXTS: &[&str] = &["pyc", "pyo", "class", "o", "lock"];
 
 const SCAN_MAX_DEPTH: usize = 8;
-/// How many matches we keep/return (newest-first).
+/// How many matches we keep/return (newest-first). Enforced by a bounded heap
+/// DURING the walk, so this also caps memory — there is no intermediate "collect
+/// everything, then sort" step to blow up.
 const SCAN_MAX_FILES: usize = 500;
-/// Memory safety cap on matches collected during the walk, before sorting. Set
-/// well above SCAN_MAX_FILES so we still pick the newest 500 globally rather
-/// than stopping the walk at an arbitrary 500 (which could drop the real,
-/// most-recent deliverable). Only a pathological tree (>5000 changed files
-/// since the baseline) hits it.
-const SCAN_WALK_MAX: usize = 5000;
 /// Hard cap on directory entries examined, so a huge workspace (where few files
 /// match the baseline, forcing a full traversal) can't make the walk run
 /// unbounded. Each entry costs a `metadata()` stat; this bounds worst-case time.
-const SCAN_MAX_ENTRIES: usize = 50_000;
+///
+/// Measured on this tree shape: ~80k entries walk in ~150ms (debug build), so the
+/// old 50k was far more conservative than the cost warranted — and being cheap
+/// there was not free, because hitting the cap silently drops whatever the walk
+/// had not reached yet.
+const SCAN_MAX_ENTRIES: usize = 200_000;
+
+/// Read one entry's mtime as epoch millis.
+fn entry_mtime_ms(meta: &std::fs::Metadata) -> Option<u64> {
+    meta.modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+}
 
 /// Walk `root` collecting (absolute path, mtime_ms) for files modified at/after
 /// `since_ms`. Skips dotfiles/dotdirs, ignore dirs, ignore exts, symlinks.
-/// Bounded by depth, match count, and total entries examined so a huge tree can
-/// never hang the caller. Returns the newest SCAN_MAX_FILES, newest first.
+/// Returns the newest SCAN_MAX_FILES, newest first.
+///
+/// Two properties the previous version claimed but did not have:
+///
+/// 1. **The newest match is never dropped for running out of room.** It used to
+///    stop the walk after 5000 matches and only then sort, so in a busy
+///    workspace the file the agent had just written could be missed entirely
+///    while 500 older ones were reported. Matches now go through a bounded
+///    min-heap keyed on mtime, so "the newest 500" is global over everything the
+///    walk saw, and memory is capped without ever cutting the walk short.
+///
+/// 2. **Which files get seen does not depend on directory ordering luck.** The
+///    walk is a LIFO DFS, so with a hard entry budget it could exhaust the
+///    budget in unrelated subtrees before reaching the one that changed —
+///    measurably: the same fresh file was found or missed purely by which
+///    directory it sat in. Subdirectories are now visited newest-mtime-first,
+///    and a directory's mtime bumps when an entry is created in it, so the
+///    subtree the agent just wrote to is walked first.
+///    (Only a heuristic for ORDER, never for pruning: editing a file in place
+///    leaves its parent's mtime untouched, so no directory can be skipped on
+///    this basis.)
 fn collect_changed_files(root: &std::path::Path, since_ms: u64) -> Vec<(String, u64)> {
-    let mut out: Vec<(String, u64)> = Vec::new();
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    // Min-heap on mtime: the oldest kept match is always on top, so once full we
+    // evict it in favour of anything newer.
+    let mut best: BinaryHeap<Reverse<(u64, String)>> = BinaryHeap::new();
     let mut visited: usize = 0;
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+
     while let Some((dir, depth)) = stack.pop() {
-        if out.len() >= SCAN_WALK_MAX || visited >= SCAN_MAX_ENTRIES {
+        if visited >= SCAN_MAX_ENTRIES {
             break;
         }
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue,
         };
+        // Subdirs are collected with their mtimes and pushed in one batch so the
+        // newest lands on top of the stack (= popped first).
+        let mut subdirs: Vec<(PathBuf, u64)> = Vec::new();
+
         for entry in entries.flatten() {
             visited += 1;
             if visited >= SCAN_MAX_ENTRIES {
@@ -2401,7 +2646,8 @@ fn collect_changed_files(root: &std::path::Path, since_ms: u64) -> Vec<(String, 
                     continue;
                 }
                 if depth + 1 <= SCAN_MAX_DEPTH {
-                    stack.push((path, depth + 1));
+                    let mtime = entry.metadata().ok().and_then(|m| entry_mtime_ms(&m)).unwrap_or(0);
+                    subdirs.push((path, mtime));
                 }
                 continue;
             }
@@ -2414,25 +2660,31 @@ fn collect_changed_files(root: &std::path::Path, since_ms: u64) -> Vec<(String, 
                     continue;
                 }
             }
-            let mtime_ms = match entry.metadata().ok().and_then(|m| m.modified().ok()) {
-                Some(t) => t
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0),
+            let mtime_ms = match entry.metadata().ok().and_then(|m| entry_mtime_ms(&m)) {
+                Some(t) => t,
                 None => continue,
             };
-            if mtime_ms >= since_ms {
-                out.push((path.to_string_lossy().to_string(), mtime_ms));
-                if out.len() >= SCAN_WALK_MAX {
-                    break;
-                }
+            if mtime_ms < since_ms {
+                continue;
+            }
+            if best.len() < SCAN_MAX_FILES {
+                best.push(Reverse((mtime_ms, path.to_string_lossy().to_string())));
+            } else if best.peek().map(|Reverse((oldest, _))| mtime_ms > *oldest).unwrap_or(false) {
+                best.pop();
+                best.push(Reverse((mtime_ms, path.to_string_lossy().to_string())));
             }
         }
+
+        // Oldest pushed first → newest ends up on top of the LIFO stack.
+        subdirs.sort_by_key(|(_, mtime)| *mtime);
+        for (path, _) in subdirs {
+            stack.push((path, depth + 1));
+        }
     }
-    // Newest first, then keep only the newest SCAN_MAX_FILES.
+
+    let mut out: Vec<(String, u64)> =
+        best.into_iter().map(|Reverse((mtime, path))| (path, mtime)).collect();
     out.sort_by(|a, b| b.1.cmp(&a.1));
-    out.truncate(SCAN_MAX_FILES);
     out
 }
 
@@ -6831,6 +7083,108 @@ mod free_trial_consent_tests {
 }
 
 #[cfg(test)]
+mod sidecar_log_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("uw-log-{}-{}", tag, n))
+    }
+
+    #[test]
+    fn formats_epoch_millis_as_utc() {
+        assert_eq!(format_utc_millis(0), "1970-01-01T00:00:00.000Z");
+        // Cross-checked against `date -u -r 1785328496`.
+        assert_eq!(format_utc_millis(1_785_328_496_789), "2026-07-29T12:34:56.789Z");
+        // Leap day must not slide a day (the whole point of civil-from-days).
+        assert_eq!(format_utc_millis(1_709_164_800_000), "2024-02-29T00:00:00.000Z");
+    }
+
+    #[test]
+    fn writes_one_record_per_line_with_stream_tag() {
+        let dir = tmp_dir("write");
+        let mut log = SidecarLog::open_in(dir.clone(), "gw");
+        log.write("out", "hello\nworld\n");
+        log.write("err", "boom");
+
+        let body = std::fs::read_to_string(dir.join("gw.log")).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 3, "one record per input line: {:?}", lines);
+        assert!(lines[0].ends_with(" [out] hello"), "{}", lines[0]);
+        assert!(lines[1].ends_with(" [out] world"), "{}", lines[1]);
+        assert!(lines[2].ends_with(" [err] boom"), "{}", lines[2]);
+        // Timestamp prefix must be parseable, not decorative.
+        assert!(lines[0].starts_with("20"), "{}", lines[0]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotates_at_the_cap_and_keeps_exactly_one_generation() {
+        let dir = tmp_dir("rotate");
+        let mut log = SidecarLog::open_in(dir.clone(), "kb");
+        // Pretend we are already at the cap so the test doesn't write 4 MB.
+        log.written = SIDECAR_LOG_MAX_BYTES;
+        log.write("out", "first-after-rotate");
+        assert!(dir.join("kb.1.log").exists(), "previous generation kept");
+
+        // Force a second rotation: the older generation must be replaced, not stacked.
+        log.written = SIDECAR_LOG_MAX_BYTES;
+        log.write("out", "second-after-rotate");
+        let files: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(files.len(), 2, "at most two files on disk: {:?}", files);
+        assert!(std::fs::read_to_string(dir.join("kb.log"))
+            .unwrap()
+            .contains("second-after-rotate"));
+        assert!(std::fs::read_to_string(dir.join("kb.1.log"))
+            .unwrap()
+            .contains("first-after-rotate"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_failure_disables_the_logger_instead_of_retrying() {
+        // An unwritable directory must not turn into a per-line error storm — and
+        // above all must not back-pressure into the sidecar (see SidecarLog docs).
+        //
+        // A FILE sitting where the directory should be fails create_dir_all
+        // identically on all three platforms (an interior NUL in the path would
+        // be a Unix-shaped assumption).
+        let base = tmp_dir("nodir");
+        std::fs::create_dir_all(&base).unwrap();
+        let blocked = base.join("not-a-dir");
+        std::fs::write(&blocked, "occupied").unwrap();
+
+        let mut log = SidecarLog::open_in(blocked.join("logs"), "bad");
+        assert!(log.disabled, "unusable log dir disables the logger");
+        log.write("out", "must not panic");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn appends_across_reopen_so_a_restart_keeps_history() {
+        let dir = tmp_dir("append");
+        let mut a = SidecarLog::open_in(dir.clone(), "acp");
+        a.write("app", "run-one");
+        drop(a);
+        let mut b = SidecarLog::open_in(dir.clone(), "acp");
+        b.write("app", "run-two");
+
+        let body = std::fs::read_to_string(dir.join("acp.log")).unwrap();
+        assert!(body.contains("run-one") && body.contains("run-two"), "{}", body);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
 mod scan_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -6889,6 +7243,81 @@ mod scan_tests {
         // scan_workspace_changes is async (runs off the UI thread); its dir guard
         // mirrors the helper's read_dir-failure path, tested here synchronously.
         assert!(collect_changed_files(std::path::Path::new("/no/such/dir/xyz"), 0).is_empty());
+    }
+
+    /// Build `dirs` directories of `per_dir` files each. Returns the root.
+    fn wide_tree(tag: &str, dirs: usize, per_dir: usize) -> PathBuf {
+        let root = unique_tmp(tag);
+        for d in 0..dirs {
+            let dir = root.join(format!("d{:03}", d));
+            std::fs::create_dir_all(&dir).unwrap();
+            for f in 0..per_dir {
+                std::fs::write(dir.join(format!("f{:03}.txt", f)), "x").unwrap();
+            }
+        }
+        root
+    }
+
+    /// The defect this replaces: the walk was a LIFO DFS with a hard entry
+    /// budget, so in a large tree the same freshly-written file was FOUND when it
+    /// sat in the last directory and MISSED when it sat in the first — pure
+    /// traversal luck deciding whether the artifacts panel saw the deliverable.
+    #[test]
+    fn finds_a_fresh_file_wherever_it_sits_in_a_large_tree() {
+        let root = wide_tree("wherever", 120, 300); // 36k entries
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let baseline =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        for dir in ["d000", "d060", "d119"] {
+            let fresh = root.join(dir).join("fresh.pdf");
+            std::fs::write(&fresh, "x").unwrap();
+            let hits = collect_changed_files(&root, baseline);
+            assert!(
+                hits.iter().any(|(p, _)| p.ends_with("fresh.pdf")),
+                "fresh file in {dir} must be found regardless of walk order (got {} hits)",
+                hits.len()
+            );
+            std::fs::remove_file(&fresh).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half: a recent file reached LATE in the walk must still survive.
+    /// The old code filled a flat 5000-match buffer and only sorted afterwards,
+    /// so once a busy workspace had filled it, everything the walk had not yet
+    /// reached was dropped — including, in this shape, the deliverable.
+    ///
+    /// The directory ordering fix alone does NOT cover this, so the tree is built
+    /// to defeat it: `.touch` bumps every other directory's mtime AFTER the
+    /// deliverable is written, which sends them to the front of the walk and
+    /// leaves d000 for last. (A dotfile is skipped as an entry but still bumps
+    /// its parent's mtime — exactly the lever needed here.)
+    #[test]
+    fn keeps_a_recent_file_reached_late_in_a_busy_tree() {
+        let root = wide_tree("late", 40, 200); // 8k matching files, > any flat buffer
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let deliverable = root.join("d000").join("zzz-deliverable.pdf");
+        std::fs::write(&deliverable, "x").unwrap();
+
+        // Make every OTHER directory look more recently touched than d000.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        for d in 1..40 {
+            std::fs::write(root.join(format!("d{:03}", d)).join(".touch"), "x").unwrap();
+        }
+
+        let hits = collect_changed_files(&root, 0);
+        assert_eq!(hits.len(), SCAN_MAX_FILES, "returns exactly the cap");
+        assert!(
+            hits.iter().any(|(p, _)| p.ends_with("zzz-deliverable.pdf")),
+            "a file this recent must make the cut even when walked last ({} hits, oldest kept {})",
+            hits.len(),
+            hits.last().map(|(_, m)| *m).unwrap_or(0),
+        );
+        // Sorted newest-first throughout, not just at the head.
+        assert!(hits.windows(2).all(|w| w[0].1 >= w[1].1));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
@@ -9364,6 +9793,18 @@ mod sidecar_exit_watch_tests {
     use std::sync::atomic::Ordering;
     use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
 
+    fn tmp_log_dir(tag: &str) -> PathBuf {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("uw-watch-{}-{}", tag, n))
+    }
+
+    fn log_into(dir: &PathBuf) -> SidecarLog {
+        SidecarLog::open_in(dir.clone(), "sidecar")
+    }
+
     fn wait_for(flag: &std::sync::atomic::AtomicBool, want: bool) -> bool {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
@@ -9378,7 +9819,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn flags_exit_on_terminated() {
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit("acp-client", rx);
+        let exited = watch_sidecar_exit_with("acp-client", rx, log_into(&tmp_log_dir("terminated")), None);
         assert!(!exited.load(Ordering::SeqCst));
 
         tauri::async_runtime::block_on(async {
@@ -9394,7 +9835,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn flags_exit_when_the_event_stream_ends() {
         let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(1);
-        let exited = watch_sidecar_exit("channel-gateway", rx);
+        let exited = watch_sidecar_exit_with("channel-gateway", rx, log_into(&tmp_log_dir("stream-end")), None);
         drop(tx);
         assert!(wait_for(&exited, true), "stream end must flip the exit flag");
     }
@@ -9403,8 +9844,9 @@ mod sidecar_exit_watch_tests {
     /// every chatty sidecar would be retried onto a new port on its first log line.
     #[test]
     fn stdout_and_stderr_do_not_flag_an_exit() {
+        let dir = tmp_log_dir("output");
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit("knowledge-sidecar", rx);
+        let exited = watch_sidecar_exit_with("knowledge-sidecar", rx, log_into(&dir), None);
 
         tauri::async_runtime::block_on(async {
             tx.send(CommandEvent::Stdout(b"listening on 127.0.0.1:4098\n".to_vec())).await.unwrap();
@@ -9421,6 +9863,16 @@ mod sidecar_exit_watch_tests {
                 .unwrap();
         });
         assert!(wait_for(&exited, true));
+
+        // The whole point of draining: what the child said must be recoverable
+        // afterwards. Before this capture existed all of it went to /dev/null,
+        // so a field failure in gateway/knowledge/acp left no trace at all.
+        let body = std::fs::read_to_string(dir.join("sidecar.log")).expect("log file written");
+        assert!(body.contains("[out] listening on 127.0.0.1:4098"), "stdout captured: {body}");
+        assert!(body.contains("[err] a warning"), "stderr captured: {body}");
+        assert!(body.contains("stream error: transient"), "stream errors captured: {body}");
+        assert!(body.contains("exited (code Some(0)"), "exit code recorded: {body}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A held-but-undrained receiver stalls the child (plugin channel capacity is 1 and
@@ -9429,7 +9881,7 @@ mod sidecar_exit_watch_tests {
     #[test]
     fn keeps_draining_so_a_chatty_child_never_blocks() {
         let (tx, rx) = tauri::async_runtime::channel(1);
-        let exited = watch_sidecar_exit("opencode-server", rx);
+        let exited = watch_sidecar_exit_with("opencode-server", rx, log_into(&tmp_log_dir("chatty")), None);
 
         tauri::async_runtime::block_on(async {
             for i in 0..200 {

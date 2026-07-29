@@ -7,6 +7,13 @@ interface SessionsContextType {
   loading: boolean
   error: string | null
   activeSessionIds: Set<string>
+  /** Search query, forwarded to the server so it covers every session (not just
+   *  the loaded window). */
+  search: string
+  setSearch: (query: string) => void
+  /** True when the server may hold sessions older than the loaded window. */
+  hasMore: boolean
+  loadMore: () => void
   refresh: () => Promise<void>
   createSession: () => Promise<Session>
   deleteSession: (sessionId: string) => Promise<void>

@@ -8,9 +8,8 @@ vi.mock("@/lib/i18n-context", () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}))
+const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), message: vi.fn() }))
+vi.mock("sonner", () => ({ toast }))
 
 const markSessionIdle = vi.fn()
 const markSessionActive = vi.fn()
@@ -34,6 +33,7 @@ const connector = {
   capabilitiesOf: () => ({ sessionStatus: sessionStatusCap, globalEvents: globalEventsCap, revert: true }),
   fetchHistory: vi.fn().mockResolvedValue({ messages: [], cursor: undefined, hasMore: false }),
   cancel: vi.fn().mockResolvedValue(undefined),
+  revert: vi.fn().mockResolvedValue(undefined),
   prompt: vi.fn().mockResolvedValue(undefined),
 }
 
@@ -44,6 +44,8 @@ vi.mock("@/lib/sse-context", () => ({
   useSessionSubscribe: (_sid: string | undefined, handler: (e: SSEEvent) => void) => {
     capturedHandler = handler
   },
+  // No reconnect in this suite: the hook only re-derives `sending` after a recovery.
+  useSSEReconnectEpoch: () => 0,
 }))
 
 import { useSessionMessages, __resetMessageCache, applyMessageEventToCache, registerMessageCacheSession } from "@/lib/use-session-messages"
@@ -292,5 +294,51 @@ describe("useSessionMessages — Home→Session 8s safety timer", () => {
     act(() => capturedHandler!(activity()))
     act(() => { vi.advanceTimersByTime(20000) })
     expect(result.current.sending).toBe(true)
+  })
+})
+
+describe("useSessionMessages — stopping when the backend refuses", () => {
+  beforeEach(() => {
+    toast.error.mockClear()
+    connector.cancel.mockReset().mockResolvedValue(undefined)
+    connector.revert.mockReset().mockResolvedValue(undefined)
+  })
+
+  it("a successful stop stays quiet and keeps the turn frozen", async () => {
+    const { result } = renderHook(() => useSessionMessages("s1", { initialSending: true }))
+    act(() => capturedHandler!(activity()))
+
+    act(() => result.current.stopGeneration())
+
+    await waitFor(() => expect(connector.cancel).toHaveBeenCalledWith("s1"))
+    expect(result.current.stopped).toBe(true)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it("tells the user when the stop FAILED, instead of pretending it worked", async () => {
+    // The agent is still running and still spending tokens. Freezing the view
+    // locally while saying nothing is the one outcome the user cannot act on.
+    connector.cancel.mockRejectedValue(new Error("backend unreachable"))
+    const { result } = renderHook(() => useSessionMessages("s1", { initialSending: true }))
+    act(() => capturedHandler!(activity()))
+
+    act(() => result.current.stopGeneration())
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("error.stopGeneration"))
+  })
+
+  it("un-freezes the view after a failed stop, so later output is still visible", async () => {
+    // `stopped` gates EVERY later message event. Leaving it set after a failed
+    // cancel would hide everything the still-running agent goes on to produce.
+    connector.cancel.mockRejectedValue(new Error("backend unreachable"))
+    const { result } = renderHook(() => useSessionMessages("s1", { initialSending: true }))
+    act(() => capturedHandler!(activity()))
+
+    act(() => result.current.stopGeneration())
+    await waitFor(() => expect(result.current.stopped).toBe(false))
+
+    // Proof it is not merely a flag: a later part actually lands in the list.
+    act(() => capturedHandler!(activity()))
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0))
   })
 })

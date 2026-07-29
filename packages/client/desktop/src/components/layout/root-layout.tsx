@@ -6,6 +6,7 @@ import { ChannelSessionsProvider } from "@/lib/channel-sessions-context"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useWorkspace } from "@/lib/workspace-context"
 import { DragRegion } from "@/components/layout/drag-region"
+import { ConnectionBanner } from "@/components/layout/connection-banner"
 // Lives INSIDE SessionsProvider (it needs session titles) and stays mounted for the whole
 // app — a session that finishes while the user is on Settings, or on another session, still
 // has to reach them.
@@ -43,6 +44,9 @@ export function RootLayout() {
 
           {/* Main content area - pages render here via Outlet */}
           <div className="my-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-[var(--color-bg)] shadow-sm">
+            {/* Above the outlet so it is visible on every page — a dead stream
+                affects all of them, not just the chat. */}
+            <ConnectionBanner />
             <ErrorBoundary>
               <Outlet />
             </ErrorBoundary>

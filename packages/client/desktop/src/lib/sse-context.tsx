@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react"
-import { toast } from "sonner"
 import {
   Connector,
   OpenCodeBackend,
@@ -33,6 +32,15 @@ interface ConnectorContextValue {
   subscribe: (handler: SSEEventHandler) => () => void
   /** Whether the SSE connection is alive (open + heartbeat within 30s) */
   connected: boolean
+  /**
+   * Bumped every time the global stream comes back up after having been down —
+   * NOT on the first connect. The opencode event stream has no replay, so every
+   * event emitted during the gap is lost; consumers watch this to re-derive
+   * whatever they had been tracking from events alone.
+   */
+  reconnectEpoch: number
+  /** Retry now instead of waiting out the background interval. */
+  reconnect: () => void
 }
 
 const ConnectorContext = createContext<ConnectorContextValue | null>(null)
@@ -50,6 +58,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   const { workspacePath } = useWorkspace()
   const handlersRef = useRef<Set<SSEEventHandler>>(new Set())
   const [connected, setConnected] = useState(false)
+  const [reconnectEpoch, setReconnectEpoch] = useState(0)
 
   // The backends below capture their base URL at construction. A sidecar that
   // loses a bind race moves to a new port after startup, so treat that as another
@@ -99,11 +108,19 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     if (!opencode) return
 
     const unsubscribeEvents = connector.subscribeGlobal(masterHandler)
+    // Per-connector: a rebuilt connector starts a fresh stream, and its first
+    // "open" is a first connect, not a recovery.
+    let everOpened = false
     const unsubscribeStatus = opencode.onTransportStatusChange((status) => {
       setConnected(status === "open")
-      if (status === "gave-up") {
-        toast.error("Connection lost. Please check the server and refresh.")
+      if (status === "open") {
+        if (everOpened) setReconnectEpoch((n) => n + 1)
+        everOpened = true
       }
+      // "gave-up" now only means the FAST retries are spent — the transport
+      // keeps knocking in the background. No toast here: ConnectionBanner is the
+      // single disconnect surface, and it covers every kind of drop (not just
+      // this one) with a state that persists instead of a message you can miss.
     })
     opencode.connectGlobal()
 
@@ -119,9 +136,13 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     return () => { handlersRef.current.delete(handler) }
   }, [])
 
+  const reconnect = useCallback(() => {
+    connector.getBackend<OpenCodeBackend>(OPENCODE_BACKEND_KIND)?.reconnectGlobal()
+  }, [connector])
+
   const value = useMemo<ConnectorContextValue>(
-    () => ({ connector, subscribe, connected }),
-    [connector, subscribe, connected],
+    () => ({ connector, subscribe, connected, reconnectEpoch, reconnect }),
+    [connector, subscribe, connected, reconnectEpoch, reconnect],
   )
 
   return (
@@ -160,6 +181,25 @@ export function useSSEConnected(): boolean {
   const ctx = useContext(ConnectorContext)
   if (!ctx) throw new Error("useSSEConnected must be used within SSEProvider")
   return ctx.connected
+}
+
+/**
+ * Counter of RECOVERIES of the global stream (0 until the first one). Anything
+ * whose state is built by folding SSE events must re-derive it from the server
+ * when this changes — the stream has no replay, so the gap is unrecoverable
+ * from events alone.
+ */
+export function useSSEReconnectEpoch(): number {
+  const ctx = useContext(ConnectorContext)
+  if (!ctx) throw new Error("useSSEReconnectEpoch must be used within SSEProvider")
+  return ctx.reconnectEpoch
+}
+
+/** Manual retry for the disconnected banner. */
+export function useSSEReconnect(): () => void {
+  const ctx = useContext(ConnectorContext)
+  if (!ctx) throw new Error("useSSEReconnect must be used within SSEProvider")
+  return ctx.reconnect
 }
 
 /**

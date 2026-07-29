@@ -646,3 +646,40 @@ expect(col.scrollWidth).toBeLessThanOrEqual(col.clientWidth)
 
 ⚠️ 但捕获阶段接管键盘，就必须让出输入法组字期 —— 见 `gotchas.md §19①`。
 
+
+## 22. 事件派生的状态，重连后必须从服务端重新求值（ADR-071）
+
+**规则**：任何「靠折叠 SSE 事件得出的状态」，都要在**流恢复时**重新求值，因为断流窗口里的事件不会补发（gotchas §20①）。
+
+**信号**：`useSSEReconnectEpoch()` —— 只在掉线后重新连上时 +1，**首连不算**（首连之前没有错过任何东西，那时查询只是给冷启动多加一个请求）。
+
+```tsx
+const reconnectEpoch = useSSEReconnectEpoch()
+
+useEffect(() => {
+  if (reconnectEpoch === 0) return          // 首连，无事可补
+  let cancelled = false
+  api.getSessionStatuses()
+    .then((statuses) => {
+      if (cancelled) return
+      const busy = new Set(Object.keys(statuses))   // 缺席即 idle
+      setActiveSessionIds((prev) => reconcile(prev, busy))
+    })
+    .catch((err) => console.error("re-derive failed:", err))   // 尽力而为
+  return () => { cancelled = true }
+}, [reconnectEpoch, api, connector])
+```
+
+**三条必须遵守的**：
+
+1. **失败要保守。** 探针失败时**不要清**任何标记 —— 没验证到的东西不能当作「已确认为 idle」。
+2. **只对自己 backend 的会话下结论。** opencode 的快照不代表 ACP；ACP sidecar 自己会在重连时重放 busy 快照（`acp-manager.subscribeGlobal`），越权去清只会打架。用 `connector.bindings.backendOf(id)` 分流。
+3. **本地副本要跟着 app 级真相走。** `useSessionMessages` 的 `sending` 是独立 state、由同一批丢失的事件驱动，所以要用 `[reconnectEpoch, activeSessionIds]` 作依赖跟着松开 —— 否则转圈和禁用的输入框会活过那个已经结束的 turn。
+
+## 23. 断流类 UI 用「状态」而不是「消息」（ADR-071）
+
+一次性 toast 对**持续状态**是错的载体：错过就再无线索，而用户看到的是一个能打字但永远不回话的 app。
+
+- 常驻横幅 + **4s 宽限**（普通秒级抖动不该弹，弹多了就被无视）
+- 判据用 `connected`（= 流是否 open），**不要**用 `gave-up` —— 后者只表示快速重试耗尽，且时机不直觉（gotchas §20④）
+- **死法不同，文案必须不同**：进程退出后没有任何东西会重启它，对它说「正在重试」是撒谎

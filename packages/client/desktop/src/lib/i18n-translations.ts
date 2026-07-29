@@ -22,6 +22,10 @@ export const en: Record<string, string> = {
     "sidebar.searchPlaceholder": "Search sessions...",
     "sidebar.noMatch": "No matching sessions",
     "sidebar.noSessions": "No sessions yet",
+    "sidebar.loadMore": "Load older sessions",
+    "connection.offline": "Disconnected from the agent server",
+    "connection.retry": "Reconnect",
+    "connection.sidecarExited": "A background service stopped. Restart Ultrawork to recover.",
     "sidebar.unread": "New activity",
     "sidebar.user": "User",
 
@@ -808,6 +812,7 @@ export const en: Record<string, string> = {
     // Errors
     "error.switchModel": "Failed to switch model",
     "error.sendMessage": "Failed to send message",
+    "error.stopGeneration": "Could not stop the agent — it may still be running",
     "error.loadMessages": "Failed to load messages",
     "error.createSession": "Failed to create session. Please check your connection.",
     "error.replyPermission": "Failed to reply permission",
@@ -902,6 +907,10 @@ export const zhHans: Record<string, string> = {
     "sidebar.searchPlaceholder": "搜索会话...",
     "sidebar.noMatch": "没有匹配的会话",
     "sidebar.noSessions": "暂无会话",
+    "sidebar.loadMore": "加载更早的会话",
+    "connection.offline": "已与 Agent 服务断开",
+    "connection.retry": "重新连接",
+    "connection.sidecarExited": "后台服务已退出，请重启 Ultrawork 恢复。",
     "sidebar.unread": "有新消息",
     "sidebar.user": "用户",
 
@@ -1682,6 +1691,7 @@ export const zhHans: Record<string, string> = {
     // Errors
     "error.switchModel": "切换模型失败",
     "error.sendMessage": "发送消息失败",
+    "error.stopGeneration": "停止失败，Agent 可能仍在运行",
     "error.loadMessages": "加载消息失败",
     "error.createSession": "创建会话失败，请检查连接。",
     "error.replyPermission": "回复授权失败",
