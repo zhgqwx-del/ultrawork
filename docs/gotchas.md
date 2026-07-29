@@ -554,5 +554,14 @@ ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一�
 错误凭据: HTTP 401  Access-Control-Allow-Origin = ❌ 缺失
 ```
 ⇒ **从 renderer 看，「密码错」和「端口没人听」完全一样**（fetch 都是直接 throw）。曾据此把凭据失效误报成「后台服务已退出，请重启」——而重启根本没用，坏密码在 localStorage 里活得好好的。
-**逃生口 = `OPTIONS`**：服务端明确放行未鉴权的 preflight（`if (c.req.method === "OPTIONS") return next()`），所以它能走到 cors 中间件、带着 ACAO 回来（实测 204 + ACAO；进程死了则 throw）。**OPTIONS 通而 GET 不通 ⇒ 有人在听且在拒绝你**。见 `use-backend-liveness.ts`。
-**jsdom 验不了这条**：它的 fetch 不执行 CORS，401 会被正常读到 —— 单测里必须手工构造「GET throw + OPTIONS 通」的替身，并用真实 sidecar 对照替身是否与现实一致。
+**逃生口 = `mode: "no-cors"`**：它是**简单请求**，浏览器不发 preflight 也不检查回应 ⇒ 任何状态码都返回 `opaque`（status 0），**只有连接本身失败才 throw**。读不到内容无所谓 —— 要问的不是服务端说了什么，而是**有没有人在那儿说话**。真 Chrome 实测：
+
+| 场景 | 可读 GET | 手动 OPTIONS | no-cors GET |
+|---|---|---|---|
+| 在跑 + 正确密码 | 200 | **THROW** | opaque |
+| 在跑 + 错误密码 | THROW | **THROW** | opaque |
+| 已杀 | THROW | THROW | THROW |
+
+**⚠️ 手动发 `OPTIONS` 是没用的**（我先试了这条，被真 Chrome 否掉）：手写的 OPTIONS 不是 preflight，它自己就是个**非简单请求、需要自己的 preflight**，而服务端答的是 `Allow-Methods: GET,HEAD,PUT,POST,DELETE,PATCH` —— **不含 OPTIONS**，所以三种场景全被拦，健康时也一样。
+
+**两层验证都会骗你，必须上真浏览器**：① jsdom 的 fetch 完全不执行 CORS，401 会被正常读到；② 我在 node 里手写的「浏览器模拟」只检查了 ACAO 响应头、**没模拟 preflight 流程**，于是给 OPTIONS 方案发了通行证。常驻回归 = `e2e/backend-liveness-cors.e2e.ts`（真 Chrome + 真 sidecar）。

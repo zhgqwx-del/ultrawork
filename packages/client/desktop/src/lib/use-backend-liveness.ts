@@ -27,10 +27,24 @@ import { resolveApiBaseUrl } from "./config"
  * only problem was a stale password — advice that cannot possibly help, since
  * the bad credential is in localStorage and survives the restart.
  *
- * OPTIONS settles it: the server explicitly lets preflight through unauthenticated
- * (`if (c.req.method === "OPTIONS") return next()`), so it reaches the CORS
- * middleware and comes back readable. If OPTIONS answers while the GET did not,
- * something is listening and refusing us — which is exactly `unauthorized`.
+ * A `no-cors` request settles it. It is a simple request, so the browser sends it
+ * without a preflight and never inspects the reply — the response comes back
+ * `opaque` (status 0, unreadable) for ANY status code, and only throws when the
+ * connection itself fails. Unreadable is fine here: the question is not what the
+ * server said, only whether anyone was there to say it.
+ *
+ * Measured in real Chrome against the real sidecar (jsdom and node `fetch` both
+ * ignore CORS entirely, so neither can answer this):
+ *
+ *   scenario          GET+auth   manual OPTIONS   no-cors GET
+ *   running, good pw  200        THROW            opaque
+ *   running, bad pw   THROW      THROW            opaque
+ *   killed            THROW      THROW            THROW
+ *
+ * Note the OPTIONS column: sending one BY HAND is not a preflight, it is a
+ * non-simple request that needs its own preflight — and the server answers that
+ * with `Allow-Methods: GET,HEAD,PUT,POST,DELETE,PATCH`, which does not include
+ * OPTIONS. So it is blocked in every case, including the healthy one.
  *
  * Known limit: in `vite dev` the request goes through the dev-server proxy, which
  * answers 500 when the target refuses. That reads as `listening`, so the
@@ -77,11 +91,11 @@ export async function probeBackend(
     }
 
     await fetchImpl(`${url}/global/health`, {
-      method: "OPTIONS",
+      mode: "no-cors",
       signal: controller.signal,
     })
-    // Preflight got through but the GET did not: someone is home and turning us
-    // away.
+    // The socket answered even though the readable request did not: someone is
+    // home and turning us away.
     return "unauthorized"
   } catch {
     if (controller.signal.aborted) return "unknown"
