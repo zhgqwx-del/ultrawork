@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { ChatInput } from "@/components/chat/chat-input"
 import type { Command } from "@agent/api-client"
@@ -219,11 +220,15 @@ describe("CommandSelector — ordering and grouping", () => {
 
 describe("CommandSelector — selection", () => {
   it("never highlights two rows at once: hovering moves the selection", async () => {
+    // userEvent.hover drives the full pointer sequence React needs to synthesize
+    // onMouseEnter. A hand-fired `fireEvent.mouseEnter` is a non-bubbling event
+    // that React's enter/leave delegation may never see — it happened to pass in
+    // a full-file run and failed both in isolation and on CI's ubuntu runner.
     render(<Harness />)
     await openMenu()
     const highlighted = () => rows().filter((r) => r.className.includes("bg-[var(--color-accent)]"))
     expect(highlighted()).toHaveLength(1)
-    fireEvent.mouseEnter(rows()[2])
+    await userEvent.hover(rows()[2])
     await waitFor(() => expect(highlighted()[0]).toHaveTextContent("/markdown-exporter"))
     expect(highlighted()).toHaveLength(1)
   })
