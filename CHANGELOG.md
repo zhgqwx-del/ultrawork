@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **🔴 重置配置目录后 app 永久 401 锁死（gotchas §20⑧）** —— `config-context.tsx` 里 localStorage 一旦有密码就永不重新拉取，所以删掉 `~/.config/ultrawork/` 想重置时，Rust 生成新密码而前端继续用旧的 ⇒ 每个请求 401，且**症状与「重连失败」完全一样**（横幅常驻 + 点重连没用），排查时极易误判为新引入的连接 bug。现由 `use-credential-resync.ts` 恢复：探测到 401/403 且 base URL 为 auto 时向 Rust 重取一次。**两条守卫都是承重的**——非 401 不动，非 auto 不动（用户在设置页指向自己的 opencode 时，那套凭据是他的）。
 - **稳定性 review 第一轮：连接韧性、会话可达性、可诊断性（ADR-071 / discussions/057，真机验收通过）** —— 一轮系统性排查（无 QA、真机问题暴露不出来）挖出一条完整故障链，四段各自独立成缺陷：`sidecar 崩溃/卡住 → SSE 断流 → 重试耗尽后永久放弃 → 会话永久卡在「运行中」`。
   - **🔴 SSE 断流后永久失联** —— `gave-up` 是终态（真实 HTTP 探针实测：后端恢复健康后服务端 accept 计数不再增长，transport 再不敲门）。改为快速重试耗尽后**转入 15s 后台慢重试**，状态仍报 `gave-up` 一次给 UI，但静默重试直到接上。`ACP_SSE_RETRY` 同步改造（单 agent 的 Claude/Gemini 与 team 的 ACP 成员此前同样会永久断流）。不设 `keepRetryingEveryMs` 时行为完全不变，gateway 的无限重试策略不受影响。
   - **🔴 会话永久卡在「运行中」、输入框永久锁死** —— opencode `/event` **没有重放**，断流窗口内的 `session.status:idle` 永久丢失，而 `activeSessionIds` 纯事件驱动 ⇒ 侧栏一直转圈且 `sendMessage` 的 busy guard 把输入锁死，只能切工作区或重启。新增 `reconnectEpoch`（**只在重连时 +1，首连不算**），据此用 `GET /session/status` 从服务端重建 busy 集（该端点在会话转 idle 时删除条目 ⇒ **缺席即 idle**）。只对 opencode 绑定的会话下结论——ACP 自己会重放 busy 快照。

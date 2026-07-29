@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { WifiOff } from "lucide-react"
 import { useSSEConnected, useSSEReconnect } from "@/lib/sse-context"
 import { useBackendLiveness } from "@/lib/use-backend-liveness"
+import { useCredentialResync } from "@/lib/use-credential-resync"
 import { useI18n } from "@/lib/i18n-context"
 
 /**
@@ -35,6 +36,10 @@ export function ConnectionBanner() {
   // Only probe once the banner is up: a healthy app must not poll the port, and
   // an ordinary blip resolves inside the grace window anyway.
   const liveness = useBackendLiveness(showing)
+  // Lives here because this is where the two facts meet: the stream is down AND
+  // the port just told us why. Recovering a stale password is the one kind of
+  // "disconnected" the app can fix by itself.
+  useCredentialResync(liveness)
 
   useEffect(() => {
     if (connected) {
