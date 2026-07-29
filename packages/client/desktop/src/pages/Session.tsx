@@ -5,6 +5,7 @@ import { TopBar } from "@/components/layout/top-bar"
 import { handleDrag } from "@/components/layout/drag-region"
 import { useSidebar } from "@/components/layout/sidebar-context"
 import { useSessionsContext } from "@/lib/sessions-context"
+import { commandsAvailableFor } from "@/lib/command-menu"
 import { useModel } from "@/lib/model-context"
 import { useSessionMessages } from "@/lib/use-session-messages"
 import { useSessionPlan } from "@/lib/use-session-plan"
@@ -462,6 +463,9 @@ export function SessionPage() {
               disabled={isAgentActive || preparing}
               loading={isAgentActive || preparing}
               variant="reply"
+              // Team session → the leader is the receiving backend; otherwise the
+              // session binding. Rationale + matrix: lib/command-menu.ts.
+              commandsEnabled={commandsAvailableFor(teamEntry?.leaderAgentId ?? getSessionAgentId(id))}
               leftSlot={
                 <div className="flex items-center gap-1">
                   {teamEntry ? (

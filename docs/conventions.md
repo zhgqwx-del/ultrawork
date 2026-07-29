@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-28 -->
+<!-- last-synced: 2026-07-29 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -604,3 +604,45 @@ expect(col.scrollWidth).toBeLessThanOrEqual(col.clientWidth)
 **为什么值得单列**：会话页「内容由 AI 生成，仅供参考」调浅时，`opacity-70` 把浅色主题压到 2.68:1 —— 而这行字的目的恰恰是**合规上的显著提示**，调得看不清等于把功能做没了。同类教训见 `gotchas.md §10⑭`（deckcraft 对比度门禁：阈值须实测标定、背景要取真实绘制栈）。
 
 **取真值的方法**（别用设计稿色值心算）：浏览器里读 `getComputedStyle(el).color` + `opacity`，再逐层向上找第一个非透明祖先背景做 alpha 合成，然后套 WCAG 相对亮度公式。祖先合成这一步不能省——元素自己通常没有背景色。
+
+## 21. 弹层列表（下拉 / 命令面板）的标准写法（discussions/056，2026-07-29）
+
+`chat/` 下的下拉已有成熟范式，新写弹层**照抄，不要另起**（`agent-selector.tsx` 是参照实现）：
+
+```tsx
+<div className="… overflow-hidden rounded-lg border shadow-lg">      {/* 外层裁圆角 */}
+  {title && <p className="px-3 pb-1 pt-2 text-[10px] …">{title}</p>}
+  <div ref={listRef} className="scrollbar-soft max-h-64 overflow-y-auto p-1.5">
+    {rows.map((r, i) => (
+      <button
+        data-index={i}
+        onMouseEnter={() => setSelected(i)}        {/* hover 移动选中，而不是加第二个高亮 */}
+        title={r.description}                       {/* 截断后仍能看全文 */}
+        className={cn("flex min-h-[2.75rem] w-full items-center gap-2.5 …",
+                      i === selected && "bg-[var(--color-accent)]")}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium">{r.name}</div>
+          <div className="truncate text-[11px]">{r.description}</div>
+        </div>
+      </button>
+    ))}
+  </div>
+</div>
+```
+
+四条**缺一即缺陷**：
+
+1. **`max-h-* + overflow-y-auto`** —— 没有上限的弹层会长到视口外，而 `root-layout.tsx` 的主内容卡片是 `overflow-hidden`，超出部分**渲染了但永远够不到**。
+2. **scroll-into-view** —— 加了滚动就必须加，否则方向键走出可视区（`selectedIndex` 变化时 `scrollIntoView({ block: "nearest" })`）。
+3. **hover 同步选中**（而非独立 hover 样式）—— 保证任何时刻**只有一行高亮**，"回车选中哪个"永远有答案。
+4. **两行式 + `truncate` + `min-h`** —— 描述单行截断，行高一致。
+
+### 事件归属：用捕获阶段 `stopPropagation`，不要把状态镜像给父组件
+
+弹层与输入框争 Enter/方向键时，**别用「把候选数上报给父组件、父组件据此判断」**——那条链路是 `render → effect → setState`，**天生落后一帧**，事件处理器读到的可能是旧值（异步加载的数据尤其容易踩），表现为 Enter 双触发或被吞。
+
+正确做法：弹层的监听挂在 `document` **捕获阶段**，对自己消费的键 `preventDefault() + stopPropagation()`（React 17+ 监听器挂在 root container 上，捕获阶段 stop 即可拦住）；**不消费的键原样放行**，输入框照常处理。谁知道谁决定，无时序依赖。
+
+⚠️ 但捕获阶段接管键盘，就必须让出输入法组字期 —— 见 `gotchas.md §19①`。
+

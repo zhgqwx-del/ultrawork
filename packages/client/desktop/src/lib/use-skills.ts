@@ -4,8 +4,9 @@ import { invoke } from "@tauri-apps/api/core"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
 import type { Command, Skill } from "@agent/api-client"
+import { GROUP_ORDER, isHiddenBuiltinCommand, type SkillSource } from "@/lib/command-menu"
 
-export type SkillSource = "command" | "mcp" | "skill"
+export type { SkillSource }
 
 export interface SkillItem {
   name: string
@@ -32,11 +33,6 @@ export interface SkillsConfig {
   paths: string[]
   urls: string[]
 }
-
-const GROUP_ORDER: SkillSource[] = ["command", "mcp", "skill"]
-
-// Built-in OpenCode commands that are developer-oriented and not useful for end users
-const HIDDEN_BUILTIN_COMMANDS = new Set(["init", "review"])
 
 export function useSkills() {
   const api = useApi()
@@ -107,7 +103,7 @@ export function useSkills() {
     // Filter out developer-oriented built-in commands (init, review) for end users
     for (const cmd of commands) {
       if (seen.has(cmd.name)) continue
-      if (HIDDEN_BUILTIN_COMMANDS.has(cmd.name) && (cmd.source === "command" || !cmd.source)) continue
+      if (isHiddenBuiltinCommand(cmd.name, cmd.source)) continue
       seen.add(cmd.name)
       const location = skillLocationMap.get(cmd.name)
       items.push({
