@@ -247,7 +247,12 @@ describe("CommandSelector — selection", () => {
     fireEvent.change(textarea(), { target: { value: "" } })
     await waitFor(() => expect(rows()).toHaveLength(0))
     await openMenu()
-    expect(highlighted()[0]).toHaveTextContent("/deckcraft")
+    // waitFor, not a bare assert: openMenu only waits for the ROWS, and the
+    // selection reset lands in a later effect tick. Asserting synchronously
+    // passed locally and flaked on CI (seen on ubuntu and macos runners) —
+    // the sibling assertion above is already written this way for the same
+    // reason.
+    await waitFor(() => expect(highlighted()[0]).toHaveTextContent("/deckcraft"))
   })
 
   it("fills the composer on click", async () => {
