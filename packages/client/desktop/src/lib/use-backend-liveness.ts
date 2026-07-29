@@ -14,10 +14,23 @@ import { resolveApiBaseUrl } from "./config"
  *   (ADR-071), so retrying is a lie and relaunching is the only fix.
  * - `unknown`   — not probed yet, or the answer was ambiguous.
  *
- * The judgement is deliberately narrow: ONLY an outright connection failure is
- * read as `absent`. Any HTTP response at all — including 401 or 500 — proves a
- * process is there, and a timeout proves nothing, so both stay `listening` /
- * `unknown` rather than accusing a live backend of having died.
+ * The judgement is deliberately narrow: a live backend must never be accused of
+ * having died. A timeout proves nothing (the port may be open with a wedged
+ * server), so it stays `unknown`.
+ *
+ * Two requests, because one cannot answer both halves. opencode runs its
+ * basic-auth middleware BEFORE its CORS middleware, so a 401 goes out with no
+ * `Access-Control-Allow-Origin` and the browser refuses to hand it to us — a
+ * rejected password is indistinguishable, from `fetch`, from a dead port
+ * (verified against the real sidecar; gotchas §20⑭). Judging on the GET alone
+ * therefore reported "the service exited, restart the app" to someone whose
+ * only problem was a stale password — advice that cannot possibly help, since
+ * the bad credential is in localStorage and survives the restart.
+ *
+ * OPTIONS settles it: the server explicitly lets preflight through unauthenticated
+ * (`if (c.req.method === "OPTIONS") return next()`), so it reaches the CORS
+ * middleware and comes back readable. If OPTIONS answers while the GET did not,
+ * something is listening and refusing us — which is exactly `unauthorized`.
  *
  * Known limit: in `vite dev` the request goes through the dev-server proxy, which
  * answers 500 when the target refuses. That reads as `listening`, so the
@@ -49,16 +62,28 @@ export async function probeBackend(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
-    const res = await fetchImpl(`${url}/global/health`, {
-      headers,
+    try {
+      const res = await fetchImpl(`${url}/global/health`, {
+        headers,
+        signal: controller.signal,
+      })
+      // A readable response of ANY status proves a process is listening. 401/403
+      // is singled out only because it is separately fixable.
+      return res.status === 401 || res.status === 403 ? "unauthorized" : "listening"
+    } catch {
+      if (controller.signal.aborted) return "unknown"
+      // Either nothing is listening, or the answer was withheld by CORS. Only
+      // OPTIONS can tell those apart.
+    }
+
+    await fetchImpl(`${url}/global/health`, {
+      method: "OPTIONS",
       signal: controller.signal,
     })
-    // An HTTP response of ANY status proves a process is listening. 401/403 is
-    // singled out only because it is separately fixable.
-    return res.status === 401 || res.status === 403 ? "unauthorized" : "listening"
-  } catch (err) {
-    // Our own timeout aborted it: the port may well be open with a wedged
-    // server, so this is NOT evidence of absence.
+    // Preflight got through but the GET did not: someone is home and turning us
+    // away.
+    return "unauthorized"
+  } catch {
     if (controller.signal.aborted) return "unknown"
     return "absent"
   } finally {

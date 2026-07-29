@@ -546,3 +546,13 @@ ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一�
 
 **⑬ `btoa` 遇非 Latin-1 抛异常，而设置页允许用户随便输用户名/密码。**
 把 Basic 头拼在 `try` 外面 ⇒ 变成 **unhandled rejection**，轮询循环直接静默死掉、之后再也不上报。凭据既然编码都编不出来就更认证不了，所以**裸发请求让服务端答 401** 才是诚实做法。
+
+**⑭ ⚠️ opencode 的 401 响应**没有** CORS 头 —— 浏览器里根本读不到状态码。**
+`server.ts` 的中间件顺序是 `basicAuth` **在** `cors` **之前**，所以鉴权失败的响应不经过 cors 中间件。实测（真实 sidecar + `origin: tauri://localhost`）：
+```
+正确凭据: HTTP 200  Access-Control-Allow-Origin = tauri://localhost
+错误凭据: HTTP 401  Access-Control-Allow-Origin = ❌ 缺失
+```
+⇒ **从 renderer 看，「密码错」和「端口没人听」完全一样**（fetch 都是直接 throw）。曾据此把凭据失效误报成「后台服务已退出，请重启」——而重启根本没用，坏密码在 localStorage 里活得好好的。
+**逃生口 = `OPTIONS`**：服务端明确放行未鉴权的 preflight（`if (c.req.method === "OPTIONS") return next()`），所以它能走到 cors 中间件、带着 ACAO 回来（实测 204 + ACAO；进程死了则 throw）。**OPTIONS 通而 GET 不通 ⇒ 有人在听且在拒绝你**。见 `use-backend-liveness.ts`。
+**jsdom 验不了这条**：它的 fetch 不执行 CORS，401 会被正常读到 —— 单测里必须手工构造「GET throw + OPTIONS 通」的替身，并用真实 sidecar 对照替身是否与现实一致。

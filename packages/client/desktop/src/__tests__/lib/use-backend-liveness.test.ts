@@ -28,6 +28,18 @@ function refusing() {
     throw new TypeError("Failed to fetch")
   }) as unknown as typeof fetch
 }
+/**
+ * What a rejected password ACTUALLY looks like from the renderer: opencode's
+ * 401 carries no CORS header, so the browser throws instead of handing us the
+ * response — while OPTIONS (explicitly allowed through unauthenticated) answers
+ * fine. Verified against the real sidecar; gotchas §20⑭.
+ */
+function corsBlockedGetButOptionsOk() {
+  return vi.fn(async (_url: unknown, init?: { method?: string }) => {
+    if (init?.method === "OPTIONS") return new Response("", { status: 204 })
+    throw new TypeError("Failed to fetch")
+  }) as unknown as typeof fetch
+}
 /** Never settles until aborted — a wedged server that holds the socket open. */
 function hanging() {
   return vi.fn((_url: unknown, init?: { signal?: AbortSignal }) => {
@@ -68,6 +80,29 @@ describe("probeBackend", () => {
     // port IS open; claiming the process died would be a fabrication.
     expect(await probeBackend(URL, HEADERS, hanging())).toBe("unknown")
   }, 10_000)
+
+  it("reads a CORS-blocked GET with a live OPTIONS as UNAUTHORIZED, not absent", async () => {
+    // The real-machine failure this fixes: a stale password made the banner say
+    // "the service exited, restart the app" — advice that cannot help, because
+    // the bad credential lives in localStorage and survives the restart. And the
+    // credential re-sync never fired, because it waits for `unauthorized`.
+    expect(await probeBackend(URL, HEADERS, corsBlockedGetButOptionsOk())).toBe("unauthorized")
+  })
+
+  it("still calls a truly dead port absent — OPTIONS fails there too", async () => {
+    expect(await probeBackend(URL, HEADERS, refusing())).toBe("absent")
+  })
+
+  it("does not send credentials on the OPTIONS fallback", async () => {
+    // Preflight is allowed through precisely because it is unauthenticated;
+    // attaching the rejected header would invite the same 401 we are escaping.
+    const f = corsBlockedGetButOptionsOk()
+    await probeBackend(URL, HEADERS, f)
+    const calls = (f as unknown as ReturnType<typeof vi.fn>).mock.calls
+    const options = calls.find((c) => c[1]?.method === "OPTIONS")
+    expect(options).toBeDefined()
+    expect(options![1].headers).toBeUndefined()
+  })
 
   it("never throws, whatever fetch does", async () => {
     const exploding = vi.fn(async () => {
