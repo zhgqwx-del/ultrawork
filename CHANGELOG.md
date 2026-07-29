@@ -21,7 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **断连常驻横幅 + 手动重连（ADR-071）** —— 取代原先一次性 toast（错过就再无线索，用户看到的是能打字但永远不回话的 app）。4s 宽限，普通秒级抖动不弹。Rust 侧新增 `sidecar-exited` 事件：**sidecar 死亡与网络断开文案不同**，前者没有任何东西会重启它，说「正在重试」是撒谎。
+- **断连常驻横幅 + 手动重连（ADR-071）** —— 取代原先一次性 toast（错过就再无线索，用户看到的是能打字但永远不回话的 app）。4s 宽限，普通秒级抖动不弹。**原计划的「sidecar 已退出」独立文案已撤下** —— 其 Rust 侧 `sidecar-exited` 事件会让 Windows 的 `cargo test` 二进制加载不起来（`STATUS_ENTRYPOINT_NOT_FOUND`，两次 CI 对照归因），详见 ADR-071 §Windows 加载失败 · gotchas §20⑪。
 - **`e2e/session-reachability.e2e.ts`** —— 130 个真实会话 + 真实 opencode + 真实 Chrome，先验服务端 `?search=` 契约再信 UI（单测 mock 了 `listSessions`，证不了服务端行为）。
 
 - **`/` 技能菜单：无界弹层 + 失效过滤 + 4 个功能性缺陷（discussions/056）** —— 真机截图暴露：Home 页敲 `/` 唤起的菜单越过主内容卡片顶部，9 个内置技能就已有约 60% 条目**渲染了却永远够不到**。排查后发现同一组件里还藏着与"列表太长"无关的功能缺陷。

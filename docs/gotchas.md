@@ -530,3 +530,9 @@
 macOS 上 `/var` → `/private/var`。工作区路径若经软链接，侧栏会**一条会话都不显示**。既有行为；默认工作区不受影响。
 
 **⑩ 测试绝不能写真实 home（复发过一次）。** `SidecarLog` 起初直接用真实日志目录，`cargo test` 把四个假 sidecar 的记录写进了用户的 `~/.local/share/ultrawork/log/sidecar/`。已改为注入式（ADR-051 同款）。**新增任何落盘功能，第一件事就是让路径可注入。**
+
+**⑪ ⚠️ Windows：把 `tauri::AppHandle` 引进 sidecar watcher 会让 `cargo test` 的二进制加载不起来。**
+症状 = `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139)，**编译成功、一个用例都没跑**就挂 —— 是链接/加载问题，别去查断言。
+两次 CI 对照坐实归因：只回退 `lib.rs` 转绿 · 只回退「`AppHandle` 进 watcher 线程 / `Manager<Wry>` bound / `emit`」这半也转绿（保留纯 std 部分，Windows 跑完 143 用例）。
+**机制未明**：`run()` 的 boot 线程早就在 move `AppHandle` 进 `std::thread` 并 `emit` 且一直是绿的 ⇒ 这不是充分条件。
+⇒ **在 Rust 侧新增 emit 前先在 Windows CI 上验一次**；macOS/Linux 全绿说明不了任何事。
