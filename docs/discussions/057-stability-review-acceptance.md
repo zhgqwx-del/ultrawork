@@ -40,14 +40,28 @@
 - [ ] **A4**（可选，验轮转）持续用一段时间后确认单个文件 < 4MB，
       且最多只有 `<name>.log` + `<name>.1.log` 两代。
 
-## B. sidecar 死亡提示（F3）
+## 真机验收总表（macOS，2026-07-29 全部通过）
 
-- [ ] **B1** app 运行中，手动杀掉一个 sidecar：
+`no-cors` 探测的三种判定在 **WKWebView 下全部闭环** —— 此前只在 Chrome（e2e）里验过，
+而 Tauri 在 macOS 跑的是 WebKit，是不同引擎，之前只能靠推断：
+
+| 判定 | 场景 | 真机证据 |
+|---|---|---|
+| `listening` | 服务在跑 + 正确密码 | C-auth 自愈后横幅消失 |
+| `unauthorized` | 服务在跑 + **错误**密码 | C-auth：localStorage 密码被自动换新 |
+| `absent` | 服务**已死** | A 组：横幅「后台服务已退出」+ **无**重连按钮 |
+
+⚠️ **A 组必须在 no-cors 版本上验**。更早的 OPTIONS 版本也会显示「已退出」，但那是
+**假阳性** —— 它在所有场景都判 absent（含健康时），碰巧在这一格给出正确答案。
+
+## B. sidecar 死亡提示（F3）— ✅ 已验收
+
+- [x] **B1** app 运行中，手动杀掉一个 sidecar：
       ```
       lsof -ti :4097 | xargs kill      # channel-gateway
       ```
       不应有任何界面变化（gateway 不喂全局流）。日志里应出现 `exited`。
-- [ ] **B2** 杀掉 opencode：
+- [x] **B2** 杀掉 opencode（**已在 no-cors 版本上重验**）：
       ```
       lsof -ti :4096 | xargs kill
       ```
