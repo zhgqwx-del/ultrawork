@@ -536,3 +536,4 @@ macOS 上 `/var` → `/private/var`。工作区路径若经软链接，侧栏会
 两次 CI 对照坐实归因：只回退 `lib.rs` 转绿 · 只回退「`AppHandle` 进 watcher 线程 / `Manager<Wry>` bound / `emit`」这半也转绿（保留纯 std 部分，Windows 跑完 143 用例）。
 **机制未明**：`run()` 的 boot 线程早就在 move `AppHandle` 进 `std::thread` 并 `emit` 且一直是绿的 ⇒ 这不是充分条件。
 ⇒ **在 Rust 侧新增 emit 前先在 Windows CI 上验一次**；macOS/Linux 全绿说明不了任何事。
+该能力最终用**不含 Rust 的方式**补回（`use-backend-liveness.ts` 探 `/global/health`），见 ADR-071。

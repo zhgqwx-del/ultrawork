@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { WifiOff } from "lucide-react"
 import { useSSEConnected, useSSEReconnect } from "@/lib/sse-context"
+import { useBackendLiveness } from "@/lib/use-backend-liveness"
 import { useI18n } from "@/lib/i18n-context"
 
 /**
@@ -18,18 +19,22 @@ const GRACE_MS = 4000
  * you can type, the message goes nowhere visible, and no reply ever arrives.
  * A state that persists needs an indicator that persists.
  *
- * NOT distinguished here: "the sidecar process died" vs "the stream dropped".
- * That distinction matters — nothing restarts a dead sidecar, so offering
- * "reconnect" for it is misleading — but the Rust-side `sidecar-exited` event
- * that carried it made the Windows test binary fail to LOAD
- * (STATUS_ENTRYPOINT_NOT_FOUND, isolated to the AppHandle/Manager half by two
- * CI bisections). Deferred rather than shipped broken; see ADR-071 §遗留.
+ * "The sidecar process died" and "the stream dropped" get different words,
+ * because nothing restarts a sidecar after boot — offering "reconnect" for a
+ * dead one is a lie. That distinction was first attempted with a Rust-side
+ * `sidecar-exited` event, which made the Windows test binary fail to LOAD
+ * (STATUS_ENTRYPOINT_NOT_FOUND, isolated by two CI bisections; ADR-071). It is
+ * now derived in the renderer instead, by probing the port — no Rust, and it
+ * reports what is true NOW rather than replaying a one-off event.
  */
 export function ConnectionBanner() {
   const connected = useSSEConnected()
   const reconnect = useSSEReconnect()
   const { t } = useI18n()
   const [showing, setShowing] = useState(false)
+  // Only probe once the banner is up: a healthy app must not poll the port, and
+  // an ordinary blip resolves inside the grace window anyway.
+  const liveness = useBackendLiveness(showing)
 
   useEffect(() => {
     if (connected) {
@@ -48,13 +53,17 @@ export function ConnectionBanner() {
       className="flex shrink-0 items-center justify-center gap-2 bg-amber-500/15 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-400"
     >
       <WifiOff className="size-3.5 shrink-0" />
-      <span>{t("connection.offline")}</span>
+      <span>{liveness === "absent" ? t("connection.sidecarExited") : t("connection.offline")}</span>
+      {/* A dead process cannot be reconnected to — offering the button would be
+          the same lie the message avoids. */}
+      {liveness !== "absent" && (
       <button
         onClick={reconnect}
         className="rounded px-1.5 py-0.5 font-medium underline underline-offset-2 transition-colors hover:bg-amber-500/20"
       >
         {t("connection.retry")}
       </button>
+      )}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }))
 vi.mock("@/lib/i18n-context", () => ({
@@ -90,7 +90,14 @@ describe("ChannelsSection (moved out of Settings.tsx)", () => {
     // Manual fallback cancels the QR session and shows the credentials form
     fireEvent.click(screen.getByText("channel.qr.manualInput"))
     expect(await screen.findByText("channel.clientId")).toBeInTheDocument()
-    expect(mockApi.cancelChannelQR).toHaveBeenCalledWith("dingtalk", "qr_1")
+    // waitFor, not a bare assert: the form rendering and the cancel call are two
+    // DIFFERENT async signals — switching the view is state, cancelling the QR
+    // session is a fire-and-forget request. Awaiting the form says nothing about
+    // the request having been dispatched, and asserting it synchronously flaked
+    // on CI (macos runner, under full-suite load).
+    await waitFor(() =>
+      expect(mockApi.cancelChannelQR).toHaveBeenCalledWith("dingtalk", "qr_1"),
+    )
   })
 
   it("wecom opens the QR flow with manual fallback to the botId/secret form", async () => {

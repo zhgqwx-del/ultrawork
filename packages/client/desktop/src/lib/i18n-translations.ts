@@ -25,6 +25,7 @@ export const en: Record<string, string> = {
     "sidebar.loadMore": "Load older sessions",
     "connection.offline": "Disconnected from the agent server",
     "connection.retry": "Reconnect",
+    "connection.sidecarExited": "A background service stopped. Restart Ultrawork to recover.",
     "sidebar.unread": "New activity",
     "sidebar.user": "User",
 
@@ -909,6 +910,7 @@ export const zhHans: Record<string, string> = {
     "sidebar.loadMore": "加载更早的会话",
     "connection.offline": "已与 Agent 服务断开",
     "connection.retry": "重新连接",
+    "connection.sidecarExited": "后台服务已退出，请重启 Ultrawork 恢复。",
     "sidebar.unread": "有新消息",
     "sidebar.user": "用户",
 
