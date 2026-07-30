@@ -122,7 +122,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 **Desktop — hooks / lib**
 - `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
 - `src/lib/use-api.ts` — backend-specific REST 面：返回 connector 持有的 ApiClient（签名不变）
-- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）；`session.error` 兼理**免费试用透明回退**（ADR-057 P4：auth 错换候选、延迟到 idle 重发；quota 明确提示）
+- `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）；`session.error` 兼理**免费试用透明回退**（ADR-057 P4：auth 错换候选、延迟到 idle 重发；quota 明确提示）；**重连后正文补拉**（ADR-072）：`reconnectEpoch` 变化且会话 idle 时重取快照，经 `mergeSnapshotInPlace` **就地合并**（保持位置 / 只升级正文更长的 part / 不前插更老的分页 / 不删除任何消息 / 无变化按引用返回），**不复用初始加载**（那条会 `setMessages([])` 并重置分页窗口）；busy 或 `stopped` 时不补。e2e 守卫 `e2e/stream-gap-resync.e2e.ts` + `e2e/cuttable-proxy.ts`（可切断 TCP 代理，非空转门）
 - `src/lib/model-context.tsx` — ModelProvider：当前模型 + **免费试用同意门**（ADR-057）：`maybeOfferFreeTrial`（发送前拦截，无可用模型且未同意时弹卡片）· `enableFreeTrial`（乐观 seed）· `advanceFreeTrialModel`（回退换候选）· `revokeFreeTrial`（带保护清除）；`useModelOptional()` 供隔离单测
 - `src/lib/free-model.ts` — 免费 Zen 选型纯函数（ADR-057 P1）：`orderedFreeCandidates`/`shouldOfferFreeTrial`/`nextFreeCandidate`/`classifyZenError`/`isFreeZenModel`；`FREE_MODEL_PREFERENCE` 偏好序（discussions/040 实测）
 - `src/lib/free-trial.ts` + `free-trial-store.ts` — 同意状态机（`enableFreeTrial`/`revokeFreeTrial`，注入式可测）+ Tauri/api 适配器；Rust 侧 `get/set/clear_free_trial_consent`（`lib.rs`，独立 `free-trial-consent.json`）
@@ -216,7 +216,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (71 ADRs, 001–071)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (72 ADRs, 001–072)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

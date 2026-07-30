@@ -57,6 +57,101 @@ function textLength(m: SendMessageResponse): number {
     0,
   )
 }
+function partTextLength(p: unknown): number {
+  return p && typeof p === "object" && "text" in p && typeof (p as { text?: unknown }).text === "string"
+    ? (p as { text: string }).text.length
+    : 0
+}
+
+/**
+ * Fold `richer`'s parts into `base` WITHOUT changing membership or order.
+ * MERGE BY PART id: upgrade each base part to the richer-text version, keep base
+ * parts the other side lacks (don't drop tool/structure parts, M2), append
+ * parts only the other side has (streamed-but-not-yet-persisted, or streamed
+ * while we were deaf). `base`'s own info is untouched. Returns `base` by
+ * reference when it is already at least as rich, so callers can use identity to
+ * tell whether anything actually moved.
+ */
+function mergeRicherParts(
+  base: SendMessageResponse,
+  richer: SendMessageResponse | undefined,
+): SendMessageResponse {
+  if (!richer || textLength(richer) <= textLength(base)) return base
+  const rParts = new Map(richer.parts.filter((p) => "id" in p).map((p) => [(p as any).id, p]))
+  const baseIds = new Set(base.parts.filter((p) => "id" in p).map((p) => (p as any).id))
+  const merged = base.parts.map((bp) => {
+    const rp = "id" in bp ? rParts.get((bp as any).id) : undefined
+    return rp && partTextLength(rp) > partTextLength(bp) ? rp : bp
+  })
+  const extra = richer.parts.filter((p) => "id" in p && !baseIds.has((p as any).id))
+  return { ...base, parts: [...merged, ...extra] }
+}
+
+/**
+ * Fold a fresh server snapshot into the CURRENT list in place — the repair for a
+ * stream gap that spans the end of a turn (F1b, discussions/058). Deliberately
+ * NOT a re-seed: re-running the initial load would reset the paginated window,
+ * so older history the user pulled in would vanish and the viewport would jump.
+ *
+ * The rules that make this safe where a re-seed is not:
+ *  - messages already on screen keep their POSITION; only their parts get richer
+ *    and their info is refreshed from the snapshot (finish/tokens/completed);
+ *  - snapshot messages we don't have are inserted right AFTER the nearest
+ *    snapshot message we do have, preserving server order (in practice they land
+ *    at the tail — they're the ones born during the gap);
+ *  - snapshot messages older than everything on screen are DROPPED, not
+ *    prepended: they belong to pages the user hasn't asked for, and prepending
+ *    them would reorder the paginated window (F2);
+ *  - nothing is ever removed.
+ * Returns `prev` by reference when the snapshot adds nothing, so a no-op resync
+ * can't re-render (and scroll-jump) the list.
+ */
+export function mergeSnapshotInPlace(
+  prev: SendMessageResponse[],
+  snapshot: SendMessageResponse[],
+): SendMessageResponse[] {
+  if (snapshot.length === 0) return prev
+  // Only reachable when the initial load itself failed (it empties the list);
+  // the snapshot is then strictly better than nothing.
+  if (prev.length === 0) return snapshot
+
+  const snapById = new Map(snapshot.map((m) => [m.info.id, m]))
+  const prevIds = new Set(prev.map((m) => m.info.id))
+  // Snapshot-only messages, bucketed by the id they must follow.
+  const followers = new Map<string, SendMessageResponse[]>()
+  let anchor: string | null = null
+  for (const m of snapshot) {
+    if (prevIds.has(m.info.id)) { anchor = m.info.id; continue }
+    if (anchor === null) continue // older than the window on screen — not ours to prepend
+    const bucket = followers.get(anchor)
+    if (bucket) bucket.push(m)
+    else followers.set(anchor, [m])
+  }
+
+  let changed = followers.size > 0
+  const out: SendMessageResponse[] = []
+  for (const m of prev) {
+    const s = snapById.get(m.info.id)
+    if (!s) {
+      out.push(m)
+      continue
+    }
+    const withParts = mergeRicherParts(m, s)
+    // An idle session's snapshot is authoritative for the info record, and the
+    // finish/token fields are exactly what a gap over the turn end swallows.
+    const info = { ...m.info, ...s.info }
+    const infoChanged = JSON.stringify(info) !== JSON.stringify(m.info)
+    if (withParts === m && !infoChanged) {
+      out.push(m)
+    } else {
+      changed = true
+      out.push(infoChanged ? { ...withParts, info } : withParts)
+    }
+    const bucket = followers.get(m.info.id)
+    if (bucket) out.push(...bucket)
+  }
+  return changed ? out : prev
+}
 
 /**
  * Apply one opencode message event to the cross-switch cache for ANY session.
@@ -341,20 +436,7 @@ export function useSessionMessages(
             // (don't drop tool/structure parts, M2), append cache-only parts
             // (streamed-but-not-yet-persisted). Base info (finish/tokens) is kept.
             const cacheById = new Map(cached.map(m => [m.info.id, m]))
-            const partTextLen = (p: any): number =>
-              p && "text" in p && typeof p.text === "string" ? p.text.length : 0
-            return base.map(m => {
-              const cm = cacheById.get(m.info.id)
-              if (!cm || textLength(cm) <= textLength(m)) return m
-              const cParts = new Map(cm.parts.filter(p => "id" in p).map(p => [(p as any).id, p]))
-              const baseIds = new Set(m.parts.filter(p => "id" in p).map(p => (p as any).id))
-              const merged = m.parts.map(bp => {
-                const cp = "id" in bp ? cParts.get((bp as any).id) : undefined
-                return cp && partTextLen(cp) > partTextLen(bp) ? cp : bp
-              })
-              const extra = cm.parts.filter(p => "id" in p && !baseIds.has((p as any).id))
-              return { ...m, parts: [...merged, ...extra] }
-            })
+            return base.map(m => mergeRicherParts(m, cacheById.get(m.info.id)))
           })
           setCursor(result.cursor)
           setHasMore(result.hasMore)
@@ -778,6 +860,61 @@ export function useSessionMessages(
     setSending(false)
     setStreamingMessageId(null)
   }, [reconnectEpoch, activeSessionIds, sessionId])
+
+  // --- Re-sync message BODIES after an SSE recovery (F1b, discussions/058) ---
+  // The stream has no replay, so every token that streamed during the gap is
+  // gone. While the turn is still running that heals itself — the events that
+  // follow carry the full part text (measured: 8s and 20s outages lose nothing).
+  // An outage that spans the END of the turn does not: nothing more is ever
+  // emitted, so the message stays frozen at whatever word was in flight when the
+  // socket died, permanently. Measured at 293 of 300 markers lost (97.7%), and a
+  // sidecar crash — the failure chain ADR-071 was written for — is always this case,
+  // because the turn dies with the process. The only escape today is switching
+  // away and back, which nobody would think to do: the disconnect banner appears
+  // and then everything looks normal.
+  //
+  // Gated on the session being IDLE. That is exactly when the gap is permanent,
+  // and exactly the condition the initial-load merge above already calls safe
+  // ("Idle sessions trust the snapshot fully"). A still-busy session is left to
+  // self-heal; the epoch is only marked consumed once a resync actually runs, so
+  // a turn that ends later in the same epoch still gets one (this is the F1b path
+  // itself: at reconnect the busy map is still stale, and the resync fires when
+  // the reconciliation in use-sessions lands and clears it).
+  const resyncedEpochRef = useRef(0)
+  useEffect(() => {
+    if (reconnectEpoch === 0 || !sessionId) return
+    if (resyncedEpochRef.current >= reconnectEpoch) return
+    // activeSessionIds is the app-level truth (re-derived from the server on this
+    // same epoch). sendingRef is this hook's local copy of it and lags by one
+    // effect — the re-derive effect DIRECTLY ABOVE clears it from the very same
+    // dep change, and effects run in declaration order, so by the time this runs
+    // it agrees. Keep both: if a session is busy for a reason we never marked
+    // locally (an IM-channel turn), the map alone is the one that knows.
+    if (activeSessionIds.has(sessionId) || sendingRef.current) return
+    // Same first guard the SSE handler uses: the user pressed Stop, so the turn is
+    // frozen where they froze it. Backends without revert (ACP) keep the agent's
+    // full answer on the server, and pulling it in would visibly un-stop the turn.
+    // Cleared by the next send, which is also when a resync becomes wanted again.
+    if (stoppedRef.current) return
+    const consumed = resyncedEpochRef.current
+    resyncedEpochRef.current = reconnectEpoch
+    let cancelled = false
+    connector
+      .fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
+      .then((result) => {
+        if (cancelled || idRef.current !== sessionId) return
+        // In-place merge, NOT a re-seed: see mergeSnapshotInPlace. The paginated
+        // window (turnStart/cursor/hasMore) is deliberately left alone.
+        setMessages((prev) => mergeSnapshotInPlace(prev, result.messages))
+      })
+      .catch((err) => {
+        // Nothing to tell the user — the list they have is the list they had.
+        // Un-consume the epoch so the next dep change retries.
+        if (!cancelled) resyncedEpochRef.current = consumed
+        console.error("Failed to re-sync messages after reconnect:", err)
+      })
+    return () => { cancelled = true }
+  }, [reconnectEpoch, activeSessionIds, sessionId, connector])
 
   // --- Actions ---
   const stopGeneration = useCallback(() => {

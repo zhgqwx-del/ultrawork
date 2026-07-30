@@ -24,6 +24,7 @@
     "e2e:sidebar-select": "bun run --bun e2e/sidebar-select.e2e.ts",
     "e2e:sidebar-extensions": "bun run --bun e2e/sidebar-extensions.e2e.ts",
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
+    "e2e:stream-gap": "bun run --bun e2e/stream-gap-resync.e2e.ts",
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
     "e2e:add-source-auth": "bun run --bun e2e/add-source-auth.e2e.ts",
     "e2e:dynamic-ports": "bun run --bun e2e/dynamic-ports.e2e.ts",
