@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-30
+
 ### Changed
 
 - **三处输入框提示文案对齐 + 会话页公开 Shift+Enter 换行（真机验收通过，无 ADR）** —— 同一个 `ChatInput` 被三处调用却传了三种风格的文案（`回复...` / `有什么可以帮到你...` / `描述任务…`，连省略号都有两种写法）。**没有做字面统一，而是风格统一 + 语义分层**：Home 是空态邀请、会话页是延续、Team 需要的是一段任务描述 —— 差异本身携带信息，抹平反而丢东西。改为 `继续对话…`（回到设计稿口径）/ `有什么可以帮到你…` / `描述要协作完成的任务…`，省略号统一 `…`；英文的会话态刻意用短 base `Reply…`（理由见下）。
@@ -23,6 +25,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **编排 worktree 隔离每跑一个 run 就永久留下一个空目录** —— `createWorktree` 建的是 `<root>/<runId>/<stepId>` 两层（run 级父目录由 `mkdirSync(dirname(dir))` 顺带建出），而 `removeWorktree` 只回收 `<stepId>` 那层，**全仓没有任何代码删父目录**，也没有启动清理 / TTL / 数量上限。`completed` 与 `cancelled` 两条路径都会留（只有「产物缺失」那条刻意保留整个 worktree 供排查）。**headless soak 实测：71 分钟 523 个 run 后残留 168 个目录、其中 166 个全空，杀 sidecar 重启一个都不回收；P4 阶段 runs +201 对 worktrees +101 正好 1:1**。只漏 inode 不损数据，但长期使用无界增长。现于 `removeWorktree` 末尾补一次 `rmdirSync(dirname(dir))` —— **用 `rmdir` 而非 `rm -r` 是全部安全论据**：只在父目录已空时才删，所以 fan-out 中仍在跑的 sibling、以及刻意保留的失败 worktree，都会让它无害失败。新增 `worktree.test.ts`（真 git repo，6 例，含「不越界到 worktrees root」与并发/重复回收）+ fan-out 并行形状的端到端验证（5 个并发 worktree：全成功→回收、失败→保留、取消→回收）。gotchas §9。
 - **sidecar 构建新鲜度 hash 漏掉 workspace 依赖（同一个坑第二次犯，现改为自动派生）** —— 2026-07-12 `build-gateway.ts` 漏 `connector` 时的对策是「新增依赖时同步更新 extraDirs」，**靠人记得，于是 `build-acp.ts` 照样漏**：它从来没传过 extraDirs，而 acp-client 依赖 `api-client`/`connector`/`orchestrator` 三个包。后果是改完 orchestrator 跑 `build:acp` 答 `up-to-date, skipping`、二进制停在两天前 —— **本地拿旧二进制做「验证」并且会通过，验证本身在撒谎**。现改为从 `package.json` **递归**自动派生（`build-hash.ts` 的 `workspaceDepDirs`），新增依赖自动覆盖；递归是必需的（gateway→connector→api-client）。实测精确：改 `api-client` 精确触发 acp+gateway 重建、knowledge 正确 skip。**影响边界**：`src-tauri/binaries/` 被 gitignore ⇒ CI/发版是干净 checkout、全量重建，从不受影响；受影响的只有本地增量构建。gotchas §7。
+
+## [0.3.5] - 2026-07-29
+
+### Fixed
 
 - **🔴 凭据失效被误报成「后台服务已退出，请重启」（真机验收 C 组暴露）** —— opencode 把 basicAuth 中间件排在 cors **之前**，所以 401 响应没有 `Access-Control-Allow-Origin`，浏览器直接拒绝交给 renderer ⇒ **「密码错」与「端口没人听」在 `fetch` 眼里完全相同**。后果是给出一条不可能奏效的建议（坏密码在 localStorage 里，重启照旧），且 401 自愈路径永远不触发。改为两步探测：可读 GET 拿不到时，再发一个 `mode: "no-cors"` 请求（简单请求、无 preflight、任何状态码都回 opaque，**只有连接失败才 throw**）—— **可读 GET 不通而 no-cors 通 ⇒ 有人在听且在拒绝你**。新增真 Chrome e2e `backend-liveness-cors.e2e.ts` 常驻守护（**jsdom 不执行 CORS，node 里手写的浏览器模拟又漏了 preflight —— 两层都放行过一个真 Chrome 会拒的方案**）。gotchas §20⑭。
 - **🔴 重置配置目录后 app 永久 401 锁死（gotchas §20⑧）** —— `config-context.tsx` 里 localStorage 一旦有密码就永不重新拉取，所以删掉 `~/.config/ultrawork/` 想重置时，Rust 生成新密码而前端继续用旧的 ⇒ 每个请求 401，且**症状与「重连失败」完全一样**（横幅常驻 + 点重连没用），排查时极易误判为新引入的连接 bug。现由 `use-credential-resync.ts` 恢复：探测到 401/403 且 base URL 为 auto 时向 Rust 重取一次。**两条守卫都是承重的**——非 401 不动，非 auto 不动（用户在设置页指向自己的 opencode 时，那套凭据是他的）。
@@ -63,6 +69,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `HIDDEN_BUILTIN_COMMANDS` 的第二份拷贝已消除，与分组/排序一并抽到 `lib/command-menu.ts`（纯函数，**不引入 `useSkills`**——那个 hook mount 即发三个请求，会把成本加回启动路径）。
 
 
+## [0.3.4] - 2026-07-28
+
 ### Added
 
 - **会话页 AI 生成内容提示** —— 会话输入框下方新增一行浅色提示「内容由 AI 生成，仅供参考」（三语），把 EULA 草稿 §3.2 / §3.5 的既有条款落到界面上。
@@ -96,6 +104,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **`about-legal.test.tsx` 的超时 flake（既有问题，与 LaTeX 无关）** —— 两个用例单跑 ~2s、满负载并跑 >5s，随机撞上 vitest 默认 5s 超时让 CI 变红。根因是带 `name` 的 role 查询会对页面上**全部 108 个** `button`/`role="button"` 元素逐个计算可访问名（**~1000ms，且每次 DOM 变动后重付一遍**；`hidden: true` 实测无效——它只跳过可见性过滤）。改用 `getByText`（标签是按钮唯一子节点）与 `within(chipBar)`（候选 108→5）：1994ms→119ms、1896ms→184ms，连跑 5 次全量 730/730 全绿。教训固化 testing.md §10。
 - **`stripMarkdown` 的 `_` 强调缺 CommonMark intraword 保护** —— 与上条同一个机制，触发源换成了降级产物：Unicode 映射不了的下标会退成 `x_(i+1)` 形式，两处会被裸 `_(.+?)_` 配成一对、吃掉中间正文。补上 `(?<![^\s])_ … _(?![\p{L}\p{N}])`，顺带让 `max_pool_size` 这类 snake_case 标识符不再被拆。
 
+
+## [0.3.3] - 2026-07-26
 
 ### Added
 
