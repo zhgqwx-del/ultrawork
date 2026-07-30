@@ -264,3 +264,37 @@ bun run --bun e2e:im-math-blackbox  # 黑盒：跑编译后的 sidecar 二进制
 ```
 
 > **非空转自检是硬要求**（conventions §19）：三个 harness 里凡「X 不存在」类断言都配了前置的非空转门。`im-math-degrade` 首次运行时 opencode 少配了 `OPENCODE_APP_NAME`，回合直接报错，4 条断言在一句 51 字符的错误消息上全绿 —— 现在 check 0 不过就 `exit 1`，不给出绿色的假报告。
+
+## `orchestration-worktree.e2e.ts` — worktree 隔离的三条回收分支
+
+守 2026-07-30 修的那个泄漏：`createWorktree` 建 `<root>/<runId>/<stepId>` 两层，
+而 `removeWorktree` 只回收 `<stepId>` 那层 ⇒ **每个用过 worktree 隔离的 run 永久
+留下一个空目录**（71 分钟 soak / 523 run 实测残留 168 个、166 个全空、重启不回收）。
+
+`worktree.test.ts` 直接调 `removeWorktree`，证的是函数契约；这个 e2e 证的是
+**orchestrator 真实分支 + fan-out 并行形状**——两者缺一不可：
+
+| 分支 | 期望 |
+|---|---|
+| A 5 个 worker 并行、全成功 | run 目录被回收（含非空转门：峰值真有 5 个 worktree 并存） |
+| B 某 worker 不写产物 | 该 worktree **保留**供排查，run 目录存活 |
+| C 中途取消 | 取消路径拆掉 worktree，run 目录被回收 |
+
+**为什么必须是 fan-out**：Pipeline tab 的扇出模式给每个 worker 相同的 `inputs`，
+它们**并行**起多个 worktree；串行链 recipe（`inputs:["s0"]`）永远产生不了这个形状，
+soak 当初就是这么漏掉并发场景的。
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:orch-worktree      # E2E_VERBOSE=1 转发 sidecar/mock 日志
+```
+
+需要已构建的 opencode + acp-client sidecar 与 git。隔离：临时 HOME/XDG，端口 4696/4699/8696。
+
+> **两个踩过的坑，都会伪装成「turn timed out」**：
+> ① `Bun.spawn` 用 `stdout:"pipe"` 却不读 ⇒ 管道满后子进程阻塞（`plan` 输出少能过，
+>   5 个并发 worker 全卡死）。要么 drain，要么别建管道。
+> ② **临时根目录必须 `realpathSync`**：macOS 上 `/var`→`/private/var`，而
+>   `worktreesRoot()` 原样派生自 `XDG_DATA_HOME` ⇒ worker 的产物路径（`/var/...`）
+>   与它自己被 opencode 解析过的 cwd（`/private/var/...`）对不上，写入被当作越出沙箱，
+>   工具调用永不返回。
