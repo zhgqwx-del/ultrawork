@@ -20,6 +20,7 @@
     "e2e:math-real": "bun run --bun e2e/math-render-realapp.e2e.ts",
     "e2e:im-math": "bun run --bun e2e/im-math-degrade.e2e.ts",
     "e2e:im-math-blackbox": "bun run --bun e2e/im-math-sidecar-blackbox.e2e.ts",
+    "e2e:orch-worktree": "bun run --bun e2e/orchestration-worktree.e2e.ts",
     "e2e:sidebar-select": "bun run --bun e2e/sidebar-select.e2e.ts",
     "e2e:sidebar-extensions": "bun run --bun e2e/sidebar-extensions.e2e.ts",
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
