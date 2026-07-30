@@ -53,6 +53,62 @@ export async function computeSourceHash(
 }
 
 /**
+ * Resolve a package's `workspace:*` dependencies — TRANSITIVELY — to their source
+ * directories, shaped for `computeSourceHash`'s `extraDirs`.
+ *
+ * Why this exists: the sidecars are bundled with `bun build --compile`, so a change
+ * in `packages/core/*` lands in the binary. But every build script hashed only its
+ * OWN `src/`, so editing a dependency left the cache reporting "up-to-date" and the
+ * stale binary in place. That is worse than a slow build — a local verification run
+ * silently exercises the old code.
+ *
+ * Transitive matters: gateway depends on connector, connector depends on api-client.
+ * A direct-only walk would miss an api-client edit for anything that reaches it
+ * indirectly.
+ *
+ * Derived from package.json rather than hand-listed so a newly added dependency is
+ * covered automatically — a hand-written list is exactly what drifted here before.
+ */
+export async function workspaceDepDirs(
+  pkgDir: string,
+  rootDir: string,
+  globs: string[] = ["src/**/*.ts", "package.json"],
+): Promise<{ dir: string; globs: string[] }[]> {
+  const byName = new Map<string, string>()
+  const pkgGlob = new Glob("packages/*/*/package.json")
+  for await (const rel of pkgGlob.scan({ cwd: rootDir, absolute: false })) {
+    const full = path.join(rootDir, rel)
+    try {
+      const pkg = (await Bun.file(full).json()) as { name?: string }
+      if (pkg.name) byName.set(pkg.name, path.dirname(full))
+    } catch {
+      // an unreadable package.json simply doesn't participate
+    }
+  }
+
+  const seen = new Set<string>()
+  const out: { dir: string; globs: string[] }[] = []
+  const visit = async (dir: string): Promise<void> => {
+    let pkg: { dependencies?: Record<string, string> }
+    try {
+      pkg = (await Bun.file(path.join(dir, "package.json")).json()) as typeof pkg
+    } catch {
+      return
+    }
+    for (const [name, spec] of Object.entries(pkg.dependencies ?? {})) {
+      if (!String(spec).startsWith("workspace:")) continue
+      const depDir = byName.get(name)
+      if (!depDir || seen.has(depDir)) continue // `seen` also breaks dependency cycles
+      seen.add(depDir)
+      out.push({ dir: depDir, globs })
+      await visit(depDir)
+    }
+  }
+  await visit(pkgDir)
+  return out
+}
+
+/**
  * Check if a rebuild is needed by comparing current source hash
  * against a stored hash file next to the binary.
  *

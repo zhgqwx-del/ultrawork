@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
-import { computeSourceHash, needsRebuild, saveHash } from "./build-hash"
+import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const knowledgeDir = path.join(rootDir, "packages/knowledge/sidecar")
@@ -58,6 +58,7 @@ const currentHash = await computeSourceHash(
     path.join(knowledgeDir, "package.json"),
     path.join(rootDir, "bun.lock"),
   ],
+  await workspaceDepDirs(knowledgeDir, rootDir),
 )
 
 if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {

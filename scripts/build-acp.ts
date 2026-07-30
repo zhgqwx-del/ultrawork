@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
-import { computeSourceHash, needsRebuild, saveHash } from "./build-hash"
+import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const acpDir = path.join(rootDir, "packages/agent/acp-client")
@@ -50,6 +50,10 @@ await $`mkdir -p ${tauriBinDir}`
 const outFile = path.join(tauriBinDir, `acp-client-${tauriTarget}${suffix}`)
 const hashFile = path.join(tauriBinDir, `.acp-client-${tauriTarget}.hash`)
 
+// `bun build --compile` inlines the workspace dependencies, so an edit in
+// packages/core/{orchestrator,connector,api-client} changes this binary. Hashing
+// only acp-client's own src left the cache answering "up-to-date" after such an
+// edit — the stale binary then silently backs any local verification run.
 const currentHash = await computeSourceHash(
   acpDir,
   ["src/**/*.ts"],
@@ -57,6 +61,7 @@ const currentHash = await computeSourceHash(
     path.join(acpDir, "package.json"),
     path.join(rootDir, "bun.lock"),
   ],
+  await workspaceDepDirs(acpDir, rootDir),
 )
 
 if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {
