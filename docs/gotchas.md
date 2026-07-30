@@ -216,7 +216,11 @@
 - **直接 `bun build --compile` 的产物在 macOS arm64 会被 SIGKILL（exit 137）**：bun 产出的二进制完全无签名（`codesign -dv` 报 not signed），且 `codesign -s -` 直接签会报 "invalid or unsupported format"——必须先 `codesign --remove-signature` 再 ad-hoc 签。**官方构建脚本（`scripts/build-acp.ts` 等）已包含这两步**，本地验证编译产物请走 `bun run --bun scripts/build-*.ts`，不要直接跑包内 `bun run build` 的 dist 产物。
 
 - **`bun build --compile` 后，中文字面量不以明文形式存在于二进制里（2026-07-12 踩坑）**：`strings` 只提 ASCII，而 `grep -a` 连 UTF-8 / UTF-16LE 原字节也搜不到（源码被编成字节码）。⇒ **「中文串搜不到」不能证明代码没进包**。要验证某次改动确实进了 sidecar 二进制，**用 ASCII 的日志串做探针**（如新增的 `console.log` 文案），并同时确认旧代码的串已消失。
-- **sidecar 的构建新鲜度 hash 必须覆盖它 bundle 进去的每一个 workspace 依赖（2026-07-12，A/B 实证）**：`build-gateway.ts` 曾只喂 `api-client`、漏了 `@agent/connector` —— 只改 connector 的那次构建会被判 `up-to-date, skipping build`，**客户机器上装到旧逻辑且无任何提示**。新增依赖时同步更新 `computeSourceHash` 的 extraDirs。
+- **sidecar 的构建新鲜度 hash 必须覆盖它 bundle 进去的每一个 workspace 依赖 —— 同一个坑犯过两次，现已根治（2026-07-12 首犯 / 2026-07-30 复发并改为自动派生，均 A/B 实证）**：
+  - 首犯：`build-gateway.ts` 只喂 `api-client`、漏了 `@agent/connector`，只改 connector 那次被判 `up-to-date, skipping build`。当时的对策是「新增依赖时同步更新 `computeSourceHash` 的 extraDirs」—— **靠人记得，于是第二次照样漏**。
+  - 复发：`build-acp.ts` 从来没传过 extraDirs，而 acp-client 依赖 `api-client` / `connector` / `orchestrator` **三个**包。改完 orchestrator 跑 `build:acp` 答 "up-to-date"，二进制停在两天前 —— **本地拿旧二进制做「验证」，而且会通过**。这比慢构建糟得多：验证本身在撒谎。
+  - **现改为从 `package.json` 递归自动派生**（`build-hash.ts` 的 `workspaceDepDirs`），新增依赖自动覆盖，不再需要人同步。**必须递归**：gateway→connector→api-client，只走直接依赖会漏掉间接那层。实测精确性：改 `api-client` 精确触发 acp+gateway 重建、knowledge（无 workspace 依赖）正确 skip。
+  - **影响边界（别夸大）**：`src-tauri/binaries/` 整个被 gitignore ⇒ 哈希文件不入库，**CI / 发版是干净 checkout，`needsRebuild` 恒 true、全量重建，从不受影响**。受影响的只有本地增量构建（以及在本地跑 `bun run release` 的情形）。
 
 ### `os.homedir()` 不认运行时改的 `HOME`（Bun，2026-07-12，血泪）
 
@@ -285,6 +289,8 @@
 - **`collectDeliverable` 千万别对工作区做 fs 扫描来抓 bash 副作用产物（2026-06-16，差点踩）**：Leader 默认**同轮并行委派多个成员、且都 `cwd = 同一个工作区`**（见 `team-leader-prompt.ts`）。若在 `collectDeliverable` 里 `scanWorkspaceFiles(workspace, startedAt)`，并发成员 A/B 的文件 mtime 全 ≥ 彼此的 startedAt → A 的 `artifacts[]` 串进 B 的文件（`endedAt` 上界也救不了——生命周期重叠）。**mtime 在共享目录下无法区分并发委派是谁写的**。故 D-2 `artifacts[]` 只取**子会话自己转录里**的 write/edit 工具路径（per-child 准确）；成员的 bash 副作用产物由**桌面 Leader 面板自己的回合窗扫描**兜住（成员在 Leader 工作区、Leader 委派回合内写，落在 Leader 回合窗 → 被扫到）。要 per-delegate 精确隔离只能给每个 delegate 独立 worktree（Fan-out 已支持 `isolation:"worktree"`）。
 - **opencode 会话的 model 是会话粘滞的**（018 走查实测）：首轮 prompt 未显式传 model 时按 server config 默认解析并**固化到该会话**，后续轮不传 model 也沿用首轮的——server config 改了默认 model 只影响新会话。无 git 的目录放 `opencode.json` 不会被当 project config 拾取（project root 探测依赖 git），workspace 级默认 model 对临时测试目录无效，须走 server 级 `PATCH /config`。
 - **worktree 隔离的输入产物要复制进 worktree**（`worktree.ts stageInputs`）：子 agent cwd 沙箱在 worktree 里，引用主 workspace 绝对路径会触发跨目录读权限弹窗（claude）；产物完成后拷回主 run 目录、worktree 成功即删失败保留（`step.worktreePath` 暴露）。
+- **worktree 的回收有三条分支，别把它们记成一条（2026-07-30 soak 实测）**：`completed` 与 `cancelled` 都调 `removeWorktree`（cancel 那条的注释写明「取消没有排查价值」），**只有 `deliverable missing` 那条刻意保留整个 worktree 供排查**。所以「失败保留」只覆盖失败，不覆盖取消。
+- **`createWorktree` 建的是 `<root>/<runId>/<stepId>` 两层，早期只回收了 `<stepId>` 那层（已修，2026-07-30）**：run 级父目录由 `mkdirSync(dirname(dir))` 建出来，而**全仓没有任何代码删它** ⇒ 每个用过 worktree 隔离的 run 永久留一个空目录。71 分钟 soak（523 个 run）实测残留 168 个、其中 166 个全空，杀 sidecar 重启也不回收（无启动清理 / 无 TTL / 无上限）。只漏 inode 不损数据，但无界。现于 `removeWorktree` 末尾补一次 `rmdirSync(dirname(dir))`。**用 `rmdir` 而非 `rm -r` 是全部安全论据**：只在父目录已空时才删 ⇒ fan-out 中仍在跑的 sibling、以及刻意保留的失败 worktree，都会让它无害失败。fan-out 并行形状必须单独验（`inputs` 相同的 worker 会并行起多个 worktree），串行链的 recipe 覆盖不到。
 
 - **`delegate.snapshot` 只重放 delegates，不重放待答的权限请求**（ADR-048 实测，2026-07-11）。新订阅者拿到的首帧里没有任何 pending permission，所以**任何持有该状态的组件一旦卸载重挂，那条权限行就永久消失** —— 子 agent 会一直阻塞到 sidecar 超时，界面上无任何线索。
   → 因此 `useDelegateRows` 必须挂在 **Session 级**（组件之上），`DelegateDock` 退化为纯渲染。布局变化（如全屏预览把 dock 从会话列 re-parent 到底部栏）在 React 里等于卸载 + 重建，state 放组件里必丢。

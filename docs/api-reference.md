@@ -283,7 +283,9 @@ curl -N http://localhost:4096/event \
 
 ## ACP Client Sidecar 端点（:4099，ADR-027）
 
-无认证（仅监听 127.0.0.1），CORS 白名单同 Gateway。会话 id 一律使用桌面端自己的 session id（`clientSessionId` 直通）。
+**需 Basic 认证**（`ULTRAWORK_SIDECAR_USERNAME` / `ULTRAWORK_SIDECAR_PASSWORD`，ADR-028 起随 sidecar 凭证下发），CORS 白名单同 Gateway。会话 id 一律使用桌面端自己的 session id（`clientSessionId` 直通）。
+
+> ⚠️ 本节与下节曾长期写作「无认证（仅监听 127.0.0.1）」，那是 ADR-028 之前的状态。**认证是无条件的**：`index.ts` 在 `ULTRAWORK_SIDECAR_PASSWORD` 缺失时直接 throw（sidecar 根本起不来），且 `app.use("*")` 一并覆盖 `/orchestration/*`（`acp-server.ts` 注释写明）。不带 `authorization` 头一律 401 —— 2026-07-30 实测踩到：照文档写的探针全线 401。新增调用方一律带头。
 
 | 方法 | 路径 | 功能 | 说明 |
 |------|------|------|------|
@@ -305,7 +307,7 @@ curl -N http://localhost:4096/event \
 
 ## Orchestration 端点（:4099，ADR-031 阶段3）
 
-ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。无认证（仅 127.0.0.1），CORS 同上。
+ACP sidecar 同进程托管 orchestrator（编排跨 WebView reload 存活）。**需 Basic 认证**（同上节，不带头答 401），CORS 同上。
 
 | 方法 | 路径 | 功能 | 说明 |
 |------|------|------|------|
