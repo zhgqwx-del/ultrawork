@@ -80,6 +80,12 @@ ADR-071 把断流后的**状态**恢复做完了（转圈、输入框、侧栏 b
 
 ## 验证
 
+- **✅ 真机验收通过（2026-07-30，macOS 真 Tauri 壳 / WKWebView）**：可切断代理插在 Vite 与 opencode 之间（用 `vite.config.ts` 现成的 `E2E_OPENCODE_PORT` 开关改转发目标，app 一行未改）。实测：回合中断流 → 正文停住 → 服务端跑完 300 marker → 恢复 → **界面几秒内自动补齐到 M0300，无需切走再切回**。
+  - **「一下子补齐」是设计如此**：补拉是「取快照合并」而非「把断掉那段重放一遍」，必然一次性出现。要做成逐字回放等于为动画伪造一段并不存在的实时性。用户判定视觉上「还好」。
+  - **视口是否被拽走：本轮未能观察**（答案没超过一屏、没有滚动）。滚动位置由 `useStickToBottom` 管，只在本来就贴底时跟随；e2e case C 已机器验证「用户展开的更早历史在补拉后仍在」。
+  - **断流期间打开会话 → 空白 + 「加载消息失败」→ 恢复后自愈**（用户实测），与 D4② 的 `initialLoadFailedRef` 路径一致；**但不构成干净归因** —— 会话重新挂载从外部看结果相同。
+  - **注意**：本 rig 的断流是「拒绝新连接」，renderer 判为「后台服务已退出」（gotchas §20⑭：连不上与进程死了长得一样）。真实断网是超时 ⇒ 判 unknown ⇒ 普通断连横幅。措辞差异是 rig 的产物，不是缺陷。
+
 - **单测 17 例**（`use-session-messages-reconnect-resync.test.ts`）：合并语义 9 例（含分页不前插、不删除、按引用返回）+ 闸门 8 例。
 - **真 GUI e2e**（`e2e/stream-gap-resync.e2e.ts`，可切断 TCP 代理插在 Vite 与 opencode 之间）：A/B/C 三档同跑，**Chromium + WebKit 双引擎均全绿**（Chromium = Windows 的 WebView2；**WebKit = macOS 的 WKWebView 与 Linux 的 WebKitGTK**，即用户实际安装的壳所用引擎）。
   双引擎在本轮不是走过场：**只跑 Chromium 会一直以为 case C 那段 harness 是稳的** —— WebKit 一跑就暴露它必挂（Playwright 点「加载更早」前的 scroll-into-view 落在转录顶部，触发 app 自己的 `onScrollNearTop → backfillTurns`，重渲染把按钮摘掉、点击永远落不下去，而它触发的回填恰恰就是想要的效果）。改为**断言结果而非断言手势**后两个引擎都稳，判据见 testing.md §11。
