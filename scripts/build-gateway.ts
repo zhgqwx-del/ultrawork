@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
-import { computeSourceHash, needsRebuild, saveHash } from "./build-hash"
+import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const gatewayDir = path.join(rootDir, "packages/channel/gateway")
@@ -65,10 +65,7 @@ const currentHash = await computeSourceHash(
     path.join(connectorDir, "package.json"),
     path.join(rootDir, "bun.lock"),
   ],
-  [
-    { dir: apiClientDir, globs: ["src/**/*.ts"] },
-    { dir: connectorDir, globs: ["src/**/*.ts"] },
-  ],
+  await workspaceDepDirs(gatewayDir, rootDir),
 )
 
 if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {
