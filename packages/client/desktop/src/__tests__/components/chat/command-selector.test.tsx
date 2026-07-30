@@ -47,6 +47,7 @@ function Harness({
       onChange={setValue}
       onSend={onSend}
       commandsEnabled={commandsEnabled}
+      placeholder="Reply..."
     />
   )
 }

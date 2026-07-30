@@ -111,7 +111,7 @@ export const en: Record<string, string> = {
     "team.noMembers": "Pick at least one member",
     "team.membersCount": "members",
     "team.emptyHint": "Describe your task — the Leader decides what to delegate.",
-    "team.inputPlaceholder": "Describe the task…",
+    "team.inputPlaceholder": "Describe the task for the team…",
 
     // Settings page
     "settingsPage.title": "Settings",
@@ -827,8 +827,17 @@ export const en: Record<string, string> = {
     "model.addProvider.baseUrl": "Base URL",
     "model.addProvider.apiKey": "API Key",
     "session.newChat": "New Chat",
-    "placeholder.reply": "Reply...",
-    "placeholder.askAnything": "Ask anything...",
+    // Short on purpose, and shorter than the zh wording it mirrors: with the
+    // newline hint appended, "Continue the conversation…" pushed the English
+    // placeholder onto two lines at a ~340px composer (a half-screen window),
+    // where zh still fits one. Measured, not guessed — the hint's "(Shift+Enter"
+    // is an ~85px unbreakable token, so the base is the only lever.
+    "placeholder.reply": "Reply…",
+    "placeholder.askAnything": "Ask anything…",
+    // Wraps a composer placeholder with the newline shortcut. The spacing lives
+    // in the translation, not in code: en needs a space before "(", zh's full-width
+    // "（" already carries its own.
+    "placeholder.withKeyHint": "{base} (Shift+Enter for a new line)",
     "workspace.refresh": "Refresh",
     "workspace.openInFinder": "Open in Finder",
     "aria.attachment": "Add attachment",
@@ -867,6 +876,10 @@ export const en: Record<string, string> = {
     "screenshot.restartAfterGrant": "Permission requested — restart Ultrawork to apply",
     "screenshot.failed": "Screenshot failed",
     "aria.sendMessage": "Send message",
+    // Hover tooltip on the reply composer's send button. Only reachable while the
+    // button is enabled (i.e. there IS text) — which is exactly when the newline
+    // question comes up, so the placeholder and this cover different moments.
+    "aria.sendMessageHint": "Send (Enter) · Shift+Enter for a new line",
     "aria.scrollToBottom": "Scroll to bottom",
     "aria.unreadArtifacts": "New artifacts",
     "session.transcriptHidden": "Conversation hidden — click to show",
@@ -996,7 +1009,7 @@ export const zhHans: Record<string, string> = {
     "team.noMembers": "至少勾选一个成员",
     "team.membersCount": "个成员",
     "team.emptyHint": "描述你的任务——是否委派、派给谁由 Leader 决定。",
-    "team.inputPlaceholder": "描述任务…",
+    "team.inputPlaceholder": "描述要协作完成的任务…",
 
     // Settings page
     "settingsPage.title": "设置",
@@ -1706,8 +1719,9 @@ export const zhHans: Record<string, string> = {
     "model.addProvider.apiKey": "API 密钥",
     "model.addProvider.baseUrl": "基础 URL",
     "session.newChat": "新对话",
-    "placeholder.reply": "回复...",
-    "placeholder.askAnything": "有什么可以帮到你...",
+    "placeholder.reply": "继续对话…",
+    "placeholder.askAnything": "有什么可以帮到你…",
+    "placeholder.withKeyHint": "{base}（Shift+Enter 换行）",
     "workspace.refresh": "刷新",
     "workspace.openInFinder": "在 Finder 中打开",
     "aria.attachment": "添加附件",
@@ -1746,6 +1760,7 @@ export const zhHans: Record<string, string> = {
     "screenshot.restartAfterGrant": "已发起授权——授权后请重启 Ultrawork 生效",
     "screenshot.failed": "截图失败",
     "aria.sendMessage": "发送消息",
+    "aria.sendMessageHint": "发送（Enter）· Shift+Enter 换行",
     "aria.scrollToBottom": "回到底部",
     "aria.unreadArtifacts": "新产物",
     "session.transcriptHidden": "会话已隐藏 — 点击展开",
