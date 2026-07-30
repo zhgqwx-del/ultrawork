@@ -81,7 +81,8 @@ ADR-071 把断流后的**状态**恢复做完了（转圈、输入框、侧栏 b
 ## 验证
 
 - **单测 17 例**（`use-session-messages-reconnect-resync.test.ts`）：合并语义 9 例（含分页不前插、不删除、按引用返回）+ 闸门 8 例。
-- **真 GUI e2e**（`e2e/stream-gap-resync.e2e.ts`，可切断 TCP 代理插在 Vite 与 opencode 之间）：A/B 两档同跑。
+- **真 GUI e2e**（`e2e/stream-gap-resync.e2e.ts`，可切断 TCP 代理插在 Vite 与 opencode 之间）：A/B/C 三档同跑，**Chromium + WebKit 双引擎均全绿**（Chromium = Windows 的 WebView2；**WebKit = macOS 的 WKWebView 与 Linux 的 WebKitGTK**，即用户实际安装的壳所用引擎）。
+  双引擎在本轮不是走过场：**只跑 Chromium 会一直以为 case C 那段 harness 是稳的** —— WebKit 一跑就暴露它必挂（Playwright 点「加载更早」前的 scroll-into-view 落在转录顶部，触发 app 自己的 `onScrollNearTop → backfillTurns`，重渲染把按钮摘掉、点击永远落不下去，而它触发的回填恰恰就是想要的效果）。改为**断言结果而非断言手势**后两个引擎都稳，判据见 testing.md §11。
 - **非空转门是硬要求**：断流期间界面若没停止增长，判 **FAIL 而非 PASS**。Playwright 的 `setOffline` 不切 loopback（discussions/058 实测 `ui 7→66`），没有这道门会得出一份关于「网络从没断过」的报告。
 - **负向控制一（关掉 resync）**：单测 21 例挂 5 例、e2e **B 档 19/300 挂〔缺 281〕而 A 档 300/300 仍过** —— 后半句才是关键，它把「修复起作用」和「这一档本来就会自愈」分开了。
 - **负向控制二（把合并换成「复用初始加载」的 re-seed）**：**A 300/300 过、B 300/300 过、C 挂（最老一轮丢失）**。这一行是 D2 的全部理由 —— **re-seed 在 A/B 两档表现完美无瑕**，只有 C 能看见它把用户拉出来的历史抹掉了。

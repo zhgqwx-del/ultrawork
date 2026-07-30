@@ -31,9 +31,14 @@
 // separates "the fix works" from "the stream would have healed anyway".
 //
 // Run:  cd packages/client/desktop && bun run --bun e2e/stream-gap-resync.e2e.ts
-// Needs: system Chrome (playwright-core channel:"chrome"); built opencode sidecar
-//        (src-tauri/binaries). Exit 0 = PASS, 1 = FAIL.
-import { chromium, type Browser } from "playwright-core"
+//       E2E_ENGINE=webkit bun run --bun e2e/stream-gap-resync.e2e.ts
+// BOTH engines matter and neither substitutes for the other: Chromium is what
+// Windows ships (WebView2), WebKit is what macOS and Linux ship (WKWebView /
+// WebKitGTK). gotchas §20⑭ was written after a Chrome-only e2e waved through a
+// scheme a real WKWebView rejects.
+// Needs: system Chrome (playwright-core channel:"chrome") or the bundled WebKit;
+//        built opencode sidecar (src-tauri/binaries). Exit 0 = PASS, 1 = FAIL.
+import { chromium, webkit, type Browser } from "playwright-core"
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -61,6 +66,8 @@ const TURN_MS = CHUNKS * DELAY_MS
 const OC_PORT = 4096
 const OC_REAL_PORT = 4196
 const OC_DIRECT = `http://127.0.0.1:${OC_REAL_PORT}`
+const ENGINE = process.env.E2E_ENGINE === "webkit" ? webkit : chromium
+const ENGINE_NAME = process.env.E2E_ENGINE === "webkit" ? "webkit" : "chromium"
 
 const CASES = [
   // Restores with ~27s of turn left. Measured on a clean tree: 300/300 — the
@@ -135,7 +142,7 @@ const summary: string[] = []
 let browser: Browser | undefined
 
 try {
-  console.log("=== boot mock-llm + opencode + cuttable proxy + vite ===")
+  console.log(`=== [${ENGINE_NAME}] boot mock-llm + opencode + cuttable proxy + vite ===`)
   spawn([BUN, "run", join(DIR, "mock-llm.ts")], {
     MOCK_LLM_PORT: String(LLM_PORT), MOCK_LLM_CHUNKS: String(CHUNKS), MOCK_LLM_DELAY_MS: String(DELAY_MS),
   })
@@ -147,7 +154,7 @@ try {
   spawn([BUN, "run", "dev"], {}, DESKTOP)
   if (!await poll("vite", async () => (await fetch("http://localhost:1420/")).ok)) throw new Error("vite never came up")
 
-  browser = await chromium.launch({ channel: "chrome", headless: true })
+  browser = await ENGINE.launch(ENGINE_NAME === "chromium" ? { channel: "chrome", headless: true } : { headless: true })
 
   for (const c of CASES) {
     console.log(`\n=== ${c.name} ===`)
@@ -288,10 +295,24 @@ try {
     console.log(`  [window] oldest turn windowed away on load = ${hiddenAtFirst}`)
     if (!hiddenAtFirst) failures.push(`C: VACUOUS — ${OLDEST} was visible before "load earlier" was ever clicked (turn window did not engage)`)
 
-    await page.getByText(/Load earlier messages|加载更早消息/i).first().click()
-    if (!await poll("older history revealed", async () => (await bodyText()).includes(OLDEST), 15_000)) {
-      failures.push(`C: "load earlier" never revealed ${OLDEST} — cannot test what a resync does to it`)
+    // Revealing the older turns is the GOAL; clicking that button is only one way
+    // to get there, and on WebKit it is an unreliable one: Playwright scrolls the
+    // button into view, that lands at the top of the transcript, the app's own
+    // onScrollNearTop fires backfillTurns, the re-render detaches the button and
+    // the click never completes ("element was detached from the DOM, retrying")
+    // — even though the backfill it triggered is exactly what we wanted. Chromium
+    // happened not to hit it. So drive the OUTCOME and let either mechanism win.
+    let revealed = false
+    for (let i = 0; i < 12 && !revealed; i++) {
+      revealed = (await bodyText()).includes(OLDEST)
+      if (revealed) break
+      await page.getByText(/Load earlier messages|加载更早消息/i).first()
+        .click({ timeout: 2_000 }).catch(() => {})
+      await page.waitForTimeout(500)
     }
+    revealed = revealed || (await bodyText()).includes(OLDEST)
+    console.log(`  [reveal] older history revealed = ${revealed}`)
+    if (!revealed) failures.push(`C: never revealed ${OLDEST} — cannot test what a resync does to it`)
 
     // Now a real streaming turn, with an outage that spans its end (case B shape).
     await page.locator("textarea").first().fill("stream the markers please")

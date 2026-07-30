@@ -594,6 +594,24 @@ case C 用**独立 workspace**：opencode 按目录分实例，这样 A/B 那两
 case C 需要 20 轮历史，等不起每轮 `CHUNKS×DELAY`，于是给 `mock-llm.ts` 加了条：prompt 里带 `SEEDTURN` 就一帧答完。**第一版对整个 request body 做 `includes`，直接把真实回合也吃掉了** —— opencode 每次请求都会把**整段会话历史**回放给模型，只要这个会话被 seed 过，它的历史里就永远带着 `SEEDTURN`。症状是 case C 报 `stream never started`，看起来像产品问题。
 ⇒ 判据：**哨兵只对 `messages` 的最后一条求值**。与 §8 坑 2（`body.includes("title")` 连工具 schema 里的 `title` 字段一起命中）是同一类错误 —— **在会被历史回放的载荷上做子串匹配，等于给自己埋一个随会话年龄增长而必然触发的开关**。
 
+### ⚠️ Playwright 的 scroll-into-view 会触发 app 自己的滚动回调，把点击目标从 DOM 上摘掉（WebKit 实测）
+
+case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上必挂**：
+```
+- attempting click action
+- element is visible, enabled and stable
+- scrolling into view if needed / done scrolling
+- element was detached from the DOM, retrying     ← 循环到 30s 超时
+```
+机制：那个按钮就在转录**顶部**，Playwright 为了点它先把它滚进视野 ⇒ 落到顶部 ⇒ 触发 app 自己的 `onScrollNearTop → backfillTurns` ⇒ 重渲染 ⇒ 按钮被摘掉 ⇒ 点击永远落不下去。**讽刺的是它触发的回填正是我们想要的效果** —— 历史其实已经展开了，只是那次点击完成不了。
+⇒ 判据：**目标是「历史被展开」，不是「按钮被点到」。断言结果，别断言手势。** 改成「循环：查结果 → 试点一次（短超时、吞异常）→ 再查」后两个引擎都稳。
+⇒ 推广：**凡是点击目标位于会触发滚动副作用的位置（列表顶/底、无限滚动边界），都别用裸 `click()`** —— 它隐含一次 scroll，而那次 scroll 可能就是改变 DOM 的那只手。
+
+### 双引擎是必须的，不是锦上添花
+
+`E2E_ENGINE=webkit` 跑同一套（约定见 `math-render-realapp.e2e.ts`）。Chromium = Windows 的 WebView2；**WebKit = macOS 的 WKWebView 与 Linux 的 WebKitGTK**。
+本轮实证价值：**修复本体 A/B 两档在两个引擎都过**，而 **case C 的脆弱性只有 WebKit 暴露得出来** —— 只跑 Chromium 会一直以为那段 harness 是稳的。同类前科见 gotchas §20⑭。
+
 ### ⚠️ case C 的鉴别力来自 `turnStart`，不来自消息列表 —— 半吊子的反证会给它发假通行证
 
 给 C 做负向控制时，第一版只把合并换成 `setMessages(snapshot)`（以为这就是「re-seed」）。**C 照样绿**。
