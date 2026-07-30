@@ -38,14 +38,14 @@ describe("ChatInput screenshot button", () => {
 
   it("does not render a screenshot button when the slot has no screenshot control", () => {
     const slot = makeSlot({ screenshot: undefined })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} />)
+    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} placeholder="Reply..." />)
     expect(screen.queryByLabelText("screenshot.button")).not.toBeInTheDocument()
   })
 
   it("captures with hideWindow=true by default (飞书/微信 parity) on click", () => {
     const capture = vi.fn()
     const slot = makeSlot({ screenshot: { capture, available: true, busy: false } })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} />)
+    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} placeholder="Reply..." />)
     fireEvent.click(screen.getByLabelText("screenshot.button"))
     expect(capture).toHaveBeenCalledWith(true)
   })
@@ -53,7 +53,7 @@ describe("ChatInput screenshot button", () => {
   it("disables the button (and hides the caret) when no tool is available", () => {
     const capture = vi.fn()
     const slot = makeSlot({ screenshot: { capture, available: false, busy: false } })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} />)
+    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} placeholder="Reply..." />)
     const btn = screen.getByLabelText("screenshot.button")
     expect(btn).toBeDisabled()
     // Degraded hint, not the plain label.
@@ -67,7 +67,7 @@ describe("ChatInput screenshot button", () => {
   it("greys out the button when the slot is disabled (ACP/Team text-only backend)", () => {
     const capture = vi.fn()
     const slot = makeSlot({ disabled: true, screenshot: { capture, available: true, busy: false } })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} />)
+    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} placeholder="Reply..." />)
     const btn = screen.getByLabelText("screenshot.button")
     expect(btn).toBeDisabled()
     fireEvent.click(btn)
@@ -77,7 +77,7 @@ describe("ChatInput screenshot button", () => {
   it("shows a spinner and blocks clicks while a capture is in flight", () => {
     const capture = vi.fn()
     const slot = makeSlot({ screenshot: { capture, available: true, busy: true } })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} />)
+    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot} placeholder="Reply..." />)
     const btn = screen.getByLabelText("screenshot.button")
     expect(btn).toBeDisabled()
     fireEvent.click(btn)

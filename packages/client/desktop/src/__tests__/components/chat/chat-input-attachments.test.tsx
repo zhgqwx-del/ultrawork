@@ -38,7 +38,7 @@ beforeEach(() => {
 describe("ChatInput — attachments", () => {
   it("renders a thumbnail chip for an attached image and removes it on click", () => {
     const s = slot({ items: [image] })
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
     expect((screen.getByAltText("shot.png") as HTMLImageElement).src).toBe("data:image/png;base64,AAA")
     fireEvent.click(screen.getByLabelText("attachment.remove"))
     expect(s.remove).toHaveBeenCalledWith("a1")
@@ -47,14 +47,14 @@ describe("ChatInput — attachments", () => {
   it("enables send with an attachment and no text", () => {
     // "Paste a screenshot and hit enter" must be a complete turn.
     const onSend = vi.fn()
-    render(<ChatInput value="" onChange={vi.fn()} onSend={onSend} attachments={slot({ items: [image] })} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={onSend} attachments={slot({ items: [image] })} />)
     fireEvent.click(screen.getByLabelText("aria.sendMessage"))
     expect(onSend).toHaveBeenCalled()
   })
 
   it("keeps send disabled when there is neither text nor an attachment", () => {
     const onSend = vi.fn()
-    render(<ChatInput value="" onChange={vi.fn()} onSend={onSend} attachments={slot()} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={onSend} attachments={slot()} />)
     fireEvent.click(screen.getByLabelText("aria.sendMessage"))
     expect(onSend).not.toHaveBeenCalled()
   })
@@ -64,7 +64,7 @@ describe("ChatInput — attachments", () => {
     // string and the model would apologise for a file the user can't see.
     const onSend = vi.fn()
     render(
-      <ChatInput
+      <ChatInput placeholder="Reply..."
         value="describe this"
         onChange={vi.fn()}
         onSend={onSend}
@@ -78,7 +78,7 @@ describe("ChatInput — attachments", () => {
 
   it("attaches image files pasted into the composer", () => {
     const s = slot()
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
     const file = new File(["x"], "clip.png", { type: "image/png" })
     fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { files: [file] } })
     expect(s.add).toHaveBeenCalledWith([file])
@@ -87,7 +87,7 @@ describe("ChatInput — attachments", () => {
   it("leaves a plain-text paste alone", () => {
     // Pasting text must still land in the textarea — only files are intercepted.
     const s = slot()
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} attachments={s} />)
     fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { files: [] } })
     expect(s.add).not.toHaveBeenCalled()
   })
@@ -95,12 +95,12 @@ describe("ChatInput — attachments", () => {
   it("registers the NATIVE drag-drop listener, not an HTML5 one", () => {
     // Tauri's dragDropEnabled defaults to true, so the OS handler swallows the event and an
     // HTML5 onDrop would never fire — and only the native event carries real file paths.
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot()} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot()} />)
     expect(onDragDropEvent).toHaveBeenCalled()
   })
 
   it("offers no attach button when the backend is text-only (ACP/Team)", () => {
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot({ disabled: true })} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} attachments={slot({ disabled: true })} />)
     expect((screen.getByLabelText("aria.attachment") as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -111,7 +111,7 @@ describe("ChatInput — attachments", () => {
     // clear impossible to ship, rather than trusting every page to remember.
     const onSend = vi.fn()
     render(
-      <ChatInput
+      <ChatInput placeholder="Reply..."
         value="do the thing"
         onChange={vi.fn()}
         onSend={onSend}
@@ -125,14 +125,14 @@ describe("ChatInput — attachments", () => {
   it("sends normally on a text-only backend once the attachments are gone", () => {
     const onSend = vi.fn()
     render(
-      <ChatInput value="do the thing" onChange={vi.fn()} onSend={onSend} attachments={slot({ disabled: true })} />,
+      <ChatInput placeholder="Reply..." value="do the thing" onChange={vi.fn()} onSend={onSend} attachments={slot({ disabled: true })} />,
     )
     fireEvent.click(screen.getByLabelText("aria.sendMessage"))
     expect(onSend).toHaveBeenCalled()
   })
 
   it("shows no attachment surface at all when the composer takes no attachments", () => {
-    render(<ChatInput value="" onChange={vi.fn()} onSend={vi.fn()} />)
+    render(<ChatInput placeholder="Reply..." value="" onChange={vi.fn()} onSend={vi.fn()} />)
     expect(screen.queryByLabelText("aria.attachment")).toBeNull()
     expect(onDragDropEvent).not.toHaveBeenCalled()
   })

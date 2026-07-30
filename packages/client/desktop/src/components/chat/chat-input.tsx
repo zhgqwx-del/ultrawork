@@ -45,7 +45,10 @@ interface ChatInputProps {
    *  stop button shifts on every streaming reflow, so fast streams can swallow
    *  the click between pointerdown and pointerup. */
   onStop?: () => void
-  placeholder?: string
+  /** Required on purpose: an optional default here can only be an untranslated
+   *  literal, which is exactly the string that shows up in a Chinese UI the day
+   *  someone adds a third composer and forgets to pass one. */
+  placeholder: string
   disabled?: boolean
   loading?: boolean
   variant?: "home" | "reply"
@@ -173,7 +176,7 @@ export function ChatInput({
   onSend,
   attachments,
   onStop,
-  placeholder = "Ask anything...",
+  placeholder,
   disabled = false,
   loading = false,
   variant = "reply",
@@ -316,6 +319,15 @@ export function ChatInput({
     // Enter without Shift and not composing → send.
     // Check both React state AND native isComposing — some browsers fire compositionEnd before keyDown
     if (e.key === "Enter" && !e.shiftKey && !isComposing && !e.nativeEvent.isComposing) {
+      // preventDefault is UNCONDITIONAL, and must stay that way: the reply composer's
+      // placeholder tells the user Shift+Enter is how you get a newline, so a bare Enter
+      // that inserts one in the states where it can't send (an attachment `blocker`, the
+      // async capability gate, whitespace-only text) would contradict what the UI just
+      // promised. Those states aren't silent — `blocker` renders its own banner above and
+      // the send button is visibly disabled. Guarded by the "bare Enter never inserts a
+      // newline" test, which needs userEvent: fireEvent.keyDown performs no default
+      // editing in jsdom, so the same assertion written with it passes even if this line
+      // is deleted.
       e.preventDefault()
       if (canSend) {
         onSend()
@@ -354,6 +366,15 @@ export function ChatInput({
     !blocker &&
     !staleAttachments &&
     !gatePending
+
+  // The in-conversation composer advertises the newline shortcut; Home's does not —
+  // its empty state is the app's front door and stays uncluttered. Keyed off `variant`
+  // rather than a per-page prop for two reasons: `variant` already IS the
+  // "front door vs in-conversation" split, and the Enter/Shift+Enter semantics this
+  // sentence describes live in this component (handleKeyDown), so the promise and the
+  // behaviour it promises can't drift apart. A future reply-style composer inherits it.
+  const resolvedPlaceholder =
+    variant === "reply" ? t("placeholder.withKeyHint", { base: placeholder }) : placeholder
 
   return (
     <div
@@ -427,7 +448,7 @@ export function ChatInput({
           clearTimeout(compositionTimerRef.current)
           compositionTimerRef.current = setTimeout(() => setIsComposing(false), 0)
         }}
-        placeholder={placeholder}
+        placeholder={resolvedPlaceholder}
         disabled={disabled}
         className={cn(
           "w-full resize-none border-0 bg-transparent text-[var(--color-fg)] placeholder:text-[var(--color-fg-muted)] focus:outline-none disabled:opacity-50",
@@ -493,6 +514,7 @@ export function ChatInput({
             onClick={handleSendClick}
             disabled={!canSend}
             aria-label={t("aria.sendMessage")}
+            title={t("aria.sendMessageHint")}
             className={cn(
               "absolute bottom-2 right-2.5 flex size-7 items-center justify-center rounded-full transition-all",
               canSend

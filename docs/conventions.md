@@ -710,3 +710,20 @@ setMessages((prev) => mergeSnapshotInPlace(prev, snapshot))
 **外加一条性能上的硬要求：无变化时按引用返回原数组，未改动的元素也保持原引用。** 列表项的 `memo` 普遍靠元素引用判等（`assistant-turn.tsx` 的注释写死了这个假设），一次空转补拉若返回新数组，整条转录会重渲，长会话直接可见掉帧。
 
 **闸门**：补拉只在数据「不会再自己变好」的时候才做。会话还在 busy 说明后续事件还会补齐，此时补拉既多余又危险（那正是初始加载注释里警告的重新 seed 场景）；用户按了停止则一律不补 —— 服务端可能存着他刚刚叫停的那份完整输出。**闸门拦下时不要消费重试标记**，否则「拦下 → 条件后来满足」这条路径永远走不到（ADR-072 §D3）。
+
+## 25. 快捷键提示挂在 `variant` 上，不挂调用点（2026-07-30）
+
+`ChatInput` 的会话态（`variant="reply"`）在 placeholder 尾部追加「Shift+Enter 换行」，Home 态（`variant="home"`）不追加 —— Home 是产品门面，键盘机制会让空态读起来像说明书。
+
+```tsx
+const resolvedPlaceholder =
+  variant === "reply" ? t("placeholder.withKeyHint", { base: placeholder }) : placeholder
+```
+
+**为什么绑 `variant` 而不是给页面加个 prop**：① `variant` 本身就是「门面 / 会话中」这条切分，② Enter/Shift+Enter 的语义住在这个组件里（`handleKeyDown`），提示跟着语义走，承诺和被承诺的行为不会各自漂移，③ 将来新增的会话型 composer 自动继承。
+
+**必须配一正一负两条断言**：`variant="reply"` 的 placeholder 含 `Shift+Enter`、`variant="home"` 的**不含**。只写正向那条 = 一行改动就能把提示放回门面而没有任何测试会红（实跑负向控制确认过这条守卫能红）。
+
+**拼接用插值键，不要在代码里 `+` 字符串**：`"{base}（Shift+Enter 换行）"` / `"{base} (Shift+Enter for a new line)"` —— 英文要在 `(` 前留半角空格、中文的全角 `（` 自带间距，**间距属于译文，不属于代码**；靠在译文值里塞前导空格则是隐形字符，diff 里看不见。`t()` 的插值已是 split/join（`i18n-context.tsx`），base 里含 `$&` 也安全。
+
+**各语言的 base 长度可以不同**：同一条提示追加后，长 base 会让英文在半屏窗口（可用宽约 340px）折成两行而中文仍是一行 ⇒ 英文用短 base（`Reply…`）、中文保留 `继续对话…`。分语言给不同长度是常规做法，不是不一致。阈值与测量方法见 `gotchas.md §13.1`。

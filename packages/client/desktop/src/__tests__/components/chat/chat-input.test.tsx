@@ -1,20 +1,30 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent, act } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { useState } from "react"
 import { ChatInput } from "@/components/chat/chat-input"
 
-// Mock i18n
+// Mock i18n. `t` must honour params — `placeholder.withKeyHint` interpolates the
+// base placeholder, and a params-ignoring stub would leave a literal "{base}" in
+// the assertions instead of failing loudly.
 vi.mock("@/lib/i18n-context", () => ({
   useI18n: () => ({
-    t: (key: string) => {
+    t: (key: string, params?: Record<string, string | number>) => {
       const map: Record<string, string> = {
         "placeholder.askAnything": "Ask anything...",
         "placeholder.reply": "Reply...",
+        "placeholder.withKeyHint": "{base} (Shift+Enter for a new line)",
         "home.startNow": "Start Now",
         "aria.attachment": "Add attachment",
         "aria.sendMessage": "Send message",
+        "aria.sendMessageHint": "Send (Enter) · Shift+Enter for a new line",
         "aria.stopGenerating": "Stop generating",
       }
-      return map[key] || key
+      let out = map[key] || key
+      for (const [k, v] of Object.entries(params ?? {})) {
+        out = out.split(`{${k}}`).join(String(v))
+      }
+      return out
     },
     language: "en",
     setLanguage: vi.fn(),
@@ -26,11 +36,20 @@ vi.mock("@/components/chat/command-selector", () => ({
   CommandSelector: () => null,
 }))
 
+/** A real controlled host: `defaultProps` pins `value`, so any test that needs the
+ *  textarea's contents to actually change (i.e. anything about default editing
+ *  behaviour) has to go through this instead. */
+function Controlled({ onSend = vi.fn(), ...rest }: Partial<React.ComponentProps<typeof ChatInput>>) {
+  const [value, setValue] = useState("")
+  return <ChatInput placeholder="Reply..." {...rest} value={value} onChange={setValue} onSend={onSend} />
+}
+
 describe("ChatInput", () => {
   const defaultProps = {
     value: "",
     onChange: vi.fn(),
     onSend: vi.fn(),
+    placeholder: "Ask anything...",
   }
 
   it("renders textarea", () => {
@@ -39,14 +58,23 @@ describe("ChatInput", () => {
   })
 
   it("renders with custom placeholder", () => {
+    // Default variant is "reply", which appends the newline hint.
     render(<ChatInput {...defaultProps} placeholder="Type here..." />)
-    expect(screen.getByPlaceholderText("Type here...")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/^Type here\.\.\./)).toBeInTheDocument()
   })
 
-  it("renders default placeholder", () => {
-    render(<ChatInput {...defaultProps} />)
-    // Default placeholder is "Ask anything..." (hardcoded default param)
+  it("appends the newline hint in the reply variant", () => {
+    render(<ChatInput {...defaultProps} variant="reply" placeholder="Reply..." />)
+    expect(screen.getByPlaceholderText("Reply... (Shift+Enter for a new line)")).toBeInTheDocument()
+  })
+
+  // The negative half of the pair above, and the only thing enforcing it: Home's
+  // empty state is deliberately kept free of keyboard mechanics. Without this a
+  // one-line change could put the hint back on the front door unnoticed.
+  it("does NOT append the newline hint in the home variant", () => {
+    render(<ChatInput {...defaultProps} variant="home" placeholder="Ask anything..." />)
     expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Shift\+Enter/)).not.toBeInTheDocument()
   })
 
   it("calls onChange when typing", () => {
@@ -63,6 +91,33 @@ describe("ChatInput", () => {
     const textarea = screen.getByRole("textbox")
     fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false })
     expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  // The promise the reply placeholder makes ("Shift+Enter for a new line") only holds
+  // if a bare Enter NEVER inserts one — including in the states where it can't send.
+  // This has to be userEvent: fireEvent.keyDown performs no default editing in jsdom,
+  // so the same assertion written with it passes even with the preventDefault deleted
+  // (measured — it leaves the value untouched either way).
+  it("bare Enter never inserts a newline, sendable or not", async () => {
+    const user = userEvent.setup()
+    render(<Controlled />)
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement
+
+    // Not sendable (empty) — Enter is swallowed, and must not leave a blank line behind.
+    await user.type(textarea, "{Enter}")
+    expect(textarea.value).toBe("")
+
+    // Sendable — sends, still no newline.
+    await user.type(textarea, "hi{Enter}")
+    expect(textarea.value).toBe("hi")
+  })
+
+  it("Shift+Enter does insert a newline", async () => {
+    const user = userEvent.setup()
+    render(<Controlled />)
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement
+    await user.type(textarea, "a{Shift>}{Enter}{/Shift}b")
+    expect(textarea.value).toBe("a\nb")
   })
 
   it("does NOT call onSend on Shift+Enter", () => {

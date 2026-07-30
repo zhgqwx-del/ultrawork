@@ -384,7 +384,13 @@
 - **产物行的选择器要限定在 `[data-testid="artifacts-panel"]` 内**。「工作区」面板排在产物区之上、同样默认展开、且其文件树会列出同一个文件 —— 无限定的文本匹配会点到那一行惰性文本上，表现为「点了没反应」。（ADR-059 前排在上方的是「执行活动」段，现已移除，但「工作区」段仍在其上、限定依旧必要。）
 
 - **`vi.restoreAllMocks()` 不会清理 `vi.stubEnv()`** —— 必须显式 `vi.unstubAllEnvs()`。曾实际中招：一条「阈值设 0 关闭功能」的测试把 env **泄漏给了后面所有测试**，导致 `/resume` 的用例根本没发生轮转，却以「看起来合理」的方式失败（ADR-051）。
-- **给纯函数加「必填参数」比加测试更能防漏传**：`groupSessionsByDate(sessions, t, frozen)` 的 `frozen` **刻意不给默认值**——排序与分组必须读同一个 key，而一个默认值会让调用方静默丢掉它（行在 hover 时跳组），同时单测因为直接传参**保持全绿**。让 tsc 抓，别指望测试（ADR-051）。
+- **给纯函数加「必填参数」比加测试更能防漏传**：`groupSessionsByDate(sessions, t, frozen)` 的 `frozen` **刻意不给默认值**——排序与分组必须读同一个 key，而一个默认值会让调用方静默丢掉它（行在 hover 时跳组），同时单测因为直接传参**保持全绿**。让 tsc 抓，别指望测试（ADR-051）。同理 `ChatInput` 的 `placeholder` 改必填后当场炸出**三个**测试文件在裸渲染（2026-07-30）——可选默认值只能是个未翻译的英文字面量，正是中文界面里将来会冒出来的那句。
+- **`fireEvent.keyDown` 在 jsdom 里不执行任何默认编辑行为 ⇒ 任何「按键有没有改动输入框内容」的断言用它写都是假守卫**（2026-07-30 实测三态：`fireEvent` 无论有无 `preventDefault` 都得到 `"hi"`；`userEvent.type` 无 `preventDefault` 得 `"hi\n"`、有 `preventDefault` 得 `"hi"`）。所以 `chat-input.test.tsx` 里 13 条 `fireEvent` 的 Enter 测试只守住了「没调 `onSend`」，**「裸 Enter 不插换行」一条都没守到**——把 `handleKeyDown` 里的 `e.preventDefault()` 整行删掉，那 13 条照样全绿（实跑验证）。要守默认行为**必须用 `userEvent`**（它尊重 `defaultPrevented`），并且被测组件要套一个真受控壳：现有 `defaultProps` 把 `value` 写死，textarea 内容永远不变，断言同样空转。
+
+## 13.1 加长 placeholder 会在极窄宽度被裁切（2026-07-30，composer 提示行实测）
+
+- 会话页 composer 的 placeholder 追加「Shift+Enter 换行」后，在**输入框可用宽度 ≤ 116px** 时实排 3–4 行而 `rows=1 / minHeight:44px` 只显示 2 行 ⇒ 句子断在中间，且 `overflow:auto` 滚不动空 textarea，第 3 行起是真看不见。WebKit / Chromium 阈值一致。可用宽度 ≈ 窗口宽 − 约 360px（左侧栏 `w-64` = 256px + `px-4` + `pr-10`），产物预览打开时该列再减半。**文案层修不掉**：hint 里的 `(Shift+Enter` 是约 85px 的不可断 token，实测 5 个候选写法在 116px 下全部超 2 行（缩短 hint 无用、只有缩短 base 有用，且也只能把「单行区间」从 ≥860px 拉到 ≥700px）。**根因是 `tauri.conf.json` 没有 `minWidth`**，窗口可拖到任意小（400px 时工具栏的模型选择器本来就已溢出）。
+- **量行数不要用 `ceil(文本宽 / 可用宽)`** —— 那假设可以在任意位置断行，对 CJK 成立、**对英文不成立**（按词断行，填充效率更低）。同一次标定里这个错误让中文的裁切阈值从「测试范围内不裁切」变成「116px 就裁切」，也就是说理想除法会给出**假安心**。正解是塞一个 `white-space: pre-wrap; overflow-wrap: break-word` 的隐藏 div、宽度设成真实可用宽、读 `getBoundingClientRect().height / lineHeight`，让引擎自己排。
 
 ## 14. 办公 CLI 连接器（lark-cli + dws + wecom-cli，ADR-043 / discussions/027）
 
