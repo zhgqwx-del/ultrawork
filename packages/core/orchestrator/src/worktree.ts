@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { copyFileSync, mkdirSync, rmSync } from "node:fs"
+import { copyFileSync, mkdirSync, rmSync, rmdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { runArtifactDir, type ArtifactInput } from "./artifacts"
@@ -56,6 +56,19 @@ export function removeWorktree(workspace: string, dir: string): void {
     console.error(`[orchestrator] git worktree remove failed for ${dir}: ${result.stderr?.trim() ?? result.error}`)
     rmSync(dir, { recursive: true, force: true })
     spawnSync("git", ["-C", workspace, "worktree", "prune"], { encoding: "utf-8" })
+  }
+  // `createWorktree` creates the run-level parent via `mkdirSync(dirname(dir))`,
+  // and nothing else ever removed it — so every run that used worktree isolation
+  // left an empty `<root>/<runId>/` behind permanently (a 71-minute soak with 523
+  // runs ended with 168 residual dirs, 166 of them empty, and zero reclaimed).
+  //
+  // rmdir (not rm -r) is the whole safety argument: it removes the parent ONLY
+  // when it is already empty, so a fan-out sibling still running, or a failed
+  // step's worktree deliberately kept for debugging, makes this fail harmlessly.
+  try {
+    rmdirSync(dirname(dir))
+  } catch {
+    // non-empty (siblings/kept worktree) or already gone — both are fine
   }
 }
 
