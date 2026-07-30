@@ -55,6 +55,18 @@ ADR-071 把断流后的**状态**恢复做完了（转圈、输入框、侧栏 b
 
 取历史失败时把 epoch 退回去，让下一次依赖变化重试；**不给用户任何提示** —— 他手上的列表还是他刚才那份，没有新信息可给。
 
+### D4：两处加固（第二轮对抗性复读发现，2026-07-30）
+
+**① 锚点消息在列表里出现两次时，快照独有的消息会被插入两次。**
+`prev` 并不保证 id 唯一：`loadOlderMessages` 是 `[...result.messages, ...prev]` 直接前插、**不去重**，分页边界重叠就会留下同 id 两份。合并时按锚点 id 取 followers，遇到重复锚点就会重复插入。已改为**取出即消费**（`followers.delete`）。
+
+**② 初始加载失败时，补拉必须顺带把分页窗口建起来。**
+断流期间打开一个会话 ⇒ 初始加载抛错 ⇒ `setMessages([])`、无 cursor、无 turn 窗口。此时的补拉**就是那次加载本身**，不是打在加载结果上的补丁。原实现只合并正文，结果是「会话恢复了内容、却永久失去『加载更早』」。现由 `initialLoadFailedRef` 精确区分这一条路径（**不用 `messages.length === 0` 判断** —— 那会在正常路径上误命中并变成一次真正的 re-seed）。
+
+## 遗留
+
+- **ACP 自己的流断开不触发补拉。** `reconnectEpoch` 只由 opencode 全局流驱动（`sse-context.tsx` 的 `opencode.onTransportStatusChange`）；ACP 的 per-session 流在 `gave-up` 时只发一条 `session.error` 提示，没有任何东西告诉 renderer「流回来了」。⇒ **ACP 会话（Claude/Gemini CLI agent、Team 的 ACP 成员）在自己的流断开且跨越回合结束时，仍会留下同样的正文缺口**，规避手段同样是切走再切回。sidecar 侧历史是完整的（`session-store.applyEvent` 同步折叠），缺的只是 renderer 的重取信号 —— 修法是给 ACP 的 per-session transport 也surface 一个恢复信号并并入 epoch，属于独立一轮。
+
 ## 否决的做法
 
 - **重新跑初始加载的 effect（把 `sessionId` 换成 `[sessionId, reconnectEpoch]`）** —— 最省事，但会清空列表、重置分页窗口，正是 ADR-071 判定「值得单独一轮设计」的那个风险。
@@ -71,4 +83,6 @@ ADR-071 把断流后的**状态**恢复做完了（转圈、输入框、侧栏 b
 - **单测 17 例**（`use-session-messages-reconnect-resync.test.ts`）：合并语义 9 例（含分页不前插、不删除、按引用返回）+ 闸门 8 例。
 - **真 GUI e2e**（`e2e/stream-gap-resync.e2e.ts`，可切断 TCP 代理插在 Vite 与 opencode 之间）：A/B 两档同跑。
 - **非空转门是硬要求**：断流期间界面若没停止增长，判 **FAIL 而非 PASS**。Playwright 的 `setOffline` 不切 loopback（discussions/058 实测 `ui 7→66`），没有这道门会得出一份关于「网络从没断过」的报告。
-- **负向控制**（2026-07-30 实跑）：把 resync effect 顶部加一条 `return`，单测 17 例挂 5 例、e2e 的 **B 档 19/300 挂〔缺 281〕而 A 档 300/300 仍过** —— 后半句才是关键，它把「修复起作用」和「这一档本来就会自愈」分开了。
+- **负向控制一（关掉 resync）**：单测 21 例挂 5 例、e2e **B 档 19/300 挂〔缺 281〕而 A 档 300/300 仍过** —— 后半句才是关键，它把「修复起作用」和「这一档本来就会自愈」分开了。
+- **负向控制二（把合并换成「复用初始加载」的 re-seed）**：**A 300/300 过、B 300/300 过、C 挂（最老一轮丢失）**。这一行是 D2 的全部理由 —— **re-seed 在 A/B 两档表现完美无瑕**，只有 C 能看见它把用户拉出来的历史抹掉了。
+- **⚠️ 半吊子的反证会发假通行证**：负向控制二的第一版只把合并换成 `setMessages(snapshot)`，**C 照样绿** —— 21 轮装得进一页 80，不丢消息，而 `turnStart` 没被碰。必须**忠实复刻那个更省事的错误写法**（连 `turnStart`/`cursor`/`hasMore` 一起重置）才打得红。判据与残余边界见 testing.md §11。

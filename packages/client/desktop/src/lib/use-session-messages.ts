@@ -148,7 +148,15 @@ export function mergeSnapshotInPlace(
       out.push(infoChanged ? { ...withParts, info } : withParts)
     }
     const bucket = followers.get(m.info.id)
-    if (bucket) out.push(...bucket)
+    if (bucket) {
+      out.push(...bucket)
+      // Consume it. `prev` is not guaranteed id-unique — loadOlderMessages
+      // prepends a page with `[...result.messages, ...prev]` and no dedup, so an
+      // overlapping page can leave the same id in the list twice. Without this
+      // delete, a repeated anchor would insert the same snapshot-only messages
+      // once per occurrence.
+      followers.delete(m.info.id)
+    }
   }
   return changed ? out : prev
 }
@@ -293,6 +301,10 @@ export function useSessionMessages(
   const activeIdsRef = useRef(activeSessionIds)
   activeIdsRef.current = activeSessionIds
   const prefetchUntilRef = useRef(0)
+  // True when the initial load threw (session opened while the backend was
+  // unreachable) — the reconnect resync then has to establish the paginated
+  // window instead of merging into one (ADR-072).
+  const initialLoadFailedRef = useRef(false)
   // --- Free-trial fallback state (ADR-057 P4), read/written synchronously in SSE callbacks ---
   const freeTrialConsentRef = useRef(freeTrialConsent)
   freeTrialConsentRef.current = freeTrialConsent
@@ -403,6 +415,7 @@ export function useSessionMessages(
     // (even while backgrounded) — bounding the cache to viewed sessions (M1).
     registerMessageCacheSession(sessionId)
     setLoading(true)
+    initialLoadFailedRef.current = false
     // Dispatched by binding: opencode pages by cursor; the ACP sidecar serves
     // the whole shaped history (the turn window below limits what renders).
     connector.fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
@@ -460,6 +473,12 @@ export function useSessionMessages(
           toast.error(t("error.loadMessages"))
           setMessages([])
           setLoading(false)
+          // Opening a session while the stream is down leaves it EMPTY, with no
+          // cursor and no turn window. The reconnect resync below is then the
+          // load, not a patch on top of one — so let it re-establish the
+          // paginated window too (ADR-072). Without this the session recovers its
+          // text but silently loses the way back to older history.
+          initialLoadFailedRef.current = true
         }
       })
     return () => { cancelled = true }
@@ -904,8 +923,17 @@ export function useSessionMessages(
       .then((result) => {
         if (cancelled || idRef.current !== sessionId) return
         // In-place merge, NOT a re-seed: see mergeSnapshotInPlace. The paginated
-        // window (turnStart/cursor/hasMore) is deliberately left alone.
+        // window (turnStart/cursor/hasMore) is deliberately left alone — EXCEPT
+        // when the initial load never succeeded, where there is no window to
+        // preserve and this fetch is standing in for it.
         setMessages((prev) => mergeSnapshotInPlace(prev, result.messages))
+        if (initialLoadFailedRef.current && result.messages.length > 0) {
+          initialLoadFailedRef.current = false
+          setCursor(result.cursor)
+          setHasMore(result.hasMore)
+          const userCount = result.messages.filter((m) => m.info.role === "user").length
+          setTurnStart(userCount > TURN_INIT ? userCount - TURN_INIT : 0)
+        }
       })
       .catch((err) => {
         // Nothing to tell the user — the list they have is the list they had.

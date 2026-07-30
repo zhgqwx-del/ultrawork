@@ -108,6 +108,11 @@ function analyze(text: string): { count: number; firstGap: number | null } {
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), "f1b-resync-")))
 const ws = join(tmp, "ws")
 mkdirSync(ws, { recursive: true })
+// Case C gets its own workspace: opencode is per-directory, so this keeps the A/B
+// sessions — whose titles are full of M#### markers — out of C's sidebar, where a
+// whole-page marker count would swallow them.
+const wsC = join(tmp, "wsC")
+mkdirSync(wsC, { recursive: true })
 mkdirSync(join(tmp, ".config/ultrawork"), { recursive: true })
 const baseURL = `http://127.0.0.1:${LLM_PORT}/v1`
 writeFileSync(join(tmp, ".config/ultrawork/opencode.json"), JSON.stringify({
@@ -220,13 +225,106 @@ try {
 
     await ctx.close()
   }
+
+  // ======================================================================
+  // C) the paginated history the user REVEALED must survive the resync
+  // ======================================================================
+  // The merge's whole reason to exist is that it is not a re-seed. A re-seed
+  // (`setMessages([])` + recomputed `turnStart`) would repair the answer just as
+  // well and look correct in cases A/B — and silently throw away the older turns
+  // the user pulled in, snapping the viewport. Unit tests pin the merge function;
+  // this pins the wiring in the real app.
+  //
+  // ⚠️ WHERE THIS CASE'S DISCRIMINATING POWER ACTUALLY COMES FROM: `turnStart`,
+  // not the message list. Measured — a partial sabotage that only swaps the merge
+  // for `setMessages(snapshot)` leaves this case GREEN, because 21 turns fit in
+  // one 80-message page so nothing is lost and `turnStart` (0 after "load
+  // earlier") is untouched. It only goes red against the sabotage that mirrors the
+  // real alternative: also recomputing `turnStart` the way the initial load does.
+  // If you ever want this case to catch list truncation too, seed past
+  // INITIAL_PAGE_SIZE (>40 turns) — today it does not.
+  //
+  // Runs in its OWN workspace: opencode is per-directory, so a fresh dir keeps the
+  // A/B sessions (whose titles contain M#### markers) out of the sidebar, where
+  // they would contaminate a whole-page marker count.
+  console.log(`\n=== C · revealed older history survives the resync ===`)
+  {
+    const SEEDS = 20 // > TURN_INIT (15), so the oldest turns start out windowed away
+    const seedHeaders = { ...srvHeaders, "x-opencode-directory": encodeURIComponent(wsC), "content-type": "application/json" }
+    const created = await (await fetch(`${OC_DIRECT}/session`, { method: "POST", headers: seedHeaders, body: "{}" })).json() as { id: string }
+    const sid = created.id
+    for (let i = 1; i <= SEEDS; i++) {
+      // SEEDTURN makes mock-llm answer in one frame; 20 real persisted turns in ~a second.
+      await fetch(`${OC_DIRECT}/session/${sid}/prompt_async`, {
+        method: "POST", headers: seedHeaders,
+        body: JSON.stringify({ parts: [{ type: "text", text: `SEEDTURN-${String(i).padStart(2, "0")}` }], model: { providerID: "mockprov", modelID: "mock-model" } }),
+      })
+      if (!await poll(`seed turn ${i} done`, async () => {
+        const r = await fetch(`${OC_DIRECT}/session/status`, { headers: seedHeaders })
+        return r.ok && !Object.keys((await r.json()) as object).includes(sid)
+      }, 30_000)) throw new Error(`seed turn ${i} never finished`)
+    }
+
+    const ctx = await browser.newContext()
+    await ctx.addInitScript(({ w, p }) => {
+      const handlers: Record<string, (a: any) => any> = {
+        check_directory_exists: () => true, ensure_default_workspace: () => w,
+        login_shell_path: () => "", scan_workspace_changes: () => [],
+      }
+      // @ts-ignore
+      window.__TAURI_INTERNALS__ = { invoke: async (cmd: string, a: any) => (handlers[cmd] ? handlers[cmd](a) : null), transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
+      localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: p }))
+      localStorage.setItem("workspace_path", w)
+    }, { w: wsC, p: PW })
+    const page = await ctx.newPage()
+    await page.goto(`http://localhost:1420/session/${sid}`, { waitUntil: "domcontentloaded" })
+    await page.waitForTimeout(3000)
+    const bodyText = async () => await page.locator("body").innerText()
+    const OLDEST = "SEEDTURN-01"
+
+    // NON-VACUITY for this case: if the oldest turn were on screen from the start,
+    // "it is still on screen at the end" would prove nothing at all.
+    const hiddenAtFirst = !(await bodyText()).includes(OLDEST)
+    console.log(`  [window] oldest turn windowed away on load = ${hiddenAtFirst}`)
+    if (!hiddenAtFirst) failures.push(`C: VACUOUS — ${OLDEST} was visible before "load earlier" was ever clicked (turn window did not engage)`)
+
+    await page.getByText(/Load earlier messages|加载更早消息/i).first().click()
+    if (!await poll("older history revealed", async () => (await bodyText()).includes(OLDEST), 15_000)) {
+      failures.push(`C: "load earlier" never revealed ${OLDEST} — cannot test what a resync does to it`)
+    }
+
+    // Now a real streaming turn, with an outage that spans its end (case B shape).
+    await page.locator("textarea").first().fill("stream the markers please")
+    await page.keyboard.press("Enter")
+    if (!await poll("streaming started", async () => analyze(await bodyText()).count > 4, 30_000)) throw new Error("C: stream never started")
+    const tStart = Date.now()
+    proxy.cut()
+    const offStart = analyze(await bodyText())
+    await sleep(45_000 - 800)
+    const offEnd = analyze(await bodyText())
+    const stalled = offEnd.count === offStart.count
+    console.log(`  [outage] ui ${offStart.count}->${offEnd.count} (stalled=${stalled})`)
+    if (!stalled) failures.push(`C: VACUOUS — UI markers ${offStart.count}->${offEnd.count} during the outage`)
+    if (Date.now() - tStart <= TURN_MS) failures.push(`C: outage did not span the turn end`)
+    proxy.restore()
+
+    const healed = await poll("markers complete", async () => analyze(await bodyText()).count >= CHUNKS, 75_000)
+    await sleep(1_000)
+    const final = analyze(await bodyText())
+    const stillThere = (await bodyText()).includes(OLDEST)
+    console.log(`  [result] ui ${final.count}/${CHUNKS} · healed=${healed} · ${OLDEST} still on screen = ${stillThere}`)
+    summary.push(`C · revealed history survives → answer ${final.count}/${CHUNKS}, ${OLDEST} ${stillThere ? "kept" : "LOST"}`)
+    if (final.count !== CHUNKS) failures.push(`C: answer not repaired — ${final.count}/${CHUNKS}`)
+    if (!stillThere) failures.push(`C: the resync WIPED the older history the user had revealed (${OLDEST} gone) — that is a re-seed, not a merge`)
+    await ctx.close()
+  }
 } catch (e) {
   failures.push(`ERROR: ${(e as Error).message}`)
 } finally {
   console.log(`\n=== VERDICT ===`)
   for (const s of summary) console.log(`  ${s}`)
   if (failures.length === 0) {
-    console.log(`PASS ✅ — both an in-turn outage and one spanning the turn end end up showing every marker the server has`)
+    console.log(`PASS ✅ — in-turn and turn-end-spanning outages both end up showing every marker the server has, and the older history the user revealed is still there`)
   } else {
     console.log(`FAIL ❌`)
     for (const f of failures) console.log(`  · ${f}`)

@@ -28,11 +28,38 @@ Bun.serve({
       return Response.json({ object: "list", data: [{ id: "mock-model", object: "model", owned_by: "mock" }] })
     }
     if (url.pathname.endsWith("/chat/completions")) {
+      // Seeding path: a harness that needs a LONG history (many turns) can't wait
+      // CHUNKS×DELAY per turn. A prompt tagged SEEDTURN answers in one frame with
+      // no delay, so 20+ turns of real persisted history cost about a second.
+      //
+      // The sentinel is matched ONLY against the LAST message, never the whole
+      // body. Measured the hard way: opencode replays the entire conversation on
+      // every request, so once a seeded session exists its history carries
+      // "SEEDTURN" forever — a whole-body match then fast-paths the REAL turn too
+      // and the harness reports "stream never started". Same class as testing.md
+      // §8 坑 2 (`body.includes("title")` also matching tool schemas).
+      const body = req.method === "POST" ? await req.text().catch(() => "") : ""
+      let isSeed = false
+      try {
+        const msgs = (JSON.parse(body) as { messages?: unknown[] }).messages
+        const last = Array.isArray(msgs) ? (msgs[msgs.length - 1] as any) : undefined
+        const text = typeof last?.content === "string"
+          ? last.content
+          : Array.isArray(last?.content) ? last.content.map((p: any) => p?.text ?? "").join(" ") : ""
+        isSeed = text.includes("SEEDTURN")
+      } catch { /* not JSON → treat as a normal streaming request */ }
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const enc = new TextEncoder()
           const send = (o: unknown) => controller.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`))
           send(chunk("", null)) // role frame
+          if (isSeed) {
+            send(chunk("SEEDACK", null))
+            send(chunk(null, "stop"))
+            controller.enqueue(enc.encode("data: [DONE]\n\n"))
+            controller.close()
+            return
+          }
           for (let i = 1; i <= CHUNKS; i++) {
             send(chunk(`M${String(i).padStart(3, "0")} `, null))
             await new Promise((r) => setTimeout(r, DELAY))

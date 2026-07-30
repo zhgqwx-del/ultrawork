@@ -174,6 +174,28 @@ describe("mergeSnapshotInPlace", () => {
     expect(out[1]).not.toBe(prev[1])
   })
 
+  it("inserts a snapshot-only message ONCE even when its anchor appears twice in the list", () => {
+    // `prev` is not guaranteed id-unique: loadOlderMessages prepends a page with
+    // `[...result.messages, ...prev]` and no dedup, so an overlapping page leaves
+    // a duplicate. A per-occurrence insert would then duplicate the new message.
+    const dupe = msg("a1", "assistant", [{ id: "p1", text: FULL }])
+    const prev = [dupe, dupe]
+    const snap = [msg("a1", "assistant", [{ id: "p1", text: FULL }]), msg("new1", "assistant", [{ id: "pn", text: "N" }])]
+    const out = mergeSnapshotInPlace(prev, snap)
+    expect(out.filter((m) => m.info.id === "new1")).toHaveLength(1)
+  })
+
+  it("a LAGGING snapshot (turn still in flight) can never shrink what is on screen", () => {
+    // The busy gate normally keeps this from happening, but a session can be busy
+    // for a reason the app never marked locally (an IM-channel turn, a Leader in
+    // another workspace). The merge must be harmless there, not merely unreached.
+    const prev = [msg("a1", "assistant", [{ id: "p1", text: FULL }], { finish: "stop" })]
+    const lagging = [msg("a1", "assistant", [{ id: "p1", text: TRUNCATED }])]
+    const out = mergeSnapshotInPlace(prev, lagging)
+    expect((out[0].parts[0] as any).text).toBe(FULL)
+    expect((out[0].info as any).finish).toBe("stop")
+  })
+
   it("an empty snapshot changes nothing; an empty list takes the snapshot (failed initial load)", () => {
     const prev = [msg("a1", "assistant", [{ id: "p1", text: FULL }])]
     expect(mergeSnapshotInPlace(prev, [])).toBe(prev)
@@ -325,6 +347,40 @@ describe("useSessionMessages — reconnect resync gating", () => {
     // in would visibly undo the Stop the user just pressed.
     expect(connector.fetchHistory).toHaveBeenCalledTimes(1)
     expect(answerOf(result)).toBe(TRUNCATED)
+  })
+
+  it("re-establishes the paginated window when the INITIAL load failed (session opened while the backend was down)", async () => {
+    // Opening a session during an outage leaves it empty with no cursor. The
+    // resync is then the load, not a patch on one — so it must hand back the way
+    // to older history too, or the session recovers its text and silently loses
+    // "load earlier".
+    connector.fetchHistory.mockRejectedValueOnce(new Error("backend down"))
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const { result, rerender } = renderHook(() => useSessionMessages("s1"))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.hasMore).toBe(false)
+
+    connector.fetchHistory.mockResolvedValue({
+      messages: [msg("u1", "user", [{ id: "pu", text: "go" }]), msg("a1", "assistant", [{ id: "p1", text: FULL }])],
+      cursor: "cursor-9",
+      hasMore: true,
+    })
+    mockEpoch = 1
+    await act(async () => { rerender() })
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(2))
+    expect(result.current.hasMore).toBe(true)
+  })
+
+  it("does NOT touch the paginated window on a normal resync (the failed-load path is not the default)", async () => {
+    const { result, rerender } = mountWithTruncated()
+    await waitFor(() => expect(result.current.hasMore).toBe(true))
+    serverHasFullAnswer() // cursor: undefined, hasMore: false
+    mockEpoch = 1
+    await act(async () => { rerender() })
+    await waitFor(() => expect(answerOf(result)).toBe(FULL))
+    expect(result.current.hasMore).toBe(true)
   })
 
   it("never resyncs when the stream has not recovered (epoch 0 = first connect)", async () => {
