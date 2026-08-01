@@ -1258,6 +1258,12 @@ def build_xlsx(path: Path, flaw: str | None = None) -> dict:
     elif flaw == "wrong-value":
         ws["B2"] = 999
         ws["B2"].font = blue
+    elif flaw == "recalc-drift":
+        # B4 feeds D4 (=C4-B4) but is not in expect["sheets"], so ONLY X3 can see
+        # this: every stored formula still reads back correctly, the recalculated
+        # number does not. X3's only other control is "soffice is broken", which
+        # says nothing about whether it can spot a wrong number.
+        ws["B4"] = "=B2+B3"
     elif flaw is not None and flaw != "err-typed-cell":
         raise ValueError(f"unknown xlsx flaw {flaw!r}")
 
@@ -1279,7 +1285,13 @@ def build_xlsx(path: Path, flaw: str | None = None) -> dict:
     return {"sheets": {"利润表": {"B2": 1000, "C2": 1200, "D2": "=C2-B2"},
                        "汇总": {"B1": "=利润表!D4"}},
             "finance_colors": True,          # this fixture IS a financial model
-            "recalc": {"D2": 200, "D4": 300}}
+            # D4 is =C4-B4 where B4 is =B2-B3 (400) and C4 is =C2-C3 (500), so 100.
+            # This said 300 — the value of D2+D3 — from S1 until 2026-08-01, and it
+            # went unnoticed because the machine that could disprove it had no
+            # LibreOffice: the assertion was SKIPPED, and skipped reads as green at a
+            # glance. The first real run of X3 caught it. This file prints "skipped is
+            # not green"; it turns out that was literal.
+            "recalc": {"D2": 200, "D4": 100}}
 
 
 PDF_CJK = "季度经营分析报告与中文排版验证内容"
@@ -1707,6 +1719,8 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("X2 cached #REF! value", "xlsx", "err-cached-value", "X2", True),
     ("X2 #REF! baked into a formula", "xlsx", "err-in-formula", "X2", True),
     ("X2 error-typed cell with a cached #DIV/0!", "xlsx", "err-typed-cell", "X2", True),
+    ("X3 a recalculated value drifts from the expectation", "xlsx", "recalc-drift",
+     "X3", True),
     ("X4 hard-coded input not blue", "xlsx", "input-not-blue", "X4", True),
     ("X4 formula not black", "xlsx", "formula-not-black", "X4", True),
     ("X4 cross-sheet link not green", "xlsx", "link-not-green", "X4", True),

@@ -970,6 +970,33 @@ T1-T3（表格）· N1-N4（页面操作）· K1-K4（加密）。矩阵里唯�
 - L1 的 `render()` 改成递归替换后，`contains` 里若真出现 `{out}` / `{fixtures}` 字面量也会被替换。
   实际内容里不会有，但这是一处行为变化，记在此。
 
+### 装上 LibreOffice 后的第一次真跑（2026-08-01）—— 抓到一个躺了一个月的错
+
+`brew install --cask libreoffice` 之后，**D7 / X3 的成功路径第一次真正执行**（此前只跑过
+失败路径，见 §5 L2「分层与跳过 ≠ 通过」）。结果：
+
+```
+FAIL  [must stay silent] xlsx clean artifact stays silent
+      X3 recalculated D4 = '100', expected 300
+```
+
+**LibreOffice 算对了，是 fixture 自己的期望值写错了。** 独立复算：
+`B4 = B2-B3 = 400`、`C4 = C2-C3 = 500` ⇒ 文件里写的 `D4 = C4-B4` 就是 **100**；
+而 `300` 是 `D2+D3` 的值 —— 一个和文件里的公式无关的算法。
+
+**这个错从 S1 一直躺到今天，因为唯一能证伪它的机器上没装 LibreOffice** ⇒ 该断言一直是
+SKIPPED，而**跳过在扫一眼时和通过长得一模一样**。这份脚本自己打印的那句
+「Skipped is not green」，原来是字面意思。
+
+顺带补上 X3 缺的那半边控制：此前 X3 唯一的负向控制是「soffice 坏掉要报错」——
+它**完全不能说明 X3 能不能看出一个错的数**。新增 `recalc-drift`：改 `B4` 的公式
+（它喂给 `D4`，但不在 `expect["sheets"]` 里）⇒ 所有存下来的公式仍然读得对，只有重算的
+数变了，**只有 X3 能看见**。L2 自检 53 → **54 passed，跳过 3 → 1**（只剩 D2/xsd）。
+
+> CI 的 `office-skills` job 仍带 `--allow-missing soffice xsd`：三平台装 LibreOffice 会
+> 显著拖慢，§7 待办①标着「需评估缓存」，本轮不擅自决定。**本机从此应当用
+> `--allow-missing xsd`（不再放行 soffice）**。
+
 ### 下一刀
 
 pdf 技能已清零，**S2 完成**。接下来是 §6 的 **S3（xlsx）**，其前置在 §7：
