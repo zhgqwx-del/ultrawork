@@ -48,12 +48,23 @@ FORM_FLAT = FIXTURES / "form-flat.pdf"
 FORM_FILLED = FIXTURES / "form-filled.pdf"
 FORM_VALUES = FIXTURES / "values-acroform.json"
 FORM_PLACEMENTS = FIXTURES / "placements-flat.json"
+STDOUT_BUDGET = 4096      # bytes a single call may print for a large document
+SCALE_PAGES = 60          # comfortably past pdfcommon.STDOUT_ITEM_LIMIT
 DOC_SPEC = FIXTURES / "document.json"
+TABLE_GRID = FIXTURES / "table-grid.pdf"
+
+# What fixtures/table-grid.pdf holds: the SAME table twice, ruled on page 1 and
+# unruled on page 2.
+TABLE_CELLS = [["科目", "本季度", "上年同期"], ["营业收入", "1,240", "1,103"],
+               ["营业成本", "769", "702"], ["毛利", "471", "401"]]
+ENC_USER_PW, ENC_OWNER_PW = "s3cret", "admin"
 
 # A Latin-only face, used to prove the glyph-coverage refusal guards a real failure.
-# Absent on non-macOS hosts; the cases that need it report SKIPPED rather than
-# quietly passing.
-LATIN_ONLY_FONT = Path("/System/Library/Fonts/Supplemental/Arial.ttf")
+# `helv` is PyMuPDF's own Helvetica: present wherever PyMuPDF is, carries real
+# embeddable bytes, and has no CJK glyphs. The first version of this pointed at
+# /System/Library/Fonts/…/Arial.ttf and the whole suite went red on any non-macOS
+# host — a check that can only run on the author's machine is not a check.
+LATIN_ONLY_FONT = "helv"
 
 # PyMuPDF ships this CJK face at ~3.5MB. A generated document that carries it
 # unsubset is the failure G2 exists to catch.
@@ -187,7 +198,10 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
              len({f["verdict"] for f in ctx["form"]["proof_of"]}), 3),
             ("fonts in the generated document", len(ctx["create"]["report"]["fonts"]), 2),
             ("spec strings to look for", len(ctx["create"]["needles"]), 5),
-            ("generated pages measured", len(ctx["create"]["page_boxes"]), 2)):
+            ("generated pages measured", len(ctx["create"]["page_boxes"]), 2),
+            ("pages carrying a detected table", len(ctx["ops"]["tables"]["pages"]), 2),
+            ("CSV files exported", len(ctx["ops"]["csv"]), 2),
+            ("split parts", len(ctx["ops"]["split"]["report"]["parts"]), 2)):
         if got < need:
             out.append(f"V0 only {got} {label}, need >= {need} — assertions covering "
                        f"them would pass by having nothing to check")
@@ -644,13 +658,231 @@ def g5_coverage(ctx: dict) -> list[str]:
                    "was generated without complaint — missing glyphs raise no error "
                    "of their own, so nothing downstream would ever notice")
     if cov.get("forced_findings") is None:
-        out.append("G5 SKIPPED: no Latin-only font on this host, so the claim that "
-                   "the refusal prevents a real failure is unproven here")
+        # Reported through ctx["skips"], never as a finding: a skip written into the
+        # findings list makes the "real output stays silent" case fail, which is how
+        # this file used to go red everywhere except macOS.
+        pass
     elif not cov["forced_findings"]:
         # If forcing it through produced a perfectly good document, the refusal is
         # protecting nobody and should be dropped rather than kept as ceremony.
         out.append("G5 forcing a Latin-only face onto Chinese text produced a document "
                    "L2 accepts — then the refusal in G5's first half guards nothing")
+    return out
+
+
+@check("T1", "a ruled table is read exactly, and reported as reliable")
+def t1_ruled(ctx: dict) -> list[str]:
+    out = []
+    page = next((p for p in ctx["ops"]["tables"]["pages"] if p["number"] == 1), None)
+    if page is None or not page["tables"]:
+        return ["T1 no table found on the ruled page at all"]
+    t = page["tables"][0]
+    if t["strategy"] != "lines" or not t["reliable"]:
+        out.append(f"T1 the ruled page was read with strategy {t['strategy']!r} "
+                   f"(reliable={t['reliable']}) — a drawn grid is evidence and should "
+                   f"never fall back to guessing")
+    if t["cells"] != TABLE_CELLS:
+        out.append(f"T1 cells {t['cells']} != the fixture's {TABLE_CELLS}")
+    if t["header"] != TABLE_CELLS[0]:
+        out.append(f"T1 header {t['header']} != {TABLE_CELLS[0]}")
+    return out
+
+
+@check("T2", "a guessed table is never presented as if it were read")
+def t2_guessed(ctx: dict) -> list[str]:
+    """The unruled page holds the identical data and is detected differently.
+
+    Measured: it comes back 7x3 with blank rows interleaved, against a real 4x3.
+    The point is not that the guess is bad — it is that the report must SAY it is a
+    guess, because a caller cannot tell from the cells alone.
+    """
+    out = []
+    page = next((p for p in ctx["ops"]["tables"]["pages"] if p["number"] == 2), None)
+    if page is None or not page["tables"]:
+        return ["T2 nothing was detected on the unruled page — the fallback did not run"]
+    t = page["tables"][0]
+    if t["strategy"] == "lines" or t["reliable"]:
+        out.append(f"T2 the unruled page claims strategy {t['strategy']!r} "
+                   f"reliable={t['reliable']}, but it has no ruling lines to read")
+    if ctx["ops"]["tables"]["unreliable_count"] < 1:
+        out.append("T2 the summary counts 0 unreliable tables while one was guessed")
+    return out
+
+
+@check("T3", "each table is also written as CSV that reads back identically")
+def t3_csv(ctx: dict) -> list[str]:
+    out = []
+    rows = ctx["ops"]["csv"]
+    if not rows:
+        return ["T3 no CSV was written"]
+    if rows.get("page001-table1.csv") != TABLE_CELLS:
+        out.append(f"T3 the ruled table's CSV reads back as "
+                   f"{rows.get('page001-table1.csv')}, expected {TABLE_CELLS}")
+    if not ctx["ops"]["csv_has_bom"]:
+        out.append("T3 the CSV has no UTF-8 BOM — Excel opens Chinese CSV without one "
+                   "as mojibake, which is the whole reason for exporting it")
+    return out
+
+
+@check("N1", "a merge keeps every input's pages, in order")
+def n1_merge(ctx: dict) -> list[str]:
+    out = []
+    merge = ctx["ops"]["merge"]
+    want = sum(len(t) for t in merge["input_texts"])
+    if merge["pages"] != want:
+        out.append(f"N1 merged to {merge['pages']} pages from inputs totalling {want}")
+    flat = [t for texts in merge["input_texts"] for t in texts]
+    for i, (before, after) in enumerate(zip(flat, merge["out_texts"]), 1):
+        if squeeze(before) != squeeze(after):
+            out.append(f"N1 merged page {i} does not match the input page it came from")
+    return out
+
+
+@check("N2", "extract/delete keep exactly the pages they name")
+def n2_select(ctx: dict) -> list[str]:
+    out = []
+    src = ctx["ops"]["source_texts"]
+    ext = ctx["ops"]["extract"]
+    want = [src[n - 1] for n in ext["kept_pages"]]
+    if [squeeze(t) for t in ext["out_texts"]] != [squeeze(t) for t in want]:
+        out.append(f"N2 extract of pages {ext['kept_pages']} did not return those pages")
+    dele = ctx["ops"]["delete"]
+    want = [t for i, t in enumerate(src, 1) if i not in dele["deleted_pages"]]
+    if [squeeze(t) for t in dele["out_texts"]] != [squeeze(t) for t in want]:
+        out.append(f"N2 delete of pages {dele['deleted_pages']} did not leave the rest")
+    return out
+
+
+@check("N3", "rotation is relative, applies only to the named page, and keeps the text")
+def n3_rotate(ctx: dict) -> list[str]:
+    out = []
+    rot = ctx["ops"]["rotate"]
+    for entry in rot["report"]["rotated"]:
+        expected = (entry["from"] + rot["degrees"]) % 360
+        if entry["to"] != expected:
+            out.append(f"N3 page {entry['page']} went {entry['from']} -> {entry['to']}, "
+                       f"expected {expected} (rotation must be relative, or applying it "
+                       f"twice silently does nothing)")
+    named = {e["page"] for e in rot["report"]["rotated"]}
+    for i, (before, after) in enumerate(zip(ctx["ops"]["source_rotations"],
+                                            rot["out_rotations"]), 1):
+        if i not in named and before != after:
+            out.append(f"N3 page {i} was not named but its rotation changed "
+                       f"{before} -> {after}")
+    if [squeeze(t) for t in ctx["ops"]["source_texts"]] != \
+            [squeeze(t) for t in rot["out_texts"]]:
+        out.append("N3 rotating changed the text layer — /Rotate is metadata and must "
+                   "not rewrite content")
+    return out
+
+
+@check("N4", "split covers every source page exactly once")
+def n4_split(ctx: dict) -> list[str]:
+    out = []
+    split = ctx["ops"]["split"]
+    covered = []
+    for part in split["report"]["parts"]:
+        covered += list(range(part["from_page"], part["to_page"] + 1))
+    expected = list(range(1, len(ctx["ops"]["source_texts"]) + 1))
+    if sorted(covered) != expected:
+        out.append(f"N4 the parts cover pages {sorted(covered)}, source has {expected}")
+    for part, texts in zip(split["report"]["parts"], split["part_texts"]):
+        want = ctx["ops"]["source_texts"][part["from_page"] - 1:part["to_page"]]
+        if [squeeze(t) for t in texts] != [squeeze(t) for t in want]:
+            out.append(f"N4 {part['file']} does not hold source pages "
+                       f"{part['from_page']}-{part['to_page']}")
+    return out
+
+
+@check("K1", "setting a password really encrypts, and only that password opens it")
+def k1_encrypt(ctx: dict) -> list[str]:
+    out = []
+    enc = ctx["ops"]["encrypt"]
+    if not enc["report"]["encrypted"]:
+        out.append("K1 the report claims the file is not encrypted after --set-password")
+    if not enc["needs_pass"]:
+        out.append("K1 the written file opens with no password at all — save() will "
+                   "silently produce a plain file if the arguments do not line up, so "
+                   "this is the failure the whole capability turns on")
+    if not enc["right_password_opens"]:
+        out.append("K1 the password that was just written does not open the file")
+    if enc["wrong_password_opens"]:
+        out.append("K1 a wrong password opens the file")
+    return out
+
+
+@check("K2", "the permission bits actually restrict the USER")
+def k2_permissions(ctx: dict) -> list[str]:
+    out = []
+    perms = ctx["ops"]["encrypt"]["user_permissions"]
+    for name in ("print", "copy"):
+        if not perms.get(name):
+            out.append(f"K2 {name} was granted but the file denies it")
+    for name in ("modify", "annotate"):
+        if perms.get(name):
+            out.append(f"K2 {name} was NOT granted but the file allows it — measured "
+                       f"once as the owner instead of the user, which reports every "
+                       f"permission granted and confirms a restriction that is not there")
+    return out
+
+
+@check("K3", "removing a password needs that password, and keeps the document")
+def k3_decrypt(ctx: dict) -> list[str]:
+    out = []
+    dec = ctx["ops"]["decrypt"]
+    if dec["refusal_exit"] == 0:
+        out.append("K3 a password was stripped from an encrypted file WITHOUT supplying "
+                   "it — that is not an unlock feature, that is removing protection "
+                   "from a file the caller cannot open")
+    if dec["still_encrypted"]:
+        out.append("K3 the output still asks for a password after --remove-password")
+    if [squeeze(t) for t in dec["out_texts"]] != \
+            [squeeze(t) for t in ctx["ops"]["source_texts"]]:
+        out.append("K3 decrypting changed the document's text")
+    return out
+
+
+@check("K4", "a restriction that cannot hold is refused, not written")
+def k4_owner_trap(ctx: dict) -> list[str]:
+    if ctx["ops"]["encrypt"]["owner_equals_user_exit"] == 0:
+        return ["K4 a restrictive --allow was accepted with the owner password equal to "
+                "the user password; everyone who can open the file is then the owner "
+                "and gets every permission, so the restriction is decoration"]
+    return []
+
+
+@check("O1", "stdout stays small on a big document, and the detail is still written")
+def o1_stdout_bounded(ctx: dict) -> list[str]:
+    """Everything on stdout is read by an agent and costs context — and under Team
+    delegation it crosses the boundary a second time. Measured before this was
+    bounded: pdf_info.py on a 300-page document printed 82KB."""
+    out = []
+    big = ctx["scale"]
+    if big["stdout_bytes"] > STDOUT_BUDGET:
+        out.append(f"O1 pdf_info printed {big['stdout_bytes']} bytes for a "
+                   f"{big['pages']}-page document (budget {STDOUT_BUDGET}) — that is "
+                   f"agent context spent on per-page geometry nobody asked for")
+    if big["file_pages"] != big["pages"]:
+        out.append(f"O1 the --out file holds {big['file_pages']} page entries for a "
+                   f"{big['pages']}-page document — trimming stdout must not lose data")
+    if big["small_doc_pages_inline"] != 3:
+        out.append(f"O1 a 3-page document printed {big['small_doc_pages_inline']} page "
+                   f"entries inline; small documents should still answer in full")
+    return out
+
+
+@check("O2", "every writer refuses to overwrite its own input, with a sentence")
+def o2_in_place(ctx: dict) -> list[str]:
+    """PyMuPDF answers this with a raw `ValueError: save to original must be
+    incremental`. The input survives, so this is about the message: an agent that
+    gets a traceback instead of one actionable line has to guess."""
+    out = []
+    for label, res in ctx["scale"]["in_place"].items():
+        if res["exit"] == 0:
+            out.append(f"O2 {label} accepted an output equal to its input")
+        elif "Traceback" in res["stderr"] or "error:" not in res["stderr"]:
+            out.append(f"O2 {label} refused, but not with the one-line contract every "
+                       f"other failure here honours: {res['stderr'].strip()[:90]}")
     return out
 
 
@@ -699,10 +931,14 @@ def collect(work: Path) -> dict:
 
     form = collect_form(work)
     create = collect_create(work)
+    ops = collect_ops(work)
+    scale = collect_scale(work)
 
     return {
+        "scale": scale,
         "form": form,
         "create": create,
+        "ops": ops,
         "render": {"dir": str(render_dir), "dpi": RENDER_DPI,
                    "requested": list(RENDER_PAGES),
                    "report": json.loads(render_report.read_text(encoding="utf-8"))},
@@ -850,12 +1086,16 @@ def collect_create(work: Path) -> dict:
                                ensure_ascii=False), encoding="utf-8")
     coverage = {"refusal_exit": run_script("pdf_create.py", "--in", rare,
                                            "--out", work / "rare.pdf").returncode,
-                "forced_findings": None}
-    if LATIN_ONLY_FONT.is_file():
-        forced = work / "forced.pdf"
-        r = run_script("pdf_create.py", "--in", DOC_SPEC, "--out", forced,
-                       "--font", LATIN_ONLY_FONT, "--allow-missing-glyphs")
-        if r.returncode == 0:
+                "forced_findings": None, "skips": []}
+    forced = work / "forced.pdf"
+    r = run_script("pdf_create.py", "--in", DOC_SPEC, "--out", forced,
+                   "--font", LATIN_ONLY_FONT, "--allow-missing-glyphs")
+    if r.returncode != 0:
+        coverage["skips"].append(
+            f"G5: forcing {LATIN_ONLY_FONT} onto CJK text did not even run "
+            f"({r.stderr.strip()[:120]}), so the second half of G5 is unproven here")
+    else:
+        if True:
             import importlib.util
             spec_l2 = importlib.util.spec_from_file_location(
                 "l2", REPO / "scripts" / "office-skills-selftest.py")
@@ -869,6 +1109,159 @@ def collect_create(work: Path) -> dict:
             "text_by_page": pages, "page_boxes": boxes,
             "long_pages": long_report["pages"], "long_blocks": n,
             "coverage": coverage}
+
+
+def page_texts(path: Path, password: str | None = None) -> list[str]:
+    import fitz
+    doc = fitz.open(path)
+    with doc:
+        if doc.needs_pass and password:
+            doc.authenticate(password)
+        return [p.get_text() for p in doc]
+
+
+def collect_ops(work: Path) -> dict:
+    """Tables, page operations and encryption, run for real on the fixtures."""
+    import csv as csvmod
+    import fitz
+
+    def must(script: str, *args) -> subprocess.CompletedProcess:
+        r = run_script(script, *args)
+        if r.returncode != 0:
+            raise SystemExit(f"[setup] {script} failed: {r.stdout}{r.stderr}")
+        return r
+
+    # ---- P3 ----
+    tables_json, csv_dir = work / "tables.json", work / "csv"
+    must("pdf_tables.py", "--in", TABLE_GRID, "--out", tables_json, "--csv-dir", csv_dir)
+    rows = {}
+    has_bom = False
+    for f in sorted(csv_dir.glob("*.csv")):
+        raw = f.read_bytes()
+        has_bom = has_bom or raw.startswith(b"\xef\xbb\xbf")
+        rows[f.name] = list(csvmod.reader(raw.decode("utf-8-sig").splitlines()))
+
+    # ---- P11 ----
+    src_texts = page_texts(REPORT)
+    with fitz.open(REPORT) as d:
+        src_rotations = [p.rotation for p in d]
+
+    merged, merge_report = work / "merged.pdf", work / "merge.json"
+    must("pdf_pages.py", "--op", "merge", "--in", REPORT, FORM_FLAT,
+         "--out", merged, "--report", merge_report)
+
+    extracted, extract_report = work / "sub.pdf", work / "extract.json"
+    must("pdf_pages.py", "--op", "extract", "--in", REPORT, "--pages", "1,3",
+         "--out", extracted, "--report", extract_report)
+
+    deleted, delete_report = work / "fewer.pdf", work / "delete.json"
+    must("pdf_pages.py", "--op", "delete", "--in", REPORT, "--pages", "2",
+         "--out", deleted, "--report", delete_report)
+
+    rotated, rotate_report, degrees = work / "rot.pdf", work / "rotate.json", 90
+    must("pdf_pages.py", "--op", "rotate", "--in", REPORT, "--pages", "1",
+         "--degrees", degrees, "--out", rotated, "--report", rotate_report)
+    with fitz.open(rotated) as d:
+        out_rotations = [p.rotation for p in d]
+
+    parts_dir, split_report = work / "parts", work / "split.json"
+    must("pdf_pages.py", "--op", "split", "--in", REPORT, "--out", parts_dir,
+         "--every", "2", "--report", split_report)
+    split_data = _json(split_report)
+    part_texts = [page_texts(parts_dir / p["file"]) for p in split_data["parts"]]
+
+    # ---- P12 ----
+    locked, enc_report = work / "locked.pdf", work / "encrypt.json"
+    must("pdf_encrypt.py", "--in", REPORT, "--out", locked,
+         "--set-password", ENC_USER_PW, "--owner-password", ENC_OWNER_PW,
+         "--allow", "print,copy", "--report", enc_report)
+    with fitz.open(locked) as d:
+        needs_pass = bool(d.needs_pass)
+        right = bool(d.authenticate(ENC_USER_PW))
+        user_bits = int(d.permissions)
+    with fitz.open(locked) as d:
+        wrong = bool(d.authenticate("definitely-not-it"))
+    user_permissions = {n: bool(user_bits & getattr(fitz, f"PDF_PERM_{n.upper()}"))
+                        for n in ("print", "copy", "modify", "annotate")}
+
+    # The trap: restrictive --allow while the owner password defaults to the user's.
+    owner_trap = run_script("pdf_encrypt.py", "--in", REPORT, "--out", work / "trap.pdf",
+                            "--set-password", ENC_USER_PW, "--allow", "print,copy")
+
+    plain = work / "plain.pdf"
+    refusal = run_script("pdf_encrypt.py", "--in", locked, "--out", work / "nope.pdf",
+                         "--remove-password")
+    must("pdf_encrypt.py", "--in", locked, "--out", plain,
+         "--password", ENC_USER_PW, "--remove-password")
+    with fitz.open(plain) as d:
+        still_encrypted = bool(d.needs_pass)
+
+    return {
+        "tables": _json(tables_json), "csv": rows, "csv_has_bom": has_bom,
+        "source_texts": src_texts, "source_rotations": src_rotations,
+        "merge": {"report": _json(merge_report), "pages": len(page_texts(merged)),
+                  "out_texts": page_texts(merged),
+                  "input_texts": [src_texts, page_texts(FORM_FLAT)]},
+        "extract": {"kept_pages": _json(extract_report)["kept_pages"],
+                    "out_texts": page_texts(extracted)},
+        "delete": {"deleted_pages": _json(delete_report)["deleted_pages"],
+                   "out_texts": page_texts(deleted)},
+        "rotate": {"report": _json(rotate_report), "degrees": degrees,
+                   "out_rotations": out_rotations, "out_texts": page_texts(rotated)},
+        "split": {"report": split_data, "part_texts": part_texts},
+        "encrypt": {"report": _json(enc_report), "needs_pass": needs_pass,
+                    "right_password_opens": right, "wrong_password_opens": wrong,
+                    "user_permissions": user_permissions,
+                    "owner_equals_user_exit": owner_trap.returncode},
+        "decrypt": {"refusal_exit": refusal.returncode,
+                    "still_encrypted": still_encrypted,
+                    "out_texts": page_texts(plain)},
+    }
+
+
+def collect_scale(work: Path) -> dict:
+    """How the scripts behave on a document far bigger than the fixtures."""
+    import fitz
+
+    big = work / "big.pdf"
+    doc = fitz.open()
+    with doc:
+        for i in range(SCALE_PAGES):
+            page = doc.new_page(width=595, height=842)
+            page.insert_text((60, 80), f"Page {i + 1}", fontsize=13)
+        doc.save(str(big))
+
+    # Every script that writes a PDF, pointed at its own input.
+    victim = work / "victim.pdf"
+    shutil.copy(REPORT, victim)
+    in_place = {}
+    for label, args in (
+            ("pdf_pages.py --out", ("pdf_pages.py", "--op", "rotate", "--in", victim,
+                                    "--pages", "1", "--out", victim)),
+            ("pdf_encrypt.py --out", ("pdf_encrypt.py", "--in", victim, "--out", victim,
+                                      "--set-password", "a", "--allow",
+                                      ",".join(("print", "modify", "copy", "annotate",
+                                                "form", "accessibility", "assemble",
+                                                "print_hq")))),
+            ("pdf_extract.py --overlay", ("pdf_extract.py", "--in", victim, "--out",
+                                          work / "v.json", "--overlay", victim)),
+            ("pdf_tables.py --overlay", ("pdf_tables.py", "--in", victim, "--out",
+                                         work / "vt.json", "--overlay", victim)),
+            ("pdf_form_fill.py --out", ("pdf_form_fill.py", "--in", victim, "--out",
+                                        victim, "--values", FORM_VALUES)),
+            ("pdf_form_check.py --proof", ("pdf_form_check.py", "--in", victim,
+                                           "--proof", victim))):
+        r = run_script(*args)
+        in_place[label] = {"exit": r.returncode, "stderr": r.stderr}
+
+    bare = run_script("pdf_info.py", "--in", big)
+    with_file = work / "big-info.json"
+    run_script("pdf_info.py", "--in", big, "--out", with_file)
+    small = json.loads(run_script("pdf_info.py", "--in", REPORT).stdout)
+    return {"pages": SCALE_PAGES, "in_place": in_place,
+            "stdout_bytes": len(bare.stdout.encode("utf-8")),
+            "file_pages": len(_json(with_file)["pages"]),
+            "small_doc_pages_inline": len(small.get("pages") or [])}
 
 
 # ── negative controls ─────────────────────────────────────────────────────────
@@ -1154,7 +1547,159 @@ def flaw_create_ignores_coverage(ctx, work):
     return ctx
 
 
+# --- tables / page ops / encryption: the shortcut in each case ---
+def flaw_tables_claim_reliable(ctx, work):
+    """The guess presented as a reading — the caller cannot tell from the cells."""
+    for page in ctx["ops"]["tables"]["pages"]:
+        for t in page["tables"]:
+            t["strategy"], t["reliable"] = "lines", True
+    ctx["ops"]["tables"]["unreliable_count"] = 0
+    return ctx
+
+
+def flaw_tables_wrong_cells(ctx, work):
+    ctx["ops"]["tables"]["pages"][0]["tables"][0]["cells"][1][1] = "9,999"
+    return ctx
+
+
+def flaw_csv_no_bom(ctx, work):
+    """A plain UTF-8 CSV: opens as mojibake in Excel, which is where these go."""
+    ctx["ops"]["csv_has_bom"] = False
+    return ctx
+
+
+def flaw_merge_drops_input(ctx, work):
+    m = ctx["ops"]["merge"]
+    keep = len(m["input_texts"][0])
+    m["out_texts"] = m["out_texts"][:keep]
+    m["pages"] = keep
+    return ctx
+
+
+def flaw_merge_wrong_order(ctx, work):
+    m = ctx["ops"]["merge"]
+    m["out_texts"] = m["out_texts"][::-1]
+    return ctx
+
+
+def flaw_extract_off_by_one(ctx, work):
+    """`--pages 1,3` answered with pages 1 and 2 — counts still match."""
+    src = ctx["ops"]["source_texts"]
+    ctx["ops"]["extract"]["out_texts"] = [src[0], src[1]]
+    return ctx
+
+
+def flaw_delete_removes_wrong_page(ctx, work):
+    src = ctx["ops"]["source_texts"]
+    ctx["ops"]["delete"]["out_texts"] = [src[1], src[2]]
+    return ctx
+
+
+def flaw_rotate_absolute(ctx, work):
+    """set_rotation(degrees) instead of (current + degrees): applying 90 to a page
+    already at 90 becomes a no-op, and nothing about the page count notices."""
+    for entry in ctx["ops"]["rotate"]["report"]["rotated"]:
+        entry["from"], entry["to"] = 90, 90
+    return ctx
+
+
+def flaw_rotate_touches_other_pages(ctx, work):
+    ctx["ops"]["rotate"]["out_rotations"] = [
+        (r + 90) % 360 for r in ctx["ops"]["source_rotations"]]
+    return ctx
+
+
+def flaw_rotate_rewrites_text(ctx, work):
+    ctx["ops"]["rotate"]["out_texts"] = [t.replace("季度", "")
+                                         for t in ctx["ops"]["rotate"]["out_texts"]]
+    return ctx
+
+
+def flaw_split_loses_a_page(ctx, work):
+    sp = ctx["ops"]["split"]
+    sp["report"]["parts"] = sp["report"]["parts"][:1]
+    sp["part_texts"] = sp["part_texts"][:1]
+    return ctx
+
+
+def flaw_encrypt_writes_plain(ctx, work):
+    """save(encryption=...) silently producing an unprotected file."""
+    ctx["ops"]["encrypt"]["needs_pass"] = False
+    return ctx
+
+
+def flaw_encrypt_any_password(ctx, work):
+    ctx["ops"]["encrypt"]["wrong_password_opens"] = True
+    return ctx
+
+
+def flaw_permissions_measured_as_owner(ctx, work):
+    """Reading permissions after authenticating as the OWNER: everything granted."""
+    ctx["ops"]["encrypt"]["user_permissions"] = {n: True for n in
+                                                 ("print", "copy", "modify", "annotate")}
+    return ctx
+
+
+def flaw_decrypt_without_password(ctx, work):
+    ctx["ops"]["decrypt"]["refusal_exit"] = 0
+    return ctx
+
+
+def flaw_owner_trap_accepted(ctx, work):
+    ctx["ops"]["encrypt"]["owner_equals_user_exit"] = 0
+    return ctx
+
+
+def flaw_stdout_dumps_everything(ctx, work):
+    """Printing the full per-page list: what it did before, measured at 82KB."""
+    ctx["scale"]["stdout_bytes"] = 81899
+    return ctx
+
+
+def flaw_trimming_loses_data(ctx, work):
+    """Trimming stdout by dropping the data instead of routing it to the file."""
+    ctx["scale"]["file_pages"] = 20
+    return ctx
+
+
+def flaw_in_place_allowed(ctx, work):
+    ctx["scale"]["in_place"]["pdf_pages.py --out"] = {"exit": 0, "stderr": ""}
+    return ctx
+
+
+def flaw_in_place_raw_traceback(ctx, work):
+    """What the library does on its own: a wall of Python instead of a sentence."""
+    ctx["scale"]["in_place"]["pdf_encrypt.py --out"] = {
+        "exit": 1, "stderr": "Traceback (most recent call last):\n  ...\n"
+                             "ValueError: save to original must be incremental\n"}
+    return ctx
+
+
 FLAWS = [
+    ("writer-overwrites-its-own-input", flaw_in_place_allowed, {"O2"}, ""),
+    ("writer-fails-with-a-raw-traceback", flaw_in_place_raw_traceback, {"O2"}, ""),
+    ("stdout-dumps-every-page", flaw_stdout_dumps_everything, {"O1"}, ""),
+    ("trimming-drops-the-data-instead-of-filing-it", flaw_trimming_loses_data, {"O1"}, ""),
+    ("tables-present-a-guess-as-a-reading", flaw_tables_claim_reliable, {"T2"}, ""),
+    ("tables-misread-a-cell", flaw_tables_wrong_cells, {"T1"}, ""),
+    ("csv-written-without-a-bom", flaw_csv_no_bom, {"T3"}, ""),
+    ("merge-drops-its-second-input", flaw_merge_drops_input, {"N1"}, ""),
+    ("merge-concatenates-in-the-wrong-order", flaw_merge_wrong_order, {"N1"}, ""),
+    ("extract-returns-the-wrong-pages", flaw_extract_off_by_one, {"N2"}, ""),
+    ("delete-removes-the-wrong-page", flaw_delete_removes_wrong_page, {"N2"}, ""),
+    ("rotate-sets-an-absolute-angle", flaw_rotate_absolute, {"N3"}, ""),
+    ("rotate-turns-pages-it-was-not-asked-to", flaw_rotate_touches_other_pages, {"N3"}, ""),
+    ("rotate-rewrites-the-text-layer", flaw_rotate_rewrites_text, {"N3"}, ""),
+    ("split-loses-a-page", flaw_split_loses_a_page, {"N4", "V0"},
+     "V0 also fires: dropping a part leaves fewer than the two the vacuity guard "
+     "needs, which is honest — with one part there is nothing left to check coverage on"),
+    ("encrypt-writes-an-unprotected-file", flaw_encrypt_writes_plain, {"K1"}, ""),
+    ("encrypt-accepts-any-password", flaw_encrypt_any_password, {"K1"}, ""),
+    ("permissions-measured-as-the-owner", flaw_permissions_measured_as_owner, {"K2"}, ""),
+    ("decrypt-strips-protection-without-the-password", flaw_decrypt_without_password,
+     {"K3"}, ""),
+    ("owner-password-trap-accepted", flaw_owner_trap_accepted, {"K4"}, ""),
+
     ("create-names-the-font-instead-of-embedding", flaw_create_names_the_font, {"G1"}, ""),
     ("create-embeds-without-subsetting", flaw_create_skips_subsetting, {"G1", "G2"},
      "G1 also fires: dropping the subset tag is how an unsubset face presents itself, "
@@ -1224,6 +1769,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="pdf-skill-test-") as td:
         work = Path(td)
         base = collect(work)
+        skips = base["create"]["coverage"].get("skips", [])
 
         clean = fired(base)
         results.append({"case": "real output of the real scripts", "expect": "silence",
@@ -1252,7 +1798,7 @@ def main() -> int:
 
     failed = [r for r in results if not r["ok"]]
     if args.json:
-        print(json.dumps({"results": results, "matrix": matrix,
+        print(json.dumps({"results": results, "matrix": matrix, "skips": skips,
                           "failed": len(failed)}, ensure_ascii=False, indent=2))
         return 1 if failed else 0
 
@@ -1266,8 +1812,14 @@ def main() -> int:
         extra = sorted(set(m["fired"]) - set(m["expected"]))
         note = f"   (also {', '.join(extra)}: {m['cascade_note']})" if extra else ""
         print(f"  {m['flaw']:<40} -> {', '.join(m['fired']) or '(nothing)'}{note}")
+    if skips:
+        # Named out loud, never folded into the pass count: "skipped" and "passed"
+        # must not look the same from the outside.
+        print("\n[skipped] claims this host could not exercise:")
+        for note in skips:
+            print(f"  - {note}")
     print(f"\n[pdf-skill] {len(results) - len(failed)} passed, {len(failed)} failed, "
-          f"{len(CHECKS)} assertions")
+          f"{len(CHECKS)} assertions" + (f", {len(skips)} skipped" if skips else ""))
     return 1 if failed else 0
 
 

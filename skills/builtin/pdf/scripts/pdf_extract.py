@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import open_pdf, parse_pages, run, write_json  # noqa: E402
+from pdfcommon import ensure_distinct, open_pdf, parse_pages, run, write_json  # noqa: E402
 
 GRANULARITIES = ("word", "line", "block")
 BOX_COLOR = {"word": (0.85, 0.25, 0.10), "line": (0.10, 0.35, 0.85),
@@ -127,6 +127,8 @@ def main() -> None:
                     help="write a copy of the PDF with the boxes drawn on it")
     args = ap.parse_args()
 
+    if args.overlay:
+        ensure_distinct(args.src, args.overlay, "--overlay")
     result = extract(args.src, args.pages, args.granularity, args.password, args.overlay)
     write_json(args.out, result)
     print(json.dumps({"out": str(args.out), "pages": len(result["pages"]),

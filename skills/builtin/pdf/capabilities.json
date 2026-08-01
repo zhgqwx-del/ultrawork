@@ -52,6 +52,33 @@
       },
       "verified_by": "L2 checks the overlay PDF (P1/P2/P4 legality + P5 fidelity: the boxes must not disturb the text layer); the boxes actually landing on glyphs is scripts/test-pdf-skill.py E1-E4"
     },
+    "P3": {
+      "entry": "scripts/pdf_tables.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/table-grid.pdf",
+          "--out",
+          "{out}/tables.json",
+          "--csv-dir",
+          "{out}/csv",
+          "--overlay",
+          "{out}/tables.pdf"
+        ],
+        "produces": [
+          "tables.json",
+          "tables.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "营业收入",
+          "本季度"
+        ],
+        "baseline": "{fixtures}/table-grid.pdf"
+      },
+      "verified_by": "L2 checks the overlay PDF (legal, and P5 fidelity: boxing the tables must not disturb the text). That the RULED page yields exactly the 4x3 table and the identical UNRULED page falls back to a guess flagged unreliable is scripts/test-pdf-skill.py T1-T3"
+    },
     "P4": {
       "entry": "scripts/pdf_info.py",
       "sample": {
@@ -203,6 +230,68 @@
       },
       "verified_by": "L2 checks the proof sheet is a legal PDF that kept the filled values; that a box is drawn per field in the right colour and the right frame is scripts/test-pdf-skill.py M6"
     },
+    "P11": {
+      "entry": "scripts/pdf_pages.py",
+      "sample": {
+        "args": [
+          "--op",
+          "merge",
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "{fixtures}/form-flat.pdf",
+          "--out",
+          "{out}/merged.pdf",
+          "--report",
+          "{out}/merge.json"
+        ],
+        "produces": [
+          "merged.pdf",
+          "merge.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "员工信息登记表"
+        ],
+        "baseline": [
+          "{fixtures}/report-cjk.pdf",
+          "{fixtures}/form-flat.pdf"
+        ]
+      },
+      "verified_by": "L2's P5 now accepts a LIST of baselines (added for this capability) and walks every input's pages in order — a merge that drops its second input produces a legal PDF that page count alone cannot fault. split/extract/delete/rotate are scripts/test-pdf-skill.py N1-N5"
+    },
+    "P12": {
+      "entry": "scripts/pdf_encrypt.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "--out",
+          "{out}/locked.pdf",
+          "--set-password",
+          "s3cret",
+          "--owner-password",
+          "admin",
+          "--allow",
+          "print,copy",
+          "--report",
+          "{out}/encrypt.json"
+        ],
+        "produces": [
+          "locked.pdf",
+          "encrypt.json"
+        ]
+      },
+      "expect": {
+        "password": "s3cret",
+        "contains": [
+          "季度经营分析报告"
+        ],
+        "baseline": "{fixtures}/report-cjk.pdf"
+      },
+      "verified_by": "the artifact is a genuinely encrypted PDF; L2 gained a `password` in expectations for it (before that it raised an uncaught ValueError on any encrypted file). Removing a password, refusing to strip one without it, and the owner-password trap are scripts/test-pdf-skill.py K1-K4"
+    },
     "P13": {
       "entry": "scripts/pdf_create.py",
       "sample": {
@@ -249,10 +338,5 @@
       },
       "verified_by": "the font report names every font and whether it is EMBEDDED; scripts/test-pdf-skill.py G1 asserts embedded+subset (the negative control is the old insert_text(fontname='china-s') path, which reports ext 'n/a'), G2 asserts subsetting kept the file small, G5 asserts an uncoverable character is refused and that forcing it through produces a document L2 rejects"
     }
-  },
-  "pending": {
-    "P3": "表格抽取 — 需先定表格判据（PyMuPDF find_tables 的跨页/合并单元格策略）和对应产物断言，与 xlsx 技能的表模型一起定（S3）",
-    "P11": "合并/拆分/抽页/旋转 — 多输入写入型能力，L2 的保真度期望目前只接受单个 baseline，要先扩",
-    "P12": "加密/解密/去口令 — 产物是加密 PDF，L2 现有断言全部读不了它，需要先定加密产物怎么验"
   }
 }

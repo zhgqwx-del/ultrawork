@@ -31,6 +31,13 @@ from pdfcommon import fail
 BUILTIN_CJK = "china-s"
 BUILTIN_LATIN = "helv"
 
+# PyMuPDF ships these by name and they all carry real, embeddable bytes (measured:
+# helv 33,151 / cour 45,974 / tiro 48,556 / china-s 3,556,308). --font accepts a
+# name from here as well as a file path, which means a Latin-only document does not
+# have to carry a 3.5MB CJK face — and it means the coverage check can be exercised
+# on every platform instead of hunting for a system font that only macOS has.
+BUILTIN_FONTS = ("helv", "cour", "tiro", "china-s", "china-t", "japan", "korea")
+
 CJK_RANGES = ((0x2E80, 0x2EFF), (0x3000, 0x303F), (0x3400, 0x4DBF),
               (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0xFF00, 0xFF60),
               (0x20000, 0x2A6DF))
@@ -47,21 +54,31 @@ def has_cjk(s: str) -> bool:
 class Typeface:
     """One font plus the two questions the layout keeps asking it."""
 
-    def __init__(self, path: Path | None = None):
+    def __init__(self, spec: Path | str | None = None):
         import fitz
 
-        if path is not None:
-            if not path.is_file():
-                fail(f"no such font file: {path}")
-            try:
-                self.font = fitz.Font(fontfile=str(path))
-            except Exception as e:  # noqa: BLE001 - fitz raises several types
-                fail(f"{path.name} is not a usable font file: {type(e).__name__}: {e}")
-            self.source = str(path)
-        else:
+        if spec is None:
             self.font = fitz.Font(BUILTIN_CJK)
             self.source = f"PyMuPDF built-in {BUILTIN_CJK!r}"
+        elif Path(spec).is_file():
+            try:
+                self.font = fitz.Font(fontfile=str(spec))
+            except Exception as e:  # noqa: BLE001 - fitz raises several types
+                fail(f"{Path(spec).name} is not a usable font file: "
+                     f"{type(e).__name__}: {e}")
+            self.source = str(spec)
+        elif str(spec) in BUILTIN_FONTS:
+            # Checked AFTER the file test on purpose: a real file named `helv` in the
+            # working directory is what the caller meant, not the built-in.
+            self.font = fitz.Font(str(spec))
+            self.source = f"PyMuPDF built-in {str(spec)!r}"
+        else:
+            fail(f"--font {spec}: no such file, and not one of the built-in names "
+                 f"({', '.join(BUILTIN_FONTS)})")
         self.name = self.font.name
+        if not self.font.buffer:
+            fail(f"{self.name} carries no embeddable bytes, so a document using it "
+                 f"would only name the font and rely on the reader having it")
 
     def width(self, text: str, size: float) -> float:
         return self.font.text_length(text, fontsize=size)

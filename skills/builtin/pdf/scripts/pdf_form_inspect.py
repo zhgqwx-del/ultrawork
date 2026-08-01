@@ -21,7 +21,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import open_pdf, parse_pages, run, write_json  # noqa: E402
+from pdfcommon import compact, open_pdf, parse_pages, run, write_json  # noqa: E402
 from pdfform import collect_fields, has_acroform  # noqa: E402
 
 
@@ -63,7 +63,7 @@ def main() -> None:
         result.pop("fields")
     if args.out:
         write_json(args.out, result)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(compact(result, "fields", args.out), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

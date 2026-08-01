@@ -79,6 +79,41 @@ jobs:
         run: bun run --bun scripts/verify-dmg-layout.ts --self-test
 
   # ── Rust: compile (all #[cfg] branches for the host OS) + cargo test ─
+  # Office-skill gates (discussions/059). Three platforms because the skills ship to
+  # all three and the whole family is pure Python driving PyMuPDF — until this job
+  # existed every one of these had only ever run on one developer's macOS box, which
+  # is exactly how the harness came to hardcode /System/Library/Fonts.
+  #
+  # L0 (clean-room originality) is NOT here: it needs the reference corpus, which is
+  # deliberately outside the repo. It exits 2 = skipped when absent, and is run by
+  # hand before a PR that adds skill content.
+  office-skills:
+    name: office skills (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the libraries the skills import
+        run: python -m pip install --disable-pip-version-check pymupdf pypdf python-docx openpyxl lxml
+      # soffice / ECMA-376 XSD are declared REQUIRED by 059 §7 and are not installed
+      # here yet; --allow-missing names them out loud so the run can never read as
+      # "fully green" while those tiers are unrun (059 §5 "skipped is not green").
+      - name: L2 artifact gate (self-test)
+        run: python scripts/office-skills-selftest.py
+      - name: L1 capability gate (self-test)
+        run: python scripts/check-office-skill-capabilities.py --selftest
+      - name: L1 capability gate (acceptance tier, no pending debt)
+        run: python scripts/check-office-skill-capabilities.py --no-pending --allow-missing soffice xsd
+      - name: pdf skill behaviour tests
+        run: python scripts/test-pdf-skill.py
+
   rust:
     name: rust (${{ matrix.os }})
     strategy:

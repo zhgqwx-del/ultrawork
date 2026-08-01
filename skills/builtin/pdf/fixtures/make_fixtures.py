@@ -202,6 +202,44 @@ def build_form_flat(path: Path) -> None:
     doc.close()
 
 
+def build_table_grid(path: Path) -> None:
+    """Two pages of the SAME table: one fully ruled, one with no rules at all.
+
+    The pair is the point. `find_tables(strategy="lines")` reads a drawn grid as
+    fact and finds nothing without one; the text strategy infers columns from where
+    words line up and is a guess. Measured on report-cjk.pdf (horizontal rules only)
+    the text strategy returns a 7x3 table for a table that is really 4x3 — it
+    swallows the heading above it. A fixture with only one of the two cases would
+    let that difference stay invisible.
+    """
+    doc = fitz.open()
+    cols_x = [60, 220, 360, 500]
+    top, row_h = 120, 30
+
+    def cells(page, ruled: bool):
+        cjk(page, (60, 90), "主要财务指标（单位：万元）", size=15)
+        for r, row in enumerate(TABLE):
+            y = top + r * row_h
+            for c, text in enumerate(row):
+                cjk(page, (cols_x[c] + 8, y + 20), text, size=11)
+        if not ruled:
+            return
+        bottom = top + len(TABLE) * row_h
+        for r in range(len(TABLE) + 1):
+            y = top + r * row_h
+            page.draw_line(fitz.Point(cols_x[0], y), fitz.Point(cols_x[-1], y),
+                           color=(0.35, 0.35, 0.35), width=0.8)
+        for x in cols_x:
+            page.draw_line(fitz.Point(x, top), fitz.Point(x, bottom),
+                           color=(0.35, 0.35, 0.35), width=0.8)
+
+    cells(doc.new_page(width=560, height=320), ruled=True)
+    cells(doc.new_page(width=560, height=320), ruled=False)
+    doc.set_metadata(META | {"title": "表格检测样例"})
+    doc.save(str(path), garbage=4, deflate=True, no_new_id=True)
+    doc.close()
+
+
 # The generation spec. Deliberately exercises every block type plus an explicit
 # page break, and carries enough text that the wrapper has to break both CJK runs
 # and Latin words on the same line.
@@ -253,9 +291,10 @@ def main() -> int:
     build_form_acroform(HERE / "form-acroform.pdf")
     build_form_filled(HERE / "form-acroform.pdf", HERE / "form-filled.pdf")
     build_form_flat(HERE / "form-flat.pdf")
+    build_table_grid(HERE / "table-grid.pdf")
     write_inputs()
     for name in ("report-cjk.pdf", "locked.pdf", "form-acroform.pdf",
-                 "form-filled.pdf", "form-flat.pdf"):
+                 "form-filled.pdf", "form-flat.pdf", "table-grid.pdf"):
         p = HERE / name
         print(f"{name}: {p.stat().st_size} bytes")
     return 0

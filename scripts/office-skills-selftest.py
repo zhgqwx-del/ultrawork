@@ -758,16 +758,37 @@ def part_is_inert(name: str, data: bytes) -> bool:
     return len(root) == 0 and not (root.text or "").strip()
 
 
-def baseline_of(expect: dict) -> Path | None:
+def baselines_of(expect: dict) -> list[Path]:
+    """`baseline` is one path, or several when the artifact was merged from several."""
     b = expect.get("baseline")
-    return Path(b) if b else None
+    if not b:
+        return []
+    return [Path(b)] if isinstance(b, (str, Path)) else [Path(x) for x in b]
+
+
+def baseline_of(expect: dict) -> Path | None:
+    """The single input an edit came from; None when there is no baseline at all.
+
+    A list means the caller merged several files. The docx/xlsx fidelity checks have
+    no meaning for that, so they say so instead of silently examining the first one.
+    """
+    paths = baselines_of(expect)
+    return paths[0] if len(paths) == 1 else None
+
+
+def multi_baseline_note(cid: str, expect: dict) -> list[str]:
+    n = len(baselines_of(expect))
+    if n > 1:
+        return [f"{cid} takes a single baseline; {n} were given — a merged artifact "
+                f"has no single input to compare against"]
+    return []
 
 
 @check("F1", ("docx", "xlsx"), "fidelity: every part of the input survives the edit")
 def f1_parts(path: Path, expect: dict) -> list[str]:
     base = baseline_of(expect)
     if base is None:
-        return []
+        return multi_baseline_note("F1", expect)
     if not base.is_file():
         return [f"F1 baseline not found: {base}"]
     try:
@@ -790,7 +811,7 @@ def f2_docx_structure(path: Path, expect: dict) -> list[str]:
     from lxml import etree
     base = baseline_of(expect)
     if base is None:
-        return []
+        return multi_baseline_note("F2", expect)
     if not base.is_file():
         return [f"F2 baseline not found: {base}"]
     out: list[str] = []
@@ -825,7 +846,7 @@ def f3_xlsx_features(path: Path, expect: dict) -> list[str]:
     import openpyxl
     base = baseline_of(expect)
     if base is None:
-        return []
+        return multi_baseline_note("F3", expect)
     if not base.is_file():
         return [f"F3 baseline not found: {base}"]
 
@@ -871,28 +892,48 @@ def f3_xlsx_features(path: Path, expect: dict) -> list[str]:
 
 @check("P5", "pdf", "fidelity: page count holds and untouched pages keep their text")
 def p5_pdf_fidelity(path: Path, expect: dict) -> list[str]:
+    """One baseline is an edit; several is a merge.
+
+    A merge that quietly drops its second input produces a perfectly legal PDF, and
+    nothing else in this file would notice — page count, text extraction and the
+    raster are all happy with it. Walking the inputs in order is what catches it.
+    """
     import fitz
-    base = baseline_of(expect)
-    if base is None:
+    bases = baselines_of(expect)
+    if not bases:
         return []
-    if not base.is_file():
-        return [f"P5 baseline not found: {base}"]
+    missing = [str(b) for b in bases if not b.is_file()]
+    if missing:
+        return [f"P5 baseline not found: {', '.join(missing)}"]
     touched = set(expect.get("touched_pages", []))
-    try:
-        src, dst = fitz.open(base), fitz.open(path)
-    except Exception as e:  # noqa: BLE001
-        return [f"P5 cannot compare PDFs: {e}"]
     out: list[str] = []
-    with src, dst:
-        if dst.page_count < src.page_count:
-            out.append(f"P5 page count dropped from {src.page_count} to {dst.page_count}")
-        for i in range(min(src.page_count, dst.page_count)):
-            if (i + 1) in touched:
-                continue
-            b, a = src[i].get_text().strip(), dst[i].get_text().strip()
-            if a != b:
-                out.append(f"P5 page {i + 1} was not meant to be edited but its text "
-                           f"changed ({len(b)} chars -> {len(a)})")
+    try:
+        dst = fitz.open(path)
+    except Exception as e:  # noqa: BLE001
+        return [f"P5 cannot open the artifact: {e}"]
+    with dst:
+        offset = 0
+        for base in bases:
+            try:
+                src = fitz.open(base)
+            except Exception as e:  # noqa: BLE001
+                return [f"P5 cannot open baseline {base.name}: {e}"]
+            with src:
+                if dst.page_count < offset + src.page_count:
+                    out.append(f"P5 {base.name} contributes {src.page_count} page(s) "
+                               f"at index {offset}, but the artifact has only "
+                               f"{dst.page_count}")
+                for i in range(min(src.page_count, max(dst.page_count - offset, 0))):
+                    if (offset + i + 1) in touched:
+                        continue
+                    b = src[i].get_text().strip()
+                    a = dst[offset + i].get_text().strip()
+                    if a != b:
+                        where = (f"page {offset + i + 1}" if len(bases) == 1 else
+                                 f"page {offset + i + 1} (page {i + 1} of {base.name})")
+                        out.append(f"P5 {where} was not meant to be edited but its "
+                                   f"text changed ({len(b)} chars -> {len(a)})")
+                offset += src.page_count
     return out
 
 
@@ -952,6 +993,40 @@ def inert_reason(cid: str, expect: dict) -> str | None:
     return f"nothing to assert — expectations carry none of: {', '.join(keys)}"
 
 
+def readable_pdf(path: Path, expect: dict, tmpdir: str) -> tuple[Path | None, list[str]]:
+    """An encrypted artifact, decrypted into `tmpdir` so the checks can read it.
+
+    Added 2026-08-01 for P12: before this, handing run_checks an encrypted PDF blew
+    up with an uncaught `ValueError: document closed or encrypted` from the first
+    page access. A gate that CRASHES on an artifact type a skill legitimately
+    produces reports nothing at all — which is worse than reporting a failure.
+
+    A locked artifact with no password in `expect` is a finding, not a pass: nobody
+    has checked it, and that is exactly what "not a verified artifact" means.
+
+    These findings carry the `A0` id — they come from before any assertion runs, so
+    they belong to no check, and every other finding in this file starts with the id
+    of the check that raised it.
+    """
+    import fitz
+    try:
+        doc = fitz.open(path)
+    except Exception as e:  # noqa: BLE001 - a malformed file raises several types
+        return None, [f"A0 cannot open {path.name} as a PDF: {type(e).__name__}: {e}"]
+    with doc:
+        if not doc.needs_pass:
+            return path, []
+        password = expect.get("password")
+        if password is None:
+            return None, [f"A0 {path.name} is encrypted and expectations carry no "
+                          f"`password`, so not one assertion could run on it"]
+        if not doc.authenticate(password):
+            return None, [f"A0 the `password` in expectations was rejected by {path.name}"]
+        plain = Path(tmpdir) / path.name
+        doc.save(str(plain), encryption=fitz.PDF_ENCRYPT_NONE)
+        return plain, []
+
+
 def run_checks(path: Path, expect: dict, only: set[str] | None = None,
                allow_missing: frozenset[str] = frozenset()
                ) -> tuple[list[str], list[str], list[str]]:
@@ -959,6 +1034,17 @@ def run_checks(path: Path, expect: dict, only: set[str] | None = None,
     kind = KIND_BY_SUFFIX.get(path.suffix.lower())
     if kind is None:
         return [f"unsupported artifact type: {path.name}"], [], []
+    if kind == "pdf":
+        with tempfile.TemporaryDirectory(prefix="l2-decrypt-") as td:
+            usable, errors = readable_pdf(path, expect, td)
+            if usable is None:
+                return errors, [], []
+            return _run_checks(usable, expect, kind, only, allow_missing)
+    return _run_checks(path, expect, kind, only, allow_missing)
+
+
+def _run_checks(path: Path, expect: dict, kind: str, only: set[str] | None,
+                allow_missing: frozenset[str]) -> tuple[list[str], list[str], list[str]]:
     findings, skipped, inert = [], [], []
     for cid, c in CHECKS.items():
         if kind not in c["kind"] or (only and cid not in only):
@@ -1490,6 +1576,78 @@ def fid_real_xlsx(root: Path):
 
 
 # (case name, builder, marker, should_fire)
+def fid_pdf_merge(root: Path) -> tuple[Path, Path, dict]:
+    """A merge that keeps everything. `baseline` is a LIST — the extension P11 needed."""
+    import fitz
+    a, b, out = root / "ma.pdf", root / "mb.pdf", root / "merged.pdf"
+    build_pdf_pages(a, pages=2)
+    build_pdf_pages(b, pages=3)
+    doc = fitz.open(a)
+    with doc:
+        with fitz.open(b) as second:
+            doc.insert_pdf(second)
+        doc.save(str(out))
+    return a, out, {"baseline": [str(a), str(b)]}
+
+
+def fid_pdf_merge_drops_input(root: Path) -> tuple[Path, Path, dict]:
+    """The merge that forgot its second input.
+
+    The result opens, renders, extracts text and passes every other assertion here.
+    Only walking the declared inputs in order shows that half the document is gone.
+    """
+    import fitz
+    a, b, out = root / "da.pdf", root / "db.pdf", root / "half.pdf"
+    build_pdf_pages(a, pages=2)
+    build_pdf_pages(b, pages=3)
+    doc = fitz.open(a)
+    with doc:
+        doc.save(str(out))
+    return a, out, {"baseline": [str(a), str(b)]}
+
+
+def fid_pdf_merge_wrong_order(root: Path) -> tuple[Path, Path, dict]:
+    """All the pages are present — in the wrong order. Page COUNT cannot see this."""
+    import fitz
+    a, b, out = root / "oa.pdf", root / "ob.pdf", root / "swapped.pdf"
+    build_pdf_pages(a, pages=2)
+    build_pdf_pages(b, pages=3)
+    doc = fitz.open(b)
+    with doc:
+        with fitz.open(a) as first:
+            doc.insert_pdf(first)
+        doc.save(str(out))
+    return a, out, {"baseline": [str(a), str(b)]}
+
+
+def fid_pdf_encrypted(root: Path) -> tuple[Path, Path, dict]:
+    """An encrypted artifact WITH the password: every assertion must run normally."""
+    import fitz
+    base, out = root / "ea.pdf", root / "enc.pdf"
+    build_pdf_pages(base, pages=2)
+    doc = fitz.open(base)
+    with doc:
+        doc.save(str(out), encryption=fitz.PDF_ENCRYPT_AES_256,
+                 user_pw="s3cret", owner_pw="s3cret-owner")
+    return base, out, {"baseline": str(base), "password": "s3cret",
+                       "contains": ["Page 1 of 2"]}
+
+
+def fid_pdf_encrypted_no_password(root: Path) -> tuple[Path, Path, dict]:
+    """The same artifact with no password in expectations.
+
+    Before this path existed the gate raised an uncaught ValueError from the first
+    page access — a crash reports nothing, which is worse than a failure.
+    """
+    import fitz
+    base, out = root / "eb.pdf", root / "enc2.pdf"
+    build_pdf_pages(base, pages=2)
+    doc = fitz.open(base)
+    with doc:
+        doc.save(str(out), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="s3cret")
+    return base, out, {"baseline": str(base), "contains": ["Page 1 of 2"]}
+
+
 FIDELITY_CASES = [
     ("preserving xlsx edit keeps every feature", fid_xlsx_preserving, "", False),
     ("F1 library round-trip drops parts it has no model for", fid_xlsx_naive, "F1", True),
@@ -1506,6 +1664,16 @@ FIDELITY_CASES = [
     # test in part_is_inert: same symptom, opposite verdicts.
     ("real sample.docx: empty rels omitted is NOT data loss", fid_real_docx, "", False),
     ("real sample.xlsx: xl/metadata.xml lost IS data loss", fid_real_xlsx, "F1", True),
+    # P11 needed `baseline` to accept several inputs; these are what make that real.
+    ("merge keeping every input stays silent", fid_pdf_merge, "", False),
+    ("P5 a merge silently drops an input", fid_pdf_merge_drops_input, "P5", True),
+    ("P5 a merge keeps every page but reorders them", fid_pdf_merge_wrong_order,
+     "P5", True),
+    # P12 needed encrypted artifacts to be checkable at all.
+    ("an encrypted artifact with its password checks normally", fid_pdf_encrypted,
+     "", False),
+    ("an encrypted artifact with no password is reported, not crashed on",
+     fid_pdf_encrypted_no_password, "A0", True),
 ]
 
 

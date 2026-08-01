@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import fail, open_pdf, run, write_json  # noqa: E402
+from pdfcommon import ensure_distinct, fail, open_pdf, run, write_json  # noqa: E402
 from pdfform import (CJK_FONT, collect_fields, has_acroform, has_cjk,  # noqa: E402
                      load_placements, round_box)
 
@@ -153,6 +153,7 @@ def main() -> None:
                     help="write the fill report (feeds pdf_form_check.py)")
     args = ap.parse_args()
 
+    ensure_distinct(args.src, args.out)
     if not args.values.is_file():
         fail(f"no such values file: {args.values}")
     doc = open_pdf(args.src, args.password)

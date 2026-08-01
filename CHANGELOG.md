@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Office 技能重做 S1+S2：三层验收门禁 + `pdf` 技能 clean-room 重写（discussions/059）** —— `skills/builtin/pdf/` 从「上游 OpenAI Apache 版 + 零脚本」整体替换为 ultrawork 自写（PyMuPDF），**14 项能力全部实现、零 pending，L1 验收档 `--no-pending` 转绿**。
+  - **先写标尺再动实现（S1）**：L0 clean-room 合规（逐字节 + 专有许可特征条款 + **AST 骨架指纹**，实测词级相似度把「改 6 个标识符的复制品」判 clean 而 AST 判 1.00）· L1 能力矩阵 C1-C5（C4 = 跑样例产出 artifact 再交给 L2，C5 带 `pending` 欠账出口）· L2 产物合法性（含保真度：`openpyxl load→save` 会静默丢 `xl/metadata.xml`）。
+  - **S2 四刀**：P1/P2/P4 读取三件 · 表单族 P5-P10（探测/抽取/AcroForm 填充/无域叠加/越界校验/标色校验图）· P13 生成 + P14 字体嵌入 · P3 表格 / P11 页面操作 / P12 加密。
+  - **未打包 OFL 字体**（实测推翻前提）：`insert_font(fontbuffer=...)` + `subset_fonts()` 把嵌入成本从 3,569,129 压到 **10,675 字节**，字体是 PyMuPDF 随包自带的 Droid Sans Fallback（Apache-2.0，用户 pip 装，本仓库不再分发）。`--font` 可换任意 TTF/OTF 或内置名。
+  - **同一类坐标系缺陷出现两次**：PyMuPDF `get_text`/`draw_rect` 用页面坐标系而 `get_pixmap` 用显示坐标系 —— 旋转 90° 的页，抽出的框内 36 个暗像素、映射后 2282 个。第二次出现在 **L2 门禁自己身上**（旋转页豆腐块假阳性，被判红的是未改动的源文件），由 L1 咬出来。
+  - **owner 口令等于 user 口令时权限位形同虚设**：能打开文件的人就是 owner，而 owner 不受限制（实测同一文件 user 视角 `print+copy`、owner 视角全部允许）⇒ 限制性 `--allow` 而 owner 口令未给时直接拒绝。
+  - **收工复审又抓到 5 个缺陷**：测试脚本硬编码 macOS 字体路径导致**非 macOS 全红** · SKILL.md 指向不随包分发的脚本（`doc-export` 断链同一类）· `pdf_info.py` 在 300 页文档上往 stdout 打 **82KB**（→ 808 字节）· 就地覆盖抛裸 traceback · `find_tables` 把广告打在 stdout 上导致 `| jq` 坏掉。
+  - **门禁进 CI**：新增 `office-skills` job（**macOS/Windows/Ubuntu 三平台**）跑 L2 自检 + L1 自检 + L1 验收档 + pdf 行为测试 —— 此前这批代码的「跨平台兼容」只有人工审计、没有机器证据。`check-docs.ts` 新增第 10 条：内置技能 SKILL.md 引用的技能内路径必须真在发布树里。
+  - 连带：`markdown-exporter` 降级为长尾格式转换（PDF→`pdf`、PPTX→`deckcraft`）· `fetch-builtin-skills.ts` 移除 pdf 源（否则每次 fetch 会删掉自写实现）· Rust `run_python_feature_probe` 泛化为模块名列表 · `BUILTIN_DEP_MAP` 的 pdf 改 `[python3, pymupdf]`。
+  - 门禁数字：L2 自检 **53 passed** · `test-pdf-skill.py` **38 条断言 / 53 passed**（每条配负向控制 + flaw→check 触发矩阵）· L0 分离带 0.188~0.736（阈值 0.55）。
+
 ## [0.3.6] - 2026-07-30
 
 ### Changed

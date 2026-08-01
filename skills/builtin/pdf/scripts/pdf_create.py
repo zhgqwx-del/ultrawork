@@ -151,7 +151,7 @@ class Writer:
             row(r, False)
 
 
-def build(spec: dict, out: Path, font: Path | None, allow_missing: bool) -> dict:
+def build(spec: dict, out: Path, font: str | None, allow_missing: bool) -> dict:
     import fitz
 
     blocks = spec.get("blocks")
@@ -217,8 +217,9 @@ def main() -> None:
     ap.add_argument("--in", dest="spec", required=True, type=Path,
                     help="document spec (JSON)")
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--font", type=Path, default=None,
-                    help="TTF/OTF to embed (default: the CJK face PyMuPDF ships)")
+    ap.add_argument("--font", default=None,
+                    help="TTF/OTF path, or a built-in name (helv, cour, tiro, "
+                         "china-s...). Default: the CJK face PyMuPDF ships")
     ap.add_argument("--font-report", type=Path, default=None,
                     help="write what a reader on another machine will get")
     ap.add_argument("--allow-missing-glyphs", action="store_true")

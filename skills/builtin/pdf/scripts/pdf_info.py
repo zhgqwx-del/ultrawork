@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import open_pdf, run, write_json  # noqa: E402
+from pdfcommon import compact, open_pdf, run, write_json  # noqa: E402
 
 PT_PER_MM = 72.0 / 25.4
 # Common sizes, in points, keyed by (width, height) portrait. Tolerance is 3pt:
@@ -107,7 +107,7 @@ def main() -> None:
     info = describe(args.src, args.password)
     if args.out:
         write_json(args.out, info)
-    print(json.dumps(info, ensure_ascii=False, indent=2))
+    print(json.dumps(compact(info, "pages", args.out), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

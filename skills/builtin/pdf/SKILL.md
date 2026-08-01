@@ -2,16 +2,16 @@
 name: pdf
 description: >
   Use when the deliverable is a PDF itself — 读PDF / 提取PDF文字 / PDF转图片 /
-  查看PDF页数与加密状态 / 填PDF表单 / 生成PDF, or extract text with coordinates,
+  查看PDF页数与加密状态 / 填PDF表单 / 生成PDF / 合并拆分PDF / PDF加密解密 /
+  提取PDF表格, or extract text with coordinates,
   render pages to images, report page geometry and encryption state, fill forms
   (AcroForm fields when the file has them, anchored text overlay when it does not)
-  with an overflow check and a colour-coded proof sheet, and BUILD a PDF from a
+  with an overflow check and a colour-coded proof sheet, BUILD a PDF from a
   document spec with the font genuinely embedded so Chinese survives on machines
-  that have no CJK font installed. Scripted today: rendering, text + bbox
-  extraction, metadata, the form family, and generation; anything else is done by
-  driving PyMuPDF directly (the capability table below says plainly what does not
-  exist yet). Not for making slide decks from a PDF — that is `deckcraft`; not for
-  .docx/.xlsx editing — that is `doc-edit`.
+  that have no CJK font installed, and
+  merge/split/extract/rotate pages, encrypt or decrypt, and pull tables out to CSV.
+  Not for making slide decks from a PDF — that is `deckcraft`; not for .docx/.xlsx
+  editing — that is `doc-edit`.
 x-requires: [python3, pymupdf]
 ---
 
@@ -40,10 +40,11 @@ PyMuPDF 是 **AGPL-3.0 或商业授权**。ultrawork **不打包**它，由用�
 | 表单填充 | `scripts/pdf_form_fill.py` | 有域走 AcroForm，无域按锚点或坐标叠加 |
 | 越界校验与校验图 | `scripts/pdf_form_check.py` | 值有没有超出字段框；产出逐字段标色的 PDF |
 | 从零生成 PDF | `scripts/pdf_create.py` | 标题/正文/项目符号/表格/分页；**字体真嵌入并子集化** |
+| 表格抽取 | `scripts/pdf_tables.py` | JSON + CSV；**逐表标注是「读出来的」还是「猜出来的」** |
+| 页面操作 | `scripts/pdf_pages.py` | 合并 / 拆分 / 抽页 / 删页 / 旋转 |
+| 加密解密 | `scripts/pdf_encrypt.py` | AES-256 设/改/去口令，权限位 |
 
-**尚未实现**：表格抽取、合并拆分抽页旋转、加密解密。
-清单与欠账理由见同目录 `capabilities.json` 的 `pending` 段；需要这些能力时
-**直接写 PyMuPDF 代码**，不要假装调用不存在的脚本。
+`capabilities.json` 里 **14 项能力全部已实现，无 pending**。
 
 ## 用法
 
@@ -127,6 +128,62 @@ python3 scripts/pdf_create.py --in doc.json --out report.pdf \
 缺哪些（`--allow-missing-glyphs` 可强行写并在报告里点名）。实测强行用只有西文的
 Arial 写中文：中文不是变豆腐而是**整页消失**（渲染全白、文字连抽都抽不出来）。
 
+### 表格抽取：读出来的 vs 猜出来的
+
+```bash
+python3 scripts/pdf_tables.py --in report.pdf --out tables.json \
+        --csv-dir ./csv --overlay boxes.pdf
+```
+
+每张表都带 `strategy` 和 `reliable`：
+
+- **`lines`（reliable=true）** —— 表格线画在页面里，单元格边界是文件里的事实。
+- **`text`（reliable=false）** —— 没有可用的表格线，列位置靠文字对齐**猜**。
+
+实测同一张表在 `fixtures/table-grid.pdf` 的两页里：**画了格线的一页读出 4×3、完全正确；
+去掉格线的一页猜成 7×3**（中间插了三行空行）。数据一模一样，结果不一样 ——
+**光看单元格内容分不出哪个是猜的，所以报告必须说**。
+
+CSV 用 `utf-8-sig` 写（带 BOM）：不带 BOM 的中文 CSV 在 Excel 里就是乱码，而 CSV 导出的
+去处基本都是 Excel。
+
+### 页面操作
+
+```bash
+python3 scripts/pdf_pages.py --op merge   --in a.pdf b.pdf --out merged.pdf --report m.json
+python3 scripts/pdf_pages.py --op extract --in a.pdf --pages 1,3-4 --out sub.pdf
+python3 scripts/pdf_pages.py --op delete  --in a.pdf --pages 2 --out fewer.pdf
+python3 scripts/pdf_pages.py --op rotate  --in a.pdf --pages 1 --degrees 90 --out r.pdf
+python3 scripts/pdf_pages.py --op split   --in a.pdf --out ./parts --every 2
+```
+
+- **旋转是相对的**（`--degrees 90` 加在现有 `/Rotate` 上），存的是 `/Rotate` 元数据，
+  不重写内容 —— 所以文字坐标不变、操作可逆。写成绝对角度的话，对一张已经转过 90° 的页
+  再转 90° 就成了空操作，而页数完全正常。
+- **拆分产物按源页号命名**（`pages-001-002.pdf`），与 `pdf_render.py` 同一约定。
+- 合并会把每个输入贡献了几页写进报告：**丢掉第二个输入产出的仍是一个完全合法的 PDF**，
+  光看页数看不出来，所以把输入清单交给 `office-skills-selftest.py --check` 的 `baseline`
+  才验得住。
+- 删光所有页 / 合并只给一个文件 / `--degrees 45` 都是退出码 2。
+
+### 加密
+
+```bash
+python3 scripts/pdf_encrypt.py --in report.pdf --out locked.pdf \
+        --set-password s3cret --owner-password admin --allow print,copy
+python3 scripts/pdf_encrypt.py --in locked.pdf --out plain.pdf \
+        --password s3cret --remove-password
+```
+
+⚠️ **owner 口令和 user 口令相同时，权限位形同虚设** —— 能打开文件的人就是 owner，
+而 owner 不受任何限制。实测同一个文件：以 user 身份打开是 `print+copy`，
+以 owner 身份打开是**全部允许**。所以 `--allow` 一旦是限制性的而 `--owner-password`
+没给（或与 user 口令相同），本脚本**直接拒绝**，不产出那种「限制其实不生效」的文件。
+
+去口令**必须提供当前口令**（没有绕过路径）。写完会重新打开验证：`save(encryption=...)`
+参数对不上时会静默产出**未加密**文件，而「所有人都以为受保护、其实没有」是这个脚本能犯的
+最坏的错。
+
 ## 两个坐标系（用错就是把框画在白纸上）
 
 `pdf_extract.py` 每个条目给**两个**框，单位都是 point、原点左上、y 向下：
@@ -162,9 +219,12 @@ Arial 写中文：中文不是变豆腐而是**整页消失**（渲染全白、�
 ## 自检
 
 ```bash
-python3 scripts/test-pdf-skill.py            # 仓库根目录下运行；25 条断言 + 逐条负向控制
-python3 fixtures/make_fixtures.py            # 仅在示例本身要改时才跑，见下
+python3 fixtures/make_fixtures.py            # 重建示例文件；仅在示例本身要改时才跑，见下
 ```
+
+> 本技能的行为测试（36 条断言 + 48 条负向控制）在 **ultrawork 仓库**里
+> （scripts 目录下的 `test-pdf-skill.py`），**不随技能分发** —— 它需要 fixtures 之外的
+> 仓库上下文。装在你机器上的这份目录里没有它，别去找。
 
 ⚠️ `report-cjk.pdf` 是逐字节可复现的（`no_new_id=True` + 固定日期），但 **`locked.pdf` 不是**
 （AES 密钥每次不同）。重跑生成脚本会改动它的字节 ⇒ `skills/builtin/.builtin-version` 跟着变 ⇒

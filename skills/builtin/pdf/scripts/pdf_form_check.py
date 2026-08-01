@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import fail, open_pdf, run, write_json  # noqa: E402
+from pdfcommon import ensure_distinct, fail, open_pdf, run, write_json  # noqa: E402
 from pdfform import collect_fields, round_box, text_width  # noqa: E402
 
 EDGE_TOLERANCE = 0.5    # points a glyph may poke SIDEWAYS past the box
@@ -182,6 +182,8 @@ def main() -> None:
     ap.add_argument("--fail-on-overflow", action="store_true")
     args = ap.parse_args()
 
+    if args.proof:
+        ensure_distinct(args.src, args.proof, "--proof")
     doc = open_pdf(args.src, args.password)
     with doc:
         fields = fields_to_check(doc, args.report)

@@ -307,6 +307,47 @@ if (await memFile.exists()) {
   }
 }
 
+// ── 10. 内置技能 SKILL.md 指向的技能内文件必须真的随包发布 ──────────
+// 技能树是**发布产物**：SKILL.md 会跟着 zip 装到用户机器上，而仓库里的 scripts/
+// 不会。指向一个不随包走的文件，用户（和 agent）按指引去找必然扑空——这正是
+// discussions/059 §1 记的 `doc-export` 断链缺陷，2026-08-01 在 pdf 技能上又犯了一次
+// （SKILL.md 让人跑仓库里的 scripts/test-pdf-skill.py）。
+//
+// 只校验**看起来像技能内相对路径**的引用（scripts/ fixtures/ references/ assets/
+// examples/ agents/ eval-viewer/）。豁免见 RUNTIME_MATERIALIZED：连接器在运行时
+// 落地的目录本来就不在发布树里。
+{
+  const SKILL_DIR_PREFIXES = ["scripts", "fixtures", "references", "assets", "examples", "agents", "eval-viewer"]
+  // 运行时才落地的路径（设置 → 连接器 → 办公 CLI 安装官方技能包），不是断链。
+  const RUNTIME_MATERIALIZED = new Set(["dingtalk-assistant:references/products/"])
+  const builtinRoot = path.join(rootDir, "skills/builtin")
+  const refRe = new RegExp(
+    String.raw`(?<![\w/.-])((?:${SKILL_DIR_PREFIXES.join("|")})/[A-Za-z0-9_.*/-]+)`,
+    "g",
+  )
+  if (await isDir(builtinRoot)) {
+    for (const name of (await fs.readdir(builtinRoot, { withFileTypes: true })).filter((d) => d.isDirectory())) {
+      const md = path.join(builtinRoot, name.name, "SKILL.md")
+      if (!(await Bun.file(md).exists())) continue
+      const text = await Bun.file(md).text()
+      const seen = new Set<string>()
+      for (const m of text.matchAll(refRe)) {
+        const ref = m[1].replace(/[.,;:)）】]+$/, "")
+        if (ref.includes("*") || seen.has(ref)) continue
+        seen.add(ref)
+        if (RUNTIME_MATERIALIZED.has(`${name.name}:${ref}`) || RUNTIME_MATERIALIZED.has(`${name.name}:${ref}/`)) continue
+        const target = path.join(builtinRoot, name.name, ref)
+        if (!(await Bun.file(target).exists()) && !(await isDir(target))) {
+          errors.push(
+            `skills/builtin/${name.name}/SKILL.md 指向 \`${ref}\`，但它不在该技能的发布树里 → ` +
+              `用户装完照着做会扑空；改成不随包发布的说明，或把文件放进技能目录。`,
+          )
+        }
+      }
+    }
+  }
+}
+
 // ── 报告 ────────────────────────────────────────────────────────────
 console.log(`📄 check-docs：扫描 ${mdFiles.length} 个 md，${adrCount} 个 ADR`)
 for (const w of warnings) console.log(`  ⚠️  ${w}`)

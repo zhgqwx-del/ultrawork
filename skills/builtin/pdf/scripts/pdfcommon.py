@@ -97,17 +97,69 @@ def _page_number(token: str, page_count: int) -> int:
     return n - 1
 
 
+def ensure_distinct(src: Path, out: Path, label: str = "--out") -> None:
+    """Refuse to write an output over one of its own inputs.
+
+    PyMuPDF answers this with `ValueError: save to original must be incremental`,
+    i.e. a raw traceback — every other failure in these scripts is one sentence and
+    exit 2, and an agent reading a traceback has to guess what to do. The input
+    survives either way; this is about the message, and about not depending on the
+    library to notice.
+    """
+    try:
+        same = out.exists() and src.resolve() == out.resolve()
+    except OSError:
+        same = False
+    if same:
+        fail(f"{label} is the same file as --in ({out}); write somewhere else and "
+             f"replace it afterwards if that is what you meant")
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8")
 
 
+# Anything printed on stdout is read by an agent and costs context — and in Team
+# mode it crosses the delegation boundary as well. Measured before this existed:
+# pdf_info.py on a 300-page document printed 82KB of per-page geometry, split
+# printed 18KB of part names. The full data belongs in --out; stdout stays a
+# summary once a list gets long.
+STDOUT_ITEM_LIMIT = 20
+
+
+def compact(payload: dict, key: str, out: Path | None,
+            limit: int = STDOUT_ITEM_LIMIT) -> dict:
+    """A stdout-sized copy of `payload`: long lists replaced by a count + pointer."""
+    items = payload.get(key)
+    if not isinstance(items, list) or len(items) <= limit:
+        return payload
+    trimmed = {k: v for k, v in payload.items() if k != key}
+    trimmed[f"{key}_count"] = len(items)
+    trimmed[f"{key}_note"] = (
+        f"{len(items)} entries omitted from stdout"
+        + (f"; the full list is in {out}" if out else
+           "; pass --out to write the full list to a file"))
+    return trimmed
+
+
 def run(entry) -> int:
-    """Turn PdfError into one line on stderr and exit 2; keep 1 for crashes."""
+    """Turn PdfError into one line on stderr and exit 2; keep 1 for crashes.
+
+    The catch-all is not there to hide bugs — the traceback still goes to stderr —
+    but to guarantee the FIRST line is always a sentence an agent can act on. A
+    library that raises where we did not expect it (a malformed producer, a version
+    change) otherwise reaches the caller as a wall of Python.
+    """
     try:
         entry()
     except PdfError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except Exception as e:  # noqa: BLE001 - deliberate boundary
+        import traceback
+        print(f"error: unexpected {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc()
+        return 1
     return 0

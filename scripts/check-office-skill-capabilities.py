@@ -107,9 +107,22 @@ def load_l2():
         return None, f"L2 gate unavailable ({type(e).__name__}: {e})"
 
 
-def render(value: str, subs: dict[str, str]) -> str:
-    for k, v in subs.items():
-        value = value.replace("{" + k + "}", v)
+def render(value, subs: dict[str, str]):
+    """Substitute {out}/{skill}/{fixtures} anywhere in a string, list or dict.
+
+    Lists matter: `baseline` accepts several inputs now (a merged artifact has more
+    than one), and a string-only version left those placeholders literal — the L2
+    gate then reported "baseline not found: {fixtures}/…", which reads like a
+    missing file rather than a substitution that never happened.
+    """
+    if isinstance(value, str):
+        for k, v in subs.items():
+            value = value.replace("{" + k + "}", v)
+        return value
+    if isinstance(value, list):
+        return [render(v, subs) for v in value]
+    if isinstance(value, dict):
+        return {k: render(v, subs) for k, v in value.items()}
     return value
 
 
@@ -144,8 +157,7 @@ def run_sample(skill_dir: Path, cap_id: str, spec: dict, l2, l2_err: str,
             if l2 is None:
                 errors.append(f"{skill_dir.name} {cap_id}: cannot verify {art.name} — {l2_err}")
                 continue
-            expect = {k: render(str(v), subs) if isinstance(v, str) else v
-                      for k, v in (spec.get("expect") or {}).items()}
+            expect = render(spec.get("expect") or {}, subs)
             findings, _, inert = l2.run_checks(art, expect,
                                                allow_missing=allow_missing)
             checked += 1
