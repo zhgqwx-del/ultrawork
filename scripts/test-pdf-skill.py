@@ -43,6 +43,23 @@ PY = sys.executable
 RENDER_DPI = 100
 RENDER_PAGES = [1, 3]
 
+FORM = FIXTURES / "form-acroform.pdf"
+FORM_FLAT = FIXTURES / "form-flat.pdf"
+FORM_FILLED = FIXTURES / "form-filled.pdf"
+FORM_VALUES = FIXTURES / "values-acroform.json"
+FORM_PLACEMENTS = FIXTURES / "placements-flat.json"
+
+# What fixtures/form-acroform.pdf is known to contain. Spelled out here rather than
+# read back from the file: an expectation derived from the artifact it checks agrees
+# with itself no matter what the artifact says.
+EXPECT_FIELDS = {
+    "applicant": {"type": "text", "required": True, "max_length": None},
+    "id_no": {"type": "text", "required": False, "max_length": 18},
+    "dept": {"type": "combobox", "choices": ["财务部", "技术部", "市场部"]},
+    "remark": {"type": "text", "multiline": True},
+    "agree": {"type": "checkbox"},
+}
+
 # ── raster thresholds ─────────────────────────────────────────────────────────
 # BOX_INK: share of dark pixels under one reported box, measured on the rendered
 # page. Calibrated 2026-08-01 against BOTH the synthetic fixture and a real
@@ -149,7 +166,14 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
             # else the two frames are the same numbers and the control is a no-op.
             ("rotated pages (E2's only discriminating case)", len(rotated), 1),
             ("info reports", len([k for k in ("plain", "locked", "unlocked")
-                                  if ctx["info"].get(k)]), 3)):
+                                  if ctx["info"].get(k)]), 3),
+            ("form fields extracted", len(ctx["form"]["fields"]), 5),
+            ("rejected fill attempts", len(ctx["form"]["refusals"]), 7),
+            ("anchored placements (M4's only subject)",
+             len([p for p in ctx["form"]["placements"] if "anchor" in p]), 2),
+            # M6 can only tell colours apart if more than one verdict is present.
+            ("distinct proof verdicts",
+             len({f["verdict"] for f in ctx["form"]["proof_of"]}), 3)):
         if got < need:
             out.append(f"V0 only {got} {label}, need >= {need} — assertions covering "
                        f"them would pass by having nothing to check")
@@ -381,6 +405,147 @@ def i4_bad_password(ctx: dict) -> list[str]:
     return []
 
 
+@check("M1", "form detection separates a widget form from a flat one")
+def m1_detect(ctx: dict) -> list[str]:
+    out = []
+    acro, flat = ctx["form"]["summary_acro"], ctx["form"]["summary_flat"]
+    if not acro["has_acroform"]:
+        out.append("M1 the AcroForm fixture reports has_acroform=false")
+    if acro["field_count"] != len(EXPECT_FIELDS):
+        out.append(f"M1 field_count {acro['field_count']}, fixture has {len(EXPECT_FIELDS)}")
+    # The flat form carries the same visible layout and zero widgets. This is the
+    # answer a filler routes on, so getting it wrong sends every value to the wrong
+    # code path rather than producing a visible error.
+    if flat["has_acroform"] or flat["field_count"]:
+        out.append(f"M1 the flat fixture reports has_acroform={flat['has_acroform']} "
+                   f"field_count={flat['field_count']}, both must be empty")
+    if acro.get("required_unfilled") != ["applicant"]:
+        out.append(f"M1 required_unfilled {acro.get('required_unfilled')}, "
+                   f"expected ['applicant']")
+    return out
+
+
+@check("M2", "field extraction reports type, choices, limits and flags")
+def m2_fields(ctx: dict) -> list[str]:
+    out = []
+    got = {f["name"]: f for f in ctx["form"]["fields"]}
+    for name, want in EXPECT_FIELDS.items():
+        f = got.get(name)
+        if f is None:
+            out.append(f"M2 field {name!r} is missing from the extraction")
+            continue
+        if f["type"] != want["type"]:
+            out.append(f"M2 {name}: type {f['type']!r}, expected {want['type']!r}")
+        if "choices" in want and f.get("choices") != want["choices"]:
+            out.append(f"M2 {name}: choices {f.get('choices')}, expected {want['choices']}")
+        if "max_length" in want and f.get("max_length") != want["max_length"]:
+            out.append(f"M2 {name}: max_length {f.get('max_length')}, "
+                       f"expected {want['max_length']}")
+        for flag in ("required", "multiline"):
+            if flag in want and bool(f["flags"].get(flag)) != want[flag]:
+                out.append(f"M2 {name}: flag {flag}={f['flags'].get(flag)}, "
+                           f"expected {want[flag]}")
+        for key in ("rect", "rect_display"):
+            box = f.get(key)
+            if not box or box[2] <= box[0] or box[3] <= box[1]:
+                out.append(f"M2 {name}: {key} {box} is missing or degenerate")
+    return out
+
+
+@check("M3", "AcroForm filling writes the values and refuses the ones it cannot hold")
+def m3_fill(ctx: dict) -> list[str]:
+    out = []
+    written = {f["name"]: f["text"] for f in ctx["form"]["fill_report"]["filled"]}
+    for name, want in ctx["form"]["values"].items():
+        if name == "agree":
+            continue                      # checkbox value is normalised to Yes/Off
+        if written.get(name) != str(want):
+            out.append(f"M3 {name}: wrote {written.get(name)!r}, values file said {want!r}")
+    for label, code in ctx["form"]["refusals"].items():
+        if code == 0:
+            out.append(f"M3 {label}: exited 0 — this value cannot be stored faithfully "
+                       f"and writing it anyway produces a file that only looks filled")
+    return out
+
+
+@check("M4", "overlay text is placed against its anchor, not at a guessed position")
+def m4_overlay(ctx: dict) -> list[str]:
+    import fitz
+    out = []
+    placed = {f["name"]: f for f in ctx["form"]["overlay_report"]["filled"]}
+    doc = fitz.open(FORM_FLAT)
+    with doc:
+        for item in ctx["form"]["placements"]:
+            if "anchor" not in item:
+                continue
+            got = placed.get(item["name"])
+            if got is None:
+                out.append(f"M4 placement {item['name']!r} is not in the fill report")
+                continue
+            hits = doc[0].search_for(item["anchor"])
+            if not hits:
+                out.append(f"M4 anchor {item['anchor']!r} is not in the fixture at all")
+                continue
+            anchor, box = hits[0], fitz.Rect(got["rect"])
+            if box.x0 < anchor.x1:
+                out.append(f"M4 {item['name']}: placed at x={box.x0:.1f}, which is left of "
+                           f"the anchor {item['anchor']!r} ending at x={anchor.x1:.1f}")
+            # Same line: a value that drifts to another row lands next to the wrong
+            # label, which reads as filled-in and is wrong.
+            if box.y1 < anchor.y0 or box.y0 > anchor.y1:
+                out.append(f"M4 {item['name']}: placed at y {box.y0:.1f}-{box.y1:.1f}, "
+                           f"anchor sits at {anchor.y0:.1f}-{anchor.y1:.1f}")
+    return out
+
+
+@check("M5", "the overflow check finds a value that does not fit, and clears one that does")
+def m5_overflow(ctx: dict) -> list[str]:
+    out = []
+    clean, spill = ctx["form"]["check_clean"], ctx["form"]["check_overflow"]
+    if clean["overflowing"]:
+        bad = [f["name"] for f in clean["fields"] if f["verdict"] == "overflows"]
+        out.append(f"M5 the fitting fixture reports {clean['overflowing']} overflow(s): {bad}")
+    if not clean["checked"]:
+        out.append("M5 the fitting fixture measured 0 fields — a clean report with "
+                   "nothing measured is not a clean report")
+    hit = [f["name"] for f in spill["fields"] if f["verdict"] == "overflows"]
+    if hit != ["remark"]:
+        out.append(f"M5 the overlong multiline value was reported as {hit or 'nothing'}, "
+                   f"expected ['remark'] — no width measurement can see this, only the "
+                   f"rendered spans can")
+    return out
+
+
+@check("M6", "the proof sheet draws one box per field, in the colour of its verdict")
+def m6_proof(ctx: dict) -> list[str]:
+    import fitz
+    out = []
+    colors = {"fits": (0.13, 0.55, 0.24), "overflows": (0.80, 0.16, 0.16),
+              "not_applicable": (0.45, 0.45, 0.45), "unknown": (0.45, 0.45, 0.45)}
+    doc = fitz.open(ctx["form"]["proof_pdf"])
+    with doc:
+        drawn = [(fitz.Rect(d["rect"]), d.get("color")) for d in doc[0].get_drawings()
+                 if d.get("color")]
+        for field in ctx["form"]["proof_of"]:
+            rect = fitz.Rect(field["rect"])
+            near = [(r, c) for r, c in drawn
+                    if abs(r.x0 - rect.x0) < 1.5 and abs(r.y0 - rect.y0) < 1.5
+                    and abs(r.x1 - rect.x1) < 1.5 and abs(r.y1 - rect.y1) < 1.5]
+            if not near:
+                out.append(f"M6 no box drawn on {field['name']!r} at {field['rect']}")
+                continue
+            want = colors[field["verdict"]]
+            # EVERY box at this spot must agree. `any` would accept a sheet carrying a
+            # green box and a red box on the same field, which tells a reader nothing.
+            wrong = [c for _, c in near
+                     if max(abs(a - b) for a, b in zip(c, want)) >= 0.02]
+            if wrong:
+                out.append(f"M6 {field['name']!r} is {field['verdict']} but carries "
+                           f"box colour(s) {wrong}, expected {want} — a proof sheet that "
+                           f"colours everything the same proves nothing")
+    return out
+
+
 # ── collecting the real output ────────────────────────────────────────────────
 NEEDLES = {1: ["季度经营分析报告", "Quarterly"], 2: ["科目", "营业收入"],
            3: ["第三页为横向版面"]}
@@ -424,7 +589,10 @@ def collect(work: Path) -> dict:
     infos["wrong_password_exit"] = run_script(
         "pdf_info.py", "--in", LOCKED, "--password", "definitely-wrong").returncode
 
+    form = collect_form(work)
+
     return {
+        "form": form,
         "render": {"dir": str(render_dir), "dpi": RENDER_DPI,
                    "requested": list(RENDER_PAGES),
                    "report": json.loads(render_report.read_text(encoding="utf-8"))},
@@ -435,6 +603,93 @@ def collect(work: Path) -> dict:
         "extract": {"json": json.loads(extract_json.read_text(encoding="utf-8")),
                     "overlay": str(overlay), "needles": NEEDLES},
         "info": infos,
+    }
+
+
+def _json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def collect_form(work: Path) -> dict:
+    """Run the whole form pipeline: detect -> extract -> fill (both ways) -> check."""
+    def must(name: str, *args) -> subprocess.CompletedProcess:
+        r = run_script(name, *args)
+        if r.returncode != 0:
+            raise SystemExit(f"[setup] {name} failed: {r.stdout}{r.stderr}")
+        return r
+
+    must("pdf_form_inspect.py", "--in", FORM, "--summary", "--out", work / "sum-acro.json")
+    must("pdf_form_inspect.py", "--in", FORM_FLAT, "--summary", "--out", work / "sum-flat.json")
+    must("pdf_form_inspect.py", "--in", FORM, "--out", work / "fields.json")
+
+    must("pdf_form_fill.py", "--in", FORM, "--out", work / "filled.pdf",
+         "--values", FORM_VALUES, "--report", work / "fill.json")
+    must("pdf_form_fill.py", "--in", FORM_FLAT, "--out", work / "flat.pdf",
+         "--values", FORM_PLACEMENTS, "--mode", "overlay", "--report", work / "flat-fill.json")
+
+    # Values the form cannot hold faithfully. Each one is a thing a filler is tempted
+    # to do anyway — truncate, coerce, paint over — and each produces a file that
+    # looks filled and is wrong.
+    refusals = {}
+    bad = {"a field that does not exist": ({"nope": "x"}, "auto"),
+           "a value outside the combobox choices": ({"dept": "后勤部"}, "auto"),
+           "a value longer than /MaxLen": ({"id_no": "1" * 22}, "auto"),
+           "acroform mode on a form with no fields": ({"applicant": "x"}, "acroform")}
+    for i, (label, (values, mode)) in enumerate(bad.items()):
+        vf = work / f"bad{i}.json"
+        vf.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
+        src = FORM_FLAT if mode == "acroform" else FORM
+        refusals[label] = run_script("pdf_form_fill.py", "--in", src, "--out",
+                                     work / f"bad{i}.pdf", "--values", vf,
+                                     "--mode", mode).returncode
+    for i, (label, item) in enumerate({
+            "an anchor that is not on the page": {"text": "x", "anchor": "不存在的标签"},
+            "an anchor that appears more than once": {"text": "x", "anchor": "："},
+            "text that cannot fit the box it was given":
+                {"name": "n", "text": "远超出方框容量的很长很长很长的中文说明文字",
+                 "page": 1, "rect": [122, 256, 180, 268]}}.items()):
+        vf = work / f"badp{i}.json"
+        vf.write_text(json.dumps({"placements": [item]}, ensure_ascii=False), encoding="utf-8")
+        refusals[label] = run_script("pdf_form_fill.py", "--in", FORM_FLAT, "--out",
+                                     work / f"badp{i}.pdf", "--values", vf,
+                                     "--mode", "overlay").returncode
+
+    must("pdf_form_check.py", "--in", FORM_FILLED, "--out", work / "check-clean.json")
+
+    # The overflowing case is built here, not committed: a fixture carrying a known
+    # defect could not also be handed to the L2 artifact gate as a good sample.
+    long_values = work / "long.json"
+    long_values.write_text(json.dumps(
+        {"applicant": "张国强",
+         "remark": "入职材料齐全，包括身份证复印件、学历学位证书、离职证明、体检报告、"
+                   "银行卡信息以及紧急联系人信息，均已交由人力资源部门归档保存备查"},
+        ensure_ascii=False), encoding="utf-8")
+    must("pdf_form_fill.py", "--in", FORM, "--out", work / "long.pdf",
+         "--values", long_values)
+    must("pdf_form_check.py", "--in", work / "long.pdf", "--out", work / "check-long.json",
+         "--proof", work / "proof.pdf")
+
+    check_long = _json(work / "check-long.json")
+    return {
+        "summary_acro": _json(work / "sum-acro.json"),
+        "summary_flat": _json(work / "sum-flat.json"),
+        "fields": _json(work / "fields.json")["fields"],
+        "values": _json(FORM_VALUES),
+        "fill_report": _json(work / "fill.json"),
+        "placements": _json(FORM_PLACEMENTS)["placements"],
+        "overlay_report": _json(work / "flat-fill.json"),
+        "refusals": refusals,
+        "check_clean": _json(work / "check-clean.json"),
+        "check_overflow": check_long,
+        # The proof sheet is drawn from the overflowing run on purpose: it is the only
+        # one carrying all three verdicts, so a single-colour proof cannot pass M6.
+        "proof_pdf": str(work / "proof.pdf"),
+        # A COPY, not the same list: the proof sheet was drawn from these verdicts at
+        # the time it was drawn. Aliasing them let a flaw injected into the check
+        # report rewrite history, so "the checker mis-verdicted" also lit M6 — a
+        # cascade that cannot happen in reality, where the proof would simply carry
+        # the same wrong verdict.
+        "proof_of": copy.deepcopy(check_long["fields"]),
     }
 
 
@@ -574,7 +829,103 @@ def flaw_fixture_loses_the_rotated_page(ctx, work):
     return ctx
 
 
+# --- form family: each flaw is the shortcut a filler is tempted to take ---
+def flaw_form_always_fillable(ctx, work):
+    """`is_form_pdf` truth-tested instead of compared: a flat PDF reads as a form."""
+    ctx["form"]["summary_flat"]["has_acroform"] = True
+    return ctx
+
+
+def flaw_form_forgets_choices(ctx, work):
+    """Type reported, options dropped — the caller then invents a value."""
+    for f in ctx["form"]["fields"]:
+        if f["type"] == "combobox":
+            f["choices"] = None
+    return ctx
+
+
+def flaw_form_ignores_maxlen(ctx, work):
+    for f in ctx["form"]["fields"]:
+        f["max_length"] = None
+    return ctx
+
+
+def flaw_fill_accepts_anything(ctx, work):
+    """The tempting filler: write what you were given, let the viewer sort it out."""
+    for label in ctx["form"]["refusals"]:
+        ctx["form"]["refusals"][label] = 0
+    return ctx
+
+
+def flaw_fill_drops_a_value(ctx, work):
+    for item in ctx["form"]["fill_report"]["filled"]:
+        if item["name"] == "id_no":
+            item["text"] = item["text"][:18][:10]      # quietly truncated
+    return ctx
+
+
+def flaw_overlay_fixed_position(ctx, work):
+    """Anchor ignored, everything written at one hard-coded spot on the left."""
+    for item in ctx["form"]["overlay_report"]["filled"]:
+        item["rect"] = [20.0, 120.0, 170.0, 137.0]
+    return ctx
+
+
+def flaw_check_misses_overflow(ctx, work):
+    """Width-only checking: it cannot see a multiline value spilling out the bottom."""
+    for f in ctx["form"]["check_overflow"]["fields"]:
+        if f["verdict"] == "overflows":
+            f["verdict"] = "fits"
+    ctx["form"]["check_overflow"]["overflowing"] = 0
+    return ctx
+
+
+def flaw_check_cries_wolf(ctx, work):
+    ctx["form"]["check_clean"]["fields"][0]["verdict"] = "overflows"
+    ctx["form"]["check_clean"]["overflowing"] = 1
+    return ctx
+
+
+def flaw_proof_all_green(ctx, work):
+    """A proof sheet that draws every box the same colour proves nothing.
+
+    Drawn on the blank form, not over the real proof: the first version of this
+    control painted green boxes on top of the correctly coloured ones and M6 passed,
+    because both boxes were present and M6 only asked whether SOME box at that spot
+    had the right colour. The control was wrong AND the check was too lenient.
+    """
+    import fitz
+    src, dst = fitz.open(FORM), work / "proof-green.pdf"
+    with src:
+        for res in ctx["form"]["proof_of"]:
+            src[res["page"] - 1].draw_rect(fitz.Rect(res["rect"]),
+                                           color=(0.13, 0.55, 0.24), width=0.9)
+        src.save(str(dst))
+    ctx["form"]["proof_pdf"] = str(dst)
+    return ctx
+
+
+def flaw_proof_skips_a_field(ctx, work):
+    import fitz
+    src, dst = fitz.open(FORM), work / "proof-empty.pdf"
+    with src:
+        src.save(str(dst))
+    ctx["form"]["proof_pdf"] = str(dst)
+    return ctx
+
+
 FLAWS = [
+    ("form-reports-every-pdf-as-fillable", flaw_form_always_fillable, {"M1"}, ""),
+    ("form-omits-the-combobox-choices", flaw_form_forgets_choices, {"M2"}, ""),
+    ("form-omits-the-length-limit", flaw_form_ignores_maxlen, {"M2"}, ""),
+    ("fill-writes-values-the-form-cannot-hold", flaw_fill_accepts_anything, {"M3"}, ""),
+    ("fill-truncates-a-value-silently", flaw_fill_drops_a_value, {"M3"}, ""),
+    ("overlay-uses-a-fixed-position", flaw_overlay_fixed_position, {"M4"}, ""),
+    ("check-measures-width-only", flaw_check_misses_overflow, {"M5"}, ""),
+    ("check-reports-a-fitting-value-as-overflow", flaw_check_cries_wolf, {"M5"}, ""),
+    ("proof-draws-every-box-green", flaw_proof_all_green, {"M6"}, ""),
+    ("proof-draws-nothing", flaw_proof_skips_a_field, {"M6"}, ""),
+
     ("render-drops-a-page", flaw_drop_page, {"R1"}, ""),
     # R3 deliberately does NOT fire here: the renamed file still holds page 3's
     # pixels and the summary still says page 3, so only the naming contract broke.
