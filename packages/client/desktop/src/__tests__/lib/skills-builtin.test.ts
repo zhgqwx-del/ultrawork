@@ -57,12 +57,17 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   })
 
   it("reports ready when every required tool is present", () => {
-    expect(missingDeps("pdf", present("python3", "pdftoppm"))).toEqual([])
+    // pdf was rewritten onto PyMuPDF (059 S2): Poppler/pdftoppm is no longer a
+    // dependency, and pymupdf is an import probe rather than a PATH lookup.
+    expect(missingDeps("pdf", present("python3", "pymupdf"))).toEqual([])
     expect(missingDeps("doc-edit", present("python3"))).toEqual([])
   })
 
   it("lists exactly the missing tools", () => {
-    expect(missingDeps("pdf", present("python3"))).toEqual(["pdftoppm"])
+    expect(missingDeps("pdf", present("python3"))).toEqual(["pymupdf"])
+    // a machine with Poppler but no PyMuPDF is NOT ready — the old dep would have
+    // made this pass
+    expect(missingDeps("pdf", present("python3", "pdftoppm"))).toEqual(["pymupdf"])
     expect(missingDeps("skill-installer", present())).toEqual(["python3", "git"])
     expect(missingDeps("markdown-exporter", present("pandoc"))).toEqual(["markdown-exporter"])
   })

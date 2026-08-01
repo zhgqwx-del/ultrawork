@@ -4475,19 +4475,44 @@ fn python_probe_allowed(python: &str) -> bool {
     true
 }
 
-/// One-shot feature probe inside a python interpreter: (version >= 3.10, pptx
-/// importable). `find_spec` avoids actually importing the package (fast, no side
-/// effects). Returns None when the interpreter can't run the probe at all (spawn
-/// failure / timeout / non-zero exit, e.g. a Windows Store alias stub) so the
-/// caller can try the next candidate.
-fn run_python_feature_probe(python: &str, timeout: Duration) -> Option<(bool, bool)> {
-    const CODE: &str = "import sys, importlib.util\nprint(1 if sys.version_info >= (3, 10) else 0)\nprint(1 if importlib.util.find_spec('pptx') else 0)";
-    let out = run_probe(sys_cmd(python).args(["-c", CODE]), timeout)?;
+/// Python libraries built-in skills import, as (dep-name shown in the UI, module
+/// name to probe). The dep-name side must match `BUILTIN_DEP_MAP` in
+/// use-skill-deps.ts — that pairing is what turns a skill card's badge on.
+///
+/// Kept as data rather than one boolean per library (discussions/059 §5·补.3):
+/// the hard-coded pair this replaced meant every new skill needed a Rust change,
+/// and the pdf skill was the first to prove it — its badge would otherwise have
+/// reported on python-pptx while the skill imports fitz.
+const PY_MODULES: &[(&str, &str)] = &[("python-pptx", "pptx"), ("pymupdf", "fitz")];
+
+/// One-shot feature probe inside a python interpreter: (version >= 3.10, one flag
+/// per entry of `modules` in order). `find_spec` avoids actually importing the
+/// package (fast, no side effects). Returns None when the interpreter can't run
+/// the probe at all (spawn failure / timeout / non-zero exit, e.g. a Windows Store
+/// alias stub) so the caller can try the next candidate — and also when it prints
+/// fewer lines than asked for, since a short read would otherwise silently become
+/// "that library is missing".
+fn run_python_feature_probe(
+    python: &str,
+    modules: &[(&str, &str)],
+    timeout: Duration,
+) -> Option<(bool, Vec<bool>)> {
+    let mut code = String::from(
+        "import sys, importlib.util\nprint(1 if sys.version_info >= (3, 10) else 0)\n",
+    );
+    for (_, module) in modules {
+        // Module names come from the const above, never from user input.
+        code.push_str(&format!("print(1 if importlib.util.find_spec('{module}') else 0)\n"));
+    }
+    let out = run_probe(sys_cmd(python).args(["-c", &code]), timeout)?;
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines();
     let ver = lines.next().map(|l| l.trim() == "1")?;
-    let pptx = lines.next().map(|l| l.trim() == "1")?;
-    Some((ver, pptx))
+    let mut found = Vec::with_capacity(modules.len());
+    for _ in modules {
+        found.push(lines.next().map(|l| l.trim() == "1")?);
+    }
+    Some((ver, found))
 }
 
 /// Probe the PATH for the external tools built-in skills shell out to, plus
@@ -4518,9 +4543,10 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
     }
 
     // deckcraft hard-requires Python >= 3.10 (its source_to_md converters use
-    // module-level `X | None` unions) and python-pptx for the PPTX export step.
+    // module-level `X | None` unions) and python-pptx for the PPTX export step;
+    // the pdf skill needs PyMuPDF. Both come out of one probe process.
     let mut ver = false;
-    let mut pptx = false;
+    let mut modules: Vec<bool> = vec![false; PY_MODULES.len()];
     // The interpreter the verdict is about — surfaced in the badge tooltip so a
     // "still missing after install" case is self-explanatory (e.g. the user
     // installed a versioned `python3.11` while `python3` still resolves to 3.9).
@@ -4529,15 +4555,21 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
         if !python_probe_allowed(c) {
             continue;
         }
-        if let Some((v, p)) = run_python_feature_probe(c, Duration::from_secs(5)) {
+        if let Some((v, found)) = run_python_feature_probe(c, PY_MODULES, Duration::from_secs(5)) {
             ver = v;
-            pptx = p;
+            modules = found;
             probed = Some(c.clone());
             break;
         }
     }
     deps.push(DepStatus { name: "python3.10+".into(), available: ver, path: probed.clone() });
-    deps.push(DepStatus { name: "python-pptx".into(), available: pptx, path: probed });
+    for (i, (dep_name, _)) in PY_MODULES.iter().enumerate() {
+        deps.push(DepStatus {
+            name: (*dep_name).into(),
+            available: modules.get(i).copied().unwrap_or(false),
+            path: probed.clone(),
+        });
+    }
 
     // deckcraft exports via a headless Chromium engine (Chrome or Edge) — not
     // PATH-probeable on macOS/Windows, so probe the known install locations.
@@ -7466,19 +7498,49 @@ mod builtin_skills_tests {
             p
         };
 
-        // modern python with pptx
-        let both = mk("py-both", "#!/bin/sh\necho 1\necho 1\n");
-        assert_eq!(run_python_feature_probe(both.to_str().unwrap(), Duration::from_secs(5)), Some((true, true)));
-        // modern python, no pptx
-        let ver_only = mk("py-ver", "#!/bin/sh\necho 1\necho 0\n");
-        assert_eq!(run_python_feature_probe(ver_only.to_str().unwrap(), Duration::from_secs(5)), Some((true, false)));
+        let two: &[(&str, &str)] = &[("python-pptx", "pptx"), ("pymupdf", "fitz")];
+        let probe = |p: &std::path::Path, m: &'static [(&'static str, &'static str)]| {
+            run_python_feature_probe(p.to_str().unwrap(), m, Duration::from_secs(5))
+        };
+
+        // modern python with both libraries
+        let both = mk("py-both", "#!/bin/sh\necho 1\necho 1\necho 1\n");
+        assert_eq!(probe(&both, two), Some((true, vec![true, true])));
+        // modern python, second library missing — the flags must stay in declared
+        // order, not collapse into "some library was found"
+        let one = mk("py-one", "#!/bin/sh\necho 1\necho 1\necho 0\n");
+        assert_eq!(probe(&one, two), Some((true, vec![true, false])));
+        let other = mk("py-other", "#!/bin/sh\necho 1\necho 0\necho 1\n");
+        assert_eq!(probe(&other, two), Some((true, vec![false, true])));
+        // old interpreter, libraries present
+        let old = mk("py-old", "#!/bin/sh\necho 0\necho 1\necho 1\n");
+        assert_eq!(probe(&old, two), Some((false, vec![true, true])));
+        // Truncated output must be None, NOT a short vec: silently treating the
+        // missing lines as `false` would report every library as absent on an
+        // interpreter that merely printed less than it was asked to.
+        let short = mk("py-short", "#!/bin/sh\necho 1\necho 1\n");
+        assert_eq!(probe(&short, two), None);
         // broken interpreter / Store alias stub (non-zero exit) -> None (try next candidate)
         let stub = mk("py-stub", "#!/bin/sh\nexit 9\n");
-        assert_eq!(run_python_feature_probe(stub.to_str().unwrap(), Duration::from_secs(5)), None);
+        assert_eq!(probe(&stub, two), None);
         // missing binary -> None, no panic
-        assert_eq!(run_python_feature_probe(dir.join("nope").to_str().unwrap(), Duration::from_secs(5)), None);
+        assert_eq!(probe(&dir.join("nope"), two), None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The dep names the Rust probe publishes must be exactly the python-library
+    /// names the frontend asks about; a typo on either side is a badge that is
+    /// permanently red with nothing to install. use-skill-deps.ts is the other half.
+    #[test]
+    fn py_modules_cover_the_frontend_dep_names() {
+        let dep_map = include_str!("../../src/lib/use-skill-deps.ts");
+        for (dep_name, _) in PY_MODULES {
+            assert!(
+                dep_map.contains(&format!("\"{dep_name}\"")),
+                "{dep_name} is probed in Rust but never required in BUILTIN_DEP_MAP"
+            );
+        }
     }
 
     #[test]
@@ -8073,9 +8135,14 @@ mod builtin_skills_tests {
         if !python_probe_allowed(&py) {
             return; // macOS CLT shim without CLT — executing it would pop a dialog
         }
-        let Some((ver, _pptx)) = run_python_feature_probe(&py, Duration::from_secs(10)) else {
+        // Runs the REAL module list: a name that is not a valid python identifier
+        // would make find_spec raise and the whole probe come back None, which the
+        // fake-interpreter tests cannot see.
+        let Some((ver, found)) = run_python_feature_probe(&py, PY_MODULES, Duration::from_secs(10))
+        else {
             return; // interpreter present but not runnable (stub) — probe correctly rejected it
         };
+        assert_eq!(found.len(), PY_MODULES.len());
         let Ok(out) = sys_cmd(&py)
             .args(["-c", "import sys; print(sys.version_info >= (3, 10))"])
             .output()

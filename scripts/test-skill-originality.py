@@ -37,14 +37,14 @@ spec.loader.exec_module(G)
 # Our own scripts: written for this repo, never derived from the reference corpus.
 # Whatever they score is the detector's false-positive floor.
 #
-# KNOWN LIMIT of this negative sample (2026-08-01): deckcraft/doc-edit do DIFFERENT
-# jobs than the reference skills, so 0.165 is a floor for "unrelated code", not for
-# "same job, written independently". The upcoming pdf/docx/xlsx skills fill the same
-# forms and parse the same OOXML as the references, so their skeletons will legitimately
-# score higher. RE-RUN this calibration once each new skill exists and widen the
-# negative sample to include it — a threshold calibrated only against unrelated code
-# will start crying wolf on same-job code.
-OWN_SKILLS = ["deckcraft", "doc-edit"]
+# KNOWN LIMIT of this negative sample: deckcraft/doc-edit do DIFFERENT jobs than the
+# reference skills, so their score is a floor for "unrelated code", not for "same job,
+# written independently". `pdf` was added 2026-08-01 (059 S2) precisely because it IS
+# same-job code — it reads the same PDFs with the same library as four of the reference
+# skills — so it is the first sample that measures what this threshold actually has to
+# survive. docx/xlsx must be added the same way as S3/S4 land; a threshold calibrated
+# only against unrelated code starts crying wolf on same-job code.
+OWN_SKILLS = ["deckcraft", "doc-edit", "pdf"]
 
 RENAMES = [("field", "entry"), ("writer", "out_doc"), ("reader", "in_doc"),
            ("annotation", "annot"), ("value", "val"), ("page", "pg"),

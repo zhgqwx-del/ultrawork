@@ -268,6 +268,19 @@ skills/builtin/
 
 分离带 **0.165 ~ 0.736**，阈值取 **0.55**（带正中）。
 
+#### 重标定 ①：加入 `pdf`（2026-08-01，S2 收尾义务第 1 条）
+
+`pdf` 是第一个**同活儿**负样本 —— 它用和四家参考同一个库读同样的 PDF，骨架天然更像。实测：
+
+| 负样本 | max | 说明 |
+|---|---|---|
+| deckcraft + doc-edit（不同活儿，22 个 .py） | 0.165 | 旧基线 |
+| **+ pdf（同活儿，5 个 .py）** | **0.168**（`pdf_render.py` ← `qa_text.py`） | 新的最高分，中位 0.135 |
+
+同活儿只把地板抬高了 0.003，分离带变成 **0.168 ~ 0.736**，阈值 0.55 仍在带内、余量充足。
+**这条不是「果然没事」而是「终于量过了」**——在 pdf 落地前，0.165 这个数字对同活儿代码没有任何
+证据力。docx/xlsx 落地时必须照做（`OWN_SKILLS` 加进去再跑一遍）。
+
 #### 两条必须记住的实证
 
 1. **word 级相似度对「看着写」完全无效**。初版只有 5-gram 词相似，实测把一份改了 6 个标识符的复制品判为 `clean`（词相似 0.02，AST 相似 1.00）——**如果没做这个负向控制，我会拿"4 个已知抄袭样本全部打红"当作守卫有效的证据**，而它只能抓逐字节复制这种没人会故意犯的错。
@@ -351,6 +364,25 @@ not yet declaring capabilities.json: pdf, docx(不存在), xlsx(不存在)
 | **P2** | 文本回抽 == 写入文本 | core |
 | **P3** | 填充值不越出字段框（自然文本宽 + 实际 span bbox 双判） | core |
 | **P4** | 中文抽取回来仍是中文，且渲染成字形而非豆腐块 | core |
+
+#### 补丁 ①：旋转页的假阳性（2026-08-01，由 S2 的第一个产物发现）
+
+`cjk_center_ink_fraction` 从 `get_text("rawdict")` 取字符框（**页面坐标系**），却拿
+`get_pixmap` 的栅格（**显示坐标系**）去量。页面带 `/Rotate` 时两者不是一个框，每个字都被量到
+一片空白纸上。实测 `skills/builtin/pdf/fixtures/report-cjk.pdf`：
+
+| 页 | 旋转 | 修复前 | 乘 `page.rotation_matrix` 后 |
+|---|---|---|---|
+| 1 / 2 | 0° | 1.00 | 1.00 |
+| **3** | **90°** | **0.04（判豆腐块）** | **1.00** |
+
+被判红的是**未经改动的源文件本身**，不是产物 ⇒ 缺陷在门禁，不在被测对象。修复=字符框先乘
+`rotation_matrix`。新增一对用例（`rotated` 必须静默 / `rotated-tofu` 必须仍然打红），并跑了
+**控制臂**：把修复回退后，`rotated` 用例立刻 FAIL 而 `rotated-tofu` 仍 PASS ——
+证明修复真的在起作用，且不是靠把检查变瞎换来的静默。自检 46 → **48 passed / 0 failed / 3 skipped**。
+
+> 这是同一类坐标系错误在本轮的**第二次**出现（第一次在 `pdf_extract.py` 自己的 bbox 输出上）。
+> 两处都不是拼写错误，是「PyMuPDF 读用页面系、画用页面系、渲染用显示系」这个非直觉契约。
 
 #### 自检结果（2026-08-01 实测）
 
@@ -593,8 +625,8 @@ soffice 拍板必装后，`xsd` 也被一并列进 L2 的 `REQUIRED_TIERS`。**�
 |---|---|---|---|
 | **S0** | 本方案定稿（形态 A/B 拍板、语料准备、markdown-exporter 去留） | 本文档 + ADR 草案 | **当前窗口** |
 | **S1** ✅ | 先写验收骨架：L0/L1/L2 三个脚本 + **对当前技能跑一遍拿到基线数字** | 3 个脚本 + 基线报告（见 §5 L0/L1/L2） | 已完成 2026-08-01 |
-| **S2** | `pdf` 技能重做（差距最大、依赖最轻、可独立验收） | pdf/ 全套 + L2 通过 | **新窗口** |
-| S2 收尾 | Rust 依赖探测泛化（5·补.3）——pdf 是第一个落地技能，会第一个暴露 badge 说谎 | 探测数据化 | 同窗口 |
+| **S2** 🟡 | `pdf` 技能重做 —— **第一刀（薄切片）已完成 2026-08-01**：P1/P2/P4 三项落地，其余 11 项进 `pending`。见 §六·补 | pdf/ 骨架 + L0/L1/L2 全绿 | 进行中 |
+| S2 收尾 | ✅ Rust 依赖探测泛化（5·补.3）已完成：`run_python_feature_probe` 接受模块名列表，`PY_MODULES` 数据化 | 探测数据化 | 已完成 |
 | **S3** | `xlsx` 技能（含 office 底座首次实现） | xlsx/ + office 底座 | **新窗口** |
 | **S4** | `docx` 技能（最复杂：修订/批注/XSD/CJK） | docx/ | **新窗口**（可能需 2 个） |
 | **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
@@ -611,6 +643,82 @@ soffice 拍板必装后，`xsd` 也被一并列进 L2 的 `REQUIRED_TIERS`。**�
    归批原则 = **谁与本阶段的路由/能力同时生效，就跟谁一批**：
    - **S2**（建 `pdf/` 必然要 pack）：顺带改 `markdown-exporter` 的 description。它现在声明能产 PDF，**与新 pdf 技能是直接冲突，必须同时生效**，不能分两批。
    - **S6**：`doc-export` 断链（`doc-edit/SKILL.md` 三处）+ deckcraft 的路由边界 —— 这两项都与 docx/xlsx 绑定，等三技能齐了再一次改完。
+
+---
+
+## 六·补 — S2 第一刀（薄切片）落地记录（2026-08-01）
+
+目标是**先打通端到端管线**，不是一次铺完 14 项：能力 → 样例 → 产物 → L2 → 报告这条链先跑通，
+后面每加一项能力才有地方挂断言。
+
+### 落地内容
+
+`skills/builtin/pdf/` 从「上游 Apache 版 + 零脚本」整体替换为自写：
+
+| 文件 | 作用 |
+|---|---|
+| `SKILL.md` | 重写。description 明确边界（产物是 PDF→本技能；做 PPT→deckcraft；改 Office→doc-edit），并**白纸黑字列出没实现什么** |
+| `scripts/pdfcommon.py` | 开文件（含加密分支）/ 页范围解析 / 错误出口 |
+| `scripts/pdf_render.py` | **P1** 渲染成图，可控 DPI 与页范围 |
+| `scripts/pdf_extract.py` | **P2** 文字 + bbox 抽取（word/line/block），可选画框校验 PDF |
+| `scripts/pdf_info.py` | **P4** 页数 / 逐页尺寸与旋转 / 加密态与权限位 |
+| `fixtures/` | `make_fixtures.py` + 两个生成的 PDF（三页中文报告含一页旋转 90°；一个 AES-256 加密件） |
+| `capabilities.json` | 3 项 implemented（全部 sample 档）+ **11 项 pending 逐条写理由** |
+| 删除 | `LICENSE.txt`（上游 Apache）、`assets/pdf.png`；`NOTICE` 改为自写声明 |
+
+连带（与 pdf 路由**同批生效**，§6 归批原则）：`markdown-exporter` description 降级、
+`fetch-builtin-skills.ts` 移除 pdf 源、`BUILTIN_DEP_MAP` + Rust 探测改 PyMuPDF、
+`skills/builtin/README.md` 改血缘表。
+
+### 门禁结果（全部本机实测）
+
+| 门禁 | 结果 |
+|---|---|
+| **L0** clean-room | `pdf` clean（0 violation / 0 review）；重标定后分离带 0.168 ~ 0.736，阈值 0.55 仍居中 |
+| **L1** 能力矩阵 | OK。`3/3 pass (3 proved by sample, 1 artifact(s) verified by L2)`，11 项 pending 逐条列出 |
+| **L1 `--no-pending`** | **红**（预期）——欠账未清时验收档必须拒绝 |
+| **L1 `--selftest`** | 13 passed |
+| **L2** 产物合法性 | 48 passed / 0 failed / 3 skipped（新增旋转页正负一对） |
+| **pdf 行为测试** | `scripts/test-pdf-skill.py`：14 条断言 + 16 条负向控制，17 passed，flaw→check 矩阵每行只点亮该点亮的那条 |
+| typecheck / desktop / Rust | 8 task · 857 · 155，全绿 |
+
+### 本轮抓到的两个真缺陷（都是坐标系，且第二个在门禁自己身上）
+
+1. **`pdf_extract.py` 的 bbox 与渲染图对不上**。PyMuPDF 的非直觉契约：`get_text` 给**页面坐标系**
+   （未旋转），`get_pixmap` 渲染**显示坐标系**（旋转后），而 `draw_rect` 又吃页面坐标系。
+   实测旋转 90° 的第 3 页：抽出的框 `(60,75,450,93)` 框内只有 36 个暗像素，映射后的
+   `(502,60,520,450)` 有 2282 个。解法不是二选一而是**两个框都给**（`bbox` / `bbox_display`），
+   因为两个消费场景（写回 PDF / 画到 PNG）真的需要不同的框。
+2. **L2 的豆腐块判据在旋转页上假阳性**（详见 §5 L2 补丁①）。**是 L1 把它抓出来的**——我自己的
+   E2 断言只验「框落在字上」，用的就是 `bbox_display`，所以永远发现不了 L2 用错框。
+   **两层门禁互相咬到了对方漏的那一口**，这是 S1 分层的第一次真实回报。
+
+### 明确没做 / 与原计划的偏差（都是有意的）
+
+- **P1 与 P4 的产物 L2 验不了**：PNG 与 JSON 不在 L2 的 `KIND_BY_SUFFIX` 里，所以「1 artifact
+  verified by L2」指的只有 P2 的画框 PDF。C4 对 P1/P4 实际只证到「退出 0 且产出非空文件」。
+  这个洞由 `scripts/test-pdf-skill.py` 补（R1-R3/R5、I1-I4 都是它在断言），
+  `capabilities.json` 里每项都写了 `verified_by` 指向具体断言号。**不要把 L1 绿当成 P1/P4 验过了。**
+- **`markdown-exporter` 只改掉了 PDF/PPTX 的路由，docx/xlsx 暂留**。原计划是三个格式一起指向新技能，
+  但 docx/xlsx 技能 S3/S4 才存在 —— 现在就把路由指过去，就是复刻 §1 那个
+  `doc-export` 断链缺陷（三处指向不存在的技能）。description 里写明「专用技能建设中，届时接管」。
+- **`x-requires` 只声明 `pymupdf`，没声明 `pypdf`**：本轮没有任何脚本 `import pypdf`。声明一个没人调用的
+  依赖 = 用户机器上凭空多一个红徽标。P7/P11/P12 落地时如果真用到再加。
+- **§3.1 的「当前」列不动**：它记录的是重做**之前**的基线，是「更优」这个说法的对照系。
+  跟着实现改它，等于把对照系抹掉。
+- **没有重跑 `fetch-builtin-skills.ts`**：它的三个源都 pin 在 `ref: "main"`，重跑会把未经审阅的上游
+  变更一起拉进来。收尾义务的实质是「zip 与 `.builtin-version` 一致」，已由重跑 `pack` 达成
+  （sentinel `1bfc9f95d92f9b54` → `85b24ce9b4ae3b77`，两处一致）。`markdown-exporter` 的
+  description patch 已逐字节核对与提交的文件一致，下次真跑 fetch 不会还原。
+- **fixture 的中文没有嵌入字形**（用 PyMuPDF 内置 `china-s`）：本机渲染正常，换台缺中文字体的机器
+  可能就是豆腐块。这正是 pending 里的 P14，**因此本轮所有「中文不豆腐」的绿灯只对本机成立**。
+
+### 下一刀的建议顺序
+
+1. **表单族 P5-P10 一批做**（共用字段模型，L2 的 P3 越界断言已就位，缺的是产生被检对象的入口）。
+2. **P13 + P14 一起做**（字体嵌入不解决，生成能力产出的就是「只在本机不豆腐」的 PDF），
+   顺带把 P1/P4 的产物变成 L2 能读的东西。
+3. P11/P12 需要先扩 L2：多输入保真度、加密产物怎么验。
 
 ---
 

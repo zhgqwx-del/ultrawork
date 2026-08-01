@@ -1,0 +1,49 @@
+{
+  "skill": "pdf",
+  "matrix": "docs/discussions/059-office-skills-revamp.md §3.1",
+  "capabilities": {
+    "P1": {
+      "entry": "scripts/pdf_render.py",
+      "sample": {
+        "args": ["--in", "{fixtures}/report-cjk.pdf", "--out", "{out}",
+                 "--pages", "1,3", "--dpi", "120", "--report", "{out}/render.json"],
+        "produces": ["page-001.png", "page-003.png", "render.json"]
+      },
+      "verified_by": "PNGs are not an artifact type L2 can read; the claims that the images ARE the requested pages and that --dpi is honoured are asserted in scripts/test-pdf-skill.py (R1-R3, R5)"
+    },
+    "P2": {
+      "entry": "scripts/pdf_extract.py",
+      "sample": {
+        "args": ["--in", "{fixtures}/report-cjk.pdf", "--out", "{out}/text.json",
+                 "--granularity", "line", "--overlay", "{out}/boxes.pdf"],
+        "produces": ["text.json", "boxes.pdf"]
+      },
+      "expect": {
+        "contains": ["季度经营分析报告", "营业收入"],
+        "baseline": "{fixtures}/report-cjk.pdf"
+      },
+      "verified_by": "L2 checks the overlay PDF (P1/P2/P4 legality + P5 fidelity: the boxes must not disturb the text layer); the boxes actually landing on glyphs is scripts/test-pdf-skill.py E1-E4"
+    },
+    "P4": {
+      "entry": "scripts/pdf_info.py",
+      "sample": {
+        "args": ["--in", "{fixtures}/report-cjk.pdf", "--out", "{out}/info.json"],
+        "produces": ["info.json"]
+      },
+      "verified_by": "JSON is not an L2 artifact type; page count, geometry, rotation and the three encryption states are asserted in scripts/test-pdf-skill.py (I1-I4)"
+    }
+  },
+  "pending": {
+    "P3": "表格抽取 — 需先定表格判据（PyMuPDF find_tables 的跨页/合并单元格策略）和对应产物断言，与 xlsx 技能的表模型一起定（S3）",
+    "P5": "AcroForm 字段探测 — 表单族 P5-P10 共用一套字段模型，拆开做等于写两遍，整族一批交付",
+    "P6": "表单字段信息抽取 — 同 P5（表单族）",
+    "P7": "AcroForm 填充 — 同 P5（表单族）；写入型能力，要先给 L2 补填充前后的期望",
+    "P8": "无 AcroForm 时的叠加填充 — 同 P5（表单族）",
+    "P9": "bbox 越界校验 — 同 P5（表单族）；L2 的 P3 断言已就位，缺的是产生被检对象的入口",
+    "P10": "填充结果校验图 — 同 P5（表单族）",
+    "P11": "合并/拆分/抽页/旋转 — 多输入写入型能力，L2 的保真度期望目前只接受单个 baseline，要先扩",
+    "P12": "加密/解密/去口令 — 产物是加密 PDF，L2 现有断言全部读不了它，需要先定加密产物怎么验",
+    "P13": "从零生成 PDF — 与 P14 绑定：字体不嵌入就会产出「只在本机不豆腐」的 PDF，先解决嵌入再做生成",
+    "P14": "CJK 字体嵌入 — 需要随技能落一份可再分发的 CJK 字体（许可未查），本轮 fixture 用的是 PyMuPDF 内置 china-s，并未嵌入字形"
+  }
+}

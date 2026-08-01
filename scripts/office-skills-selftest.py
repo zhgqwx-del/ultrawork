@@ -184,6 +184,13 @@ def cjk_center_ink_fraction(page) -> tuple[float, int]:
 
     A .notdef box is hollow: ink on the perimeter, nothing inside. Real characters
     almost always cross their own centre. Returns (fraction, cjk_char_count).
+
+    The rotation_matrix is not optional. get_text reports character boxes in PAGE
+    space (unrotated) while get_pixmap renders DISPLAY space; on a page carrying a
+    /Rotate the two disagree and every character gets measured against a patch of
+    empty paper. Found 2026-08-01 by the first artifact the pdf skill produced: a
+    perfectly rendered 90-degree page scored 0.04 here and 1.00 once mapped. The
+    pdf skill has the same trap in its own bbox output (bbox vs bbox_display).
     """
     import fitz
     chars = [c for b in page.get_text("rawdict")["blocks"] if b.get("lines")
@@ -193,9 +200,11 @@ def cjk_center_ink_fraction(page) -> tuple[float, int]:
         return 0.0, 0
     pix = page.get_pixmap(dpi=TOFU_DPI, colorspace=fitz.csGRAY)
     scale, width, data = TOFU_DPI / 72.0, pix.width, pix.samples
+    rotation = page.rotation_matrix
     inked = 0
     for c in chars:
-        x0, y0, x1, y1 = (v * scale for v in c["bbox"])
+        box = fitz.Rect(c["bbox"]) * rotation
+        x0, y0, x1, y1 = (v * scale for v in box)
         bw, bh = x1 - x0, y1 - y0
         if bw < 3 or bh < 3:
             continue
@@ -1193,6 +1202,12 @@ PDF_LATIN = "Ultrawork office skill artifact"
 
 def build_pdf(path: Path, flaw: str | None = None) -> dict:
     import fitz
+    # A /Rotate page is built by producing the ordinary content and rotating at the
+    # end, so "rotated" and "rotated-tofu" differ from their unrotated twins in
+    # exactly one property. Anything else and a finding could not be attributed to
+    # the rotation.
+    rotate = flaw in ("rotated", "rotated-tofu")
+    flaw = {"rotated": None, "rotated-tofu": "tofu"}.get(flaw, flaw)
     doc = fitz.open()
     page = doc.new_page(width=420, height=260)
 
@@ -1230,6 +1245,9 @@ def build_pdf(path: Path, flaw: str | None = None) -> dict:
         wd.text_fontsize = 11
         page.add_widget(wd)
 
+    if rotate:
+        for pg in doc:
+            pg.set_rotation(90)
     doc.save(str(path))
     doc.close()
     if flaw not in (None, "blank", "missing-text", "cjk-mojibake", "tofu",
@@ -1533,6 +1551,13 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("P3 field value overflows its box", "pdf", "field-overflow", "P3", True),
     ("P4 CJK comes back as mojibake", "pdf", "cjk-mojibake", "P4", True),
     ("P4 CJK renders as tofu boxes", "pdf", "tofu", "P4", True),
+    # The pair that pins cjk_center_ink_fraction's rotation handling. Before the fix
+    # the first of these failed — a correctly rendered rotated page scored 0.04
+    # because the character boxes were read in page space and the raster is in
+    # display space. The second is the control: the fix must not have bought silence
+    # by making the check blind on rotated pages.
+    ("P4 rotated page with real glyphs stays silent", "pdf", "rotated", "", False),
+    ("P4 rotated page with tofu boxes still fires", "pdf", "rotated-tofu", "P4", True),
 ]
 
 

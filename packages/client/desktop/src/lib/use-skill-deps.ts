@@ -20,7 +20,12 @@ export type DepMap = Record<string, DepStatus>
 export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   "skill-creator": ["python3"],
   "skill-installer": ["python3", "git"],
-  pdf: ["python3", "pdftoppm"],
+  // Rewritten as an ultrawork skill (discussions/059 S2): PyMuPDF everywhere, no
+  // Poppler. `pdftoppm` is deliberately gone — nothing in the skill shells out to
+  // it any more, and a required tool nobody calls is a badge that says "not ready"
+  // for no reason. pymupdf is an import probe, not a PATH probe (see the python
+  // module list in src-tauri check_skill_dependencies).
+  pdf: ["python3", "pymupdf"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
   "doc-edit": ["python3"],
   // HTML-first deck generator (discussions/043). python3.10+ (not plain
