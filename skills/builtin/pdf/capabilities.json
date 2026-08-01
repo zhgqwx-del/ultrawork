@@ -202,13 +202,57 @@
         ]
       },
       "verified_by": "L2 checks the proof sheet is a legal PDF that kept the filled values; that a box is drawn per field in the right colour and the right frame is scripts/test-pdf-skill.py M6"
+    },
+    "P13": {
+      "entry": "scripts/pdf_create.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/document.json",
+          "--out",
+          "{out}/report.pdf"
+        ],
+        "produces": [
+          "report.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "营业收入",
+          "附注"
+        ]
+      },
+      "verified_by": "L2 checks the generated PDF (P1 no blank page, P2 the text extracts back, P4 CJK renders as glyphs). Auto-pagination, margin containment and the block types are scripts/test-pdf-skill.py G3-G4"
+    },
+    "P14": {
+      "entry": "scripts/pdf_create.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/document.json",
+          "--out",
+          "{out}/cjk.pdf",
+          "--font-report",
+          "{out}/fonts.json"
+        ],
+        "produces": [
+          "cjk.pdf",
+          "fonts.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "毛利率"
+        ]
+      },
+      "verified_by": "the font report names every font and whether it is EMBEDDED; scripts/test-pdf-skill.py G1 asserts embedded+subset (the negative control is the old insert_text(fontname='china-s') path, which reports ext 'n/a'), G2 asserts subsetting kept the file small, G5 asserts an uncoverable character is refused and that forcing it through produces a document L2 rejects"
     }
   },
   "pending": {
     "P3": "表格抽取 — 需先定表格判据（PyMuPDF find_tables 的跨页/合并单元格策略）和对应产物断言，与 xlsx 技能的表模型一起定（S3）",
     "P11": "合并/拆分/抽页/旋转 — 多输入写入型能力，L2 的保真度期望目前只接受单个 baseline，要先扩",
-    "P12": "加密/解密/去口令 — 产物是加密 PDF，L2 现有断言全部读不了它，需要先定加密产物怎么验",
-    "P13": "从零生成 PDF — 与 P14 绑定：字体不嵌入就会产出「只在本机不豆腐」的 PDF，先解决嵌入再做生成",
-    "P14": "CJK 字体嵌入 — 需要随技能落一份可再分发的 CJK 字体（许可未查），本轮 fixture 用的是 PyMuPDF 内置 china-s，并未嵌入字形"
+    "P12": "加密/解密/去口令 — 产物是加密 PDF，L2 现有断言全部读不了它，需要先定加密产物怎么验"
   }
 }

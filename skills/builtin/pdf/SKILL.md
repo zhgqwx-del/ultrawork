@@ -2,13 +2,15 @@
 name: pdf
 description: >
   Use when the deliverable is a PDF itself — 读PDF / 提取PDF文字 / PDF转图片 /
-  查看PDF页数与加密状态 / 填PDF表单, or extract text with coordinates, render pages
-  to images, report page geometry and encryption state, and fill forms (AcroForm
-  fields when the file has them, anchored text overlay when it does not) with an
-  overflow check and a colour-coded proof sheet. Scripted today: rendering, text +
-  bbox extraction, metadata, and the form family; anything else is done by driving
-  PyMuPDF directly (the capability table below says plainly what does not exist
-  yet). Not for making slide decks from a PDF — that is `deckcraft`; not for
+  查看PDF页数与加密状态 / 填PDF表单 / 生成PDF, or extract text with coordinates,
+  render pages to images, report page geometry and encryption state, fill forms
+  (AcroForm fields when the file has them, anchored text overlay when it does not)
+  with an overflow check and a colour-coded proof sheet, and BUILD a PDF from a
+  document spec with the font genuinely embedded so Chinese survives on machines
+  that have no CJK font installed. Scripted today: rendering, text + bbox
+  extraction, metadata, the form family, and generation; anything else is done by
+  driving PyMuPDF directly (the capability table below says plainly what does not
+  exist yet). Not for making slide decks from a PDF — that is `deckcraft`; not for
   .docx/.xlsx editing — that is `doc-edit`.
 x-requires: [python3, pymupdf]
 ---
@@ -37,8 +39,9 @@ PyMuPDF 是 **AGPL-3.0 或商业授权**。ultrawork **不打包**它，由用�
 | 表单探测与字段抽取 | `scripts/pdf_form_inspect.py` | 有没有 AcroForm；字段类型/选项/长度上限/标志/坐标 |
 | 表单填充 | `scripts/pdf_form_fill.py` | 有域走 AcroForm，无域按锚点或坐标叠加 |
 | 越界校验与校验图 | `scripts/pdf_form_check.py` | 值有没有超出字段框；产出逐字段标色的 PDF |
+| 从零生成 PDF | `scripts/pdf_create.py` | 标题/正文/项目符号/表格/分页；**字体真嵌入并子集化** |
 
-**尚未实现**：表格抽取、合并拆分抽页旋转、加密解密、从零生成 PDF、CJK 字体嵌入。
+**尚未实现**：表格抽取、合并拆分抽页旋转、加密解密。
 清单与欠账理由见同目录 `capabilities.json` 的 `pending` 段；需要这些能力时
 **直接写 PyMuPDF 代码**，不要假装调用不存在的脚本。
 
@@ -98,6 +101,32 @@ python3 scripts/pdf_form_check.py --in filled.pdf --report fill.json \
 
 加密文件加 `--password`。所有脚本的失败都是 **退出码 2 + 一行人话**，不会静默产出空结果。
 
+### 生成文档
+
+```bash
+python3 scripts/pdf_create.py --in doc.json --out report.pdf \
+        --font-report fonts.json
+```
+
+`doc.json` 的 `blocks` 支持 `heading`(1-3 级) / `paragraph` / `bullets` / `table` /
+`spacer` / `pagebreak`，**超出下边距自动分页**。换行同时处理两套规则：中文任意字之间可断，
+西文只在空格处断 —— 只按空格断的话，一整段中文会变成一行不可断的长文本，直接溢出页面。
+
+**字体是真嵌进去的，并做子集化。** 这是这条能力最要紧的一点：
+
+| 写法 | 产物里的字体 | 换台机器 |
+|---|---|---|
+| `insert_text(fontname="china-s")` | `ext='n/a'` —— 只**写了个名字** | 缺中文字体就是空白/豆腐 |
+| `insert_font(fontbuffer=...)` + `subset_fonts()` | `ext='ttf'`，带子集标记 | 自带字形，到哪都一样 |
+
+实测：嵌入未子集化 3,569,129 字节 → 子集化后 **10,675 字节**，仍然是嵌入的、文字仍可抽取。
+用的是 PyMuPDF 自带的 Droid Sans Fallback（Apache-2.0），**本仓库不额外打包字体**；
+`--font 路径.ttf` 可换成任意 TTF/OTF。
+
+**写之前先查字形覆盖**：字体没有的字会画成空白且**不报任何错**，所以缺字直接拒绝生成并列出
+缺哪些（`--allow-missing-glyphs` 可强行写并在报告里点名）。实测强行用只有西文的
+Arial 写中文：中文不是变豆腐而是**整页消失**（渲染全白、文字连抽都抽不出来）。
+
 ## 两个坐标系（用错就是把框画在白纸上）
 
 `pdf_extract.py` 每个条目给**两个**框，单位都是 point、原点左上、y 向下：
@@ -125,14 +154,15 @@ python3 scripts/pdf_form_check.py --in filled.pdf --report fill.json \
 
 ## 中文
 
-`fixtures/` 里的示例用 PyMuPDF 内置的 `china-s` 写中文，**字形并未嵌入文件**：本机能正常
-渲染，换一台缺中文字体的机器就可能是豆腐块。真正的字体嵌入是尚未实现的 P14，生成中文 PDF
-之前先确认这一点。
+- **生成走 `pdf_create.py` 的，字形已嵌入**，到别的机器上不会变豆腐。
+- **`fixtures/` 里的示例 PDF 仍用 `china-s` 且未嵌入**（它们只是本机测试用的输入，不是产物）。
+- 自己直接调 PyMuPDF 写中文时，`insert_text(fontname="china-s")` **不会嵌入字体** ——
+  要嵌入就照 `scripts/pdfwrite.py` 的做法走 `insert_font(fontbuffer=...)` + `subset_fonts()`。
 
 ## 自检
 
 ```bash
-python3 scripts/test-pdf-skill.py            # 仓库根目录下运行；20 条断言 + 逐条负向控制
+python3 scripts/test-pdf-skill.py            # 仓库根目录下运行；25 条断言 + 逐条负向控制
 python3 fixtures/make_fixtures.py            # 仅在示例本身要改时才跑，见下
 ```
 

@@ -48,6 +48,17 @@ FORM_FLAT = FIXTURES / "form-flat.pdf"
 FORM_FILLED = FIXTURES / "form-filled.pdf"
 FORM_VALUES = FIXTURES / "values-acroform.json"
 FORM_PLACEMENTS = FIXTURES / "placements-flat.json"
+DOC_SPEC = FIXTURES / "document.json"
+
+# A Latin-only face, used to prove the glyph-coverage refusal guards a real failure.
+# Absent on non-macOS hosts; the cases that need it report SKIPPED rather than
+# quietly passing.
+LATIN_ONLY_FONT = Path("/System/Library/Fonts/Supplemental/Arial.ttf")
+
+# PyMuPDF ships this CJK face at ~3.5MB. A generated document that carries it
+# unsubset is the failure G2 exists to catch.
+FULL_FONT_BYTES = 3_000_000
+DOC_MARGIN = 56
 
 # What fixtures/form-acroform.pdf is known to contain. Spelled out here rather than
 # read back from the file: an expectation derived from the artifact it checks agrees
@@ -173,7 +184,10 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
              len([p for p in ctx["form"]["placements"] if "anchor" in p]), 2),
             # M6 can only tell colours apart if more than one verdict is present.
             ("distinct proof verdicts",
-             len({f["verdict"] for f in ctx["form"]["proof_of"]}), 3)):
+             len({f["verdict"] for f in ctx["form"]["proof_of"]}), 3),
+            ("fonts in the generated document", len(ctx["create"]["report"]["fonts"]), 2),
+            ("spec strings to look for", len(ctx["create"]["needles"]), 5),
+            ("generated pages measured", len(ctx["create"]["page_boxes"]), 2)):
         if got < need:
             out.append(f"V0 only {got} {label}, need >= {need} — assertions covering "
                        f"them would pass by having nothing to check")
@@ -546,6 +560,100 @@ def m6_proof(ctx: dict) -> list[str]:
     return out
 
 
+@check("G1", "generated documents EMBED their font, subset, on every page")
+def g1_embedded(ctx: dict) -> list[str]:
+    out = []
+    report = ctx["create"]["report"]
+    if not report["fonts"]:
+        return ["G1 the generated document declares no fonts at all"]
+    for f in report["fonts"]:
+        if not f["embedded"]:
+            # This is precisely what fontname="china-s" produces: the file NAMES a
+            # font and hopes the reader has it. It looks perfect on the machine that
+            # made it and turns into blanks anywhere else.
+            out.append(f"G1 page {f['page']}: {f['basefont']} is not embedded "
+                       f"(file_ext {f['file_ext']!r}) — the reader has to already own it")
+        # A subset tag (ABCDEF+Name) is how a subset font announces itself; without
+        # one the whole face went in.
+        if "+" not in (f["basefont"] or ""):
+            out.append(f"G1 page {f['page']}: {f['basefont']} carries no subset tag, "
+                       f"so the entire face was embedded")
+    if not report["all_embedded"]:
+        out.append("G1 the font report itself says not every font is embedded")
+    return out
+
+
+@check("G2", "embedding is paid for by subsetting, not by a 3.5MB file")
+def g2_size(ctx: dict) -> list[str]:
+    got = ctx["create"]["report"]["bytes"]
+    if got >= FULL_FONT_BYTES:
+        return [f"G2 the generated document is {got} bytes, which is the whole "
+                f"unsubset face — subset_fonts() did not run or did not take"]
+    return []
+
+
+def squeeze(s: str) -> str:
+    """Drop every space and line break.
+
+    Laid-out text is not the string that went in: wrapping puts a newline inside a
+    CJK run and turns the space between two Latin words into one. Comparing the raw
+    strings reports a defect on every paragraph long enough to wrap — which is how
+    the first version of G3 failed on correct output.
+    """
+    return "".join(s.split())
+
+
+@check("G3", "the spec's content all lands, and long documents paginate themselves")
+def g3_content(ctx: dict) -> list[str]:
+    out = []
+    text = squeeze("\n".join(ctx["create"]["text_by_page"]))
+    for needle in ctx["create"]["needles"]:
+        if squeeze(needle) not in text:
+            out.append(f"G3 the spec asked for {needle[:40]!r} and it is not in the output")
+    if ctx["create"]["report"]["pages"] < 2:
+        out.append("G3 the spec carries an explicit pagebreak but the output is 1 page")
+    # No pagebreak block at all: the writer has to notice the bottom margin itself.
+    if ctx["create"]["long_pages"] < 2:
+        out.append(f"G3 a document of {ctx['create']['long_blocks']} paragraphs came out "
+                   f"as {ctx['create']['long_pages']} page(s) — nothing paginated it")
+    return out
+
+
+@check("G4", "nothing the generator draws escapes the margins")
+def g4_margins(ctx: dict) -> list[str]:
+    out = []
+    for page in ctx["create"]["page_boxes"]:
+        m, w, h = DOC_MARGIN, page["width"], page["height"]
+        box = page["text_bbox"]
+        if box is None:
+            continue
+        for label, over in (("left", m - box[0]), ("top", m - box[1]),
+                            ("right", box[2] - (w - m)), ("bottom", box[3] - (h - m))):
+            if over > 0.5:
+                out.append(f"G4 page {page['number']}: text runs past the {label} "
+                           f"margin by {over:.1f}pt")
+    return out
+
+
+@check("G5", "a character the font cannot draw is refused, and forcing it is worse")
+def g5_coverage(ctx: dict) -> list[str]:
+    out = []
+    cov = ctx["create"]["coverage"]
+    if cov["refusal_exit"] == 0:
+        out.append("G5 a document containing a character the face has no glyph for "
+                   "was generated without complaint — missing glyphs raise no error "
+                   "of their own, so nothing downstream would ever notice")
+    if cov.get("forced_findings") is None:
+        out.append("G5 SKIPPED: no Latin-only font on this host, so the claim that "
+                   "the refusal prevents a real failure is unproven here")
+    elif not cov["forced_findings"]:
+        # If forcing it through produced a perfectly good document, the refusal is
+        # protecting nobody and should be dropped rather than kept as ceremony.
+        out.append("G5 forcing a Latin-only face onto Chinese text produced a document "
+                   "L2 accepts — then the refusal in G5's first half guards nothing")
+    return out
+
+
 # ── collecting the real output ────────────────────────────────────────────────
 NEEDLES = {1: ["季度经营分析报告", "Quarterly"], 2: ["科目", "营业收入"],
            3: ["第三页为横向版面"]}
@@ -590,9 +698,11 @@ def collect(work: Path) -> dict:
         "pdf_info.py", "--in", LOCKED, "--password", "definitely-wrong").returncode
 
     form = collect_form(work)
+    create = collect_create(work)
 
     return {
         "form": form,
+        "create": create,
         "render": {"dir": str(render_dir), "dpi": RENDER_DPI,
                    "requested": list(RENDER_PAGES),
                    "report": json.loads(render_report.read_text(encoding="utf-8"))},
@@ -691,6 +801,74 @@ def collect_form(work: Path) -> dict:
         # the same wrong verdict.
         "proof_of": copy.deepcopy(check_long["fields"]),
     }
+
+
+def collect_create(work: Path) -> dict:
+    """Generate documents and measure what came out."""
+    import fitz
+
+    def must(*args) -> subprocess.CompletedProcess:
+        r = run_script("pdf_create.py", *args)
+        if r.returncode != 0:
+            raise SystemExit(f"[setup] pdf_create.py failed: {r.stdout}{r.stderr}")
+        return r
+
+    out_pdf, report_path = work / "doc.pdf", work / "fonts.json"
+    must("--in", DOC_SPEC, "--out", out_pdf, "--font-report", report_path)
+    report = _json(report_path)
+
+    spec = _json(DOC_SPEC)
+    needles = [b["text"] for b in spec["blocks"] if b.get("text")]
+    needles += [i for b in spec["blocks"] for i in b.get("items", [])]
+
+    pages, boxes = [], []
+    doc = fitz.open(out_pdf)
+    with doc:
+        for i, page in enumerate(doc, 1):
+            pages.append(page.get_text())
+            spans = [fitz.Rect(sp["bbox"]) for b in page.get_text("dict")["blocks"]
+                     for l in b.get("lines", []) for sp in l["spans"] if sp["text"].strip()]
+            union = None
+            for r in spans:
+                union = r if union is None else union | r
+            boxes.append({"number": i, "width": page.rect.width,
+                          "height": page.rect.height,
+                          "text_bbox": [round(v, 2) for v in union] if union else None})
+
+    # No pagebreak block anywhere: if the writer does not watch the bottom margin
+    # itself, this comes out as one page with text running off it.
+    long_spec, n = work / "long.json", 24
+    para = "本季度营业收入同比增长，毛利率保持稳定，费用结构持续优化，销售费用率下降。" * 3
+    long_spec.write_text(json.dumps(
+        {"blocks": [{"type": "paragraph", "text": f"{i + 1}. {para}"} for i in range(n)]},
+        ensure_ascii=False), encoding="utf-8")
+    long_report = json.loads(must("--in", long_spec, "--out", work / "long.pdf").stdout)
+
+    # Coverage: U+20BB7 is outside the shipped face, so this must be refused.
+    rare = work / "rare.json"
+    rare.write_text(json.dumps({"blocks": [{"type": "paragraph", "text": "生僻字 𠮷"}]},
+                               ensure_ascii=False), encoding="utf-8")
+    coverage = {"refusal_exit": run_script("pdf_create.py", "--in", rare,
+                                           "--out", work / "rare.pdf").returncode,
+                "forced_findings": None}
+    if LATIN_ONLY_FONT.is_file():
+        forced = work / "forced.pdf"
+        r = run_script("pdf_create.py", "--in", DOC_SPEC, "--out", forced,
+                       "--font", LATIN_ONLY_FONT, "--allow-missing-glyphs")
+        if r.returncode == 0:
+            import importlib.util
+            spec_l2 = importlib.util.spec_from_file_location(
+                "l2", REPO / "scripts" / "office-skills-selftest.py")
+            l2 = importlib.util.module_from_spec(spec_l2)
+            spec_l2.loader.exec_module(l2)
+            findings, _, _ = l2.run_checks(forced, {"contains": ["季度经营分析报告"]},
+                                           allow_missing=frozenset({"soffice", "xsd"}))
+            coverage["forced_findings"] = findings
+
+    return {"report": report, "pdf": str(out_pdf), "needles": needles,
+            "text_by_page": pages, "page_boxes": boxes,
+            "long_pages": long_report["pages"], "long_blocks": n,
+            "coverage": coverage}
 
 
 # ── negative controls ─────────────────────────────────────────────────────────
@@ -914,7 +1092,78 @@ def flaw_proof_skips_a_field(ctx, work):
     return ctx
 
 
+# --- generation: the shortcut is to NAME a font instead of carrying it ---
+def flaw_create_names_the_font(ctx, work):
+    """The exact thing the fixtures did before P14: insert_text(fontname='china-s').
+
+    Not a hand-edited report — a real document built the tempting way, measured by
+    the same reader. It renders perfectly on this machine.
+    """
+    import fitz
+    dst = work / "named-font.pdf"
+    doc = fitz.open()
+    # Two pages, matching the real document's shape: a control that is also SMALLER
+    # than what it replaces trips the vacuity guard, and then it is unclear which
+    # difference the check reacted to.
+    for _ in range(2):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((56, 100), "季度经营分析报告", fontname="china-s", fontsize=20)
+    doc.save(str(dst))
+    fonts = []
+    with fitz.open(dst) as check:
+        for number in range(check.page_count):
+            for entry in check[number].get_fonts(full=True):
+                _, ext, ftype, basefont, alias, encoding = entry[:6]
+                fonts.append({"page": number + 1, "basefont": basefont, "alias": alias,
+                              "type": ftype, "encoding": encoding,
+                              "embedded": ext != "n/a", "file_ext": ext})
+    ctx["create"]["report"]["fonts"] = fonts
+    ctx["create"]["report"]["all_embedded"] = all(f["embedded"] for f in fonts)
+    return ctx
+
+
+def flaw_create_skips_subsetting(ctx, work):
+    """Embedded, but the whole 3.5MB face went along with it."""
+    ctx["create"]["report"]["bytes"] = 3_569_129
+    for f in ctx["create"]["report"]["fonts"]:
+        f["basefont"] = f["basefont"].split("+")[-1]
+    return ctx
+
+
+def flaw_create_loses_a_block(ctx, work):
+    ctx["create"]["text_by_page"] = [t.replace("主要指标", "")
+                                     for t in ctx["create"]["text_by_page"]]
+    return ctx
+
+
+def flaw_create_never_paginates(ctx, work):
+    """One tall page instead of breaking: everything past the margin is off-paper."""
+    ctx["create"]["long_pages"] = 1
+    return ctx
+
+
+def flaw_create_runs_off_the_page(ctx, work):
+    box = ctx["create"]["page_boxes"][0]
+    box["text_bbox"] = [box["text_bbox"][0], box["text_bbox"][1],
+                        box["width"] - 10, box["text_bbox"][3]]
+    return ctx
+
+
+def flaw_create_ignores_coverage(ctx, work):
+    ctx["create"]["coverage"]["refusal_exit"] = 0
+    return ctx
+
+
 FLAWS = [
+    ("create-names-the-font-instead-of-embedding", flaw_create_names_the_font, {"G1"}, ""),
+    ("create-embeds-without-subsetting", flaw_create_skips_subsetting, {"G1", "G2"},
+     "G1 also fires: dropping the subset tag is how an unsubset face presents itself, "
+     "and both checks read the same basefont string"),
+    ("create-drops-a-heading", flaw_create_loses_a_block, {"G3"}, ""),
+    ("create-never-breaks-a-page", flaw_create_never_paginates, {"G3"}, ""),
+    ("create-draws-past-the-margin", flaw_create_runs_off_the_page, {"G4"}, ""),
+    ("create-writes-glyphs-the-font-lacks", flaw_create_ignores_coverage, {"G5"}, ""),
+
     ("form-reports-every-pdf-as-fillable", flaw_form_always_fillable, {"M1"}, ""),
     ("form-omits-the-combobox-choices", flaw_form_forgets_choices, {"M2"}, ""),
     ("form-omits-the-length-limit", flaw_form_ignores_maxlen, {"M2"}, ""),

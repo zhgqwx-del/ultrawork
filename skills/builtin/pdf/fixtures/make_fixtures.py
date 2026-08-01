@@ -202,6 +202,29 @@ def build_form_flat(path: Path) -> None:
     doc.close()
 
 
+# The generation spec. Deliberately exercises every block type plus an explicit
+# page break, and carries enough text that the wrapper has to break both CJK runs
+# and Latin words on the same line.
+DOCUMENT_SPEC = {
+    "page": {"size": "A4", "orientation": "portrait", "margin": 56},
+    "font_size": 11,
+    "blocks": [
+        {"type": "heading", "text": TITLE, "level": 1},
+        {"type": "paragraph", "text": BODY + " This sentence is Latin, so the line "
+                                             "breaker has to apply both rules at once."},
+        {"type": "heading", "text": "主要指标", "level": 2},
+        {"type": "bullets", "items": ["营业收入 1,240 万元", "毛利率 38.0%",
+                                      "经营性现金流净额 210 万元"]},
+        {"type": "table", "header": list(TABLE[0]),
+         "rows": [list(r) for r in TABLE[1:]]},
+        {"type": "spacer", "height": 10},
+        {"type": "pagebreak"},
+        {"type": "heading", "text": "附注", "level": 2},
+        {"type": "paragraph", "text": "第二页用于验证自动分页、页边距与字体子集化。"},
+    ],
+}
+
+
 def write_inputs() -> None:
     """The values files the capability samples feed to pdf_form_fill.py.
 
@@ -218,6 +241,8 @@ def write_inputs() -> None:
          "offset": [8, 2], "width": 170, "size": 9},
         {"name": "remark", "text": "入职材料齐全", "page": 1,
          "rect": [122, 256, 422, 274]}]}
+    (HERE / "document.json").write_text(
+        json.dumps(DOCUMENT_SPEC, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (HERE / "placements-flat.json").write_text(
         json.dumps(placements, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
