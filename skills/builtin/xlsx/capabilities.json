@@ -111,6 +111,165 @@
       },
       "verified_by": "JSON is not an L2 artifact type, and the sample deliberately runs on a CLEAN workbook: it proves the scan executes and reports no error/missing/circular finding. DETECTION is asserted separately in scripts/test-xlsx-skill.py (A1-A4), which builds the broken workbook itself — a deliberately corrupt fixture could not also be handed to L2 as a good artifact. A6 pins the two false positives the parser had to survive: a reference inside a string literal, and LOG10( parsing as cell LOG10"
     },
+    "X6": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/formatted.xlsx",
+          "--sheet",
+          "利润表",
+          "--range",
+          "B3:C5",
+          "--number-format",
+          "#,##0",
+          "--font-color",
+          "0000FF",
+          "--bold",
+          "--fill",
+          "FFF2CC",
+          "--border",
+          "thin",
+          "--report",
+          "{out}/format.json"
+        ],
+        "produces": [
+          "formatted.xlsx",
+          "format.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "this is the FIRST capability to go through office/rebuild.py — openpyxl rebuilds the package and the graft puts back what it dropped. L2's F1/F3 are the assertion that matters: the three customXml parts openpyxl loses on every save must be back, and the chart/conditional-format/freeze/filter the fixture already had must survive a rebuild that was only asked to change a font. That the format lands on the named range and nowhere else, and that setting only a colour does not reset the size and face, is scripts/test-xlsx-skill.py S1-S2"
+    },
+    "X7": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/conditional.xlsx",
+          "--sheet",
+          "利润表",
+          "--rules",
+          "{fixtures}/rules.json",
+          "--report",
+          "{out}/conditional.json"
+        ],
+        "produces": [
+          "conditional.xlsx",
+          "conditional.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's F3 asserts the rule count does not DECREASE, which is the fidelity half. That all three rule kinds (cellIs / colorScale / dataBar) actually arrive, on the ranges asked for, and that the rule the fixture already carried is still there, is scripts/test-xlsx-skill.py S3"
+    },
+    "X8": {
+      "entry": "scripts/xlsx_chart.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/charted.xlsx",
+          "--sheet",
+          "汇总",
+          "--type",
+          "column",
+          "--data",
+          "利润表!B2:C4",
+          "--categories",
+          "利润表!A3:A4",
+          "--anchor",
+          "D18",
+          "--title",
+          "季度对比",
+          "--report",
+          "{out}/chart.json"
+        ],
+        "produces": [
+          "charted.xlsx",
+          "chart.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's F3 counts chart parts from the PACKAGE rather than through openpyxl (a chart it failed to parse would read as absent on both sides and cancel out), so it catches a rebuild that dropped the fixture's existing chart. That a SECOND chart really was added, that its series take their names from the header row rather than coming out as Series1/Series2, and that its data reference points at the requested range on the requested sheet, is scripts/test-xlsx-skill.py S5"
+    },
+    "X9": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/panes.xlsx",
+          "--sheet",
+          "利润表",
+          "--freeze",
+          "C6",
+          "--filter",
+          "A2:C5",
+          "--report",
+          "{out}/panes.json"
+        ],
+        "produces": [
+          "panes.xlsx",
+          "panes.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "the sample deliberately sets values DIFFERENT from the fixture's own (which already freezes at A3 and filters A2:D5) — reusing them would make the sample pass whether or not it did anything. That the new values are the ones in the artifact is scripts/test-xlsx-skill.py S4"
+    },
     "X10": {
       "entry": "scripts/xlsx_write.py",
       "sample": {
@@ -182,10 +341,6 @@
   },
   "pending": {
     "X4": "formula evaluation. Needs both halves before it is honest: LibreOffice recalculation AND the pure-Python evaluator it is cross-validated against (059 §7), whose supported-function boundary has to be measured and written into the gate rather than asserted",
-    "X6": "number formats / fonts / fills / borders — needs the openpyxl write path plus the graft, which is built (office/package.py) but has no capability hanging off it yet",
-    "X7": "conditional formatting — same write path as X6",
-    "X8": "charts — same write path as X6",
-    "X9": "freeze panes / auto filter — same write path as X6",
     "X11": "CSV / JSON import and export",
     "X12": "streaming read of large workbooks (openpyxl read_only). A beyond-reference item: the claim is a bounded-memory read, so it needs a large fixture and a measured memory ceiling, not just a flag",
     "X13": "convert to PDF / preview image via LibreOffice — the office/soffice.py probe and converter are written and used by the gate, but no capability entry drives them yet",

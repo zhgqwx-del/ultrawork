@@ -45,6 +45,9 @@ CUSTOM_XML_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 relationships/customXmlProps" Target="itemProps1.xml"/></Relationships>
 """
 
+DATA_FONT = "宋体"
+DATA_FONT_SIZE = 12
+
 INCOME_ROWS = [
     ("营业收入", 1240, 1103),
     ("营业成本", 769, 702),
@@ -72,6 +75,12 @@ def build_book(path: Path) -> None:
         ws[f"A{i}"], ws[f"B{i}"], ws[f"C{i}"] = name, now, prev
         ws[f"D{i}"] = f"=B{i}/C{i}-1"
         ws[f"D{i}"].number_format = "0.0%"
+        # A DELIBERATELY non-default face and size on the number cells. Without it,
+        # "changing the colour resets the font" is invisible: assigning a fresh
+        # Font() lands on Calibri 11, which is what the cell already had, and the
+        # negative control for that defect cannot fire. Asserted by V0.
+        for col in "BC":
+            ws[f"{col}{i}"].font = Font(name=DATA_FONT, size=DATA_FONT_SIZE)
     ws["A5"] = "毛利"
     ws["B5"], ws["C5"] = "=B3-B4", "=C3-C4"
     ws["D5"] = "=B5/C5-1"

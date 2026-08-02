@@ -377,6 +377,118 @@ def collect(work: Path) -> dict:
     ctx["refuse"] = {"cases": refusals, "legit_exit": ok.returncode,
                      "legit_formula": cells_of(linked, "利润表", ["C7"])["C7"]}
 
+    # --- the rebuild path: openpyxl object model + graft -----------------------
+    fmt = work / "formatted.xlsx"
+    f = run_script("xlsx_format.py", "--in", BOOK, "--out", fmt, "--sheet", "利润表",
+                   "--range", "B3:C5", "--number-format", "#,##0",
+                   "--font-color", "0000FF", "--bold", "--fill", "FFF2CC",
+                   "--border", "thin", "--report", work / "format.json")
+    fmt_report = json.loads((work / "format.json").read_text(encoding="utf-8"))
+
+    cond = work / "conditional.xlsx"
+    run_script("xlsx_format.py", "--in", BOOK, "--out", cond, "--sheet", "利润表",
+               "--rules", FIXTURES / "rules.json")
+    panes = work / "panes.xlsx"
+    run_script("xlsx_format.py", "--in", BOOK, "--out", panes, "--sheet", "利润表",
+               "--freeze", "C6", "--filter", "A2:C5")
+    charted = work / "charted.xlsx"
+    c = run_script("xlsx_chart.py", "--in", BOOK, "--out", charted, "--sheet", "汇总",
+                   "--type", "column", "--data", "利润表!B2:C4",
+                   "--categories", "利润表!A3:A4", "--anchor", "D18",
+                   "--title", "季度对比", "--report", work / "chart.json")
+    chart_report = json.loads((work / "chart.json").read_text(encoding="utf-8"))
+
+    import openpyxl as _o
+
+    def style_probe(path: Path, sheet: str, refs: list[str]) -> dict:
+        wb = _o.load_workbook(path)
+        try:
+            ws = wb[sheet]
+            out = {}
+            for r in refs:
+                cell = ws[r]
+                fill = cell.fill
+                out[r] = {
+                    "number_format": cell.number_format,
+                    "bold": bool(cell.font.bold),
+                    "color": cell.font.color.rgb if cell.font.color
+                    and isinstance(cell.font.color.rgb, str) else None,
+                    "size": cell.font.size, "name": cell.font.name,
+                    "fill": fill.start_color.rgb if fill and fill.fill_type
+                    and isinstance(fill.start_color.rgb, str) else None,
+                    "border": cell.border.left.style,
+                }
+            return out
+        finally:
+            wb.close()
+
+    def cf_probe(path: Path, sheet: str) -> dict:
+        wb = _o.load_workbook(path)
+        try:
+            ws = wb[sheet]
+            out: dict[str, list[str]] = {}
+            for rng in ws.conditional_formatting:
+                out.setdefault(str(rng.sqref), []).extend(r.type for r in rng.rules)
+            return out
+        finally:
+            wb.close()
+
+    def chart_probe(path: Path, sheet: str) -> dict:
+        wb = _o.load_workbook(path)
+        try:
+            ws = wb[sheet]
+            titles = []
+            refs = []
+            for ch in ws._charts:
+                for s in ch.series:
+                    titles.append(getattr(getattr(s.tx, "strRef", None), "f", None)
+                                  if s.tx else None)
+                    refs.append(s.val.numRef.f if s.val and s.val.numRef else None)
+            return {"count": len(ws._charts), "series_titles": titles,
+                    "series_refs": refs}
+        finally:
+            wb.close()
+
+    base_style = style_probe(BOOK, "利润表", ["B3", "D3"])
+    ctx["rebuild"] = {
+        "format_exit": f.returncode, "chart_exit": c.returncode,
+        "format_report": fmt_report, "chart_report": chart_report,
+        "style": style_probe(fmt, "利润表", ["B3", "C5", "D3"]),
+        "style_before": base_style,
+        "custom_parts": {
+            tag: sum(1 for n in parts_of(p) if n.startswith("customXml"))
+            for tag, p in (("format", fmt), ("conditional", cond),
+                           ("panes", panes), ("chart", charted))},
+        "custom_parts_in": sum(1 for n in parts_of(BOOK) if n.startswith("customXml")),
+        "cf": cf_probe(cond, "利润表"),
+        "cf_before": cf_probe(BOOK, "利润表"),
+        "panes": (lambda p: {"freeze": p[0], "filter": p[1]})(
+            (lambda wb: (wb["利润表"].freeze_panes, wb["利润表"].auto_filter.ref))(
+                _o.load_workbook(panes))),
+        "panes_before": {"freeze": "A3", "filter": "A2:D5"},
+        "chart": chart_probe(charted, "汇总"),
+        "chart_before": chart_probe(BOOK, "汇总"),
+    }
+
+    # Fault injection: make the graft restore nothing and assert the rebuild REFUSES.
+    # Same shape as the L2 gate's broken-soffice cases — a repair path nobody has
+    # watched fail is not evidence that it repairs anything.
+    probe = ("import sys, pathlib\n"
+             f"sys.path.insert(0, {str(SKILL / 'scripts')!r})\n"
+             "from office import rebuild as R\n"
+             "R.graft_missing_parts = lambda base, prod: "
+             "{'restored': [], 'skipped': [], 'restored_count': 0, 'skipped_count': 0}\n"
+             f"out = pathlib.Path({str(work / 'nograft.xlsx')!r})\n"
+             "try:\n"
+             f"    R.rebuild(pathlib.Path({str(BOOK)!r}), out, lambda wb: None)\n"
+             "    print('RAISED=no')\n"
+             "except R.RebuildError as e:\n"
+             "    print('RAISED=yes', 'customXml' in str(e))\n"
+             "print('WROTE=', out.exists())\n")
+    fault = subprocess.run([PY, "-c", probe], capture_output=True, text=True,
+                           encoding="utf-8", timeout=300)
+    ctx["graft_fault"] = {"stdout": fault.stdout.strip(), "exit": fault.returncode}
+
     # --- stdout budget and the in-place contract -------------------------------
     big = work / "big.xlsx"
     big_workbook(big, SCALE_ROWS)
@@ -436,6 +548,15 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
         if got < need:
             out.append(f"V0 only {got} {label} (need at least {need}) — the "
                        f"assertions that rest on them cannot fail")
+    # S2's whole discriminating power rests on the fixture's font NOT being the
+    # openpyxl default: a wholesale Font() assignment lands on Calibri 11, so if
+    # B3 already were Calibri 11 the negative control would be a no-op that reads
+    # as a pass. The first version of this fixture was exactly that.
+    b3 = ctx["rebuild"]["style_before"]["B3"]
+    if b3["name"] in (None, "Calibri") or b3["size"] in (None, 11.0):
+        out.append(f"V0 the fixture's B3 font is {b3['name']!r} {b3['size']} — the "
+                   f"openpyxl default, so S2's control cannot tell a preserved font "
+                   f"from a reset one")
     return out
 
 
@@ -827,6 +948,135 @@ def q3_accept_legit(ctx: dict) -> list[str]:
     return []
 
 
+@check("S1", "formatting lands on the named range and nowhere else")
+def s1_format_scope(ctx: dict) -> list[str]:
+    s = ctx["rebuild"]["style"]
+    out = []
+    for ref in ("B3", "C5"):
+        cell = s[ref]
+        if cell["number_format"] != "#,##0":
+            out.append(f"S1 {ref} number format is {cell['number_format']!r}")
+        if not cell["bold"] or cell["color"] != "FF0000FF":
+            out.append(f"S1 {ref} font is bold={cell['bold']} color={cell['color']}")
+        if cell["fill"] != "FFFFF2CC":
+            out.append(f"S1 {ref} fill is {cell['fill']!r}, expected FFFFF2CC")
+        if cell["border"] != "thin":
+            out.append(f"S1 {ref} border is {cell['border']!r}")
+    # D3 is OUTSIDE B3:C5. A formatter that quietly applies to the whole sheet
+    # passes every check above.
+    if ctx["rebuild"]["style"]["D3"]["fill"] == "FFFFF2CC":
+        out.append("S1 D3 is outside the requested range and was formatted anyway")
+    return out
+
+
+@check("S2", "setting one font attribute keeps the others the cell already had")
+def s2_font_merge(ctx: dict) -> list[str]:
+    """`Font(color=...)` replaces the whole font object.
+
+    Assigning a fresh Font to change a colour silently resets size and typeface to
+    the defaults — the "I made one number blue and the row changed size" failure.
+    """
+    before, after = ctx["rebuild"]["style_before"]["B3"], ctx["rebuild"]["style"]["B3"]
+    out = []
+    if after["size"] != before["size"]:
+        out.append(f"S2 B3 font size changed from {before['size']} to {after['size']} "
+                   f"while only the colour was asked for")
+    if after["name"] != before["name"]:
+        out.append(f"S2 B3 typeface changed from {before['name']!r} to {after['name']!r}")
+    return out
+
+
+@check("S3", "every conditional-format rule kind arrives, and the existing one survives")
+def s3_conditional(ctx: dict) -> list[str]:
+    cf, before = ctx["rebuild"]["cf"], ctx["rebuild"]["cf_before"]
+    out = []
+    want = {"D3:D5": "cellIs", "B3:B5": "colorScale", "C3:C5": "dataBar"}
+    for rng, kind in want.items():
+        kinds = cf.get(rng, [])
+        if kind not in kinds:
+            out.append(f"S3 no {kind} rule on {rng} (got {kinds or 'nothing'})")
+    # The fixture already carried a rule on D3:D5. Adding one must not replace it.
+    kept = len(cf.get("D3:D5", []))
+    if kept < len(before.get("D3:D5", [])) + 1:
+        out.append(f"S3 D3:D5 holds {kept} rule(s); the fixture's own rule was "
+                   f"replaced rather than added to")
+    return out
+
+
+@check("S4", "freeze panes and auto filter are set to the requested values")
+def s4_panes(ctx: dict) -> list[str]:
+    p, before = ctx["rebuild"]["panes"], ctx["rebuild"]["panes_before"]
+    out = []
+    if p["freeze"] != "C6":
+        out.append(f"S4 freeze_panes is {p['freeze']!r}, expected C6"
+                   + (" — that is the fixture's own value, so nothing happened"
+                      if p["freeze"] == before["freeze"] else ""))
+    if p["filter"] != "A2:C5":
+        out.append(f"S4 auto_filter is {p['filter']!r}, expected A2:C5"
+                   + (" — the fixture's own value" if p["filter"] == before["filter"]
+                      else ""))
+    return out
+
+
+@check("S5", "a chart is added, named from the header, pointing at the requested data")
+def s5_chart(ctx: dict) -> list[str]:
+    c, before = ctx["rebuild"]["chart"], ctx["rebuild"]["chart_before"]
+    out = []
+    if c["count"] != before["count"] + 1:
+        out.append(f"S5 汇总 holds {c['count']} chart(s), was {before['count']} — "
+                   f"the new one replaced the fixture's instead of joining it")
+    if not c["series_titles"] or not all(c["series_titles"]):
+        out.append("S5 a series has no title reference — without titles_from_data the "
+                   "legend reads Series1/Series2 and the chart is unreadable")
+    refs = " ".join(r for r in c["series_refs"] if r)
+    if "利润表" not in refs:
+        out.append(f"S5 no series points at the requested sheet: {c['series_refs']}")
+    return out
+
+
+@check("G1", "every rebuild-path script gets the dropped parts back")
+def g1_graft(ctx: dict) -> list[str]:
+    """The headline of this slice.
+
+    openpyxl drops all three customXml parts on ANY save. Each of these four
+    artifacts went through load→mutate→save, so each is a chance to lose them.
+    """
+    r = ctx["rebuild"]
+    want = r["custom_parts_in"]
+    out = []
+    if want < 3:
+        return [f"G1 the input carries only {want} customXml part(s); the graft has "
+                f"nothing to prove"]
+    for tag, got in r["custom_parts"].items():
+        if got != want:
+            out.append(f"G1 {tag}: {got}/{want} customXml parts survived the rebuild")
+    if not r["format_report"]["grafted"]:
+        out.append("G1 the report claims nothing was grafted, yet openpyxl always "
+                   "drops these parts — the repair is not being recorded")
+    if r["format_report"]["still_missing"]:
+        out.append(f"G1 still missing after the graft: "
+                   f"{r['format_report']['still_missing']}")
+    return out
+
+
+@check("G2", "a rebuild that cannot restore what it lost writes nothing")
+def g2_graft_fault(ctx: dict) -> list[str]:
+    """Fault injection: the graft is disabled and the rebuild must refuse.
+
+    Without this, G1 passing proves the parts survive — not that anything would
+    notice if they stopped. A repair path nobody has watched fail is not evidence.
+    """
+    got = ctx["graft_fault"]["stdout"]
+    out = []
+    if "RAISED=yes" not in got:
+        out.append(f"G2 with the graft disabled the rebuild did not refuse: {got!r}")
+    elif "True" not in got.split("RAISED=yes")[1].split("\n")[0]:
+        out.append("G2 it refused but did not name the part it lost")
+    if "WROTE= False" not in got:
+        out.append(f"G2 a file was written despite the refusal: {got!r}")
+    return out
+
+
 # ── negative controls ─────────────────────────────────────────────────────────
 def flaw_write_via_load_save(ctx, work):
     """The implementation everyone reaches for first, measured on the same edit."""
@@ -1089,7 +1339,104 @@ def flaw_write_refuses_every_cross_sheet(ctx, work):
     return ctx
 
 
+def _style(ctx, ref, **kw):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["style"][ref].update(kw)
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_format_applies_to_whole_sheet(ctx, work):
+    return _style(ctx, "D3", fill="FFFFF2CC")
+
+
+def flaw_format_misses_the_range(ctx, work):
+    return _style(ctx, "C5", number_format="General", bold=False, color=None,
+                  fill=None, border=None)
+
+
+def flaw_font_replaced_wholesale(ctx, work):
+    """`cell.font = Font(color=...)` — the one-liner that resets size and face."""
+    return _style(ctx, "B3", size=11.0, name="Calibri")
+
+
+def flaw_conditional_replaces_existing(ctx, work):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["cf"]["D3:D5"] = ["cellIs"]
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_conditional_drops_a_kind(ctx, work):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["cf"].pop("C3:C5", None)
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_panes_left_at_the_fixture_value(ctx, work):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["panes"] = dict(r["panes_before"])
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_chart_replaces_the_existing_one(ctx, work):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["chart"]["count"] = r["chart_before"]["count"]
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_chart_series_unnamed(ctx, work):
+    """titles_from_data left off: the legend reads Series1, Series2."""
+    r = copy.deepcopy(ctx["rebuild"])
+    r["chart"]["series_titles"] = [None] * len(r["chart"]["series_titles"])
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_rebuild_without_graft(ctx, work):
+    """What `load → mutate → save` does on its own: the customXml parts are gone."""
+    r = copy.deepcopy(ctx["rebuild"])
+    r["custom_parts"] = {k: 0 for k in r["custom_parts"]}
+    r["format_report"] = {**r["format_report"], "grafted": []}
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_graft_reports_a_repair_it_did_not_make(ctx, work):
+    r = copy.deepcopy(ctx["rebuild"])
+    r["format_report"] = {**r["format_report"],
+                          "still_missing": ["customXml/item1.xml"]}
+    ctx["rebuild"] = r
+    return ctx
+
+
+def flaw_rebuild_writes_anyway(ctx, work):
+    ctx["graft_fault"] = {"stdout": "RAISED=no\nWROTE= True", "exit": 0}
+    return ctx
+
+
 FLAWS = [
+    ("format-applies-to-the-whole-sheet", flaw_format_applies_to_whole_sheet,
+     {"S1"}, ""),
+    ("format-never-reaches-the-range", flaw_format_misses_the_range, {"S1"}, ""),
+    ("font-assigned-wholesale-resets-size-and-face", flaw_font_replaced_wholesale,
+     {"S2"}, ""),
+    ("conditional-rule-replaces-the-existing-one", flaw_conditional_replaces_existing,
+     {"S3"}, ""),
+    ("conditional-drops-a-rule-kind", flaw_conditional_drops_a_kind, {"S3"}, ""),
+    ("panes-left-at-the-fixture-value", flaw_panes_left_at_the_fixture_value,
+     {"S4"}, ""),
+    ("chart-replaces-the-existing-one", flaw_chart_replaces_the_existing_one,
+     {"S5"}, ""),
+    ("chart-series-come-out-unnamed", flaw_chart_series_unnamed, {"S5"}, ""),
+    ("rebuild-without-the-graft", flaw_rebuild_without_graft, {"G1"}, ""),
+    ("graft-claims-a-repair-it-did-not-make", flaw_graft_reports_a_repair_it_did_not_make,
+     {"G1"}, ""),
+    ("rebuild-writes-a-lossy-file-anyway", flaw_rebuild_writes_anyway, {"G2"}, ""),
+
     ("audit-names-the-token-but-not-the-cause", flaw_audit_scans_formulas_only,
      {"A1"}, ""),
     ("audit-only-scans-for-existing-tokens", flaw_audit_misses_missing_sheet,

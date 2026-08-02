@@ -41,8 +41,12 @@ python3 -m pip install openpyxl lxml
 | 跨表引用 | `scripts/xlsx_write.py --set-formula` | 写之前先验目标表在不在 |
 | 公式体检 | `scripts/xlsx_audit.py` | 错误值 / 引用了不存在的表 / **循环引用** / 未计算 |
 | 中文列宽自适应 | `scripts/xlsx_write.py --autofit` | 按**显示宽度**算，汉字算两格 |
+| 数字格式/字体/填充/边框 | `scripts/xlsx_format.py --range` | 走重建+graft，见下 |
+| 条件格式 | `scripts/xlsx_format.py --rules` | cellIs / expression / colorScale / dataBar |
+| 冻结窗格 / 自动筛选 | `scripts/xlsx_format.py --freeze --filter` | |
+| 图表 | `scripts/xlsx_chart.py` | 柱/条/折线/饼/散点/面积，系列名取自表头 |
 
-`capabilities.json` 里 **6 项已实现、9 项 pending 并逐条写了理由**。
+`capabilities.json` 里 **10 项已实现、5 项 pending 并逐条写了理由**。
 pending 的不是「快好了」，是**还没有断言在证明它**。
 
 ## 用法
@@ -159,15 +163,22 @@ python3 scripts/xlsx_audit.py --in book.xlsx --out audit.json \
   这些在 `capabilities.json` 的 pending 里。
 - **循环引用检测有上限**：单条引用超过 20000 格的区域会被截断，且**截断这件事会写进报告**
   （`graph_truncated`）—— 一个悄悄停止生长的依赖图会对着满是循环的 workbook 报「无循环」。
-- 外科式路径覆盖的是「写值 / 写公式 / 追加行 / 设列宽」。别的结构性改动要走
-  openpyxl 重建 + `scripts/office/package.py` 的 graft，那条路**还没有能力挂上去**。
+- **两条写入路径，分工是量出来的不是拍的**：写值/写公式/追加行/设列宽走**外科式**
+  （一个 part 不丢、16/17 逐字节未变）；创建格式/条件格式/图表/冻结筛选走
+  **openpyxl 重建 + graft**（`scripts/office/rebuild.py`）—— 因为这些是 styles.xml +
+  sheet + drawing + rels 图交织的结构，手写就是进 Excel 修复对话框。
+  重建路径实测：openpyxl 每次 save 都丢 3 个 customXml part，graft 后 0 丢、包校验干净。
+- **graft 是 part 级的，修不了「存活 part 内部」的丢失**（如 sheet1.xml 里的
+  `<ignoredErrors>`）。这条边界写在 `rebuild.py` 里，且报告永远带 `still_missing` 字段 ——
+  **一个只在有损失时才提损失的报告，和没人写的报告分不出来**。
 - `--autofit` 用的是字符计数，不是字体度量。等宽假设在默认字体下够用，
   换成很宽或很窄的字体会偏。
 
 ## 底座
 
 `scripts/office/` 是本技能自带的一份 OOXML 底座（`package` 包与关系 /
-`sheet` 外科式编辑 / `formula` 引用解析与依赖图 / `soffice` 探测与转换 /
+`sheet` 外科式编辑 / `rebuild` 重建+graft / `formula` 引用解析与依赖图 /
+`soffice` 探测与转换 /
 `validate` 一致性 / `xmlorder` ECMA-376 元素序）。**docx / pdf 各自带各自的副本**，不共享 —— 打包脚本拒绝 symlink。
 
 ## 自检
@@ -179,6 +190,6 @@ python3 fixtures/make_fixtures.py    # 重建示例；仅在示例内容要改�
 ⚠️ 示例文件是**逐字节可复现**的（zip 时间戳、压缩级别、`dcterms:modified` 都已固定），
 但它们进 `skills/builtin/.builtin-version` 这个哈希。**没有要改示例内容时不要跑它。**
 
-> 本技能的行为测试（27 条断言 + 37 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（34 条断言 + 48 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。
