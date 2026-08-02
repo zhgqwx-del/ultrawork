@@ -17,10 +17,10 @@
 |---|---|---|---|
 | `skill-creator` | anthropics/skills `skills/skill-creator` | Apache-2.0 | python3 |
 | `skill-installer` | openai/skills `.system/skill-installer`（改安装目标） | Apache-2.0 | python3, git |
-| `pdf` | **ultrawork 自写**（PyMuPDF；原 openai/skills `.curated/pdf` 已整体替换，discussions/059 S2） | 同仓库 | python3 + pymupdf（AGPL-3.0/商业，用户自装不打包） |
+| `pdf` | **ultrawork 自写**（原 openai/skills `.curated/pdf` 已整体替换，discussions/059 S2；S3.5 整体去 PyMuPDF/AGPL） | 同仓库 | python3 + pypdfium2(Apache-2.0) + pypdf(BSD-3) + pdfplumber(MIT) + reportlab(BSD-3)，用户自装不打包 |
 | `xlsx` | **ultrawork 自写**（openpyxl 读 + 自建 OOXML 底座外科式写，discussions/059 S3） | 同仓库 | python3 + openpyxl/lxml + **soffice（必需，非可选）** |
 | `markdown-exporter` | bowenliang123/md_exporter（仅 SKILL.md，按 pip 模式） | Apache-2.0 | markdown-exporter(pip), pandoc |
-| `deckcraft` | **ultrawork 自写**（HTML-first PPT，做 PPT 的默认技能，ADR-061） | 同仓库；vendored pptxgenjs MIT | python3.10+, python-pptx, chrome-or-edge（可编辑 pptx 另需 Node，OPTIONAL） |
+| `deckcraft` | **ultrawork 自写**（HTML-first PPT，做 PPT 的默认技能，ADR-061；S3.5 去 PyMuPDF/AGPL） | 同仓库；vendored pptxgenjs MIT | 必需 python3.10+, python-pptx, pillow, chrome-or-edge；**OPTIONAL**（缺了只影响读那一类源文件）Node（可编辑 pptx）· pdfplumber/pypdf/pypdfium2（PDF）· mammoth/ebooklib/nbconvert/markdownify/beautifulsoup4/requests（DOCX/EPUB/ipynb）· openpyxl（XLSX）· curl_cffi（网页） |
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
 | `feishu-assistant` | **ultrawork 自写**（薄路由到 lark-cli 内嵌官方技能） | 同仓库 | lark-cli（设置→连接器→办公 CLI 安装） |
 | `dingtalk-assistant` | **ultrawork 自写**（薄路由到连接器 materialize 的 dws 官方 mono 技能） | 同仓库 | dws（设置→连接器→办公 CLI 安装） |

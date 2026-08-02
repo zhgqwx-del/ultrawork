@@ -4482,12 +4482,33 @@ fn python_probe_allowed(python: &str) -> bool {
 /// Kept as data rather than one boolean per library (discussions/059 §5·补.3):
 /// the hard-coded pair this replaced meant every new skill needed a Rust change,
 /// and the pdf skill was the first to prove it — its badge would otherwise have
-/// reported on python-pptx while the skill imports fitz.
+/// reported on python-pptx while the skill imports something else entirely. It
+/// then proved it a second time by swapping one library for four (059 §5·补.8c,
+/// moving off AGPL PyMuPDF), which cost nothing but this list.
+/// The badge name on the left is what the UI shows; the import name on the right
+/// is what actually gets probed. They differ often enough that assuming them equal
+/// is a bug waiting to happen — `pillow` imports as `PIL`, `beautifulsoup4` as
+/// `bs4`, `python-pptx` as `pptx`.
 const PY_MODULES: &[(&str, &str)] = &[
     ("python-pptx", "pptx"),
-    ("pymupdf", "fitz"),
+    ("pypdfium2", "pypdfium2"),
+    ("pypdf", "pypdf"),
+    ("pdfplumber", "pdfplumber"),
+    ("reportlab", "reportlab"),
     ("openpyxl", "openpyxl"),
     ("lxml", "lxml"),
+    // deckcraft: `pillow` sits on the core export path (export_deck.py imports
+    // PIL) and was undeclared until 059 S3.5; the rest are its per-format source
+    // readers, declared so the badge can name the missing format but kept
+    // optional in OPTIONAL_DEPS so they do not gate the skill.
+    ("pillow", "PIL"),
+    ("mammoth", "mammoth"),
+    ("ebooklib", "ebooklib"),
+    ("nbconvert", "nbconvert"),
+    ("markdownify", "markdownify"),
+    ("beautifulsoup4", "bs4"),
+    ("requests", "requests"),
+    ("curl_cffi", "curl_cffi"),
 ];
 
 /// One-shot feature probe inside a python interpreter: (version >= 3.10, one flag
@@ -4549,7 +4570,8 @@ fn check_skill_dependencies() -> Vec<DepStatus> {
 
     // deckcraft hard-requires Python >= 3.10 (its source_to_md converters use
     // module-level `X | None` unions) and python-pptx for the PPTX export step;
-    // the pdf skill needs PyMuPDF. Both come out of one probe process.
+    // the pdf skill needs its four permissive libraries and xlsx needs two more.
+    // They all come out of one probe process.
     let mut ver = false;
     let mut modules: Vec<bool> = vec![false; PY_MODULES.len()];
     // The interpreter the verdict is about — surfaced in the badge tooltip so a
@@ -7503,7 +7525,7 @@ mod builtin_skills_tests {
             p
         };
 
-        let two: &[(&str, &str)] = &[("python-pptx", "pptx"), ("pymupdf", "fitz")];
+        let two: &[(&str, &str)] = &[("python-pptx", "pptx"), ("pypdf", "pypdf")];
         let probe = |p: &std::path::Path, m: &'static [(&'static str, &'static str)]| {
             run_python_feature_probe(p.to_str().unwrap(), m, Duration::from_secs(5))
         };

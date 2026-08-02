@@ -21,30 +21,31 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import compact, open_pdf, parse_pages, run, write_json  # noqa: E402
+from pdfcommon import compact, open_reader, parse_pages, run, write_json  # noqa: E402
 from pdfform import collect_fields, has_acroform  # noqa: E402
 
 
 def inspect(src: Path, pages: str | None, password: str | None) -> dict:
-    doc = open_pdf(src, password)
-    with doc:
-        wanted = parse_pages(pages, doc.page_count)
-        fields = collect_fields(doc, wanted)
-        by_type = Counter(f["type"] for f in fields)
-        return {
-            "source": str(src),
-            "page_count": doc.page_count,
-            # Widgets can exist on a page while the document carries no AcroForm
-            # dictionary; both halves are reported so a filler can tell a real form
-            # from stray annotations.
-            "has_acroform": has_acroform(doc),
-            "field_count": len(fields),
-            "by_type": dict(sorted(by_type.items())),
-            "pages_with_fields": sorted({f["page"] for f in fields}),
-            "required_unfilled": sorted(f["name"] for f in fields
-                                        if f["flags"].get("required") and not f["value"]),
-            "fields": fields,
-        }
+    # pypdf, not the rasterizer: every question here is about the object model.
+    reader = open_reader(src, password)
+    page_count = len(reader.pages)
+    wanted = parse_pages(pages, page_count)
+    fields = collect_fields(reader, wanted)
+    by_type = Counter(f["type"] for f in fields)
+    return {
+        "source": str(src),
+        "page_count": page_count,
+        # Widgets can exist on a page while the document carries no AcroForm
+        # dictionary; both halves are reported so a filler can tell a real form
+        # from stray annotations.
+        "has_acroform": has_acroform(reader),
+        "field_count": len(fields),
+        "by_type": dict(sorted(by_type.items())),
+        "pages_with_fields": sorted({f["page"] for f in fields}),
+        "required_unfilled": sorted(f["name"] for f in fields
+                                    if f["flags"].get("required") and not f["value"]),
+        "fields": fields,
+    }
 
 
 def main() -> None:

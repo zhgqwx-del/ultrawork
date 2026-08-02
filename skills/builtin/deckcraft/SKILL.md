@@ -9,7 +9,8 @@ description: >
   (text/shapes native in PowerPoint). Not for beautifying/templating an EXISTING .pptx
   1:1 or building reusable template packs — for those, ppt-master can be installed from
   设置 → 技能 (see routing table below).
-x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
+x-requires: [python3.10+, python-pptx, pillow, chrome-or-edge]
+x-requires-optional: [node, pdfplumber, pypdf, pypdfium2, openpyxl, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, curl_cffi]
 ---
 
 # deckcraft — HTML-first 快速演示文稿
@@ -99,6 +100,19 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 > 非点目录——一旦写到点目录外，就会污染产物面板。
 
 有源文档：用 `source_to_md/` 转换，产物放 `.deckcraft/<name>/sources/`。
+
+> **每个转换器有各自的第三方依赖，且都是 OPTIONAL**（缺了不影响「从主题/Markdown 做 deck」，
+> 只影响读那一类源文件）。缺哪个就 `pip install` 哪个，**不要让用户为用不到的格式装东西**：
+>
+> | 源格式 | 脚本 | 依赖 |
+> |---|---|---|
+> | PDF | `pdf_to_md.py` | `pdfplumber` `pypdf` `pypdfium2` |
+> | DOCX / EPUB / .ipynb | `doc_to_md.py` | `mammoth` `ebooklib` `nbconvert` `markdownify` `beautifulsoup4` `requests` |
+> | XLSX | `excel_to_md.py` | `openpyxl` |
+> | PPTX | `ppt_to_md.py` | `python-pptx`（核心依赖，本来就必需） |
+> | 网页 URL | `web_to_md.py` | `curl_cffi` `requests` `beautifulsoup4` |
+>
+> 三处声明（`x-requires` / `BUILTIN_DEP_MAP` / Rust `PY_MODULES`）必须同步，改一处就要改三处。
 
 **无源文档（只给了主题）→ Research 阶段 MANDATORY**：Read `references/content-engineering.md` §一，
 把主题拆 3-6 个检索问题，用联网工具至少 3 轮检索，写 `research/research.md` + `research/facts.json`

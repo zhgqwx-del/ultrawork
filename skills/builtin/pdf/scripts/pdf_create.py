@@ -20,11 +20,13 @@ doc.json:
 
 Pages break automatically when a block runs past the bottom margin.
 
-The font is EMBEDDED and then subset (see pdfwrite.py): a generated document that
-names a font instead of carrying it looks perfect here and turns into empty boxes
-on a machine without that font. Characters the font cannot draw are refused before
-anything is written, because a missing glyph produces no error of its own — pass
---allow-missing-glyphs to write anyway and have them listed in the report.
+The font is EMBEDDED, subset (see pdfwrite.py): a generated document that names a
+font instead of carrying it looks perfect here and turns into empty boxes on a
+machine without that font. The default is a CJK face found on this machine; the
+document that comes out is portable, only the machine generating it needs a font.
+Characters the font cannot draw are refused before anything is written, because a
+missing glyph produces no error of its own — pass --allow-missing-glyphs to write
+anyway and have them listed in the report.
 """
 from __future__ import annotations
 
@@ -35,9 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfcommon import fail, run, write_json  # noqa: E402
-from pdfwrite import Typeface, embed, font_report, wrap  # noqa: E402
+from pdfwrite import Typeface, font_report, wrap  # noqa: E402
 
-ALIAS = "UWF"
 PAPER = {"a4": (595, 842), "letter": (612, 792), "a5": (420, 595), "a3": (842, 1191)}
 HEADING_SCALE = {1: 1.9, 2: 1.5, 3: 1.25}
 LINE_RATIO = 1.5           # leading as a multiple of the font size
@@ -68,22 +69,25 @@ def collect_text(blocks: list[dict]) -> str:
 
 
 class Writer:
-    """Places lines top-down and starts a new page when the margin is reached."""
+    """Places lines top-down and starts a new page when the margin is reached.
 
-    def __init__(self, doc, width, height, margin, face, size):
-        self.doc, self.w, self.h = doc, width, height
+    The cursor `y` counts DOWN from the top of the page, the way every box this
+    skill reports does; reportlab's canvas counts up from the bottom. The single
+    conversion lives in `line`, because doing it per call site is how half a
+    document ends up mirrored.
+    """
+
+    def __init__(self, canvas, width, height, margin, face, size):
+        self.c, self.w, self.h = canvas, width, height
         self.margin, self.face, self.size = margin, face, size
-        self.page = None
-        self.y = 0.0
-        self.new_page()
+        self.y = margin
 
     @property
     def text_width(self) -> float:
         return self.w - 2 * self.margin
 
     def new_page(self) -> None:
-        self.page = self.doc.new_page(width=self.w, height=self.h)
-        embed(self.page, ALIAS, self.face)
+        self.c.showPage()
         self.y = self.margin
 
     def room_for(self, height: float) -> bool:
@@ -99,11 +103,18 @@ class Writer:
              color=(0, 0, 0)) -> None:
         leading = size * LINE_RATIO
         self.ensure(leading)
-        # insert_text takes the BASELINE, so the ascent has to be added or the first
+        self.c.setFont(self.face.name, size)
+        self.c.setFillColorRGB(*color)
+        # drawString takes the BASELINE, so the ascent has to be added or the first
         # line of every page sits half outside the top margin.
-        self.page.insert_text((self.margin if x is None else x, self.y + size),
-                              text, fontname=ALIAS, fontsize=size, color=color)
+        self.c.drawString(self.margin if x is None else x,
+                          self.h - (self.y + size), text)
         self.y += leading
+
+    def rule(self, x0: float, x1: float, width: float) -> None:
+        self.c.setStrokeColorRGB(*RULE)
+        self.c.setLineWidth(width)
+        self.c.line(x0, self.h - self.y, x1, self.h - self.y)
 
     def paragraph(self, text: str, size: float, indent: float = 0.0) -> None:
         for ln in wrap(text, self.face, size, self.text_width - indent):
@@ -133,16 +144,16 @@ class Writer:
             self.ensure(height + 2)
             top = self.y
             x = self.margin
+            self.c.setFont(self.face.name, size)
+            self.c.setFillColorRGB(0, 0, 0)
             for c in range(cols):
                 for i, ln in enumerate(wrapped[c]):
-                    self.page.insert_text((x + CELL_PAD, top + size + i * leading), ln,
-                                          fontname=ALIAS, fontsize=size)
+                    self.c.drawString(x + CELL_PAD,
+                                      self.h - (top + size + i * leading), ln)
                 x += widths[c]
             self.y = top + height
-            import fitz
-            self.page.draw_line(fitz.Point(self.margin, self.y),
-                                fitz.Point(self.margin + sum(widths), self.y),
-                                color=RULE, width=1.0 if bold_rule else 0.5)
+            self.rule(self.margin, self.margin + sum(widths),
+                      1.0 if bold_rule else 0.5)
             self.y += 2
 
         if header:
@@ -152,7 +163,7 @@ class Writer:
 
 
 def build(spec: dict, out: Path, font: str | None, allow_missing: bool) -> dict:
-    import fitz
+    from reportlab.pdfgen import canvas
 
     blocks = spec.get("blocks")
     if not isinstance(blocks, list) or not blocks:
@@ -168,8 +179,13 @@ def build(spec: dict, out: Path, font: str | None, allow_missing: bool) -> dict:
     w, h = page_size(spec.get("page") or {})
     margin = float((spec.get("page") or {}).get("margin", 56))
     size = float(spec.get("font_size", 11))
-    doc = fitz.open()
-    writer = Writer(doc, w, h, margin, face, size)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # initialFontName: without it reportlab writes a Helvetica the document never
+    # draws with into every page's resources, and "is every font in this file
+    # embedded" then answers no for a reason that has nothing to do with the text.
+    c = canvas.Canvas(str(out), pagesize=(w, h), initialFontName=face.name,
+                      initialFontSize=size)
+    writer = Writer(c, w, h, margin, face, size)
 
     for i, block in enumerate(blocks):
         kind = block.get("type", "paragraph")
@@ -199,15 +215,18 @@ def build(spec: dict, out: Path, font: str | None, allow_missing: bool) -> dict:
             fail(f"block #{i}: unknown type {kind!r}; supported: heading, paragraph, "
                  f"bullets, table, spacer, pagebreak")
 
-    # Subsetting is what makes embedding affordable: the full CJK face is ~3.5MB and
-    # only the glyphs used are needed. Measured 3,569,129 -> 10,675 bytes.
-    doc.subset_fonts()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(out), garbage=4, deflate=True, no_new_id=True)
-    report = font_report(doc, face, text)
-    report.update({"out": str(out), "pages": doc.page_count,
+    # Subsetting is what makes embedding affordable, and reportlab does it as it
+    # writes: only the glyphs actually drawn go into the file. Measured Songti.ttc
+    # 66,933,080 bytes on disk -> a 17KB document, still embedded, still extractable.
+    c.save()
+    from pypdf import PdfReader
+    report = font_report(out, face, text)
+    # Counted out of the file, not off the writer's own tally: a spec ending in a
+    # pagebreak asks for a page nothing is ever drawn on, and reportlab does not
+    # write it. Reporting the request rather than the result is a report that
+    # disagrees with its own artifact.
+    report.update({"out": str(out), "pages": len(PdfReader(str(out)).pages),
                    "bytes": out.stat().st_size})
-    doc.close()
     return report
 
 
@@ -218,8 +237,9 @@ def main() -> None:
                     help="document spec (JSON)")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--font", default=None,
-                    help="TTF/OTF path, or a built-in name (helv, cour, tiro, "
-                         "china-s...). Default: the CJK face PyMuPDF ships")
+                    help="TrueType path to embed, or a standard face name (helv, "
+                         "cour, tiro...) for a Latin-only document. Default: a CJK "
+                         "face found on this machine and embedded, subset")
     ap.add_argument("--font-report", type=Path, default=None,
                     help="write what a reader on another machine will get")
     ap.add_argument("--allow-missing-glyphs", action="store_true")

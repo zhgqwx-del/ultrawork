@@ -40,12 +40,20 @@ spec.loader.exec_module(G)
 # KNOWN LIMIT of this negative sample: deckcraft/doc-edit do DIFFERENT jobs than the
 # reference skills, so their score is a floor for "unrelated code", not for "same job,
 # written independently". `pdf` was added 2026-08-01 (059 S2) precisely because it IS
-# same-job code — it reads the same PDFs with the same library as four of the reference
-# skills — so it is the first sample that measures what this threshold actually has to
-# survive. `xlsx` joined 2026-08-02 (059 S3) for the same reason: it opens the same
-# OOXML packages with the same library as all four reference skills. `docx` must be
-# added the same way when S4 lands; a threshold calibrated only against unrelated code
-# starts crying wolf on same-job code.
+# same-job code — it reads the same PDFs as four of the reference skills — so it is the
+# first sample that measures what this threshold actually has to survive. `xlsx` joined
+# 2026-08-02 (059 S3) for the same reason: it opens the same OOXML packages with the
+# same library as all four reference skills. `docx` must be added the same way when S4
+# lands; a threshold calibrated only against unrelated code starts crying wolf on
+# same-job code.
+#
+# ⚠️ One thing this sample no longer proves: `pdf` was rewritten off PyMuPDF onto four
+# permissive libraries (059 §5·补.8c), so it and the reference skills no longer call
+# the same API. Same job, different library, which is a weaker resemblance than "same
+# job, same library" was. Measured across that rewrite the floor went 0.187 -> 0.191
+# and stayed the same file pair (pdf_form_inspect.py <- qa_text.py), so nothing about
+# the threshold changed — but the sample's strength did, and only `xlsx` still carries
+# the same-library case.
 OWN_SKILLS = ["deckcraft", "doc-edit", "pdf", "xlsx"]
 
 RENAMES = [("field", "entry"), ("writer", "out_doc"), ("reader", "in_doc"),

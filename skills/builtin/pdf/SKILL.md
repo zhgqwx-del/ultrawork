@@ -12,22 +12,30 @@ description: >
   merge/split/extract/rotate pages, encrypt or decrypt, and pull tables out to CSV.
   Not for making slide decks from a PDF — that is `deckcraft`; not for .docx/.xlsx
   editing — that is `doc-edit`.
-x-requires: [python3, pymupdf]
+x-requires: [python3, pypdfium2, pypdf, pdfplumber, reportlab]
 ---
 
 # PDF 技能
 
-由 ultrawork 自写（非 Anthropic 专有文档技能、也非 OpenAI 版的改写）。所有脚本基于
-**PyMuPDF**（`import fitz`）。
+由 ultrawork 自写（非 Anthropic 专有文档技能、也非 OpenAI 版的改写）。四个宽松许可的库
+各答一类问题，谁也替不了谁。
 
 ## 依赖
 
 ```
-python3 -m pip install pymupdf
+python3 -m pip install pypdfium2 pypdf pdfplumber reportlab
 ```
 
-PyMuPDF 是 **AGPL-3.0 或商业授权**。ultrawork **不打包**它，由用户机器自行安装，技能脚本
-只是 `import fitz`（与 deckcraft 的既有做法一致）。
+| 库 | 许可 | 在这里干什么 |
+|---|---|---|
+| `pypdfium2` | Apache-2.0 / BSD-3（内含 PDFium，BSD-3） | 光栅化：页面渲染成图 |
+| `pypdf` | BSD-3 | 对象模型：页树、表单域、权限位、加解密 |
+| `pdfplumber` | MIT（带 pdfminer.six + Pillow） | 文字几何与表格 |
+| `reportlab` | BSD-3 | 写：生成 PDF、外观流、叠加层 |
+
+**为什么不是 PyMuPDF**：它是 **AGPL-3.0 或商业授权**（权利人 Artifex，同时是 Ghostscript
+权利人，有 *Artifex v. Hancom* 判例），而 `skills/builtin/` 随产品分发 —— 商业分发扛不住
+AGPL。本技能已**整体**移出，没有任何一个文件 `import fitz`（059 §5·补.8c）。
 
 ## 现在有什么（其余的没有，别假装有）
 
@@ -117,16 +125,21 @@ python3 scripts/pdf_create.py --in doc.json --out report.pdf \
 
 | 写法 | 产物里的字体 | 换台机器 |
 |---|---|---|
-| `insert_text(fontname="china-s")` | `ext='n/a'` —— 只**写了个名字** | 缺中文字体就是空白/豆腐 |
-| `insert_font(fontbuffer=...)` + `subset_fonts()` | `ext='ttf'`，带子集标记 | 自带字形，到哪都一样 |
+| 只**写了个名字**（无 `/FontFile*`） | 字典里只有 BaseFont | 缺中文字体就是空白/豆腐 |
+| 注册 TrueType → reportlab 自动子集嵌入 | `/FontFile2` + `AAAAAA+` 子集标记 | 自带字形，到哪都一样 |
 
-实测：嵌入未子集化 3,569,129 字节 → 子集化后 **10,675 字节**，仍然是嵌入的、文字仍可抽取。
-用的是 PyMuPDF 自带的 Droid Sans Fallback（Apache-2.0），**本仓库不额外打包字体**；
-`--font 路径.ttf` 可换成任意 TTF/OTF。
+实测：Songti.ttc 磁盘上 66,933,080 字节 → 产物 **32KB（两页含表格）**，仍然是嵌入的、
+文字仍可抽取。**本仓库不打包字体**：默认在**生成端**的机器上探测一个 CJK 字体并嵌入子集，
+产物照样可移植；`--font 路径.ttf` 可换成任意 TrueType，找不到就明确报错而不是画空白。
+
+> ⚠️ macOS 上第一个能找到的候选恰恰嵌不了：`Hiragino Sans GB.ttc` 是 PostScript(CFF)
+> 轮廓，reportlab 直接拒绝。所以字体是**逐个试注册**而不是「找到路径就用」。
+> 标准 14 号字（`--font helv` 等）是唯一不嵌入也可移植的例外——任何阅读器都必须自带。
 
 **写之前先查字形覆盖**：字体没有的字会画成空白且**不报任何错**，所以缺字直接拒绝生成并列出
-缺哪些（`--allow-missing-glyphs` 可强行写并在报告里点名）。实测强行用只有西文的
-Arial 写中文：中文不是变豆腐而是**整页消失**（渲染全白、文字连抽都抽不出来）。
+缺哪些（`--allow-missing-glyphs` 可强行写并在报告里点名）。实测 `--font helv
+--allow-missing-glyphs` 强行拿 Helvetica 写中文：reportlab **不报错**，静默掉进
+ZapfDingbats，中文全变成一排黑方块（抽出来是 `nnnnnnnn`）—— 这就是那道拒绝挡住的东西。
 
 ### 表格抽取：读出来的 vs 猜出来的
 
@@ -176,13 +189,16 @@ python3 scripts/pdf_encrypt.py --in locked.pdf --out plain.pdf \
 ```
 
 ⚠️ **owner 口令和 user 口令相同时，权限位形同虚设** —— 能打开文件的人就是 owner，
-而 owner 不受任何限制。实测同一个文件：以 user 身份打开是 `print+copy`，
-以 owner 身份打开是**全部允许**。所以 `--allow` 一旦是限制性的而 `--owner-password`
-没给（或与 user 口令相同），本脚本**直接拒绝**，不产出那种「限制其实不生效」的文件。
+而 owner 不受任何限制（PDF 32000 §7.6.3）。所以 `--allow` 一旦是限制性的而
+`--owner-password` 没给（或与 user 口令相同），本脚本**在写之前就拒绝**，不产出那种
+「限制其实不生效」的文件。
 
-去口令**必须提供当前口令**（没有绕过路径）。写完会重新打开验证：`save(encryption=...)`
-参数对不上时会静默产出**未加密**文件，而「所有人都以为受保护、其实没有」是这个脚本能犯的
-最坏的错。
+> ⚠️ 这条**不是**用「打开看看」验出来的，别照着写验证代码：pypdf 无论用哪个口令打开都
+> 返回文件里存的那一份 `/P`（实测 user / owner 都读到 20），它证明的是位写进去了，
+> **证明不了 owner 不受限**。防线在写入前的拒绝，不在事后的复读。
+
+去口令**必须提供当前口令**（没有绕过路径）。写完会重新打开验证：加密参数对不上时可能静默
+产出**未加密**文件，而「所有人都以为受保护、其实没有」是这个脚本能犯的最坏的错。
 
 ## 两个坐标系（用错就是把框画在白纸上）
 
@@ -204,17 +220,19 @@ python3 scripts/pdf_encrypt.py --in locked.pdf --out plain.pdf \
 
 ## 表单的已知边界
 
-- **不做单选按钮组的创建**：PyMuPDF 1.27 给已存在的 radio 字段加第二个 widget 会抛
-  `bad xref`。**读**第三方表单里的 radio 正常，字段模型也认这个类型。
-- AcroForm 里的中文能正常渲染（实测字形中心着墨 1.00），但外观流是 PyMuPDF 生成的；
-  换一个会自己重建外观的阅读器行为未验证。
+- **不做单选按钮组的创建**：radio 需要多个 widget 共享一个父字段，夹具里手搓一个只会
+  测到夹具自己。**读**第三方表单里的 radio 正常，字段模型也认这个类型。
+- **AcroForm 的外观流由本技能自己画**（reportlab 嵌入 CJK 子集），并把 `/NeedAppearances`
+  写成 false —— 否则会自己重建外观的阅读器会拿它手上的字体重画中文，正是要避的豆腐。
+- **越界检查先把 widget 外观压平到页面内容再量**：pdfplumber / pdfminer / PDFium 都只读
+  页面内容流，域里的值对三者都是不可见的。压平副本只在临时目录里，不会交给调用方。
 
 ## 中文
 
 - **生成走 `pdf_create.py` 的，字形已嵌入**，到别的机器上不会变豆腐。
-- **`fixtures/` 里的示例 PDF 仍用 `china-s` 且未嵌入**（它们只是本机测试用的输入，不是产物）。
-- 自己直接调 PyMuPDF 写中文时，`insert_text(fontname="china-s")` **不会嵌入字体** ——
-  要嵌入就照 `scripts/pdfwrite.py` 的做法走 `insert_font(fontbuffer=...)` + `subset_fonts()`。
+- **表单填充（`pdf_form_fill.py`）的中文同样嵌入**：四个域共用一份子集，实测 23KB。
+- 自己直接调 reportlab 写中文时，**先 `registerFont(TTFont(...))` 再 `setFont`** ——
+  用标准 14 号字画中文不会报错，会掉进 ZapfDingbats 画成一排黑方块（实测）。
 
 ## 自检
 
@@ -222,10 +240,12 @@ python3 scripts/pdf_encrypt.py --in locked.pdf --out plain.pdf \
 python3 fixtures/make_fixtures.py            # 重建示例文件；仅在示例本身要改时才跑，见下
 ```
 
-> 本技能的行为测试（36 条断言 + 48 条负向控制）在 **ultrawork 仓库**里
+> 本技能的行为测试（38 条断言 + 53 条负向控制）在 **ultrawork 仓库**里
 > （scripts 目录下的 `test-pdf-skill.py`），**不随技能分发** —— 它需要 fixtures 之外的
 > 仓库上下文。装在你机器上的这份目录里没有它，别去找。
 
-⚠️ `report-cjk.pdf` 是逐字节可复现的（`no_new_id=True` + 固定日期），但 **`locked.pdf` 不是**
-（AES 密钥每次不同）。重跑生成脚本会改动它的字节 ⇒ `skills/builtin/.builtin-version` 跟着变 ⇒
-所有桌面端重装内置技能。**没有要改示例内容时不要跑它。**
+⚠️ 六个示例里**五个逐字节可复现**（reportlab `invariant=1` + 固定 `/ID` 与日期），
+**`locked.pdf` 不是**（AES-256 每次换盐，实测两次运行只有它不同）。另外：git 里那批是
+PyMuPDF 时代写的，**重跑得到的不是同一批字节**（`--out-dir` 可以旁路生成来对比）。
+重跑会改 `skills/builtin/.builtin-version` ⇒ 所有桌面端重装内置技能。
+**没有要改示例内容时不要跑它。**

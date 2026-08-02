@@ -27,7 +27,7 @@ import { useCliConnectors } from "@/lib/use-cli-connectors"
 import { CopyButton } from "@/components/chat/copy-button"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
-import { useSkillDeps, BUILTIN_DEP_MAP, missingDeps, type DepMap } from "@/lib/use-skill-deps"
+import { useSkillDeps, BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, type DepMap } from "@/lib/use-skill-deps"
 import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 import { Button } from "@/components/ui/button"
 import {
@@ -2207,6 +2207,7 @@ function ShadowedSkillCard({ name, onRestore }: { name: string; onRestore: () =>
 // Install-guidance hints shown when a dependency is missing (per host platform).
 const DEP_HINTS: Record<string, string> = isWindows
   ? {
+      ...PIP_HINTS,
       python3: "winget install Python.Python.3.12 / python.org",
       "python3.10+": "winget install Python.Python.3.12 / python.org",
       node: "winget install OpenJS.NodeJS.LTS / nodejs.org",
@@ -2215,7 +2216,6 @@ const DEP_HINTS: Record<string, string> = isWindows
       pdftoppm: "scoop/choco install poppler",
       git: "winget install Git.Git / git-scm.com",
       "markdown-exporter": "pip install md-exporter",
-      "python-pptx": "pip install python-pptx",
       "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
@@ -2223,6 +2223,7 @@ const DEP_HINTS: Record<string, string> = isWindows
     }
   : isMacOS
     ? {
+        ...PIP_HINTS,
         python3: "brew install python / python.org",
         "python3.10+": "brew install python / python.org (>= 3.10)",
         node: "brew install node / nodejs.org",
@@ -2231,13 +2232,13 @@ const DEP_HINTS: Record<string, string> = isWindows
         pdftoppm: "brew install poppler",
         git: "brew install git / git-scm.com",
         "markdown-exporter": "pip install md-exporter",
-        "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "chrome-or-edge": "brew install --cask google-chrome / google.com/chrome",
       }
     : {
+        ...PIP_HINTS,
         python3: "apt/dnf install python3",
         "python3.10+": "apt/dnf install python3 (>= 3.10)",
         node: "apt/dnf install nodejs / nodejs.org",
@@ -2246,7 +2247,6 @@ const DEP_HINTS: Record<string, string> = isWindows
         pdftoppm: "apt/dnf install poppler-utils",
         git: "apt/dnf install git",
         "markdown-exporter": "pip install md-exporter",
-        "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",

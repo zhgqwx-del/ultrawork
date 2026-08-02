@@ -18,34 +18,48 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import fail, open_pdf, parse_pages, run, write_json  # noqa: E402
+from pdfcommon import fail, open_raster, parse_pages, run, write_json  # noqa: E402
 
 MIN_DPI, MAX_DPI = 20, 600
 
 
 def render(src: Path, out_dir: Path, pages: str | None, dpi: int, prefix: str,
            fmt: str, password: str | None) -> dict:
-    import fitz
+    """Rasterize with PDFium (via pypdfium2).
 
+    PDFium's `scale` is a multiple of 72 dpi, so dpi/72 is the conversion. There is
+    no dpi argument to hand through, and getting the factor wrong produces images at
+    a silently wrong size rather than an error.
+    """
     if not MIN_DPI <= dpi <= MAX_DPI:
         fail(f"--dpi {dpi} outside the supported range {MIN_DPI}-{MAX_DPI}")
-    doc = open_pdf(src, password)
-    with doc:
-        indices = parse_pages(pages, doc.page_count)
+    doc = open_raster(src, password)
+    try:
+        page_count = len(doc)
+        indices = parse_pages(pages, page_count)
         out_dir.mkdir(parents=True, exist_ok=True)
         written = []
         for i in indices:
             page = doc[i]
-            pix = page.get_pixmap(dpi=dpi)
+            # get_size() is the DISPLAY size, rotation already applied, matching what
+            # the raster will be. The mediabox alone disagrees with the image on any
+            # rotated page.
+            w_pt, h_pt = page.get_size()
+            image = page.render(scale=dpi / 72.0).to_pil()
             target = out_dir / f"{prefix}-{i + 1:03d}.{fmt}"
-            pix.save(str(target))
+            if fmt == "jpg":
+                image.convert("RGB").save(str(target), "JPEG", quality=90)
+            else:
+                image.save(str(target))
             written.append({"page": i + 1, "file": target.name,
-                            "pixels": [pix.width, pix.height],
-                            "points": [round(page.rect.width, 2),
-                                       round(page.rect.height, 2)],
-                            "rotation": page.rotation})
+                            "pixels": [image.width, image.height],
+                            "points": [round(w_pt, 2), round(h_pt, 2)],
+                            "rotation": page.get_rotation()})
+            page.close()
         return {"source": str(src), "dpi": dpi, "format": fmt,
-                "page_count": doc.page_count, "rendered": written}
+                "page_count": page_count, "rendered": written}
+    finally:
+        doc.close()
 
 
 def main() -> None:

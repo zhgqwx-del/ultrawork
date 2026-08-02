@@ -84,42 +84,55 @@ def only_sheet(src: Path, name: str, workdir: Path) -> Path:
 
 
 def page_ink(page) -> float:
-    import fitz
-    pix = page.get_pixmap(dpi=BLANK_DPI, colorspace=fitz.csGRAY)
-    data = pix.samples
-    if not data:
+    """Share of dark pixels on one page, rendered grey at BLANK_DPI.
+
+    `stride` is the row length in bytes and is NOT always the width — PDFium pads
+    rows — so the rows are counted individually. Treating the buffer as one flat
+    w*h run divides by a length that includes padding bytes and quietly reports
+    less ink than there is, which on this threshold is the difference between
+    "blank" and "fine".
+    """
+    bitmap = page.render(scale=BLANK_DPI / 72.0, grayscale=True)
+    buf, stride, width, height = (bitmap.buffer, bitmap.stride, bitmap.width,
+                                  bitmap.height)
+    if not width or not height:
         return 0.0
     dark = bytes(1 if v < 140 else 0 for v in range(256))
-    return data.translate(dark).count(1) / len(data)
+    hits = sum(bytes(buf[r * stride:r * stride + width]).translate(dark).count(1)
+               for r in range(height))
+    return hits / (width * height)
 
 
 def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
     try:
-        import fitz
+        import pypdfium2 as pdfium
     except ImportError:
-        # PyMuPDF belongs to the pdf skill and is NOT a declared dependency here —
+        # pypdfium2 belongs to the pdf skill and is NOT a declared dependency here —
         # putting a red badge on the xlsx skill for a library only the preview extras
         # need would be wrong. So the PDF is still produced and the blank-page check
         # degrades to a stated gap. But --png was asked for explicitly: quietly
         # producing no images would be the silent failure this file exists to avoid.
         if png_dir is not None:
-            fail("--png needs PyMuPDF to rasterize the pages, and it is not "
-                 "installed (pip install pymupdf). The PDF itself does not need it")
+            fail("--png needs pypdfium2 to rasterize the pages, and it is not "
+                 "installed (pip install pypdfium2). The PDF itself does not need it")
         return {"pages": None, "blank_pages": None, "images": [],
-                "note": "PyMuPDF is not installed, so the blank-page check did NOT "
+                "note": "pypdfium2 is not installed, so the blank-page check did NOT "
                         "run — this PDF has not been checked for empty pages "
-                        "(pip install pymupdf)"}
+                        "(pip install pypdfium2)"}
     out: dict = {"images": []}
-    with fitz.open(pdf) as doc:
-        out["pages"] = doc.page_count
-        blank = [i + 1 for i, p in enumerate(doc) if page_ink(p) < BLANK_INK]
-        out["blank_pages"] = blank
+    doc = pdfium.PdfDocument(str(pdf))
+    try:
+        out["pages"] = len(doc)
+        out["blank_pages"] = [i + 1 for i in range(len(doc))
+                              if page_ink(doc[i]) < BLANK_INK]
         if png_dir is not None:
             png_dir.mkdir(parents=True, exist_ok=True)
-            for i, page in enumerate(doc, 1):
-                img = png_dir / f"page-{i:03d}.png"
-                page.get_pixmap(dpi=dpi).save(str(img))
+            for i in range(len(doc)):
+                img = png_dir / f"page-{i + 1:03d}.png"
+                doc[i].render(scale=dpi / 72.0).to_pil().save(str(img))
                 out["images"].append(str(img))
+    finally:
+        doc.close()
     return out
 
 

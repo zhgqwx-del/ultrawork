@@ -4,6 +4,20 @@
 Three things every entry point needs and must not each get subtly wrong:
 opening a file that may be locked, turning a human page range into indices, and
 failing with a sentence instead of a traceback.
+
+TWO READERS, ON PURPOSE
+-----------------------
+    pypdf       (BSD-3)          structure: pages, rotation, forms, encryption
+    pypdfium2   (Apache-2.0/BSD) pixels and geometry: rendering, text boxes
+
+They are not redundant. pypdf understands the object model — form fields,
+permission bits, page trees — and cannot rasterize. pypdfium2 wraps PDFium, the
+renderer inside Chrome, and is the only one of the two that can tell you where a
+glyph actually landed. Every script here takes whichever one answers its question.
+
+Both are permissively licensed. This skill was originally built on PyMuPDF, which
+is AGPL-3.0-or-commercial; that is a licence a commercial product cannot carry
+without buying it, so the whole skill was moved off it (059 §5·补.8c).
 """
 from __future__ import annotations
 
@@ -20,42 +34,76 @@ def fail(message: str) -> "NoReturn":  # noqa: F821 - typing.NoReturn without th
     raise PdfError(message)
 
 
-def open_pdf(path: Path, password: str | None = None, allow_locked: bool = False):
-    """Open a PDF, authenticating when needed.
-
-    allow_locked is for the metadata reader only: "is this file encrypted" is a
-    question that has to be answerable WITHOUT the password, so that one caller
-    accepts a document it cannot read the pages of. Everyone else must fail loudly
-    — silently returning an empty page list would look exactly like an empty PDF.
-    """
-    import fitz
-
+def _check_exists(path: Path) -> None:
     if not path.is_file():
         fail(f"no such file: {path}")
+
+
+def open_reader(path: Path, password: str | None = None,
+                allow_locked: bool = False):
+    """Structure reader (pypdf), authenticating when needed.
+
+    allow_locked is for the metadata reader only: "is this file encrypted" has to
+    be answerable WITHOUT the password, so that one caller accepts a document whose
+    pages it cannot read. Everyone else fails loudly — silently returning an empty
+    page list looks exactly like an empty PDF.
+    """
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    _check_exists(path)
     try:
-        doc = fitz.open(str(path))
-    except Exception as e:  # noqa: BLE001 - fitz raises several unrelated types
+        reader = PdfReader(str(path))
+    except (PdfReadError, OSError, ValueError) as e:
         fail(f"cannot open {path.name} as a PDF: {type(e).__name__}: {e}")
-    # PyMuPDF: `needs_pass` is a property of the FILE and stays 1 even after a
-    # successful authenticate(); `is_encrypted` is the one that flips to False once
-    # the document is open. Testing needs_pass for "still locked" reports every
-    # password-protected file as unreadable, including the ones just unlocked.
-    if doc.needs_pass:
-        if password is not None:
-            doc.authenticate(password)
-            # A rejected password is an error even for allow_locked callers: the
-            # caller believes it holds the key, and handing back a "this file is
-            # locked" report would read as a property of the file rather than as
-            # "you typed the wrong password".
-            if doc.is_encrypted:
-                doc.close()
-                fail(f"the supplied --password was rejected by {path.name}")
-            return doc
-        if allow_locked:
-            return doc
-        doc.close()
-        fail(f"{path.name} is password-protected: pass --password")
-    return doc
+    if not reader.is_encrypted:
+        return reader
+    if password is not None:
+        # decrypt() returns a PasswordType; 0 (NOT_DECRYPTED) is the failure.
+        if not reader.decrypt(password):
+            fail(f"the supplied --password was rejected by {path.name}")
+        return reader
+    if allow_locked:
+        return reader
+    fail(f"{path.name} is password-protected: pass --password")
+
+
+def open_raster(path: Path, password: str | None = None):
+    """Pixel/geometry reader (pypdfium2). Caller must close it.
+
+    PDFium takes the password up front and raises if it is wrong, so the two
+    failure messages below are the same ones open_reader produces — a caller should
+    not be able to tell which library refused it.
+    """
+    import pypdfium2 as pdfium
+
+    _check_exists(path)
+    try:
+        return pdfium.PdfDocument(str(path), password=password)
+    except pdfium.PdfiumError as e:
+        text = str(e).lower()
+        if "password" in text:
+            if password is None:
+                fail(f"{path.name} is password-protected: pass --password")
+            fail(f"the supplied --password was rejected by {path.name}")
+        fail(f"cannot open {path.name} as a PDF: {type(e).__name__}: {e}")
+    except (OSError, ValueError) as e:
+        fail(f"cannot open {path.name} as a PDF: {type(e).__name__}: {e}")
+
+
+def is_encrypted(path: Path) -> bool:
+    """Whether the FILE is encrypted, read from its structure.
+
+    Not from metadata and not from "did opening it fail": a file can carry an empty
+    user password, open without one, and still be encrypted.
+    """
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+    _check_exists(path)
+    try:
+        return bool(PdfReader(str(path)).is_encrypted)
+    except (PdfReadError, OSError, ValueError):
+        return False
 
 
 def parse_pages(spec: str | None, page_count: int) -> list[int]:
@@ -100,11 +148,9 @@ def _page_number(token: str, page_count: int) -> int:
 def ensure_distinct(src: Path, out: Path, label: str = "--out") -> None:
     """Refuse to write an output over one of its own inputs.
 
-    PyMuPDF answers this with `ValueError: save to original must be incremental`,
-    i.e. a raw traceback — every other failure in these scripts is one sentence and
-    exit 2, and an agent reading a traceback has to guess what to do. The input
-    survives either way; this is about the message, and about not depending on the
-    library to notice.
+    Every other failure in these scripts is one sentence and exit 2; a library that
+    truncates the file it is reading, or raises its own error type, would break that
+    contract. An agent reading a traceback has to guess what to do.
     """
     try:
         same = out.exists() and src.resolve() == out.resolve()
@@ -142,6 +188,148 @@ def compact(payload: dict, key: str, out: Path | None,
         + (f"; the full list is in {out}" if out else
            "; pass --out to write the full list to a file"))
     return trimmed
+
+
+def to_page_space(box, rotation: int, disp_w: float, disp_h: float) -> tuple:
+    """Display box -> page (unrotated) box. Both top-left origin, y downwards.
+
+    pdfplumber reports DISPLAY coordinates — rotation already applied — while
+    anything written back into the file (a drawn box, an annotation) lives in page
+    space. The conversion is silent when it is wrong: on an unrotated page the two
+    frames are identical, so a mistake here only shows up on rotated pages, drawn
+    onto empty paper.
+    """
+    x0, y0, x1, y1 = box
+    if rotation == 90:
+        corners = [(y0, disp_w - x1), (y1, disp_w - x0)]
+    elif rotation == 180:
+        corners = [(disp_w - x1, disp_h - y1), (disp_w - x0, disp_h - y0)]
+    elif rotation == 270:
+        corners = [(disp_h - y1, x0), (disp_h - y0, x1)]
+    else:
+        return tuple(box)
+    (ax, ay), (bx, by) = corners
+    return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+
+
+def to_display_space(box, rotation: int, page_w: float, page_h: float) -> tuple:
+    """Page (unrotated) box -> display box. The inverse of `to_page_space`.
+
+    Widget rectangles and anything else stored in the file live in page space, so
+    this is the direction the form family needs; text extracted by pdfplumber
+    arrives already in display space and needs the other one.
+    """
+    x0, y0, x1, y1 = box
+    if rotation == 90:
+        corners = [(page_h - y1, x0), (page_h - y0, x1)]
+    elif rotation == 180:
+        corners = [(page_w - x1, page_h - y1), (page_w - x0, page_h - y0)]
+    elif rotation == 270:
+        corners = [(y0, page_w - x1), (y1, page_w - x0)]
+    else:
+        return tuple(box)
+    (ax, ay), (bx, by) = corners
+    return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+
+
+def pdf_rect_to_top_left(rect, page_h: float) -> tuple:
+    """A PDF /Rect (bottom-left origin, y up) as a top-left, y-down box.
+
+    Every box this skill reports uses the top-left convention, because that is what
+    a reader of the JSON expects and what the rendered image uses. Mixing the two is
+    invisible on a square box and wrong everywhere else.
+    """
+    x0, y0, x1, y1 = (float(v) for v in rect)
+    lo, hi = min(y0, y1), max(y0, y1)
+    return (min(x0, x1), page_h - hi, max(x0, x1), page_h - lo)
+
+
+def detach_contents(writer, page) -> None:
+    """Give `page` a private copy of its content stream before anything merges onto it.
+
+    ⚠️ Pages CAN share content objects. A producer that deduplicates identical
+    objects (MuPDF's `garbage=4` does, and fixtures/table-grid.pdf is two nearly
+    identical pages) leaves page 2's /Contents array pointing at the same streams as
+    page 1's. pypdf's merge path then calls replace_contents, which NULLS every
+    object in the array it replaced — so merging a box onto page 1 silently empties
+    page 2.
+
+    Measured: the overlay of table-grid.pdf came out with page 2 blank, 66 characters
+    of text down to 0, while the same code was fine on a three-page document whose
+    pages share nothing. Concatenating the parts into one new stream first is what
+    makes the nulling harmless, because then nothing else points at it.
+    """
+    from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject
+
+    raw = page.raw_get("/Contents") if "/Contents" in page else None
+    if raw is None:
+        return
+    parts = list(raw.get_object()) if isinstance(raw.get_object(), ArrayObject) else [raw]
+    chunks = []
+    for part in parts:
+        try:
+            chunks.append(part.get_object().get_data())
+        except Exception:  # noqa: BLE001 - a part we cannot read is left out loudly
+            continue
+    # PDF 32000 §7.8.2: an array of content streams is the concatenation of its
+    # parts, with whitespace between them.
+    stream = DecodedStreamObject()
+    stream.set_data(b"\n".join(chunks))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+
+
+def draw_boxes_overlay(src: Path, dest: Path, boxes_by_page: dict,
+                       password: str | None = None, width: float = 0.4,
+                       labels_by_page: dict | None = None,
+                       label_font: str = "Helvetica",
+                       label_size: float = 6.0) -> None:
+    """Copy the document with boxes stroked on. `boxes_by_page` is {index: [(box, rgb)]}.
+
+    `labels_by_page` is the same shape with `(x, y, text, rgb)` entries, for the
+    callers that need to say WHICH box is which; y is the text's baseline, top-left
+    frame like every other coordinate here.
+
+    The rectangles go in PAGE space, the same frame `bbox` reports, because a merged
+    overlay composes into the page's own coordinate system before any /Rotate is
+    applied for display. Using display coordinates here is exactly the mistake that
+    two-frame reporting exists to prevent.
+    """
+    import io
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.pdfgen import canvas
+
+    reader = PdfReader(str(src))
+    if reader.is_encrypted and password is not None:
+        reader.decrypt(password)
+    writer = PdfWriter(clone_from=reader)
+    labels_by_page = labels_by_page or {}
+    for index, page in enumerate(writer.pages):
+        marks = boxes_by_page.get(index) or []
+        notes = labels_by_page.get(index) or []
+        if marks or notes:
+            detach_contents(writer, page)
+            mb = page.mediabox
+            pw, ph = float(mb.width), float(mb.height)
+            buf = io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=(pw, ph))
+            c.setLineWidth(width)
+            for box, rgb in marks:
+                x0, y0, x1, y1 = box
+                c.setStrokeColorRGB(*rgb)
+                # PDF's own origin is bottom-left; reported boxes are top-left.
+                c.rect(x0, ph - y1, x1 - x0, y1 - y0, stroke=1, fill=0)
+            if notes:
+                c.setFont(label_font, label_size)
+            for x, y, text, rgb in notes:
+                c.setFillColorRGB(*rgb)
+                c.drawString(x, ph - y, text)
+            c.showPage()
+            c.save()
+            buf.seek(0)
+            page.merge_page(PdfReader(buf).pages[0])
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open("wb") as fh:
+        writer.write(fh)
 
 
 def run(entry) -> int:

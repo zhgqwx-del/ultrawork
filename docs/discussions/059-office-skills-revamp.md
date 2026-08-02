@@ -704,6 +704,45 @@ XSD 本质是形式文法，可版权表达极薄。
 
 （以上是证据与工程判断，**不是法律意见**。）
 
+#### 去 AGPL 的可行性实测（2026-08-02，用 pdf 技能自己的夹具跑，不是查文档）
+
+| 能力 | 宽松许可替代 | 实测结果 |
+|---|---|---|
+| P1 渲染 | pypdfium2（Apache-2.0/BSD-3） | ✅ 220dpi → 1819×2573，页数正确 |
+| P2 文字 + 逐字 bbox | pypdfium2 | ✅ 123 字符、首字框、中文正确 |
+| P3 表格 | pdfplumber（MIT） | ✅ 有格线页 **4×3，与 fitz 一致**；无格线页返回 0 张（比 fitz 的 `text` 猜测**更保守**） |
+| P4 元数据/旋转/加密态 | pypdf（BSD-3） | ✅ 含 `rotation=90` |
+| P5/P6 表单探测与字段 | pypdf | ✅ 5 个字段、类型齐全 |
+| P7 AcroForm 填充 | pypdf | ⚠️ **值写入正确，但外观流用 Helvetica 渲染中文会乱码**（pypdf 自己会警告）—— 需要给 AcroForm 的 `/DR` 装 CJK 字体，或置 `/NeedAppearances` 交给阅读器重建 |
+| P11 合并/拆分/旋转 | pypdf | ✅ |
+| P12 AES-256 | pypdf | ✅ 加解密往返正常 |
+| P13 从零生成 | reportlab（BSD） | ✅ 西文开箱即用 |
+| **P14 CJK 字体嵌入** | — | ❌ **没有免费的 CJK 字体来源了** |
+
+**P14 是唯一的硬伤，而且它推翻 S2 的一个决定。** S2 明确「**不打包 OFL 字体**」，三条理由
+之一是「嵌入已由 PyMuPDF 自带的 Droid Sans Fallback 达成」——实测那是一个 **3.4 MB 可嵌入
+buffer**。去掉 PyMuPDF，这条理由随之消失：
+
+- reportlab 的 CID 字体（STSong-Light 等）**不嵌入**，靠阅读器有字库 —— 那正是 P14 要避免的
+- 已装的其他 pip 包都不带可嵌入 CJK 字体
+
+**实测的中间路线：用系统 CJK 字体，嵌进产物。** 产物仍然可移植（消费端不需要字体），
+只有**生成端**需要一份。macOS 实测：
+
+| 候选 | 结果 |
+|---|---|
+| `Hiragino Sans GB.ttc` | ❌ **PostScript 轮廓,reportlab 嵌不了** |
+| `Arial Unicode.ttf` | ✅ 产物 34 KB，`FontFile2` 在，文字可抽回 |
+| `Songti.ttc`(subfontIndex=0) | ✅ 产物 **16 KB**（源字体 63.8 MB ⇒ 子集化正常） |
+
+⇒ **可行，但必须按平台探测且要挑对候选**（macOS 上第一个能找到的偏偏是嵌不了的那个）。
+Windows(`msyh.ttc`/`simsun.ttc`)与 Linux(Noto CJK)是 TrueType 轮廓，预期可行，
+**本机无法验证，靠三平台 CI**。
+
+**代价总结**：9 项能力可直接平移；P7 的中文外观流要补；**P14 从「零成本」变成
+「生成端需要一份 CJK 字体」**——若 CI 显示某平台没有，退路是打包一份 OFL 字体
+（约 10 MB，S2 当初算过这笔账）。
+
 ### 5·补.8d — D2 落地：从「两条路径都没跑过」到零跳过（2026-08-02）
 
 schema vendored 到 `scripts/schemas/ecma376/`（27 个文件 984 KB，附 NOTICE 记明来源、
@@ -805,9 +844,10 @@ CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-miss
 |---|---|---|---|
 | **S0** | 本方案定稿（形态 A/B 拍板、语料准备、markdown-exporter 去留） | 本文档 + ADR 草案 | **当前窗口** |
 | **S1** ✅ | 先写验收骨架：L0/L1/L2 三个脚本 + **对当前技能跑一遍拿到基线数字** | 3 个脚本 + 基线报告（见 §5 L0/L1/L2） | 已完成 2026-08-01 |
-| **S2** ✅ | `pdf` 技能重做 —— 四刀：P1/P2/P4（`071cd18c`）· 表单族 P5-P10（`513c9a84`）· 生成 P13 + 字体嵌入 P14（`69f7ac18`）· P3/P11/P12。**14/14 无 pending，`--no-pending` 验收档绿** | pdf/ 全套 + L0/L1/L2 全绿 | 已完成 2026-08-01 |
+| **S2** ✅ | `pdf` 技能重做 —— 四刀：P1/P2/P4（`071cd18c`）· 表单族 P5-P10（`513c9a84`）· 生成 P13 + 字体嵌入 P14（`69f7ac18`）· P3/P11/P12。**14/14 无 pending，`--no-pending` 验收档绿**。⚠️ **实现已在 S3.5 整体重写**（去 PyMuPDF/AGPL），能力表与标尺不变，见 §六·补三 | pdf/ 全套 + L0/L1/L2 全绿 | 已完成 2026-08-01 |
 | S2 收尾 | ✅ Rust 依赖探测泛化（5·补.3）已完成：`run_python_feature_probe` 接受模块名列表，`PY_MODULES` 数据化 | 探测数据化 | 已完成 |
-| **S3** 🟡 | `xlsx` 技能（含 office 底座首次实现）。**四刀已落**：office 底座 + X1/X2/X15，公式族 X3/X5/X10，结构性写入 X6-X9，双引擎重算 X4，**4 项 pending**（见 §六·补二） | xlsx/ + office 底座 | **新窗口** |
+| **S3** ✅ | `xlsx` 技能（含 office 底座首次实现）。**五刀**：office 底座 + X1/X2/X15 · 公式族 X3/X5/X10 · 结构性写入 X6-X9 · 双引擎重算 X4 · 收官 X11-X14。**15/15 无 pending，`--no-pending` 全技能绿**（见 §六·补二） | xlsx/ + office 底座 | 已完成 2026-08-02 |
+| **S3.5** ✅ | **去 PyMuPDF / 去 AGPL**（§5·补.8c 的路 ②）。`pdf` 技能 14 个文件 + `xlsx_pdf.py` 可选依赖（§六·补三）· `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四，新建读取层 `pdfsource.py` + **新建标尺 25 断言/28 控制**）。**`skills/builtin/` 下没有任何一个文件 `import fitz`**；`scripts/` 下三个门禁脚本仍用（不分发，单独一刀） | 商业分发无 AGPL 暴露 | 已完成 2026-08-02 |
 | **S4** | `docx` 技能（最复杂：修订/批注/XSD/CJK） | docx/ | **新窗口**（可能需 2 个） |
 | **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
 | **S6** | 收尾：README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version` | 文档同步 | 新窗口 |
@@ -1556,6 +1596,293 @@ L2 为此付过学费（默认打开会把普通夹具判红）。所以它是�
 **下一步是 S4（docx）**，其前置在 §5·补.8：**ECMA-376 XSD 能否随仓库分发尚未查证** ——
 不查清楚，D2 会一直是唯一的永久 SKIP。另：CI 的 ubuntu 届时要补 `libreoffice-writer`
 （D7 是 docx→PDF）。
+
+---
+
+## 六·补三 — `pdf` 技能整体去 PyMuPDF / 去 AGPL（2026-08-02）
+
+**为什么**：用户告知后续作为商业软件分发。PyMuPDF 是 **AGPL-3.0 或商业授权**（权利人
+Artifex，同时是 Ghostscript 权利人，有 *Artifex v. Hancom* 判例），而 `skills/builtin/`
+随产品走 —— 这是整套东西里唯一的高风险项（§5·补.8c）。**换库不换标尺**：
+`scripts/test-pdf-skill.py`（38 条断言 / 53 条负向控制）原样全绿是判据。
+
+### 换成什么
+
+| 库 | 许可 | 答哪类问题 |
+|---|---|---|
+| `pypdfium2` | Apache-2.0 / BSD-3（内含 PDFium） | 光栅化 |
+| `pypdf` | BSD-3 | 对象模型：页树 / 表单 / 权限位 / 加解密 |
+| `pdfplumber` | MIT（带 pdfminer.six + Pillow） | 文字几何 + 表格 |
+| `reportlab` | BSD-3 | 写：生成 / 外观流 / 叠加层 |
+
+14 个文件全换完（前一窗口 9 个，本窗口 5 个：`pdf_form_inspect` · `pdf_form_fill` ·
+`pdf_form_check` · `pdfwrite`+`pdf_create` · `fixtures/make_fixtures.py`）。
+`skills/builtin/pdf/` 下**没有任何一个文件 `import fitz`**。
+
+### 门禁结果（全部本机实测）
+
+| 门 | 结果 |
+|---|---|
+| `test-pdf-skill.py` | **53 passed / 0 failed**，38 条断言；矩阵每行只点亮该点亮的那条（仅两条本就记过档的级联） |
+| `check-office-skill-capabilities.py --no-pending pdf xlsx` | **OK**，29/29 declared entry points pass，20 个产物过 L2 |
+| `office-skills-selftest.py`（L2） | 62 passed / 0 failed，零跳过 |
+| `check-skill-originality.py --target skills/builtin/pdf` | clean，0 violation / 0 review |
+| `test-skill-originality.py`（L0 重标定） | 分离带 **0.191 ~ 0.736**，阈值 0.55 仍居中 |
+
+### 三件量出来的事（别再猜）
+
+1. **坐标系两个方向相反**，搞错是静默的、只在旋转页现形：`pdfplumber` 给**显示系**
+   （旋转已应用）⇒ `to_page_space()` 逆转回页面系；widget `/Rect` 给**页面系且左下原点**
+   ⇒ `pdf_rect_to_top_left()` 再 `to_display_space()`。对照值（`report-cjk.pdf` 第 3 页，
+   旋转 90°）：显示 `(502,60,517,450)` ↔ 页面 `(60,78,450,93)`。fitz 当年记
+   `(60,75,450,93)`，**差的 3pt 是两库对字框上沿的差异，不是坐标系错误**。
+2. **macOS 上第一个能找到的 CJK 字体恰恰嵌不了**：`Hiragino Sans GB.ttc` 是 PostScript(CFF)
+   轮廓，reportlab 报 `postscript outlines are not supported`。所以 `pdffont.py` 是
+   **逐个试注册**而非「找到路径就用」。实测可用 `Songti.ttc`(subfontIndex=0) /
+   `Arial Unicode.ttf`。Songti.ttc 磁盘 66,933,080 字节 → 产物 **32KB**（两页含表格），
+   仍是嵌入的、文字仍可抽取。
+3. **AcroForm 的值对三个文字读取器都是不可见的**：pdfplumber / pdfminer / PDFium 都只读
+   页面内容流，域里的值活在 widget 的 `/AP` 流里。所以 `pdf_form_check.py` 先把外观**压平**
+   到临时副本的页面内容再量 —— 这既是唯一可行的办法，也比原来更诚实：量的是阅读器真会画
+   出来的东西。压平遵循 PDF 32000 §12.5.5（`/BBox` 过 `/Matrix` 再贴 `/Rect`）。
+
+### 本轮抓到的两个真缺陷（两个都是门禁咬出来的，不是我预料到的）
+
+1. **`pdf_info.py` 对加密文件报 `page_count: null`（I3 判红）。** 上一窗口把这一项记成
+   「已完成并实测通过」，但那时树是坏的、整套标尺一次都没跑起来 —— **「我实测过」和
+   「门禁跑过」是两件事**。真相：加密只覆盖**字符串和流**，对象图是明文，页树的 `/Count`
+   本来就答得出来；是 pypdf 的守卫按对象一刀切才读不到。修法是只为这一个数字掀开守卫
+   （`locked_page_count()`），并写清「目录在压缩对象流里时真的读不到，那时返回 null」。
+2. **`draw_boxes_overlay` 会把第二页的内容整页抹掉（capabilities C4 判红）。**
+   根因在 pypdf：`replace_contents()` 会把它替换掉的那批 `/Contents` 对象**全部置 Null**，
+   而**两个页面可以共享内容对象** —— `table-grid.pdf` 的两页只差格线，MuPDF `garbage=4`
+   把前 13 个对象去重合并了。于是给第 1 页画框顺手清空了第 2 页（实测 66 字符 → 0，
+   渲染全白）。修法 `detach_contents()`：合并前先把该页内容拼成一份**私有**流。
+   ⚠️ **`test-pdf-skill.py` 的 E4 覆盖不到这个** —— 它的被测对象 `report-cjk.pdf`
+   三页之间不共享对象，这条缺口只有 capability 门（P3 的 L2 fidelity）表达得出来。
+   **两个门禁量的不是同一件事，这次是后者救了场。**
+
+### 明确的能力降级（都写进代码注释了，别改回去）
+
+- **`pdf_encrypt.verify()` 证不了 owner 不受限**：pypdf 无论用哪个口令打开都返回文件里
+  存的那一份 `/P`（实测 user / owner 都读到 20），而 PyMuPDF 会施加 owner 语义。
+  真正的防线是**写入前**就拒绝「限制性 `--allow` + 没给 owner 口令」，不是事后复读。
+  SKILL.md 里那句「实测以 owner 身份打开是全部允许」已改写 —— 那是规范事实，不是本工具链
+  量得出来的事实。
+- **`pdf_tables.py` 的 `header_external` 恒为 null**：pdfplumber 没有表头检测。
+- **`make_fixtures.py` 重跑不再字节复现**：git 里那批是 PyMuPDF 写的。新脚本自身
+  **六个示例里五个逐字节可复现**（`invariant=1` + 固定 `/ID`），`locked.pdf` 不可复现
+  （AES-256 每次换盐）。新增 `--out-dir` 用于旁路生成对比。
+  **本轮没有重新生成提交的夹具**（重跑会改 `.builtin-version` ⇒ 存量桌面端重装）；
+  验证办法是把旁路生成的那批临时换进去跑全套 —— 实测 **53 passed / 0 failed**，跑完换回。
+
+### ⚠️ 剩下的 AGPL 暴露面（本刀没做，需要单独决定）
+
+1. **`skills/builtin/deckcraft/scripts/source_to_md/pdf_to_md.py`（1178 行）仍
+   `import fitz`** —— 它**随产品分发**，和 pdf 技能是同一类风险。
+   ⚠️ **更正一句我一开始写错的话**：这不是「新发现的」——**§5·补.8c 的路 ② 从一开始就写着
+   「代价是重写 pdf 技能（S2 全部产出）+ deckcraft 的 `pdf_to_md.py`」**，13 个文件的清点里
+   也点了它的名。本轮的会话任务书只圈了 pdf 技能，所以它被留下了；**它是已知欠账，不是遗漏**。
+   附带问题：`BUILTIN_DEP_MAP.deckcraft` **从来没有声明过 pymupdf**，所以这条依赖在 UI 上
+   一直是隐形的（§4·补 第 2 点记的既有缺陷，至今没修）。
+   **规模与 pdf 技能的一刀相当，且 `pdf_to_md.py` 没有自己的行为门禁** —— 换实现的风险比
+   pdf 技能那一刀高，因为没有标尺接着。
+2. **`scripts/` 下三个门禁脚本仍 import fitz**（`office-skills-selftest.py` /
+   `test-pdf-skill.py` / `test-xlsx-skill.py`）—— 它们不进产品包，风险低得多。
+   `test-pdf-skill.py` 尤其要小心：它是标尺，**在它刚刚变绿的这一刀里换掉它的测量手段，
+   等于让「绿」这件事失去意义**。留作单独一刀。
+
+---
+
+## 六·补四 — `deckcraft/pdf_to_md.py` 去 PyMuPDF（2026-08-02，S3.5 收官）
+
+§六·补三 结尾点名的欠账。这是全仓库**最后一处「分发中的 AGPL 暴露」**：1178 行、随产品走、
+**一条测试都没有**（`scripts/` · `packages/**/__tests__/` · `.github/workflows/` 全 grep 零命中）。
+
+### 顺序：先立标尺，后换实现
+
+新增 `scripts/test-deckcraft-pdf-md.py`（**25 条断言 / 28 条负向控制**），**在动实现之前写完**。
+这是 S1 立的规矩，也是 §六·补三 能安全换掉 14 个文件的唯一原因。夹具在临时目录现生成
+（reportlab 画 styles/table/card/headfoot/figure，pypdf 造 rotated），**不入 git ⇒ 不动
+`.builtin-version`**；真实语料用仓库里的 `examples/ai-coding-pilot/export/deck.pdf`。
+
+实现拆成两层：新增 `source_to_md/pdfsource.py` 作为**读取层**（pdfplumber/pypdf/pypdfium2），
+`pdf_to_md.py` 的 1100 行转换逻辑**逐字未动**（只换 import、`fitz.Rect`→`Rect`、
+`get_pixmap`→`render_clip`）。这样任何 Markdown 差异都只有一个可能的来源。
+
+### 判据：合成夹具逐字节相同，真实语料四处差异全部有据
+
+| 夹具 | 与 PyMuPDF 基线 |
+|---|---|
+| styles / table / headfoot / figure | **逐字节相同** |
+| rotated（styles + `/Rotate 90`） | 与 styles 逐字节相同（除标题行） |
+| deck.pdf（真实语料） | 四处差异，见下 |
+
+1. **`E N G I N E E R I N G` → `ENGINEERING`** —— PyMuPDF 把 CSS letter-spacing 当成词间空格，
+   逐字母拆开。**新实现更对。**
+2. **CJK 加粗标记** —— Chrome 把中文导成 **Type3 字体**，无 descriptor ⇒ PyMuPDF 对
+   **deck 里每一个中文字**都报 `flags=0`（粗细信息整体丢失）；pdfminer 能解析出
+   `PingFangSC-Semibold` / `-Thin`。⇒ 新实现给 semibold 加 `**`。**这是本刀唯一一处
+   刻意的行为改变**，写进断言 B5，并配了「按 PyMuPDF 那样不算粗体」的负向控制。
+3. **页内阅读顺序**（`01 交付压力持续上升` vs `交付压力持续上升 01`）—— 两者都是把一页幻灯片
+   拍平成一行，谁也不比谁「对」。新实现按视觉从上到下、从左到右。
+4. **不再出现幽灵表格**（见下第 3 条）。
+
+### 五件量出来的事（都不是查文档得来的）
+
+1. **pdfminer 会把中文读成「康熙部首」。** `力`(U+529B) 到手是 `⼒`(U+2F12)，`同比`→`同⽐`、
+   `人力`→`⼈⼒`、`工具`→`⼯具`、`行动`→`⾏动`、`时长`→`时⻓`。**长得一模一样，比较不相等**
+   —— 搜索、diff、喂给模型全部受影响。PyMuPDF 静默折叠了这一层，迁过来才冒出来。
+   修法有两半：**康熙部首块(U+2F00–2FD5) 每个码位都有 NFKC 分解**，逐字符折叠即可；
+   ⚠️ **CJK 部首补充块(U+2E80–2EF3) 的 113 个码位一个 NFKC 分解都没有**，同样的招数对它无效
+   （`⻅⻓⻛` 就是这么漏进第一版产物的），只能查表。**表只收「本身就是独立汉字」的 20 个
+   简化部首**（⻅见 ⻓长 ⻛风 ⻢马 …）；`⺅`(人字旁) `⻌`(走之) `讠` `纟` 这类**部件**故意不折 ——
+   它们不是字，折了等于替文档说它没说的话。**整串 NFKC 是错的**：会把 `①`→`1`、`％`→`%`、
+   `Ａ`→`A`、`ﬁ`→`fi` 一起改掉（K2 断言守的就是这条）。
+2. **PDF 里没有「空格」，只有距离 —— 阈值必须实测标定。** 同一基线上的两段文字（幻灯片上三个
+   分开的数字、两张卡片的标题）之间没有空格字符。deck.pdf 的 1044 对相邻字符实测：
+
+   | 间距 / 字号 | 对数 | 是什么 |
+   |---|---|---|
+   | 0.0180 ~ **0.2500** | 225 | CSS letter-spacing —— **不能**变成空格 |
+   | （空带，宽 **5.17 倍**） | **0** | |
+   | **1.2934** ~ 39.46 | 34 | 真的是两段（`路线B` \| `推荐`）—— **必须**变成空格 |
+
+   取 **0.9**。**两边都配了负向控制，而且是真的把常量改掉重跑**：调到 0.2 ⇒ kicker 又碎成
+   单字母（正是 PyMuPDF 的老毛病）；调到 3.0 ⇒ `+31% -24% 83%` 粘成 `+31%-24%83%`。
+3. **pdfplumber 把「有边框的方块」报成 1×1 的表格。** 幻灯片就是由这种卡片组成的，deck 的
+   第 4、7 页各中一枪：产出 `||` / `|---|` 这种废话 Markdown，**并且顺手吞掉卡片里的正文**
+   （调用方会丢弃与表格区域重叠的文本块）。修法是**要求 ≥2 行且 ≥2 列** —— 网格才是表格，
+   边框不是。配了专门的 `card.pdf` 夹具与 T2 断言。
+4. **「显示坐标系」和「阅读坐标系」不是一回事，只有旋转页现形 —— 而且这次是标尺先抓到的。**
+   pdfplumber 给的框是 /Rotate 之后的（观众看到的），但上面 1100 行逻辑通篇假设「文字向右走、
+   行往下叠」：它按 `y0` 排序、把页面上方 15% 当页眉带。第一版只改了行聚类的轴，结果 X1 判红：
+   旋转页的产物是**倒序的行 + 粘成一坨的词 + 全错的字号**。修法是引入 `_Frame`：
+   **交给上层的每一个几何量（文字/图片/表格/矢量图/页面本身）统一换算到阅读系**，
+   `render_clip` 再换回去。⚠️ 附带一条独立的坑：**页面文字不横向走时，pdfplumber 的
+   `size` 报的是字的「前进宽度」而不是字号**（实测 24pt 标题报成 18.67，连带整个正文/标题
+   排序全错）—— 字号改从阅读系框高取。
+5. **裁剪框翻转了 y 之后，「有墨」这个判据会给它发通行证。** 实测本刀自己的夹具：正确裁剪
+   墨占比 **0.399**，上下翻转的错误裁剪 **0.587 —— 更高**（因为翻过去正好落在那张噪声图上）。
+   ⇒ R1 断言量的不是墨，而是**把产出的 PNG 与「整页渲染后按同一个框裁下来的那块」逐像素比**
+   （参考路径完全不做 PDF 坐标换算，所以它独立）：正确 **0.00**，翻转 **66.13**。
+   这条负向控制是**真渲染**出来的，不是往 ctx 里填的数。
+
+### 标尺自己有三个缺陷，全是被它自己跑出来的
+
+1. **`deck.pdf` 是 10 页，不是 24 页。** 本刀的任务书写的是「24 页中文」，文件和它自己的
+   `N / 10` 页脚都说 10。P1 断言把它照抄进来就会永远判红 —— **抄来的数字要验**。
+2. **A1「树里还有没有 `import fitz`」被自己的注释骗了。** 用 grep 就会数到 `pdfsource.py`
+   docstring 里那句「本文件是为了取代 `import fitz`」和标尺自己的说明文字，**把干净的树判成脏的**。
+   改成 `ast` 解析真实 import 语句。
+3. **V0 的非空性下限写错两处**（表格行数 4 行 + 表头线 = 5 而不是 6）。
+
+另有 5 条负向控制会**连带**点亮 V0 —— 这是诚实的级联（把标题全删了，H1 确实就没有被测对象了），
+按 §六·补三 的做法写进矩阵注释而不是把哪一边调松。
+
+### 顺带修掉 §4·补 第 2 点的依赖声明缺口（比记录的更大）
+
+实测清点五个转换器的真实 import，**比 059 原先记的多出三项**：
+
+| 脚本 | 实际依赖 | 原声明 |
+|---|---|---|
+| （核心）`export_deck.py` | **`PIL`** | ❌ **核心路径依赖却完全没声明** |
+| `pdf_to_md.py` | pdfplumber · pypdf · pypdfium2 | ❌ |
+| `doc_to_md.py` | mammoth · ebooklib · nbconvert · markdownify · **bs4** · requests · PIL | ❌ |
+| `excel_to_md.py` | openpyxl | ❌ |
+| `ppt_to_md.py` | python-pptx · PIL | ✅（PIL 除外） |
+| `web_to_md.py` | curl_cffi · requests · **bs4** · **urllib3** · PIL | ❌ |
+
+处置：**`pillow` 进必需**（核心导出路径真的要它）；**十一个「源读取器」进 optional** ——
+只在用户喂那种格式时才 import，只做 Markdown→deck 的人没有 nbconvert 不该看到「未就绪」。
+三处同步：`x-requires`（新增 `x-requires-optional`）· `BUILTIN_DEP_MAP` · Rust `PY_MODULES`。
+
+⚠️ **这里差点引入一个新缺陷**：`OPTIONAL_DEPS` 原本是**按依赖名全局生效**的，
+把 `pdfplumber` 标成 optional 会**让 `pdf` 技能在一个 PDF 库都没有的情况下显示「就绪」**。
+改成支持 `技能名:依赖名` 作用域，并补了「对 deckcraft 可选的东西，对以它为地基的技能仍然必需」
+这条回归断言（`openpyxl` 同理：xlsx 必需、deckcraft 可选）。
+
+### 收工复审又抓到两个真缺陷（S4 开工前的系统 review，2026-08-02）
+
+**都不是标尺抓的，是「换个角度提问」抓的** —— 一个来自「team 协作模式下兼容吗」，
+一个来自「打包到客户机器上能正常工作吗」。
+
+1. **⚠️ pdfminer 把 168 行警告打进 stdout，而 stdout 在 team 模式下跨委派边界。**
+   转一份 10 页的示例 deck，`Could not get FontBBox from font descriptor because None
+   cannot be parsed as 4 floats` 打了 **168 次** —— **172 行 / 14,775 字节**，而 PyMuPDF
+   时代是 **4 行 / 328 字节**。根因：Chrome 的 print-to-PDF 写的 Type3 字体没有 FontBBox，
+   于是每个嵌入字体触发一次，**而它说的每一句话的意思都是「这个 PDF 很正常」**。
+   ⚠️ **我此前所有门禁运行都用 `2>/dev/null` 把输出丢掉了，所以一次都没看见它** ——
+   「我的验证方式让我看不见缺陷」的又一例。
+   修法 `_quiet_pdfminer()`：只把 `pdfminer` 这一个 logger 抬到 ERROR（不是 disable，
+   真错误仍然说话），且**在 `Document.__init__` 里调用而非 import 时** —— 一个模块仅仅
+   因为被 import 就重配日志系统，对 import 它的人是意外。
+   实测 **172 行 → 4 行**，产物逐字节相同。已写成断言 **O1**（预算 4096 字节，取 pdf 技能
+   同一个数）+ **两条负向控制**：一条灌 168 行真实噪声（不是编造的破坏），
+   一条把 stdout 清空 —— 因为**「消掉噪声」的过度修正就是把进度报告一起消掉**。
+
+2. **依赖徽标里所有 Python 库都是裸名字，没有任何安装提示。** `DEP_HINTS` 三个平台分支里
+   只有 `python-pptx` 一个 pip 包，于是 pdf 技能的四个必需依赖、xlsx 的两个、加上本刀新增的
+   `pillow` 全部走 `DEP_HINTS[m] ?? m` 兜底 —— 用户看到「缺少: pypdfium2, pypdf, pdfplumber,
+   reportlab」，点「引导安装」按钮时**递给助手的也是同样的裸名字**。
+   这是 **S2/S3 就有的既有缺陷，本刀又扩大了它**。处置：抽出 `PIP_HINTS`（三平台命令相同，
+   放一份而不是抄三份等着漂移）移到 `use-skill-deps.ts` 与 `BUILTIN_DEP_MAP` 同处，
+   并加断言「`BUILTIN_DEP_MAP` 里每个依赖要么在 `PIP_HINTS`、要么在显式的非 pip 白名单里」
+   —— 负向控制实测：删掉 `pillow` 一行即精确判红 `["pillow"]`，还原转绿。
+
+3. **⚠️⚠️ CI 装的库还停在换库之前，而且新标尺根本没进 CI。** `office-skills` job 的
+   `pip install` 是 `pymupdf pypdf python-docx openpyxl lxml` —— **`pypdfium2` /
+   `pdfplumber` / `reportlab` 一个都没有**，而 pdf 技能整体换库后就靠这三个。
+   **一 push 就 ImportError 直接红。** 之所以至今没响，是**分支从未 push** ——
+   与 §7 里 `recalc-drift` 那颗雷**完全同一个形状**，而且本机装了全部库、看不见。
+   同时发现 `scripts/test-deckcraft-pdf-md.py` 建好之后**没有加进 CI** ——
+   §六·补 的教训「收工复审抓到 5 个缺陷，2 个只在别人机器上犯，根因是门禁一条都没进 CI」
+   **本轮原样重犯了一次**。
+   处置：pip 列表补齐并逐项注明用途（含**为什么还留着 `pymupdf`** —— 不是给技能用的，
+   是 `scripts/` 下那三个未换的门禁脚本要，它们不分发）· 新标尺加进 job。
+   验证手段是**静态求 import 闭包再对照 pip 列表**（⚠️ 这个检查脚本自己错了三次：
+   本地模块白名单手写漏了 `pdfwrite`、漏了包目录 `office`、没映射 `pdfminer` 是
+   `pdfplumber` 的传递依赖 —— 改成从目录现扫本地模块名之后才准）。
+
+**同时验证为「没问题」的**：打包链路（从 zip 解压到 `/var/folders/...` 的陌生路径跑真实转换，
+产物正确）· 徽标不会因 deckcraft 从 4 个依赖变 16 个而爆炸（UI 只渲染 missing，optional 不进）·
+Rust 的 badge 名与 TS 查的名字一致（`("pillow","PIL")` 的左值才是 `DepStatus.name`）·
+新代码零平台调用、路径全走 pathlib（`pdf_to_md.py` 里那两处 `/` 是 Markdown 图片链接，
+**正斜杠才是对的**，换成 `os.sep` 反而会在 Windows 上生成坏链接）。
+
+### 明确没做 / 已知边界（写下来，不要以为验过了）
+
+- **代码块围栏一直是坏的，本刀没修。** 段落合并那一步重建元素时把 `is_code` 丢了
+  （`pdf_to_md.py` 的 `merged_elements` 分支），所以等宽字体的行永远拿不到 ```` ``` ````。
+  **这是换库之前就存在的缺陷**，在一刀换库里顺手改行为会让「差异只有一个来源」这个判据失效。
+  已由 B4 断言把**当前行为**钉住（等宽行不被加粗斜体标记污染），修它归下一刀。
+- **CJK 部首补充块只折了 20 个独立汉字**，其余 93 个部件形态原样保留（K2 守着这条）。
+- **一页里混排多个文字方向**时，`_Frame` 取字符数占多数的那个方向，少数派的顺序会错。
+- **旋转页只有合成夹具**（pypdf 给 styles.pdf 加 `/Rotate 90`）。真实世界的横排扫描件
+  是「文字本身也旋转过」的另一种形态，`_Frame` 按字符矩阵判方向所以应当覆盖，**但没有真样本**。
+- **图片字节不再逐字节等同**：pypdf 会重新编码（实测同一张图 fitz 360,494 字节 / pypdf 360,763），
+  所以 R3 断言比的是**像素**而不是字节。`should_keep_image` 里那几个按字节数标定的阈值
+  （`MIN_IMAGE_BYTES` / bpp）因此有轻微漂移，量级 0.07%，未重新标定。
+- **`scripts/` 下三个门禁脚本仍 `import fitz`**（不分发）—— 与 §六·补三 的结论一致，留作单独一刀。
+
+### 门禁结果（全部本机实测，退出码直读不经管道）
+
+| 门 | 结果 |
+|---|---|
+| `test-deckcraft-pdf-md.py`（**新**） | **30 passed / 0 failed**，26 条断言，矩阵每行只点亮该点亮的那条 |
+| `test-pdf-skill.py` | 53 passed / 0 failed（38 断言）—— 未受影响 |
+| `test-xlsx-skill.py` | 71 passed / 0 failed |
+| `office-skills-selftest.py`（L2） | 62 passed / 0 failed |
+| `check-office-skill-capabilities.py --selftest` | 16 passed / 0 failed |
+| `--no-pending pdf xlsx` | OK，29/29 declared entry points，20 产物过 L2 |
+| `xlsx-evaluator-calibration.py` | 64 passed / 0 failed |
+| `check-skill-originality.py --target deckcraft` | clean，0 violation / 0 review |
+| `test-skill-originality.py`（L0） | 分离带 **0.191 ~ 0.736**，阈值 0.55 仍居中 |
+| `check-docs.ts` · `turbo typecheck` | 绿 · **8/8** |
+| desktop `skills-builtin.test.ts` | **15/15**（原 12） |
+| `cargo test` | **155** |
+
+`.builtin-version`: `55843f24e06ee965` → **`6bae0dae40aa68c5`**（两处已对齐）。
 
 ---
 

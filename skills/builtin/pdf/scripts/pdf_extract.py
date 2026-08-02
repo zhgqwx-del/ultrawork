@@ -7,18 +7,23 @@
 
 Every item carries TWO boxes, in points, origin top-left, y growing downwards:
 
-  bbox          page space — the unrotated frame. This is what PyMuPDF's own
-                drawing and annotation calls expect, so it is the one to use when
-                writing back into the PDF.
-  bbox_display  image space — the frame a viewer (and pdf_render.py) shows. Scale
+  bbox          page space — the unrotated frame the PDF stores. This is what
+                anything writing back into the file (an annotation, a drawn box)
+                has to use.
+  bbox_display  image space — the frame a viewer, and pdf_render.py, shows. Scale
                 by dpi/72 to land on the PNG.
 
 They differ only when the page carries a /Rotate. Measured on fixtures/report-cjk.pdf
-page 3 (rotated 90°): the extracted box is (60, 75, 450, 93) while the text is
-rendered at (502, 60, 520, 450) — 36 dark pixels under the first box versus 2282
-under the second. One box with a hand-wave about "the same coordinates" is how
-overlays end up drawn on empty paper, so both are emitted and both are asserted in
-scripts/test-pdf-skill.py.
+page 3 (rotated 90°): the display box is (502, 60, 517, 450) while the same text
+lives at (60, 78, 450, 93) in page space. One box with a hand-wave about "the same
+coordinates" is how overlays end up drawn on empty paper, so both are emitted and
+both are asserted in scripts/test-pdf-skill.py.
+
+⚠️ The direction of the conversion is the opposite of what it was. pdfplumber
+reports DISPLAY coordinates (rotation already applied), so page space is derived by
+rotating BACK. The previous implementation used PyMuPDF, which reports page space
+and needed the forward rotation. Same two frames, mirrored plumbing — and getting
+the direction wrong is silent, because on an unrotated page both are identical.
 
 --overlay writes a copy of the document with every reported box stroked onto the
 page. It is the cheapest way to see whether the coordinates mean what they claim,
@@ -32,86 +37,123 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import ensure_distinct, open_pdf, parse_pages, run, write_json  # noqa: E402
+from pdfcommon import (draw_boxes_overlay, ensure_distinct, fail,  # noqa: E402
+                       parse_pages, run, to_page_space, write_json)
 
 GRANULARITIES = ("word", "line", "block")
 BOX_COLOR = {"word": (0.85, 0.25, 0.10), "line": (0.10, 0.35, 0.85),
              "block": (0.20, 0.55, 0.25)}
+# Vertical gap, in points, above which two lines belong to different blocks.
+BLOCK_GAP = 12.0
 
 
-def _round_box(box) -> list[float]:
+def open_plumber(src: Path, password: str | None):
+    import pdfplumber
+    from pdfminer.pdfdocument import PDFPasswordIncorrect
+    if not src.is_file():
+        fail(f"no such file: {src}")
+    try:
+        return pdfplumber.open(str(src), password=password or "")
+    except PDFPasswordIncorrect:
+        if password is None:
+            fail(f"{src.name} is password-protected: pass --password")
+        fail(f"the supplied --password was rejected by {src.name}")
+    except Exception as e:  # noqa: BLE001 - pdfminer raises several unrelated types
+        fail(f"cannot open {src.name} as a PDF: {type(e).__name__}: {e}")
+
+
+def _round(box) -> list[float]:
     return [round(float(v), 2) for v in box]
 
 
-def _boxes(page, box) -> dict:
+def _boxes(box, rotation: int, w: float, h: float) -> dict:
     """Both frames for one box. On an unrotated page they are the same numbers."""
-    import fitz
-
-    return {"bbox": _round_box(box),
-            "bbox_display": _round_box(fitz.Rect(box) * page.rotation_matrix)}
+    return {"bbox": _round(to_page_space(box, rotation, w, h)),
+            "bbox_display": _round(box)}
 
 
 def page_items(page, granularity: str) -> list[dict]:
     """One dict per word / line / block, each with its two boxes."""
+    rot, w, h = int(page.rotation or 0) % 360, float(page.width), float(page.height)
+
+    def wrap(box, **extra):
+        return {**_boxes(box, rot, w, h), **extra}
+
     if granularity == "word":
-        # (x0, y0, x1, y1, word, block_no, line_no, word_no)
-        return [{"text": wd[4], **_boxes(page, wd[:4]),
-                 "block": wd[5], "line": wd[6], "word": wd[7]}
-                for wd in page.get_text("words")]
-    items: list[dict] = []
-    for bno, block in enumerate(page.get_text("dict")["blocks"]):
-        lines = block.get("lines")
-        if not lines:                      # image block: no text to report
-            continue
-        if granularity == "block":
-            text = "".join(sp["text"] for ln in lines for sp in ln["spans"])
-            items.append({"text": text, **_boxes(page, block["bbox"]), "block": bno})
-            continue
-        for lno, line in enumerate(lines):
-            spans = line["spans"]
-            items.append({
-                "text": "".join(sp["text"] for sp in spans),
-                **_boxes(page, line["bbox"]), "block": bno, "line": lno,
-                "font": spans[0]["font"] if spans else None,
-                "size": round(spans[0]["size"], 2) if spans else None,
-            })
-    return items
+        return [{"text": wd["text"],
+                 **wrap((wd["x0"], wd["top"], wd["x1"], wd["bottom"]))}
+                for wd in page.extract_words(use_text_flow=False)]
+
+    lines = page.extract_text_lines()
+    if granularity == "line":
+        out = []
+        for lno, ln in enumerate(lines):
+            chars = ln.get("chars") or []
+            out.append({"text": ln["text"],
+                        **wrap((ln["x0"], ln["top"], ln["x1"], ln["bottom"])),
+                        "line": lno,
+                        "font": chars[0].get("fontname") if chars else None,
+                        "size": round(chars[0]["size"], 2) if chars else None})
+        return out
+
+    # Blocks: consecutive lines separated by less than BLOCK_GAP. pdfplumber has no
+    # block concept of its own, and inventing one is better than dropping the
+    # granularity — but it IS a heuristic, which is why the report says so.
+    blocks: list[dict] = []
+    current: list[dict] = []
+    for ln in lines:
+        if current and ln["top"] - current[-1]["bottom"] > BLOCK_GAP:
+            blocks.append(_merge_block(current, rot, w, h, len(blocks)))
+            current = []
+        current.append(ln)
+    if current:
+        blocks.append(_merge_block(current, rot, w, h, len(blocks)))
+    return blocks
+
+
+def _merge_block(lines: list[dict], rot: int, w: float, h: float, index: int) -> dict:
+    box = (min(l["x0"] for l in lines), min(l["top"] for l in lines),
+           max(l["x1"] for l in lines), max(l["bottom"] for l in lines))
+    return {"text": "".join(l["text"] for l in lines),
+            **_boxes(box, rot, w, h), "block": index,
+            "grouping": "heuristic: lines closer than "
+                        f"{BLOCK_GAP:g}pt vertically"}
 
 
 def extract(src: Path, pages: str | None, granularity: str,
             password: str | None, overlay: Path | None) -> dict:
-    import fitz
-
-    doc = open_pdf(src, password)
-    with doc:
-        indices = parse_pages(pages, doc.page_count)
+    pdf = open_plumber(src, password)
+    try:
+        page_count = len(pdf.pages)
+        indices = parse_pages(pages, page_count)
         result = {"source": str(src), "granularity": granularity,
-                  "page_count": doc.page_count, "pages": []}
+                  "page_count": page_count, "pages": []}
+        overlay_boxes: dict[int, list] = {}
         for i in indices:
-            page = doc[i]
+            page = pdf.pages[i]
             items = page_items(page, granularity)
+            rot = int(page.rotation or 0) % 360
+            w, h = float(page.width), float(page.height)
+            # `size` is what a viewer shows (bbox_display lives in it); `mediabox`
+            # is the unrotated page (bbox lives in it).
+            mw, mh = (h, w) if rot in (90, 270) else (w, h)
             result["pages"].append({
                 "number": i + 1,
-                # `size` is what a viewer shows (bbox_display lives in it); `mediabox`
-                # is the unrotated page (bbox lives in it).
-                "size": [round(page.rect.width, 2), round(page.rect.height, 2)],
-                "mediabox": [round(page.mediabox.width, 2),
-                             round(page.mediabox.height, 2)],
-                "rotation": page.rotation,
-                "text": page.get_text(),
+                "size": [round(w, 2), round(h, 2)],
+                "mediabox": [round(mw, 2), round(mh, 2)],
+                "rotation": rot,
+                "text": page.extract_text() or "",
                 "items": items,
             })
             if overlay is not None:
-                # draw_rect takes PAGE space, which is why `bbox` and not
-                # `bbox_display` goes here — verified on the rotated fixture page.
-                color = BOX_COLOR[granularity]
-                for it in items:
-                    page.draw_rect(fitz.Rect(it["bbox"]), color=color, width=0.4)
+                overlay_boxes[i] = [(it["bbox"], BOX_COLOR[granularity])
+                                    for it in items]
         if overlay is not None:
-            overlay.parent.mkdir(parents=True, exist_ok=True)
-            doc.save(str(overlay))
+            draw_boxes_overlay(src, overlay, overlay_boxes, password)
             result["overlay"] = str(overlay)
         return result
+    finally:
+        pdf.close()
 
 
 def main() -> None:

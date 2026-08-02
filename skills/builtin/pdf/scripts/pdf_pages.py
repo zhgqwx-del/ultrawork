@@ -24,33 +24,33 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pdfcommon import (compact, ensure_distinct, fail, open_pdf,  # noqa: E402
+from pdfcommon import (compact, ensure_distinct, fail, open_reader,  # noqa: E402
                        parse_pages, run, write_json)
 
 OPS = ("merge", "split", "extract", "delete", "rotate")
 LEGAL_ROTATIONS = (0, 90, 180, 270)
 
 
-def save(doc, out: Path) -> None:
+def save(writer, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(out), garbage=4, deflate=True, no_new_id=True)
+    with out.open("wb") as fh:
+        writer.write(fh)
 
 
 def op_merge(srcs: list[Path], out: Path, password: str | None) -> dict:
-    import fitz
+    from pypdf import PdfWriter
 
     if len(srcs) < 2:
         fail("merge needs at least two files in --in")
-    merged = fitz.open()
+    writer = PdfWriter()
     contributed = []
-    with merged:
-        for src in srcs:
-            doc = open_pdf(src, password)
-            with doc:
-                merged.insert_pdf(doc)
-                contributed.append({"file": str(src), "pages": doc.page_count})
-        save(merged, out)
-        pages = merged.page_count
+    for src in srcs:
+        reader = open_reader(src, password)
+        for page in reader.pages:
+            writer.add_page(page)
+        contributed.append({"file": str(src), "pages": len(reader.pages)})
+    save(writer, out)
+    pages = len(writer.pages)
     total = sum(c["pages"] for c in contributed)
     if pages != total:
         fail(f"merge produced {pages} pages from inputs totalling {total} — refusing "
@@ -59,79 +59,81 @@ def op_merge(srcs: list[Path], out: Path, password: str | None) -> dict:
 
 
 def op_extract(src: Path, spec: str | None, out: Path, password: str | None) -> dict:
-    import fitz
+    from pypdf import PdfWriter
 
-    doc = open_pdf(src, password)
-    with doc:
-        wanted = parse_pages(spec, doc.page_count)
-        picked = fitz.open()
-        with picked:
-            for i in wanted:
-                picked.insert_pdf(doc, from_page=i, to_page=i)
-            save(picked, out)
-            pages = picked.page_count
+    reader = open_reader(src, password)
+    wanted = parse_pages(spec, len(reader.pages))
+    writer = PdfWriter()
+    for i in wanted:
+        writer.add_page(reader.pages[i])
+    save(writer, out)
     return {"op": "extract", "inputs": [{"file": str(src)}],
-            "kept_pages": [i + 1 for i in wanted], "pages": pages}
+            "kept_pages": [i + 1 for i in wanted], "pages": len(writer.pages)}
 
 
 def op_delete(src: Path, spec: str | None, out: Path, password: str | None) -> dict:
-    doc = open_pdf(src, password)
-    with doc:
-        drop = parse_pages(spec, doc.page_count)
-        if len(drop) == doc.page_count:
-            fail(f"deleting {len(drop)} of {doc.page_count} page(s) would leave an "
-                 f"empty document")
-        doc.delete_pages(drop)
-        save(doc, out)
-        pages = doc.page_count
+    from pypdf import PdfWriter
+
+    reader = open_reader(src, password)
+    count = len(reader.pages)
+    drop = parse_pages(spec, count)
+    if len(drop) == count:
+        fail(f"deleting {len(drop)} of {count} page(s) would leave an empty document")
+    writer = PdfWriter()
+    for i, page in enumerate(reader.pages):
+        if i not in set(drop):
+            writer.add_page(page)
+    save(writer, out)
     return {"op": "delete", "inputs": [{"file": str(src)}],
-            "deleted_pages": [i + 1 for i in drop], "pages": pages}
+            "deleted_pages": [i + 1 for i in drop], "pages": len(writer.pages)}
 
 
 def op_rotate(src: Path, spec: str | None, degrees: int, out: Path,
               password: str | None) -> dict:
+    from pypdf import PdfWriter
+
     if degrees not in LEGAL_ROTATIONS:
         fail(f"--degrees {degrees} is not one of {LEGAL_ROTATIONS}; PDF stores "
              f"/Rotate in quarter turns")
-    doc = open_pdf(src, password)
-    with doc:
-        wanted = parse_pages(spec, doc.page_count)
-        turned = []
-        for i in wanted:
-            page = doc[i]
+    reader = open_reader(src, password)
+    wanted = set(parse_pages(spec, len(reader.pages)))
+    writer = PdfWriter()
+    turned = []
+    for i, page in enumerate(reader.pages):
+        if i in wanted:
             # Relative, so `--degrees 90` twice ends at 180 rather than fighting an
             # existing /Rotate the document already carried.
-            before = page.rotation
-            page.set_rotation((before + degrees) % 360)
-            turned.append({"page": i + 1, "from": before, "to": page.rotation})
-        save(doc, out)
-        pages = doc.page_count
+            before = int(page.rotation) % 360
+            after = (before + degrees) % 360
+            page.rotation = after
+            turned.append({"page": i + 1, "from": before, "to": after})
+        writer.add_page(page)
+    save(writer, out)
     return {"op": "rotate", "inputs": [{"file": str(src)}], "rotated": turned,
-            "pages": pages}
+            "pages": len(writer.pages)}
 
 
 def op_split(src: Path, out_dir: Path, every: int, password: str | None) -> dict:
-    import fitz
+    from pypdf import PdfWriter
 
     if every < 1:
         fail(f"--every {every} must be at least 1")
-    doc = open_pdf(src, password)
+    reader = open_reader(src, password)
+    total = len(reader.pages)
+    out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    with doc:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for start in range(0, doc.page_count, every):
-            end = min(start + every - 1, doc.page_count - 1)
-            part = fitz.open()
-            with part:
-                part.insert_pdf(doc, from_page=start, to_page=end)
-                # Named by SOURCE page range, like pdf_render.py names by source
-                # page: "part 2" and "page 2" must not be two different things.
-                target = out_dir / (f"pages-{start + 1:03d}.pdf" if start == end
-                                    else f"pages-{start + 1:03d}-{end + 1:03d}.pdf")
-                part.save(str(target), garbage=4, deflate=True, no_new_id=True)
-            written.append({"file": target.name, "from_page": start + 1,
-                            "to_page": end + 1})
-        total = doc.page_count
+    for start in range(0, total, every):
+        end = min(start + every - 1, total - 1)
+        writer = PdfWriter()
+        for i in range(start, end + 1):
+            writer.add_page(reader.pages[i])
+        # Named by SOURCE page range, like pdf_render.py names by source page:
+        # "part 2" and "page 2" must not be two different things.
+        target = out_dir / (f"pages-{start + 1:03d}.pdf" if start == end
+                            else f"pages-{start + 1:03d}-{end + 1:03d}.pdf")
+        save(writer, target)
+        written.append({"file": target.name, "from_page": start + 1,
+                        "to_page": end + 1})
     return {"op": "split", "inputs": [{"file": str(src), "pages": total}],
             "parts": written, "pages": total}
 

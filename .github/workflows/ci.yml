@@ -111,8 +111,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # ⚠️ This list went stale the moment the pdf skill moved off PyMuPDF (059
+      # §六·补三/补四) and nobody noticed, because the branch was never pushed —
+      # the same shape as the recalc-drift landmine in §7. On the author's machine
+      # every library is installed, so the gap was invisible there too.
+      #
+      #   pypdfium2 / pdfplumber / reportlab  what the pdf skill and deckcraft's
+      #                                       pdf_to_md now actually stand on
+      #   pillow                              deckcraft's core export path (PIL);
+      #                                       pdfplumber pulls it in, named anyway
+      #                                       so the reason survives a dep change
+      #   pymupdf                             NOT for the skills — skills/ has zero
+      #                                       fitz imports. Three GATE scripts still
+      #                                       use it (office-skills-selftest,
+      #                                       test-pdf-skill, test-xlsx-skill); they
+      #                                       are not distributed, so AGPL does not
+      #                                       reach the product. Drop this when they
+      #                                       are swapped.
+      #   python-docx                         S4's skill; already here for L1/L2 stubs
       - name: Install the libraries the skills import
-        run: python -m pip install --disable-pip-version-check pymupdf pypdf python-docx openpyxl lxml
+        run: >
+          python -m pip install --disable-pip-version-check
+          pypdf pypdfium2 pdfplumber reportlab pillow
+          openpyxl lxml python-docx pymupdf
       # LibreOffice on ONE platform, deliberately (059 §7 option B).
       #
       # It is not optional dressing: the L2 gate's X3 negative control (recalc-drift)
@@ -154,6 +175,13 @@ jobs:
         run: python scripts/test-pdf-skill.py
       - name: xlsx skill behaviour tests
         run: python scripts/test-xlsx-skill.py
+      # deckcraft's pdf_to_md, which S3.5 moved off PyMuPDF. Its fixtures are built
+      # into a temp dir at run time (reportlab/pypdf), so this needs no committed
+      # corpus beyond the example deck already in the tree. Listed here because a
+      # gate that only ever runs on the author's machine is how the last round
+      # shipped two defects that only reproduced on someone else's.
+      - name: deckcraft pdf_to_md behaviour tests
+        run: python scripts/test-deckcraft-pdf-md.py
       # The evaluator's coverage boundary. Its LibreOffice half is skipped here and
       # named out loud; the pinned values themselves are still checked against the
       # python engine on every platform.
