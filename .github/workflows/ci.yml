@@ -94,7 +94,17 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Measured 2026-08-02 on the author's machine with LibreOffice present: the six
+    # steps below total ~195s, of which the L2 self-test is ~116s. Plus the apt
+    # install on Linux. 15 minutes leaves ample headroom.
     timeout-minutes: 15
+    env:
+      # ECMA-376 XSD is never available here (059 §5·补.8 — the licence question is
+      # still open, so it is not vendored). LibreOffice IS installed on Linux below,
+      # so only the other two runners have to declare it missing. --allow-missing
+      # names each unrun tier out loud: a skipped tier can never read as green
+      # (059 §5 "skipped is not green").
+      ALLOW_MISSING: ${{ matrix.os == 'ubuntu-latest' && 'xsd' || 'soffice xsd' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -102,23 +112,51 @@ jobs:
           python-version: "3.11"
       - name: Install the libraries the skills import
         run: python -m pip install --disable-pip-version-check pymupdf pypdf python-docx openpyxl lxml
-      # soffice / ECMA-376 XSD are declared REQUIRED by 059 §7 and are not installed
-      # here yet; --allow-missing names them out loud so the run can never read as
-      # "fully green" while those tiers are unrun (059 §5 "skipped is not green").
+      # LibreOffice on ONE platform, deliberately (059 §7 option B).
+      #
+      # It is not optional dressing: the L2 gate's X3 negative control (recalc-drift)
+      # can only fire where a recalculation actually happens. Without LibreOffice
+      # anywhere, that control is SKIPPED and its "must fire" case FAILS — this job
+      # was red for exactly that reason before this step existed, and nobody saw it
+      # because the branch was never pushed.
+      #
+      # Linux only because it is the cheapest of the three installers and one
+      # platform is enough to make the control effective. KNOWN GAP, written down
+      # rather than glossed: find_soffice()'s macOS and Windows branches are still
+      # never executed anywhere, so "three platforms are green" does NOT mean the
+      # soffice path works on three platforms.
+      #
+      # calc only, not the full suite. S4 (docx) will need libreoffice-writer too —
+      # D7 converts .docx to PDF.
+      - name: Install LibreOffice (Linux only — see comment)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc
+      # shell: bash on every gate step below — the default on Windows is pwsh, where
+      # $ALLOW_MISSING silently expands to nothing instead of the env var, which
+      # would quietly turn the strict tier back on and go red for the wrong reason.
       - name: L2 artifact gate (self-test)
-        run: python scripts/office-skills-selftest.py
+        shell: bash
+        run: python scripts/office-skills-selftest.py --allow-missing $ALLOW_MISSING
       - name: L1 capability gate (self-test)
         run: python scripts/check-office-skill-capabilities.py --selftest
       # Scoped to the skills that have finished. An unscoped --no-pending goes red
       # the moment the next skill starts its first slice (059 §6 builds one at a
       # time), and a job that is red by design is a job nobody reads. Add each skill
-      # here as it clears its debt: pdf did in S2, xlsx owes 12 as of S3.
+      # here as it clears its debt: pdf did in S2; xlsx owes 4 (X11-X14) as of S3.
       - name: L1 capability gate (acceptance tier, no pending debt)
-        run: python scripts/check-office-skill-capabilities.py --no-pending pdf --allow-missing soffice xsd
+        shell: bash
+        run: python scripts/check-office-skill-capabilities.py --no-pending pdf --allow-missing $ALLOW_MISSING
       - name: pdf skill behaviour tests
         run: python scripts/test-pdf-skill.py
       - name: xlsx skill behaviour tests
         run: python scripts/test-xlsx-skill.py
+      # The evaluator's coverage boundary. Its LibreOffice half is skipped here and
+      # named out loud; the pinned values themselves are still checked against the
+      # python engine on every platform.
+      - name: xlsx formula evaluator calibration
+        run: python scripts/xlsx-evaluator-calibration.py
 
   rust:
     name: rust (${{ matrix.os }})

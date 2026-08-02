@@ -1894,6 +1894,26 @@ def selftest(as_json: bool, only_kind: str | None) -> int:
         for i, (name, kind, flaw, marker, should_fire) in enumerate(CASES):
             if only_kind and kind != only_kind:
                 continue
+            # A NEGATIVE control whose check needs a tier this host does not have
+            # cannot fire, and calling that a failure makes the whole suite red for a
+            # reason that has nothing to do with the code under test. It is reported
+            # as skipped and named — never folded into the pass count.
+            #
+            # This is only honest because the tier IS exercised somewhere: CI installs
+            # LibreOffice on Linux (059 §7 option B). If that ever stops being true,
+            # this stops being a skip and becomes a control nobody runs — which is
+            # exactly how X3 carried a wrong expectation for a month.
+            tier = CHECKS.get(marker, {}).get("tier", "core") if marker else "core"
+            available, why = tier_available(tier)
+            if should_fire and not available:
+                results.append({
+                    "case": name, "kind": kind, "flaw": flaw, "marker": marker,
+                    "ok": True, "skipped_missing": True,
+                    "skip_label": f"needs the {tier} tier",
+                    "detail": f"{why} — this negative control cannot fire without it; "
+                              f"CI runs it on Linux, where LibreOffice is installed",
+                    "findings": []})
+                continue
             build, suffix = BUILDERS[kind]
             art = root / f"case{i:02d}{suffix}"
             expect = build(art, flaw)
@@ -1927,7 +1947,8 @@ def selftest(as_json: bool, only_kind: str | None) -> int:
     else:
         for r in results:
             if r.get("skipped_missing"):
-                print(f"SKIP  [fixture absent] {r['case']} — {r['detail']}")
+                print(f"SKIP  [{r.get('skip_label', 'fixture absent')}] {r['case']} "
+                      f"— {r['detail']}")
                 continue
             verdict = "PASS" if r["ok"] else "FAIL"
             arrow = r.get("arrow") or ("must fire" if r["marker"] else "must stay silent")
@@ -1942,7 +1963,10 @@ def selftest(as_json: bool, only_kind: str | None) -> int:
                 print(f"  - {s}")
             print("  Skipped is not green. Install LibreOffice / point $ECMA376_XSD_DIR\n"
                   "  at unpacked ECMA-376 schemas to close these.")
-        print(f"\n[office-selftest] {len(results) - len(failed)} passed, {len(failed)} failed"
+        n_skipped = sum(1 for r in results if r.get("skipped_missing"))
+        print(f"\n[office-selftest] {len(results) - len(failed) - n_skipped} passed, "
+              f"{len(failed)} failed"
+              + (f", {n_skipped} case(s) skipped" if n_skipped else "")
               + (f", {len(seen)} assertion(s) skipped" if seen else ""))
     return 1 if failed else 0
 

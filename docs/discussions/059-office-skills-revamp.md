@@ -1384,8 +1384,32 @@ X11/X12/X13/X14 收官，`--no-pending xlsx` 转绿则 S3 完成。
    ⚠️ **B 有一个诚实的洞**：S4 的 D7 是 docx→PDF，需要 Writer 而不只是 Calc；选 B 时
    ubuntu 要装 `libreoffice-calc` + `libreoffice-writer`（或整包），S4 开工前确认。
 
-   **本轮未擅自实施任何一个**（用户 2026-08-02 指示「先给方案和代价」）。当前 CI 仍带
-   `--allow-missing soffice xsd`，即**雷仍在**；push 前必须选定。
+   **✅ 已实施 B（2026-08-02，用户拍板）**：ubuntu 装 `libreoffice-calc`，mac/Windows 继续
+   `--allow-missing soffice xsd`（用 job 级 `ALLOW_MISSING` 按 `matrix.os` 计算）。
+
+   **B 单独不够，必须配第二件事。** 实施后 mac/Windows 仍然红 —— `selftest()` 内部恒用
+   宽松档，`recalc-drift` 这条**需要 LibreOffice 才点得亮**的负向控制在没装的机器上根本
+   不可能 fire，于是「必须打红」失败。补法：**tier 不可用时该用例记 SKIP 并单列**，
+   不计入 passed。这**不是**当初否掉的 C —— C 是所有平台都不跑，控制等于关掉；
+   现在 ubuntu 在真跑它，另外两个平台只是诚实地说自己跑不了。
+
+   双向实测：
+
+   | 主机形态 | 结果 |
+   |---|---|
+   | 装了 LibreOffice（ubuntu） | `60 passed, 0 failed` · **0 条 SKIP** · X3 用例 **PASS（真的 fire 了）** |
+   | 没装（mac/Windows） | `59 passed, 0 failed, 1 case skipped` · exit **0** · SKIP 行点名 tier 与原因 |
+
+   **实测耗时**（本机，LibreOffice 在场）：六个步骤合计 **195s**，其中 L2 自检 116s ·
+   L1 验收档 39s · L1 自检 12s · xlsx 行为测试 14s · pdf 行为测试 10s · 求值器标定 4s。
+   加 apt 安装仍远在 15 分钟超时内。
+
+   ⚠️ **写下来的已知缺口**：`find_soffice()` 的 **macOS 与 Windows 分支至今没有任何地方
+   执行过** —— 「三平台都绿」**不等于** soffice 路径在三平台可用。
+   ⚠️ **S4 欠账**：D7 是 docx→PDF，需要 Writer，届时 ubuntu 要装
+   `libreoffice-calc + libreoffice-writer`。
+   ⚠️ **Windows 上必须 `shell: bash`**：默认 pwsh 下 `$ALLOW_MISSING` 会静默展开成空，
+   等于把严格档偷偷打开、为一个不相干的原因判红。
 2. **`doc-edit` 是删是退化成路由页**（形态 B 下二选一）——删则要清理 `README.md` / `AGENTS.md` / 可能的 ADR 引用。**S4 收尾时决定，不阻塞。**
 3. **`doc-export` 断链修复**（§1，实测 `doc-edit/SKILL.md` 的 `:3`/`:22`/`:53` 三处）——**放 S6**，与 deckcraft 的路由边界同批（两者都要等 docx/xlsx 齐了才谈得上指向谁）。改动本身 3 行，但 `skills/builtin/` 一动就要重算 `.builtin-version`；归批原则见 §6「每个技能阶段的收尾义务」第 3 条。
 
