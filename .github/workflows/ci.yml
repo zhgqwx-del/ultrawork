@@ -99,12 +99,13 @@ jobs:
     # install on Linux. 15 minutes leaves ample headroom.
     timeout-minutes: 15
     env:
-      # ECMA-376 XSD is never available here (059 §5·补.8 — the licence question is
-      # still open, so it is not vendored). LibreOffice IS installed on Linux below,
-      # so only the other two runners have to declare it missing. --allow-missing
-      # names each unrun tier out loud: a skipped tier can never read as green
-      # (059 §5 "skipped is not green").
-      ALLOW_MISSING: ${{ matrix.os == 'ubuntu-latest' && 'xsd' || 'soffice xsd' }}
+      # The ECMA-376 schemas are vendored (scripts/schemas/ecma376), so the `xsd`
+      # tier is available everywhere and D2 now runs on all three platforms — its
+      # first time ever running either its pass or its fail path. LibreOffice is
+      # installed on Linux below, so only the other two runners declare a missing
+      # tier. The whole FLAG lives in the variable because an empty --allow-missing
+      # is an argparse error, not a no-op.
+      ALLOW_MISSING_FLAG: ${{ matrix.os == 'ubuntu-latest' && '' || '--allow-missing soffice' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -138,7 +139,7 @@ jobs:
       # would quietly turn the strict tier back on and go red for the wrong reason.
       - name: L2 artifact gate (self-test)
         shell: bash
-        run: python scripts/office-skills-selftest.py --allow-missing $ALLOW_MISSING
+        run: python scripts/office-skills-selftest.py $ALLOW_MISSING_FLAG
       - name: L1 capability gate (self-test)
         run: python scripts/check-office-skill-capabilities.py --selftest
       # Scoped to the skills that have finished. An unscoped --no-pending goes red
@@ -148,7 +149,7 @@ jobs:
       # listed yet — it has no capabilities.json, and naming it would assert nothing.
       - name: L1 capability gate (acceptance tier, no pending debt)
         shell: bash
-        run: python scripts/check-office-skill-capabilities.py --no-pending pdf xlsx --allow-missing $ALLOW_MISSING
+        run: python scripts/check-office-skill-capabilities.py --no-pending pdf xlsx $ALLOW_MISSING_FLAG
       - name: pdf skill behaviour tests
         run: python scripts/test-pdf-skill.py
       - name: xlsx skill behaviour tests

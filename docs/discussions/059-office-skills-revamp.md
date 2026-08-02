@@ -580,7 +580,173 @@ soffice 拍板必装后，`xsd` 也被一并列进 L2 的 `REQUIRED_TIERS`。**�
 
 选 A 的理由：D2 是「产物过 schema 校验」这句话唯一的权威依据，降级等于把它变成永久欠账；保持 REQUIRED 则每次跑严格档都会提醒它还欠着。
 
-⚠️ **未核实项**：ECMA-376 XSD 由 ECMA/ISO 公开发布，但**是否可随本仓库分发尚未查证**。若不可入 git 则走「CI 下载 + 本机 `$ECMA376_XSD_DIR` 指路」，不 vendored。**S4 开工前必须先查许可，再决定放置方式。**
+### 5·补.8b — 许可与可行性调查结果（2026-08-02，实测 + 一手来源）
+
+#### 结论先行
+
+**许可上可以 vendored，且有强先例；但差点 vendored 错东西 —— 而那个错误不会报错，只会让
+D2 对每一份真实文档判红。**
+
+#### 一、许可（一手来源，非二手转述）
+
+| 事实 | 来源 |
+|---|---|
+| ECMA-376 各 Part 可从 ECMA 免费下载，XSD 就在标准的 zip 里 | ecma-international.org 标准页 |
+| **XSD 包里没有任何许可文件，26 个 schema 也都没有版权头** | 实测解包：非 `.xsd` 条目 = 0 |
+| **ECMA-376 的 PDF 没有版权页** —— 第 2 页实测 ink=0.00000、0 张图，确实是空白 | 用 PyMuPDF 渲染实测 |
+| ECMA 的通用文本版权政策**只适用于「带该声明」的文档**（2009 年起加入，未回溯补进旧标准） | ECMA text copyright policy FAQ |
+| ⇒ 实际起作用的是 **ECMA 章程 §9.4**：*"All documents when approved shall be made available to all interested parties without restriction."* | ECMA by-laws 页，逐字核对 |
+| **Apache POI 的 NOTICE 正是引用这条 §9.4 + 微软/Adobe 的专利声明**，作为它在 Apache-2.0 产品里分发「由 ECMA 提供的 XSD 生成的 XmlBeans」的依据 | poi-ooxml-full 5.2.5 NOTICE 全文 |
+
+**判断（不是法律意见）**：ASF 法务审过的同型先例 + 章程明文「without restriction」，
+把 XSD 随仓库分发是站得住的。**最终定性请你或法务确认** —— 我能给的是证据，不是结论。
+
+#### 二、差点拿错的东西（比许可更容易出事）
+
+**ECMA-376 Part 1 带的是 Strict schema，我们需要的是 Part 4 的 Transitional。**
+
+| | targetNamespace |
+|---|---|
+| Part 1 `OfficeOpenXML-XMLSchema-Strict.zip`（21 个） | `purl.oclc.org/ooxml/...` |
+| Part 4 `OfficeOpenXML-XMLSchema-Transitional.zip`（26 个） | `schemas.openxmlformats.org/...` |
+| **本仓库的 `book.xlsx` / `sample.docx` 实测** | `schemas.openxmlformats.org/...` |
+
+Part 1 是「那本标准」，取它是最自然的动作 —— 而**用 Strict 去校验真实文档，会在命名空间这一层
+就全部判红**，看起来像「我们的产物不合规」。这与 S2 的旋转页、S3 的合并列宽同一形状：
+**判红的不是被测对象。**
+
+#### 三、ECMA 发的包对 docx 是坏的（实测）
+
+`wml.xsd` 与 `shared-math.xsd` 里写着
+
+```xml
+<xsd:import namespace="http://www.w3.org/XML/1998/namespace"/>
+```
+
+**没有 `schemaLocation`，包里也没有 `xml.xsd`** ⇒ schema 连**加载**都失败：
+`The QName value '{http://www.w3.org/XML/1998/namespace}space' does not resolve`。
+补上 `schemaLocation="xml.xsd"` 并放入 W3C 的 `xml.xsd`（8,836 字节）后，
+**`sample.docx` 的 `word/document.xml` 校验 `valid=True`**。
+
+⚠️ 这引入**第二个许可问题**：W3C 的 `xml.xsd` 自身不带版权串，适用 W3C Software Notice
+and License（BSD 型）。**同样未经法务确认**，但体量是一个 8KB 文件。
+
+#### 四、xlsx 今天就能开 D2（无需等 S4）
+
+实测**未打任何补丁**，直接用 Transitional 的 `sml.xsd`：
+
+```
+book.xlsx  xl/workbook.xml           valid=True
+book.xlsx  xl/worksheets/sheet1.xml  valid=True
+```
+
+⇒ **D2 这条「从未跑过通过路径也从未跑过失败路径」的断言，可以先在 xlsx 上闭合**，
+不必等 docx。这是本次调查最有价值的副产品。
+
+#### 五、体量与放置方式
+
+Transitional 包解开 **920 KB / 26 个文件**（压缩后约 105 KB）+ W3C `xml.xsd` 8.6 KB。
+放 `scripts/schemas/ecma376/`（`find_xsd_dir()` 已经在找这个路径）完全可接受 ——
+对比：整个内置技能 zip 3.2 MB。
+
+**建议**：vendored 进仓库（附 `NOTICE` 写明来源、ECMA §9.4、POI 先例、以及为 `xml:space`
+所做的 `schemaLocation` 修改），而不是「CI 下载」—— 下载会让 D2 在离线/断网时静默变成
+SKIP，而 SKIP 与通过长得一模一样，这正是 X3 躺了一个月的机制。
+
+#### 六、定案（用户 2026-08-02 告知「后续作为商业软件使用，需要去掉法务风险」）
+
+**ECMA XSD：vendored 进仓库。** 用户 2026-08-02 判断该项无实质法务风险，我同意 ——
+我先前把它估高了。支撑：章程 §9.4 明文 "without restriction" · **Oracle 在多个商业产品里
+分发由这批 XSD 生成的 Apache POI `poi-ooxml-full`**（ASF 法务审过，十余年商业分发实践，
+不是理论）· 微软 OSP + 微软/Adobe 向 ECMA 的专利声明 · ISO/IEC 29500 同一内容 ·
+XSD 本质是形式文法，可版权表达极薄。
+
+法务顾虑去掉后，**vendored 在工程上明显优于 fetch**：确定性、离线可构建、CI 零网络、
+且不会出现「下载失败 ⇒ D2 静默变 SKIP」那个洞（SKIP 与通过长得一模一样，正是 X3 躺一个月
+的机制）。放 `scripts/schemas/ecma376/`（`find_xsd_dir()` 已在找该路径），附 NOTICE 记明
+来源、§9.4、POI 先例、以及为 `xml:space` 所做的 `schemaLocation` 修改。
+
+### 5·补.8c — ⚠️ 商业化下真正的头号法务风险不是 XSD，是 PyMuPDF（2026-08-02）
+
+**实测清点：13 个随产品分发的文件 `import fitz`** ——
+整个 `pdf` 技能（11 个脚本 + fixtures 生成器）· `deckcraft/scripts/source_to_md/pdf_to_md.py` ·
+`xlsx/scripts/xlsx_pdf.py`（**可选**，仅空白页检查与 `--png`）。
+另有 3 个仓库内门禁脚本用它，那些不分发、不构成问题。
+
+**PyMuPDF = AGPL-3.0 或商业授权**，权利人 Artifex —— 同时也是 Ghostscript 的权利人，
+且有 *Artifex v. Hancom* 判例确立 GPL 可作为合同强制执行。
+
+§4·补 的决策表里记着「**本产品不打包该库，由用户 `pip install` 自装，技能脚本仅
+`import fitz`**」，并注明「用户已知悉并拍板」。⚠️ **那是在本项目尚未定位为商业软件的前提下
+拍的。** AGPL 管的是「分发基于该程序的作品」；随商业产品分发一批**唯一用途就是驱动 fitz
+的源码**，正是 Artifex 出售商业授权所针对的场景。**这块在法律上有争议 —— 而「有争议」恰恰
+是「去掉法务风险」不接受的状态。**
+
+各依赖的位置（`import` 型的才有传染性问题；外部进程调用没有）：
+
+| 依赖 | 许可 | 用法 | 商业风险 |
+|---|---|---|---|
+| **PyMuPDF / fitz** | **AGPL-3.0 或商业** | **`import`** | **⚠️ 高，需处置** |
+| LibreOffice | MPL-2.0 | **外部进程**调用，不打包 | 低 |
+| openpyxl / python-docx | MIT | import | 无 |
+| lxml | BSD-3 | import | 无 |
+| pypdf / reportlab | BSD | import | 无 |
+| ECMA-376 XSD | 见上 | 不再分发 | 已归零 |
+
+**三条路**：① 向 Artifex 购买商业授权 ② 换成宽松许可的实现 ——
+`pypdfium2`（**Apache-2.0 / BSD-3**，底层 PDFium 为 BSD 系）覆盖渲染 + 文本 + bbox，
+`pypdf`（BSD-3）覆盖合并/拆分/旋转/加密/表单，`pdfminer.six`（MIT）、`reportlab`（BSD）
+覆盖其余；代价是**重写 pdf 技能（S2 全部产出）+ deckcraft 的 `pdf_to_md.py`**
+③ 砍掉 PDF 相关能力。
+
+**可以立刻做的一小步**：`xlsx` 技能对 fitz 只是**可选**依赖（空白页检查 + `--png`），
+换掉或去掉即可让 **S3 的产出今天就是 AGPL-free**。pdf 技能那一大块需要单独决定。
+
+（以上是证据与工程判断，**不是法律意见**。）
+
+### 5·补.8d — D2 落地：从「两条路径都没跑过」到零跳过（2026-08-02）
+
+schema vendored 到 `scripts/schemas/ecma376/`（27 个文件 984 KB，附 NOTICE 记明来源、
+§9.4、POI 先例、两处上游缺陷补丁）。**L2 首次在不带任何 `--allow-missing` 的情况下
+62 passed / 0 failed / 零跳过。**
+
+#### D2 第一次真跑就抓到两类东西
+
+**① 不是缺陷的：MCE。** 裸 XSD 校验真实 Office 文档会在 `mc:Ignorable` 和
+`w14:docId` 上全线判红 —— 而 `mc:Ignorable` 的**存在意义**就是声明那些厂商扩展命名空间
+可忽略。ECMA-376 **Part 3** 规定合规消费者**先做 MCE 预处理再校验**。
+不做这一步，等于因为文档照标准行事而判它不合标准。已实现 `apply_mce()`
+（解析 `mc:Ignorable` 的前缀→命名空间、剥掉这些命名空间的元素与属性、
+`mc:AlternateContent` 取 `mc:Fallback`）。
+
+**② 是缺陷的：`python-docx` 自带的 `default.docx` 模板不合规。**
+它写 `<w:zoom w:val="bestFit"/>`，而 Transitional 的 `CT_Zoom` **要求** `w:percent`。
+⇒ **python-docx 产出的每一份文档都带这条不合规。** 实测确认在模板里，不是我们的代码。
+Word 能正常打开，所以它一直没人发现 —— 这正是 D2 该抓的那类东西。
+
+处置：**修夹具，不是教检查别看** —— 正向控制必须是一份合规文档，所以 L2 的
+`build_docx` 与 L1 的 docx stub 都补上 `w:percent`。**这条发现本身归 S4**：
+docx 技能必须写这个属性（或不写 `w:zoom`），否则它产出的每个文件都带着它。
+
+#### D2 的负向控制，其中一条是野外真实存在的缺陷
+
+D2 此前**从没有负向控制** —— 一条没人看着它失败过的检查不构成证据。补两条：
+
+| 控制 | 说明 |
+|---|---|
+| docx 缺必需属性 | **就是 python-docx 模板的那个 `w:zoom` 缺陷**，不是编造的破坏 |
+| xlsx 多一个 schema 不允许的属性 | `<sheetData notAThing="1">` |
+
+#### 覆盖面与 CI
+
+D2 现在校验 `xl/workbook.xml` · `xl/styles.xml` · `xl/sharedStrings.xml` ·
+`xl/worksheets/sheetN.xml` · `word/{document,styles,numbering,settings,footnotes,endnotes}.xml` ·
+`word/header*|footer*.xml`；其余 part（theme/drawing/chart/rels/docProps）不在这套 schema
+覆盖范围内，**且「一个 part 都没匹配上」会判红**，避免静默通过。
+schema 编译结果缓存（`sml.xsd` 连带导入近 900 KB，逐次编译会主导自检耗时）。
+
+CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-missing soffice`；
+**整个 flag 放进变量**是因为空的 `--allow-missing` 是 argparse 错误而非空操作。
 
 ### 执行顺序（2026-08-01 拍板）
 

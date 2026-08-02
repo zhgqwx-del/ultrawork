@@ -135,8 +135,14 @@ def find_soffice() -> str | None:
 
 
 def find_xsd_dir() -> Path | None:
-    """ECMA-376 schemas are publicly downloadable but not redistributable-by-default,
-    so they are not vendored. Point at an unpacked copy to light up D2."""
+    """The ECMA-376 Transitional schemas, vendored at scripts/schemas/ecma376.
+
+    Transitional, not Strict: real documents live in the schemas.openxmlformats.org
+    namespaces while Part 1's Strict schemas use purl.oclc.org, so Strict would fail
+    every real file at the namespace level. Provenance, licence basis and the two
+    upstream defects that had to be patched are in that directory's NOTICE.
+    $ECMA376_XSD_DIR still overrides, for trying a different edition.
+    """
     for cand in (os.environ.get("ECMA376_XSD_DIR"), REPO / "scripts" / "schemas" / "ecma376"):
         if cand and Path(cand).is_dir():
             return Path(cand)
@@ -145,6 +151,91 @@ def find_xsd_dir() -> Path | None:
 
 SOFFICE = find_soffice()
 XSD_DIR = find_xsd_dir()
+
+# Which ECMA-376 schema governs which part. Only parts with an entry here are
+# validated; everything else (theme, drawings, charts, rels, docProps) is skipped
+# because those live in schemas this set does not cover, and D1 already checks that
+# they parse and resolve.
+_SCHEMA_BY_PART = {
+    "xl/workbook.xml": "sml.xsd", "xl/styles.xml": "sml.xsd",
+    "xl/sharedStrings.xml": "sml.xsd",
+    "word/document.xml": "wml.xsd", "word/styles.xml": "wml.xsd",
+    "word/numbering.xml": "wml.xsd", "word/settings.xml": "wml.xsd",
+    "word/footnotes.xml": "wml.xsd", "word/endnotes.xml": "wml.xsd",
+}
+_SHEET_PART = re.compile(r"^xl/worksheets/sheet\d+\.xml$")
+_HEADER_FOOTER = re.compile(r"^word/(header|footer)\d*\.xml$")
+_SCHEMA_CACHE: dict = {}
+
+
+def schema_for_part(name: str) -> str | None:
+    if name in _SCHEMA_BY_PART:
+        return _SCHEMA_BY_PART[name]
+    if _SHEET_PART.match(name):
+        return "sml.xsd"
+    if _HEADER_FOOTER.match(name):
+        return "wml.xsd"
+    return None
+
+
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+
+def apply_mce(root):
+    """ECMA-376 Part 3 Markup Compatibility, applied before validation.
+
+    A conforming consumer preprocesses MCE and validates the RESULT; the bare XSDs
+    know nothing about `mc:*`. Skipping this step reds every real Office document
+    over `mc:Ignorable` and over vendor-extension elements (`w14:docId` and friends)
+    that `mc:Ignorable` exists precisely to declare ignorable — i.e. it reports the
+    document as non-conformant for doing exactly what the standard tells it to do.
+    """
+    from lxml import etree
+    ignorable: set[str] = set()
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            continue
+        raw = el.get(f"{{{MC_NS}}}Ignorable")
+        if raw:
+            for prefix in raw.split():
+                uri = el.nsmap.get(prefix)
+                if uri:
+                    ignorable.add(uri)
+    # AlternateContent: take the Fallback, which is what a consumer that understands
+    # none of the Choice requirements must do.
+    for alt in list(root.iter(f"{{{MC_NS}}}AlternateContent")):
+        parent = alt.getparent()
+        if parent is None:
+            continue
+        fallback = alt.find(f"{{{MC_NS}}}Fallback")
+        index = list(parent).index(alt)
+        parent.remove(alt)
+        if fallback is not None:
+            for i, child in enumerate(list(fallback)):
+                parent.insert(index + i, child)
+    for el in list(root.iter()):
+        if not isinstance(el.tag, str):
+            continue
+        ns = el.tag[1:].split("}")[0] if el.tag.startswith("{") else ""
+        if ns in ignorable or ns == MC_NS:
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
+            continue
+        for attr in list(el.attrib):
+            ans = attr[1:].split("}")[0] if attr.startswith("{") else ""
+            if ans in ignorable or ans == MC_NS:
+                del el.attrib[attr]
+    return root
+
+
+def compiled_schema(name: str):
+    """Compile once. sml.xsd pulls in ~900 KB of imports; the self-test validates
+    dozens of artifacts and recompiling per call dominates its runtime."""
+    from lxml import etree
+    if name not in _SCHEMA_CACHE:
+        _SCHEMA_CACHE[name] = etree.XMLSchema(etree.parse(str(XSD_DIR / name)))
+    return _SCHEMA_CACHE[name]
 PDFTOPPM = shutil.which("pdftoppm")
 
 
@@ -344,21 +435,51 @@ def d1_package(path: Path, expect: dict) -> list[str]:
     return out
 
 
-@check("D2", "docx", "ECMA-376 XSD schema validation", tier="xsd")
+@check("D2", ("docx", "xlsx"), "ECMA-376 XSD schema validation", tier="xsd")
 def d2_xsd(path: Path, expect: dict) -> list[str]:
+    """Validate every part we have a schema for against ECMA-376 Transitional.
+
+    Transitional, not Strict: real documents (and every fixture here) live in the
+    `schemas.openxmlformats.org` namespaces, while Part 1's Strict schemas use
+    `purl.oclc.org`. Validating real output against Strict fails at the namespace
+    level for every file, which reads as "our output is non-conformant" when nothing
+    is wrong with it. See scripts/schemas/ecma376/NOTICE.
+    """
     from lxml import etree
-    schema_file = next((p for p in (XSD_DIR / "wml.xsd", XSD_DIR / "wml.xsd".upper())
-                        if p.is_file()), None) if XSD_DIR else None
-    if schema_file is None:
-        return [f"D2 no wml.xsd under {XSD_DIR}"]
-    schema = etree.XMLSchema(etree.parse(str(schema_file)))
+    if XSD_DIR is None:
+        return [f"D2 no ECMA-376 schemas found (set $ECMA376_XSD_DIR)"]
+    parts: dict[str, bytes]
     try:
-        tree = etree.ElementTree(docx_tree(path))
-    except DocxUnreadable as e:
-        return [f"D2 {e}"]
-    if schema.validate(tree):
-        return []
-    return [f"D2 schema violation: {e.message} (line {e.line})" for e in schema.error_log]
+        with zipfile.ZipFile(path) as z:
+            parts = {n: z.read(n) for n in z.namelist() if not n.endswith("/")}
+    except (zipfile.BadZipFile, OSError) as e:
+        return [f"D2 cannot read the package: {e}"]
+
+    out: list[str] = []
+    checked = 0
+    for name in sorted(parts):
+        schema_name = schema_for_part(name)
+        if schema_name is None:
+            continue
+        try:
+            schema = compiled_schema(schema_name)
+        except Exception as e:  # noqa: BLE001 - a broken vendored schema must be loud
+            return [f"D2 cannot load {schema_name}: {type(e).__name__}: {e}"]
+        checked += 1
+        try:
+            doc = apply_mce(etree.fromstring(parts[name]))
+        except etree.XMLSyntaxError as e:
+            out.append(f"D2 {name} will not parse: {e}")
+            continue
+        if not schema.validate(doc):
+            for err in list(schema.error_log)[:3]:
+                out.append(f"D2 {name} violates {schema_name}: {err.message} "
+                           f"(line {err.line})")
+    if not checked:
+        # Silence with nothing checked is the shape this whole file exists to avoid.
+        out.append(f"D2 no part of {path.name} matched a schema, so nothing was "
+                   f"validated")
+    return out
 
 
 @check("D3", "docx", "python-docx round-trip: opens, counts and text match expectation")
@@ -971,7 +1092,8 @@ ALL_TIERS = frozenset(REQUIRED_TIERS)
 TIER_RESIDUAL = {
     "soffice": ("its failure path IS covered (fault injection) and its raster half is "
                 "shared with P1/P4; only the LibreOffice conversion itself is unrun"),
-    "xsd": "NO residual coverage — neither its pass nor its fail path has ever run here",
+    "xsd": ("the ECMA-376 Transitional schemas are vendored, so this normally runs "
+            "everywhere; if it is skipped here, scripts/schemas/ecma376 is missing"),
 }
 
 
@@ -1155,6 +1277,13 @@ def build_docx(path: Path, flaw: str | None = None) -> dict:
             "contains": [CJK_TITLE, CJK_KEEP, "营业收入"]}
     doc.save(str(path))
     if flaw is None:
+        conform_settings(path)
+        return meta
+    if flaw == "schema-missing-required-attr":
+        # NOT invented damage: this is exactly what python-docx's bundled
+        # default.docx ships — <w:zoom w:val="bestFit"/> with no w:percent, which
+        # ECMA-376 Transitional requires. D2 found it on its first ever run; using
+        # it as the control means the control is a defect that exists in the wild.
         return meta
 
     def edit(name: str, data: bytes):
@@ -1214,6 +1343,8 @@ def build_docx(path: Path, flaw: str | None = None) -> dict:
             tcpr = tc.find(w("tcPr"))
             tc.remove(tcpr)
             tc.append(tcpr)
+        elif flaw == "schema-missing-required-attr":
+            pass          # handled after save; see build_docx's tail
         elif flaw == "cjk-no-rfonts":
             run = next(r for r in tree.iter(w("r")) if has_cjk(run_text(r)))
             rpr = run.find(w("rPr"))
@@ -1226,7 +1357,34 @@ def build_docx(path: Path, flaw: str | None = None) -> dict:
     path.replace(tmp)
     rewrite_zip(tmp, path, edit)
     tmp.unlink()
+    conform_settings(path)
     return meta
+
+
+def conform_settings(path: Path) -> None:
+    """Make word/settings.xml schema-conformant.
+
+    python-docx's bundled default.docx ships `<w:zoom w:val="bestFit"/>`, and
+    ECMA-376 Transitional makes `w:percent` REQUIRED on CT_Zoom. Every document
+    python-docx produces therefore fails D2 on a defect inherited from the library's
+    template — measured 2026-08-02, the first time D2 ever ran.
+
+    A POSITIVE control has to be a conformant document, so the fixture is fixed here
+    rather than the check being taught to look away. The finding itself is real and
+    belongs to S4: the docx skill must write w:percent (or omit w:zoom), or every
+    file it produces will carry this.
+    """
+    def edit(name: str, data: bytes):
+        if name != "word/settings.xml" or b"<w:zoom" not in data:
+            return data
+        text = data.decode("utf-8")
+        return re.sub(r"<w:zoom(?![^>]*w:percent)([^>]*?)/>",
+                      r'<w:zoom\1 w:percent="100"/>', text, count=1).encode("utf-8")
+
+    tmp = path.with_suffix(".pre-conform.docx")
+    path.replace(tmp)
+    rewrite_zip(tmp, path, edit)
+    tmp.unlink()
 
 
 def build_xlsx(path: Path, flaw: str | None = None) -> dict:
@@ -1303,6 +1461,8 @@ def build_xlsx(path: Path, flaw: str | None = None) -> dict:
     elif flaw == "wrong-value":
         ws["B2"] = 999
         ws["B2"].font = blue
+    elif flaw == "schema-bad-attribute":
+        pass          # injected after save, below
     elif flaw == "recalc-drift":
         # B4 feeds D4 (=C4-B4) but is not in expect["sheets"], so ONLY X3 can see
         # this: every stored formula still reads back correctly, the recalculated
@@ -1313,6 +1473,15 @@ def build_xlsx(path: Path, flaw: str | None = None) -> dict:
         raise ValueError(f"unknown xlsx flaw {flaw!r}")
 
     wb.save(str(path))
+    if flaw == "schema-bad-attribute":
+        def inject(name: str, data: bytes):
+            if name != "xl/worksheets/sheet1.xml":
+                return data
+            return data.replace(b"<sheetData>", b'<sheetData notAThing="1">', 1)
+        tmp = path.with_suffix(".good.xlsx")
+        path.replace(tmp)
+        rewrite_zip(tmp, path, inject)
+        tmp.unlink()
     if flaw == "err-typed-cell":
         # openpyxl never writes cached values, so the data_only half of X2 would
         # otherwise never see a real error. This is what Excel actually stores when
@@ -1752,6 +1921,11 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("D5 w:delText inside w:ins", "docx", "ins-holds-deltext", "D5", True),
     ("D5 revision without w:author", "docx", "del-no-author", "D5", True),
     ("D6 CJK run loses @eastAsia", "docx", "cjk-no-eastasia", "D6", True),
+    # D2's controls. The docx one is not invented damage — it is the exact
+    # non-conformance python-docx's own default.docx ships, which D2 caught the
+    # first time it ever ran (see conform_settings).
+    ("D2 required attribute missing (python-docx's own w:zoom defect)", "docx",
+     "schema-missing-required-attr", "D2", True),
     ("D6 CJK run loses w:rFonts", "docx", "cjk-no-rfonts", "D6", True),
     ("D6 reaches CJK runs inside a table cell", "docx",
      "cjk-no-eastasia-in-table", "D6", True),
@@ -1771,6 +1945,8 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("X4 cross-sheet link not green", "xlsx", "link-not-green", "X4", True),
     ("X5 CJK column too narrow", "xlsx", "narrow-cjk-col", "X5", True),
     ("X5 CJK column left at default width", "xlsx", "no-width-cjk-col", "X5", True),
+    ("D2 attribute the schema does not allow", "xlsx", "schema-bad-attribute",
+     "D2", True),
     # The pair that pins X5's merge handling, same shape as the rotated-page pair
     # below: a fix that buys silence by making the check blind is not a fix.
     ("X5 CJK title merged across columns stays silent", "xlsx", "merged-cjk-title",

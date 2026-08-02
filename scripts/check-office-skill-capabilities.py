@@ -267,7 +267,25 @@ _HEAD = ("import sys\nimport docx\nfrom docx.oxml import parse_xml\n"
 _FONTS = ("rpr = r._r.get_or_add_rPr()\n"
           "rpr.insert(0, parse_xml('<w:rFonts %s w:ascii=\"Calibri\" "
           "w:hAnsi=\"Calibri\" w:eastAsia=\"宋体\"/>' % nsdecls('w')))\n")
-_SAVE = "d.save(out)\n"
+# python-docx's bundled default.docx ships `<w:zoom w:val="bestFit"/>`, and
+# ECMA-376 Transitional makes w:percent REQUIRED — so every document it produces
+# fails L2's D2 on a defect inherited from the library's template (found 2026-08-02,
+# the first time D2 ran). These stubs are POSITIVE controls, so they have to emit a
+# conformant file; the finding itself belongs to S4's docx skill, which must write
+# the attribute or omit the element.
+_SAVE = (
+    "d.save(out)\n"
+    "import re, shutil, zipfile\n"
+    "tmp = out + '.pre'\n"
+    "shutil.move(out, tmp)\n"
+    "with zipfile.ZipFile(tmp) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zo:\n"
+    "    for it in zin.infolist():\n"
+    "        b = zin.read(it.filename)\n"
+    "        if it.filename == 'word/settings.xml' and b'<w:zoom' in b:\n"
+    "            b = re.sub(rb'<w:zoom(?![^>]*w:percent)([^>]*?)/>',\n"
+    "                       rb'<w:zoom\\1 w:percent=\"100\"/>', b, count=1)\n"
+    "        zo.writestr(it, b)\n"
+    "import os; os.remove(tmp)\n")
 
 STUBS = {
     "good": _HEAD + _FONTS + _SAVE,

@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **ECMA-376 schema vendored + D2 首次真跑（discussions/059 §5·补.8b-8d）** —— L2 的 D2「产物过 schema 校验」此前**通过路径和失败路径都从未执行过**，现在 **62 passed / 0 failed / 零跳过**（不带任何 `--allow-missing`）。
+  - **许可调查（一手来源）**：ECMA-376 Part 1(5,039 页) + Part 4(1,553 页) 全文扫描，**零条 ECMA 版权声明**（Part 1 里仅有的三处 "Copyright" 全是示例代码里的 W3C 声明），XSD 包里零个非 `.xsd` 文件。ECMA 通用版权政策只适用于「带该声明」的文档(2009 年起，未回溯)，故适用的是章程 §9.4 "without restriction"；**Oracle 等在商业产品里分发由这批 XSD 生成的 Apache POI `poi-ooxml-full`**（ASF 法务审过）。用户判定无实质法务风险，vendored 进 `scripts/schemas/ecma376/`（27 文件 984 KB，附 NOTICE）。
+  - **差点 vendored 错东西**：Part 1 是「那本标准」、最自然会去取，但它带的是 **Strict**（`purl.oclc.org` 命名空间）；真实 Word/Excel 产出与本仓库所有夹具都是 **Transitional**（`schemas.openxmlformats.org`）。**用 Strict 校验真实文档会在命名空间层全线判红**，读起来像「我们的产物不合规」—— 与旋转页豆腐块、跨列合并列宽同一形状：**判红的不是被测对象**。
+  - **ECMA 发的包对 docx 是坏的**：`wml.xsd`/`shared-math.xsd` 的 XML 命名空间 import **没有 `schemaLocation`**，包里也没有 `xml.xsd` ⇒ schema 连**加载**都失败。补 `schemaLocation` + W3C `xml.xsd`(8.6 KB) 后 `sample.docx` 校验通过。两处修改写进 NOTICE，不做静默分叉。
+  - **D2 第一次真跑抓到两类东西**：① **不是缺陷的 MCE** —— 裸 XSD 会因 `mc:Ignorable` 与 `w14:docId` 全线判红，而 `mc:Ignorable` 的存在意义正是声明那些命名空间可忽略；ECMA-376 **Part 3** 规定合规消费者**先做 MCE 预处理再校验**，不做这步等于因为文档照标准行事而判它不合标准（已实现 `apply_mce()`）。② **是缺陷的** —— **`python-docx` 自带 `default.docx` 写 `<w:zoom w:val="bestFit"/>`，缺 Transitional 要求的 `w:percent`** ⇒ 它产出的每份文档都带这条不合规，Word 能打开所以一直没人发现。处置是**修夹具而不是教检查别看**（正向控制必须是合规文档），**发现本身归 S4**：docx 技能必须写这个属性。
+  - **给 D2 补了它从来没有的负向控制**，其中一条**就是 python-docx 那个真实缺陷**，不是编造的破坏；另一条是 xlsx 上 schema 不允许的属性。
+  - 覆盖 `xl/{workbook,styles,sharedStrings,worksheets/sheetN}.xml` 与 `word/{document,styles,numbering,settings,footnotes,endnotes,header*,footer*}.xml`；**「一个 part 都没匹配上」判红**，schema 编译结果缓存。CI 的 `ALLOW_MISSING_FLAG` ubuntu 为空、mac/Windows 仅放行 soffice（**整个 flag 放进变量**——空的 `--allow-missing` 是 argparse 错误而非空操作）。
 - **Office 技能重做 S3 完成：`xlsx` 技能 + office 底座（discussions/059 §六·补二）** —— 新建 `skills/builtin/xlsx/`，**五刀做完 X1~X15 全部 15 项能力，零 pending**。
   - **核心主张是量出来的**：同一次编辑、同一个文件，`openpyxl load→save`（所有人第一反应的写法）丢 3 个 customXml part、只有 10/17 个 part 逐字节未变；**外科式写入一个 part 没丢、16/17 逐字节未变**（只有被编辑的那张表变了），两者 LibreOffice 重算结果相同 ⇒ **保真度不是拿正确性换来的**。做法是不把包交给库重建，直接改 `xl/worksheets/sheetN.xml`。
   - **office 底座**（`scripts/office/`，各技能各带一份，pack 拒绝 symlink）：`package`（包/内容类型/关系 + **graft**：把库丢掉的 part 连同 CT 与 rel 一起放回）· `sheet`（外科式编辑，保留样式索引 `s`、拒绝覆盖共享公式主格、公式变了才丢 `calcChain`）· `soffice`（三平台探测 + 隔离 profile 转换）· `validate`（包一致性）· `xmlorder`（ECMA-376 元素序，`cols` 必须在 `sheetData` 之前）。
