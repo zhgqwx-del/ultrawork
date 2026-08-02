@@ -9,6 +9,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Office 技能重做 S3 第一刀：`xlsx` 技能 + office 底座首次实现（discussions/059 §六·补二）** —— 新建 `skills/builtin/xlsx/`，本刀做 **X1 读 / X2 写 / X15 中文列宽**，**12 项能力进 `pending` 并逐条写理由**（pending 的含义是「还没有断言在证明它」，不是「快好了」）。
+  - **核心主张是量出来的**：同一次编辑、同一个文件，`openpyxl load→save`（所有人第一反应的写法）丢 3 个 customXml part、只有 10/17 个 part 逐字节未变；**外科式写入一个 part 没丢、16/17 逐字节未变**（只有被编辑的那张表变了），两者 LibreOffice 重算结果相同 ⇒ **保真度不是拿正确性换来的**。做法是不把包交给库重建，直接改 `xl/worksheets/sheetN.xml`。
+  - **office 底座**（`scripts/office/`，各技能各带一份，pack 拒绝 symlink）：`package`（包/内容类型/关系 + **graft**：把库丢掉的 part 连同 CT 与 rel 一起放回）· `sheet`（外科式编辑，保留样式索引 `s`、拒绝覆盖共享公式主格、公式变了才丢 `calcChain`）· `soffice`（三平台探测 + 隔离 profile 转换）· `validate`（包一致性）· `xmlorder`（ECMA-376 元素序，`cols` 必须在 `sheetData` 之前）。
+  - **门禁自己又错了两次**：① **L2 的 X5 在跨列合并标题上假阳性** —— 合并到 A1:F1 的标题显示在六列上，要求 A 列独自装下它会把渲染完全正常的表判红（转 PDF 读回 20 个字全在）。是**写技能的 autofit 时与门禁意见不合**才暴露的，修复配「跨列必须静默 / 同列纵向合并必须照样打红」一对用例 + 控制臂（回退修复 ⇒ 前者立刻 FAIL、后者仍 PASS）。② **L2 没办法说「这份表不是财务模型」** —— `finance_colors: false` 与「没写」都算 INERT，而 L1 把 INERT 判红 ⇒ 普通表格永远无法成为「验过的产物」，唯一出路是谎称它是财务模型。改为「`false` 是答案而非缺席」，配四条用例含控制臂。
+  - **另两个真缺陷**：删 part 只删了字节（`calcChain` 的 relationship 与 content-type Override 留成空指针，**被技能自己的 validate 层咬出来**）· 夹具不是逐字节可复现（openpyxl 除 zip 时间戳外还把保存时刻盖进 `dcterms:modified`，**覆盖掉你设的 `properties.modified`** ⇒ 重跑一次就换 `.builtin-version`、全体桌面端重装；**跑两遍 diff 才发现，不是想出来的**）。
+  - **负向控制自己错了两次**：合并探针的两个标签一样长 ⇒ 「算合并标题」与「不算」得出同一个宽度，那条控制**根本点不亮**（改成 42/18/6 三个不同长度）· 四条控制顺带点亮别人的断言，两条是断言归属划错（改断言）、两条是真级联（写进矩阵注释）· 原 V0 控制臂与另一条 flaw **是同一个破坏**，等于没测 V0。
+  - **拆了两颗 CI 定时炸弹**（都不是本刀引入的）：① 上一个 commit 的 `recalc-drift` 是**需要 LibreOffice 才点得亮**的负向控制，而 `selftest()` 内部恒用宽松档 ⇒ 无 LO 的 runner 上它被跳过、「必须打红」没打红 ⇒ **office-skills job 必红**（本机置空 `SOFFICE` 复现 `59 passed, 1 failed`），分支未 push 所以至今没响；**方案与实测代价已写进 §7 待办①，未擅自实施**。② `--no-pending` 是全局的，xlsx 一进 pending 验收档就红 —— 而计划本来就是一次做一个技能 ⇒ 改为可按技能限定（`--no-pending pdf`），裸用仍是全部，加三条用例含控制臂。
+  - **L0 重标定：地板没有涨**（与 S2 的预测相反）—— 加入 xlsx 后 max 仍是 0.187/`pdf_form_inspect.py`，**xlsx 自己最高只有 0.128**。原因是结构性的：参考实现都在驱动 openpyxl 对象模型，这份直接改 zip 与 sheet XML，AST 骨架天生对不上。**这不等于阈值安全了 —— 真正的考验是会用 python-docx 的 `docx`。**
+  - 连带：`BUILTIN_DEP_MAP` + Rust `PY_MODULES` 加 openpyxl/lxml，**`xlsx` 是第一个真正声明 `soffice` 的技能**（它此前一直被 PATH 探测却无人要求）· `markdown-exporter` 的 XLSX 路由指向新技能（DOCX 仍写「建设中」，因为 `docx` 还不存在，指过去就是 `doc-export` 断链）· CI 加 xlsx 行为测试。
+  - **第二刀 X3/X5/X10（公式族）**：一批做的理由是**同一个引用解析器服务两个方向** —— 写的时候拦住会变成 `#REF!` 的公式（`--set-formula` 引用了不存在的表直接退出 2，因为 openpyxl 会一声不吭地存下来、等 Excel 打开才炸），审计的时候找出已经是 `#REF!` 的。新增 `scripts/office/formula.py`（引用解析 + 依赖图 + **迭代式**循环检测：真实 workbook 的长依赖链会爆栈，而「审计器崩了」比它能报的任何结论都糟）与 `scripts/xlsx_audit.py`（四类：`error` 带**致因**而不只是 token / `missing` = **还没发生的 `#REF!`** / `circular` 含**一格自引**这种「不重访起点」会漏掉的形状 / `uncalc`）。**它是引用解析器不是求值器** —— 求值是 X4，仍 pending。
+  - **引用解析器的两个假阳性（都实测）**：字符串字面量里的 `"见 预算表!A1"` 被报成「指向不存在的表」· **`LOG10(` 被解析成单元格 `LOG10`**，会进依赖图并**在恰好用了 LOG10 这格的 workbook 里凭空造出循环引用**。两条都写成了断言，不是注释。
+  - **同一轮第二次「V0 抢了别人的活」**：给 V0 加的新项从 findings 算「缺陷类数」，于是两条检测类控制顺带点亮 V0。改成数**输入的公式条数**。**V0 只能量夹具，不能量被测行为。**
+  - 门禁数字：L2 自检 54 → **60 passed / 1 skipped**（只剩 D2/xsd）· L1 **20/20 pass，13 个产物经 L2 验证**，`--selftest` 13 → **16**，pending 15 → **9** · `test-xlsx-skill.py` **27 条断言 / 37 条负向控制，38 passed**，flaw→check 矩阵只剩两条注明的诚实级联 · L0 加入 xlsx 后地板仍 0.187（xlsx 自己 max 0.134）· typecheck 8 / desktop **858** / Rust 155。
 - **Office 技能重做 S1+S2：三层验收门禁 + `pdf` 技能 clean-room 重写（discussions/059）** —— `skills/builtin/pdf/` 从「上游 OpenAI Apache 版 + 零脚本」整体替换为 ultrawork 自写（PyMuPDF），**14 项能力全部实现、零 pending，L1 验收档 `--no-pending` 转绿**。
   - **先写标尺再动实现（S1）**：L0 clean-room 合规（逐字节 + 专有许可特征条款 + **AST 骨架指纹**，实测词级相似度把「改 6 个标识符的复制品」判 clean 而 AST 判 1.00）· L1 能力矩阵 C1-C5（C4 = 跑样例产出 artifact 再交给 L2，C5 带 `pending` 欠账出口）· L2 产物合法性（含保真度：`openpyxl load→save` 会静默丢 `xl/metadata.xml`）。
   - **S2 四刀**：P1/P2/P4 读取三件 · 表单族 P5-P10（探测/抽取/AcroForm 填充/无域叠加/越界校验/标色校验图）· P13 生成 + P14 字体嵌入 · P3 表格 / P11 页面操作 / P12 加密。

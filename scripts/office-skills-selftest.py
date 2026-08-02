@@ -593,6 +593,15 @@ def x4_finance_colors(path: Path, expect: dict) -> list[str]:
     return out
 
 
+def horizontally_merged(ws) -> set[str]:
+    """Cells whose text is displayed across more than one column."""
+    out: set[str] = set()
+    for rng in ws.merged_cells.ranges:
+        if rng.max_col > rng.min_col:
+            out.update(c.coordinate for row in ws[rng.coord] for c in row)
+    return out
+
+
 @check("X5", "xlsx", "CJK column widths counted in wide characters (no #### truncation)")
 def x5_cjk_width(path: Path, expect: dict) -> list[str]:
     import openpyxl
@@ -604,12 +613,20 @@ def x5_cjk_width(path: Path, expect: dict) -> list[str]:
     out: list[str] = []
     with closing(wb):
         for ws in wb.worksheets:
+            spanned = horizontally_merged(ws)
             needed: dict[int, tuple[int, str]] = {}
             for row in ws.iter_rows():
                 for cell in row:
                     v = cell.value
                     # A formula's own text is never displayed, so it must not drive width.
                     if not isinstance(v, str) or v.startswith("=") or not has_cjk(v):
+                        continue
+                    # A title merged across A1:F1 is DISPLAYED across all six columns,
+                    # so demanding that column A alone fit it reds a workbook that
+                    # renders perfectly — verified by converting one to PDF and
+                    # reading all 20 characters back. A merge inside a single column
+                    # (a vertical merge) gives no extra room and still counts.
+                    if cell.coordinate in spanned:
                         continue
                     want = min(display_width(v) + 2, 60)
                     if want > needed.get(cell.column, (0, ""))[0]:
@@ -986,10 +1003,23 @@ NEEDS_EXPECTATION = {
 }
 
 
+# For most keys the VALUE is the thing to compare against, so an empty one really is
+# nothing to assert. `finance_colors` is a boolean opt-in, where `false` is an answer
+# — "this is not a financial model" — and only an absent key means nobody said.
+# Without this distinction an ordinary spreadsheet can never be a verified artifact:
+# omitting the key is INERT (which L1 rejects) and setting it true reds every sheet
+# that is not a financial model, which is the default-on problem coming back through
+# the other door.
+PRESENCE_IS_AN_ANSWER = {"finance_colors"}
+
+
 def inert_reason(cid: str, expect: dict) -> str | None:
     keys = NEEDS_EXPECTATION.get(cid)
-    if not keys or any(expect.get(k) for k in keys):
+    if not keys:
         return None
+    for k in keys:
+        if (k in expect) if k in PRESENCE_IS_AN_ANSWER else expect.get(k):
+            return None
     return f"nothing to assert — expectations carry none of: {', '.join(keys)}"
 
 
@@ -1255,6 +1285,21 @@ def build_xlsx(path: Path, flaw: str | None = None) -> dict:
         ws.column_dimensions["A"].width = 6
     elif flaw == "no-width-cjk-col":
         del ws.column_dimensions["A"]
+    elif flaw == "merged-cjk-title":
+        # NOT a flaw — the false positive this check shipped with. A title merged
+        # across four columns is DISPLAYED across all four, so requiring column A
+        # alone to fit it reds a workbook that renders in full (confirmed by
+        # converting one to PDF and reading all 20 characters back out). Found
+        # 2026-08-01 by the xlsx skill's autofit disagreeing with the gate.
+        ws["A6"] = "二零二六年第三季度经营分析报告与附注说明"
+        ws.merge_cells("A6:D6")
+    elif flaw == "merged-cjk-vertical":
+        # The control for the line above. A merge inside ONE column buys no
+        # horizontal room, so the width still has to fit. Without this case,
+        # "ignore merged cells" could have been implemented as "ignore every merge"
+        # and looked exactly as green.
+        ws["A6"] = "二零二六年第三季度经营分析报告与附注说明"
+        ws.merge_cells("A6:A8")
     elif flaw == "wrong-value":
         ws["B2"] = 999
         ws["B2"].font = blue
@@ -1726,6 +1771,12 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("X4 cross-sheet link not green", "xlsx", "link-not-green", "X4", True),
     ("X5 CJK column too narrow", "xlsx", "narrow-cjk-col", "X5", True),
     ("X5 CJK column left at default width", "xlsx", "no-width-cjk-col", "X5", True),
+    # The pair that pins X5's merge handling, same shape as the rotated-page pair
+    # below: a fix that buys silence by making the check blind is not a fix.
+    ("X5 CJK title merged across columns stays silent", "xlsx", "merged-cjk-title",
+     "", False),
+    ("X5 CJK cell merged within one column still fires", "xlsx",
+     "merged-cjk-vertical", "X5", True),
 
     ("pdf clean artifact stays silent", "pdf", None, "", False),
     ("P1 page renders blank", "pdf", "blank", "P1", True),
@@ -1767,6 +1818,45 @@ def fidelity_cases(root: Path) -> list[dict]:
                                                  else "; ".join(findings[:4])),
                         "findings": findings})
     return results
+
+
+def inert_cases(root: Path) -> list[dict]:
+    """"Nobody said" and "the answer is no" must not look the same.
+
+    L1 rejects an artifact whose non-fidelity assertions were all INERT, so if a
+    declared `finance_colors: false` still counted as INERT, no ordinary spreadsheet
+    could ever be a verified artifact — the only way through would be to claim every
+    workbook is a financial model. The third case is the control: without it,
+    "false silences X4" would be indistinguishable from "X4 is silent anyway".
+    """
+    art = root / "inert-probe.xlsx"
+    expect = build_xlsx(art, None)
+    plain = {k: v for k, v in expect.items() if k != "finance_colors"}
+    # Same workbook, colours deliberately wrong for the convention.
+    off = root / "inert-probe-offcolour.xlsx"
+    build_xlsx(off, "input-not-blue")
+
+    def case(name: str, ok: bool, detail: str = "") -> dict:
+        return {"case": name, "kind": "xlsx", "flaw": "inert-semantics", "marker": "",
+                "arrow": "expectation semantics", "ok": ok, "detail": detail,
+                "findings": []}
+
+    absent = inert_reason("X4", plain)
+    declared_false = inert_reason("X4", {**plain, "finance_colors": False})
+    empty_list = inert_reason("P2", {"contains": []})
+    fires = CHECKS["X4"]["fn"](off, {"finance_colors": True})
+    silent = CHECKS["X4"]["fn"](off, {"finance_colors": False})
+    return [
+        case("X4 with no finance_colors key at all is INERT, not a pass",
+             bool(absent), "an unstated opt-in read as an executed assertion"),
+        case("X4 with finance_colors:false is an answer, not an absence",
+             declared_false is None, f"still INERT: {declared_false}"),
+        case("CONTROL: finance_colors:true on the same file does fire",
+             bool(fires) and not silent,
+             "opting out is indistinguishable from the check never having teeth"),
+        case("a value-bearing key that is empty is still INERT",
+             bool(empty_list), "an empty `contains` was accepted as an expectation"),
+    ]
 
 
 def tier_fault_cases(root: Path) -> list[dict]:
@@ -1821,6 +1911,7 @@ def selftest(as_json: bool, only_kind: str | None) -> int:
 
         if not only_kind:
             results += fidelity_cases(root)
+            results += inert_cases(root)
             results += tier_fault_cases(root)
 
     failed = [r for r in results if not r["ok"]]
@@ -1839,7 +1930,7 @@ def selftest(as_json: bool, only_kind: str | None) -> int:
                 print(f"SKIP  [fixture absent] {r['case']} — {r['detail']}")
                 continue
             verdict = "PASS" if r["ok"] else "FAIL"
-            arrow = "must fire" if r["marker"] else "must stay silent"
+            arrow = r.get("arrow") or ("must fire" if r["marker"] else "must stay silent")
             print(f"{verdict}  [{arrow}] {r['case']}")
             if not r["ok"]:
                 print(f"      {r['detail']}")

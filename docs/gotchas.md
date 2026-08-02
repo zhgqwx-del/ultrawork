@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-30 -->
+<!-- last-synced: 2026-08-02 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -600,3 +600,55 @@ ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一�
 **⑰ ⚠️ 边跑 harness 边改源码 = Vite HMR 把页面刷了，测量对象在你脚下被换掉。**
 症状很好认但极易误判：非空转门报 `ui 19->0` —— **marker 数不是没长，是掉到 0**（整条转录被重新挂载）。第一反应会以为是产品缺陷。
 ⇒ 判据：**变多 = 传输层根本没断**（Playwright `setOffline` 的典型症状）；**变少 = 页面被重置了**，先想 HMR。`stream-gap-resync.e2e.ts` 的失败信息已经把这两种分开报了。
+
+---
+
+## 21. OOXML 文档技能（`skills/builtin/{pdf,xlsx}`，discussions/059，2026-08-02）
+
+**① PyMuPDF 有三个坐标系，旋转页必踩。** `get_text` / `get_text("rawdict")` 返回的框是
+**页面坐标系**（未旋转），`page.draw_rect` 吃的**也是**页面坐标系，但 `get_pixmap` 渲染的是
+**显示坐标系**（旋转后）。实测旋转 90° 的页：抽出的框内 36 个暗像素，乘 `page.rotation_matrix`
+后 2282 个。**同一个错误在一轮里出现两次**（技能自己的 bbox 输出 + L2 门禁的豆腐块判据），
+后者被判红的还是未改动的源文件。凡「读坐标 → 画到位图上」都要先乘 `rotation_matrix`。
+
+**② `openpyxl.load_workbook(f)` → `save()` 是有损的，损的是「它不认识的 part」。**
+实测本仓库 `sample.xlsx` 做**空操作** round-trip（一个字节都不打算改）丢 `xl/metadata.xml`
+（904B 动态数组元数据）；自建 fixture 丢 3 个 customXml part。**part 级还不是全部** ——
+存活下来的 `sheet1.xml` 内部也会丢 `<ignoredErrors>`。
+纠偏一条免得选型时被传闻带偏：**图表 / 条件格式 / 数据验证 / 冻结窗格 / 自动筛选都不丢**
+（换个库解决不了也不需要解决）。真正丢的只有它没有模型的 part：customXml、metadata、
+线程批注、透视缓存、宏。
+⇒ 编辑既有 workbook 的正确姿势是**别把包交给库重建**（见 conventions §26）。
+
+**③ 删一个 OOXML part 是三件事，加回来也是三件事。** part 字节 +
+`[Content_Types].xml` 的 `Override` + 每一个指向它的 `Relationship`。只删字节 ⇒ 留下指向空气
+的关系（本仓库的 `validate` 层实测咬到过）；只加字节 ⇒ 孤儿 part。
+**加回来时 `rId` 必须重新分配，不能照抄** —— 库重建包时会重编号，旧 `rId` 在新包里多半已经
+指着别的东西，照抄等于静默改接线。
+
+**④ `xl/calcChain.xml` 是求值顺序的缓存：公式变了必须删，只改值必须留。**
+留着旧的 ⇒ Excel 报「发现部分内容有问题」并进入修复流程；无脑删 ⇒ 白白让人重算一遍。
+
+**⑤ 入 git 的 Office fixture 必须逐字节可复现，而不可复现有两个来源。**
+`skills/builtin/` 下所有文件都进 `.builtin-version` 哈希 ⇒ 重生成一次 fixture，全体桌面端
+重装内置技能。openpyxl 的两个来源：zip 条目时间戳用「现在」，**并且把保存时刻盖进
+`docProps/core.xml` 的 `dcterms:modified`，覆盖掉你设的 `wb.properties.modified`**。
+后者是跑两遍 diff 才发现的 —— 第一遍以为设了 property 就够了。
+PyMuPDF 同族：默认每次 save 换 `/ID`，`doc.save(..., no_new_id=True)` + 固定 metadata 日期可解；
+**加密件解不了**（AES 密钥每次随机），只能标注「别随手重跑」。
+
+**⑥ Excel 列宽单位是「默认字体下的字符数」，一个汉字占两格。**
+`len()+2` 正好差一半，值老老实实在文件里、屏幕上被截断或显示成 `####`。三条配套规则见
+conventions §26；其中**横跨多列的合并标题不算它第一列的宽度**这条，本仓库的 L2 门禁曾因此
+把一份渲染完全正常的表判红（转 PDF 读回 20 个字全在）。
+
+**⑦ `fetch-builtin-skills.ts` 的 SOURCES 里留着已改成自写的技能 = 每次 fetch 把自写实现删掉。**
+`fetchSubdir` 先 `rmSync(into)` 再拷上游。pdf 重写为自写后已从 SOURCES + `X_REQUIRES` 移除。
+另：对上游技能做的任何手改（如 markdown-exporter 的 description 重路由）**必须写成 patch 函数**
+（`applyExporterPatches`），否则下次 fetch 静默还原 —— 且改完要**逐字节核对** patch 产出与提交
+的文件一致。
+
+**⑧ `soffice` 必须用 `-env:UserInstallation` 指定隔离 profile。** 否则它写进用户真实的
+`~/.config` profile（跑一次技能就改了用户的机器），且两次并发转换会抢同一把 profile 锁、
+其中一个以一个与文档毫无关系的错误失败。另：**soffice 对它悄悄拒绝的输入也退出 0** ⇒
+判成功必须看输出文件在不在，不能看退出码。

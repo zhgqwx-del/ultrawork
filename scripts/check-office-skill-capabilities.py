@@ -385,6 +385,28 @@ def pending_cases(root: Path) -> list[dict]:
     cases.append({"case": "CONTROL: dropping the pending block brings C5 unbacked back",
                   "marker": "C5 unbacked",
                   "ok": any(f.startswith("C5 unbacked") for f in fails), "errors": fails})
+
+    # Scoping the acceptance pass (added 2026-08-02, 059 S3). The plan builds one
+    # skill at a time, so an unscoped --no-pending goes red the moment the next
+    # skill starts — and a permanently red job is one nobody reads. Three arms,
+    # because the middle one alone would pass even if the scope were ignored and the
+    # gate had simply stopped checking.
+    fails = gate("e2e-d", full, ["--no-pending", "xlsx"])
+    cases.append({"case": "--no-pending SKILL still refuses that skill's debt",
+                  "marker": "C5 pending",
+                  "ok": any(f.startswith("C5 pending") for f in fails), "errors": fails})
+
+    fails = gate("e2e-e", full, ["--no-pending", "docx"])
+    cases.append({"case": "a scope naming a skill with no manifest asserts nothing "
+                          "and is rejected",
+                  "marker": "assert nothing",
+                  "ok": any("assert nothing" in f for f in fails), "errors": fails})
+
+    clean = {"skill": "xlsx", "capabilities": {i: ok_entry for i in xlsx_ids}}
+    fails = gate("e2e-f", clean, ["--no-pending", "xlsx"])
+    cases.append({"case": "CONTROL: a scoped pass goes green once that skill owes "
+                          "nothing", "marker": None,
+                  "ok": not any(f.startswith("C5") for f in fails), "errors": fails})
     return cases
 
 
@@ -453,8 +475,13 @@ def main() -> int:
     ap.add_argument("--builtin-root", default=None,
                     help="override skills/builtin (used by the negative-control tests)")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--no-pending", action="store_true",
-                    help="acceptance mode: any capability still listed as pending fails")
+    # Scopeable because the plan builds one skill at a time (059 §6). An unscoped
+    # --no-pending is the handover gate and stays the default; naming skills lets CI
+    # keep asserting "pdf owes nothing" while xlsx is still mid-slice, instead of the
+    # only options being a permanently red job or no acceptance signal at all.
+    ap.add_argument("--no-pending", nargs="*", default=None, metavar="SKILL",
+                    help="acceptance mode: any capability still listed as pending "
+                         "fails. Names limit it to those skills; bare = every skill")
     ap.add_argument("--allow-missing", nargs="+", default=[], metavar="TIER",
                     help="forwarded to the L2 gate for dev machines lacking soffice/xsd")
     ap.add_argument("--selftest", action="store_true",
@@ -538,9 +565,20 @@ def main() -> int:
     # Acknowledged debt is fine while building and unacceptable at handover: §5's
     # replacement criterion says every gate must be green before the new skills
     # replace anything. --no-pending is that final pass.
-    if pending and args.no_pending:
-        failures.append(f"C5 pending — {len(pending)} capability(ies) still owed and "
-                        f"--no-pending was requested: {', '.join(sorted(pending))}")
+    if args.no_pending is not None:
+        scope = set(args.no_pending)
+        owed = sorted(k for k in pending if not scope or k.split(":")[0] in scope)
+        # A scope naming a skill that declares nothing would pass in silence, which
+        # is the same shape as the empty-manifest hole C5 exists to close.
+        unknown = sorted(s for s in scope if s not in set(migrated))
+        if unknown:
+            failures.append(f"C5 pending — --no-pending names {', '.join(unknown)}, "
+                            f"which declare(s) no capabilities.json; the scope would "
+                            f"assert nothing")
+        if owed:
+            where = f" in {', '.join(sorted(scope))}" if scope else ""
+            failures.append(f"C5 pending — {len(owed)} capability(ies) still owed{where} "
+                            f"and --no-pending was requested: {', '.join(owed)}")
 
     if args.json:
         print(json.dumps({

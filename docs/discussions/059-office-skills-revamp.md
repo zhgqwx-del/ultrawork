@@ -641,7 +641,7 @@ soffice 拍板必装后，`xsd` 也被一并列进 L2 的 `REQUIRED_TIERS`。**�
 | **S1** ✅ | 先写验收骨架：L0/L1/L2 三个脚本 + **对当前技能跑一遍拿到基线数字** | 3 个脚本 + 基线报告（见 §5 L0/L1/L2） | 已完成 2026-08-01 |
 | **S2** ✅ | `pdf` 技能重做 —— 四刀：P1/P2/P4（`071cd18c`）· 表单族 P5-P10（`513c9a84`）· 生成 P13 + 字体嵌入 P14（`69f7ac18`）· P3/P11/P12。**14/14 无 pending，`--no-pending` 验收档绿** | pdf/ 全套 + L0/L1/L2 全绿 | 已完成 2026-08-01 |
 | S2 收尾 | ✅ Rust 依赖探测泛化（5·补.3）已完成：`run_python_feature_probe` 接受模块名列表，`PY_MODULES` 数据化 | 探测数据化 | 已完成 |
-| **S3** | `xlsx` 技能（含 office 底座首次实现） | xlsx/ + office 底座 | **新窗口** |
+| **S3** 🟡 | `xlsx` 技能（含 office 底座首次实现）。**两刀已落**：office 底座 + X1/X2/X15，公式族 X3/X5/X10，**9 项 pending**（见 §六·补二） | xlsx/ + office 底座 | **新窗口** |
 | **S4** | `docx` 技能（最复杂：修订/批注/XSD/CJK） | docx/ | **新窗口**（可能需 2 个） |
 | **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
 | **S6** | 收尾：README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version` | 文档同步 | 新窗口 |
@@ -1004,6 +1004,203 @@ pdf 技能已清零，**S2 完成**。接下来是 §6 的 **S3（xlsx）**，�
 
 ---
 
+## 六·补二 — S3 第一刀（薄切片）落地记录（2026-08-02）
+
+沿用 S2 的做法：**先打通端到端管线**，不是一次铺完 15 项。本刀选 **X1（读）/ X2（写）/
+X15（中文列宽）** 加 **office 底座首次实现**，选择理由只有一条 ——
+**保真度是全部 15 项共用的地基**，它错了后面每一项都建在流沙上。
+
+### 落地内容
+
+`skills/builtin/xlsx/`（新建）：
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/office/package.py` | 包=parts+content types+relationships；**graft**（把库丢掉的 part 连同 CT 与 rel 一起放回）；`drop` 是它的镜像（删 part 也要删这三样） |
+| `scripts/office/sheet.py` | **外科式编辑**：直接改 `sheetN.xml`，其余字节不动 |
+| `scripts/office/soffice.py` | 三平台探测 + 转换（`-env:UserInstallation` 隔离 profile） |
+| `scripts/office/validate.py` | 包一致性（part 可解析 / 关系指得到 / 元素序） |
+| `scripts/office/xmlorder.py` | ECMA-376 CT_Worksheet / CT_Workbook 子元素序 |
+| `scripts/xlsxcommon.py` | 错误契约（退出码 2 + 一行人话）/ stdout 预算 / 显示宽度 |
+| `scripts/xlsx_read.py` | **X1** 读，**同时给公式与缓存值两个视图** |
+| `scripts/xlsx_write.py` | **X2** 写单元格/公式/追加行 · **X15** `--autofit` |
+| `fixtures/` | `book.xlsx`（双表 + 跨表公式 + 图表 + 条件格式 + 冻结 + 筛选 + 合并 + **customXml**）· `narrow.xlsx`（同内容剥掉全部列宽）· `make_fixtures.py` |
+| `capabilities.json` | 3 项 implemented + **12 项 pending 逐条写理由** |
+
+连带：`BUILTIN_DEP_MAP` + Rust `PY_MODULES` 加 openpyxl/lxml（**soffice 是第一个真正声明它的
+技能** —— 它此前一直被 `SKILL_DEP_BINS` 探测却无人要求）、`markdown-exporter` 的 XLSX 路由
+指向新技能（DOCX 仍写「建设中」，因为 `docx` 还不存在 —— 指向不存在的技能就是 §1 那个
+`doc-export` 断链）、CI 加 xlsx 行为测试。
+
+### 门禁结果（全部本机实测）
+
+| 门禁 | 结果 |
+|---|---|
+| **L0** clean-room | `xlsx` clean（0 violation / 0 review） |
+| **L0 重标定** | 见下「地板没有涨」 |
+| **L1** 能力矩阵 | OK。`17/17 pass（17 proved by sample，11 artifact(s) verified by L2）`，12 项 pending 逐条列出 |
+| **L1 `--selftest`** | 13 → **16 passed** |
+| **L2** 产物合法性 | 54 → **60 passed / 0 failed / 1 skipped**（只剩 D2/xsd） |
+| **xlsx 行为测试** | `scripts/test-xlsx-skill.py`：**18 条断言 / 25 条负向控制，26 passed**，flaw→check 矩阵只剩两条注明的诚实级联 |
+| typecheck / desktop / Rust | 8 task · **858** · 155，全绿 |
+
+### 核心主张是量出来的，不是声称的
+
+「编辑不丢东西」这句话必须有对照数字，否则它只是一句形容词。同一次编辑、同一个文件：
+
+| 写法 | 产物 part 数 | 逐字节未变的 part | LibreOffice 重算 |
+|---|---|---|---|
+| `openpyxl load → save`（**所有人第一反应的写法**） | 14（丢 3 个 customXml） | 10 / 17 | 一致 |
+| **外科式（本技能）** | **17（一个没丢）** | **16 / 17** | 一致 |
+
+两条都跑通了 LibreOffice 重算并得到相同的数 ⇒ **保真度不是拿正确性换来的**。
+`W1` 里还有一条反向守卫：**如果哪天 `load→save` 也不丢东西了，这条断言会主动报「这个夹具
+证明不了差别」** —— 免得守卫在一个不存在的问题上继续站岗。
+
+### 本轮抓到的四个真缺陷（两个在门禁自己身上）
+
+1. **L2 的 X5 在跨列合并标题上假阳性。** 合并到 A1:F1 的标题是**显示在六列上的**，
+   要求 A 列独自装下它，会把一份渲染完全正常的 workbook 判红 —— 转成 PDF 读回**全部 20 个字
+   都在**。是**我给技能写 autofit 时与门禁意见不合**才暴露的。
+   修法=跳过**横跨多列**的合并单元格，并配一对用例（跨列必须静默 / **同列内的纵向合并必须
+   照样打红**）。跑了控制臂：把修复回退 ⇒ 前者立刻 FAIL 而后者仍 PASS，
+   证明修复不是靠把检查变瞎换来的。**这是「门禁自己有缺陷」在本任务里的第二次**（第一次是
+   S2 的旋转页豆腐块）。
+2. **L2 没有办法说「这份表不是财务模型」。** X4 是 opt-in，但 `inert_reason` 用真值判断 ⇒
+   `finance_colors: false` 与「根本没写」无法区分，都算 INERT，而 L1 把非保真度的 INERT 判红
+   ⇒ **一份普通表格永远无法成为「验过的产物」，唯一出路是谎称它是财务模型** ——
+   默认打开的问题从另一扇门绕回来了。修法=`false` 是答案而不是缺席，
+   配四条用例，其中**第三条是控制臂**：同一份文件 `finance_colors: true` 必须打红，
+   否则「opt-out 让它闭嘴」和「它本来就没牙」分不出来。
+3. **删 part 只删了字节。** `calcChain` 被丢掉后，它的 relationship 和 content-type Override
+   还在 ⇒ 产出一个指向空气的包。**是我自己写的 validate 层咬出来的**（技能内部的分层）。
+   修法=`Package.drop` 与 `graft` 对称，都是三件事。
+4. **夹具不是逐字节可复现的。** openpyxl 除了 zip 条目时间戳，还会把保存时刻盖进
+   `docProps/core.xml` 的 `dcterms:modified`，**覆盖掉你设的 `wb.properties.modified`** ⇒
+   重跑一次 `make_fixtures.py` 就换 `.builtin-version`，全体桌面端重装。
+   **是跑两遍 diff 出来的，不是想出来的。**
+
+### 负向控制自己错了两次（矩阵才看得出来）
+
+- **合并探针的两个标签一样长** ⇒「算合并标题」和「不算」得出同一个宽度，
+  `width-counts-a-title-merged-across-columns` 这条控制**根本点不亮**。
+  改成三个不同长度（42 / 18 / 6），三种实现各落在一个数上。
+  **控制臂分不出两种实现，就不是控制臂。**
+- **四条控制同时点亮了别人的断言**：`append-overwrites-the-last-row` 顺带点 W3（因为 W3 也在
+  看 A6）· `trimming-drops-the-data` 顺带点 V0（因为 V0 在数脚本行为而不是夹具形状）·
+  `read-returns-values-only` 与 `inventory-forgets-a-sheet` 点 V0（**这两条是真级联，已注明**）。
+  前两条是**断言归属划错了**，改断言；后两条是真的，写进矩阵注释。
+  另外原来的 V0 控制臂与 `inventory-forgets-a-sheet` **是同一个破坏**，等于没测 V0，换成只有
+  V0 会注意到的那种。
+
+### L0 重标定：地板**没有**涨（与预测相反）
+
+S2 的曲线是 0.165 → 0.168 → 0.188，写着「docx/xlsx 落地后再涨就该重新论证阈值」。实测：
+
+| 负样本 | max | 最高分文件 |
+|---|---|---|
+| + pdf 表单族（31 个 .py） | 0.188 | `pdf_form_inspect.py` |
+| **+ xlsx（45 个 .py）** | **0.187** | 仍是 `pdf_form_inspect.py` |
+
+**xlsx 自己最高只有 0.128**（`xlsx_write.py` ← `fix_deck.py`，一个毫不相干的文件）。
+原因是结构性的，不是「我写得更干净」：**参考实现全都在驱动 openpyxl 的对象模型，而这份实现
+直接改 zip 与 sheet XML**，AST 骨架天生对不上。
+⚠️ **这不等于阈值安全了** —— 真正的考验是 `docx`，它会像参考实现一样用 python-docx。
+分离带 0.187 ~ 0.736，阈值 0.55 仍居中。
+
+### 明确没做 / 与原计划的偏差（都是有意的）
+
+- **15 项只做了 3 项**，12 项进 pending 并逐条写了理由。**pending 写的不是「快好了」，
+  是「还没有断言在证明它」。**
+- **X4（公式求值）整项未动**，因此 §7 要求的「纯 Python 求值器 × soffice 交叉验证」
+  **一行没写**，其覆盖边界当然也没标定。它是 pending 里最大的一块。
+- **X13（转 PDF）没有能力入口**，尽管 `office/soffice.py` 已经写好并被门禁在用 ——
+  **写好了不等于声明了**，没有 sample 和断言就不进 `capabilities`。
+- **openpyxl 重建 + graft 这条路径没有能力挂上去。** `graft_missing_parts` 有实现、有
+  round-trip 实测，但本刀所有写入都走外科式 ⇒ **graft 在产品路径上一次都没被执行过**，
+  只在实验里验过。X6-X9 落地时才会真正启用它。这是本刀最大的一块「写了但没验」。
+- **文本按 inline string 写**，不复用 `sharedStrings`。合法、通用，但大批量重复词会比 Excel
+  自己写的大一些。
+- **`--autofit` 是字符计数，不是字体度量**：默认字体下够用，换很宽/很窄的字体会偏。
+- **§3.3 的「当前」列不动**：它是「更优」这个说法的对照系，跟着实现改等于把对照系抹掉。
+- **没有重跑 `fetch-builtin-skills.ts`**（同 S2 理由：三个源都 pin 在 `main`）。
+  `.builtin-version` 用**独立复算 fetch 的 walk 算法**核对后手写为 `fa387f174e41b0eb`，
+  与 `pack` 的输出一致。`markdown-exporter` 的 description patch 已与提交文件逐字节比对。
+
+### 顺带把两个 CI 定时炸弹拆了（都不是本刀引入的，但本刀让它们必然爆）
+
+1. **上一个 commit `acff11d7` 让 office-skills job 必红，而分支没 push 所以没人看见。**
+   它加的 `recalc-drift` 是一条**需要 LibreOffice 才能点亮**的负向控制，而
+   `selftest()` 内部恒用 `allow_missing=ALL_TIERS` ⇒ 在没有 LO 的 runner 上该条被跳过 ⇒
+   「必须打红」的用例没打红 ⇒ **FAIL**。本机把 `SOFFICE` 置空复现：
+   `59 passed, 1 failed`。**这正是「跳过 ≠ 通过」的第二种形态** —— 上次是跳过冒充通过，
+   这次是跳过让一条控制失效。处置见 §7 待办①，**未擅自决定**。
+2. **`--no-pending` 是全局的**，xlsx 一进 pending 这条验收档就红，而 §6 的计划本来就是
+   一次做一个技能 ⇒ **一个按设计长红的 job 等于没有 job**。改成可按技能限定
+   （`--no-pending pdf`），裸用仍是「全部技能」。加了三条用例，
+   **第三条是控制臂**（某技能清零后该档必须转绿），另有一条守住
+   「限定到一个没有 manifest 的技能=什么也没断言」。
+
+### 第二刀：X3 / X5 / X10 —— 公式族（2026-08-02）
+
+一批做的理由成立：**同一个引用解析器同时服务两个方向** —— 写的时候拦住会变成 `#REF!` 的
+公式，审计的时候找出已经是 `#REF!` 的。拆开做会写两遍引用解析，而且只有一遍会被测到
+（与 S2 表单族「同一条填充记录」的理由同构）。
+
+| 文件 | 能力 |
+|---|---|
+| `scripts/office/formula.py` | 引用解析（含带空格/CJK 的引号表名）· 依赖图 · 循环检测（**迭代式，不递归**：真实 workbook 的长依赖链会爆栈，而「审计器崩了」比它能报的任何结论都糟） |
+| `scripts/xlsx_audit.py` | **X5** 四类发现：`error` / `missing` / `circular` / `uncalc` |
+| `scripts/xlsx_write.py`（扩展） | **X3** 写公式 · **X10** 跨表引用，**写之前先验目标表存在** |
+
+**它是引用解析器，不是求值器** —— 只回答「这条公式指向什么」，不算任何数。
+守这条边界是有意的：一旦开始求值，每个算错的地方都会变成一个自信的错数。求值是 X4，
+仍在 pending，且按 §7 必须做成「纯 Python 求值器 × soffice 交叉验证」。
+
+#### 四类发现里，两类是别处没有的
+
+- **`missing`（引用了不存在的表）= 还没发生的 `#REF!`**。openpyxl 一声不吭地把
+  `=预算表!A1` 存下来，等 Excel 打开才炸，那时早没人记得是哪一步写的。所以这条同时做成了
+  **写入期拒绝**（Q1）：拦在源头比事后审计有用。
+- **`circular`**：Excel 显示 0、只在状态栏提示一句，基本没人看见。实测两种形状都要能抓：
+  两格互引（D1↔E1）**和一格自引（`=F1`）** —— 后者是「不重访起点」的图遍历会漏掉的那种。
+
+#### 门禁结果
+
+| 门禁 | 结果 |
+|---|---|
+| **L1** | **20/20 pass（20 proved by sample，13 artifact(s) verified by L2）**，pending 12 → **9** |
+| **L2** | 60 passed / 1 skipped（不变） |
+| **xlsx 行为测试** | 18 → **27 条断言 / 37 条负向控制，38 passed** |
+| **L0** | xlsx clean；**加入 formula.py 后地板仍是 0.187**，xlsx 自己 max 0.134 |
+
+X3/X10 的证明落在 **L2 的 X3（LibreOffice 重算）**上，这是本刀最实的一条：
+X3 样例 `B7==B3*2` 重算得 **2480**；X10 样例 `C7==汇总!B2` 重算得 **471** ——
+471 只可能来自 `利润表!C7 → 汇总!B2 → 利润表!B5 → B3-B4` 这条链走通，
+也就是**跨表引用在两个方向上都真的解析了**，而不只是把字符串存进去了。
+
+#### 引用解析器踩到的两个假阳性（都实测，不是设想）
+
+1. **字符串字面量里的引用不是引用**。`="见 预算表!A1 的说明"` 会被报成「指向不存在的表」。
+   解法=解析前先剥掉字符串字面量与错误 token（后者自带 `!`，`=#REF!*2` 否则读作「表名 #REF」）。
+2. **`LOG10(` 会被解析成单元格 `LOG10`**（1-3 个字母 + 数字，形状完全一致）。
+   它会进依赖图；**在一个恰好用了 LOG10 这格的 workbook 里可以凭空造出一个循环引用**。
+   解法=紧跟 `(` 的匹配是函数不是引用。**这两条都写成了断言（A6），不是注释。**
+
+#### 又一次「V0 抢了别人的活」
+
+给 V0 加的新项写成「broken workbook 里有 ≥3 类缺陷」，结果 `audit-only-scans-for-existing-tokens`
+和 `audit-does-not-look-for-cycles` 两条控制**顺带点亮 V0** —— 因为那个数是**从 findings 算的**，
+而 findings 正是 A2/A3 在管的东西。改成数**输入里的公式条数**（夹具属性，任何检测缺陷都不改变它）。
+**这是同一轮里第二次犯**（第一次是 `file_cells`）：**V0 只能量夹具，不能量被测行为。**
+
+### 下一刀
+
+X4（求值器 × soffice 交叉验证，**最大的一块**，覆盖边界必须实测标定进门禁），
+再 X6-X9（走 openpyxl + graft，届时 graft 才第一次进产品路径），最后 X11/X12/X13/X14。
+
+---
+
 ## 七、待拍板 / 未决
 
 §4·补的决策表已销掉大部分。**剩余未决**：
@@ -1030,7 +1227,40 @@ pdf 技能已清零，**S2 完成**。接下来是 §6 的 **S3（xlsx）**，�
 
    **对门禁的直接影响（2026-08-01 已实施）**：L2 的 soffice 层语义**从「探测到才跑」翻转为「缺失即判红」**——契约既然是必装，缺失就是失败而非跳过。`xsd` 层同样列为必需（CI 提供）。开发机用 `--allow-missing soffice xsd` 显式放行，报告里点名，永远不会变成静默通过。L1 的 C4 同步支持同一开关（它内部调 L2）。两个 `--selftest` 验的是守卫逻辑而非机器契约，内部恒为宽松。
 
-   **待办**：① CI 三平台装 LibreOffice（会显著拖慢，需评估缓存）② `BUILTIN_DEP_MAP` / Rust 探测加 `soffice`（可复用 L2 `find_soffice()` 的平台分支）③ 本机装 LibreOffice 才能真机验 D7/X3。
+   **待办**：① **CI 装 LibreOffice —— 已升级为「必须现在决定」，方案与代价见下** ② ~~`BUILTIN_DEP_MAP` / Rust 探测加 `soffice`~~ ✅ **已做（2026-08-02，S3）**：`xlsx` 是第一个声明 soffice 的技能 ③ ~~本机装 LibreOffice~~ ✅ 已装（26.2.5.2）。
+
+   #### ①的现状：不是「要不要更严」，是「CI 现在就是红的」（2026-08-02 实测）
+
+   `acff11d7` 加的 `recalc-drift` 是一条**需要 LibreOffice 才点得亮**的负向控制。
+   `selftest()` 内部恒用 `allow_missing=ALL_TIERS`，所以在没有 LO 的 runner 上它被**跳过**，
+   而「必须打红」的用例没打红就是 **FAIL**。本机把 `SOFFICE` 置空复现：`59 passed, 1 failed`。
+   分支没 push，所以这颗雷至今没响。
+
+   **实测代价**（本机 macOS，LibreOffice 26.2.5.2）：
+
+   | 项 | 数字 |
+   |---|---|
+   | L2 自检 **有** soffice | **116.2s** |
+   | L2 自检 **无** soffice | **1.5s** |
+   | ⇒ soffice 净成本 | **≈114s**（约 33 次转换 × 3.5s，每次都起独立 profile） |
+   | L1 全跑（含 soffice） | 9.2s |
+   | 当前 job 超时 | 15 min ×3 平台 |
+
+   安装体积/耗时**未实测**（本机已装、CI 无法在此验证），按发行版包大小属数百 MB 量级。
+
+   **三个选项**：
+
+   | | 做法 | 得到 | 代价 |
+   |---|---|---|---|
+   | **A** | 三平台都装 LO | D7/X3 的成功路径与 `recalc-drift` 在三平台都真跑 | 每平台 +≈2min 运行 + 安装耗时；`apt`/`brew`/`choco` 三套安装步骤各自会坏 |
+   | **B（推荐）** | **只在 ubuntu 装 `libreoffice-calc`**，mac/Windows 继续 `--allow-missing soffice` | `recalc-drift` 有一个平台真跑 ⇒ 雷拆了、控制有效；ubuntu 装 LO 最便宜 | **mac/Windows 上 soffice 路径仍未跑过**（`find_soffice()` 的这两条平台分支尤其）。必须在报告里点名，不能当成「三平台都验了」 |
+   | **C** | 让缺 tier 时负向控制记 SKIP 而非 FAIL | CI 立刻绿，零成本 | **等于把 X3 的控制关掉** —— 而 X3 的期望值错了一个月，正是因为它一直是 SKIPPED。**这条是在重犯已经付过学费的错误，不建议** |
+
+   ⚠️ **B 有一个诚实的洞**：S4 的 D7 是 docx→PDF，需要 Writer 而不只是 Calc；选 B 时
+   ubuntu 要装 `libreoffice-calc` + `libreoffice-writer`（或整包），S4 开工前确认。
+
+   **本轮未擅自实施任何一个**（用户 2026-08-02 指示「先给方案和代价」）。当前 CI 仍带
+   `--allow-missing soffice xsd`，即**雷仍在**；push 前必须选定。
 2. **`doc-edit` 是删是退化成路由页**（形态 B 下二选一）——删则要清理 `README.md` / `AGENTS.md` / 可能的 ADR 引用。**S4 收尾时决定，不阻塞。**
 3. **`doc-export` 断链修复**（§1，实测 `doc-edit/SKILL.md` 的 `:3`/`:22`/`:53` 三处）——**放 S6**，与 deckcraft 的路由边界同批（两者都要等 docx/xlsx 齐了才谈得上指向谁）。改动本身 3 行，但 `skills/builtin/` 一动就要重算 `.builtin-version`；归批原则见 §6「每个技能阶段的收尾义务」第 3 条。
 

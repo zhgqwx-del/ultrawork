@@ -26,12 +26,21 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all nine built-in skills", () => {
+  it("covers all ten built-in skills", () => {
     // ppt-master was removed from the bundle in P3 (ADR-061 / discussions/043 §18.5);
     // it lives on only as a curated INSTALLABLE_SKILLS entry, not a builtin dep-map key.
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant"].sort(),
+      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant", "xlsx"].sort(),
     )
+  })
+
+  it("xlsx requires openpyxl, lxml and LibreOffice — soffice is not optional", () => {
+    expect(missingDeps("xlsx", present("python3", "openpyxl", "lxml", "soffice"))).toEqual([])
+    // Recalculating formulas and rendering a preview both go through LibreOffice
+    // (059 §7); without it the skill is genuinely not ready, so it must not be
+    // silently tolerated the way OPTIONAL_DEPS tolerates a missing Node.
+    expect(missingDeps("xlsx", present("python3", "openpyxl", "lxml"))).toEqual(["soffice"])
+    expect(missingDeps("xlsx", present("python3", "openpyxl", "soffice"))).toEqual(["lxml"])
   })
 
   it("deckcraft requires python 3.10+, python-pptx and a Chromium export browser", () => {

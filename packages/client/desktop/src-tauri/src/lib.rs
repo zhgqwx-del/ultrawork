@@ -4483,7 +4483,12 @@ fn python_probe_allowed(python: &str) -> bool {
 /// the hard-coded pair this replaced meant every new skill needed a Rust change,
 /// and the pdf skill was the first to prove it — its badge would otherwise have
 /// reported on python-pptx while the skill imports fitz.
-const PY_MODULES: &[(&str, &str)] = &[("python-pptx", "pptx"), ("pymupdf", "fitz")];
+const PY_MODULES: &[(&str, &str)] = &[
+    ("python-pptx", "pptx"),
+    ("pymupdf", "fitz"),
+    ("openpyxl", "openpyxl"),
+    ("lxml", "lxml"),
+];
 
 /// One-shot feature probe inside a python interpreter: (version >= 3.10, one flag
 /// per entry of `modules` in order). `find_spec` avoids actually importing the

@@ -18,6 +18,7 @@
 | `skill-creator` | anthropics/skills `skills/skill-creator` | Apache-2.0 | python3 |
 | `skill-installer` | openai/skills `.system/skill-installer`（改安装目标） | Apache-2.0 | python3, git |
 | `pdf` | **ultrawork 自写**（PyMuPDF；原 openai/skills `.curated/pdf` 已整体替换，discussions/059 S2） | 同仓库 | python3 + pymupdf（AGPL-3.0/商业，用户自装不打包） |
+| `xlsx` | **ultrawork 自写**（openpyxl 读 + 自建 OOXML 底座外科式写，discussions/059 S3） | 同仓库 | python3 + openpyxl/lxml + **soffice（必需，非可选）** |
 | `markdown-exporter` | bowenliang123/md_exporter（仅 SKILL.md，按 pip 模式） | Apache-2.0 | markdown-exporter(pip), pandoc |
 | `deckcraft` | **ultrawork 自写**（HTML-first PPT，做 PPT 的默认技能，ADR-061） | 同仓库；vendored pptxgenjs MIT | python3.10+, python-pptx, chrome-or-edge（可编辑 pptx 另需 Node，OPTIONAL） |
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
@@ -27,7 +28,8 @@
 
 > ⚠️ Anthropic 官方 `docx/pdf/pptx/xlsx` 文档技能是**专有许可、禁止再分发**（`LICENSE.txt` 1467B
 > 即专有，11345B 即 Apache-2.0），**不可内置**。PDF 曾用 OpenAI 的 Apache 版，059 S2 起改为
-> clean-room 自写；Office 读改自写 `doc-edit`、长尾格式转换用 `markdown-exporter`。
+> clean-room 自写；xlsx 自 059 S3 起是自写专用技能（`doc-edit` 暂留，S4 齐活后再定去留），
+> 长尾格式转换用 `markdown-exporter`。
 > 自写技能的合规由 `scripts/check-skill-originality.py` 把关（逐字节 + 专有许可特征 + AST 骨架），
 > 详见 `docs/discussions/059-office-skills-revamp.md` §5 L0。
 

@@ -178,12 +178,16 @@ function applyInstallerPatches(dir: string) {
  * 直接双命中 —— description 是模型路由的唯一依据，冲突不改就是让模型随机挑。
  * 这里做成 patch 而不是手改文件：手改的话下一次 fetch 会静默还原。
  */
+// Routing flips one format at a time, as each dedicated skill actually lands
+// (059 §6 batching rule). XLSX moved here in S3; DOCX still says "being built"
+// because there is no `docx` skill yet, and pointing at a skill that does not exist
+// is precisely the `doc-export` broken-link defect recorded in 059 §1.
 const EXPORTER_DESCRIPTION =
   "description: \"Long-tail Markdown conversion: turn Markdown text into HTML, IPYNB, MD, CSV, " +
   "JSON, JSONL or XML files, and extract fenced code blocks into Python/Bash/JS files. NOT the " +
-  "route for PDF (use the `pdf` skill) or slide decks (use `deckcraft`). It can still emit " +
-  "DOCX/XLSX via the md-exporter CLI, but only as a quick one-shot conversion — dedicated " +
-  "docx/xlsx skills are being built and will take that route over.\""
+  "route for PDF (use the `pdf` skill), Excel workbooks (use the `xlsx` skill) or slide decks " +
+  "(use `deckcraft`). It can still emit DOCX via the md-exporter CLI, but only as a quick " +
+  "one-shot conversion — a dedicated docx skill is being built and will take that route over.\""
 
 function applyExporterPatches(dir: string) {
   const p = join(dir, "SKILL.md")

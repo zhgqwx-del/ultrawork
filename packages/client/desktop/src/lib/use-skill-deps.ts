@@ -26,6 +26,14 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // for no reason. pymupdf is an import probe, not a PATH probe (see the python
   // module list in src-tauri check_skill_dependencies).
   pdf: ["python3", "pymupdf"],
+  // Written for ultrawork (discussions/059 S3). openpyxl reads; lxml does the
+  // surgical sheet-XML edit that keeps charts/pivot caches/custom parts alive, and
+  // openpyxl does NOT pull lxml in, so it is a real requirement rather than a
+  // transitive one. soffice is the FIRST skill to declare it — it was already being
+  // PATH-probed by SKILL_DEP_BINS with nothing asking for it. It is required, not
+  // optional: formula recalculation has no pure-Python substitute, and converting to
+  // PDF is the only way an .xlsx becomes visible in the artifact panel (059 §7).
+  xlsx: ["python3", "openpyxl", "lxml", "soffice"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
   "doc-edit": ["python3"],
   // HTML-first deck generator (discussions/043). python3.10+ (not plain

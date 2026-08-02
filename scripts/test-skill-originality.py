@@ -42,9 +42,11 @@ spec.loader.exec_module(G)
 # written independently". `pdf` was added 2026-08-01 (059 S2) precisely because it IS
 # same-job code — it reads the same PDFs with the same library as four of the reference
 # skills — so it is the first sample that measures what this threshold actually has to
-# survive. docx/xlsx must be added the same way as S3/S4 land; a threshold calibrated
-# only against unrelated code starts crying wolf on same-job code.
-OWN_SKILLS = ["deckcraft", "doc-edit", "pdf"]
+# survive. `xlsx` joined 2026-08-02 (059 S3) for the same reason: it opens the same
+# OOXML packages with the same library as all four reference skills. `docx` must be
+# added the same way when S4 lands; a threshold calibrated only against unrelated code
+# starts crying wolf on same-job code.
+OWN_SKILLS = ["deckcraft", "doc-edit", "pdf", "xlsx"]
 
 RENAMES = [("field", "entry"), ("writer", "out_doc"), ("reader", "in_doc"),
            ("annotation", "annot"), ("value", "val"), ("page", "pg"),

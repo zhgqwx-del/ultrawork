@@ -1,0 +1,14 @@
+The xlsx skill is authored by the ultrawork project. It is not derived from Anthropic's
+proprietary document skills, nor from any of the third-party skill collections surveyed
+in docs/discussions/059 §2 — SKILL.md, scripts, fixtures and capabilities.json are
+written from scratch (see docs/discussions/059 §5 L0 for the clean-room gate that
+checks this, including an AST-skeleton fingerprint that survives renaming).
+
+It invokes the following third-party software at runtime (NOT bundled; installed by the
+user per the SKILL.md instructions):
+  - openpyxl (MIT)
+  - lxml (BSD-3-Clause)
+  - LibreOffice / soffice (MPL-2.0), invoked as an external command
+
+The ECMA-376 element orderings encoded in scripts/office/xmlorder.py are taken from the
+published standard (ECMA-376 Part 1, §18.3.1), which is a specification of fact.
