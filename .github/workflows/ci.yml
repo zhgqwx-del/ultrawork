@@ -148,13 +148,17 @@ jobs:
       # never executed anywhere, so "three platforms are green" does NOT mean the
       # soffice path works on three platforms.
       #
-      # calc only, not the full suite. S4 (docx) will need libreoffice-writer too —
-      # D7 converts .docx to PDF.
+      # calc AND writer. Writer is not S4 scope creep — it was already needed and
+      # missing: the L2 gate's D7 converts a .docx to PDF on EVERY docx case, and it
+      # runs wherever `soffice` exists. With calc alone the binary is present, exits
+      # 0 on a .docx and writes no PDF, so every docx case in the L2 self-test goes
+      # red. Nobody saw it because the branch has never been pushed — the third
+      # instance of that shape in this task (059 §7).
       - name: Install LibreOffice (Linux only — see comment)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-calc
+          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-writer
       # shell: bash on every gate step below — the default on Windows is pwsh, where
       # $ALLOW_MISSING silently expands to nothing instead of the env var, which
       # would quietly turn the strict tier back on and go red for the wrong reason.
@@ -175,6 +179,11 @@ jobs:
         run: python scripts/test-pdf-skill.py
       - name: xlsx skill behaviour tests
         run: python scripts/test-xlsx-skill.py
+      # Added in the same slice that created the gate, deliberately: "a gate that
+      # only ever runs on the author's machine" is how the last two rounds each
+      # shipped defects that reproduced nowhere else.
+      - name: docx skill behaviour tests
+        run: python scripts/test-docx-skill.py
       # deckcraft's pdf_to_md, which S3.5 moved off PyMuPDF. Its fixtures are built
       # into a temp dir at run time (reportlab/pypdf), so this needs no committed
       # corpus beyond the example deck already in the tree. Listed here because a

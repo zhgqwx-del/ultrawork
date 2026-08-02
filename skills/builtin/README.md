@@ -19,6 +19,7 @@
 | `skill-installer` | openai/skills `.system/skill-installer`（改安装目标） | Apache-2.0 | python3, git |
 | `pdf` | **ultrawork 自写**（原 openai/skills `.curated/pdf` 已整体替换，discussions/059 S2；S3.5 整体去 PyMuPDF/AGPL） | 同仓库 | python3 + pypdfium2(Apache-2.0) + pypdf(BSD-3) + pdfplumber(MIT) + reportlab(BSD-3)，用户自装不打包 |
 | `xlsx` | **ultrawork 自写**（openpyxl 读 + 自建 OOXML 底座外科式写，discussions/059 S3） | 同仓库 | python3 + openpyxl/lxml + **soffice（必需，非可选）** |
+| `docx` | **ultrawork 自写**（纯 lxml 读写 WordprocessingML，**刻意不依赖 python-docx**，discussions/059 S4） | 同仓库 | python3 + lxml + **soffice（必需，非可选）** |
 | `markdown-exporter` | bowenliang123/md_exporter（仅 SKILL.md，按 pip 模式） | Apache-2.0 | markdown-exporter(pip), pandoc |
 | `deckcraft` | **ultrawork 自写**（HTML-first PPT，做 PPT 的默认技能，ADR-061；S3.5 去 PyMuPDF/AGPL） | 同仓库；vendored pptxgenjs MIT | 必需 python3.10+, python-pptx, pillow, chrome-or-edge；**OPTIONAL**（缺了只影响读那一类源文件）Node（可编辑 pptx）· pdfplumber/pypdf/pypdfium2（PDF）· mammoth/ebooklib/nbconvert/markdownify/beautifulsoup4/requests（DOCX/EPUB/ipynb）· openpyxl（XLSX）· curl_cffi（网页） |
 | `doc-edit` | **ultrawork 自写** | 同仓库 | python3 + python-docx/openpyxl/python-pptx |
@@ -28,7 +29,8 @@
 
 > ⚠️ Anthropic 官方 `docx/pdf/pptx/xlsx` 文档技能是**专有许可、禁止再分发**（`LICENSE.txt` 1467B
 > 即专有，11345B 即 Apache-2.0），**不可内置**。PDF 曾用 OpenAI 的 Apache 版，059 S2 起改为
-> clean-room 自写；xlsx 自 059 S3 起是自写专用技能（`doc-edit` 暂留，S4 齐活后再定去留），
+> clean-room 自写；xlsx 自 059 S3 起、docx 自 059 S4 起是自写专用技能（`doc-edit` 暂留，docx 19 项
+> 能力齐活后再定去留），
 > 长尾格式转换用 `markdown-exporter`。
 > 自写技能的合规由 `scripts/check-skill-originality.py` 把关（逐字节 + 专有许可特征 + AST 骨架），
 > 详见 `docs/discussions/059-office-skills-revamp.md` §5 L0。

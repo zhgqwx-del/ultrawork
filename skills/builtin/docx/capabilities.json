@@ -1,0 +1,317 @@
+{
+  "skill": "docx",
+  "matrix": "docs/discussions/059-office-skills-revamp.md §3.2",
+  "capabilities": {
+    "W1": {
+      "entry": "scripts/docx_read.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--outline",
+          "--tables",
+          "--text",
+          "--out",
+          "{out}/document.json"
+        ],
+        "produces": [
+          "document.json"
+        ]
+      },
+      "verified_by": "JSON is not an artifact type L2 can read. What matters here is that the text is joined at the PARAGRAPH rather than handed back as runs (a paragraph Word stored as three separate runs must read as one string), that tracked-deleted text is NOT reported as document text while tracked-inserted text IS — which is the half python-docx's own `paragraph.text` gets wrong — and that tables, list levels, sections, headers, comments and revisions are all reachable. All of it is asserted in scripts/test-docx-skill.py R1-R6"
+    },
+    "W2": {
+      "entry": "scripts/docx_edit.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/replaced.docx",
+          "--replace",
+          "第三季度=第四季度",
+          "--replace",
+          "{{客户名称}}=示例科技有限公司",
+          "--report",
+          "{out}/replace.json"
+        ],
+        "produces": [
+          "replaced.docx",
+          "replace.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "第四季度",
+          "示例科技有限公司"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "L2 is the proof that the edit did not cost anything: F1 (every part of the input survives), F2 (styles, numbering, headers and the relationship wiring survive), D1/D4/D5 (the package, the element order and the revision markup are still legal) and D7 (LibreOffice still renders it, non-blank and non-tofu). The claim that makes this capability worth having — that a phrase Word stored across two runs is found and replaced, where the per-run implementation everyone writes first finds 1 of the 2 occurrences and silently misses exactly the one that spans — is measured in scripts/test-docx-skill.py E1-E5, against a control arm that performs the naive replace on the same file"
+    },
+    "W3": {
+      "entry": "scripts/docx_edit.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/appended.docx",
+          "--append-paragraph",
+          "结论：维持全年增长预期。",
+          "--append-paragraph",
+          "下一步：与审计确认应收账款账龄。",
+          "--style",
+          "Normal",
+          "--report",
+          "{out}/append.json"
+        ],
+        "produces": [
+          "appended.docx",
+          "append.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "结论：维持全年增长预期。",
+          "下一步：与审计确认应收账款账龄。"
+        ],
+        "paragraphs": 11,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the assertion that matters is D4: `<w:sectPr>` must still be LAST in the body. `body.append(p)` is the natural way to write this and it puts the paragraph after the section properties, which Word repairs by discarding the section — page size, margins and the header/footer bindings all go. D6 covers the other half: a Chinese paragraph this skill writes must carry both @w:ascii and @w:eastAsia, or it renders in whatever face the reader's theme picks. scripts/test-docx-skill.py A1-A3 assert the placement, the numbering refusal and the font binding directly"
+    },
+    "W13": {
+      "entry": "scripts/docx_package.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--unpack",
+          "{out}/unpacked",
+          "--out",
+          "{out}/rebuilt.docx",
+          "--report",
+          "{out}/package.json"
+        ],
+        "produces": [
+          "rebuilt.docx",
+          "package.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the sample takes the package apart and puts it back, so L2 is being asked whether a document survives that — F1/F2 plus the whole D-series on the rebuilt file. That every one of the 17 parts comes back BYTE-identical and in the same order (which `unzip`+`zip` does not give you, and which some readers care about for [Content_Types].xml), and that a part name crafted to escape the target directory is refused rather than written, is scripts/test-docx-skill.py P1-P4"
+    },
+    "W15": {
+      "entry": "scripts/docx_package.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/unordered.docx",
+          "--fix-order",
+          "--out",
+          "{out}/ordered.docx",
+          "--report",
+          "{out}/order.json"
+        ],
+        "produces": [
+          "ordered.docx",
+          "order.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/unordered.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the input `unordered.docx` is the state a writer that appends elements in the order it thought of them leaves a document in, and it FAILS L2 on both D4 (element order) and D2 (the XSD says the same thing in stronger words) — the artifact must pass both. The pairing is the point: a repair verified only on its output cannot be told apart from a check with no teeth. scripts/test-docx-skill.py O1-O3 pin that the input really is rejected, that all three kinds of misplacement are repaired, and that nothing else in the document moved"
+    },
+    "W5": {
+      "entry": "scripts/docx_template.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/filled.docx",
+          "--set",
+          "客户名称=示例科技有限公司",
+          "--set",
+          "日期=2026-08-02",
+          "--set",
+          "密级=内部",
+          "--strict",
+          "--report",
+          "{out}/fill.json"
+        ],
+        "produces": [
+          "filled.docx",
+          "fill.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "示例科技有限公司",
+          "2026-08-02"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the sample runs under --strict, so it is also an assertion: it exits non-zero if ANY placeholder is left over or ANY supplied value matched nothing, which means L1 would fail on a filler that quietly did less than it was asked. L2 then holds the fidelity line (F1/F2) and the legality line (D1-D7) on the filled document. What --strict cannot see is asserted in scripts/test-docx-skill.py T1-T5: that a placeholder Word split across runs is filled at all, that a leftover placeholder is NAMED rather than shipped in silence, that a supplied key matching nothing is named (a typo is otherwise indistinguishable from 'not in this template'), and that the header's placeholder is filled too — half of a real template's placeholders live in the letterhead"
+    },
+    "W17": {
+      "entry": "scripts/docx_pdf.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/preview.pdf",
+          "--png",
+          "{out}/pages",
+          "--dpi",
+          "120",
+          "--report",
+          "{out}/pdf.json"
+        ],
+        "produces": [
+          "preview.pdf",
+          "pdf.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "二零二六年第三季度经营分析报告",
+          "营业收入"
+        ],
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (it rasterizes and no page is blank) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes a .docx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that pending tracked changes and cached field results are NAMED (the picture is one resolution of the revisions, not the document anyone approved), is scripts/test-docx-skill.py Y1-Y3 — skipped and named out loud on a host with no LibreOffice, and run for real on CI's Linux runner"
+    },
+    "W6": {
+      "entry": "scripts/docx_revise.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/tracked.docx",
+          "--author",
+          "张三",
+          "--replace",
+          "第三季度=第四季度",
+          "--report",
+          "{out}/revise.json"
+        ],
+        "produces": [
+          "tracked.docx",
+          "revise.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "待核对的应收账款余额",
+          "营业收入同比增长"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "L2's D5 is the assertion that matters and it is a strict one: every w:ins and w:del must carry an id and an author, deleted text must be <w:delText> and not <w:t>, and no delText may sit directly in an insertion — which is exactly what goes wrong when runs are wrapped by hand. D1/D4/D7 cover the rest, and F1/F2 that nothing was lost. ⚠️ `contains` deliberately names text OUTSIDE the revision: D3 reads through python-docx, whose `paragraph.text` walks direct <w:r> children only and therefore CANNOT SEE tracked insertions — asserting the inserted text there would fail on a correct artifact. The first draft of this sample named the document TITLE and failed for exactly that reason: the title carries the same phrase, so it was tracked too. That the cross-run phrase was split into whole runs, wrapped in ONE deletion, and followed by an insertion carrying the first run's formatting is scripts/test-docx-skill.py K1"
+    },
+    "W7": {
+      "entry": "scripts/docx_revise.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/accepted.docx",
+          "--accept-all",
+          "--strict",
+          "--report",
+          "{out}/accept.json"
+        ],
+        "produces": [
+          "accepted.docx",
+          "accept.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "本季度净利润同比增长。"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the sample runs under --strict, which makes it an assertion in its own right: it exits non-zero unless the document is left with NO revision markup at all, so a resolver that silently skips a form it does not handle fails L1 here rather than shipping a half-resolved document. `contains` is the fixture's tracked insertion now readable through python-docx — which it was not before, because an unresolved <w:ins> is invisible to it; the string is therefore evidence the insertion was really unwrapped. The five shapes (run-level, moves, paragraph MARKS where resolving means MERGING two paragraphs, formatting revisions whose old properties must be restored, and <w:ins><w:del> nesting) are asserted in scripts/test-docx-skill.py K2-K6"
+    },
+    "W8": {
+      "entry": "scripts/docx_comment.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/commented.docx",
+          "--add-on",
+          "三季度营业收入",
+          "--text",
+          "季度口径需与年报一致。",
+          "--author",
+          "王审计",
+          "--report",
+          "{out}/comment.json"
+        ],
+        "produces": [
+          "commented.docx",
+          "comment.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "营业收入",
+          "二零二六年第三季度经营分析报告"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "L2 holds the package line: D1 checks that every r:id resolves (a comments part reached by no relationship is the classic half-written comment), F1/F2 that nothing else moved, D4/D7 that the range markers did not break the element order or the render. The five pieces a comment actually is — the part, the content-type Override, the relationship, the commentRangeStart/End pair and the reference run — are asserted piece by piece in scripts/test-docx-skill.py B1-B5, including creation from a document that has no comments part at all, and deletion of the LAST comment, which must take the part and both of its indexes with it"
+    }
+  },
+  "pending": {
+    "W4": "generating a document from Markdown needs a heading/list/table/emphasis mapping and a template to hang it on; nothing is written and nothing asserts it",
+    "W9": "header and footer parts are read and their text is reported (W1), but creating or replacing one is not implemented — it needs the part, the content type, the relationship and the sectPr reference, and a first-page/even-page variant contract",
+    "W10": "a table of contents is a field whose result is cached, so writing one without recalculating produces a document showing a TOC that does not match the headings. Multi-level numbering needs its own abstractNum authoring. Neither is started",
+    "W11": "images can be preserved through an edit today (the sample's image survives F1/F2) but nothing inserts or replaces one; that needs the media part, a Default content type for the extension, a relationship, and a correctly sized wp:inline drawing",
+    "W12": "reading styles.xml is partly covered by W1's `styles_used`, but creating or modifying a style is not implemented and would need the CT_Style element order this skill already models plus a contract for style inheritance",
+    "W14": "L2 validates artifacts against the vendored ECMA-376 schemas, but the skill itself cannot: the schemas are 984 KB and live in the ultrawork repo, not in the distributed skill. The open question is whether to ship them, point at $ECMA376_XSD_DIR, or degrade loudly — and 'degrades silently' is the one answer that is not acceptable",
+    "W16": "every run this skill writes already binds @w:eastAsia (D6 would reject it otherwise), but there is no capability that INSPECTS or REPAIRS an existing document's font bindings, which is what the matrix row is about",
+    "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
+    "W19": "table and layout presets need a house style to preset, and picking one before the generation path (W4) exists would be guessing at what it has to fit"
+  }
+}

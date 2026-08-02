@@ -38,6 +38,17 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // optional: formula recalculation has no pure-Python substitute, and converting to
   // PDF is the only way an .xlsx becomes visible in the artifact panel (059 §7).
   xlsx: ["python3", "openpyxl", "lxml", "soffice"],
+  // Written for ultrawork (discussions/059 S4). Note what is NOT here:
+  // **python-docx**. Every reference implementation of a docx skill is built on it,
+  // and this one is not — it reads and writes WordprocessingML through lxml
+  // directly. Two measured reasons (059 §六·补五): python-docx's bundled template
+  // ships a `<w:zoom>` that fails ECMA-376 validation, so every document it produces
+  // carries that defect; and its model has no place at all for tracked revisions,
+  // comments or a phrase that spans runs, which is most of what this skill does.
+  // soffice is required for the same reason it is for xlsx: a .docx cannot be
+  // previewed inside ultrawork, so converting to PDF is the only way an artifact
+  // becomes visible (059 §7).
+  docx: ["python3", "lxml", "soffice"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
   "doc-edit": ["python3"],
   // HTML-first deck generator (discussions/043). python3.10+ (not plain

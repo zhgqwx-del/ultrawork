@@ -54,7 +54,7 @@ spec.loader.exec_module(G)
 # and stayed the same file pair (pdf_form_inspect.py <- qa_text.py), so nothing about
 # the threshold changed — but the sample's strength did, and only `xlsx` still carries
 # the same-library case.
-OWN_SKILLS = ["deckcraft", "doc-edit", "pdf", "xlsx"]
+OWN_SKILLS = ["deckcraft", "doc-edit", "docx", "pdf", "xlsx"]
 
 RENAMES = [("field", "entry"), ("writer", "out_doc"), ("reader", "in_doc"),
            ("annotation", "annot"), ("value", "val"), ("page", "pg"),

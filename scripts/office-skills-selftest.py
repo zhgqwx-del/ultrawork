@@ -541,14 +541,39 @@ def d5_revisions(path: Path, expect: dict) -> list[str]:
     except DocxUnreadable as e:
         return [f"D5 {e}"]
     out: list[str] = []
+
+    def nearest_revision(node, stop):
+        """The innermost w:ins / w:del between `node` and `stop`, exclusive."""
+        for anc in node.iterancestors():
+            if anc is stop:
+                return None
+            if anc.tag in (w("ins"), w("del")):
+                return anc
+        return None
+
     # The single most common way a hand-edited .docx becomes unopenable: text kept as
     # <w:t> inside a deletion, or delText left behind inside an insertion.
+    #
+    # ⚠️ Both rules skip text that belongs to a NESTED revision, and that is not a
+    # loophole — `<w:ins><w:del>…</w:del></w:ins>` is how OOXML says "this text was
+    # inserted with tracking on and then deleted with tracking on", which is ordinary
+    # review traffic. This check used to walk descendants and flagged it. The verdict
+    # came from the vendored ECMA-376 schema, not from an opinion: D2 validates such a
+    # document and D5 rejected it (CT_RunTrackChange's content model includes
+    # EG_ContentRunContent, which contains w:ins and w:del). Found 2026-08-02 while
+    # designing W6/W7 — BEFORE any implementation existed to be judged by it.
+    # The teeth are unchanged: a delText sitting DIRECTLY in an insertion still fires,
+    # and there is a case for each of the two below.
     for i, dele in enumerate(doc.iter(w("del"))):
         for t in dele.iter(w("t")):
+            if nearest_revision(t, dele) is not None:
+                continue
             out.append(f"D5 <w:del> #{i}: contains <w:t>{(t.text or '')[:24]!r}, "
                        f"must be <w:delText>")
     for i, ins in enumerate(doc.iter(w("ins"))):
         for t in ins.iter(w("delText")):
+            if nearest_revision(t, ins) is not None:
+                continue
             out.append(f"D5 <w:ins> #{i}: contains <w:delText>{(t.text or '')[:24]!r}, "
                        f"deleted text cannot live in an insertion")
     for tag in (w("del"), w("ins")):
@@ -960,15 +985,35 @@ def f2_docx_structure(path: Path, expect: dict) -> list[str]:
     # Named separately from F1 so the report says WHICH capability was silently
     # dropped — "numbering.xml is gone" means every list in the document is now flat.
     for n in sorted(p for p in before if KEY_DOCX_PART.match(p)):
-        if n not in after:
+        if n not in after and n not in set(expect.get("may_drop", [])):
             out.append(f"F2 {n} was in the input and is not in the output")
+
+    # Relationships that point at a part the caller declared droppable do not count.
+    # Without this there is no way to express "this part went ON PURPOSE": deleting
+    # the last comment legitimately removes word/comments.xml AND its relationship,
+    # and F2 fired on it — the same shape as the `finance_colors` hole (059 §六·补二),
+    # where a gate had no way to say "this is not a defect" and the only route past
+    # it was to misdescribe the artifact. The exemption is opt-in and per-part: the
+    # caller has to name the file, so it cannot become a blanket loophole, and the
+    # case below proves an UNdeclared drop still fires.
+    allowed = set(expect.get("may_drop", []))
 
     def rel_count(pkg: Path) -> int | None:
         try:
             with zipfile.ZipFile(pkg) as z:
                 if "word/_rels/document.xml.rels" not in z.namelist():
                     return 0
-                return len(etree.fromstring(z.read("word/_rels/document.xml.rels")))
+                rels = etree.fromstring(z.read("word/_rels/document.xml.rels"))
+                n = 0
+                for rel in rels:
+                    target = (rel.get("Target") or "").lstrip("./")
+                    if rel.get("TargetMode") == "External":
+                        n += 1
+                        continue
+                    if ("word/" + target) in allowed or target in allowed:
+                        continue
+                    n += 1
+                return n
         except (zipfile.BadZipFile, etree.XMLSyntaxError):
             return None
 
@@ -1322,6 +1367,15 @@ def build_docx(path: Path, flaw: str | None = None) -> dict:
         elif flaw == "ins-holds-deltext":
             run = next(tree.iter(w("ins"))).find(w("r"))
             run.append(parse_xml(f'<w:delText {nsdecls("w")}>不该在这里</w:delText>'))
+        elif flaw == "ins-holds-a-tracked-deletion":
+            # Legal review traffic, not damage: text inserted with tracking on and
+            # then deleted with tracking on. Used as a POSITIVE case — D5 must stay
+            # silent — and it is the exact shape D5 used to reject.
+            ins = next(tree.iter(w("ins")))
+            ins.append(parse_xml(
+                f'<w:del {nsdecls("w")} w:id="103" w:author="ultrawork" '
+                f'w:date="2026-08-02T00:00:00Z"><w:r>{fonts}'
+                f'<w:delText>又被删掉的那部分</w:delText></w:r></w:del>'))
         elif flaw == "del-no-author":
             del next(tree.iter(w("del"))).attrib[w("author")]
         elif flaw == "cjk-no-eastasia":
@@ -1740,6 +1794,59 @@ def fid_docx_drop_relationships(root: Path) -> tuple[Path, Path, dict]:
     return base, out, {"baseline": str(base)}
 
 
+def _drop_part_and_wiring(base: Path, out: Path, part: str) -> None:
+    """Remove a part the way it must be removed: bytes, Override, relationship."""
+    from lxml import etree
+    CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+    REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+    def edit(name: str, data: bytes):
+        if name == part:
+            return None
+        if name == "[Content_Types].xml":
+            tree = etree.fromstring(data)
+            for el in list(tree):
+                if el.tag == CT + "Override" and el.get("PartName") == "/" + part:
+                    tree.remove(el)
+            return etree.tostring(tree, xml_declaration=True, encoding="UTF-8",
+                                  standalone=True)
+        if name == "word/_rels/document.xml.rels":
+            tree = etree.fromstring(data)
+            for el in list(tree):
+                if el.tag == REL + "Relationship" and \
+                        ("word/" + (el.get("Target") or "").lstrip("./")) == part:
+                    tree.remove(el)
+            return etree.tostring(tree, xml_declaration=True, encoding="UTF-8",
+                                  standalone=True)
+        return data
+    rewrite_zip(base, out, edit)
+
+
+def fid_docx_declared_drop(root: Path) -> tuple[Path, Path, dict]:
+    """A part removed ON PURPOSE and declared. F1 and F2 must both stay silent.
+
+    This is what deleting the last comment does: word/comments.xml goes, and so does
+    the relationship that reached it. Before `may_drop` reached F2 there was no way
+    to say so, and a correct deletion was reported as lost wiring.
+    """
+    base, out = root / "fd.docx", root / "fd-edited.docx"
+    build_docx(base, None)
+    _drop_part_and_wiring(base, out, "word/numbering.xml")
+    return base, out, {"baseline": str(base), "may_drop": ["word/numbering.xml"]}
+
+
+def fid_docx_undeclared_drop(root: Path) -> tuple[Path, Path, dict]:
+    """CONTROL: the same removal, NOT declared. F2 must still fire.
+
+    Without this arm, `may_drop` reaching F2 would be indistinguishable from F2
+    having stopped counting relationships at all.
+    """
+    base, out = root / "fu.docx", root / "fu-edited.docx"
+    build_docx(base, None)
+    _drop_part_and_wiring(base, out, "word/numbering.xml")
+    return base, out, {"baseline": str(base)}
+
+
 def fid_pdf_preserving(root: Path) -> tuple[Path, Path, dict]:
     import fitz
     base, out = root / "m.pdf", root / "m-edited.pdf"
@@ -1883,6 +1990,10 @@ FIDELITY_CASES = [
     ("preserving docx edit keeps every part", fid_docx_preserving, "", False),
     ("F2 word/styles.xml dropped", fid_docx_drop_styles, "F2", True),
     ("F2 a document relationship dropped", fid_docx_drop_relationships, "F2", True),
+    ("a part dropped ON PURPOSE and declared in may_drop is not a loss",
+     fid_docx_declared_drop, "", False),
+    ("CONTROL: the same drop without may_drop still fires F2",
+     fid_docx_undeclared_drop, "F2", True),
     ("preserving pdf edit leaves other pages alone", fid_pdf_preserving, "", False),
     ("P5 a page disappears", fid_pdf_drop_page, "P5", True),
     ("P5 an undeclared page is rewritten", fid_pdf_touch_untouched, "P5", True),
@@ -1920,6 +2031,8 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("D5 w:t inside w:del", "docx", "del-holds-wt", "D5", True),
     ("D5 w:delText inside w:ins", "docx", "ins-holds-deltext", "D5", True),
     ("D5 revision without w:author", "docx", "del-no-author", "D5", True),
+    ("D5 stays silent on a tracked deletion INSIDE a tracked insertion", "docx",
+     "ins-holds-a-tracked-deletion", None, False),
     ("D6 CJK run loses @eastAsia", "docx", "cjk-no-eastasia", "D6", True),
     # D2's controls. The docx one is not invented damage — it is the exact
     # non-conformance python-docx's own default.docx ships, which D2 caught the

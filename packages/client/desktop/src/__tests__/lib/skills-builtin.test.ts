@@ -26,11 +26,11 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   const present = (...names: string[]): DepMap =>
     Object.fromEntries(names.map((n) => [n, { name: n, available: true }]))
 
-  it("covers all ten built-in skills", () => {
+  it("covers all eleven built-in skills", () => {
     // ppt-master was removed from the bundle in P3 (ADR-061 / discussions/043 §18.5);
     // it lives on only as a curated INSTALLABLE_SKILLS entry, not a builtin dep-map key.
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["deckcraft", "dingtalk-assistant", "doc-edit", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant", "xlsx"].sort(),
+      ["deckcraft", "dingtalk-assistant", "doc-edit", "docx", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant", "xlsx"].sort(),
     )
   })
 
@@ -41,6 +41,19 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     // silently tolerated the way OPTIONAL_DEPS tolerates a missing Node.
     expect(missingDeps("xlsx", present("python3", "openpyxl", "lxml"))).toEqual(["soffice"])
     expect(missingDeps("xlsx", present("python3", "openpyxl", "soffice"))).toEqual(["lxml"])
+  })
+
+  it("docx needs lxml and LibreOffice — and deliberately NOT python-docx", () => {
+    expect(missingDeps("docx", present("python3", "lxml", "soffice"))).toEqual([])
+    // The skill reads and writes WordprocessingML through lxml. Declaring
+    // python-docx would put a red badge on a machine where the skill works fine,
+    // and — worse — would suggest the skill is built the way every reference
+    // implementation is built, which is exactly the claim 059 §六·补五 disproves.
+    expect(BUILTIN_DEP_MAP.docx).not.toContain("python-docx")
+    // Same standing as xlsx: a .docx cannot be previewed in-app, so the PDF route
+    // through LibreOffice is not a nicety (059 §7).
+    expect(missingDeps("docx", present("python3", "lxml"))).toEqual(["soffice"])
+    expect(missingDeps("docx", present("python3", "soffice"))).toEqual(["lxml"])
   })
 
   it("deckcraft requires python 3.10+, python-pptx, Pillow and a Chromium export browser", () => {

@@ -848,7 +848,7 @@ CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-miss
 | S2 收尾 | ✅ Rust 依赖探测泛化（5·补.3）已完成：`run_python_feature_probe` 接受模块名列表，`PY_MODULES` 数据化 | 探测数据化 | 已完成 |
 | **S3** ✅ | `xlsx` 技能（含 office 底座首次实现）。**五刀**：office 底座 + X1/X2/X15 · 公式族 X3/X5/X10 · 结构性写入 X6-X9 · 双引擎重算 X4 · 收官 X11-X14。**15/15 无 pending，`--no-pending` 全技能绿**（见 §六·补二） | xlsx/ + office 底座 | 已完成 2026-08-02 |
 | **S3.5** ✅ | **去 PyMuPDF / 去 AGPL**（§5·补.8c 的路 ②）。`pdf` 技能 14 个文件 + `xlsx_pdf.py` 可选依赖（§六·补三）· `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四，新建读取层 `pdfsource.py` + **新建标尺 25 断言/28 控制**）。**`skills/builtin/` 下没有任何一个文件 `import fitz`**；`scripts/` 下三个门禁脚本仍用（不分发，单独一刀） | 商业分发无 AGPL 暴露 | 已完成 2026-08-02 |
-| **S4** | `docx` 技能（最复杂：修订/批注/XSD/CJK） | docx/ | **新窗口**（可能需 2 个） |
+| **S4** 🟡 | `docx` 技能（最复杂：修订/批注/XSD/CJK）。**进行中**：三刀落地 W1/W2/W3/W5/W6/W7/W8/W13/W15/W17 共 **10/19**，9 项 pending 逐条写理由（见 §六·补五）。纯 lxml，**刻意不依赖 python-docx** | docx/ | 进行中 |
 | **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
 | **S6** | 收尾：README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version` | 文档同步 | 新窗口 |
 
@@ -1883,6 +1883,247 @@ Rust 的 badge 名与 TS 查的名字一致（`("pillow","PIL")` 的左值才是
 | `cargo test` | **155** |
 
 `.builtin-version`: `55843f24e06ee965` → **`6bae0dae40aa68c5`**（两处已对齐）。
+
+---
+
+## 六·补五 — S4 第一/第二刀：`docx` 技能落地（2026-08-02）
+
+19 项能力里落地 **7 项（W1/W2/W3/W5/W13/W15/W17），12 项 pending 逐条写理由**。
+沿用 S2/S3 的规矩：**先立标尺，后写实现** —— `capabilities.json` 与
+`scripts/test-docx-skill.py` 先于每一项能力，且新标尺**在同一刀里进 CI**。
+
+### 开工前两个实测，直接改掉了原计划
+
+| 原设想（照搬 xlsx） | 实测 | 后果 |
+|---|---|---|
+| 「库的 round-trip 是有损的，所以要外科式 + graft」 | **python-docx round-trip 一个字节不丢**：17/17 part 逐字节相同。它只丢**没有任何关系指向的** part（注入一个孤儿 part，保存后消失） | xlsx 那套「load→save 丢 part」的叙事**对 docx 不成立**，照抄就是一句没有数据的形容词。graft 保留了，但理由换成「让 drop/restore 对称」，不是「每次写入的绷带」 |
+| 「docx 的头号缺陷和 xlsx 类似」 | **一句话不是一个 run**：`第三季度` 在示例里出现两次，标题里那次在一个 run 内、正文里那次被切成 `"2026 年第"` + `"三季度"`。逐 run 替换实测 **1/2** | 这才是 docx 的头号缺陷，整个技能围绕它建 |
+
+⚠️ **「1/2」这个数字本身是被标尺纠正的。** 开工前我在一个只含拆分短语的段落上量到
+**0**，写进了三处文档；标尺跑起来第一件事就是 V0 判红 —— 真实夹具里标题那次是能匹配到的。
+**"我在别的场景里量过" ≠ "在这个夹具上量过"**，三处文案已全部改成实测值。
+而且 1/2 比 0/2 更能说明问题：**一处都找不到的工具一分钟内会被报 bug，十处对九处的工具会一直用下去**。
+
+### 落地内容
+
+`skills/builtin/docx/`（新建，**纯 lxml，刻意不依赖 python-docx**）：
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/office/package.py` | 包=parts+content types+relationships；graft / drop 对称 |
+| `scripts/office/document.py` | **段落字符流**：`<w:t>` 节点 ↔ 偏移的映射，跨 run 匹配与替换；`near_miss` |
+| `scripts/office/xmlorder.py` | WordprocessingML 三种序规则：SEQUENCES（pPr/rPr/sectPr/tblPr/tcPr/trPr/styles/numbering）· LEADING（p 的 pPr、r 的 rPr、tbl 的 tblPr+tblGrid）· **TRAILING（body 的 sectPr）** |
+| `scripts/office/validate.py` | 包一致性 + **每个 `r:id` 都有 Relationship** + 元素序 |
+| `scripts/office/soffice.py` | 三平台探测 + 转换（隔离 profile） |
+| `scripts/docxcommon.py` | 错误契约 / stdout 预算 / `open_document` 按名字拒绝非 Word 包 |
+| `scripts/docx_read.py` | **W1** 段落级文本、表格网格、列表层级、章节、页眉页脚（含域计数）、修订、批注 |
+| `scripts/docx_edit.py` | **W2** 跨 run 替换（`--in-headers` opt-in）· **W3** 追加段落 |
+| `scripts/docx_template.py` | **W5** `{{占位符}}` 填充，**页眉页脚默认一起填**，`--strict` |
+| `scripts/docx_package.py` | **W13** unpack/pack（保序、防路径穿越）· **W15** `--fix-order` |
+| `scripts/docx_pdf.py` | **W17** 转 PDF / 页面图 |
+| `fixtures/` | `report.docx`（17 part：CJK 标题、拆分 run、占位符、编号列表、`w:ins`+`w:del`、批注、超链接、3×3 表格、图片、页眉、带 PAGE 域的页脚、**customXml**）· `unordered.docx`（同一份文档、只差三处元素序）· `make_fixtures.py` |
+
+**夹具是手写的，不是 python-docx 产的**，三条理由：① python-docx 自带模板的
+`<w:zoom>` 缺 `w:percent`（§5·补.8d 记录的那条），**一个自身带已知缺陷的产物没资格当正样本**；
+② 它的模板 ~800 KB，会主导内置技能体积；③ 修订/批注/域/customXml 它一个都表达不了。
+手写 17 个 part 共 **8.3 KB**，**逐字节可复现**（固定 zip 时间戳 + 压缩级别 + 字面日期），
+且一次就通过了 L2 的 D1–D7（含 **D2 XSD** 与 **D7 LibreOffice 渲染**）零 finding。
+
+### 三个「先绿后被推翻」的点（全是标尺自己抓的）
+
+1. **V0 又一次去量了别人的活。** 初版 V0 读的是「脚本报告里 cross_run 是不是 ≥1」——
+   于是逐 run 替换那条负向控制一点亮就顺带点亮 V0，**而 V0 该说的是「夹具还在不在考这件事」**。
+   改成 `fixture_facts()`：**只走夹具的 XML，一个脚本报告都不读**。
+   （这是本任务里同一个错误的第**四**次，前三次记在 §六·补二。）
+2. **夹具里被删的文字与正文撞了。** `REVISION_DELETED` 原本是 `毛利`，而正文有
+   `毛利率保持稳定。` ⇒ 「被删的文字不得当正文报告」这条**在正确实现上就判红**，
+   而且**在错误实现上也无法失败** —— 它测的是子串巧合。改成 `扣非净利`（全文唯一）。
+3. **「空白文档」并不空白。** Y2 的负向输入是「body 只剩一个空段落」，
+   但它**保留了页眉页脚引用** ⇒ LibreOffice 渲出来的页面上有信笺抬头和页码，**有墨**。
+   同样是断言在正确实现上判红，才发现夹具不是它名字说的那个东西。
+
+### 顺带拆掉的 CI 雷（不是 S4 引入的）
+
+⚠️ **`office-skills` job 在 ubuntu 上本来就是红的，而且与 S4 无关。**
+`ci.yml` 只装 `libreoffice-calc`，而 **L2 的 D7 对每一个 docx 用例都要把 .docx 转成 PDF**，
+且它在「探测到 soffice」时就会跑 —— 只有 Calc 的机器上 `soffice` 存在、
+**对 .docx 退出 0 且不产出任何文件**，于是 L2 自检的所有 docx 用例全红。
+之所以没响，还是那句：**分支从未 push**。这是本任务里同一形状的第三次
+（`recalc-drift` · 换库后 pip 列表 · 本条）。处置：装 `libreoffice-writer`，
+并在注释里写明它不是 S4 的新需求、是一直欠着的。
+
+同一刀里 `test-docx-skill.py` **也进了 CI**（§六·补四 的教训「新标尺建好没进 CI」不再重犯）。
+
+### 跳过必须被点名：Y1-Y3 与它们的负向控制一起跳
+
+W17 的三条断言需要 LibreOffice。没装的机器上：**断言跳过、并且它们的负向控制也跳过并逐条点名**
+（`negative control 'blank-render-handed-back-as-a-preview': needs LibreOffice`）。
+只跳断言不跳控制 = 「必须打红的没打红」= FAIL；两个都静默跳过 = 把控制关掉。
+这是 §7 那颗雷的正确处置方式，在新技能上第一次就照做。
+
+### 收工复审：「换个角度提问」又抓到一个门禁抓不到的缺陷
+
+沿用 §六·补四 的两个问题。**「打包到客户机器能工作吗」这次是干净的**（zip 里 18 个 docx 文件、
+`scripts/office/` 齐全、无 `__pycache__` 泄漏；解压到陌生路径、cwd 设在 home 跑三个入口点全 exit 0；
+`lxml` 有 pip 提示、`soffice` 在非 pip 白名单里）。
+
+**「team 协作模式下兼容吗」抓到一个真缺陷。** 九个入口点的 stdout 都在 400~4,549 字节、
+**stderr 全为 0**，看起来没问题 —— 直到换一种文档形状：
+
+| 形状 | 报告列表长度 | stdout |
+|---|---|---|
+| 2000 个段落 | 2000（**超过条数上限，裁剪触发**） | 合规 |
+| **1 张 800 行的表格** | **1**（条数上限**看不见它**） | **130,602 字节** |
+
+`compact()` 按**列表长度**裁，而 `table_contents` 是「条数少、每条巨大」。
+⇒ 补一道**字节预算**（裁完 130,602 → **1,577**，且 `--out` 里数据一条不少）。
+**过度修正是另一个缺陷**：裁完必须仍说得出「这里有一张多大的表被省略了」，
+所以断言 C3 配两条控制 —— 一条是缺陷本身（130,602），一条是裁过头（报告里连表都不提了）。
+⚠️ **C1 只喂过「很多段落」，从没喂过「一张很大的表」** —— 门禁只看它被设计去看的那一面。
+
+### L0 重标定：地板**又**没有涨，而且原因与预测的不同
+
+§六·补二 写过「真正的考验是 `docx`，它会像参考实现一样用 python-docx」。实测：
+
+| 负样本 | max | 最高分文件 |
+|---|---|---|
+| + xlsx（45 个 .py） | 0.187 | `pdf_form_inspect.py` |
+| **+ docx（67 个 .py）** | **0.191** | 仍是 `pdf_form_inspect.py` |
+
+**docx 自己最高 0.152**（`xmlorder.py` ← 参考实现的 `element_order.py` —— 主题最接近的那一个，
+说明打分器行为合理）。**但这不是「阈值经受住了考验」** ——
+那个预测的前提（同库）**没有成立**，因为这份实现没有用 python-docx。
+参考语料里确实有 `accept_changes.py`（W7）和 `element_order.py`（W15），
+**W6/W7 落地时这条对照才真正到来**。分离带 0.191 ~ 0.736，阈值 0.55 仍居中。
+
+### 明确没做 / 已知边界
+
+- **19 项只做了 7 项**，12 项 pending。**W14（XSD 校验）的 pending 理由里写着一个真问题**：
+  schema 984 KB 在仓库里、不随技能分发，「shipping / `$ECMA376_XSD_DIR` / 大声降级」三选一未定，
+  **唯一不可接受的是静默降级**。
+- **`--fix-order` 只排建模过的元素**，不认识的命名空间原样留在原位。
+- **替换不认识域**：`{ PAGE }` 是五个 run，其中一个存着缓存值；替换串正好命中缓存值就会被当普通文字改掉。
+- **`markdown-exporter` 的 DOCX 路由仍写「建设中」，故意的** —— 那条路由指的是
+  「从 Markdown 生成 Word」= **W4，仍在 pending**。指向一个做不到这件事的技能，就是 §1 那个 `doc-export` 断链。
+- **`doc-edit` 去留仍未决**（§7 第 2 条），docx 19 项齐活前不动路由。
+- **CI 的 `--no-pending` 仍只列 `pdf xlsx`**，docx 清完 12 项欠债才加进去。
+
+### 门禁结果（全部本机实测，退出码直读不经管道）
+
+| 门 | 结果 |
+|---|---|
+| `test-docx-skill.py`（**新**） | **60 passed / 0 failed**，35 条断言 / 59 条负向控制，矩阵每行只点亮该点亮的那条 |
+| `test-pdf-skill.py` | 53 passed / 0 failed |
+| `test-xlsx-skill.py` | 71 passed / 0 failed |
+| `test-deckcraft-pdf-md.py` | 30 passed / 0 failed |
+| `office-skills-selftest.py`（L2） | 62 passed / 0 failed，零跳过 |
+| `check-office-skill-capabilities.py --selftest` | 16 passed / 0 failed |
+| `--no-pending pdf xlsx` | OK，**36/36** declared entry points（原 29），**26** 个产物过 L2（原 20） |
+| `xlsx-evaluator-calibration.py` | 64 passed / 0 failed |
+| `check-skill-originality.py --target docx` | clean，0 violation / 0 review |
+| `test-skill-originality.py`（L0） | 分离带 **0.191 ~ 0.736**，阈值 0.55 仍居中 |
+| `check-docs.ts` · `turbo typecheck` | 绿 · **8/8** |
+| desktop `skills-builtin.test.ts` | **16/16**（原 15） |
+| `cargo test` | **155** |
+
+`.builtin-version`: `6bae0dae40aa68c5` → `273f1b925a460d55` →（第三刀后）**`ea934ed9347ea5bd`**（两处已对齐）。
+
+### 下一刀
+
+**修订批注族 W6/W7/W8**（059 标注最难的一族，且参考语料里有 `accept_changes.py`，
+是 L0 那条「同库同活」对照真正到来的时候）· 版式族 W9/W10/W11/W16 ·
+生成族 W4/W12/W19 · W14/W18。
+
+---
+
+### 第三刀：W6 / W7 / W8 —— 修订批注族（2026-08-02）
+
+19 项里再落地 3 项，**共 10/19，9 项 pending**。这一族 059 自己标注「最难」，难点不在
+解开 `<w:ins>`，在于**形态有五种，只认识前两种会毁掉文档**。
+
+| 形态 | 只认识前两种会怎样 |
+|---|---|
+| `<w:ins>` / `<w:del>` 行内 | —— |
+| `<w:moveFrom>` / `<w:moveTo>` + 区间标记 | 移动只解一半 |
+| **段落标记上的修订** | 它表示**段落分隔符**被插入/删除，解析它意味着**合并两个段落**；当成行内修订解包，文档看起来没变而编辑其实没生效 |
+| `<w:pPrChange>` 等格式修订 | 旧属性存在**它内部**，拒绝时要放回去；直接删掉 = 「报告说拒绝了、格式却留着新的」 |
+| **`<w:ins>` 里嵌 `<w:del>`** | 「插入的文字后来又被删了」，最普通的评审流水 |
+
+处置是**契约而不是声称**：每次操作结束重扫一遍并报告 `remaining`，
+`--strict` 把「还有剩」变成拒绝写出。一种本代码不认识的形态会出现在那里，
+而不是被当成成功 —— L1 的 W7 sample 就跑在 `--strict` 下，所以「悄悄跳过一种形态」在门禁层判红。
+
+#### 开工第一件事就是修门禁，而裁决来自 schema 不是我
+
+`<w:ins><w:del>` 会被 **L2 的 D5 判红** —— 它用 `.iter()` 做后代遍历，
+把「插入后又删除」当成「删除的文字混进了插入里」。
+**用 vendored 的 ECMA-376 XSD 裁决**（独立权威，与手写规则不同源）：
+
+| | 结论 |
+|---|---|
+| **D2**（XSD） | **VALID** —— `CT_RunTrackChange` 的内容模型含 `EG_ContentRunContent`，其中就有 `w:ins`/`w:del` |
+| **D5**（本仓库手写规则） | 判红 |
+
+⇒ **D5 错了**。修法是跳过「属于嵌套修订的」文本，**牙齿一颗没松**：三条「必须打红」
+（`w:t` 在 `w:del` 里 · `delText` 直接在 `w:ins` 里 · 修订缺 author）全部照旧，
+另加一条**正样本**用例钉住这次的放宽。⚠️ **这是在写实现之前发现的** ——
+不是我的代码被它判红才去改它。
+
+#### F2 也有同一个形状的缺口：无法表达「这个 part 是有意删掉的」
+
+删掉最后一条批注**必须**连 `word/comments.xml` 和它的关系一起删 —— 而 F2 对
+关系数下降一律判红，没有出口。这与 §六·补二 记的 `finance_colors` 是同一个病：
+**门禁没法说「这不是缺陷」，唯一的出路是谎报产物**。
+修法 = 让 `may_drop`（F1 已有）也对 F2 的两条规则生效，**并配控制臂**：
+同一个删除**不声明** `may_drop` 时必须照样打红，否则「放行」和「F2 不再数关系了」分不出来。
+L2：62 → **65 passed**。
+
+#### 两个在正确实现上判红、从而暴露我自己错了的点
+
+1. **段落标记必须最后处理。** 段落标记在文档序里是段落的**第一个**元素（`w:pPr` 打头），
+   按文档序扫描会在段落**还装着即将被删掉的内容时**就去问「这个段落空了吗」⇒
+   拒绝一个被插入的段落会**留下一个空段落**。实测到了才改成「内容优先、段落标记最后」。
+2. **lxml 元素的真值判断**：`target = target or mark_target` 对**没有子元素的元素**会
+   静默选错分支，并且往 stderr 打 `FutureWarning` —— 而 stderr 在 team 委派下是要付钱的输出。
+
+#### 一条断言写错了才发现的语义
+
+「reject-all 应该等于原文」是**错的**：夹具**自己就带着一条修订**（`净利润` 插入 /
+`扣非净利` 删除），reject-all 把它也拒绝掉是**正确行为**。所以断言改成两条更准的：
+被我改动的那段落**逐字回到原样**，而夹具自己那条修订按方向解析（accept→`净利润`、
+reject→`扣非净利`）。
+
+#### 顺带量到一条 python-docx 的边界，直接改了 L1 sample
+
+**跟踪插入的文字 python-docx 读不到**（它的 `paragraph.text` 只遍历直接 `w:r` 子元素），
+所以 W6 的 sample 里 `contains` **必须点名修订之外的文字** —— 第一版写了文档标题，
+而标题里也含 `第三季度`、同样被跟踪了，于是 L1 判红。**没有去改 D3**：
+D3 的价值正在于它是一个**独立的第三方读取器**，让它改用本技能自己的抽取逻辑就变成自证。
+
+#### L0：预测了两轮的「同库同活」对照终于到来
+
+参考语料里确实有 `accept_changes.py`（W7）、`comments.py`（W8）、`element_order.py`（W15）。实测：
+
+| 本技能文件 | 分数 | 最近邻 |
+|---|---|---|
+| `office/revision.py`（与 `accept_changes.py` **同一件事**） | **0.097** | `attendance_vacation_balance.py`（毫不相干） |
+| `docx_comment.py` | 0.130 | `comment.py` |
+| `office/xmlorder.py` | 0.152 | `element_order.py` |
+
+72 个自写脚本 max 仍是 **0.191**（`pdf_form_inspect.py`），分离带 0.191 ~ 0.736，阈值 0.55 仍居中。
+**做同一件事并没有把分数推上去**，这条对照到此销账。
+
+#### 门禁结果
+
+`test-docx-skill.py` **85 passed / 0 failed**（46 断言 / 84 控制）· L2 **65/0** ·
+capabilities 16/0 + `--no-pending pdf xlsx` **39/39**（29 产物过 L2）· pdf 53/0 · xlsx 71/0 ·
+deckcraft 30/0 · 求值器 64/0 · L0 0.191~0.736 · check-docs 绿 · typecheck 8/8 · Rust 155 ·
+desktop skills-builtin 16/16。`.builtin-version` → **`ea934ed9347ea5bd`**（两处对齐）。
+
+#### 下一刀
+
+版式族 **W9/W10/W11/W16**（页眉页脚创建 · 目录与多级编号 · 图片插入 · 字体巡检）·
+生成族 **W4/W12/W19** · **W14/W18**。
 
 ---
 
