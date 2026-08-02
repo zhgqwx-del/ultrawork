@@ -96,6 +96,36 @@
       },
       "verified_by": "L2's X3 is the proof that matters: LibreOffice recalculates B7 to 2480, so the formula reached the evaluation graph rather than merely being stored as a string. That a formula naming a sheet the workbook lacks — the way a #REF! is actually born — is REFUSED before it reaches the file is scripts/test-xlsx-skill.py Q1-Q2"
     },
+    "X4": {
+      "entry": "scripts/xlsx_recalc.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/calculated.xlsx",
+          "--report",
+          "{out}/recalc.json"
+        ],
+        "produces": [
+          "calculated.xlsx",
+          "recalc.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "TWO engines, and the point is that they check each other rather than that either is trusted. L2's F1/F3 hold the fidelity line; L2's X1 asserts the FORMULA survived (a recalculation that replaces =B3-B4 with 471 has destroyed the model to produce a number). The evaluator's coverage boundary is MEASURED, not claimed: scripts/xlsx-evaluator-calibration.py pins 55 values taken from LibreOffice plus 9 constructs that must be refused, and scripts/test-xlsx-skill.py K1-K7 assert the python engine matches every pin (runs in CI), that LibreOffice still agrees with the pins where it exists (K4 — skipped and named out loud otherwise, because that is the exact hole a wrong X3 expectation sat in for a month), that every name in SUPPORTED is actually exercised, that anything outside the boundary is refused rather than guessed, and that a single-engine run never presents itself as cross-checked"
+    },
     "X5": {
       "entry": "scripts/xlsx_audit.py",
       "sample": {
@@ -340,7 +370,6 @@
     }
   },
   "pending": {
-    "X4": "formula evaluation. Needs both halves before it is honest: LibreOffice recalculation AND the pure-Python evaluator it is cross-validated against (059 §7), whose supported-function boundary has to be measured and written into the gate rather than asserted",
     "X11": "CSV / JSON import and export",
     "X12": "streaming read of large workbooks (openpyxl read_only). A beyond-reference item: the claim is a bounded-memory read, so it needs a large fixture and a measured memory ceiling, not just a flag",
     "X13": "convert to PDF / preview image via LibreOffice — the office/soffice.py probe and converter are written and used by the gate, but no capability entry drives them yet",

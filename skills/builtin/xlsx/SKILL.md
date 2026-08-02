@@ -45,8 +45,9 @@ python3 -m pip install openpyxl lxml
 | 条件格式 | `scripts/xlsx_format.py --rules` | cellIs / expression / colorScale / dataBar |
 | 冻结窗格 / 自动筛选 | `scripts/xlsx_format.py --freeze --filter` | |
 | 图表 | `scripts/xlsx_chart.py` | 柱/条/折线/饼/散点/面积，系列名取自表头 |
+| 公式重算 | `scripts/xlsx_recalc.py` | **双引擎互相校验**，见下 |
 
-`capabilities.json` 里 **10 项已实现、5 项 pending 并逐条写了理由**。
+`capabilities.json` 里 **11 项已实现、4 项 pending 并逐条写了理由**。
 pending 的不是「快好了」，是**还没有断言在证明它**。
 
 ## 用法
@@ -152,7 +153,51 @@ python3 scripts/xlsx_audit.py --in book.xlsx --out audit.json \
 `uncalculated` 标志。这不是啰嗦：**任何库写出来的 workbook 都没有缓存值**，
 只问 `value` 会得到一片 `null`，然后把「这个表还没算过」读成「这个表是空的」。
 
-要真正的数字，用 LibreOffice 重算（S3 后续切片的 X4 会把它包成一条能力）。
+要真正的数字，用 `xlsx_recalc.py`（下一节）。
+
+## 重算：两个引擎，互相校验
+
+`openpyxl` **从不写缓存值**。所以任何库产出的 workbook，公式格里存的是 `<f>` 而没有
+`<v>` —— 凡是读「值」而不是读「公式」的消费者（包括本技能自己的 reader），看到的都是空格。
+重算并把结果写回，才让这种文件对非表格软件可读。
+
+```bash
+python3 scripts/xlsx_recalc.py --in book.xlsx --out calculated.xlsx --report r.json
+python3 scripts/xlsx_recalc.py --in book.xlsx --engine python        # 没装 LO 时
+python3 scripts/xlsx_recalc.py --in book.xlsx --fail-on disagreement,unsupported
+```
+
+| 引擎 | 是什么 |
+|---|---|
+| `soffice` | LibreOffice，权威。转成 xlsx 会强制全量重算并给**每一张表**写缓存值（转 CSV 只覆盖第一张） |
+| `python` | `office/evaluate.py`，小而且**故意不完整** |
+
+`--engine both`（默认）两个都跑，**逐条报告分歧，且不裁定谁对** —— 两个独立引擎算出不同的数，
+说明其中一个错了，而这个脚本无从知道是哪个。
+
+**它算不了的公式，输出的是公式原文，不是数字。** 这是这条能力唯一不能丢的性质：
+一个看起来算出来了的错数，比一个诚实的空缺糟得多。
+
+### 覆盖边界是量出来的，不是声称的
+
+覆盖边界由 ultrawork 仓库里的一份标定表钉住（**不随技能分发**，装在你机器上的这份目录里
+没有它）：**55 个取自 LibreOffice 的值** + **9 个必须被拒绝的构造**。第一版实现有 **6 条与 LibreOffice 不符**，
+每一条都会作为自信的错数发出去：
+
+| 构造 | LibreOffice | 第一版实现 |
+|---|---|---|
+| `-2^2` | **4**（一元负号比 `^` 结合更紧） | -4 |
+| `2^3^2` | **64**（`^` 左结合） | 512 |
+| `MOD(-7,3)` | **2**（取除数的符号） | -1（用了 `fmod`） |
+| `IF(TRUE,,5)` | **0**（空参数=空白） | 解析失败 |
+| `SUM()` | **0** | 解析失败 |
+| `AVERAGE(1,"x",2)` | **#VALUE!**（直接传的文本 ≠ 区域里的文本） | 1.5 |
+
+还有一条**两个权威互相矛盾**：`SQRT(-1)` Excel 说 `#NUM!`、LibreOffice 说 `#VALUE!` ⇒
+引擎**拒绝**，不选边。
+
+明确不做：数组公式 · 易变函数（TODAY/NOW/RAND —— 拿会动的值做交叉校验没有意义）·
+日期运算 · 查找族（VLOOKUP/INDEX/MATCH）· 条件里的通配符 · 定义名称 · 外部链接。
 
 ## 已知边界（写下来，不要以为验过了）
 
@@ -178,6 +223,7 @@ python3 scripts/xlsx_audit.py --in book.xlsx --out audit.json \
 
 `scripts/office/` 是本技能自带的一份 OOXML 底座（`package` 包与关系 /
 `sheet` 外科式编辑 / `rebuild` 重建+graft / `formula` 引用解析与依赖图 /
+`evaluate` 纯 Python 求值器 /
 `soffice` 探测与转换 /
 `validate` 一致性 / `xmlorder` ECMA-376 元素序）。**docx / pdf 各自带各自的副本**，不共享 —— 打包脚本拒绝 symlink。
 
@@ -190,6 +236,6 @@ python3 fixtures/make_fixtures.py    # 重建示例；仅在示例内容要改�
 ⚠️ 示例文件是**逐字节可复现**的（zip 时间戳、压缩级别、`dcterms:modified` 都已固定），
 但它们进 `skills/builtin/.builtin-version` 这个哈希。**没有要改示例内容时不要跑它。**
 
-> 本技能的行为测试（34 条断言 + 48 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（41 条断言 + 57 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。

@@ -67,6 +67,12 @@ STDOUT_BUDGET = 6000             # bytes one call may print for a large workbook
 SCALE_ROWS = 2000                # comfortably past xlsxcommon.STDOUT_ITEM_LIMIT
 
 
+# Claims this host could not exercise. Reported separately and never folded into the
+# pass count — the whole reason X3 carried a wrong expectation for a month is that a
+# skip and a pass looked identical at a glance.
+SKIPS: list[str] = []
+
+
 def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
@@ -98,6 +104,22 @@ def widths_of(path: Path, sheet: str) -> dict[str, float]:
 def cells_of(path: Path, sheet: str, refs: list[str]) -> dict[str, object]:
     import openpyxl
     wb = openpyxl.load_workbook(path)
+    try:
+        ws = wb[sheet]
+        return {r: ws[r].value for r in refs}
+    finally:
+        wb.close()
+
+
+def values_of(path: Path, sheet: str, refs: list[str]) -> dict[str, object]:
+    """The CACHED values, not the formulas.
+
+    `cells_of` opens the workbook with data_only=False and therefore hands back
+    "=B3-B4" where a recalculated number is expected — which is what the first
+    version of K5 asserted against, so the check failed on correct output.
+    """
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
     try:
         ws = wb[sheet]
         return {r: ws[r].value for r in refs}
@@ -488,6 +510,64 @@ def collect(work: Path) -> dict:
     fault = subprocess.run([PY, "-c", probe], capture_output=True, text=True,
                            encoding="utf-8", timeout=300)
     ctx["graft_fault"] = {"stdout": fault.stdout.strip(), "exit": fault.returncode}
+
+    # --- X4: the two engines, and the evaluator's measured coverage boundary ----
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "xlsx_calibration", REPO / "scripts" / "xlsx-evaluator-calibration.py")
+    cal = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cal)
+
+    py_results = cal.python_results()
+    lo_results, lo_err = cal.soffice_results()
+    ctx["calibration"] = {
+        "mismatches": [{"formula": f, "pinned": want, "python": py_results[f]}
+                       for f, want in cal.CALIBRATION
+                       if cal.norm(py_results[f]) != cal.norm(want)],
+        "leaked": [{"formula": f, "why": why, "got": cal.python_refusals()[f]}
+                   for f, why in cal.MUST_REFUSE
+                   if cal.python_refusals()[f][0] != "REFUSED"],
+        "unexercised": cal.unexercised(),
+        "pinned_rows": len(cal.CALIBRATION),
+        "must_refuse_rows": len(cal.MUST_REFUSE),
+        "soffice_available": not lo_err,
+        "soffice_reason": lo_err,
+        "soffice_drift": [] if lo_err else
+        [{"formula": f, "pinned": want, "soffice": lo_results[f]}
+         for f, want in cal.CALIBRATION
+         if cal.norm(lo_results[f]) != cal.norm(want)],
+    }
+    if lo_err:
+        SKIPS.append(
+            f"K4 (LibreOffice agrees with every pinned value) — {lo_err}. "
+            f"Residual coverage: K1 still checks the python engine against the pins, "
+            f"but NOTHING checked the pins themselves this run — that is exactly how "
+            f"the L2 gate carried a wrong X3 expectation for a month.")
+
+    recalc = work / "recalced.xlsx"
+    rc = run_script("xlsx_recalc.py", "--in", BOOK, "--out", recalc,
+                    "--report", work / "recalc.json")
+    recalc_report = json.loads((work / "recalc.json").read_text(encoding="utf-8"))
+    mixed = work / "mixed.xlsx"
+    wb = openpyxl.load_workbook(BOOK)
+    ws = wb["利润表"]
+    ws["B8"] = "=SUM(B3:B4)"          # both engines can do this
+    ws["B9"] = "=VLOOKUP(B3,A3:B4,2,0)"   # only LibreOffice can
+    wb.save(mixed)
+    wb.close()
+    mx = run_script("xlsx_recalc.py", "--in", mixed, "--report", work / "mixed.json")
+    mixed_report = json.loads((work / "mixed.json").read_text(encoding="utf-8"))
+    py_only = run_script("xlsx_recalc.py", "--in", mixed, "--engine", "python",
+                         "--report", work / "pyonly.json")
+    py_only_report = json.loads((work / "pyonly.json").read_text(encoding="utf-8"))
+    ctx["recalc"] = {
+        "exit": rc.returncode, "report": recalc_report,
+        "cached_after": values_of(recalc, "利润表", ["B5", "D5"]),
+        "cached_before": values_of(BOOK, "利润表", ["B5", "D5"]),
+        "formula_after": cells_of(recalc, "利润表", ["B5", "D5"]),
+        "mixed": mixed_report, "mixed_exit": mx.returncode,
+        "python_only": py_only_report, "python_only_exit": py_only.returncode,
+    }
 
     # --- stdout budget and the in-place contract -------------------------------
     big = work / "big.xlsx"
@@ -1077,6 +1157,105 @@ def g2_graft_fault(ctx: dict) -> list[str]:
     return out
 
 
+@check("K1", "the python engine matches every pinned value")
+def k1_pins(ctx: dict) -> list[str]:
+    m = ctx["calibration"]["mismatches"]
+    return [f"K1 {x['formula']}: pinned {x['pinned']!r}, python {x['python']!r}"
+            for x in m[:6]]
+
+
+@check("K2", "everything outside the boundary is refused, never quietly computed")
+def k2_refusals(ctx: dict) -> list[str]:
+    """The one behaviour the evaluator must never have.
+
+    A cross-check has value only if it can be wrong loudly. A function that is not
+    implemented but returns something plausible is worse than no evaluator at all.
+    """
+    return [f"K2 {x['formula']} must be refused ({x['why']}) — got {x['got']!r}"
+            for x in ctx["calibration"]["leaked"][:6]]
+
+
+@check("K3", "every function the evaluator claims to support is actually exercised")
+def k3_coverage(ctx: dict) -> list[str]:
+    missing = ctx["calibration"]["unexercised"]
+    if missing:
+        return [f"K3 SUPPORTED names never run by the corpus: {', '.join(missing)} — "
+                f"a claim nothing measures is a wish list (L1's C5, one level down)"]
+    return []
+
+
+@check("K4", "LibreOffice agrees with every pinned value")
+def k4_pin_truth(ctx: dict) -> list[str]:
+    """Checks the PINS, not the engine.
+
+    K1 compares the python engine against these numbers; only this compares the
+    numbers against the authority they came from. Skipped where LibreOffice is
+    absent — and named in the skip list, because that is the exact hole X3 sat in.
+    """
+    c = ctx["calibration"]
+    if not c["soffice_available"]:
+        return []
+    return [f"K4 {x['formula']}: pinned {x['pinned']!r}, LibreOffice {x['soffice']!r} "
+            f"— the PIN is wrong, not the engine" for x in c["soffice_drift"][:6]]
+
+
+@check("K5", "recalculation writes cached values a value-reader can actually see")
+def k5_cached(ctx: dict) -> list[str]:
+    r = ctx["recalc"]
+    out = []
+    if any(v is not None for v in r["cached_before"].values()):
+        out.append("K5 the input already had cached values, so writing them proves "
+                   "nothing")
+    for ref, want in (("B5", 471),):
+        got = r["cached_after"].get(ref)
+        if not isinstance(got, (int, float)) or abs(float(got) - want) > 1e-6:
+            out.append(f"K5 {ref} reads back as {got!r} after recalculation, "
+                       f"expected {want}")
+    # The formula must survive: a "recalculation" that replaces =B3-B4 with 471 has
+    # destroyed the model to produce a number.
+    if r["formula_after"].get("B5") != "=B3-B4":
+        out.append(f"K5 the formula in B5 became {r['formula_after'].get('B5')!r} — "
+                   f"caching a result must not overwrite the formula")
+    return out
+
+
+@check("K6", "a formula only one engine can do is reported, not silently dropped")
+def k6_partial(ctx: dict) -> list[str]:
+    """VLOOKUP: LibreOffice computes it, the python engine refuses it.
+
+    The report must say so. Without this, "0 disagreements" would be reachable by
+    an engine that simply declines everything.
+    """
+    rep = ctx["recalc"]["mixed"]
+    out = []
+    unsupported = [f for f in rep["findings"] if f["class"] == "unsupported"]
+    if not any("VLOOKUP" in (f.get("formula") or "") for f in unsupported):
+        out.append("K6 the VLOOKUP the python engine cannot do was not reported as "
+                   "unsupported")
+    for f in unsupported:
+        if not f.get("formula"):
+            out.append(f"K6 {f['cell']} is reported unsupported without its formula "
+                       f"text — the caller is told nothing it can act on")
+    if rep["cross_checked"] >= rep["formulas"]:
+        out.append(f"K6 the report claims {rep['cross_checked']} of {rep['formulas']} "
+                   f"formulas were cross-checked, but one engine could not do them all")
+    return out
+
+
+@check("K7", "a single-engine run never presents itself as cross-checked")
+def k7_single_engine(ctx: dict) -> list[str]:
+    solo, both = ctx["recalc"]["python_only"], ctx["recalc"]["mixed"]
+    out = []
+    if solo["cross_checked_by_two_engines"]:
+        out.append("K7 --engine python reported itself as cross-checked by two engines")
+    if solo["cross_checked"]:
+        out.append(f"K7 --engine python reports {solo['cross_checked']} cross-checked "
+                   f"cells; nothing checked it")
+    if not both["cross_checked_by_two_engines"] and ctx["calibration"]["soffice_available"]:
+        out.append("K7 the two-engine run does not report itself as cross-checked")
+    return out
+
+
 # ── negative controls ─────────────────────────────────────────────────────────
 def flaw_write_via_load_save(ctx, work):
     """The implementation everyone reaches for first, measured on the same edit."""
@@ -1418,7 +1597,87 @@ def flaw_rebuild_writes_anyway(ctx, work):
     return ctx
 
 
+def _cal(ctx, **kw):
+    c = copy.deepcopy(ctx["calibration"])
+    c.update(kw)
+    ctx["calibration"] = c
+    return ctx
+
+
+def flaw_evaluator_gets_a_number_wrong(ctx, work):
+    """The first draft's answer for -2^2: right in most languages, wrong in Excel."""
+    return _cal(ctx, mismatches=[{"formula": "=-2^2", "pinned": 4, "python": -4.0}])
+
+
+def flaw_evaluator_guesses_instead_of_refusing(ctx, work):
+    return _cal(ctx, leaked=[{"formula": "=VLOOKUP(H1,H1:I3,2,0)",
+                              "why": "not implemented", "got": ("VALUE", 20.0)}])
+
+
+def flaw_supported_is_a_wish_list(ctx, work):
+    return _cal(ctx, unexercised=["MEDIAN", "XLOOKUP"])
+
+
+def flaw_pinned_value_is_wrong(ctx, work):
+    """X3's defect, one level down: the expectation itself is wrong."""
+    return _cal(ctx, soffice_available=True,
+                soffice_drift=[{"formula": "=MOD(-7,3)", "pinned": -1, "soffice": 2}])
+
+
+def flaw_recalc_leaves_no_cached_values(ctx, work):
+    r = copy.deepcopy(ctx["recalc"])
+    r["cached_after"] = {"B5": None, "D5": None}
+    ctx["recalc"] = r
+    return ctx
+
+
+def flaw_recalc_overwrites_the_formula(ctx, work):
+    r = copy.deepcopy(ctx["recalc"])
+    r["formula_after"]["B5"] = 471
+    ctx["recalc"] = r
+    return ctx
+
+
+def flaw_unsupported_reported_without_the_formula(ctx, work):
+    r = copy.deepcopy(ctx["recalc"])
+    for f in r["mixed"]["findings"]:
+        if f["class"] == "unsupported":
+            f["formula"] = None
+    ctx["recalc"] = r
+    return ctx
+
+
+def flaw_unsupported_silently_dropped(ctx, work):
+    r = copy.deepcopy(ctx["recalc"])
+    r["mixed"]["findings"] = [f for f in r["mixed"]["findings"]
+                              if f["class"] != "unsupported"]
+    ctx["recalc"] = r
+    return ctx
+
+
+def flaw_single_engine_claims_cross_check(ctx, work):
+    r = copy.deepcopy(ctx["recalc"])
+    r["python_only"]["cross_checked_by_two_engines"] = True
+    ctx["recalc"] = r
+    return ctx
+
+
 FLAWS = [
+    ("evaluator-gets-a-number-wrong", flaw_evaluator_gets_a_number_wrong, {"K1"}, ""),
+    ("evaluator-guesses-instead-of-refusing", flaw_evaluator_guesses_instead_of_refusing,
+     {"K2"}, ""),
+    ("supported-list-is-a-wish-list", flaw_supported_is_a_wish_list, {"K3"}, ""),
+    ("the-pinned-value-itself-is-wrong", flaw_pinned_value_is_wrong, {"K4"}, ""),
+    ("recalc-leaves-no-cached-values", flaw_recalc_leaves_no_cached_values, {"K5"}, ""),
+    ("recalc-overwrites-the-formula-with-its-result",
+     flaw_recalc_overwrites_the_formula, {"K5"}, ""),
+    ("unsupported-reported-without-its-formula",
+     flaw_unsupported_reported_without_the_formula, {"K6"}, ""),
+    ("unsupported-formulas-silently-dropped", flaw_unsupported_silently_dropped,
+     {"K6"}, ""),
+    ("single-engine-run-claims-it-was-cross-checked",
+     flaw_single_engine_claims_cross_check, {"K7"}, ""),
+
     ("format-applies-to-the-whole-sheet", flaw_format_applies_to_whole_sheet,
      {"S1"}, ""),
     ("format-never-reaches-the-range", flaw_format_misses_the_range, {"S1"}, ""),
@@ -1528,6 +1787,7 @@ def main() -> int:
             return 1
 
     results = []
+    SKIPS.clear()
     with tempfile.TemporaryDirectory(prefix="xlsx-skill-test-") as td:
         work = Path(td)
         base = collect(work)
@@ -1559,7 +1819,8 @@ def main() -> int:
 
     failed = [r for r in results if not r["ok"]]
     if args.json:
-        print(json.dumps({"results": results, "matrix": matrix, "failed": len(failed)},
+        print(json.dumps({"results": results, "matrix": matrix,
+                          "skipped": SKIPS, "failed": len(failed)},
                          ensure_ascii=False, indent=2))
         return 1 if failed else 0
 
@@ -1573,8 +1834,13 @@ def main() -> int:
         extra = sorted(set(m["fired"]) - set(m["expected"]))
         note = f"   (also {', '.join(extra)}: {m['cascade_note']})" if extra else ""
         print(f"  {m['flaw']:<46} -> {', '.join(m['fired']) or '(nothing)'}{note}")
+    if SKIPS:
+        print("\n[skipped] claims this host could not exercise:")
+        for note in SKIPS:
+            print(f"  - {note}")
     print(f"\n[xlsx-skill] {len(results) - len(failed)} passed, {len(failed)} failed, "
-          f"{len(CHECKS)} assertions")
+          f"{len(CHECKS)} assertions"
+          + (f", {len(SKIPS)} skipped" if SKIPS else ""))
     return 1 if failed else 0
 
 

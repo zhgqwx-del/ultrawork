@@ -168,6 +168,61 @@ class Worksheet:
         self._grow_dimension(ref)
         return {"cell": ref, "kind": kind, "kept_style": style is not None}
 
+    def set_cached(self, ref: str, value) -> dict:
+        """Write a formula cell's CACHED RESULT, leaving the formula itself alone.
+
+        This is what makes a workbook written by a library readable: openpyxl stores
+        `<f>` and no `<v>`, so every consumer that asks for values — including this
+        skill's own reader, and anything that is not a spreadsheet application —
+        sees an empty cell where a number should be.
+
+        Only formula cells are touched. Writing a cached value onto a constant would
+        be inventing a second, silently divergent copy of it.
+        """
+        from lxml import etree
+        cell = self._cell(ref, create=False)
+        if cell is None:
+            return {"cell": ref, "written": False, "why": "no such cell"}
+        f = cell.find(q("f"))
+        if f is None:
+            return {"cell": ref, "written": False, "why": "not a formula cell"}
+        for child in list(cell):
+            if child.tag != q("f"):
+                cell.remove(child)
+        cell.attrib.pop("t", None)
+        if value is None:
+            return {"cell": ref, "written": True, "kind": "blank"}
+        if isinstance(value, bool):
+            cell.set("t", "b")
+            etree.SubElement(cell, q("v")).text = "1" if value else "0"
+            kind = "boolean"
+        elif isinstance(value, (int, float)):
+            etree.SubElement(cell, q("v")).text = repr(float(value)) \
+                if isinstance(value, float) else str(value)
+            kind = "number"
+        elif isinstance(value, str) and value.startswith("#"):
+            # An error VALUE is a legitimate cached result and has its own cell type.
+            cell.set("t", "e")
+            etree.SubElement(cell, q("v")).text = value
+            kind = "error"
+        else:
+            # `str` is the cell type for a formula whose result is text — NOT
+            # inlineStr, which is only for constants.
+            cell.set("t", "str")
+            etree.SubElement(cell, q("v")).text = str(value)
+            kind = "text"
+        return {"cell": ref, "written": True, "kind": kind}
+
+    def formula_cells(self) -> dict[str, str]:
+        """Every cell on this sheet holding a formula, as {ref: '=...'}."""
+        out: dict[str, str] = {}
+        for row in self._sheet_data().findall(q("row")):
+            for cell in row.findall(q("c")):
+                f = cell.find(q("f"))
+                if f is not None and f.text:
+                    out[cell.get("r")] = "=" + f.text
+        return out
+
     def _guard_shared_formula(self, ref: str, cell) -> None:
         f = cell.find(q("f"))
         if f is None or f.get("t") != "shared":
