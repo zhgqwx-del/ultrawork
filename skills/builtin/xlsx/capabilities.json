@@ -337,6 +337,111 @@
       },
       "verified_by": "the recalc expectation is the whole point: 471 can only appear if LibreOffice followed 利润表!C7 -> 汇总!B2 -> 利润表!B5 -> B3-B4, i.e. the cross-sheet link resolves in BOTH directions between the two sheets. Writing a link to a sheet that does not exist is refused (test-xlsx-skill.py Q1); reading cross-sheet formulas back is X1's inventory, asserted at R4"
     },
+    "X11": {
+      "entry": "scripts/xlsx_convert.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--to",
+          "jsonl",
+          "--out",
+          "{out}/rows.jsonl",
+          "--sheet",
+          "利润表",
+          "--header-row",
+          "2",
+          "--report",
+          "{out}/convert.json"
+        ],
+        "produces": [
+          "rows.jsonl",
+          "convert.json"
+        ]
+      },
+      "verified_by": "JSONL is not an L2 artifact type. That a CSV round trip (xlsx -> csv -> xlsx) preserves the values, that the CSV carries a UTF-8 BOM (without it Chinese opens as mojibake in Excel, which is where a CSV export almost always goes), and that --header-row drops the merged title above the real headers instead of turning it into a column name, is scripts/test-xlsx-skill.py N1-N2"
+    },
+    "X12": {
+      "entry": "scripts/xlsx_convert.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--stats",
+          "--sheet",
+          "利润表",
+          "--header-row",
+          "2",
+          "--report",
+          "{out}/stats.json"
+        ],
+        "produces": [
+          "stats.json"
+        ]
+      },
+      "verified_by": "the sample only proves the streaming path RUNS and computes correct aggregates on a small file — the claim of this beyond-reference item is BOUNDED MEMORY, and a small fixture cannot demonstrate that. Measured instead in scripts/test-xlsx-skill.py N3, which generates 10k- and 50k-row workbooks and runs THIS script under tracemalloc against the same script with read_only forced off: 5.91 MB vs 63.15 MB at 50k rows, and a per-row cost that FALLS with size (0.252 -> 0.118 MB per 1k rows) where the eager path stays flat at ~1.3. A large fixture is deliberately not committed: it would dominate the builtin-skills sentinel"
+    },
+    "X13": {
+      "entry": "scripts/xlsx_pdf.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/preview.pdf",
+          "--png",
+          "{out}/pages",
+          "--dpi",
+          "120",
+          "--report",
+          "{out}/pdf.json"
+        ],
+        "produces": [
+          "preview.pdf",
+          "pdf.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "营业收入"
+        ],
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (rasterizes, no blank page) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes an .xlsx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that an uncalculated workbook is warned about (its formula cells render EMPTY — the picture is wrong in a way the picture cannot show), is scripts/test-xlsx-skill.py N5-N7"
+    },
+    "X14": {
+      "entry": "scripts/xlsx_finance.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/finance.xlsx",
+          "--apply",
+          "--report",
+          "{out}/finance.json"
+        ],
+        "produces": [
+          "finance.xlsx",
+          "finance.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": true
+      },
+      "verified_by": "`finance_colors: true` here is the whole point: this is the ONE artifact in the skill that claims to follow the convention, so L2's X4 runs in earnest on it — blue hard-coded inputs, black formulas, green cross-sheet links. Every other sample declares false, which is a statement that the workbook is ordinary rather than an unstated opt-in. That --check reports the right violations by role on a workbook that never claimed the convention, that --apply then clears them, and that applying changes ONLY the colour (size, face, bold carried across), is scripts/test-xlsx-skill.py N8-N9"
+    },
     "X15": {
       "entry": "scripts/xlsx_write.py",
       "sample": {
@@ -369,10 +474,5 @@
       "verified_by": "L2's X5 is the assertion: every column holding CJK must be wide enough counted in DISPLAY width. The input `narrow.xlsx` fails X5 (it is the state a writer that does not think about width leaves a workbook in) and the artifact must pass it. That a merged title does NOT drive its first column's width — and that a merge inside one column still does — is a matching pair in the L2 selftest; scripts/test-xlsx-skill.py C1-C3 assert the arithmetic (a Han character is two units, formulas do not count, the cap holds)"
     }
   },
-  "pending": {
-    "X11": "CSV / JSON import and export",
-    "X12": "streaming read of large workbooks (openpyxl read_only). A beyond-reference item: the claim is a bounded-memory read, so it needs a large fixture and a measured memory ceiling, not just a flag",
-    "X13": "convert to PDF / preview image via LibreOffice — the office/soffice.py probe and converter are written and used by the gate, but no capability entry drives them yet",
-    "X14": "financial colour convention (blue inputs / black formulas / green links). L2 asserts it opt-in; the skill-side applier and auditor are not written"
-  }
+  "pending": {}
 }

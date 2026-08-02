@@ -63,6 +63,16 @@ MERGE_EXPECT_WIDTH = 18
 MERGE_TITLE_WIDTH = 42
 MERGE_PLAIN_WIDTH = 6
 
+# X12's memory calibration. Sizes chosen so the per-row cost is visibly different
+# between them (0.252 -> 0.118 MB per 1k rows in streaming mode) while 50k still
+# builds in under a second. The large one is generated, never committed: a 50k-row
+# workbook under skills/builtin/ would dominate the sentinel hash.
+MEM_SMALL, MEM_LARGE = 10_000, 50_000
+# Measured 2026-08-02: streaming 5.91 MB vs eager 63.15 MB at 50k rows (10.7x).
+# 3x leaves a wide margin while still being far outside measurement noise.
+MEM_MIN_RATIO = 3.0
+PNG_DPI = "120"
+
 STDOUT_BUDGET = 6000             # bytes one call may print for a large workbook
 SCALE_ROWS = 2000                # comfortably past xlsxcommon.STDOUT_ITEM_LIMIT
 
@@ -567,6 +577,112 @@ def collect(work: Path) -> dict:
         "formula_after": cells_of(recalc, "利润表", ["B5", "D5"]),
         "mixed": mixed_report, "mixed_exit": mx.returncode,
         "python_only": py_only_report, "python_only_exit": py_only.returncode,
+    }
+
+    # --- X11 conversions -------------------------------------------------------
+    calc = work / "calc.xlsx"
+    run_script("xlsx_recalc.py", "--in", BOOK, "--out", calc)
+    csv_out, back = work / "sheet.csv", work / "back.xlsx"
+    run_script("xlsx_convert.py", "--in", calc, "--to", "csv", "--out", csv_out,
+               "--sheet", "利润表")
+    run_script("xlsx_convert.py", "--from", csv_out, "--out", back, "--sheet", "明细")
+    jsonl = work / "rows.jsonl"
+    run_script("xlsx_convert.py", "--in", calc, "--to", "jsonl", "--out", jsonl,
+               "--sheet", "利润表", "--header-row", "2")
+    jsonl_r1 = work / "rows-r1.jsonl"
+    run_script("xlsx_convert.py", "--in", calc, "--to", "jsonl", "--out", jsonl_r1,
+               "--sheet", "利润表")
+    ctx["convert"] = {
+        "csv_head": csv_out.read_bytes()[:3],
+        "csv_text": csv_out.read_text(encoding="utf-8-sig"),
+        "roundtrip": [list(r) for r in (lambda wb: [
+            [c.value for c in row] for row in wb["明细"].iter_rows()])(
+            openpyxl.load_workbook(back))],
+        "jsonl": [json.loads(l) for l in jsonl.read_text(encoding="utf-8").splitlines()],
+        "jsonl_row1": [json.loads(l) for l in
+                       jsonl_r1.read_text(encoding="utf-8").splitlines()],
+        "stats": json.loads(run_script("xlsx_convert.py", "--in", calc, "--stats",
+                                       "--sheet", "利润表", "--header-row", "2").stdout),
+    }
+
+    # --- X12: bounded memory, measured on THIS script --------------------------
+    MEM_PROBE = (
+        "import sys, tracemalloc, runpy, openpyxl\n"
+        "if sys.argv[1] == 'eager':\n"
+        "    _o = openpyxl.load_workbook\n"
+        "    openpyxl.load_workbook = lambda *a, **k: _o(*a, **{**k, 'read_only': False})\n"
+        "script, book = sys.argv[2], sys.argv[3]\n"
+        "sys.argv = [script, '--in', book, '--stats', '--sheet', '明细']\n"
+        "tracemalloc.start()\n"
+        "try:\n    runpy.run_path(script, run_name='__main__')\n"
+        "except SystemExit:\n    pass\n"
+        "print(tracemalloc.get_traced_memory()[1])\n")
+
+    def peak_mb(mode: str, book: Path) -> float:
+        r = subprocess.run([PY, "-c", MEM_PROBE, mode,
+                            str(SKILL / "scripts" / "xlsx_convert.py"), str(book)],
+                           capture_output=True, text=True, timeout=1800)
+        return int(r.stdout.strip().splitlines()[-1]) / 1024 / 1024
+
+    mem: dict[int, dict[str, float]] = {}
+    for rows in (MEM_SMALL, MEM_LARGE):
+        big = work / f"mem{rows}.xlsx"
+        wb = openpyxl.Workbook(write_only=True)
+        ws = wb.create_sheet("明细")
+        ws.append(["科目", "金额", "备注"])
+        for i in range(rows):
+            ws.append([f"科目{i}", i * 7, f"备注{i}"])
+        wb.save(big)
+        wb.close()
+        mem[rows] = {m: peak_mb(m, big) for m in ("stream", "eager")}
+    ctx["memory"] = mem
+
+    # --- X13 render ------------------------------------------------------------
+    pdf, pages = work / "preview.pdf", work / "pages"
+    p13 = run_script("xlsx_pdf.py", "--in", calc, "--out", pdf, "--png", pages,
+                     "--dpi", PNG_DPI, "--report", work / "pdf.json")
+    pdf_report = json.loads((work / "pdf.json").read_text(encoding="utf-8")) \
+        if (work / "pdf.json").exists() else {}
+    empty = work / "empty.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active.title = "空"
+    wb.save(empty)
+    wb.close()
+    blank = run_script("xlsx_pdf.py", "--in", empty, "--out", work / "blank.pdf")
+    raw = run_script("xlsx_pdf.py", "--in", BOOK, "--out", work / "raw.pdf",
+                     "--report", work / "raw.json")
+    raw_report = json.loads((work / "raw.json").read_text(encoding="utf-8")) \
+        if (work / "raw.json").exists() else {}
+    png_size = None
+    imgs = sorted(pages.glob("*.png")) if pages.is_dir() else []
+    if imgs:
+        try:
+            import fitz
+            png_size = fitz.Pixmap(str(imgs[0])).width
+        except Exception:  # noqa: BLE001
+            png_size = None
+    ctx["render"] = {
+        "exit": p13.returncode, "report": pdf_report,
+        "pdf_exists": pdf.is_file(), "images": len(imgs), "png_width": png_size,
+        "blank_exit": blank.returncode, "blank_stderr": blank.stderr.strip(),
+        "blank_wrote": (work / "blank.pdf").exists(),
+        "uncalc_warning": raw_report.get("warning"),
+        "uncalc_count": raw_report.get("uncalculated_formulas"),
+    }
+
+    # --- X14 finance convention ------------------------------------------------
+    fin = work / "finance.xlsx"
+    chk = run_script("xlsx_finance.py", "--in", calc, "--check")
+    run_script("xlsx_finance.py", "--in", calc, "--out", fin, "--apply")
+    rechk = run_script("xlsx_finance.py", "--in", fin, "--check",
+                       "--fail-on-violation")
+    ctx["finance"] = {
+        "before": json.loads(chk.stdout),
+        "after": json.loads(rechk.stdout),
+        "recheck_exit": rechk.returncode,
+        "font_before": style_probe(calc, "利润表", ["B3"])["B3"],
+        "font_after": style_probe(fin, "利润表", ["B3"])["B3"],
+        "custom_parts": sum(1 for n in parts_of(fin) if n.startswith("customXml")),
     }
 
     # --- stdout budget and the in-place contract -------------------------------
@@ -1256,6 +1372,172 @@ def k7_single_engine(ctx: dict) -> list[str]:
     return out
 
 
+@check("N1", "a CSV round trip keeps the values, and the file carries a BOM")
+def n1_csv(ctx: dict) -> list[str]:
+    c = ctx["convert"]
+    out = []
+    if c["csv_head"] != b"\xef\xbb\xbf":
+        out.append(f"N1 the CSV has no UTF-8 BOM (starts {c['csv_head']!r}); Excel "
+                   f"reads a BOM-less UTF-8 CSV as the local codepage and Chinese "
+                   f"arrives as mojibake")
+    rows = c["roundtrip"]
+    flat = [v for row in rows for v in row]
+    for want in ("营业收入", 1240, "毛利"):
+        if want not in flat:
+            out.append(f"N1 {want!r} did not survive xlsx -> csv -> xlsx")
+    if any(isinstance(v, str) and v.strip().lstrip("-").isdigit() for v in flat):
+        out.append("N1 a numeric column came back as text after the round trip")
+    return out
+
+
+@check("N2", "the header row names the JSON keys, and rows above it are dropped")
+def n2_headers(ctx: dict) -> list[str]:
+    c = ctx["convert"]
+    out = []
+    if not c["jsonl"]:
+        return ["N2 the JSONL export is empty"]
+    keys = set(c["jsonl"][0])
+    if not {"科目", "本季度"} <= keys:
+        out.append(f"N2 --header-row 2 did not use row 2 as the keys: {sorted(keys)}")
+    # The fixture carries a merged title in row 1. Taking it on faith turns that
+    # title into a column name, which is what the default run should show.
+    if c["jsonl_row1"] and "科目" in set(c["jsonl_row1"][0]):
+        out.append("N2 the default run also produced the row-2 keys, so --header-row "
+                   "cannot be shown to do anything")
+    return out
+
+
+@check("N3", "reading a large sheet does not scale memory with row count")
+def n3_memory(ctx: dict) -> list[str]:
+    """X12's actual claim, measured on THIS script rather than on openpyxl.
+
+    Measuring openpyxl's two modes would prove openpyxl behaves — not that the
+    script uses read_only. The eager arm is the same script with read_only forced
+    off: the plausible wrong implementation.
+    """
+    m = ctx["memory"]
+    out = []
+    small, large = m[MEM_SMALL], m[MEM_LARGE]
+    ratio = large["eager"] / large["stream"] if large["stream"] else 0
+    if ratio < MEM_MIN_RATIO:
+        out.append(f"N3 at {MEM_LARGE:,} rows the script peaked at "
+                   f"{large['stream']:.2f} MB against {large['eager']:.2f} MB with "
+                   f"read_only forced off — only {ratio:.1f}x, expected at least "
+                   f"{MEM_MIN_RATIO}x")
+    per_small = small["stream"] / (MEM_SMALL / 1000)
+    per_large = large["stream"] / (MEM_LARGE / 1000)
+    if per_large >= per_small:
+        out.append(f"N3 per-row cost did not fall with size ({per_small:.3f} -> "
+                   f"{per_large:.3f} MB per 1k rows) — that is linear growth, which "
+                   f"is exactly what streaming is supposed to avoid")
+    # The control arm has to be linear, or the comparison above proves nothing.
+    eager_small = small["eager"] / (MEM_SMALL / 1000)
+    eager_large = large["eager"] / (MEM_LARGE / 1000)
+    if eager_large < eager_small * 0.5:
+        out.append(f"N3 the eager control is not linear either ({eager_small:.3f} -> "
+                   f"{eager_large:.3f} MB per 1k rows); the two arms cannot be told "
+                   f"apart and the measurement means nothing")
+    return out
+
+
+@check("N4", "streaming aggregates are numerically right")
+def n4_stats(ctx: dict) -> list[str]:
+    s = ctx["convert"]["stats"]["stats"][0]
+    cols = {c["header"]: c for c in s["columns"]}
+    out = []
+    if s["rows"] != 3:
+        out.append(f"N4 counted {s['rows']} data rows, expected 3")
+    q = cols.get("本季度")
+    if q is None:
+        return out + [f"N4 no 本季度 column in the stats: {sorted(cols)}"]
+    # 1240 + 769 + 471 = 2480
+    for key, want in (("count", 3), ("sum", 2480.0), ("min", 471), ("max", 1240)):
+        if abs(float(q[key]) - float(want)) > 1e-6:
+            out.append(f"N4 本季度 {key} = {q[key]!r}, expected {want!r}")
+    if abs(q["mean"] - 2480 / 3) > 1e-6:
+        out.append(f"N4 本季度 mean = {q['mean']!r}")
+    return out
+
+
+@check("N5", "the render produces a PDF and the page images that were asked for")
+def n5_render(ctx: dict) -> list[str]:
+    r = ctx["render"]
+    out = []
+    if r["exit"] != 0 or not r["pdf_exists"]:
+        out.append(f"N5 rendering exited {r['exit']} / pdf present {r['pdf_exists']}")
+    if not r["report"].get("pages"):
+        out.append("N5 the report does not say how many pages were produced")
+    if r["images"] != r["report"].get("pages"):
+        out.append(f"N5 {r['images']} PNG(s) for {r['report'].get('pages')} page(s)")
+    if r["report"].get("blank_pages"):
+        out.append(f"N5 page(s) {r['report']['blank_pages']} came out blank")
+    # 120 dpi on a portrait A4 is ~991px wide. A renderer ignoring --dpi lands near
+    # the 72-dpi default (~595px).
+    if r["png_width"] is not None and r["png_width"] < 800:
+        out.append(f"N5 the first page image is {r['png_width']}px wide; --dpi "
+                   f"{PNG_DPI} was ignored")
+    return out
+
+
+@check("N6", "a render with no ink is refused, and nothing is written")
+def n6_blank(ctx: dict) -> list[str]:
+    r = ctx["render"]
+    out = []
+    if r["blank_exit"] != 2:
+        out.append(f"N6 rendering an empty sheet exited {r['blank_exit']}; a blank "
+                   f"preview looks exactly like lost data")
+    if r["blank_wrote"]:
+        out.append("N6 a PDF was written despite the refusal")
+    return out
+
+
+@check("N7", "an uncalculated workbook is warned about before it renders empty")
+def n7_uncalculated(ctx: dict) -> list[str]:
+    r = ctx["render"]
+    if not r["uncalc_count"]:
+        return ["N7 the uncalculated fixture reported 0 formula cells without a "
+                "cached value, so nothing is proven"]
+    if not r["uncalc_warning"]:
+        return ["N7 no warning for a workbook whose formulas render EMPTY — the "
+                "picture is wrong in a way the picture cannot show"]
+    return []
+
+
+@check("N8", "the finance convention is audited by role, applied, and then clean")
+def n8_finance(ctx: dict) -> list[str]:
+    f = ctx["finance"]
+    out = []
+    before, after = f["before"], f["after"]
+    if not before["cells_in_scope"]:
+        return ["N8 no cell fell under the convention, so nothing was checked"]
+    if not before["violations"]:
+        out.append("N8 the ordinary fixture reported zero violations; it does not "
+                   "follow the convention, so this proves the check has no teeth")
+    if not before["by_role"].get("input") or not before["by_role"].get("link"):
+        out.append(f"N8 violations were not attributed by role: {before['by_role']}")
+    if after["violations"]:
+        out.append(f"N8 --apply left {after['violations']} violation(s)")
+    if f["recheck_exit"] != 0:
+        out.append(f"N8 the re-check exited {f['recheck_exit']} after --apply")
+    if f["custom_parts"] != 3:
+        out.append(f"N8 the recoloured workbook kept {f['custom_parts']}/3 customXml "
+                   f"parts — the finance path goes through the graft too")
+    return out
+
+
+@check("N9", "recolouring changes the colour and nothing else about the font")
+def n9_font_preserved(ctx: dict) -> list[str]:
+    b, a = ctx["finance"]["font_before"], ctx["finance"]["font_after"]
+    out = []
+    if a["color"] == b["color"]:
+        return ["N9 B3's colour did not change, so nothing is proven"]
+    for key in ("size", "name"):
+        if a[key] != b[key]:
+            out.append(f"N9 B3's font {key} changed from {b[key]!r} to {a[key]!r} "
+                       f"while only the colour was in scope")
+    return out
+
+
 # ── negative controls ─────────────────────────────────────────────────────────
 def flaw_write_via_load_save(ctx, work):
     """The implementation everyone reaches for first, measured on the same edit."""
@@ -1662,7 +1944,124 @@ def flaw_single_engine_claims_cross_check(ctx, work):
     return ctx
 
 
+def flaw_csv_without_bom(ctx, work):
+    c = copy.deepcopy(ctx["convert"])
+    c["csv_head"] = b"\xe7\xa7\x91\xe7"
+    ctx["convert"] = c
+    return ctx
+
+
+def flaw_csv_roundtrip_stringifies_numbers(ctx, work):
+    c = copy.deepcopy(ctx["convert"])
+    c["roundtrip"] = [[str(v) if isinstance(v, (int, float)) else v for v in row]
+                      for row in c["roundtrip"]]
+    ctx["convert"] = c
+    return ctx
+
+
+def flaw_header_row_ignored(ctx, work):
+    """--header-row accepted and then not used: row 1 becomes the keys anyway."""
+    c = copy.deepcopy(ctx["convert"])
+    c["jsonl"] = copy.deepcopy(c["jsonl_row1"])
+    ctx["convert"] = c
+    return ctx
+
+
+def flaw_reader_forgets_read_only(ctx, work):
+    """The one-character omission this whole capability is about."""
+    m = copy.deepcopy(ctx["memory"])
+    for rows in m:
+        m[rows]["stream"] = m[rows]["eager"]
+    ctx["memory"] = m
+    return ctx
+
+
+def flaw_memory_grows_linearly(ctx, work):
+    m = copy.deepcopy(ctx["memory"])
+    per = m[MEM_SMALL]["stream"] / (MEM_SMALL / 1000)
+    m[MEM_LARGE]["stream"] = per * (MEM_LARGE / 1000) * 1.05
+    ctx["memory"] = m
+    return ctx
+
+
+def flaw_stats_miscounts(ctx, work):
+    c = copy.deepcopy(ctx["convert"])
+    for col in c["stats"]["stats"][0]["columns"]:
+        if col["header"] == "本季度":
+            col["sum"] = 9999.0
+    ctx["convert"] = c
+    return ctx
+
+
+def flaw_render_ignores_dpi(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    r["png_width"] = 595
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_render_drops_images(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    r["images"] = 1
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_blank_render_accepted(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    r.update(blank_exit=0, blank_wrote=True)
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_uncalculated_not_warned(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    r["uncalc_warning"] = None
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_finance_check_has_no_teeth(ctx, work):
+    f = copy.deepcopy(ctx["finance"])
+    f["before"]["violations"] = 0
+    f["before"]["by_role"] = {"input": 0, "formula": 0, "link": 0}
+    ctx["finance"] = f
+    return ctx
+
+
+def flaw_finance_apply_leaves_violations(ctx, work):
+    f = copy.deepcopy(ctx["finance"])
+    f["after"]["violations"] = 4
+    ctx["finance"] = f
+    return ctx
+
+
+def flaw_finance_resets_the_font(ctx, work):
+    f = copy.deepcopy(ctx["finance"])
+    f["font_after"] = {**f["font_after"], "size": 11.0, "name": "Calibri"}
+    ctx["finance"] = f
+    return ctx
+
+
 FLAWS = [
+    ("csv-written-without-a-bom", flaw_csv_without_bom, {"N1"}, ""),
+    ("csv-roundtrip-turns-numbers-into-text", flaw_csv_roundtrip_stringifies_numbers,
+     {"N1"}, ""),
+    ("header-row-accepted-then-ignored", flaw_header_row_ignored, {"N2"}, ""),
+    ("reader-forgets-read-only", flaw_reader_forgets_read_only, {"N3"}, ""),
+    ("memory-grows-linearly-with-rows", flaw_memory_grows_linearly, {"N3"}, ""),
+    ("streaming-stats-miscount", flaw_stats_miscounts, {"N4"}, ""),
+    ("render-ignores-dpi", flaw_render_ignores_dpi, {"N5"}, ""),
+    ("render-drops-a-page-image", flaw_render_drops_images, {"N5"}, ""),
+    ("blank-render-handed-back-as-a-preview", flaw_blank_render_accepted, {"N6"}, ""),
+    ("uncalculated-workbook-rendered-without-a-warning",
+     flaw_uncalculated_not_warned, {"N7"}, ""),
+    ("finance-check-reports-nothing-on-an-ordinary-sheet",
+     flaw_finance_check_has_no_teeth, {"N8"}, ""),
+    ("finance-apply-leaves-violations", flaw_finance_apply_leaves_violations,
+     {"N8"}, ""),
+    ("finance-apply-resets-the-font", flaw_finance_resets_the_font, {"N9"}, ""),
+
     ("evaluator-gets-a-number-wrong", flaw_evaluator_gets_a_number_wrong, {"K1"}, ""),
     ("evaluator-guesses-instead-of-refusing", flaw_evaluator_guesses_instead_of_refusing,
      {"K2"}, ""),

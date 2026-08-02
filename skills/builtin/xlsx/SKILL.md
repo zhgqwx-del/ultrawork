@@ -46,9 +46,12 @@ python3 -m pip install openpyxl lxml
 | 冻结窗格 / 自动筛选 | `scripts/xlsx_format.py --freeze --filter` | |
 | 图表 | `scripts/xlsx_chart.py` | 柱/条/折线/饼/散点/面积，系列名取自表头 |
 | 公式重算 | `scripts/xlsx_recalc.py` | **双引擎互相校验**，见下 |
+| CSV / JSON 进出 | `scripts/xlsx_convert.py` | 双向；读**永远**走 read_only |
+| 大文件流式读 | `scripts/xlsx_convert.py --stats` | 内存**不随行数增长**，见下 |
+| 转 PDF / 页面图 | `scripts/xlsx_pdf.py` | 应用内**唯一**可见通道 |
+| 财务色彩规范 | `scripts/xlsx_finance.py` | opt-in，`--check` / `--apply` |
 
-`capabilities.json` 里 **11 项已实现、4 项 pending 并逐条写了理由**。
-pending 的不是「快好了」，是**还没有断言在证明它**。
+`capabilities.json` 里 **15 项全部实现，零 pending**。
 
 ## 用法
 
@@ -199,6 +202,63 @@ python3 scripts/xlsx_recalc.py --in book.xlsx --fail-on disagreement,unsupported
 明确不做：数组公式 · 易变函数（TODAY/NOW/RAND —— 拿会动的值做交叉校验没有意义）·
 日期运算 · 查找族（VLOOKUP/INDEX/MATCH）· 条件里的通配符 · 定义名称 · 外部链接。
 
+## 大文件：read_only 不是优化开关
+
+用 `tracemalloc` 实测读同一张三列表：
+
+| 行数 | 普通模式 | read_only | 比值 |
+|---|---|---|---|
+| 10,000 | 12.9 MB | 1.7 MB | 7.5× |
+| 50,000 | 62.3 MB | 5.1 MB | 12.2× |
+| 250,000 | 326.6 MB | 22.0 MB | 14.9× |
+
+普通模式每行约 **1.3 KB 且不随规模改善** —— 它给每个单元格建一个 Python 对象并全部留着。
+一个磁盘上 8 MB 的 50 万行文件，光读进来就要接近 1 GB。
+**所以本技能的读取路径永远用 read_only**，这不是调优，是「能用」和「吃掉机器」的差别。
+
+```bash
+python3 scripts/xlsx_convert.py --in big.xlsx --to jsonl --out rows.jsonl --sheet 明细
+python3 scripts/xlsx_convert.py --in big.xlsx --stats --sheet 明细
+python3 scripts/xlsx_convert.py --from data.csv --out new.xlsx --autofit
+```
+
+- **CSV 用 `utf-8-sig` 写**（带 BOM）：不带 BOM 的中文 CSV 在 Excel 里就是乱码，而 CSV 导出
+  的去处基本都是 Excel。
+- **`--header-row N`**：真实表格常在表头之上还有一行合并标题。默认取第 1 行当表头，会把标题
+  变成列名。
+- **导出的是「值」不是公式**。没算过的文件根本没有值，所以这种情况会**明确警告**，
+  而不是导出一片空白（先跑 `xlsx_recalc.py`）。
+
+## 转 PDF：产物在应用内可见的唯一通道
+
+**xlsx 在 ultrawork 里没法预览** —— 产物面板能渲染 PDF，其余一律只给一张二进制信息卡。
+
+```bash
+python3 scripts/xlsx_pdf.py --in book.xlsx --out book.pdf --png ./pages --dpi 150
+```
+
+两件事它拒绝而不是糊弄过去:**整页没有墨的 PDF**（LibreOffice 对空表照样退出 0 并产出
+白页，把它当预览交回去比报错更糟——那看起来就像数据没了）· **没算过的 workbook**
+（公式格渲染成**空**，图片本身没法告诉你哪里不对，所以先警告）。
+
+`--png` 需要 PyMuPDF。它**不是**本技能声明的依赖（为几个预览附加功能给整个技能挂红徽标
+不合理），所以缺它时：PDF 照出，空白页检查降级为**明说的缺口**，而 `--png` **直接报错** ——
+你明确要了图，不产图却安静退出才是这份文件最该避免的失败。
+
+## 财务色彩规范（opt-in）
+
+蓝＝手输的数 · 黑＝本表算的 · 绿＝引用了别的表。价值在于一眼可审计：该是公式的格子是蓝的，
+就说明有人硬改过。
+
+```bash
+python3 scripts/xlsx_finance.py --in model.xlsx --check
+python3 scripts/xlsx_finance.py --in model.xlsx --out coloured.xlsx --apply
+```
+
+**它是 opt-in 且会一直是。** 这是财务建模的约定，不是电子表格的普遍属性——本仓库的 L2 门禁
+为此付过学费：默认打开会立刻把一个什么也没做错的普通夹具判红。`--apply` **只改字体颜色**，
+字号字形粗细一概带过去。
+
 ## 已知边界（写下来，不要以为验过了）
 
 - **文本按 inline string 写**（`t="inlineStr"`），不碰 `xl/sharedStrings.xml`。
@@ -236,6 +296,6 @@ python3 fixtures/make_fixtures.py    # 重建示例；仅在示例内容要改�
 ⚠️ 示例文件是**逐字节可复现**的（zip 时间戳、压缩级别、`dcterms:modified` 都已固定），
 但它们进 `skills/builtin/.builtin-version` 这个哈希。**没有要改示例内容时不要跑它。**
 
-> 本技能的行为测试（41 条断言 + 57 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（50 条断言 + 70 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。
