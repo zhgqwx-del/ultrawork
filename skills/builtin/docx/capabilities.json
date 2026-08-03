@@ -438,11 +438,50 @@
         "allow_blank_pages": false
       },
       "verified_by": "this is the one capability whose gate is D6 itself, used as a before/after pair: fontless.docx FAILS D6 with exactly three findings and the artifact must pass it, which is the same pairing W15 uses (a repair verified only on its output cannot be told apart from a check with no teeth). The three findings are three different defects on purpose — a run with no `w:rPr` at all, a run whose paragraph STYLE already names a face, and a run carrying `@w:ascii` and no `@w:eastAsia` — and they do not have the same right answer. scripts/test-docx-skill.py N1-N5 assert that the inherited case takes the STYLE's face and not the fallback (writing 宋体 over a heading the document already said should be 黑体 is a silent restyle that D6 cannot distinguish from a repair), that a deliberate latin face survives, that `--check` on an already-correct document reports nothing and writes nothing, and that `--strict` refuses when a value came from the fallback because nothing in the file said what face that text wants"
+    },
+    "W12": {
+      "entry": "scripts/docx_style.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/restyled.docx",
+          "--set",
+          "正文小字",
+          "--name",
+          "Body Small",
+          "--based-on",
+          "Normal",
+          "--size",
+          "9",
+          "--east-asia",
+          "宋体",
+          "--font",
+          "Calibri",
+          "--report",
+          "{out}/style.json"
+        ],
+        "produces": [
+          "restyled.docx",
+          "style.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告",
+          "营业收入"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact differs from its input in exactly one part — word/styles.xml — so F1/F2 are the assertion that the rest of the document was not touched, and D2 checks the new `w:style` against CT_Style's child order, which is a strict sequence this skill has to get right by construction rather than by remembering. D1/D4/D7 cover the package, the element order and the render. What L2 cannot see is the whole contract, because none of it is visible in a legal document: that MODIFYING a style repaints every paragraph using it (so `--set` on an existing id refuses without `--overwrite`, and the report says how many), that DELETING one Word silently replaces with Normal (so it refuses unless nothing uses it or `--reassign` says where they go), that a `w:basedOn` cycle makes Word stop resolving formatting with no error anywhere, and that a style based on a deleted one must be repointed rather than left dangling. scripts/test-docx-skill.py S1-S5 assert each, and S3 in particular pins a defect this skill shipped and fixed within the hour: the report said `properties_set: []` on a call that set six — the document was right and the REPORT was wrong, which is the harder half to notice"
     }
   },
   "pending": {
     "W4": "generating a document from Markdown needs a heading/list/table/emphasis mapping and a template to hang it on; nothing is written and nothing asserts it",
-    "W12": "reading styles.xml is partly covered by W1's `styles_used`, but creating or modifying a style is not implemented and would need the CT_Style element order this skill already models plus a contract for style inheritance. W10 writes the TOC styles it needs and W16 reads the style chain to resolve a font, so the pieces exist; what is missing is a general contract for inheritance and for overwriting a style a document already has",
     "W14": "L2 validates artifacts against the vendored ECMA-376 schemas, but the skill itself cannot: the schemas are 984 KB and live in the ultrawork repo, not in the distributed skill. The open question is whether to ship them, point at $ECMA376_XSD_DIR, or degrade loudly — and 'degrades silently' is the one answer that is not acceptable",
     "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
     "W19": "table and layout presets need a house style to preset, and picking one before the generation path (W4) exists would be guessing at what it has to fit"

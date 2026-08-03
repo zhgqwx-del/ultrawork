@@ -184,6 +184,15 @@ FONTLESS_STYLE_EA = "黑体"          # what Heading2 already says; a repair mus
 FONTLESS_KEPT_ASCII = "Times New Roman"   # a deliberate latin face, must survive
 FONTLESS_FALLBACK_EA = "宋体"
 
+# W12. A style id that is not one of Word's built-ins, so `customStyle` has a
+# subject; Chinese on purpose, because a style id is a string and the paths that
+# carry one are the same paths the Windows encoding defect lived in.
+NEW_STYLE = "正文小字"
+# Heading1 is used by exactly ONE paragraph in report.docx. That number is what turns
+# "modifying a style repaints everything using it" into a checkable claim rather than
+# a warning nobody can verify.
+HEADING_USERS = 1
+
 # Claims this host could not exercise. Reported separately and never folded into the
 # pass count — a skip and a pass look identical at a glance, which is exactly how a
 # wrong expectation once sat unnoticed for a month.
@@ -806,6 +815,7 @@ def collect(work: Path) -> dict:
     ctx["toc"] = collect_toc(work)
     ctx["image"] = collect_images(work)
     ctx["fonts"] = collect_fonts(work)
+    ctx["styles"] = collect_styles(work)
 
     # --- contracts -------------------------------------------------------------
     big = work / "big.docx"
@@ -1072,6 +1082,84 @@ def collect_fonts(work: Path) -> dict:
                     "--fix", "--strict")
     out["strict"] = {"exit": sr.returncode, "stderr": sr.stderr.strip(),
                      "wrote": (work / "strict.docx").exists()}
+    return out
+
+
+# ── W12: styles ───────────────────────────────────────────────────────────────
+def styles_of(path: Path) -> dict[str, dict]:
+    """Every `w:style`, read from the file: id -> {name, basedOn, children, rPr}."""
+    out = {}
+    for style in tree_of(path, "word/styles.xml").findall(W + "style"):
+        kids = [str(c.tag).rsplit("}", 1)[-1] for c in style]
+        rpr = style.find(W + "rPr")
+        out[style.get(W + "styleId")] = {
+            "children": kids,
+            "custom": style.get(W + "customStyle") == "1",
+            "based_on": (style.find(W + "basedOn").get(W + "val")
+                         if style.find(W + "basedOn") is not None else None),
+            "rpr": [str(c.tag).rsplit("}", 1)[-1] for c in rpr] if rpr is not None else [],
+            "sz": (rpr.find(W + "sz").get(W + "val")
+                   if rpr is not None and rpr.find(W + "sz") is not None else None),
+        }
+    return out
+
+
+def paragraph_styles(path: Path) -> list[str | None]:
+    out = []
+    for para in tree_of(path).find(W + "body").findall(W + "p"):
+        ppr = para.find(W + "pPr")
+        ps = ppr.find(W + "pStyle") if ppr is not None else None
+        out.append(ps.get(W + "val") if ps is not None else None)
+    return out
+
+
+def collect_styles(work: Path) -> dict:
+    out: dict = {}
+    made = work / "restyled.docx"
+    r = run_script("docx_style.py", "--in", REPORT, "--out", made,
+                   "--set", NEW_STYLE, "--name", "Body Small", "--based-on", "Normal",
+                   "--size", "9", "--east-asia", "宋体", "--font", "Calibri",
+                   "--report", work / "style.json")
+    out["create"] = {
+        "exit": r.returncode,
+        "report": json.loads((work / "style.json").read_text(encoding="utf-8")),
+        "styles": styles_of(made),
+        "parts_changed": sorted(n for n, d in parts_of(made).items()
+                                if parts_of(REPORT).get(n) != d),
+    }
+    # Modifying one that exists: refused without --overwrite, and the refusal has to
+    # say how many paragraphs it would have repainted.
+    bare = run_script("docx_style.py", "--in", REPORT, "--out", work / "no.docx",
+                      "--set", "Heading1", "--color", "1F5CA8")
+    out["no_overwrite"] = {"exit": bare.returncode, "stderr": bare.stderr.strip(),
+                           "wrote": (work / "no.docx").exists()}
+    ow = work / "overwritten.docx"
+    o = run_script("docx_style.py", "--in", REPORT, "--out", ow, "--set", "Heading1",
+                   "--overwrite", "--color", "FF0000", "--underline", "--italic",
+                   "--size", "20", "--report", work / "ow.json")
+    out["overwrite"] = {
+        "exit": o.returncode,
+        "report": json.loads((work / "ow.json").read_text(encoding="utf-8")),
+        "styles": styles_of(ow),
+    }
+    # Deleting one still in use, with and without --reassign.
+    d = run_script("docx_style.py", "--in", REPORT, "--out", work / "del.docx",
+                   "--delete", "Heading1")
+    out["delete_in_use"] = {"exit": d.returncode, "stderr": d.stderr.strip(),
+                            "wrote": (work / "del.docx").exists()}
+    re_ = work / "reassigned.docx"
+    rr = run_script("docx_style.py", "--in", REPORT, "--out", re_, "--delete",
+                    "Heading1", "--reassign", "Normal", "--report", work / "re.json")
+    out["reassign"] = {
+        "exit": rr.returncode,
+        "report": json.loads((work / "re.json").read_text(encoding="utf-8")),
+        "styles": styles_of(re_),
+        "paragraph_styles": paragraph_styles(re_),
+    }
+    cyc = run_script("docx_style.py", "--in", REPORT, "--out", work / "cyc.docx",
+                     "--set", "Heading1", "--overwrite", "--based-on", "Heading1")
+    out["cycle"] = {"exit": cyc.returncode, "stderr": cyc.stderr.strip(),
+                    "wrote": (work / "cyc.docx").exists()}
     return out
 
 
@@ -2769,6 +2857,123 @@ def n5_strict(ctx: dict) -> list[str]:
     return out
 
 
+# ── W12: styles ───────────────────────────────────────────────────────────────
+@check("S1", "a new style is written in CT_Style order and touches nothing else")
+def s1_create(ctx: dict) -> list[str]:
+    c = ctx["styles"]["create"]
+    out = []
+    if c["exit"] != 0:
+        out.append(f"S1 creating a style exited {c['exit']}")
+    style = c["styles"].get(NEW_STYLE)
+    if style is None:
+        return out + [f"S1 {NEW_STYLE!r} is not in word/styles.xml"]
+    # CT_Style is an xsd:sequence: name, basedOn, next, ..., pPr, rPr. Out of order
+    # is invalid even though every element in it is spelled right (gotchas §21.2 ㉓).
+    order = ["name", "basedOn", "next", "uiPriority", "pPr", "rPr"]
+    ranks = [order.index(k) for k in style["children"] if k in order]
+    if ranks != sorted(ranks):
+        out.append(f"S1 the style's children are {style['children']}, which is not "
+                   f"CT_Style order — Word repairs the file and drops what it cannot "
+                   f"place")
+    if not style["custom"]:
+        out.append("S1 the new style is not marked w:customStyle, so Word files it "
+                   "with its own built-ins")
+    if style["based_on"] != "Normal":
+        out.append(f"S1 w:basedOn is {style['based_on']!r}, expected 'Normal'")
+    if "rFonts" not in style["rpr"]:
+        out.append("S1 the style sets a size but binds no font faces — a CJK style "
+                   "with no @w:eastAsia renders in whatever the reader's theme picks")
+    if c["parts_changed"] != ["word/styles.xml"]:
+        out.append(f"S1 the edit rewrote {c['parts_changed']}; a style change belongs "
+                   f"in word/styles.xml and nowhere else")
+    return out
+
+
+@check("S2", "modifying a style that exists is refused until the caller says so")
+def s2_overwrite(ctx: dict) -> list[str]:
+    s = ctx["styles"]
+    out = []
+    if s["no_overwrite"]["exit"] == 0:
+        out.append("S2 --set on an existing style succeeded without --overwrite. A "
+                   "style is shared: the change repaints every paragraph using it, "
+                   "and the request that asked for it usually named one")
+    if s["no_overwrite"]["wrote"]:
+        out.append("S2 it wrote the file anyway, which makes the refusal a message "
+                   "rather than a refusal")
+    if str(HEADING_USERS) not in s["no_overwrite"]["stderr"]:
+        out.append(f"S2 the refusal does not say how many would be repainted: "
+                   f"{s['no_overwrite']['stderr'][:120]!r}")
+    if s["overwrite"]["exit"] != 0:
+        out.append(f"S2 --overwrite exited {s['overwrite']['exit']}")
+    elif s["overwrite"]["report"]["set"].get("repainted") != HEADING_USERS:
+        out.append(f"S2 the report says it repainted "
+                   f"{s['overwrite']['report']['set'].get('repainted')}, "
+                   f"expected {HEADING_USERS}")
+    return out
+
+
+@check("S3", "the report names every property it set, and the file agrees")
+def s3_report_truthful(ctx: dict) -> list[str]:
+    ow = ctx["styles"]["overwrite"]
+    out = []
+    said = set(ow["report"]["set"].get("properties_set") or [])
+    got = set(ow["styles"].get("Heading1", {}).get("rpr") or [])
+    # The defect this pins: `insert_ordered` REPARENTS each child, so counting them
+    # after the merge counted an empty shell — the report said `properties_set: []`
+    # on a call that had just set six. The document was right and the REPORT was
+    # wrong, which is the half nobody checks.
+    for want in ("color", "u", "i", "sz"):
+        if want not in said:
+            out.append(f"S3 the report does not mention w:{want}, which was asked for")
+        if want not in got:
+            out.append(f"S3 w:{want} is not in the style, though it was asked for")
+    if ow["styles"].get("Heading1", {}).get("sz") != "40":
+        out.append(f"S3 --size 20 wrote w:sz={ow['styles'].get('Heading1', {}).get('sz')!r}; "
+                   f"w:sz is in HALF-points, so 20pt is 40")
+    return out
+
+
+@check("S4", "deleting a style in use is refused, and --reassign moves what used it")
+def s4_delete(ctx: dict) -> list[str]:
+    s = ctx["styles"]
+    out = []
+    if s["delete_in_use"]["exit"] == 0 or s["delete_in_use"]["wrote"]:
+        out.append("S4 a style still in use was deleted. Word raises nothing — the "
+                   "paragraphs fall back to Normal and the document quietly loses "
+                   "its headings")
+    if s["reassign"]["exit"] != 0:
+        out.append(f"S4 --reassign exited {s['reassign']['exit']}")
+        return out
+    if "Heading1" in s["reassign"]["styles"]:
+        out.append("S4 the style is still in word/styles.xml after --delete")
+    if "Heading1" in s["reassign"]["paragraph_styles"]:
+        out.append("S4 a paragraph still names the deleted style, so it now points "
+                   "at nothing")
+    if s["reassign"]["report"]["deleted"].get("reassigned") != HEADING_USERS:
+        out.append(f"S4 the report says it moved "
+                   f"{s['reassign']['report']['deleted'].get('reassigned')} "
+                   f"paragraph(s), expected {HEADING_USERS}")
+    # Everything based on the removed style has to be repointed, not left dangling:
+    # Word treats a missing w:basedOn as no inheritance at all.
+    for sid, style in s["reassign"]["styles"].items():
+        if style["based_on"] == "Heading1":
+            out.append(f"S4 {sid!r} is still based on the style that was deleted")
+    return out
+
+
+@check("S5", "a w:basedOn cycle is refused rather than written")
+def s5_cycle(ctx: dict) -> list[str]:
+    c = ctx["styles"]["cycle"]
+    out = []
+    if c["exit"] == 0 or c["wrote"]:
+        out.append("S5 a style was made to inherit from itself. Word stops resolving "
+                   "formatting at the loop and renders it as Normal, with no error "
+                   "anywhere — so nothing downstream would report this either")
+    if "itself" not in c["stderr"] and "->" not in c["stderr"]:
+        out.append(f"S5 the refusal does not name the loop: {c['stderr'][:120]!r}")
+    return out
+
+
 # ── the negative controls ─────────────────────────────────────────────────────
 # Each one is a defect an assertion above claims to catch, applied to the collected
 # context. They are the implementations somebody reaches for first, not invented
@@ -3855,6 +4060,81 @@ def flaw_chart_loses_its_density(ctx, work):
     return ctx
 
 
+def flaw_style_written_out_of_ct_style_order(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["create"]["styles"][NEW_STYLE]["children"] = ["rPr", "name", "basedOn"]
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_style_edit_rewrites_other_parts(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["create"]["parts_changed"] = ["word/document.xml", "word/styles.xml"]
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_overwrite_allowed_silently(ctx, work):
+    """The defect: a style change that looks local and repaints the document."""
+    s = copy.deepcopy(ctx["styles"])
+    s["no_overwrite"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_overwrite_does_not_say_how_many(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["overwrite"]["report"]["set"]["repainted"] = 0
+    s["no_overwrite"]["stderr"] = "error: style already exists"
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_report_says_it_set_nothing(ctx, work):
+    """Measured: `properties_set: []` on a call that set six of them."""
+    s = copy.deepcopy(ctx["styles"])
+    s["overwrite"]["report"]["set"]["properties_set"] = []
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_size_written_in_points_not_half_points(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["overwrite"]["styles"]["Heading1"]["sz"] = "20"
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_delete_in_use_allowed(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["delete_in_use"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_reassign_leaves_paragraphs_pointing_at_nothing(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["reassign"]["paragraph_styles"] = ["Heading1"] + \
+        s["reassign"]["paragraph_styles"][1:]
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_children_left_based_on_a_deleted_style(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    first = next(iter(s["reassign"]["styles"]))
+    s["reassign"]["styles"][first]["based_on"] = "Heading1"
+    ctx["styles"] = s
+    return ctx
+
+
+def flaw_basedon_cycle_written(ctx, work):
+    s = copy.deepcopy(ctx["styles"])
+    s["cycle"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["styles"] = s
+    return ctx
+
+
 def flaw_entry_point_dies_on_a_windows_code_page(ctx, work):
     """The measured defect: on Windows every entry point exited 2 with
     UnicodeEncodeError the moment its output was captured."""
@@ -4089,6 +4369,23 @@ FLAWS = [
      flaw_fontless_style_stops_answering, {"V0"}, ""),
     ("CONTROL: chart.png loses its declared density", flaw_chart_loses_its_density,
      {"V0"}, ""),
+
+    ("style-written-out-of-ct-style-order", flaw_style_written_out_of_ct_style_order,
+     {"S1"}, ""),
+    ("style-edit-rewrites-other-parts", flaw_style_edit_rewrites_other_parts,
+     {"S1"}, ""),
+    ("overwrite-allowed-silently", flaw_overwrite_allowed_silently, {"S2"}, ""),
+    ("overwrite-does-not-say-how-many", flaw_overwrite_does_not_say_how_many,
+     {"S2"}, ""),
+    ("report-says-it-set-nothing", flaw_report_says_it_set_nothing, {"S3"}, ""),
+    ("size-written-in-points-not-half-points",
+     flaw_size_written_in_points_not_half_points, {"S3"}, ""),
+    ("delete-a-style-still-in-use", flaw_delete_in_use_allowed, {"S4"}, ""),
+    ("reassign-leaves-paragraphs-pointing-at-nothing",
+     flaw_reassign_leaves_paragraphs_pointing_at_nothing, {"S4"}, ""),
+    ("children-left-based-on-a-deleted-style",
+     flaw_children_left_based_on_a_deleted_style, {"S4"}, ""),
+    ("basedon-cycle-written", flaw_basedon_cycle_written, {"S5"}, ""),
 
     ("entry-point-dies-on-a-windows-code-page",
      flaw_entry_point_dies_on_a_windows_code_page, {"C4"}, ""),

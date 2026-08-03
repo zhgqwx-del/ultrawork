@@ -636,8 +636,22 @@ def collect(work: Path) -> dict:
     def peak_mb(mode: str, book: Path) -> float:
         r = subprocess.run([PY, "-c", MEM_PROBE, mode,
                             str(SKILL / "scripts" / "xlsx_convert.py"), str(book)],
-                           capture_output=True, text=True, timeout=1800)
-        return int(r.stdout.strip().splitlines()[-1]) / 1024 / 1024
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=1800)
+        # Diagnose rather than crash. On Windows this line raised
+        # `AttributeError: 'NoneType' object has no attribute 'strip'` — a message
+        # that says nothing about WHY, on a platform the author cannot run. The
+        # probe's own exit code and stderr are the evidence; an AttributeError
+        # throws them away. Same lesson as the truncated gate output earlier in
+        # this branch: a diagnostic that hides the cause is not a diagnostic.
+        out = (r.stdout or "").strip()
+        last = out.splitlines()[-1] if out else ""
+        if not last.isdigit():
+            raise SystemExit(
+                f"[error] the X12 memory probe ({mode}, {book.name}) produced no "
+                f"number.\n  exit={r.returncode}\n  stdout={(r.stdout or '')[:400]!r}"
+                f"\n  stderr={(r.stderr or '')[:800]!r}")
+        return int(last) / 1024 / 1024
 
     mem: dict[int, dict[str, float]] = {}
     for rows in (MEM_SMALL, MEM_LARGE):
