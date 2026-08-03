@@ -1460,6 +1460,19 @@ def collect_diff(work: Path) -> dict:
         out[mode] = {"exit": rr.returncode,
                      "signature": doc_signature(resolved) if resolved.is_file() else []}
 
+    # The redline carries revisions in BOTH word/document.xml and a header, which is
+    # the case that showed the resolve report had two shapes. Resolved twice — once
+    # on a body-only document, once on this one — so the two reports can be compared.
+    body_only = work / "resolved-body.docx"
+    run_script("docx_revise.py", "--in", REPORT, "--out", body_only, "--accept-all",
+               "--report", work / "shape-body.json")
+    both = work / "resolved-both.docx"
+    run_script("docx_revise.py", "--in", out["main"]["redline"], "--out", both,
+               "--accept-all", "--report", work / "shape-both.json")
+    out["resolve_shape"] = {
+        tag: json.loads((work / f"shape-{tag}.json").read_text(encoding="utf-8"))
+        for tag in ("body", "both")}
+
     noise = work / "variant-noise.docx"
     make_noise_only(REPORT, noise)
     out["noise"] = compare("noise", REPORT, noise)
@@ -3947,6 +3960,36 @@ def _sig_gap(got: list, want: list) -> str:
     return f" — lengths {len(got)} vs {len(want)}"
 
 
+@check("K7", "the resolve report has ONE shape, whatever parts the revisions live in")
+def k7_report_shape(ctx: dict) -> list[str]:
+    shapes = ctx["diff"]["resolve_shape"]
+    body = shapes["body"].get("resolved", {})
+    both = shapes["both"].get("resolved", {})
+    out = []
+    if not body or not both:
+        return ["K7 one of the resolve reports has no `resolved` block at all"]
+    if sorted(body) != sorted(both):
+        out.append(f"K7 resolving a body-only document reports "
+                   f"{sorted(body)} while one with revisions in a header reports "
+                   f"{sorted(both)} — a caller reading `resolved.applied` breaks on "
+                   f"whichever document it did not happen to be tested with")
+    for field in ("mode", "count", "applied", "remaining", "parts"):
+        for tag, shape in (("body-only", body), ("body+header", both)):
+            if field not in shape:
+                out.append(f"K7 the {tag} report has no `{field}`")
+    # The header revisions have to actually BE in there, or this compares two
+    # body-only reports and proves nothing about the case it was written for.
+    if len(both.get("parts", [])) < 2:
+        out.append(f"K7 the redline resolved only "
+                   f"{len(both.get('parts', []))} part(s) — the multi-part case this "
+                   f"assertion exists for is not being exercised")
+    if not any(p.get("part", "").startswith("word/header")
+               for p in both.get("parts", [])):
+        out.append("K7 no header part appears in the resolve report, so revisions "
+                   "outside word/document.xml are still invisible to it")
+    return out
+
+
 @check("U3", "what Word rewrites on every save is counted, and counted as NOT a change")
 def u3_noise(ctx: dict) -> list[str]:
     d = ctx["diff"]
@@ -5598,6 +5641,23 @@ def _diff(ctx):
     return ctx["diff"]
 
 
+def flaw_resolve_report_changes_shape(ctx, work):
+    """The defect this assertion was written for: one field, two shapes."""
+    d = _diff(ctx)
+    d["resolve_shape"]["both"]["resolved"] = {
+        "parts": d["resolve_shape"]["both"]["resolved"]["parts"],
+        "count": d["resolve_shape"]["both"]["resolved"]["count"]}
+    return ctx
+
+
+def flaw_resolve_never_leaves_the_body(ctx, work):
+    """CONTROL: the multi-part case stops being exercised, so K7 compares nothing."""
+    d = _diff(ctx)
+    both = d["resolve_shape"]["both"]["resolved"]
+    both["parts"] = [p for p in both["parts"] if p["part"] == DOC_PART]
+    return ctx
+
+
 def flaw_revised_stops_removing_a_paragraph(ctx, work):
     """CONTROL: the A/B fixture stops carrying one of the six changes."""
     d = _diff(ctx)
@@ -6168,6 +6228,10 @@ FLAWS = [
      flaw_children_left_based_on_a_deleted_style, {"S4"}, ""),
     ("basedon-cycle-written", flaw_basedon_cycle_written, {"S5"}, ""),
 
+    ("resolve-report-changes-shape-with-the-document",
+     flaw_resolve_report_changes_shape, {"K7"}, ""),
+    ("CONTROL: the resolve report never leaves word/document.xml",
+     flaw_resolve_never_leaves_the_body, {"K7"}, ""),
     ("CONTROL: revised.docx stops removing a paragraph",
      flaw_revised_stops_removing_a_paragraph, {"V0"}, ""),
     ("CONTROL: revised.docx stops restyling a paragraph",

@@ -232,9 +232,29 @@ def main() -> int:
                     root = part_root
                 if outcome["count"] or outcome["remaining"] or name == DOCUMENT:
                     resolved.append({**outcome, "part": name})
-            report["resolved"] = (resolved[0] if len(resolved) == 1
-                                  else {"parts": resolved,
-                                        "count": sum(r["count"] for r in resolved)})
+            # ONE shape, whatever the document happens to hold. An earlier version of
+            # this returned the single part's outcome directly when only one part had
+            # revisions and a `{parts: [...]}` summary otherwise — so `resolved.mode`
+            # and `resolved.applied` existed or not depending on whether the letterhead
+            # happened to carry a tracked change. A report whose shape is data
+            # dependent is one every caller gets wrong eventually, and it fails on the
+            # documents that are least common rather than in testing.
+            report["resolved"] = {
+                "mode": "accept" if accept else "reject",
+                "count": sum(r["count"] for r in resolved),
+                "applied": [{**item, "part": r["part"]}
+                            for r in resolved for item in r["applied"]],
+                "remaining": sorted({n for r in resolved for n in r["remaining"]}),
+                "range_markers_removed": sum(r["range_markers_removed"]
+                                             for r in resolved),
+                "paragraph_marks_with_nothing_to_merge": sum(
+                    r["paragraph_marks_with_nothing_to_merge"] for r in resolved),
+                "exhausted": any(r["exhausted"] for r in resolved),
+                # Per part as well, because "which part is still dirty" is the
+                # question `remaining` cannot answer once it is a union.
+                "parts": [{"part": r["part"], "count": r["count"],
+                           "remaining": r["remaining"]} for r in resolved],
+            }
 
         pkg.put_tree(DOCUMENT, root)
         leftovers = sorted({n for name in parts

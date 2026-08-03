@@ -2519,3 +2519,31 @@ L2 **65/0** 零跳过 · caps selftest 16/0 · L1 全量 **48/48 entry points** 
 **`--no-pending pdf xlsx docx` OK** · 求值器 64/0 · L0 **0.191~0.736**（阈值 0.55，
 provenance 6 条豁免逐条打印）· check-docs · typecheck 8/8 · Rust 155 ·
 desktop **862 / 102 files** · `.builtin-version` → `5354efd710bcd307`。
+
+### 六·补七之后的收工复审（2026-08-03，用户五问）
+
+**又抓到一个门禁没抓到的真回归，而且是我这一刀自己引入的。**
+`docx_revise.py` 的 `report["resolved"]` 有了**两种形状**：只有正文带修订时是 `rev.apply()`
+的结果（`mode`/`applied`/`remaining`/…），正文+页眉都带时变成 `{parts, count}` ——
+后者把 `mode`/`applied`/`remaining` 全丢了。**形状取决于「页眉里碰巧有没有修订」**，
+读 `resolved.applied` 的调用方会在某些文档上 KeyError，而且是在最不常见的文档上、不在测试里。
+
+K1-K6 没抓到，因为它们用的 `report.docx` 只有正文修订；W18 的 U2 只看解析后的文档、不看报告形状。
+⇒ 修法是**永远一种形状**（原字段全保留 + 增 `parts` + 每条 `applied` 带 `part`，对老调用方是超集），
+补断言 **K7**（一种形状 + 多 part 情形必须真的被覆盖）+ 两条控制。
+
+**这条的通用形状值得记：一个字段的形状由数据决定，就是一个迟早所有调用方都会踩的坑。**
+
+复审其余各项实测结论（均无缺陷）：
+
+| 问 | 办法 | 结论 |
+|---|---|---|
+| 跨平台 | 扫 `os.environ['HOME']`/`/tmp`/unix-only 命令/PATH 分隔符 | 零命中；`soffice` 走 `shutil.which` + `platform.system()` 三分支 + `Path.home()` |
+| 打包到客户机 | 扫硬编码绝对路径；解压到含空格/中文的陌生路径 + cwd 设在别处跑 | 零命中；schema 走 `Path(__file__).resolve().parent.parent`，可用 |
+| Team 模式 | 18 个入口点跑一份 600 段 + 400 行表的大文档，量 stdout 字节 | 最大 **2,435** 字节（预算 6,000），stderr 全 0 |
+| 对抗性输入 | 空 body / 无 sectPr / 无 styles.xml / 非法 XML / 非 zip / 0 字节 / 目录 | **无一处 traceback**，一律 exit 2 给一句话 |
+| 别扭路径 | 中文 + 空格 + 深层目录 | 全通 |
+| W15 回归面（新加三张元素序表） | LibreOffice 产的文档 `--check`；打乱 `tblBorders` 后 XSD/`--check`/`--fix-order` | 0 误报；打乱后 XSD 判非法且 `--check` 点名到具体路径；`--fix-order` 修回 XSD valid |
+
+⚠️ 复审过程中我自己的探针错了两次（读 `out_of_order` 而字段叫 `findings`；拿被 LibreOffice
+同名覆写的文件当原件）——**两次都是「判红的是我的描述，不是被测对象」**。
