@@ -222,7 +222,16 @@ def ensure_style(styles_root, style_id: str, *, name: str, kind: str = "paragrap
         etree.SubElement(style, q("uiPriority")).set(q("val"), str(ui_priority))
     for xml in (ppr_xml, rpr_xml):
         if xml:
-            style.append(etree.fromstring(f'<w:wrap xmlns:w="{MAIN_NS}">{xml}</w:wrap>')[0])
+            node = etree.fromstring(f'<w:wrap xmlns:w="{MAIN_NS}">{xml}</w:wrap>')[0]
+            # Sort the fragment's OWN children too, not just where it lands in the
+            # style. CT_PPr and CT_RPr are strict sequences, and a caller writing a
+            # fragment by hand has no reason to know that `w:spacing` precedes
+            # `w:ind` and `w:jc` — this function does. Skipping this shipped two
+            # invalid styles that the package validator caught on the first run.
+            for grand in list(node):
+                node.remove(grand)
+                insert_ordered(node, grand)
+            style.append(node)
     # The children above are appended in CT_Style order already, but the caller may
     # have handed pPr/rPr in either order; put the whole thing back through the
     # ordering rules so this function cannot be the source of an invalid style.

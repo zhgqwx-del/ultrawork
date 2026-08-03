@@ -208,6 +208,13 @@ def normalize(path: Path) -> None:
             info = zipfile.ZipInfo(name, date_time=ZIP_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
+            # `ZipInfo.__init__` sets create_system = 0 on Windows and 3 elsewhere,
+            # and that byte lands in the central directory — so the same generator
+            # emits different bytes there. Found by the docx fixtures' F0 assertion
+            # on CI; this generator has the same gap and no assertion that would
+            # ever fire on it, which is the more dangerous of the two. Pinned to 3,
+            # what macOS and Linux already write, so committed bytes do not change.
+            info.create_system = 3
             z.writestr(info, data)
     shutil.move(str(tmp), str(path))
 

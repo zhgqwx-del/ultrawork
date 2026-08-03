@@ -726,6 +726,15 @@ def write_package(path: Path, items: list[tuple[str, bytes]]) -> None:
             info = zipfile.ZipInfo(name, date_time=EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
+            # ⚠️ The fourth thing reproducibility needs, and the only one that is
+            # invisible on the machine you develop on. `ZipInfo.__init__` sets
+            # `create_system = 0` on Windows and `3` (Unix) everywhere else, and that
+            # byte goes into the zip's central directory — so the SAME generator
+            # produces different bytes on Windows. Measured on CI: F0 fired there
+            # while every other platform was green, and 141 of 145 docx assertions
+            # went with it. Pinned to 3, which is what macOS and Linux already write,
+            # so the committed fixtures do not change.
+            info.create_system = 3
             z.writestr(info, data)
 
 
