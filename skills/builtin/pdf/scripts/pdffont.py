@@ -55,6 +55,45 @@ CANDIDATES = {
     ],
 }
 
+# A list of EXACT paths is a list that goes stale, and it goes stale silently: the
+# skill says "no CJK font on this machine" on a machine that has one under a name
+# nobody predicted. Measured on CI (ubuntu-latest with fonts-noto-cjk installed):
+# every path above missed, because the package now ships the variable-font build
+# `NotoSansCJK-VF.otf.ttc`, and four capabilities refused to run.
+# So the exact list is a PREFERENCE order, and this is the fallback: look for
+# anything CJK-shaped in the standard font trees. Globbing is second, not first,
+# because the curated paths pick a face known to have TrueType outlines — reportlab
+# cannot embed CFF ones (gotchas §21.1 ⑯) — and a glob may land on one that fails.
+GLOB_ROOTS = {
+    "Linux": ("/usr/share/fonts", "/usr/local/share/fonts"),
+    "Darwin": ("/System/Library/Fonts", "/Library/Fonts"),
+    "Windows": (r"C:\Windows\Fonts",),
+}
+# Substrings that mark a face as CJK-capable in every distribution's naming.
+GLOB_HINTS = ("notosanscjk", "notoserifcjk", "sourcehansans", "sourcehanserif",
+              "wqy", "droidsansfallback", "arphic", "uming", "ukai", "fandol",
+              "msyh", "simsun", "simhei", "songti", "pingfang", "hiragino")
+
+
+def _globbed_candidates() -> list[tuple[str, int | None]]:
+    """Every CJK-looking font file under this platform's font trees, sorted."""
+    out: list[tuple[str, int | None]] = []
+    for root in GLOB_ROOTS.get(platform.system(), ()):
+        base = Path(root)
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.suffix.lower() not in (".ttf", ".ttc", ".otf"):
+                continue
+            if not any(h in path.name.lower().replace("-", "").replace("_", "")
+                       for h in GLOB_HINTS):
+                continue
+            # A .ttc holds several faces and the useful one is not always index 0
+            # (gotchas §21.1 ⑯), so both are offered and `_try_register` decides.
+            out += [(str(path), None), (str(path), 0)] if path.suffix.lower() == ".ttc" \
+                else [(str(path), None)]
+    return out
+
 # Ideographs AND the punctuation/fullwidth blocks that travel with them. A string
 # whose only non-Latin character is a fullwidth comma still needs the CJK face —
 # Helvetica has no glyph for U+FF0C either, and the blank it draws raises nothing.
@@ -103,6 +142,10 @@ def register_cjk(explicit: str | None = None) -> tuple[str | None, str | None]:
     else:
         tries = [(p, i) for p, i in CANDIDATES.get(platform.system(), [])
                  if Path(p).is_file()]
+        # Curated paths first, then anything CJK-shaped the machine actually has.
+        # Without this the skill reports "no CJK font on this machine" on machines
+        # that have several — measured on CI, see GLOB_HINTS.
+        tries += [t for t in _globbed_candidates() if t not in tries]
     for path, index in tries:
         # A STABLE name: this ends up as the /BaseFont of the embedded subset, and
         # hash() is salted per process, so a random one would make two runs of the
@@ -120,8 +163,15 @@ _SOURCES: dict[str, str] = {}
 
 
 def available_candidates() -> list[str]:
-    """Paths this platform would try, for an error message worth acting on."""
-    return [p for p, _ in CANDIDATES.get(platform.system(), [])]
+    """Paths this platform would try, for an error message worth acting on.
+
+    The curated list plus whatever the glob found, so "no CJK font" names both what
+    was expected and what is actually installed — an error listing only paths that
+    do not exist tells the reader nothing about their own machine.
+    """
+    curated = [p for p, _ in CANDIDATES.get(platform.system(), [])]
+    found = [p for p, _ in _globbed_candidates()]
+    return curated + [p for p in dict.fromkeys(found) if p not in curated]
 
 
 def text_width(text: str, font: str | None, size: float) -> float | None:

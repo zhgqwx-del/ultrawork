@@ -45,6 +45,21 @@ import zipfile
 from contextlib import closing
 from pathlib import Path
 
+# ── stdout must be UTF-8 on every platform, and on Windows it is not ──────────
+# This gate prints ✅/❌ and Chinese. Windows encodes a CAPTURED stdout in the
+# machine's ANSI code page and Python only defaults to UTF-8 from 3.15 (PEP 686);
+# CI pins 3.11. Measured on CI: this script died with
+# `UnicodeEncodeError: 'charmap' codec can't encode character '\u2705'` inside its
+# own `print(json.dumps(...))`. The skills were fixed for this first and the GATES
+# were missed — the same defect has two homes, and only one of them was product.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):        # already detached / not reconfigurable
+            pass
+
+
 REPO = Path(__file__).resolve().parent.parent
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

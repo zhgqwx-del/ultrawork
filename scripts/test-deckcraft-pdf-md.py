@@ -45,6 +45,21 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
+# ── stdout must be UTF-8 on every platform, and on Windows it is not ──────────
+# This gate prints ✅/❌ and Chinese. Windows encodes a CAPTURED stdout in the
+# machine's ANSI code page and Python only defaults to UTF-8 from 3.15 (PEP 686);
+# CI pins 3.11. Measured on CI: this script died with
+# `UnicodeEncodeError: 'charmap' codec can't encode character '\u2705'` inside its
+# own `print(json.dumps(...))`. The skills were fixed for this first and the GATES
+# were missed — the same defect has two homes, and only one of them was product.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):        # already detached / not reconfigurable
+            pass
+
+
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills" / "builtin" / "deckcraft"
 SRC = SKILL / "scripts" / "source_to_md"
@@ -105,6 +120,20 @@ STDOUT_BUDGET = 4096
 # deck.pdf is TEN pages. The task brief that commissioned this said 24; the file
 # and its own "N / 10" footers say 10, and P1 is why that got checked instead of
 # copied.
+# The real corpus is NOT in git: .gitignore excludes skills/builtin/*/examples/*/
+# export/, and deck.pdf is 610 KB of generated output that would also ship inside
+# skills-builtin.zip to every user. So this gate could only ever run on the author's
+# machine — measured on CI, where it exited 1 with "real corpus missing" the first
+# time this branch was ever pushed. Adding a gate to CI is not the same as that gate
+# being able to RUN there.
+#
+# Handling follows the rule this repo already applies to LibreOffice (059 §7): when
+# the corpus is absent these assertions are SKIPPED AND NAMED, never folded into the
+# pass count — and so are the negative controls that could not fire, because a
+# control nobody ran is not a control. The synthetic half still runs everywhere.
+DECK_CHECKS = {"V0", "O1", "H2", "T2", "G1", "G2", "K1", "P1", "X1"}
+SKIPS: list[str] = []
+
 DECK_PAGES = 10
 DECK_HEADINGS = ["## AI编程助手 落地实践", "### 为什么 是现在", "### 试点怎么做的"]
 DECK_LETTERSPACED = "ENGINEERING PRODUCTIVITY REVIEW"
@@ -477,10 +506,16 @@ def collect(work: Path) -> dict:
                              if fig_md.is_file() else ""}
 
     deck_md = out / "deck.md"
-    proc = run_converter(DECK, "-o", deck_md)
-    ctx["runs"]["deck"] = {"exit": proc.returncode, "stdout": proc.stdout,
-                           "md": deck_md.read_text(encoding="utf-8")
-                           if deck_md.is_file() else ""}
+    if DECK.is_file():
+        proc = run_converter(DECK, "-o", deck_md)
+        ctx["runs"]["deck"] = {"exit": proc.returncode, "stdout": proc.stdout,
+                               "md": deck_md.read_text(encoding="utf-8")
+                               if deck_md.is_file() else ""}
+    else:
+        # An empty result, so the derived values below still compute. Every check
+        # that reads them is in DECK_CHECKS and is skipped by name in main().
+        ctx["runs"]["deck"] = {"exit": 0, "stdout": "", "md": ""}
+    ctx["deck_available"] = DECK.is_file()
 
     # -- headings, formatting, structure ------------------------------------
     ctx["headings"] = {n: headings_of(r["md"]) for n, r in ctx["runs"].items()}
@@ -1111,9 +1146,11 @@ FLAWS = [
 ]
 
 
-def fired(ctx: dict) -> dict[str, list[str]]:
+def fired(ctx: dict, skip: set[str] = frozenset()) -> dict[str, list[str]]:
     out = {}
     for cid, c in CHECKS.items():
+        if cid in skip:
+            continue
         findings = c["fn"](ctx)
         if findings:
             out[cid] = findings
@@ -1126,24 +1163,36 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    if not DECK.is_file():
-        print(f"[error] real corpus missing: {DECK}", file=sys.stderr)
-        return 1
+    SKIPS.clear()
+    have_deck = DECK.is_file()
+    if not have_deck:
+        SKIPS.append(f"the real corpus is not in this checkout ({DECK.name}); "
+                     f"{len(DECK_CHECKS)} assertion(s) and their controls cannot run")
 
     results = []
     with tempfile.TemporaryDirectory(prefix="deckcraft-pdf-md-") as td:
         work = Path(td)
         base = collect(work)
 
-        clean = fired(base)
+        skip = set() if have_deck else DECK_CHECKS
+        clean = fired(base, skip)
         results.append({"case": "real output of the real converter", "expect": "silence",
                         "ok": not clean,
                         "detail": [f"{k}: {v[0]}" for k, v in clean.items()]})
 
         matrix = []
         for name, mutate, expected, cascade in FLAWS:
+            # Without the corpus a check in DECK_CHECKS cannot fire, so expecting it
+            # to would make the suite red for a reason that has nothing to do with
+            # the code. Subtract rather than test for a subset: several controls
+            # expect a MIX (e.g. {"G1","G3"} — one needs the corpus, one does not),
+            # and a subset test leaves those half-asserted and failing.
+            expected = expected - skip
+            if not expected:
+                SKIPS.append(f"negative control {name!r}: needs the real corpus")
+                continue
             ctx = mutate(copy.deepcopy(base), work)
-            got = fired(ctx)
+            got = fired(ctx, skip)
             unexpected = set(got) - expected
             missing = expected - set(got)
             matrix.append({"flaw": name, "expected": sorted(expected),
@@ -1176,8 +1225,16 @@ def main() -> int:
         extra = sorted(set(m["fired"]) - set(m["expected"]))
         note = f"   (also {', '.join(extra)}: {m['cascade_note']})" if extra else ""
         print(f"  {m['flaw']:<52} -> {', '.join(m['fired']) or '(nothing)'}{note}")
+    if SKIPS:
+        # Named one by one. A skip and a pass look identical at a glance, which is
+        # exactly how a wrong expectation once sat unnoticed for a month (059 §7).
+        print("\n[skipped] claims this checkout could not exercise:")
+        for note in SKIPS:
+            print(f"  - {note}")
+    ran = len(CHECKS) - (0 if have_deck else len(DECK_CHECKS))
     print(f"\n[deckcraft-pdf-md] {len(results) - len(failed)} passed, "
-          f"{len(failed)} failed, {len(CHECKS)} assertions")
+          f"{len(failed)} failed, {ran} assertions"
+          + (f", {len(SKIPS)} skipped" if SKIPS else ""))
     return 1 if failed else 0
 
 
