@@ -95,10 +95,51 @@ LVL = ("start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff", "lvlText",
        "lvlPicBulletId", "legacy", "lvlJc", "pPr", "rPr")
 NUMPR = ("ilvl", "numId", "numberingChange", "ins")
 
+# CT_Settings, §17.15.1.78. Ninety-seven children in one xsd:sequence, and the two
+# this skill has to write sit ~30 elements apart in the middle of it:
+# `w:evenAndOddHeaders` (what makes an even-page header take effect at all) and
+# `w:updateFields` (what asks the reader to refresh a table of contents). Appending
+# either produces a settings part Word repairs. Transcribed from the vendored
+# ECMA-376 schema rather than typed from memory — a published order, not a guess.
+SETTINGS = (
+    "writeProtection", "view", "zoom", "removePersonalInformation",
+    "removeDateAndTime", "doNotDisplayPageBoundaries",
+    "displayBackgroundShape", "printPostScriptOverText",
+    "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts",
+    "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "mirrorMargins",
+    "alignBordersAndEdges", "bordersDoNotSurroundHeader",
+    "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors",
+    "hideGrammaticalErrors", "activeWritingStyle", "proofState",
+    "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter",
+    "stylePaneSortMethod", "documentType", "mailMerge", "revisionView",
+    "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting",
+    "documentProtection", "autoFormatOverride", "styleLockTheme",
+    "styleLockQFSet", "defaultTabStop", "autoHyphenation",
+    "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps",
+    "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle",
+    "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting",
+    "bookFoldPrintingSheets", "drawingGridHorizontalSpacing",
+    "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery",
+    "displayVerticalDrawingGridEvery", "doNotUseMarginsForDrawingGridOrigin",
+    "drawingGridHorizontalOrigin", "drawingGridVerticalOrigin",
+    "doNotShadeFormData", "noPunctuationKerning", "characterSpacingControl",
+    "printTwoOnOne", "strictFirstAndLastChars", "noLineBreaksAfter",
+    "noLineBreaksBefore", "savePreviewPicture", "doNotValidateAgainstSchema",
+    "saveInvalidXml", "ignoreMixedContent", "alwaysShowPlaceholderText",
+    "doNotDemarcateInvalidXml", "saveXmlDataOnly", "useXSLTWhenSaving",
+    "saveThroughXslt", "showXMLTags", "alwaysMergeEmptyNamespace",
+    "updateFields", "hdrShapeDefaults", "footnotePr", "endnotePr", "compat",
+    "docVars", "rsids", "attachedSchema", "themeFontLang", "clrSchemeMapping",
+    "doNotIncludeSubdocsInStats", "doNotAutoCompressPictures", "forceUpgrade",
+    "captions", "readModeInkLockDown", "smartTagType", "shapeDefaults",
+    "doNotEmbedSmartTags", "decimalSymbol", "listSeparator",
+)
+
 SEQUENCES = {
     "pPr": PPR, "rPr": RPR, "sectPr": SECTPR, "tblPr": TBLPR, "tcPr": TCPR,
     "trPr": TRPR, "styles": STYLES, "docDefaults": DOCDEFAULTS, "style": STYLE,
     "numbering": NUMBERING, "abstractNum": ABSTRACTNUM, "lvl": LVL, "numPr": NUMPR,
+    "settings": SETTINGS,
 }
 
 # Children that must precede the free content of a mixed model, in this order.

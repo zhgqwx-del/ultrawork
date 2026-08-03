@@ -33,7 +33,7 @@ python3 -m pip install lxml
 
 **这里没有 `python-docx`，这是有意的。** 见下面「为什么不用 python-docx」。
 
-## 现在有什么（19 项里的 10 项，其余的没有，别假装有）
+## 现在有什么（19 项里的 14 项，其余的没有，别假装有）
 
 | 能力 | 脚本 | 说明 |
 |---|---|---|
@@ -47,10 +47,13 @@ python3 -m pip install lxml
 | 接受 / 拒绝修订 | `scripts/docx_revise.py --accept-all/--reject-all/…` | **纯 Python**，不需要 Word |
 | 批注增 / 删 / 读 | `scripts/docx_comment.py` | 一条批注是**五样东西** |
 | 转 PDF / 页面图 | `scripts/docx_pdf.py` | 应用内**唯一**可见通道 |
+| **页眉页脚增 / 删 / 首页 / 奇偶页** | `scripts/docx_header.py` | 四样东西，变体是**五样**，见下 |
+| **目录 + 多级标题编号** | `scripts/docx_toc.py` | 目录是个**域**，页码**故意不写**，见下 |
+| **插图 / 换图** | `scripts/docx_image.py` | 尺寸单位是 **EMU**，见下 |
+| **CJK 字体巡检 / 修复** | `scripts/docx_fonts.py` | 先查样式链再写，见下 |
 
-`capabilities.json` 里另有 **9 项 pending，逐条写了理由** ——
-从 Markdown 生成、页眉页脚创建、目录、图片插入、样式管理、XSD 校验、字体巡检、
-文档 diff、排版预设。
+`capabilities.json` 里另有 **5 项 pending，逐条写了理由** ——
+从 Markdown 生成、样式管理、XSD 校验、文档 diff、排版预设。
 **pending 写的不是「快好了」，是「还没有断言在证明它」。**
 
 ## 用法
@@ -96,6 +99,29 @@ python3 scripts/docx_package.py --in report.docx --unpack ./unpacked
 python3 scripts/docx_package.py --pack ./unpacked --out rebuilt.docx
 python3 scripts/docx_package.py --in report.docx --check
 python3 scripts/docx_package.py --in messy.docx --fix-order --out fixed.docx
+
+# 页眉页脚（--list 会告诉你哪个变体写了但没生效）
+python3 scripts/docx_header.py --in a.docx --list
+python3 scripts/docx_header.py --in a.docx --out b.docx \
+        --header "示例科技有限公司" --footer "内部资料" --page-number
+python3 scripts/docx_header.py --in b.docx --out c.docx --type first --header "封面"
+python3 scripts/docx_header.py --in c.docx --out d.docx --type even --remove header
+
+# 目录 + 多级标题编号（1. / 1.1 / 1.1.1）
+python3 scripts/docx_toc.py --in a.docx --list
+python3 scripts/docx_toc.py --in a.docx --out b.docx --toc --outline-numbering
+python3 scripts/docx_toc.py --in a.docx --out b.docx --toc --no-cache   # 只写域，不写结果
+
+# 插图 / 换图（尺寸单位是 EMU，别自己算）
+python3 scripts/docx_image.py --in a.docx --list
+python3 scripts/docx_image.py --in a.docx --out b.docx --insert chart.png \
+        --after "营业收入同比增长" --width-cm 8 --alt "季度收入趋势图"
+python3 scripts/docx_image.py --in b.docx --out c.docx --replace 0 --with new.png
+
+# CJK 字体巡检 / 修复
+python3 scripts/docx_fonts.py --in a.docx --check
+python3 scripts/docx_fonts.py --in a.docx --out b.docx --fix --east-asia 宋体
+python3 scripts/docx_fonts.py --in a.docx --out b.docx --fix --strict
 ```
 
 ## 这个技能与「随手用 python-docx」的差别：一句话不是一个 run
@@ -216,6 +242,90 @@ WordprocessingML 的内容模型是 `xsd:sequence`：`<w:pPr>` 的子元素顺�
 `--fix-order` **逐个元素报告**它移动了什么，而不是在每次写入时默默排一遍 ——
 元素放错位置说明某个写入方有 bug，悄悄排序等于把是谁干的这件事藏起来。
 
+## 页眉页脚：写对四样，Word 照样不理你
+
+一个页眉是四样东西 —— part · `[Content_Types].xml` 的 Override · document.xml 到它的
+关系 · `<w:sectPr>` 里的 `<w:headerReference>`。**首页和奇偶页变体是五样**，
+而第五样才是决定前四样有没有用的那一个：
+
+| 变体 | 少了什么就白写 | 那个开关在哪 |
+|---|---|---|
+| `default` | —— | —— |
+| `first` | `<w:titlePg/>` | 同一个 `<w:sectPr>` 里 |
+| `even` | `<w:evenAndOddHeaders/>` | **`word/settings.xml`，不在 section 里** |
+
+四样全写对、schema 全过、Word 打开一看还是原来那个页眉 —— 因为文档从来没说过
+「首页要不一样」。`--list` 会直接告诉你「这个变体写了但开关没开」。
+
+**删的时候同理。** 删掉首页页眉必须把 `<w:titlePg/>` 一起关掉，否则第一页变成
+**完全没有页眉** —— 一个没人要求的改动，而且要等打印出来才看得见。
+
+## 目录：它是一个域，而域的结果是缓存
+
+写目录的诱人做法是把条目连页码一起填好，看起来就完成了。问题是**页码是算出来的**，
+而这里没有任何东西给文档排过版。⚠️ 实测：**LibreOffice 转 PDF 时也不更新域**，
+所以「下游会有人修」这条路也是不通的。
+
+本技能的取舍：
+
+- **条目是缓存的**——标题文字、层级、指向书签的超链接都写进去，打开就能读、能点；
+- **页码不写**，该放页码的地方是一个不会被误认成数字的占位符 `—`；
+- `w:dirty` + `word/settings.xml` 的 `<w:updateFields w:val="true"/>` 请阅读器自己算；
+- 报告里把上面三条明说，而不是留给人自己发现。
+
+想要「只写域、不写任何结果」用 `--no-cache`。
+
+**多级编号有两半，只写一半的 XML 看起来完全正确。**
+`<w:abstractNum>` 的每一级用 `<w:pStyle>` 点名 `Heading1/2/3`，**但这一半自己不编号任何东西** ——
+标题**样式**的 `pPr` 里还得有对应的 `<w:numPr>`。两半都写了才有 1. / 1.1 / 1.1.1。
+
+⚠️ 还有一条只有渲染出来才看得见的：`TOCHeading` 按惯例 `basedOn="Heading1"`，
+于是它**继承**了刚挂上去的编号，**目录页自己占掉第 1 号**，真正的第一章变成 2。
+实测渲染结果是「1. 目录 / 2. 经营概况 / 2.1 收入分析 / 3. 风险提示」，
+而包里没有任何一处非法。本技能给 `TOCHeading` 写了 `<w:numId w:val="0"/>` 显式取消
+（`0` 是 ECMA-376 §17.9.18 留给「取消编号」的值）。
+文档里**已有的**、同样会继承编号的样式**只报告不改** —— 那是这次调用没被要求动的东西。
+
+## 插图：单位是 EMU，写错了不会有人报错
+
+EMU = English Metric Unit，**1 英寸 = 914400**。一张图要写两个尺寸：
+`<wp:extent>`（Word 排版用的框）和 `<a:ext>`（图被拉伸成的大小），**两个必须一致**，
+否则 Word 画一个尺寸的框、把另一个尺寸的图塞进去 —— 看起来像「导出模糊」，不像 bug。
+
+- 把**像素数**填进 extent ⇒ 图宽 0.00026 英寸，等于没有；
+- 把**厘米数**填进去 ⇒ 图有几十页高；
+- 两个都不会报错。
+
+尺寸从**图片自己声明的分辨率**算（PNG 的 `pHYs` / JPEG 的 JFIF density），
+不是从「大家都用 96 dpi」算：240 像素在 96 dpi 下是 2.5 英寸，在 150 dpi 下是 1.6 英寸。
+文件没声明时用 96 dpi，**并在报告里说明这是假设的**。
+
+`--width-cm` 只给一边时按原比例算另一边。**换图（`--replace`）不动原来的框** ——
+你要求换的是图，不是版式。
+
+## 字体巡检：没有 `w:rFonts` 不等于没有字体
+
+Word 的中文字体来自 `@w:eastAsia`、西文来自 `@w:ascii`。一个 run 只绑一半，
+另一半就从主题里挑 —— 主题字体没有中文覆盖时，中文**不是显示成别的字体，是不显示**。
+
+看起来显然的修法「给每个中文 run 写上 `w:eastAsia="宋体"`」是**错的**：
+这个值可能已经由字符样式、段落样式、样式的 `basedOn` 祖先、或 `w:docDefaults` 说过了，
+**覆盖掉任何一个都是在给作者已经做过决定的文字改样式**。
+而改完一样过 D6、一样能渲染 —— 只是不再是交进来的那份文档。
+
+所以 `--check` / `--fix` 先走一遍样式链，逐个 run 报告这个值**从哪来**：
+
+| 来源 | 怎么处理 |
+|---|---|
+| `run` | 已经显式了，不动 |
+| `style:<id>` | 文档已经说过了 —— 把**那个**值写成显式，不是默认值 |
+| `docDefaults` | 同上 |
+| `nothing` | 没有人说过。**只有这里用 fallback 才是诚实的**，且单独计数、逐条点名 |
+
+`--strict` 就是用来拒绝最后那一类的：「这个字体是工具挑的，不是文档说的」。
+主题绑定（`@w:eastAsiaTheme`）**算已绑定**，原样留着；`styles.xml` 本身不改
+（改一个样式会影响用它的每一个 run，比被要求的改动大得多），两条都写在报告里。
+
 ## 为什么不用 python-docx
 
 不是风格偏好，是两条实测：
@@ -233,7 +343,15 @@ WordprocessingML 的内容模型是 `xsd:sequence`：`<w:pPr>` 的子元素顺�
 
 ## 已知边界（写下来，不要以为验过了）
 
-- **19 项能力只做了 10 项**，其余 9 项在 `capabilities.json` 的 pending 里逐条写了理由。
+- **19 项能力只做了 14 项**，其余 5 项在 `capabilities.json` 的 pending 里逐条写了理由。
+- **目录的页码永远要人按一次 F9**（Word）或 Tools > Update > Fields（LibreOffice）。
+  转 PDF **不会**更新它 —— 这是实测的，不是推测。
+- **`--toc` 不会替换已有的目录**，检测到就拒绝：两个目录在更新之前长得一模一样，
+  第二个是没人会发现的那个。
+- **换图不会重新排版**：新图被拉进原来的框里，比例不同就会变形，报告里会说
+  `aspect_ratio_changed`。要换尺寸请删掉重插。
+- **字体巡检不改 `styles.xml`，也不解析主题**（`word/theme/theme1.xml`）。
+  绑到主题字体的 run 算「已绑定」。
 - **替换不认识字段。** `{ PAGE }` 这样的域是五个 run，其中一个存着上次算出来的数字。
   本技能不会去改域的定义，但如果你替换的字符串正好命中缓存值，它就会被当普通文字改掉。
 - **`--fix-order` 只排本技能建模过的元素**（pPr / rPr / sectPr / tblPr / tcPr / trPr /
@@ -246,10 +364,11 @@ WordprocessingML 的内容模型是 `xsd:sequence`：`<w:pPr>` 的子元素顺�
 ## 底座
 
 `scripts/office/` 是本技能自带的一份 OOXML 底座（`package` 包与关系 /
-`document` 段落与跨 run 字符流 / `revision` 修订的五种形态 / `soffice` 探测与转换 / `validate` 一致性 /
-`xmlorder` ECMA-376 元素序）。**xlsx / pdf 各自带各自的副本**，不共享 ——
-打包脚本拒绝 symlink。
+`document` 段落与跨 run 字符流、章节与域 / `revision` 修订的五种形态 /
+`styles` 样式链与字体解析 / `media` 图片尺寸与 EMU 换算 / `soffice` 探测与转换 /
+`validate` 一致性 / `xmlorder` ECMA-376 元素序）。**xlsx / pdf 各自带各自的副本**，
+不共享 —— 打包脚本拒绝 symlink。
 
-> 本技能的行为测试（46 条断言 + 84 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（67 条断言 + 130 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。

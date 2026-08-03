@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -113,6 +114,59 @@ INSERTED_PARAGRAPH = "新增结论段落。"
 # W8.
 COMMENT_ANCHOR_SPLIT = "三季度营业收入"    # its first occurrence spans two runs
 NEW_COMMENT = "季度口径需与年报一致。"
+
+# ── W9 / W10 / W11 / W16: the layout family, built on outline.docx ────────────
+# outline.docx exists because report.docx cannot test "create": it already HAS a
+# header, a footer, a picture and a png Default, so every create path would run as a
+# replace and the package wiring would never be exercised.
+OUTLINE = FIXTURES / "outline.docx"
+FONTLESS = FIXTURES / "fontless.docx"
+CHART = FIXTURES / "chart.png"
+
+OUTLINE_PARAGRAPHS = 10
+OUTLINE_HEADINGS = ("经营概况", "收入分析", "分产品收入", "成本与费用", "风险提示")
+OUTLINE_LEVELS = (1, 2, 3, 2, 1)
+OUTLINE_BODY = "营业收入同比增长，主要来自华东区域。"
+
+# W9. A header is four package pieces; the first-page and even-page variants are
+# five, and the fifth is the one that decides whether the other four do anything.
+HEADER_NEW = "示例科技有限公司 · 季度经营分析"
+FOOTER_NEW = "内部资料，请勿外传"
+FIRST_HEADER = "封面页眉"
+EVEN_HEADER = "偶数页眉"
+
+# W10. Six paragraphs: one title plus one per heading. A field with no cached result
+# would add two, which is why the count is asserted and not just "more than before".
+TOC_TITLE = "目录"
+TOC_PARAGRAPHS_ADDED = 6
+TOC_PLACEHOLDER = "—"
+# Measured, in a PDF LibreOffice made from the artifact: with TOCHeading based on
+# Heading1 and outline numbering attached to the heading styles, the contents page
+# took number 1 and the real first chapter became 2 — "1. 目录 / 2. 经营概况 /
+# 2.1 收入分析 / 3. 风险提示". Nothing in the package was invalid.
+TOC_HEADING_STYLE = "TOCHeading"
+
+# W11. Measured from the fixture rather than assumed, and the two numbers are far
+# enough apart that an implementation reading the file's own pHYs density and one
+# assuming the web's 96 dpi cannot both be called right.
+CHART_PX = (240, 120)
+CHART_INTRINSIC_EMU = (1462919, 731460)      # 240x120 at the declared 150 dpi
+CHART_96DPI_EMU = (2286000, 1143000)         # what "everyone uses 96" produces
+IMAGE_WIDTH_CM = 8
+IMAGE_WIDTH_EMU = (2880000, 1440000)         # 8cm, aspect ratio kept
+# A 1x1 GIF89a: the shortest valid picture in a DIFFERENT format, so replacing with
+# it exercises the path where the old media part has to go and a new content-type
+# Default has to be declared.
+TINY_GIF = bytes.fromhex(
+    "47494638396101000100800000000000ffffff21f90401000000002c00000000"
+    "010001000002024401003b")
+
+# W16. fontless.docx carries three DIFFERENT ways of losing a font binding, and they
+# do not have the same right answer — which is the whole reason there are three.
+FONTLESS_UNBOUND_RUNS = 3
+FONTLESS_STYLE_EA = "黑体"          # what Heading2 already says; a repair must keep it
+FONTLESS_KEPT_ASCII = "Times New Roman"   # a deliberate latin face, must survive
+FONTLESS_FALLBACK_EA = "宋体"
 
 # Claims this host could not exercise. Reported separately and never folded into the
 # pass count — a skip and a pass look identical at a glance, which is exactly how a
@@ -261,6 +315,184 @@ def long_document(src: Path, dst: Path, paragraphs: int) -> None:
     rewrite_zip(src, dst, mutate)
 
 
+# ── package plumbing, read straight from the zip ──────────────────────────────
+CT_NS = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+PR_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+WP_NS = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def overrides_of(path: Path) -> set[str]:
+    root = tree_of(path, "[Content_Types].xml")
+    return {el.get("PartName").lstrip("/") for el in root
+            if el.tag == CT_NS + "Override"}
+
+
+def defaults_of(path: Path) -> dict[str, str]:
+    root = tree_of(path, "[Content_Types].xml")
+    return {(el.get("Extension") or "").lower(): el.get("ContentType")
+            for el in root if el.tag == CT_NS + "Default"}
+
+
+def rels_of(path: Path, owner: str = "word/_rels/document.xml.rels") -> dict[str, str]:
+    if owner not in parts_of(path):
+        return {}
+    return {el.get("Id"): (el.get("Target") or "").lstrip("./")
+            for el in tree_of(path, owner) if el.tag == PR_NS + "Relationship"}
+
+
+def sect_refs(path: Path) -> list[dict]:
+    """Every header/footer binding in the body's `w:sectPr`, with what it resolves to."""
+    root = tree_of(path)
+    body = root.find(W + "body")
+    sect = next((el for el in body if el.tag == W + "sectPr"), None)
+    if sect is None:
+        return []
+    rels = rels_of(path)
+    out = []
+    for el in sect:
+        if el.tag not in (W + "headerReference", W + "footerReference"):
+            continue
+        rid = el.get(R_NS + "id")
+        target = rels.get(rid)
+        out.append({"kind": "header" if el.tag.endswith("headerReference") else "footer",
+                    "type": el.get(W + "type") or "default", "rid": rid,
+                    "part": f"word/{target}" if target else None})
+    return out
+
+
+def sect_tags(path: Path) -> list[str]:
+    root = tree_of(path)
+    body = root.find(W + "body")
+    sect = next((el for el in body if el.tag == W + "sectPr"), None)
+    return [str(el.tag).rsplit("}", 1)[-1] for el in sect] if sect is not None else []
+
+
+def settings_tags(path: Path) -> list[str]:
+    if "word/settings.xml" not in parts_of(path):
+        return []
+    return [str(el.tag).rsplit("}", 1)[-1] for el in tree_of(path, "word/settings.xml")]
+
+
+def part_text(path: Path, part: str) -> str:
+    return parts_of(path).get(part, b"").decode("utf-8", "replace")
+
+
+def toc_entries(path: Path) -> list[dict]:
+    """The cached TOC result, read out of the paragraphs that carry the field."""
+    root = tree_of(path)
+    body = root.find(W + "body")
+    out = []
+    for para in body.findall(W + "p"):
+        ppr = para.find(W + "pPr")
+        pstyle = ppr.find(W + "pStyle") if ppr is not None else None
+        style = pstyle.get(W + "val") if pstyle is not None else None
+        if not style or not style.startswith("TOC") or style == TOC_HEADING_STYLE:
+            continue
+        links = [h for h in para.iter(W + "hyperlink")]
+        out.append({
+            "style": style,
+            "text": "".join(t.text or "" for t in para.iter(W + "t")),
+            "anchors": [h.get(W + "anchor") for h in links],
+            "link_text": "".join(t.text or "" for h in links for t in h.iter(W + "t")),
+        })
+    return out
+
+
+def bookmark_names(path: Path) -> set[str]:
+    return {b.get(W + "name") for b in tree_of(path).iter(W + "bookmarkStart")}
+
+
+def style_numbering(path: Path) -> dict[str, str | None]:
+    """`{styleId: numId}` for every style whose pPr carries a `w:numPr`."""
+    out = {}
+    for style in tree_of(path, "word/styles.xml").findall(W + "style"):
+        ppr = style.find(W + "pPr")
+        numpr = ppr.find(W + "numPr") if ppr is not None else None
+        if numpr is None:
+            continue
+        num_id = numpr.find(W + "numId")
+        out[style.get(W + "styleId")] = num_id.get(W + "val") if num_id is not None \
+            else None
+    return out
+
+
+def style_based_on(path: Path) -> dict[str, str | None]:
+    out = {}
+    for style in tree_of(path, "word/styles.xml").findall(W + "style"):
+        based = style.find(W + "basedOn")
+        out[style.get(W + "styleId")] = based.get(W + "val") if based is not None else None
+    return out
+
+
+def abstract_levels(path: Path) -> list[dict]:
+    """The levels of the LAST abstractNum, which is the one just authored."""
+    root = tree_of(path, "word/numbering.xml")
+    abstracts = root.findall(W + "abstractNum")
+    if not abstracts:
+        return []
+    out = []
+    for lvl in abstracts[-1].findall(W + "lvl"):
+        pstyle = lvl.find(W + "pStyle")
+        text = lvl.find(W + "lvlText")
+        out.append({"ilvl": lvl.get(W + "ilvl"),
+                    "style": pstyle.get(W + "val") if pstyle is not None else None,
+                    "text": text.get(W + "val") if text is not None else None})
+    return out
+
+
+def drawings_of(path: Path) -> list[dict]:
+    root = tree_of(path)
+    rels = rels_of(path)
+    out = []
+    for drawing in root.iter(W + "drawing"):
+        extent = next(iter(drawing.iter(WP_NS + "extent")), None)
+        inner = next(iter(drawing.iter(A_NS + "ext")), None)
+        blip = next(iter(drawing.iter(A_NS + "blip")), None)
+        doc_pr = next(iter(drawing.iter(WP_NS + "docPr")), None)
+        rid = blip.get(R_NS + "embed") if blip is not None else None
+        target = rels.get(rid)
+        out.append({
+            "rid": rid, "part": f"word/{target}" if target else None,
+            "alt": doc_pr.get("descr") if doc_pr is not None else None,
+            "extent": [int(extent.get("cx")), int(extent.get("cy"))]
+            if extent is not None else None,
+            "inner": [int(inner.get("cx")), int(inner.get("cy"))]
+            if inner is not None else None,
+        })
+    return out
+
+
+def unbound_cjk_runs(path: Path) -> list[dict]:
+    """CJK runs whose OWN `w:rFonts` does not state both faces, read from the XML.
+
+    ⚠️ Computed here rather than taken from the skill's report, for the same reason
+    V0 is: a fixture fact derived from the tool that is being judged by it agrees
+    with that tool no matter what either of them does. This is the fourth time in
+    this task that mistake had to be undone (059 §六·补二 / §六·补五).
+    """
+    def cjk(s: str) -> bool:
+        return any("⺀" <= c <= "鿿" or "豈" <= c <= "﫿" for c in s)
+
+    out = []
+    root = tree_of(path)
+    for p_index, para in enumerate(root.iter(W + "p")):
+        for run in para.iter(W + "r"):
+            text = "".join(t.text or "" for t in run.iter(W + "t"))
+            if not cjk(text):
+                continue
+            rpr = run.find(W + "rPr")
+            rfonts = rpr.find(W + "rFonts") if rpr is not None else None
+            missing = [slot for slot in ("ascii", "eastAsia")
+                       if rfonts is None or not (rfonts.get(W + slot)
+                                                 or rfonts.get(W + slot + "Theme"))]
+            if missing:
+                out.append({"paragraph": p_index, "text": text[:12],
+                            "missing": missing})
+    return out
+
+
 def fixture_facts() -> dict:
     """Facts about the fixtures, read from the FILES and from nothing else.
 
@@ -300,9 +532,47 @@ def fixture_facts() -> dict:
         if W + "rPr" in children and children.index(W + "rPr") != 0:
             defects += 1
 
+    outline_root = tree_of(OUTLINE)
+    outline_styles = tree_of(OUTLINE, "word/styles.xml")
+    heading_levels = []
+    for para in outline_root.iter(W + "p"):
+        ppr = para.find(W + "pPr")
+        pstyle = ppr.find(W + "pStyle") if ppr is not None else None
+        val = pstyle.get(W + "val") if pstyle is not None else None
+        if val and val.startswith("Heading") and val[7:].isdigit():
+            heading_levels.append(int(val[7:]))
+    chart = CHART.read_bytes()
+
     return {
         "phrase_runs": spans,
         "naive_hits": naive_run_replace(REPORT, CROSS_RUN),
+        # outline.docx: what it must NOT have is the point of it.
+        "outline_paragraphs": len(list(outline_root.iter(W + "p"))),
+        "outline_heading_levels": heading_levels,
+        "outline_header_footer_parts": sum(1 for n in parts_of(OUTLINE)
+                                           if n.startswith(("word/header",
+                                                            "word/footer"))),
+        "outline_sect_refs": len(sect_refs(OUTLINE)),
+        "outline_png_default": "png" in defaults_of(OUTLINE),
+        "outline_media_parts": sum(1 for n in parts_of(OUTLINE)
+                                   if n.startswith("word/media/")),
+        "outline_heading_styles": sum(
+            1 for s in outline_styles.findall(W + "style")
+            if (s.get(W + "styleId") or "").startswith("Heading")),
+        # fontless.docx: three shapes, and one of them must resolve through a style
+        # that already names a face — otherwise "keep what the document said" is
+        # untestable and writing the fallback everywhere would look correct.
+        "fontless_unbound": len(unbound_cjk_runs(FONTLESS)),
+        "fontless_style_says": FONTLESS_STYLE_EA in part_text(FONTLESS,
+                                                              "word/styles.xml"),
+        "fontless_docdefaults_say": "rFonts" in part_text(
+            FONTLESS, "word/styles.xml").split("</w:docDefaults>")[0],
+        "fontless_kept_ascii": FONTLESS_KEPT_ASCII in part_text(FONTLESS,
+                                                                "word/document.xml"),
+        "report_unbound": len(unbound_cjk_runs(REPORT)),
+        # chart.png: not square, and it states a density that is not 96 dpi.
+        "chart_square": CHART_PX[0] == CHART_PX[1],
+        "chart_has_phys": b"pHYs" in chart,
         "tables": len(list(root.iter(W + "tbl"))),
         "insertions": len(list(root.iter(W + "ins"))),
         "deletions": len(list(root.iter(W + "del"))),
@@ -501,6 +771,12 @@ def collect(work: Path) -> dict:
     # --- W8 comments -------------------------------------------------------------
     ctx["comment"] = collect_comments(work)
 
+    # --- W9 / W10 / W11 / W16 the layout family ----------------------------------
+    ctx["headerfooter"] = collect_headers(work)
+    ctx["toc"] = collect_toc(work)
+    ctx["image"] = collect_images(work)
+    ctx["fonts"] = collect_fonts(work)
+
     # --- contracts -------------------------------------------------------------
     big = work / "big.docx"
     long_document(REPORT, big, SCALE_PARAGRAPHS)
@@ -539,6 +815,190 @@ def collect(work: Path) -> dict:
                       for name in ("report.docx", "unordered.docx")},
     }
     return ctx
+
+
+# ── W9: headers and footers ───────────────────────────────────────────────────
+def collect_headers(work: Path) -> dict:
+    out: dict = {}
+    letterhead = work / "letterhead.docx"
+    r = run_script("docx_header.py", "--in", OUTLINE, "--out", letterhead,
+                   "--header", HEADER_NEW, "--footer", FOOTER_NEW, "--page-number",
+                   "--report", work / "header.json")
+    out["create"] = {
+        "exit": r.returncode,
+        "report": json.loads((work / "header.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(letterhead)),
+        "overrides": sorted(overrides_of(letterhead)),
+        "rel_targets": sorted(rels_of(letterhead).values()),
+        "refs": sect_refs(letterhead),
+        "footer_xml": part_text(letterhead, "word/footer1.xml"),
+    }
+
+    first = work / "first.docx"
+    fr = run_script("docx_header.py", "--in", letterhead, "--out", first,
+                    "--type", "first", "--header", FIRST_HEADER,
+                    "--report", work / "first.json")
+    out["first"] = {
+        "exit": fr.returncode,
+        "report": json.loads((work / "first.json").read_text(encoding="utf-8")),
+        "sect_tags": sect_tags(first),
+        "refs": sect_refs(first),
+    }
+
+    even = work / "even.docx"
+    er = run_script("docx_header.py", "--in", first, "--out", even,
+                    "--type", "even", "--header", EVEN_HEADER,
+                    "--report", work / "even.json")
+    out["even"] = {
+        "exit": er.returncode,
+        "report": json.loads((work / "even.json").read_text(encoding="utf-8")),
+        "settings_tags": settings_tags(even),
+        "sect_tags": sect_tags(even),
+        "refs": sect_refs(even),
+    }
+
+    removed = work / "removed.docx"
+    rr = run_script("docx_header.py", "--in", even, "--out", removed,
+                    "--type", "first", "--remove", "header",
+                    "--report", work / "removed.json")
+    out["remove"] = {
+        "exit": rr.returncode,
+        "report": json.loads((work / "removed.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(removed)),
+        "overrides": sorted(overrides_of(removed)),
+        "rel_targets": sorted(rels_of(removed).values()),
+        "sect_tags": sect_tags(removed),
+        "refs": sect_refs(removed),
+    }
+    return out
+
+
+# ── W10: contents and outline numbering ───────────────────────────────────────
+def collect_toc(work: Path) -> dict:
+    contents = work / "contents.docx"
+    r = run_script("docx_toc.py", "--in", OUTLINE, "--out", contents,
+                   "--toc", "--levels", "3", "--title", TOC_TITLE,
+                   "--outline-numbering", "--report", work / "toc.json")
+    out = {
+        "exit": r.returncode,
+        "report": json.loads((work / "toc.json").read_text(encoding="utf-8")),
+        "paragraphs": len(paragraph_texts(contents)),
+        "entries": toc_entries(contents),
+        "bookmarks": sorted(bookmark_names(contents)),
+        "document_xml": part_text(contents, "word/document.xml"),
+        "settings_tags": settings_tags(contents),
+        "style_numbering": style_numbering(contents),
+        "style_based_on": style_based_on(contents),
+        "abstract_levels": abstract_levels(contents),
+    }
+    # The other half of the product decision: --no-cache writes the field and no
+    # result, which is a legitimate mode and must be distinguishable from a bug.
+    bare = work / "bare-toc.docx"
+    nr = run_script("docx_toc.py", "--in", OUTLINE, "--out", bare, "--toc",
+                    "--no-cache", "--report", work / "bare-toc.json")
+    # `entries` counts paragraphs carrying a TOC style — and --no-cache writes ONE
+    # of those to hold the field markers, so a count of zero was never the right
+    # expectation. What "no result" actually means is that no entry carries a
+    # heading: the cached result is exactly the hyperlinked entries.
+    out["no_cache"] = {"exit": nr.returncode,
+                       "paragraphs": len(paragraph_texts(bare)),
+                       "cached_entries": sum(1 for e in toc_entries(bare)
+                                             if e["anchors"])}
+    # Running it twice must refuse: two contents pages look identical until someone
+    # updates them, so the second one is the one nobody notices.
+    again = run_script("docx_toc.py", "--in", contents, "--out", work / "twice.docx",
+                       "--toc")
+    out["twice"] = {"exit": again.returncode, "stderr": again.stderr.strip(),
+                    "wrote": (work / "twice.docx").exists()}
+    return out
+
+
+# ── W11: pictures ─────────────────────────────────────────────────────────────
+def collect_images(work: Path) -> dict:
+    sized = work / "illustrated.docx"
+    r = run_script("docx_image.py", "--in", OUTLINE, "--out", sized,
+                   "--insert", CHART, "--after", OUTLINE_BODY,
+                   "--width-cm", str(IMAGE_WIDTH_CM), "--alt", "季度收入趋势图",
+                   "--report", work / "image.json")
+    out = {
+        "exit": r.returncode,
+        "report": json.loads((work / "image.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(sized)),
+        "defaults": defaults_of(sized),
+        "drawings": drawings_of(sized),
+        "paragraphs": len(paragraph_texts(sized)),
+        "body_children": body_child_names(sized),
+    }
+    # No --width-cm: the size then comes from the file's own declared density, and
+    # that is the number a 96-dpi assumption gets wrong.
+    intrinsic = work / "intrinsic.docx"
+    ir = run_script("docx_image.py", "--in", OUTLINE, "--out", intrinsic,
+                    "--insert", CHART, "--report", work / "intrinsic.json")
+    out["intrinsic"] = {
+        "exit": ir.returncode,
+        "drawings": drawings_of(intrinsic),
+        "report": json.loads((work / "intrinsic.json").read_text(encoding="utf-8")),
+    }
+    # Replace with the SAME format: the relationship and content type already say the
+    # right thing, so only bytes may change.
+    same = work / "replaced-same.docx"
+    bigger = work / "bigger.png"
+    bigger.write_bytes(CHART.read_bytes() + b"\x00" * 8)   # different bytes, same format
+    sr = run_script("docx_image.py", "--in", sized, "--out", same,
+                    "--replace", "0", "--with", bigger, "--report", work / "same.json")
+    out["replace_same"] = {
+        "exit": sr.returncode,
+        "report": json.loads((work / "same.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(same)),
+        "drawings": drawings_of(same),
+        "media_bytes": {n: len(d) for n, d in parts_of(same).items()
+                        if n.startswith("word/media/")},
+    }
+    # Replace with a DIFFERENT format: the old media part has to go — all three of
+    # bytes, Override/Default and Relationship — and a new Default declared.
+    other = work / "replaced-gif.docx"
+    gif = work / "tiny.gif"
+    gif.write_bytes(TINY_GIF)
+    gr = run_script("docx_image.py", "--in", sized, "--out", other,
+                    "--replace", "0", "--with", gif, "--report", work / "gif.json")
+    out["replace_other"] = {
+        "exit": gr.returncode,
+        "report": json.loads((work / "gif.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(other)),
+        "defaults": defaults_of(other),
+        "drawings": drawings_of(other),
+        "rel_targets": sorted(rels_of(other).values()),
+    }
+    return out
+
+
+# ── W16: font bindings ────────────────────────────────────────────────────────
+def collect_fonts(work: Path) -> dict:
+    bound = work / "bound.docx"
+    r = run_script("docx_fonts.py", "--in", FONTLESS, "--out", bound, "--fix",
+                   "--east-asia", FONTLESS_FALLBACK_EA, "--ascii", "Calibri",
+                   "--report", work / "fonts.json")
+    out = {
+        "exit": r.returncode,
+        "report": json.loads((work / "fonts.json").read_text(encoding="utf-8")),
+        "document_xml": part_text(bound, "word/document.xml"),
+        "still_unbound": unbound_cjk_runs(bound),
+        "parts_changed": sorted(n for n, d in parts_of(bound).items()
+                                if parts_of(FONTLESS).get(n) != d),
+    }
+    clean = work / "clean.json"
+    cr = run_script("docx_fonts.py", "--in", REPORT, "--check", "--report", clean)
+    out["check_clean"] = {
+        "exit": cr.returncode,
+        "report": json.loads(clean.read_text(encoding="utf-8")),
+        "wrote_anything": sorted(p.name for p in work.glob("*.docx")
+                                 if p.name.startswith("check")),
+    }
+    sr = run_script("docx_fonts.py", "--in", FONTLESS, "--out", work / "strict.docx",
+                    "--fix", "--strict")
+    out["strict"] = {"exit": sr.returncode, "stderr": sr.stderr.strip(),
+                     "wrote": (work / "strict.docx").exists()}
+    return out
 
 
 def blank_document(src: Path, dst: Path) -> None:
@@ -867,6 +1327,49 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
         out.append(f"V0 unordered.docx carries {f['order_defects']} order defect(s), "
                    f"expected {ORDER_DEFECTS} — the repair assertions are measuring a "
                    f"different fixture than they were written for")
+
+    # outline.docx earns its place by what it does NOT have. The moment it gains a
+    # header, a png Default or a media part, every "create" assertion silently
+    # becomes a "replace" assertion and stops testing the package wiring.
+    if f["outline_header_footer_parts"] or f["outline_sect_refs"]:
+        out.append(f"V0 outline.docx now carries {f['outline_header_footer_parts']} "
+                   f"header/footer part(s) and {f['outline_sect_refs']} binding(s) — "
+                   f"W9 would then be exercising replacement, not creation")
+    if f["outline_png_default"] or f["outline_media_parts"]:
+        out.append("V0 outline.docx already declares a picture content type or holds "
+                   "media, so inserting one no longer has to declare anything")
+    if f["outline_paragraphs"] != OUTLINE_PARAGRAPHS:
+        out.append(f"V0 outline.docx has {f['outline_paragraphs']} paragraphs, the "
+                   f"assertions are written for {OUTLINE_PARAGRAPHS}")
+    if sorted(set(f["outline_heading_levels"])) != [1, 2, 3] or \
+            f["outline_heading_styles"] < 3:
+        out.append(f"V0 outline.docx's heading levels are "
+                   f"{sorted(set(f['outline_heading_levels']))}; a contents page "
+                   f"built from one level proves nothing about levels")
+    if not f["chart_has_phys"] or f["chart_square"]:
+        out.append("V0 chart.png is square or no longer states its own density — a "
+                   "square picture hides a swapped extent, and without pHYs the "
+                   "96-dpi assumption gives the same answer as reading the file")
+
+    # fontless.docx must carry all three shapes, and the STYLE must be the only
+    # place one of the answers lives — otherwise "keep what the document said" and
+    # "write the default everywhere" produce the same output.
+    if f["fontless_unbound"] != FONTLESS_UNBOUND_RUNS:
+        out.append(f"V0 fontless.docx has {f['fontless_unbound']} unbound CJK run(s), "
+                   f"expected {FONTLESS_UNBOUND_RUNS}")
+    if not f["fontless_style_says"]:
+        out.append(f"V0 no style in fontless.docx names {FONTLESS_STYLE_EA!r}, so a "
+                   f"repair that writes the fallback everywhere cannot be told apart "
+                   f"from one that honours the document")
+    if f["fontless_docdefaults_say"]:
+        out.append("V0 fontless.docx's w:docDefaults state a font again, so no run in "
+                   "it is genuinely unbound and --strict has nothing to refuse")
+    if not f["fontless_kept_ascii"]:
+        out.append(f"V0 fontless.docx no longer carries a deliberate "
+                   f"{FONTLESS_KEPT_ASCII!r}, so 'the repair kept it' is untestable")
+    if f["report_unbound"]:
+        out.append(f"V0 report.docx now has {f['report_unbound']} unbound CJK run(s), "
+                   f"so the clean --check case is no longer clean")
     return out
 
 
@@ -1670,6 +2173,499 @@ def b5_listing(ctx: dict) -> list[str]:
     return out
 
 
+# ── W9: headers and footers ───────────────────────────────────────────────────
+@check("H1", "a new header is four package pieces, and all four are written")
+def h1_pieces(ctx: dict) -> list[str]:
+    c = ctx["headerfooter"]["create"]
+    out = []
+    if c["exit"] != 0:
+        out.append(f"H1 creating a header exited {c['exit']}")
+    for kind, part in (("header", "word/header1.xml"), ("footer", "word/footer1.xml")):
+        if part not in c["parts"]:
+            out.append(f"H1 no {part} was written")
+            continue
+        if part not in c["overrides"]:
+            out.append(f"H1 {part} has no content-type Override — Word treats a part "
+                       f"nothing declares as damage")
+        if part.split("/", 1)[1] not in c["rel_targets"]:
+            out.append(f"H1 nothing in word/_rels/document.xml.rels points at {part}; "
+                       f"the bytes are in the package and unreachable")
+        ref = next((r for r in c["refs"] if r["kind"] == kind), None)
+        if ref is None:
+            out.append(f"H1 w:sectPr carries no {kind}Reference, so the part is never "
+                       f"used by any page")
+        elif ref["part"] != part:
+            out.append(f"H1 the {kind}Reference resolves to {ref['part']}, not {part}")
+    written = c["report"].get("written") or []
+    if len(written) != 2 or not all(len(w.get("pieces") or []) >= 4 for w in written):
+        out.append("H1 the report does not name the four pieces it wrote — a caller "
+                   "cannot tell a complete write from a partial one")
+    return out
+
+
+@check("H2", "a first-page header without <w:titlePg/> is a part Word ignores")
+def h2_title_page(ctx: dict) -> list[str]:
+    f = ctx["headerfooter"]["first"]
+    out = []
+    if f["exit"] != 0:
+        out.append(f"H2 creating a first-page header exited {f['exit']}")
+    if "titlePg" not in f["sect_tags"]:
+        out.append("H2 <w:titlePg/> is not in w:sectPr, so the first-page header was "
+                   "written correctly in every other respect and page one still "
+                   "shows the ordinary one")
+    if not any(r["type"] == "first" for r in f["refs"]):
+        out.append("H2 no headerReference of type 'first' was added")
+    written = (f["report"].get("written") or [{}])[0]
+    if "titlePg" not in (written.get("activated_by") or ""):
+        out.append("H2 the report does not say what makes the variant take effect, "
+                   "which is the one thing about it worth reporting")
+    return out
+
+
+@check("H3", "an even-page header needs a switch in settings.xml, not in the section")
+def h3_even_pages(ctx: dict) -> list[str]:
+    e = ctx["headerfooter"]["even"]
+    out = []
+    if e["exit"] != 0:
+        out.append(f"H3 creating an even-page header exited {e['exit']}")
+    if "evenAndOddHeaders" not in e["settings_tags"]:
+        out.append("H3 <w:evenAndOddHeaders/> is not in word/settings.xml — it is a "
+                   "DOCUMENT-wide setting, and without it the even header is a part "
+                   "no page ever asks for")
+    if "evenAndOddHeaders" in e["sect_tags"]:
+        out.append("H3 <w:evenAndOddHeaders/> was written into w:sectPr, where it is "
+                   "not a member of CT_SectPr and does nothing")
+    if not any(r["type"] == "even" for r in e["refs"]):
+        out.append("H3 no headerReference of type 'even' was added")
+    return out
+
+
+@check("H4", "removing a header takes its part and its switch with it")
+def h4_remove(ctx: dict) -> list[str]:
+    r = ctx["headerfooter"]["remove"]
+    out = []
+    if r["exit"] != 0:
+        out.append(f"H4 removing a header exited {r['exit']}")
+    if any(x["type"] == "first" for x in r["refs"]):
+        out.append("H4 the first-page reference is still in w:sectPr")
+    if "word/header2.xml" in r["parts"]:
+        out.append("H4 word/header2.xml is still in the package with nothing pointing "
+                   "at it — an orphan part is exactly what `drop` exists to prevent")
+    if "word/header2.xml" in r["overrides"] or "header2.xml" in r["rel_targets"]:
+        out.append("H4 the part is gone but its Override or its Relationship is not — "
+                   "removing a part is three things, and this did fewer")
+    if "titlePg" in r["sect_tags"]:
+        out.append("H4 <w:titlePg/> is still on after the first-page header was "
+                   "removed, so page one now has NO header at all — a change nobody "
+                   "asked for and nobody sees until it prints")
+    removed = (r["report"].get("removed") or [{}])[0]
+    if not removed.get("part_dropped") or not removed.get("title_page_switched_off"):
+        out.append("H4 the report does not say the part was dropped and the switch "
+                   "turned off")
+    return out
+
+
+@check("H5", "the page number is a field, not a digit somebody cached")
+def h5_page_field(ctx: dict) -> list[str]:
+    c = ctx["headerfooter"]["create"]
+    xml = c["footer_xml"]
+    out = []
+    if "fldChar" not in xml or "PAGE" not in xml:
+        out.append("H5 the footer holds no PAGE field, so the page number is whatever "
+                   "literal text was written there")
+    if "<w:t>1</w:t>" in xml or "<w:t>1<" in xml:
+        out.append("H5 the footer caches the digit 1 as the field result — nothing "
+                   "here has laid the document out, and a cached 1 is how every page "
+                   "ends up saying page 1")
+    if 'w:fldCharType="separate"' in xml:
+        out.append("H5 the field carries a `separate` marker, which opens a cached "
+                   "RESULT; this field was written precisely because there is no "
+                   "result to cache")
+    footer = next((w for w in (c["report"].get("written") or [])
+                   if w.get("kind") == "footer"), {})
+    if not footer.get("page_number_field"):
+        out.append("H5 the report does not say a page-number field was written")
+    return out
+
+
+# ── W10: contents and outline numbering ───────────────────────────────────────
+@check("G1", "every heading is listed, at its own level, in document order")
+def g1_headings(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    out = []
+    if t["exit"] != 0:
+        out.append(f"G1 the TOC run exited {t['exit']}")
+    headings = t["report"].get("headings") or []
+    if [h["level"] for h in headings] != list(OUTLINE_LEVELS):
+        out.append(f"G1 heading levels came back as {[h['level'] for h in headings]}, "
+                   f"expected {list(OUTLINE_LEVELS)} — a contents page that flattens "
+                   f"levels is a list, not a structure")
+    if [h["text"] for h in headings] != list(OUTLINE_HEADINGS):
+        out.append(f"G1 the headings came back as {[h['text'] for h in headings]}")
+    entries = t["entries"]
+    if len(entries) != len(OUTLINE_HEADINGS):
+        out.append(f"G1 the cached result holds {len(entries)} entries for "
+                   f"{len(OUTLINE_HEADINGS)} headings")
+    for heading, entry in zip(OUTLINE_HEADINGS, entries):
+        if heading not in entry["text"]:
+            out.append(f"G1 the entry for {heading!r} does not carry its text")
+    styles = [e["style"] for e in entries]
+    if styles != [f"TOC{min(lvl, 3)}" for lvl in OUTLINE_LEVELS]:
+        out.append(f"G1 the entries carry styles {styles}, so the indentation does "
+                   f"not follow the heading levels")
+    if t["paragraphs"] != OUTLINE_PARAGRAPHS + TOC_PARAGRAPHS_ADDED:
+        out.append(f"G1 the document has {t['paragraphs']} paragraphs, expected "
+                   f"{OUTLINE_PARAGRAPHS + TOC_PARAGRAPHS_ADDED}")
+    return out
+
+
+@check("G2", "the cached result carries no page number, because none was computed")
+def g2_no_page_numbers(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    out = []
+    for entry in t["entries"]:
+        tail = entry["text"].replace(entry["link_text"], "")
+        if any(ch.isdigit() for ch in tail):
+            out.append(f"G2 the entry for {entry['link_text']!r} carries {tail!r} "
+                       f"where a page number goes — nothing here laid the document "
+                       f"out, so that number was invented")
+        elif TOC_PLACEHOLDER not in tail:
+            out.append(f"G2 the entry for {entry['link_text']!r} has nothing where a "
+                       f"page number goes; a blank is indistinguishable from a tool "
+                       f"that forgot")
+    toc = t["report"].get("toc") or {}
+    if not toc.get("needs_update") or "not written" not in (toc.get("page_numbers") or ""):
+        out.append("G2 the report does not say the page numbers are missing on "
+                   "purpose, which is the whole product decision")
+    if t["no_cache"]["paragraphs"] != OUTLINE_PARAGRAPHS + 2 or \
+            t["no_cache"]["cached_entries"] != 0:
+        out.append(f"G2 --no-cache produced {t['no_cache']['paragraphs']} paragraphs "
+                   f"and {t['no_cache']['cached_entries']} cached entr(ies); it is "
+                   f"supposed to write the field and NO result, and it must stay "
+                   f"distinguishable from the cached mode")
+    return out
+
+
+@check("G3", "the field asks to be recalculated, in both of the two ways")
+def g3_dirty(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    out = []
+    if 'w:dirty="true"' not in t["document_xml"]:
+        out.append("G3 the TOC field is not marked w:dirty, so a reader has no reason "
+                   "to recompute the page numbers this document deliberately omits")
+    if "updateFields" not in t["settings_tags"]:
+        out.append("G3 <w:updateFields/> is not in word/settings.xml — the only "
+                   "switch that asks a reader to refresh fields on open")
+    if 'TOC \\o "1-3"' not in t["document_xml"].replace("\\\\", "\\"):
+        out.append("G3 the field instruction is not a TOC over levels 1-3")
+    return out
+
+
+@check("G4", "every entry links to a bookmark that exists")
+def g4_bookmarks(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    out = []
+    names = set(t["bookmarks"])
+    anchors = [a for e in t["entries"] for a in e["anchors"]]
+    # Deliberately NOT "there are as many anchors as headings": how COMPLETE the
+    # contents page is belongs to G1, and duplicating it here made a flaw that
+    # shortens the list light up both checks, which hides which one owns the defect.
+    # G4 owns one thing — that the links go somewhere.
+    if not anchors:
+        out.append("G4 no entry is a hyperlink, so a reader clicking the contents "
+                   "page gets nothing and the \\h switch was written for no one")
+    for anchor in anchors:
+        if anchor not in names:
+            out.append(f"G4 an entry anchors to {anchor!r}, which no bookmarkStart "
+                       f"defines — Word shows 'Error! Bookmark not defined.'")
+    for heading in (h["bookmark"] for h in t["report"].get("headings") or []):
+        if heading not in names:
+            out.append(f"G4 heading bookmark {heading!r} was reported but is not in "
+                       f"the document")
+    return out
+
+
+@check("G5", "outline numbering is written in both halves, or it numbers nothing")
+def g5_numbering(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    out = []
+    levels = t["abstract_levels"]
+    if [lvl["style"] for lvl in levels] != ["Heading1", "Heading2", "Heading3"]:
+        out.append(f"G5 the abstractNum levels name {[l['style'] for l in levels]}, "
+                   f"so they are not bound to the heading styles")
+    if [lvl["text"] for lvl in levels] != ["%1.", "%1.%2", "%1.%2.%3"]:
+        out.append(f"G5 the level texts are {[l['text'] for l in levels]}, not a "
+                   f"1 / 1.1 / 1.1.1 outline")
+    numbering = t["style_numbering"]
+    num_id = (t["report"].get("numbering") or {}).get("num_id")
+    for style in ("Heading1", "Heading2", "Heading3"):
+        if style not in numbering:
+            out.append(f"G5 {style} carries no w:numPr — an abstractNum whose levels "
+                       f"name a w:pStyle numbers NOTHING until the style points back "
+                       f"at it, and the XML looks complete either way")
+        elif numbering[style] != str(num_id):
+            out.append(f"G5 {style} points at numId {numbering[style]}, but the "
+                       f"list that was authored is numId {num_id}")
+    return out
+
+
+@check("G6", "the contents heading does not take chapter number 1 for itself")
+def g6_contents_not_numbered(ctx: dict) -> list[str]:
+    t = ctx["toc"]
+    numbering = t["style_numbering"]
+    based = t["style_based_on"]
+    out = []
+    if TOC_HEADING_STYLE not in based:
+        return [f"G6 {TOC_HEADING_STYLE} was not created, so the contents title is "
+                f"formatted as body text"]
+    # Walk the basedOn chain: numbering attached to a style is inherited by every
+    # style built on it, and TOCHeading is built on Heading1 (as Word's own is).
+    chain, current = [], based.get(TOC_HEADING_STYLE)
+    while current and current not in chain:
+        chain.append(current)
+        current = based.get(current)
+    inherits = [s for s in chain if s in numbering and numbering[s] != "0"]
+    cancels = numbering.get(TOC_HEADING_STYLE) == "0"
+    if inherits and not cancels:
+        out.append(f"G6 {TOC_HEADING_STYLE} is based on {inherits[0]}, which is "
+                   f"numbered, and does not cancel it with <w:numId w:val=\"0\"/> — "
+                   f"measured in a rendered PDF, the contents page then takes number "
+                   f"1 and the real first chapter becomes 2. Nothing in the package "
+                   f"is invalid and no other check can see it")
+    return out
+
+
+# ── W11: pictures ─────────────────────────────────────────────────────────────
+@check("M1", "a picture is four package pieces, and a package that has never held "
+             "one has no content type for it")
+def m1_pieces(ctx: dict) -> list[str]:
+    i = ctx["image"]
+    out = []
+    if i["exit"] != 0:
+        out.append(f"M1 inserting a picture exited {i['exit']}")
+    if not any(n.startswith("word/media/") for n in i["parts"]):
+        out.append("M1 no media part was written")
+    if i["defaults"].get("png") != "image/png":
+        out.append("M1 [Content_Types].xml declares no Default for .png — outline.docx "
+                   "had never held one, and a package with an undeclared part is one "
+                   "Word offers to repair")
+    drawings = i["drawings"]
+    if len(drawings) != 1:
+        out.append(f"M1 {len(drawings)} drawing(s) in the document, expected 1")
+    elif not drawings[0]["part"]:
+        out.append(f"M1 the drawing's r:embed={drawings[0]['rid']} resolves to no "
+                   f"relationship, so it points at nothing")
+    if i["paragraphs"] != OUTLINE_PARAGRAPHS + 1:
+        out.append(f"M1 the document has {i['paragraphs']} paragraphs, expected "
+                   f"{OUTLINE_PARAGRAPHS + 1}")
+    if i["body_children"] and i["body_children"][-1] != "sectPr":
+        out.append("M1 <w:sectPr> is no longer last in the body")
+    if not (i["report"].get("inserted") or {}).get("content_type_default_added"):
+        out.append("M1 the report does not say the content type had to be declared")
+    return out
+
+
+@check("M2", "the size comes from the picture's own density, not from 96 dpi")
+def m2_intrinsic(ctx: dict) -> list[str]:
+    drawings = ctx["image"]["intrinsic"]["drawings"]
+    out = []
+    if not drawings or not drawings[0]["extent"]:
+        return ["M2 the intrinsic insert produced no sized drawing"]
+    extent = drawings[0]["extent"]
+    if extent != list(CHART_INTRINSIC_EMU):
+        out.append(f"M2 the extent is {extent} EMU, expected "
+                   f"{list(CHART_INTRINSIC_EMU)} — chart.png declares 150 dpi in its "
+                   f"pHYs chunk, and {list(CHART_96DPI_EMU)} is what assuming the "
+                   f"web's 96 dpi gives instead")
+    if extent[0] < 100000:
+        out.append(f"M2 the extent is {extent[0]} EMU, which is a pixel count written "
+                   f"into a field measured in 914400ths of an inch — the picture is "
+                   f"a fraction of a millimetre wide and renders as nothing")
+    described = (ctx["image"]["intrinsic"]["report"].get("inserted") or {})
+    if described.get("pixels") != list(CHART_PX):
+        out.append(f"M2 the report says the picture is {described.get('pixels')} "
+                   f"pixels, measured {list(CHART_PX)}")
+    if "read from the file" not in (described.get("density") or ""):
+        out.append("M2 the report does not say whether the density was measured or "
+                   "assumed, which is the difference between the two numbers above")
+    return out
+
+
+@check("M3", "--width-cm scales it and keeps the aspect ratio")
+def m3_scaled(ctx: dict) -> list[str]:
+    drawings = ctx["image"]["drawings"]
+    out = []
+    if not drawings or not drawings[0]["extent"]:
+        return ["M3 the scaled insert produced no sized drawing"]
+    extent = drawings[0]["extent"]
+    if extent != list(IMAGE_WIDTH_EMU):
+        out.append(f"M3 the extent is {extent} EMU; {IMAGE_WIDTH_CM}cm at the "
+                   f"fixture's 2:1 ratio is {list(IMAGE_WIDTH_EMU)}")
+    if extent[1] and abs(extent[0] / extent[1] - CHART_PX[0] / CHART_PX[1]) > 0.01:
+        out.append(f"M3 the ratio came out {extent[0] / extent[1]:.3f}, the picture's "
+                   f"is {CHART_PX[0] / CHART_PX[1]:.3f} — scaling one side and "
+                   f"leaving the other stretches it, and nothing errors")
+    return out
+
+
+@check("M4", "the two numbers that state one size agree")
+def m4_extent_agrees(ctx: dict) -> list[str]:
+    out = []
+    for label, drawings in (("scaled", ctx["image"]["drawings"]),
+                            ("intrinsic", ctx["image"]["intrinsic"]["drawings"])):
+        for d in drawings:
+            if d["extent"] and d["inner"] and d["extent"] != d["inner"]:
+                out.append(f"M4 ({label}) <wp:extent> says {d['extent']} and <a:ext> "
+                           f"says {d['inner']} — Word lays out a box of one size and "
+                           f"stretches a picture of the other into it, which reads as "
+                           f"a blurry export rather than as a defect")
+    return out
+
+
+@check("M5", "replacing a picture rewires it without orphaning the old part")
+def m5_replace(ctx: dict) -> list[str]:
+    same = ctx["image"]["replace_same"]
+    other = ctx["image"]["replace_other"]
+    out = []
+    if same["exit"] != 0 or other["exit"] != 0:
+        out.append(f"M5 replace exited {same['exit']} / {other['exit']}")
+    media = [n for n in same["parts"] if n.startswith("word/media/")]
+    if len(media) != 1:
+        out.append(f"M5 same-format replace left {len(media)} media part(s): {media} — "
+                   f"the relationship and the content type already said the right "
+                   f"thing, so only the bytes had to change")
+    if same["media_bytes"].get("word/media/image1.png") == CHART.stat().st_size:
+        out.append("M5 same-format replace did not change the bytes at all")
+    if same["drawings"] and same["drawings"][0]["part"] != "word/media/image1.png":
+        out.append("M5 same-format replace repointed the drawing when it did not "
+                   "need to")
+
+    media = [n for n in other["parts"] if n.startswith("word/media/")]
+    if any(n.endswith(".png") for n in media):
+        out.append(f"M5 the replaced .png is still in the package: {media} — nothing "
+                   f"points at it, which is precisely the orphan `drop` exists for")
+    if "image1.png" in other["rel_targets"]:
+        out.append("M5 the old relationship survived the replacement, so the package "
+                   "has a link to bytes that are gone")
+    if other["defaults"].get("gif") != "image/gif":
+        out.append("M5 no Default was declared for the new format's extension")
+    if other["drawings"] and not other["drawings"][0]["part"]:
+        out.append("M5 the drawing's r:embed no longer resolves after the replacement")
+    return out
+
+
+# ── W16: font bindings ────────────────────────────────────────────────────────
+@check("N1", "the audit finds all three shapes of a missing binding")
+def n1_audit(ctx: dict) -> list[str]:
+    f = ctx["fonts"]
+    out = []
+    if f["exit"] != 0:
+        out.append(f"N1 --fix exited {f['exit']}")
+    problems = f["report"].get("problems") or []
+    if len(problems) != FONTLESS_UNBOUND_RUNS:
+        out.append(f"N1 {len(problems)} unbound run(s) found, the fixture carries "
+                   f"{FONTLESS_UNBOUND_RUNS} and they are three different shapes: no "
+                   f"w:rPr at all, a style that already answers, and a w:rFonts with "
+                   f"only @w:ascii")
+    shapes = {tuple(p["missing"]) for p in problems}
+    if ("eastAsia",) not in shapes:
+        out.append("N1 the run carrying @w:ascii and no @w:eastAsia was not found — "
+                   "an audit that only looks for a missing w:rFonts misses the half "
+                   "that is hardest to see")
+    if f["still_unbound"]:
+        out.append(f"N1 after --fix, {len(f['still_unbound'])} CJK run(s) still state "
+                   f"neither face: {f['still_unbound'][:2]}")
+    if f["parts_changed"] != ["word/document.xml"]:
+        out.append(f"N1 --fix rewrote {f['parts_changed']}; only the part holding the "
+                   f"unbound runs should have changed")
+    return out
+
+
+@check("N2", "a face the document already stated is kept, not replaced by the default")
+def n2_inherited(ctx: dict) -> list[str]:
+    f = ctx["fonts"]
+    out = []
+    inherited = [p for p in f["report"].get("problems") or []
+                 if any(v.get("from", "").startswith("style:")
+                        for v in (p.get("written") or {}).values())]
+    if not inherited:
+        out.append("N2 no run resolved its face from a style, so 'keep what the "
+                   "document said' was never exercised")
+    for entry in inherited:
+        value = entry["written"].get("eastAsia", {}).get("value")
+        if value != FONTLESS_STYLE_EA:
+            out.append(f"N2 the run under Heading2 was bound to {value!r}; its style "
+                       f"already says {FONTLESS_STYLE_EA!r}, and writing the default "
+                       f"over it restyles a heading the author chose a face for — a "
+                       f"change D6 cannot tell apart from a repair")
+    if FONTLESS_STYLE_EA not in f["document_xml"]:
+        out.append(f"N2 {FONTLESS_STYLE_EA!r} appears nowhere in the repaired document")
+    sources = f["report"].get("sources") or {}
+    if not any(k.startswith("style:") for k in sources):
+        out.append("N2 the report does not say which faces came from the document and "
+                   "which from the fallback")
+    return out
+
+
+@check("N3", "a latin face the run chose deliberately survives the repair")
+def n3_keeps_ascii(ctx: dict) -> list[str]:
+    f = ctx["fonts"]
+    out = []
+    if FONTLESS_KEPT_ASCII not in f["document_xml"]:
+        out.append(f"N3 {FONTLESS_KEPT_ASCII!r} is gone from the repaired document — "
+                   f"that run was missing only its @w:eastAsia, and overwriting the "
+                   f"@w:ascii it did state changes text nobody asked to change")
+    half = [p for p in f["report"].get("problems") or [] if p["missing"] == ["eastAsia"]]
+    if half and "ascii" in (half[0].get("written") or {}):
+        out.append("N3 the repair wrote an @w:ascii onto a run that already had one")
+    return out
+
+
+@check("N4", "--check reports and writes nothing, and it reads headers and footers too")
+def n4_check_only(ctx: dict) -> list[str]:
+    c = ctx["fonts"]["check_clean"]
+    out = []
+    if c["exit"] != 0:
+        out.append(f"N4 --check on an already-correct document exited {c['exit']}")
+    if c["report"].get("unbound_runs") != 0:
+        out.append(f"N4 --check reports {c['report'].get('unbound_runs')} unbound "
+                   f"run(s) in report.docx, whose every run states both faces — an "
+                   f"audit that cries wolf is one people turn off")
+    parts = c["report"].get("parts_examined") or []
+    if not any(p.startswith("word/header") for p in parts) or \
+            not any(p.startswith("word/footer") for p in parts):
+        out.append(f"N4 --check examined {parts}; a letterhead is exactly the text "
+                   f"most likely to have been pasted in with its own fonts")
+    if c["report"].get("out") or c["wrote_anything"]:
+        out.append("N4 --check wrote a document; it is an inspection")
+    if not c["report"].get("verdict"):
+        out.append("N4 --check gives no verdict, so a clean document and a crashed "
+                   "run read the same")
+    return out
+
+
+@check("N5", "--strict refuses when the face came from this tool and not the document")
+def n5_strict(ctx: dict) -> list[str]:
+    f = ctx["fonts"]
+    s = f["strict"]
+    out = []
+    if s["exit"] == 0:
+        out.append("N5 --strict exited 0 on a document where two runs had no face "
+                   "stated anywhere — not on the run, not on a style, not in "
+                   "w:docDefaults. That value is this tool's choice, not the "
+                   "document's, and --strict exists to say so")
+    if s["wrote"]:
+        out.append("N5 --strict wrote the file anyway, which makes the refusal a "
+                   "message rather than a refusal")
+    if "docDefaults" not in s["stderr"] and "fallback" not in s["stderr"]:
+        out.append(f"N5 the refusal does not say why: {s['stderr'][:120]!r}")
+    if not f["report"].get("fallback_used"):
+        out.append("N5 the non-strict report does not name the runs whose face came "
+                   "from the fallback, so the same information is unavailable to a "
+                   "caller who did not pass --strict")
+    return out
+
+
 # ── the negative controls ─────────────────────────────────────────────────────
 # Each one is a defect an assertion above claims to catch, applied to the collected
 # context. They are the implementations somebody reaches for first, not invented
@@ -2349,6 +3345,413 @@ def flaw_listing_hides_the_anchor_state(ctx, work):
     return ctx
 
 
+# ── W9 ────────────────────────────────────────────────────────────────────────
+def flaw_header_part_not_wired(ctx, work):
+    """The bytes and the content type, and nothing pointing at either."""
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["create"]["rel_targets"] = [t for t in c["create"]["rel_targets"]
+                                  if t != "header1.xml"]
+    for ref in c["create"]["refs"]:
+        if ref["kind"] == "header":
+            ref["part"] = None
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_header_reference_never_added(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["create"]["refs"] = [r for r in c["create"]["refs"] if r["kind"] != "header"]
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_footer_never_created(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["create"]["parts"] = [p for p in c["create"]["parts"] if "footer" not in p]
+    c["create"]["refs"] = [r for r in c["create"]["refs"] if r["kind"] != "footer"]
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_first_page_without_titlepg(ctx, work):
+    """All four pieces written, and page one still shows the ordinary header."""
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["first"]["sect_tags"] = [t for t in c["first"]["sect_tags"] if t != "titlePg"]
+    for w in c["first"]["report"].get("written") or []:
+        w["activated_by"] = None
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_first_page_activation_not_reported(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    for w in c["first"]["report"].get("written") or []:
+        w["activated_by"] = None
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_even_switch_missing(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["even"]["settings_tags"] = [t for t in c["even"]["settings_tags"]
+                                  if t != "evenAndOddHeaders"]
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_even_switch_put_in_the_section(ctx, work):
+    """The natural guess: it looks like a section property, so it goes in sectPr."""
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["even"]["settings_tags"] = [t for t in c["even"]["settings_tags"]
+                                  if t != "evenAndOddHeaders"]
+    c["even"]["sect_tags"] = c["even"]["sect_tags"] + ["evenAndOddHeaders"]
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_remove_leaves_the_part(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["remove"]["parts"] = sorted(c["remove"]["parts"] + ["word/header2.xml"])
+    c["remove"]["overrides"] = sorted(c["remove"]["overrides"] + ["word/header2.xml"])
+    for r in c["remove"]["report"].get("removed") or []:
+        r["part_dropped"] = False
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_remove_leaves_titlepg_on(ctx, work):
+    """Page one now has NO header, and nothing says so."""
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["remove"]["sect_tags"] = c["remove"]["sect_tags"] + ["titlePg"]
+    for r in c["remove"]["report"].get("removed") or []:
+        r["title_page_switched_off"] = False
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_page_number_cached_as_a_digit(ctx, work):
+    """The field is there and so is a stale '1' — which is what every page then says."""
+    c = copy.deepcopy(ctx["headerfooter"])
+    c["create"]["footer_xml"] = c["create"]["footer_xml"].replace(
+        '<w:fldChar w:fldCharType="end"/>',
+        '<w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/>')
+    ctx["headerfooter"] = c
+    return ctx
+
+
+def flaw_page_number_written_as_plain_text(ctx, work):
+    c = copy.deepcopy(ctx["headerfooter"])
+    xml = c["create"]["footer_xml"]
+    xml = re.sub(r"<w:fldChar[^>]*/>|<w:instrText[^>]*>.*?</w:instrText>", "", xml)
+    c["create"]["footer_xml"] = xml
+    for w in c["create"]["report"].get("written") or []:
+        w["page_number_field"] = False
+    ctx["headerfooter"] = c
+    return ctx
+
+
+# ── W10 ───────────────────────────────────────────────────────────────────────
+def flaw_toc_flattens_the_levels(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    for h in t["report"]["headings"]:
+        h["level"] = 1
+    for e in t["entries"]:
+        e["style"] = "TOC1"
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_lists_only_the_top_level(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    t["report"]["headings"] = [h for h in t["report"]["headings"] if h["level"] == 1]
+    t["entries"] = [e for e in t["entries"] if e["style"] == "TOC1"]
+    t["paragraphs"] = OUTLINE_PARAGRAPHS + 3
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_caches_invented_page_numbers(ctx, work):
+    """The tempting implementation: fill the entries in and look finished."""
+    t = copy.deepcopy(ctx["toc"])
+    for i, e in enumerate(t["entries"]):
+        e["text"] = e["link_text"] + "\t" + str(i + 1)
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_caches_no_placeholder(ctx, work):
+    """The over-correction: nothing where the number goes, which reads as a bug."""
+    t = copy.deepcopy(ctx["toc"])
+    for e in t["entries"]:
+        e["text"] = e["link_text"]
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_no_cache_caches_anyway(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    t["no_cache"] = {"exit": 0, "paragraphs": OUTLINE_PARAGRAPHS + TOC_PARAGRAPHS_ADDED,
+                     "cached_entries": len(OUTLINE_HEADINGS)}
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_field_not_dirty(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    t["document_xml"] = t["document_xml"].replace(' w:dirty="true"', "")
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_update_fields_not_set(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    t["settings_tags"] = [x for x in t["settings_tags"] if x != "updateFields"]
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_entries_are_plain_text(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    for e in t["entries"]:
+        e["anchors"] = []
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_toc_links_to_a_bookmark_that_is_not_there(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    t["bookmarks"] = []
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_numbering_not_attached_to_the_styles(ctx, work):
+    """The half everyone writes: an abstractNum that numbers nothing."""
+    t = copy.deepcopy(ctx["toc"])
+    t["style_numbering"] = {k: v for k, v in t["style_numbering"].items()
+                            if not k.startswith("Heading")}
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_numbering_levels_name_no_style(ctx, work):
+    t = copy.deepcopy(ctx["toc"])
+    for lvl in t["abstract_levels"]:
+        lvl["style"] = None
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_contents_heading_takes_chapter_one(ctx, work):
+    """Measured in a rendered PDF: '1. 目录 / 2. 经营概况 / 2.1 收入分析'."""
+    t = copy.deepcopy(ctx["toc"])
+    t["style_numbering"].pop(TOC_HEADING_STYLE, None)
+    ctx["toc"] = t
+    return ctx
+
+
+# ── W11 ───────────────────────────────────────────────────────────────────────
+def flaw_image_without_a_content_type(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    i["defaults"].pop("png", None)
+    i["report"]["inserted"]["content_type_default_added"] = False
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_image_drawing_points_at_nothing(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    for d in i["drawings"]:
+        d["part"] = None
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_size_assumes_96_dpi(ctx, work):
+    """The file says 150 dpi; this is the number you get for not asking."""
+    i = copy.deepcopy(ctx["image"])
+    for d in i["intrinsic"]["drawings"]:
+        d["extent"] = list(CHART_96DPI_EMU)
+        d["inner"] = list(CHART_96DPI_EMU)
+    i["intrinsic"]["report"]["inserted"]["density"] = "assumed 96 dpi"
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_extent_filled_with_the_pixel_count(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    for d in i["intrinsic"]["drawings"]:
+        d["extent"] = list(CHART_PX)
+        d["inner"] = list(CHART_PX)
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_width_cm_ignored(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    for d in i["drawings"]:
+        d["extent"] = list(CHART_INTRINSIC_EMU)
+        d["inner"] = list(CHART_INTRINSIC_EMU)
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_only_the_width_is_scaled(ctx, work):
+    """Height left at its intrinsic value: the picture is stretched, nothing errors."""
+    i = copy.deepcopy(ctx["image"])
+    for d in i["drawings"]:
+        d["extent"] = [IMAGE_WIDTH_EMU[0], CHART_INTRINSIC_EMU[1]]
+        d["inner"] = list(d["extent"])
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_extent_and_inner_disagree(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    for d in i["drawings"]:
+        d["inner"] = [d["extent"][0] // 2, d["extent"][1] // 2]
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_same_format_replace_adds_a_part(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    i["replace_same"]["parts"] = sorted(i["replace_same"]["parts"]
+                                        + ["word/media/image2.png"])
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_replace_orphans_the_old_part(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    i["replace_other"]["parts"] = sorted(i["replace_other"]["parts"]
+                                         + ["word/media/image1.png"])
+    i["replace_other"]["rel_targets"] = sorted(i["replace_other"]["rel_targets"]
+                                               + ["image1.png"])
+    ctx["image"] = i
+    return ctx
+
+
+def flaw_replace_repoints_nothing(ctx, work):
+    i = copy.deepcopy(ctx["image"])
+    for d in i["replace_other"]["drawings"]:
+        d["part"] = None
+    ctx["image"] = i
+    return ctx
+
+
+# ── W16 ───────────────────────────────────────────────────────────────────────
+def flaw_audit_only_looks_for_a_missing_rfonts(ctx, work):
+    """Misses the run that carries @w:ascii and no @w:eastAsia — the hardest half."""
+    f = copy.deepcopy(ctx["fonts"])
+    f["report"]["problems"] = [p for p in f["report"]["problems"]
+                               if p["missing"] != ["eastAsia"]]
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_repair_leaves_runs_unbound(ctx, work):
+    f = copy.deepcopy(ctx["fonts"])
+    f["still_unbound"] = [{"paragraph": 1, "text": "本季度整体经营情况",
+                           "missing": ["eastAsia"]}]
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_repair_writes_the_fallback_everywhere(ctx, work):
+    """Passes D6, renders, and quietly restyles a heading the author chose a face for."""
+    f = copy.deepcopy(ctx["fonts"])
+    f["document_xml"] = f["document_xml"].replace(FONTLESS_STYLE_EA,
+                                                  FONTLESS_FALLBACK_EA)
+    for p in f["report"]["problems"]:
+        for slot in (p.get("written") or {}).values():
+            if slot["value"] == FONTLESS_STYLE_EA:
+                slot["value"] = FONTLESS_FALLBACK_EA
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_repair_overwrites_the_latin_face(ctx, work):
+    f = copy.deepcopy(ctx["fonts"])
+    f["document_xml"] = f["document_xml"].replace(FONTLESS_KEPT_ASCII, "Calibri")
+    for p in f["report"]["problems"]:
+        if p["missing"] == ["eastAsia"]:
+            p.setdefault("written", {})["ascii"] = {"value": "Calibri",
+                                                    "from": "fallback"}
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_check_cries_wolf(ctx, work):
+    f = copy.deepcopy(ctx["fonts"])
+    f["check_clean"]["report"]["unbound_runs"] = 4
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_check_skips_headers_and_footers(ctx, work):
+    f = copy.deepcopy(ctx["fonts"])
+    f["check_clean"]["report"]["parts_examined"] = ["word/document.xml"]
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_font_strict_writes_anyway(ctx, work):
+    # NOT named flaw_strict_writes_anyway: W5's template control already owns that
+    # name, and defining it twice silently rebinds it — the T4 row would then run
+    # this mutation instead of its own and fire the wrong check.
+    f = copy.deepcopy(ctx["fonts"])
+    f["strict"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_fallback_runs_not_named(ctx, work):
+    f = copy.deepcopy(ctx["fonts"])
+    f["report"]["fallback_used"] = []
+    ctx["fonts"] = f
+    return ctx
+
+
+# ── the new fixtures stop exercising what they were built for ─────────────────
+def flaw_outline_gains_a_header(ctx, work):
+    f = copy.deepcopy(ctx["fixture"])
+    f["outline_header_footer_parts"] = 1
+    f["outline_sect_refs"] = 1
+    ctx["fixture"] = f
+    return ctx
+
+
+def flaw_outline_already_declares_png(ctx, work):
+    f = copy.deepcopy(ctx["fixture"])
+    f["outline_png_default"] = True
+    ctx["fixture"] = f
+    return ctx
+
+
+def flaw_fontless_becomes_bound(ctx, work):
+    f = copy.deepcopy(ctx["fixture"])
+    f["fontless_unbound"] = 0
+    ctx["fixture"] = f
+    return ctx
+
+
+def flaw_fontless_style_stops_answering(ctx, work):
+    """Then "keep what the document said" and "write the default" agree."""
+    f = copy.deepcopy(ctx["fixture"])
+    f["fontless_style_says"] = False
+    ctx["fixture"] = f
+    return ctx
+
+
+def flaw_chart_loses_its_density(ctx, work):
+    f = copy.deepcopy(ctx["fixture"])
+    f["chart_has_phys"] = False
+    ctx["fixture"] = f
+    return ctx
+
+
 FLAWS = [
     ("replace-run-by-run", flaw_replace_run_by_run, {"E1", "E2"},
      "E2 also fires, and it must: a replacement that never happened leaves the old "
@@ -2472,6 +3875,80 @@ FLAWS = [
      {"V0"}, ""),
     ("CONTROL: unordered.docx stops being unordered", flaw_fixture_stops_being_unordered,
      {"V0"}, ""),
+
+    ("header-part-written-but-not-wired", flaw_header_part_not_wired, {"H1"}, ""),
+    ("header-reference-never-added", flaw_header_reference_never_added, {"H1"}, ""),
+    ("footer-never-created", flaw_footer_never_created, {"H1"}, ""),
+    ("first-page-header-without-titlepg", flaw_first_page_without_titlepg, {"H2"}, ""),
+    ("first-page-activation-not-reported", flaw_first_page_activation_not_reported,
+     {"H2"}, ""),
+    ("even-header-without-the-settings-switch", flaw_even_switch_missing, {"H3"}, ""),
+    ("even-switch-written-into-the-section", flaw_even_switch_put_in_the_section,
+     {"H3"}, ""),
+    ("remove-leaves-the-orphan-part", flaw_remove_leaves_the_part, {"H4"}, ""),
+    ("remove-leaves-titlepg-on", flaw_remove_leaves_titlepg_on, {"H4"}, ""),
+    ("page-number-cached-as-a-digit", flaw_page_number_cached_as_a_digit, {"H5"}, ""),
+    ("page-number-written-as-plain-text", flaw_page_number_written_as_plain_text,
+     {"H5"}, ""),
+
+    ("toc-flattens-the-levels", flaw_toc_flattens_the_levels, {"G1"}, ""),
+    ("toc-lists-only-the-top-level", flaw_toc_lists_only_the_top_level, {"G1"}, ""),
+    ("toc-caches-invented-page-numbers", flaw_toc_caches_invented_page_numbers,
+     {"G2"}, ""),
+    ("toc-caches-no-placeholder-either", flaw_toc_caches_no_placeholder, {"G2"}, ""),
+    ("no-cache-caches-anyway", flaw_no_cache_caches_anyway, {"G2"}, ""),
+    ("toc-field-not-marked-dirty", flaw_toc_field_not_dirty, {"G3"}, ""),
+    ("update-fields-not-set", flaw_update_fields_not_set, {"G3"}, ""),
+    ("toc-entries-are-plain-text", flaw_toc_entries_are_plain_text, {"G4"}, ""),
+    ("toc-links-to-a-bookmark-that-is-not-there",
+     flaw_toc_links_to_a_bookmark_that_is_not_there, {"G4"}, ""),
+    # G6 stays SILENT here, and that is right rather than a gap: with no heading
+    # style numbered there is nothing for the contents heading to inherit, so G6's
+    # subject has gone. G5 owns the missing half; G6 owns what happens when the half
+    # IS there. The first draft of this row predicted a cascade and got it backwards.
+    ("numbering-not-attached-to-the-styles", flaw_numbering_not_attached_to_the_styles,
+     {"G5"}, ""),
+    ("numbering-levels-name-no-style", flaw_numbering_levels_name_no_style, {"G5"}, ""),
+    ("contents-heading-takes-chapter-one", flaw_contents_heading_takes_chapter_one,
+     {"G6"}, ""),
+
+    ("image-written-with-no-content-type", flaw_image_without_a_content_type,
+     {"M1"}, ""),
+    ("image-drawing-points-at-nothing", flaw_image_drawing_points_at_nothing,
+     {"M1"}, ""),
+    ("size-assumes-96-dpi", flaw_size_assumes_96_dpi, {"M2"}, ""),
+    ("extent-filled-with-the-pixel-count", flaw_extent_filled_with_the_pixel_count,
+     {"M2"}, ""),
+    ("width-cm-ignored", flaw_width_cm_ignored, {"M3"}, ""),
+    ("only-the-width-is-scaled", flaw_only_the_width_is_scaled, {"M3"}, ""),
+    ("extent-and-inner-disagree", flaw_extent_and_inner_disagree, {"M4"}, ""),
+    ("same-format-replace-adds-a-part", flaw_same_format_replace_adds_a_part,
+     {"M5"}, ""),
+    ("replace-orphans-the-old-part", flaw_replace_orphans_the_old_part, {"M5"}, ""),
+    ("replace-repoints-nothing", flaw_replace_repoints_nothing, {"M5"}, ""),
+
+    ("audit-only-looks-for-a-missing-rfonts",
+     flaw_audit_only_looks_for_a_missing_rfonts, {"N1"}, ""),
+    ("repair-leaves-runs-unbound", flaw_repair_leaves_runs_unbound, {"N1"}, ""),
+    ("repair-writes-the-fallback-everywhere",
+     flaw_repair_writes_the_fallback_everywhere, {"N2"}, ""),
+    ("repair-overwrites-the-latin-face", flaw_repair_overwrites_the_latin_face,
+     {"N3"}, ""),
+    ("check-cries-wolf", flaw_check_cries_wolf, {"N4"}, ""),
+    ("check-skips-headers-and-footers", flaw_check_skips_headers_and_footers,
+     {"N4"}, ""),
+    ("font-strict-writes-anyway", flaw_font_strict_writes_anyway, {"N5"}, ""),
+    ("fallback-runs-not-named", flaw_fallback_runs_not_named, {"N5"}, ""),
+
+    ("CONTROL: outline.docx gains a header", flaw_outline_gains_a_header, {"V0"}, ""),
+    ("CONTROL: outline.docx already declares a png content type",
+     flaw_outline_already_declares_png, {"V0"}, ""),
+    ("CONTROL: fontless.docx becomes correctly bound", flaw_fontless_becomes_bound,
+     {"V0"}, ""),
+    ("CONTROL: fontless.docx's style stops naming a face",
+     flaw_fontless_style_stops_answering, {"V0"}, ""),
+    ("CONTROL: chart.png loses its declared density", flaw_chart_loses_its_density,
+     {"V0"}, ""),
 ]
 
 
@@ -2490,7 +3967,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    for f in (REPORT, UNORDERED):
+    for f in (REPORT, UNORDERED, OUTLINE, FONTLESS, CHART):
         if not f.is_file():
             print(f"[error] fixture missing: {f} (run fixtures/make_fixtures.py)",
                   file=sys.stderr)

@@ -418,6 +418,65 @@ def isolate_runs(paragraph, start: int, end: int) -> list:
     return out
 
 
+# ── sections and fields ───────────────────────────────────────────────────────
+def body_sect_pr(root, *, create: bool = False):
+    """The `<w:sectPr>` that closes `<w:body>`, the one headers bind to.
+
+    A document can carry several: every `<w:pPr>` may hold one, which ends a section
+    at that paragraph. The body's is the LAST section's, and it is the one a
+    header/footer reference belongs in unless the caller means a specific earlier
+    section — so it is named explicitly here rather than found with `iter()`, which
+    would return whichever one happens to come first in document order.
+    """
+    container = body(root)
+    for el in container:
+        if local(el.tag) == "sectPr":
+            return el
+    if not create:
+        return None
+    node = element("sectPr")
+    insert_ordered(container, node)          # TRAILING keeps it last, which is the rule
+    return node
+
+
+def make_field(instruction: str, cached: str | None = None, *,
+               dirty: bool = True, **run_kwargs) -> list:
+    """The runs a field is made of. A field is not text and not one run.
+
+    `{ PAGE }` is five runs: a `begin` marker, the instruction, a `separate` marker,
+    the last computed RESULT, and an `end` marker. The result is a cache — it is
+    whatever the last program to lay the document out wrote there, and nothing
+    recomputes it on open unless asked. Passing `cached=None` writes a field with no
+    result at all, which shows as empty until the reader updates it; passing a string
+    writes that string, and it is the caller's job for that string to be true.
+
+    `w:dirty` is the flag that asks a reader to recompute on open. It is set by
+    default because every field this skill writes is one whose value it cannot know.
+    """
+    from lxml import etree
+    runs = []
+
+    def marker(kind: str):
+        run = element("r")
+        char = element("fldChar", fldCharType=kind)
+        if kind == "begin" and dirty:
+            char.set(q("dirty"), "true")
+        run.append(char)
+        return run
+
+    runs.append(marker("begin"))
+    instr_run = element("r")
+    node = etree.SubElement(instr_run, q("instrText"))
+    set_text(node, instruction)
+    node.set(f"{{{XML_NS}}}space", "preserve")
+    runs.append(instr_run)
+    if cached is not None:
+        runs.append(marker("separate"))
+        runs.append(make_run(cached, **run_kwargs))
+    runs.append(marker("end"))
+    return runs
+
+
 def append_block(container, node) -> None:
     """Add a block to a body, keeping `<w:sectPr>` last.
 

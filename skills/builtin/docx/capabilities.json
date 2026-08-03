@@ -301,16 +301,149 @@
         "allow_blank_pages": false
       },
       "verified_by": "L2 holds the package line: D1 checks that every r:id resolves (a comments part reached by no relationship is the classic half-written comment), F1/F2 that nothing else moved, D4/D7 that the range markers did not break the element order or the render. The five pieces a comment actually is — the part, the content-type Override, the relationship, the commentRangeStart/End pair and the reference run — are asserted piece by piece in scripts/test-docx-skill.py B1-B5, including creation from a document that has no comments part at all, and deletion of the LAST comment, which must take the part and both of its indexes with it"
+    },
+    "W9": {
+      "entry": "scripts/docx_header.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/outline.docx",
+          "--out",
+          "{out}/letterhead.docx",
+          "--header",
+          "示例科技有限公司 · 季度经营分析",
+          "--footer",
+          "内部资料，请勿外传",
+          "--page-number",
+          "--report",
+          "{out}/header.json"
+        ],
+        "produces": [
+          "letterhead.docx",
+          "header.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/outline.docx",
+        "contains": [
+          "经营概况",
+          "风险提示"
+        ],
+        "paragraphs": 10,
+        "tables": 0,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the input is outline.docx precisely because it has NO header, NO footer and no reference to one in `w:sectPr` — running this against report.docx would exercise 'replace' while reporting 'create', and the four package pieces that make a new part reachable would never run. D1 is the assertion that owns this: it resolves every r:id in document.xml, so a `headerReference` written without its relationship fires there. F1/F2 hold the rest of the document still, D4 keeps `w:sectPr` last in the body (the reference is inserted INTO it, which is where the element order of CT_SectPr starts to matter), and D7 renders the result. ⚠️ `contains` names BODY text: a header lives in its own part and python-docx's `doc.paragraphs` never walks it, so asserting the header's own words there would fail on a correct artifact. What L2 cannot see — that a first-page header without `<w:titlePg/>` and an even-page header without `<w:evenAndOddHeaders/>` in settings.xml are parts Word simply ignores, so the capability is FIVE things and not four — is scripts/test-docx-skill.py H1-H5"
+    },
+    "W10": {
+      "entry": "scripts/docx_toc.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/outline.docx",
+          "--out",
+          "{out}/contents.docx",
+          "--toc",
+          "--levels",
+          "3",
+          "--title",
+          "目录",
+          "--outline-numbering",
+          "--report",
+          "{out}/toc.json"
+        ],
+        "produces": [
+          "contents.docx",
+          "toc.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/outline.docx",
+        "contains": [
+          "目录",
+          "经营概况",
+          "风险提示"
+        ],
+        "paragraphs": 16,
+        "tables": 0,
+        "allow_blank_pages": false
+      },
+      "verified_by": "D2 is doing real work here: a TOC is a field, and `w:fldChar`/`w:instrText`/`w:bookmarkStart` plus a nine-level `w:abstractNum` are four content models with strict child order that the XSD checks against the published schema rather than against this repo's opinion. D1 covers the bookmark-anchored hyperlinks, D4 the element order in the styles this creates, D7 that LibreOffice still lays it out. ⚠️ `paragraphs` is 16 and not 10 because a cached TOC result IS paragraphs — one per entry plus the title; a field with no result would leave it at 11. ⚠️ `contains` names the TOC TITLE and the headings' own text, never a TOC entry: entries live inside `w:hyperlink` and python-docx walks direct `w:r` children only, so asserting one would fail on a correct artifact for the same reason a tracked insertion does (gotchas §21.2 ㉔/㉛). The product decision L2 cannot see — that the cached result carries the heading text and NO page number, because a page number nothing has laid out is a guess, and that both `w:dirty` and `w:updateFields` are set so the reader is asked to compute the real ones — is scripts/test-docx-skill.py G1-G6, along with the half of outline numbering everybody forgets (the `w:abstractNum` alone numbers nothing; the heading STYLE has to carry the `w:numPr` too)"
+    },
+    "W11": {
+      "entry": "scripts/docx_image.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/outline.docx",
+          "--out",
+          "{out}/illustrated.docx",
+          "--insert",
+          "{fixtures}/chart.png",
+          "--after",
+          "营业收入同比增长",
+          "--width-cm",
+          "8",
+          "--alt",
+          "季度收入趋势图",
+          "--report",
+          "{out}/image.json"
+        ],
+        "produces": [
+          "illustrated.docx",
+          "image.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/outline.docx",
+        "contains": [
+          "经营概况",
+          "风险提示"
+        ],
+        "paragraphs": 11,
+        "tables": 0,
+        "allow_blank_pages": false
+      },
+      "verified_by": "outline.docx declares no `<Default Extension=\"png\">` and holds no word/media, so the sample is the create path and not the replace path: the picture needs the media part, a content-type Default for its extension, a relationship and a `wp:inline` drawing, and D1 fires if the `r:embed` resolves to nothing while D2 checks the drawing against the DrawingML schema. D7 is the one that catches an undeclared content type — LibreOffice renders a document Word would offer to repair. What none of them can see is the sizing: EMU are English Metric Units, 914400 to the inch, so filling the extent with a pixel count yields a thumbnail and filling it with a centimetre count yields a picture forty times the page. scripts/test-docx-skill.py M1-M5 assert the measured size against the PNG's own pHYs density, that the aspect ratio survives `--width-cm`, that the drawing extent and the inner `a:ext` agree (they are two numbers for one size and Word believes the outer one while LibreOffice draws the inner), and that replacing an image reuses the relationship instead of orphaning the old part"
+    },
+    "W16": {
+      "entry": "scripts/docx_fonts.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/fontless.docx",
+          "--out",
+          "{out}/bound.docx",
+          "--fix",
+          "--east-asia",
+          "宋体",
+          "--ascii",
+          "Calibri",
+          "--report",
+          "{out}/fonts.json"
+        ],
+        "produces": [
+          "bound.docx",
+          "fonts.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/fontless.docx",
+        "contains": [
+          "经营概况",
+          "收入分析"
+        ],
+        "paragraphs": 10,
+        "tables": 0,
+        "allow_blank_pages": false
+      },
+      "verified_by": "this is the one capability whose gate is D6 itself, used as a before/after pair: fontless.docx FAILS D6 with exactly three findings and the artifact must pass it, which is the same pairing W15 uses (a repair verified only on its output cannot be told apart from a check with no teeth). The three findings are three different defects on purpose — a run with no `w:rPr` at all, a run whose paragraph STYLE already names a face, and a run carrying `@w:ascii` and no `@w:eastAsia` — and they do not have the same right answer. scripts/test-docx-skill.py N1-N5 assert that the inherited case takes the STYLE's face and not the fallback (writing 宋体 over a heading the document already said should be 黑体 is a silent restyle that D6 cannot distinguish from a repair), that a deliberate latin face survives, that `--check` on an already-correct document reports nothing and writes nothing, and that `--strict` refuses when a value came from the fallback because nothing in the file said what face that text wants"
     }
   },
   "pending": {
     "W4": "generating a document from Markdown needs a heading/list/table/emphasis mapping and a template to hang it on; nothing is written and nothing asserts it",
-    "W9": "header and footer parts are read and their text is reported (W1), but creating or replacing one is not implemented — it needs the part, the content type, the relationship and the sectPr reference, and a first-page/even-page variant contract",
-    "W10": "a table of contents is a field whose result is cached, so writing one without recalculating produces a document showing a TOC that does not match the headings. Multi-level numbering needs its own abstractNum authoring. Neither is started",
-    "W11": "images can be preserved through an edit today (the sample's image survives F1/F2) but nothing inserts or replaces one; that needs the media part, a Default content type for the extension, a relationship, and a correctly sized wp:inline drawing",
-    "W12": "reading styles.xml is partly covered by W1's `styles_used`, but creating or modifying a style is not implemented and would need the CT_Style element order this skill already models plus a contract for style inheritance",
+    "W12": "reading styles.xml is partly covered by W1's `styles_used`, but creating or modifying a style is not implemented and would need the CT_Style element order this skill already models plus a contract for style inheritance. W10 writes the TOC styles it needs and W16 reads the style chain to resolve a font, so the pieces exist; what is missing is a general contract for inheritance and for overwriting a style a document already has",
     "W14": "L2 validates artifacts against the vendored ECMA-376 schemas, but the skill itself cannot: the schemas are 984 KB and live in the ultrawork repo, not in the distributed skill. The open question is whether to ship them, point at $ECMA376_XSD_DIR, or degrade loudly — and 'degrades silently' is the one answer that is not acceptable",
-    "W16": "every run this skill writes already binds @w:eastAsia (D6 would reject it otherwise), but there is no capability that INSPECTS or REPAIRS an existing document's font bindings, which is what the matrix row is about",
     "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
     "W19": "table and layout presets need a house style to preset, and picking one before the generation path (W4) exists would be guessing at what it has to fit"
   }

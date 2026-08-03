@@ -90,6 +90,55 @@ IMAGE_ALT = "季度趋势图"
 ASCII_FONT = "Calibri"
 EA_FONT = "宋体"
 
+# ── outline.docx ──────────────────────────────────────────────────────────────
+# A second sample, for the layout capabilities. report.docx cannot serve them: it
+# already HAS a header, a footer, an image and a png Default, so "create one" would
+# be tested as "replace one" and the four-piece package work would never run. What
+# this file deliberately does NOT have is the whole point of it:
+#
+#   * no word/header*.xml, no word/footer*.xml and no reference in `w:sectPr`
+#   * no `<Default Extension="png">` and no word/media — inserting a picture has to
+#     declare the content type, not find it already declared
+#   * a real heading hierarchy (H1 > H2 > H3), because a table of contents built
+#     from one heading level proves nothing about levels
+OUTLINE_BLOCKS = (
+    ("Heading1", "经营概况"),
+    (None, "本季度整体经营情况良好，各项指标符合预期。"),
+    ("Heading2", "收入分析"),
+    (None, "营业收入同比增长，主要来自华东区域。"),
+    ("Heading3", "分产品收入"),
+    (None, "主营产品收入占比继续提升。"),
+    ("Heading2", "成本与费用"),
+    (None, "费用结构持续优化，管理费用同比下降。"),
+    ("Heading1", "风险提示"),
+    (None, "应收账款账龄需要持续关注。"),
+)
+OUTLINE_PARAGRAPHS = len(OUTLINE_BLOCKS)
+OUTLINE_HEADINGS = tuple(t for s, t in OUTLINE_BLOCKS if s)
+
+# ── fontless.docx ─────────────────────────────────────────────────────────────
+# outline.docx with the East Asian font bindings taken away, in the three shapes a
+# real document loses them in — and nothing else changed, so a repair can be
+# attributed. It is an INPUT and never an artifact: it fails D6 on purpose.
+#
+# The three shapes do not have the same right answer, which is the whole reason the
+# fixture has three of them rather than one repeated:
+#
+#   1. a run with no `w:rPr` at all, under a style that says nothing either, in a
+#      document whose `w:docDefaults` say nothing → NOTHING in the file states the
+#      face. Only here is falling back to a default honest.
+#   2. a run with no `w:rPr`, under Heading2 — whose style DOES carry
+#      `w:eastAsia="黑体"`. The document already says what this text should look
+#      like. A repair that writes the fallback here has silently restyled it.
+#   3. a run whose `w:rFonts` carries `@w:ascii` and no `@w:eastAsia`. The latin
+#      face is a deliberate choice and must survive; only the missing half is filled.
+FONTLESS_STYLE_EA = "黑体"
+FONTLESS_STYLE_ASCII = "Cambria"
+FONTLESS_KEPT_ASCII = "Times New Roman"      # shape 3: must survive the repair
+FONTLESS_UNBOUND = OUTLINE_BLOCKS[0][1]      # shape 1, under Heading1
+FONTLESS_INHERITS = OUTLINE_BLOCKS[2][1]     # shape 2, under Heading2
+FONTLESS_HALF = OUTLINE_BLOCKS[1][1]         # shape 3, ordinary body text
+
 
 def rpr(bold: bool = False, size_half: int | None = None,
         style: str | None = None) -> str:
@@ -459,6 +508,191 @@ def png_bytes(size: int = 24, rgb: tuple[int, int, int] = (31, 92, 168)) -> byte
             + chunk(b"IEND", b""))
 
 
+# ── outline.docx / fontless.docx ──────────────────────────────────────────────
+def outline_document_xml(runs=None) -> str:
+    """The heading-hierarchy sample. `runs` overrides how a paragraph's run is built.
+
+    The `w:sectPr` carries page geometry and NO header or footer reference: creating
+    one is four things (part, content-type Override, relationship, sectPr reference)
+    and a document that already has one lets three of them be skipped unnoticed.
+    """
+    make = runs or (lambda style, text: run(text, bold=bool(style),
+                                            size_half=HEADING_SIZE.get(style)))
+    blocks = [para(make(style, text), style=style)
+              for style, text in OUTLINE_BLOCKS]
+    sect = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
+            'w:header="851" w:footer="992" w:gutter="0"/>'
+            '<w:cols w:space="425"/>'
+            '<w:docGrid w:type="lines" w:linePitch="312"/></w:sectPr>')
+    return (DECL + f"<w:document {W_NS}><w:body>" + "".join(blocks) + sect
+            + "</w:body></w:document>")
+
+
+HEADING_SIZE = {"Heading1": 32, "Heading2": 28, "Heading3": 24}
+
+
+def fontless_document_xml() -> str:
+    """outline.docx with three runs' East Asian bindings removed, and nothing else.
+
+    Built by rewriting runs of the good document rather than by authoring a second
+    one, for the same reason `unordered.docx` is: a separately written "broken" file
+    differs in ways that make a repair impossible to attribute.
+    """
+    def make(style, text):
+        if text == FONTLESS_UNBOUND:                      # shape 1: no w:rPr at all
+            return f"<w:r><w:t>{text}</w:t></w:r>"
+        if text == FONTLESS_INHERITS:                     # shape 2: the style knows
+            return f"<w:r><w:t>{text}</w:t></w:r>"
+        if text == FONTLESS_HALF:                         # shape 3: only @w:ascii
+            return (f'<w:r><w:rPr><w:rFonts w:ascii="{FONTLESS_KEPT_ASCII}" '
+                    f'w:hAnsi="{FONTLESS_KEPT_ASCII}"/></w:rPr>'
+                    f"<w:t>{text}</w:t></w:r>")
+        return run(text, bold=bool(style), size_half=HEADING_SIZE.get(style))
+    return outline_document_xml(make)
+
+
+def outline_styles_xml(*, fontless: bool = False) -> str:
+    """Normal + three heading levels.
+
+    In the fontless variant `w:docDefaults` states no font at all and `Heading2`
+    states one. That asymmetry is deliberate: it is what separates "nothing in this
+    document says what face this text wants" from "the document already said, and a
+    repair that overwrites it has restyled the user's heading".
+    """
+    defaults = (f'<w:rFonts w:ascii="{ASCII_FONT}" w:hAnsi="{ASCII_FONT}" '
+                f'w:eastAsia="{EA_FONT}" w:cs="{ASCII_FONT}"/>') if not fontless else ""
+    h2_fonts = (f'<w:rFonts w:ascii="{FONTLESS_STYLE_ASCII}" '
+                f'w:hAnsi="{FONTLESS_STYLE_ASCII}" '
+                f'w:eastAsia="{FONTLESS_STYLE_EA}"/>') if fontless else ""
+    out = [DECL, f"<w:styles {W_NS}>",
+           "<w:docDefaults><w:rPrDefault><w:rPr>", defaults,
+           '<w:sz w:val="21"/><w:szCs w:val="22"/>',
+           "</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>",
+           '<w:spacing w:after="0" w:line="312" w:lineRule="auto"/>',
+           "</w:pPr></w:pPrDefault></w:docDefaults>",
+           '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+           '<w:name w:val="Normal"/><w:qFormat/></w:style>']
+    for level in (1, 2, 3):
+        sid = f"Heading{level}"
+        half = HEADING_SIZE[sid]
+        out.append(
+            f'<w:style w:type="paragraph" w:styleId="{sid}">'
+            f'<w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/>'
+            f'<w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/>'
+            f'<w:pPr><w:spacing w:before="340" w:after="330"/>'
+            f'<w:outlineLvl w:val="{level - 1}"/></w:pPr>'
+            f"<w:rPr>{h2_fonts if sid == 'Heading2' else ''}<w:b/><w:bCs/>"
+            f'<w:sz w:val="{half}"/><w:szCs w:val="{half}"/></w:rPr></w:style>')
+    out.append("</w:styles>")
+    return "".join(out)
+
+
+def outline_content_types_xml() -> str:
+    """No `<Default Extension="png">`: inserting a picture must declare it."""
+    o = "application/vnd.openxmlformats-officedocument.wordprocessingml."
+    return (DECL + f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-'
+            'package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            f'<Override PartName="/word/document.xml" ContentType="{o}document.main+xml"/>'
+            f'<Override PartName="/word/styles.xml" ContentType="{o}styles+xml"/>'
+            f'<Override PartName="/word/numbering.xml" ContentType="{o}numbering+xml"/>'
+            f'<Override PartName="/word/settings.xml" ContentType="{o}settings+xml"/>'
+            f'<Override PartName="/word/fontTable.xml" ContentType="{o}fontTable+xml"/>'
+            '<Override PartName="/docProps/core.xml" ContentType="application/vnd.'
+            'openxmlformats-package.core-properties+xml"/>'
+            '<Override PartName="/docProps/app.xml" ContentType="application/vnd.'
+            'openxmlformats-officedocument.extended-properties+xml"/>'
+            "</Types>")
+
+
+def outline_document_rels_xml() -> str:
+    t = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    return (DECL + f'<Relationships xmlns="{PR}">'
+            f'<Relationship Id="rId1" Type="{t}/styles" Target="styles.xml"/>'
+            f'<Relationship Id="rId2" Type="{t}/numbering" Target="numbering.xml"/>'
+            f'<Relationship Id="rId3" Type="{t}/settings" Target="settings.xml"/>'
+            f'<Relationship Id="rId4" Type="{t}/fontTable" Target="fontTable.xml"/>'
+            "</Relationships>")
+
+
+def outline_core_xml(title: str) -> str:
+    cp = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+    return (DECL + f'<cp:coreProperties xmlns:cp="{cp}" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'xmlns:dcterms="http://purl.org/dc/terms/" '
+            'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            f"<dc:title>{title}</dc:title>"
+            "<dc:creator>ultrawork</dc:creator>"
+            "<cp:lastModifiedBy>ultrawork</cp:lastModifiedBy>"
+            '<dcterms:created xsi:type="dcterms:W3CDTF">2026-07-01T08:00:00Z'
+            "</dcterms:created>"
+            '<dcterms:modified xsi:type="dcterms:W3CDTF">2026-07-02T10:20:00Z'
+            "</dcterms:modified>"
+            "</cp:coreProperties>")
+
+
+def outline_parts(*, fontless: bool = False) -> list[tuple[str, bytes]]:
+    document = fontless_document_xml() if fontless else outline_document_xml()
+    title = "字体巡检样例" if fontless else "多级标题样例"
+    text = [
+        ("[Content_Types].xml", outline_content_types_xml()),
+        ("_rels/.rels", package_rels_xml()),
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", outline_document_rels_xml()),
+        ("word/styles.xml", outline_styles_xml(fontless=fontless)),
+        ("word/numbering.xml", numbering_xml()),
+        ("word/settings.xml", settings_xml()),
+        ("word/fontTable.xml", font_table_xml()),
+        ("docProps/core.xml", outline_core_xml(title)),
+        ("docProps/app.xml", app_xml()),
+    ]
+    return [(n, s.encode("utf-8")) for n, s in text]
+
+
+# ── chart.png ─────────────────────────────────────────────────────────────────
+# A standalone picture to insert, which report.docx's embedded one cannot be: the
+# insert path takes a file from the filesystem. Two properties of it are load-bearing
+# and neither is decoration:
+#
+#   * it is NOT square (240x120), so an implementation that writes one number for
+#     both extents, or swaps them, produces a visibly wrong picture rather than an
+#     identical one.
+#   * it carries a `pHYs` chunk declaring 150 dpi. The intrinsic size is therefore
+#     1.6 x 0.8 inch = 1463040 x 731520 EMU, while an implementation that assumes the
+#     web's 96 dpi computes 2286000 — same file, same code path, different answer, so
+#     the assertion can tell the two apart.
+CHART_PX = (240, 120)
+CHART_DPI = 150
+CHART_PPM = round(CHART_DPI / 0.0254)      # pHYs stores pixels per METRE
+
+
+def chart_png() -> bytes:
+    """A two-tone 240x120 PNG with an explicit physical density."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    width, height = CHART_PX
+    ink, paper = (31, 92, 168), (238, 242, 248)
+    rows = []
+    for y in range(height):
+        px = []
+        for x in range(width):
+            # Five ascending bars: enough structure that a renderer showing the
+            # picture at all is distinguishable from a renderer showing a blank box.
+            bar = x // (width // 5)
+            px.append(ink if y >= height - (bar + 1) * (height // 6) else paper)
+        rows.append(b"\x00" + b"".join(bytes(p) for p in px))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    phys = struct.pack(">IIB", CHART_PPM, CHART_PPM, 1)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"pHYs", phys)
+            + chunk(b"IDAT", zlib.compress(b"".join(rows), COMPRESS_LEVEL))
+            + chunk(b"IEND", b""))
+
+
 def parts(document: str | None = None) -> list[tuple[str, bytes]]:
     """Every part, in the order the zip stores them (content types first)."""
     text = [
@@ -484,15 +718,19 @@ def parts(document: str | None = None) -> list[tuple[str, bytes]]:
     return out
 
 
-def write_docx(path: Path, document: str | None = None) -> None:
+def write_package(path: Path, items: list[tuple[str, bytes]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED,
                          compresslevel=COMPRESS_LEVEL) as z:
-        for name, data in parts(document):
+        for name, data in items:
             info = zipfile.ZipInfo(name, date_time=EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
             z.writestr(info, data)
+
+
+def write_docx(path: Path, document: str | None = None) -> None:
+    write_package(path, parts(document))
 
 
 def main() -> int:
@@ -503,11 +741,16 @@ def main() -> int:
                          "without touching the committed files)")
     args = ap.parse_args()
     out = Path(args.out_dir)
-    for name, document in (("report.docx", None),
-                           ("unordered.docx", document_xml_unordered())):
+    for name, items in (("report.docx", parts()),
+                        ("unordered.docx", parts(document_xml_unordered())),
+                        ("outline.docx", outline_parts()),
+                        ("fontless.docx", outline_parts(fontless=True))):
         target = out / name
-        write_docx(target, document)
+        write_package(target, items)
         print(f"wrote {target} ({target.stat().st_size} bytes)")
+    chart = out / "chart.png"
+    chart.write_bytes(chart_png())
+    print(f"wrote {chart} ({chart.stat().st_size} bytes)")
     return 0
 
 
