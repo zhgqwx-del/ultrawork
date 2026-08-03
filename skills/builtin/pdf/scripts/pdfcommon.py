@@ -25,6 +25,21 @@ import json
 import sys
 from pathlib import Path
 
+# ── stdout must be UTF-8 on every platform, and on Windows it is not ──────────
+# Every report this skill prints carries Chinese. Windows encodes a captured stdout
+# in the machine's ANSI code page (cp1252 on a western install, cp936 on a Chinese
+# one), and Python only defaults to UTF-8 from 3.15 (PEP 686) — CI pins 3.11.
+# Measured by forcing the code page locally: WITHOUT the two lines below, EVERY entry
+# point of this skill exits 2 with UnicodeEncodeError the moment its output is
+# captured — which is exactly how an agent calls it. It cannot be seen on macOS or
+# Linux, and it was found by a CI run on Windows, not by any local gate.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):        # already detached / not reconfigurable
+            pass
+
 
 class PdfError(Exception):
     """A condition the user can act on: wrong password, bad range, missing file."""

@@ -384,7 +384,13 @@ def pending_cases(root: Path) -> list[dict]:
         try:
             return json.loads(r.stdout)["failures"]
         except (json.JSONDecodeError, KeyError):
-            return [f"<could not parse gate output>: {(r.stdout + r.stderr)[:200]}"]
+            # 2000, not 200. When the gate itself CRASHES this string is the only
+            # evidence there is, and at 200 characters it stopped one line into the
+            # traceback — a Windows-only failure was unreadable from the CI log and
+            # had to be re-derived from scratch. A diagnostic that truncates before
+            # the cause is not a diagnostic.
+            return [f"<could not parse gate output>: exit={r.returncode}\n"
+                    f"{(r.stdout + r.stderr)[:2000]}"]
 
     full = {"skill": "xlsx", "capabilities": {i: ok_entry for i in done},
             "pending": {i: "scheduled for S3" for i in owed}}

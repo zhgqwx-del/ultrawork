@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import subprocess
 import sys
@@ -178,6 +179,20 @@ def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=300)
+
+
+# Windows encodes a captured stdout in the machine's ANSI code page, and Python only
+# defaults to UTF-8 from 3.15 (PEP 686). Every report this skill prints carries
+# Chinese, so on Windows every entry point died with UnicodeEncodeError the moment an
+# agent captured its output. Reproduced here by forcing the code page, because the
+# defect is invisible on macOS and Linux — it was found by a CI run, not by any gate.
+WINDOWS_CODE_PAGES = ("cp1252", "cp936")     # western install, Chinese install
+
+
+def run_script_encoded(name: str, code_page: str, *args: str):
+    env = {**os.environ, "PYTHONIOENCODING": code_page}
+    return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
+                          capture_output=True, env=env, timeout=300)
 
 
 def parts_of(path: Path) -> dict[str, bytes]:
@@ -802,6 +817,49 @@ def collect(work: Path) -> dict:
         "wrong_kind": {"exit": wrong_kind.returncode,
                        "stderr": wrong_kind.stderr.strip(),
                        "traceback": "Traceback" in wrong_kind.stderr},
+    }
+
+    # --- every entry point survives a Windows code page -------------------------
+    entries = sorted(p.name for p in (SKILL / "scripts").glob("docx_*.py"))
+    probes = {
+        "docx_read.py": ["--in", REPORT],
+        "docx_header.py": ["--in", REPORT, "--list"],
+        "docx_toc.py": ["--in", OUTLINE, "--list"],
+        "docx_image.py": ["--in", REPORT, "--list"],
+        "docx_fonts.py": ["--in", REPORT, "--check"],
+        "docx_package.py": ["--in", REPORT, "--check"],
+        "docx_revise.py": ["--in", REPORT, "--list"],
+        "docx_comment.py": ["--in", REPORT, "--list"],
+        "docx_template.py": ["--in", REPORT, "--list"],
+        "docx_edit.py": ["--in", REPORT, "--out", work / "cp.docx", "--replace", "a=b"],
+        # --help rather than a conversion: it still crosses the encoding path (the
+        # reconfigure happens when docxcommon is imported, before argparse runs) and
+        # its help text carries the module docstring's Chinese, without needing
+        # LibreOffice or spending seconds on a render.
+        "docx_pdf.py": ["--help"],
+    }
+    runs = {}
+    for page in WINDOWS_CODE_PAGES:
+        for name in entries:
+            args = probes.get(name)
+            if args is None:
+                continue
+            r = run_script_encoded(name, page, *args)
+            runs[f"{page}:{name}"] = {
+                "exit": r.returncode,
+                "cjk_in_stdout": any("一" <= c <= "鿿"
+                                     for c in r.stdout.decode("utf-8", "replace")),
+                "stderr": r.stderr.decode("utf-8", "replace")[:200],
+            }
+    # The vacuity guard: if a bare print of Chinese under cp1252 does NOT fail, this
+    # host is not reproducing the condition and every result above proves nothing.
+    bare = subprocess.run([PY, "-c", "print('中文')"], capture_output=True,
+                          env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=60)
+    ctx["encoding"] = {
+        "entry_points": entries,
+        "probed": sorted(probes),
+        "runs": runs,
+        "bare_print_exit": bare.returncode,
     }
 
     # --- the fixtures are byte-reproducible ------------------------------------
@@ -1778,6 +1836,35 @@ def c3_byte_budget(ctx: dict) -> list[str]:
     if c["tall_stdout_bytes"] < 300:
         out.append(f"C3 stdout is {c['tall_stdout_bytes']} bytes — the trimming took "
                    f"the answer with it")
+    return out
+
+
+@check("C4", "every entry point survives a Windows code page instead of crashing on "
+             "its own Chinese")
+def c4_windows_encoding(ctx: dict) -> list[str]:
+    e = ctx["encoding"]
+    out = []
+    # Vacuity first. If a bare print of Chinese under cp1252 exits 0, this host is
+    # not reproducing the condition and nothing below means anything — which is the
+    # state every non-Windows machine would be in if PYTHONIOENCODING did not bite.
+    if e["bare_print_exit"] == 0:
+        return ["C4 a bare print of Chinese under cp1252 exited 0, so this host is "
+                "not reproducing the Windows code page at all and this assertion "
+                "proves nothing"]
+    missed = [n for n in e["entry_points"] if n not in e["probed"]]
+    if missed:
+        out.append(f"C4 {missed} have no probe, so they are not covered — a new entry "
+                   f"point inherits this defect for free")
+    for key, r in sorted(e["runs"].items()):
+        if r["exit"] != 0:
+            out.append(f"C4 {key} exited {r['exit']} — on Windows an agent capturing "
+                       f"this output gets UnicodeEncodeError instead of a report: "
+                       f"{r['stderr'][:120]!r}")
+    speaking = sum(1 for k, r in e["runs"].items()
+                   if k.startswith("cp1252:") and r["cjk_in_stdout"])
+    if speaking < 5:
+        out.append(f"C4 only {speaking} probe(s) printed any Chinese, so most of them "
+                   f"never crossed the code path that used to crash")
     return out
 
 
@@ -3752,6 +3839,43 @@ def flaw_chart_loses_its_density(ctx, work):
     return ctx
 
 
+def flaw_entry_point_dies_on_a_windows_code_page(ctx, work):
+    """The measured defect: on Windows every entry point exited 2 with
+    UnicodeEncodeError the moment its output was captured."""
+    e = copy.deepcopy(ctx["encoding"])
+    for key in list(e["runs"]):
+        if key.startswith("cp1252:"):
+            e["runs"][key] = {"exit": 2, "cjk_in_stdout": False,
+                              "stderr": "UnicodeEncodeError: 'charmap' codec can't "
+                                        "encode character '\\u2705'"}
+    ctx["encoding"] = e
+    return ctx
+
+
+def flaw_a_new_entry_point_is_never_probed(ctx, work):
+    e = copy.deepcopy(ctx["encoding"])
+    e["entry_points"] = sorted(e["entry_points"] + ["docx_brandnew.py"])
+    ctx["encoding"] = e
+    return ctx
+
+
+def flaw_probes_print_nothing_chinese(ctx, work):
+    """Passing without having crossed the code path is the other way to be wrong."""
+    e = copy.deepcopy(ctx["encoding"])
+    for r in e["runs"].values():
+        r["cjk_in_stdout"] = False
+    ctx["encoding"] = e
+    return ctx
+
+
+def flaw_host_does_not_reproduce_the_code_page(ctx, work):
+    """CONTROL: PYTHONIOENCODING stops biting, so C4 is measuring nothing."""
+    e = copy.deepcopy(ctx["encoding"])
+    e["bare_print_exit"] = 0
+    ctx["encoding"] = e
+    return ctx
+
+
 FLAWS = [
     ("replace-run-by-run", flaw_replace_run_by_run, {"E1", "E2"},
      "E2 also fires, and it must: a replacement that never happened leaves the old "
@@ -3949,6 +4073,14 @@ FLAWS = [
      flaw_fontless_style_stops_answering, {"V0"}, ""),
     ("CONTROL: chart.png loses its declared density", flaw_chart_loses_its_density,
      {"V0"}, ""),
+
+    ("entry-point-dies-on-a-windows-code-page",
+     flaw_entry_point_dies_on_a_windows_code_page, {"C4"}, ""),
+    ("a-new-entry-point-is-never-probed", flaw_a_new_entry_point_is_never_probed,
+     {"C4"}, ""),
+    ("probes-never-print-any-chinese", flaw_probes_print_nothing_chinese, {"C4"}, ""),
+    ("CONTROL: the host stops reproducing the Windows code page",
+     flaw_host_does_not_reproduce_the_code_page, {"C4"}, ""),
 ]
 
 
