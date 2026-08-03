@@ -846,6 +846,7 @@ def collect(work: Path) -> dict:
         "docx_revise.py": ["--in", REPORT, "--list"],
         "docx_comment.py": ["--in", REPORT, "--list"],
         "docx_template.py": ["--in", REPORT, "--list"],
+        "docx_style.py": ["--in", REPORT, "--list"],
         "docx_edit.py": ["--in", REPORT, "--out", work / "cp.docx", "--replace", "a=b"],
         # --help rather than a conversion: it still crosses the encoding path (the
         # reconfigure happens when docxcommon is imported, before argparse runs) and

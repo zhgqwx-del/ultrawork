@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfcommon import (ensure_distinct, fail, open_reader,  # noqa: E402
                        pdf_rect_to_top_left, run, to_display_space,
                        to_page_space, write_json)
-from pdffont import available_candidates, missing_glyphs, resolve  # noqa: E402
+from pdffont import (available_candidates, missing_glyphs,  # noqa: E402
+                     rejected_candidates, resolve)
 from pdfform import (DEFAULT_SIZE, LINE_RATIO, PAD, build_appearances,  # noqa: E402
                      collect_fields, drawn_extent, first_baseline, has_acroform,
                      inherited, layout_lines, load_placements, page_geometry,
@@ -145,10 +146,15 @@ def fill_acroform(reader, writer, values: dict) -> list[dict]:
 
             font = resolve(text, da_font)
             if font is None:
-                fail(f"{name}: {text!r} contains CJK characters and no CJK font "
-                     f"could be found on this machine, so the value would be drawn "
-                     f"as blanks. Install one of: "
-                     f"{', '.join(available_candidates()) or 'a CJK TrueType face'}")
+                rejected = rejected_candidates()
+                fail(f"{name}: {text!r} contains CJK characters and no USABLE CJK "
+                     f"font is on this machine, so the value would be drawn as "
+                     f"blanks."
+                     + (f" Found but unusable (reportlab embeds TrueType outlines "
+                        f"only; these carry CFF/PostScript ones): "
+                        f"{', '.join(rejected)}." if rejected else "")
+                     + f" Install one of: "
+                       f"{', '.join(available_candidates()) or 'a CJK TrueType face'}")
             gaps = missing_glyphs(font, text)
             if gaps:
                 fail(f"{name}: {font} has no glyph for {''.join(gaps[:10])} — it "

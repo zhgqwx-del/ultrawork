@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfcommon import fail  # noqa: E402
-from pdffont import (STANDARD, available_candidates, has_cjk,  # noqa: E402,F401
+from pdffont import (rejected_candidates, STANDARD, available_candidates, has_cjk,  # noqa: E402,F401
                      missing_glyphs, register_cjk, wrap as _wrap)
 
 # The abbreviations an AcroForm /DA uses, plus reportlab's own spellings. Accepting
@@ -52,10 +52,18 @@ class Typeface:
         if spec is None:
             name, source = register_cjk()
             if name is None:
+                # Naming the fonts that ARE installed and still cannot be used.
+                # Measured on CI: a runner with 61 MB of Noto Sans CJK was told "no
+                # CJK font could be found", which sent the reader to install the
+                # font they already had. The real reason is narrower.
+                rejected = rejected_candidates()
+                unusable = (f" Found but UNUSABLE (reportlab embeds TrueType "
+                            f"outlines only, and these carry CFF/PostScript ones): "
+                            f"{', '.join(rejected)}." if rejected else "")
                 tried = ", ".join(available_candidates()) or "(none for this platform)"
-                fail(f"no CJK font could be found on this machine, so any Chinese in "
-                     f"the document would be drawn as blanks. Tried: {tried}. Pass "
-                     f"--font with a TrueType path, or one of the standard names "
+                fail(f"no usable CJK font on this machine, so any Chinese in the "
+                     f"document would be drawn as blanks.{unusable} Tried: {tried}. "
+                     f"Pass --font with a TrueType path, or one of the standard names "
                      f"({', '.join(BUILTIN_FONTS)}) for a Latin-only document.")
             self.name, self.source, self.embedded = name, source, True
             return

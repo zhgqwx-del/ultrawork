@@ -154,17 +154,27 @@ jobs:
       # converts a .docx to PDF on EVERY docx case, and with calc alone the binary
       # exists, exits 0 on a .docx and writes no file.
       #
-      # ⚠️ fonts-noto-cjk is load-bearing, not cosmetic. The runner image has no CJK
-      # font, so LibreOffice renders every Chinese glyph as a hollow box and D7's
-      # tofu detector fires: measured on the first push, "only 10% of 72 CJK glyphs
-      # have interior strokes (need 50%)", four cases red. macOS and Windows ship
-      # CJK faces of their own, so this is a Linux-only need.
+      # ⚠️ TWO CJK font packages, and they are not redundant — they serve two
+      # consumers with incompatible requirements. The runner image ships neither.
+      #
+      #   fonts-noto-cjk    for LIBREOFFICE. Without it D7's tofu detector fires:
+      #                     measured, "only 10% of 72 CJK glyphs have interior
+      #                     strokes (need 50%)", four cases red.
+      #   fonts-wqy-zenhei  for REPORTLAB, which the pdf skill writes with.
+      #                     Noto Sans CJK has CFF/PostScript outlines and reportlab
+      #                     cannot embed those (gotchas §21.1 ⑯) — measured, with
+      #                     61 MB of Noto installed the skill still reported "no CJK
+      #                     font on this machine" and P7/P8/P13/P14 refused to run.
+      #                     wqy-zenhei is TrueType and lands on the exact path
+      #                     pdffont.py already probes.
+      #
+      # macOS and Windows ship CJK faces of their own, so this is a Linux-only need.
       - name: Install LibreOffice (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libreoffice-calc libreoffice-writer fonts-noto-cjk
+            libreoffice-calc libreoffice-writer fonts-noto-cjk fonts-wqy-zenhei
       - name: Install LibreOffice (macOS)
         if: runner.os == 'macOS'
         run: brew install --cask libreoffice

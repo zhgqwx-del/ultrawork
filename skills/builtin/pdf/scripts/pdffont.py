@@ -174,6 +174,25 @@ def available_candidates() -> list[str]:
     return curated + [p for p in dict.fromkeys(found) if p not in curated]
 
 
+def rejected_candidates() -> list[str]:
+    """CJK fonts that ARE installed and that reportlab still cannot use.
+
+    Measured on CI: a runner with 61 MB of Noto Sans CJK installed was told "no CJK
+    font could be found on this machine". That message is false and it sends the
+    reader to install another copy of the font they already have. The real reason is
+    narrower — Noto Sans CJK carries CFF/PostScript outlines and reportlab embeds
+    TrueType only (gotchas §21.1 ⑯) — so a caller needs to hear THAT, not a list of
+    paths that do not exist on their disk.
+    """
+    out = []
+    for path, index in _globbed_candidates():
+        if path in out:
+            continue
+        if not _try_register(f"probe-{len(out)}", path, index):
+            out.append(path)
+    return out
+
+
 def text_width(text: str, font: str | None, size: float) -> float | None:
     """Natural width of `text` at `size`, or None when no font could be resolved.
 

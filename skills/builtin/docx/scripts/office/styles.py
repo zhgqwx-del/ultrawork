@@ -131,6 +131,71 @@ def ensure_rfonts(run):
     return rfonts
 
 
+def based_on_cycle(index: dict, style_id: str) -> list[str] | None:
+    """The `w:basedOn` loop this style sits in, or None.
+
+    A cycle is not a theoretical concern: it is what an edit that points a style at
+    one of its own descendants produces, and Word's response is to stop resolving
+    formatting at that point — the style silently renders as Normal. `style_chain`
+    above stops after MAX_CHAIN so nothing hangs, which means a caller that only
+    uses it would never learn the chain was broken.
+    """
+    seen, current = [], style_id
+    while current and current in index:
+        if current in seen:
+            return seen[seen.index(current):] + [current]
+        seen.append(current)
+        based = index[current].find(q("basedOn"))
+        current = based.get(q("val")) if based is not None else None
+    return None
+
+
+def users_of(document_root, style_id: str) -> int:
+    """How many paragraphs and runs name this style.
+
+    The number a caller needs BEFORE overwriting one: a style is shared, so editing
+    it is not a local change — it repaints every paragraph that uses it, and the
+    request that asked for it usually mentioned only one.
+    """
+    n = 0
+    # ⚠️ Explicit `is not None`, never `a or b`. An lxml element with no children is
+    # FALSEY, so `el.find("pPr") or el.find("rPr")` silently takes the wrong branch
+    # on exactly the elements this walks — and warns about it on stderr, which under
+    # Team delegation is output somebody pays for. This repo has already been bitten
+    # once (059 §六·补五, the revision family).
+    for tag, container, prop in (("p", "pPr", "pStyle"),
+                                 ("r", "rPr", "rStyle"),
+                                 ("tbl", "tblPr", "tblStyle")):
+        for el in document_root.iter(q(tag)):
+            pr = el.find(q(container))
+            if pr is None:
+                continue
+            node = pr.find(q(prop))
+            if node is not None and node.get(q("val")) == style_id:
+                n += 1
+    return n
+
+
+def describe(style, index: dict) -> dict:
+    """One style as a caller can act on: what it is, and where it inherits from."""
+    style_id = style.get(q("styleId"))
+    name = style.find(q("name"))
+    based = style.find(q("basedOn"))
+    nxt = style.find(q("next"))
+    return {
+        "id": style_id,
+        "name": name.get(q("val")) if name is not None else None,
+        "type": style.get(q("type")),
+        "default": style.get(q("default")) == "1",
+        "based_on": based.get(q("val")) if based is not None else None,
+        "next": nxt.get(q("val")) if nxt is not None else None,
+        "chain": [s.get(q("styleId")) for s in style_chain(index, style_id)],
+        "custom": style.get(q("customStyle")) == "1",
+        "hidden": style.find(q("semiHidden")) is not None,
+        "fonts": {slot: font_value(_rfonts_of(style), slot) for slot in FONT_SLOTS},
+    }
+
+
 def ensure_style(styles_root, style_id: str, *, name: str, kind: str = "paragraph",
                  based_on: str | None = None, next_style: str | None = None,
                  ppr_xml: str = "", rpr_xml: str = "",

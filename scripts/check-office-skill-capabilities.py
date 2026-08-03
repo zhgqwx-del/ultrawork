@@ -275,12 +275,30 @@ def probe_declared(skill_dir: Path, timeout: int = 60,
 # evidence. Each case below declares ONE capability and calls probe_declared
 # directly, so C5's "cover the whole ID range" rule stays out of the way.
 
+# ⚠️ Several paragraphs, not one. This stub used to be a single line of EIGHT
+# Chinese characters on a Letter page, and D7's blank detector works on the share of
+# inked pixels: measured, the same file renders at ink 0.00569 on macOS and 0.00028
+# on Windows — the two platforms straddle the 0.0005 threshold, so the POSITIVE
+# control was red on Windows for no defect at all. Lowering the threshold was the
+# wrong repair (it blunts blank detection for every artifact); making the positive
+# control unambiguous is the right one. Generated at run time, so nothing committed
+# and no .builtin-version churn.
+_LINES = ("季度经营分析报告",
+          "本季度营业收入同比增长百分之十二，毛利率保持稳定，费用结构持续优化。",
+          "华东区域贡献了增量的主要部分，华南区域受季节性因素影响略有回落。",
+          "经营性现金流保持健康水平，应收账款账龄需要在下季度重点关注。",
+          "综合判断，维持全年增长预期不变，并建议加强对存货周转的监控。")
 _HEAD = ("import sys\nimport docx\nfrom docx.oxml import parse_xml\n"
          "from docx.oxml.ns import nsdecls\n"
          "out = sys.argv[sys.argv.index('--out') + 1]\n"
-         "d = docx.Document()\nr = d.add_paragraph().add_run('季度经营分析报告')\n")
-_FONTS = ("rpr = r._r.get_or_add_rPr()\n"
-          "rpr.insert(0, parse_xml('<w:rFonts %s w:ascii=\"Calibri\" "
+         "d = docx.Document()\n"
+         f"lines = {_LINES!r}\n"
+         "runs = [d.add_paragraph().add_run(t) for t in lines]\n")
+# Every CJK run gets the binding, because D6 judges runs and not documents: leaving
+# one unbound would make the "good" stub fail for a reason the case is not about.
+_FONTS = ("for r in runs:\n"
+          "    rpr = r._r.get_or_add_rPr()\n"
+          "    rpr.insert(0, parse_xml('<w:rFonts %s w:ascii=\"Calibri\" "
           "w:hAnsi=\"Calibri\" w:eastAsia=\"宋体\"/>' % nsdecls('w')))\n")
 # python-docx's bundled default.docx ships `<w:zoom w:val="bestFit"/>`, and
 # ECMA-376 Transitional makes w:percent REQUIRED — so every document it produces
@@ -312,10 +330,14 @@ STUBS = {
 }
 
 SAMPLE_CASES = [
+    # `len(_LINES)`, not a literal: the stub grew from one paragraph to five so its
+    # rendered ink would clear D7's blank threshold on every platform, and a
+    # hard-coded 1 here turned that into a D3 count failure. Deriving it means the
+    # next change to the stub cannot desynchronise the two.
     ("good sample produces an artifact L2 accepts", "good",
-     {"contains": ["季度经营分析报告"], "paragraphs": 1}, None),
+     {"contains": ["季度经营分析报告"], "paragraphs": len(_LINES)}, None),
     ("sample whose artifact violates L2 is rejected", "bad-artifact",
-     {"contains": ["季度经营分析报告"], "paragraphs": 1}, "fails L2 — D6"),
+     {"contains": ["季度经营分析报告"], "paragraphs": len(_LINES)}, "fails L2 — D6"),
     ("sample exiting non-zero is rejected", "nonzero", {"contains": ["x"]},
      "sample exited 3"),
     ("sample producing nothing is rejected", "produces-nothing",
