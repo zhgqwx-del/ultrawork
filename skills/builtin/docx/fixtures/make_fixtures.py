@@ -652,6 +652,44 @@ def outline_parts(*, fontless: bool = False) -> list[tuple[str, bytes]]:
     return [(n, s.encode("utf-8")) for n, s in text]
 
 
+# ── sample.md ─────────────────────────────────────────────────────────────────
+# The input for W4. Written to carry every construct the generator maps AND three
+# it deliberately does not, because "what it cannot map is NAMED, never dropped" is
+# the contract that needs a subject: a fixture with only supported syntax would let
+# a generator that silently discards footnotes pass.
+SAMPLE_MD = """# 季度经营分析报告
+
+本季度**营业收入**同比增长 *12%*，`毛利率`保持稳定。详见[存档](https://example.invalid/q3)。
+
+## 收入分析
+
+- 华东区域贡献了增量的主要部分
+  - 其中线上渠道占比 62%
+- 华南区域略有回落
+
+1. 第一步：对齐口径
+2. 第二步：复核账龄
+
+> 审计意见：应收账款账龄需要重点关注。
+
+| 项目 | 本季 | 同比 |
+|---|---:|:---:|
+| 营业收入 | 1,240 | +12% |
+| 毛利率 | 38% | +1.2pt |
+
+```python
+def total(rows):
+    return sum(r.amount for r in rows)
+```
+
+---
+
+![季度趋势图](chart.png)
+
+这里有 <b>裸 HTML</b> 和一个脚注[^1]，两样都必须被点名而不是丢掉。
+"""
+
+
 # ── chart.png ─────────────────────────────────────────────────────────────────
 # A standalone picture to insert, which report.docx's embedded one cannot be: the
 # insert path takes a file from the filesystem. Two properties of it are load-bearing
@@ -760,6 +798,11 @@ def main() -> int:
     chart = out / "chart.png"
     chart.write_bytes(chart_png())
     print(f"wrote {chart} ({chart.stat().st_size} bytes)")
+    # LF explicitly: written from Python with newline="" so Windows does not turn
+    # these into CRLF, which would change the bytes and therefore .builtin-version.
+    sample = out / "sample.md"
+    sample.write_text(SAMPLE_MD, encoding="utf-8", newline="")
+    print(f"wrote {sample} ({sample.stat().st_size} bytes)")
     return 0
 
 

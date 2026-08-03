@@ -848,7 +848,7 @@ CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-miss
 | S2 收尾 | ✅ Rust 依赖探测泛化（5·补.3）已完成：`run_python_feature_probe` 接受模块名列表，`PY_MODULES` 数据化 | 探测数据化 | 已完成 |
 | **S3** ✅ | `xlsx` 技能（含 office 底座首次实现）。**五刀**：office 底座 + X1/X2/X15 · 公式族 X3/X5/X10 · 结构性写入 X6-X9 · 双引擎重算 X4 · 收官 X11-X14。**15/15 无 pending，`--no-pending` 全技能绿**（见 §六·补二） | xlsx/ + office 底座 | 已完成 2026-08-02 |
 | **S3.5** ✅ | **去 PyMuPDF / 去 AGPL**（§5·补.8c 的路 ②）。`pdf` 技能 14 个文件 + `xlsx_pdf.py` 可选依赖（§六·补三）· `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四，新建读取层 `pdfsource.py` + **新建标尺 25 断言/28 控制**）。**`skills/builtin/` 下没有任何一个文件 `import fitz`**；`scripts/` 下三个门禁脚本仍用（不分发，单独一刀） | 商业分发无 AGPL 暴露 | 已完成 2026-08-02 |
-| **S4** 🟡 | `docx` 技能（最复杂：修订/批注/XSD/CJK）。**进行中**：四刀落地 W1/W2/W3/W5/W6/W7/W8/W9/W10/W11/W13/W15/W16/W17 共 **14/19**，5 项 pending 逐条写理由（见 §六·补五）。纯 lxml，**刻意不依赖 python-docx** | docx/ | 进行中 |
+| **S4** 🟡 | `docx` 技能（最复杂：修订/批注/XSD/CJK）。**进行中**：五刀落地 **16/19**（余 W14/W18/W19），逐条写理由（见 §六·补五、§六·补六）。纯 lxml，**刻意不依赖 python-docx**。分支 CI 已 **10/10 全绿** | docx/ | 进行中 |
 | **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
 | **S6** | 收尾：README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version` | 文档同步 | 新窗口 |
 
@@ -2245,6 +2245,92 @@ desktop skills-builtin 16/16。`.builtin-version` → **`8223bdbd2bb8459a`**（�
 
 ---
 
+### 六·补六 — 第五刀：W12 + W4，以及这个分支第一次跑 CI 的六个发现（2026-08-03）
+
+19 项里再落地 2 项，**共 16/19，3 项 pending（W14 / W18 / W19）**。
+但这一刀真正的收获不在能力上 —— 在于**这个分支从来没有跑过 CI**，
+开一个 draft PR 之后连跑六轮，抓到六个**本机一个都不可能发现**的缺陷。
+
+#### CI 的触发条件本身是第一个发现
+
+`ci.yml` 是 `push: [main]` + `pull_request: [main]`。**推一个特性分支不触发任何东西。**
+所以「分支没 push 所以雷没响」这个本任务里已出现三次的形状，还有第四种变体：
+**推了也没用**。要在不合入的前提下跑 CI，只能开 PR —— 草稿即可，
+`pull_request` 触发器照样生效，而 GitHub 禁止合并 draft。
+
+#### 六轮抓到的东西
+
+| # | 现象 | 根因 | 本机为什么看不见 |
+|---|---|---|---|
+| 1 | Windows 上**每个技能入口点**都 exit 2 | 报告打中文到 stdout，而 Windows 捕获管道用 ANSI 代码页；Python 要 3.15 才默认 UTF-8（PEP 686），CI 用 3.11 | macOS/Linux 默认 UTF-8 |
+| 2 | 同一个缺陷**在门禁脚本上还有第二个家** | 第一次只修了 `skills/`，`scripts/` 下九个门禁同样打 `✅` | 同上 |
+| 3 | ubuntu 装了 **61 MB** Noto CJK 仍报「找不到字体」 | Noto Sans CJK 是 **CFF/PostScript 轮廓，reportlab 只能嵌 TrueType**（§21.1 ⑯ 早写着） | 本机有 Songti（TrueType） |
+| 4 | 夹具在 Windows 上**不是同样的字节** | `ZipInfo.__init__` 在 Windows 设 `create_system=0`、Unix 设 `3`，该字节进 zip 中央目录 | 单平台跑永远一致 |
+| 5 | deckcraft 门禁在 CI 上**从来跑不起来** | 真实语料 610 KB 被 `.gitignore` 排除 | 本机有那个文件 |
+| 6 | desktop 测试套件**坏了两刀** | `vi.mock` 没导出 S3.5 新增的 `PIP_HINTS` | **门禁清单只让我跑一个文件** |
+
+第 6 条的教训独立于内容：**门禁清单本身可以是盲区**。我照着任务书列的
+`vitest run src/__tests__/lib/skills-builtin.test.ts` 跑了四刀，而 MEMORY 记的基线是
+`desktop 858` —— 两个数字从来没对上过，也从来没人去对。
+
+#### 修法里两条值得单独记
+
+- **③ 的修法不是「再装一个字体」**，是先承认错误信息在说谎：装着 61 MB 中文字体的机器
+  被告知「本机找不到中文字体」，会把人打发去装自己已经有的东西。新增
+  `rejected_candidates()`，错误里点名「**找到了但用不了**（这些是 CFF 轮廓）」。
+- **④ 顺带暴露 `xlsx` 夹具生成器有完全相同的缺口**（`date_time` / `compress_type` /
+  `external_attr` 都设了，就是没设 `create_system`），而**它没有 F0 那样的断言，
+  所以永远不会响** —— 比会响的那个危险。
+
+#### 三平台都装 LibreOffice：原因不是求全，是方案 B 结构性做不到
+
+§7 选的方案 B 是「只在 ubuntu 装」。CI 一跑就暴露它有个**结构性的洞**：
+`--allow-missing soffice` 只放宽 **L2 的 tier 判定**，管不到 **L1 验收档会真跑每个能力的
+sample** —— W17/X13 自己调 `soffice`，没有就 exit 2，于是 mac/Windows 必红。
+升级为三平台都装之后，§7 那条「`find_soffice()` 的 macOS 与 Windows 分支至今没有任何
+地方执行过」的欠账**当场销掉**（见 §7 该条的销账批注）。
+
+#### 落地的两项能力
+
+| 能力 | 脚本 | 契约（都在合法文档里看不见） |
+|---|---|---|
+| **W12 样式管理** | `docx_style.py` | 改一个样式**重绘用它的每一段**（要 `--overwrite`，并报出几段）· 删还在用的要 `--reassign`（否则 Word 静默退回 Normal）· `basedOn` 成环拒绝（Word 在环处停止解析、静默变 Normal）· 删除时子样式**重指向祖父** |
+| **W4 从 Markdown 生成** | `docx_from_md.py` + `office/markdown.py` | **映射不了的构造带行号点名，绝不丢弃**（`--strict` 变拒绝）· `w:pStyle` 指向不存在的样式是**合法 XML 且静默按 Normal 排版**，所以用到的样式一律创建 · `--template` 保留样式/编号/页眉，只换正文 |
+
+`office/markdown.py` 是自写解析器（技能只有 python3 + lxml + soffice，不引入新依赖）。
+夹具 `sample.md` **刻意带三个映射不了的构造**（脚注 + 两处裸 HTML）——
+一个只含受支持语法的夹具，会让「悄悄丢掉脚注」的生成器通过所有检查。
+
+#### 这一刀自己踩的三个坑
+
+1. **又一次写出 `el.find(a) or el.find(b)`** —— 第三刀记过的 lxml 真值陷阱，当场改掉。
+2. **报告说 `properties_set: []` 而实际设了六个属性** —— `insert_ordered` 会把子元素
+   REPARENT 走，统计放在合并之后就统计了个空壳。**文件是对的、报告是错的**，
+   现在由 S3 钉住。
+3. **`MD_PARAGRAPHS` 第一版取自错误的尺子** —— 我用 python-docx 量得 15，而门禁的
+   `paragraph_texts()` 数所有 `<w:p>`（24，多出表格单元格里的 9 个）。
+   **两个计数器都对，数的不是同一件事**；断言在正确产物上判红才发现。
+
+#### C4 连着两次抓到新入口点没有探针
+
+上一刀新加的编码断言写着「新入口点会免费继承这个缺陷」，这一刀它先后抓到
+`docx_style.py` 和 `docx_from_md.py`。**这句话不是修辞。**
+
+#### 门禁结果
+
+CI **10/10 全绿**（run `30788968430`，含 Windows：`find_soffice()` 解析成功 ·
+L2 65/0 · caps 16/0 · pdf 53/0 · xlsx 71/0 · docx 145/0 · deckcraft 22/0+9skip）。
+本机：docx **155/0（79 断言 / 154 控制）** · L1 全量 `[capabilities] OK` · L2 65/0 ·
+pdf 53/0 · xlsx 71/0 · deckcraft 30/0 · L0 0.191~0.736 · check-docs · desktop **862/102**。
+
+#### 下一刀
+
+**W19**（现已解锁 —— 它的 pending 理由原本写「等 W4」，已如实改写；缺的是「怎么判定
+一个预设比另一个好」这个**可测量属性**）· **W14**（体量已量清：docx 闭包压缩后 55 KB、
++1.5%，许可见 §5·补.8b；等用户拍板）· **W18**（等「什么算一处差异」的定义）。
+
+---
+
 ## 七、待拍板 / 未决
 
 §4·补的决策表已销掉大部分。**剩余未决**：
@@ -2323,8 +2409,13 @@ desktop skills-builtin 16/16。`.builtin-version` → **`8223bdbd2bb8459a`**（�
    L1 验收档 39s · L1 自检 12s · xlsx 行为测试 14s · pdf 行为测试 10s · 求值器标定 4s。
    加 apt 安装仍远在 15 分钟超时内。
 
-   ⚠️ **写下来的已知缺口**：`find_soffice()` 的 **macOS 与 Windows 分支至今没有任何地方
-   执行过** —— 「三平台都绿」**不等于** soffice 路径在三平台可用。
+   ⚠️ ~~**写下来的已知缺口**：`find_soffice()` 的 **macOS 与 Windows 分支至今没有任何地方
+   执行过** —— 「三平台都绿」**不等于** soffice 路径在三平台可用。~~
+   ✅ **已销账（2026-08-03，§六·补六）**：方案 B 升级为三平台都装 LibreOffice 之后，
+   CI 上 Windows 报 `find_soffice() -> 'C:\Program Files\LibreOffice\program\soffice.exe'`、
+   macOS 同样解析成功，两条分支第一次真的执行过。升级的**原因不是求全**，是方案 B
+   结构性地做不到：`--allow-missing soffice` 只放宽 L2 的 tier 判定，管不到 **L1 验收档
+   会真跑每个能力的 sample** —— W17/X13 自己调 `soffice`，没有就 exit 2。
    ⚠️ **S4 欠账**：D7 是 docx→PDF，需要 Writer，届时 ubuntu 要装
    `libreoffice-calc + libreoffice-writer`。
    ⚠️ **Windows 上必须 `shell: bash`**：默认 pwsh 下 `$ALLOW_MISSING` 会静默展开成空，

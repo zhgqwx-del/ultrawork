@@ -33,7 +33,7 @@ python3 -m pip install lxml
 
 **这里没有 `python-docx`，这是有意的。** 见下面「为什么不用 python-docx」。
 
-## 现在有什么（19 项里的 14 项，其余的没有，别假装有）
+## 现在有什么（19 项里的 16 项，其余的没有，别假装有）
 
 | 能力 | 脚本 | 说明 |
 |---|---|---|
@@ -51,9 +51,11 @@ python3 -m pip install lxml
 | **目录 + 多级标题编号** | `scripts/docx_toc.py` | 目录是个**域**，页码**故意不写**，见下 |
 | **插图 / 换图** | `scripts/docx_image.py` | 尺寸单位是 **EMU**，见下 |
 | **CJK 字体巡检 / 修复** | `scripts/docx_fonts.py` | 先查样式链再写，见下 |
+| **样式管理** | `scripts/docx_style.py` | 改一个样式会重绘整篇，见下 |
+| **从 Markdown 生成** | `scripts/docx_from_md.py` | 看不懂的构造一律点名，见下 |
 
-`capabilities.json` 里另有 **5 项 pending，逐条写了理由** ——
-从 Markdown 生成、样式管理、XSD 校验、文档 diff、排版预设。
+`capabilities.json` 里另有 **3 项 pending，逐条写了理由** ——
+XSD 校验、文档 diff、排版预设。
 **pending 写的不是「快好了」，是「还没有断言在证明它」。**
 
 ## 用法
@@ -122,6 +124,18 @@ python3 scripts/docx_image.py --in b.docx --out c.docx --replace 0 --with new.pn
 python3 scripts/docx_fonts.py --in a.docx --check
 python3 scripts/docx_fonts.py --in a.docx --out b.docx --fix --east-asia 宋体
 python3 scripts/docx_fonts.py --in a.docx --out b.docx --fix --strict
+
+# 样式管理（改一个样式 = 重绘用它的每一段，所以要 --overwrite）
+python3 scripts/docx_style.py --in a.docx --list
+python3 scripts/docx_style.py --in a.docx --out b.docx --set 正文小字 \
+        --name "Body Small" --based-on Normal --size 9 --east-asia 宋体
+python3 scripts/docx_style.py --in a.docx --out b.docx --set Heading1 --overwrite --color 1F5CA8
+python3 scripts/docx_style.py --in a.docx --out b.docx --delete 旧标题 --reassign Heading2
+
+# 从 Markdown 生成（--strict = 有一个构造映射不了就拒绝写出）
+python3 scripts/docx_from_md.py --in notes.md --out notes.docx
+python3 scripts/docx_from_md.py --in notes.md --out notes.docx --template house.docx
+python3 scripts/docx_from_md.py --in notes.md --out notes.docx --strict
 ```
 
 ## 这个技能与「随手用 python-docx」的差别：一句话不是一个 run
@@ -326,6 +340,45 @@ Word 的中文字体来自 `@w:eastAsia`、西文来自 `@w:ascii`。一个 run 
 主题绑定（`@w:eastAsiaTheme`）**算已绑定**，原样留着；`styles.xml` 本身不改
 （改一个样式会影响用它的每一个 run，比被要求的改动大得多），两条都写在报告里。
 
+## 样式管理：改一个样式不是局部编辑
+
+一个样式是**共享的**。改它，用它的每一段都会跟着变 —— 而提出这个要求的人通常只提到了
+其中一段。所以：
+
+- **`--set` 一个已经存在的样式必须加 `--overwrite`**，拒绝信息和报告里都会说
+  **重绘了几个段落**。这个数字是让人在文档发出去之前认出「这不对」的唯一机会。
+- **`--delete` 一个还在用的样式必须给 `--reassign`**。Word 不报错 —— 段落静默退回
+  Normal，文档悄悄丢掉标题格式，等打印出来才发现。
+- **`w:basedOn` 成环直接拒绝**：Word 在环处停止解析格式，样式静默变成 Normal，
+  **没有任何地方报错**，所以下游也不会有人发现。
+- **删除时把「基于它的子样式」重新指向祖父**，而不是留一个悬空的 `basedOn` ——
+  Word 把找不到的 `basedOn` 当作「没有继承」。
+
+`--list` 给出每个样式的**继承链**和**使用计数**，`--set` 只改你在命令行上点名的属性
+（改颜色不会丢掉它原有的字号）。
+
+## 从 Markdown 生成：看不懂的东西必须点名
+
+两条契约，都不是「功能」：
+
+**① 映射不了的构造一律报告，绝不丢弃。** 一个悄悄丢掉脚注、裸 `<table>` 或参考式链接的
+生成器，产出的是一份**缺内容而没有任何地方说明**的文档，而发现的人是读打印稿的那个。
+每一处都带**行号**进 `unsupported`，`--strict` 把它变成拒绝写出。这和 W5 的 `unfilled`、
+W7 的 `remaining` 是同一条契约。
+
+支持：ATX 与 Setext 标题 · 段落 · 嵌套有序/无序列表 · GFM 表格（含 `:---:` 对齐）·
+围栏与缩进代码块 · 引用 · 分隔线 · 图片 · 行内 `**粗**` `*斜*` `` `码` `` `~~删~~`
+`[链接]` 与反斜杠转义。
+
+**不支持、且会被逐条点名**：裸 HTML · 参考式链接与图片 · 脚注 · 定义列表 ·
+任务列表勾选框 · front matter · 数学公式。
+
+**② 生成的文档需要**存在**的样式。** `w:pStyle` 指向一个文档里没有的样式是**合法 XML**，
+静默按 Normal 排版 —— 标题不加粗、代码不等宽、引用不缩进，而且没有任何地方解释为什么。
+所以本技能写到的每个样式都会在缺失时创建（走 W12 那套机制）。
+
+`--template` 让你用自己的版式：**模板的样式、编号、页眉页脚全部保留，只有正文被替换**。
+
 ## 为什么不用 python-docx
 
 不是风格偏好，是两条实测：
@@ -343,7 +396,7 @@ Word 的中文字体来自 `@w:eastAsia`、西文来自 `@w:ascii`。一个 run 
 
 ## 已知边界（写下来，不要以为验过了）
 
-- **19 项能力只做了 14 项**，其余 5 项在 `capabilities.json` 的 pending 里逐条写了理由。
+- **19 项能力只做了 16 项**，其余 3 项在 `capabilities.json` 的 pending 里逐条写了理由。
 - **目录的页码永远要人按一次 F9**（Word）或 Tools > Update > Fields（LibreOffice）。
   转 PDF **不会**更新它 —— 这是实测的，不是推测。
 - **`--toc` 不会替换已有的目录**，检测到就拒绝：两个目录在更新之前长得一模一样，
@@ -365,10 +418,11 @@ Word 的中文字体来自 `@w:eastAsia`、西文来自 `@w:ascii`。一个 run 
 
 `scripts/office/` 是本技能自带的一份 OOXML 底座（`package` 包与关系 /
 `document` 段落与跨 run 字符流、章节与域 / `revision` 修订的五种形态 /
-`styles` 样式链与字体解析 / `media` 图片尺寸与 EMU 换算 / `soffice` 探测与转换 /
+`styles` 样式链与字体解析 / `media` 图片尺寸与 EMU 换算 / `markdown` 自写解析器 /
+`soffice` 探测与转换 /
 `validate` 一致性 / `xmlorder` ECMA-376 元素序）。**xlsx / pdf 各自带各自的副本**，
 不共享 —— 打包脚本拒绝 symlink。
 
-> 本技能的行为测试（67 条断言 + 130 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（79 条断言 + 154 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。

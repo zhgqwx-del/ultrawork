@@ -478,12 +478,40 @@
         "allow_blank_pages": false
       },
       "verified_by": "the artifact differs from its input in exactly one part — word/styles.xml — so F1/F2 are the assertion that the rest of the document was not touched, and D2 checks the new `w:style` against CT_Style's child order, which is a strict sequence this skill has to get right by construction rather than by remembering. D1/D4/D7 cover the package, the element order and the render. What L2 cannot see is the whole contract, because none of it is visible in a legal document: that MODIFYING a style repaints every paragraph using it (so `--set` on an existing id refuses without `--overwrite`, and the report says how many), that DELETING one Word silently replaces with Normal (so it refuses unless nothing uses it or `--reassign` says where they go), that a `w:basedOn` cycle makes Word stop resolving formatting with no error anywhere, and that a style based on a deleted one must be repointed rather than left dangling. scripts/test-docx-skill.py S1-S5 assert each, and S3 in particular pins a defect this skill shipped and fixed within the hour: the report said `properties_set: []` on a call that set six — the document was right and the REPORT was wrong, which is the harder half to notice"
+    },
+    "W4": {
+      "entry": "scripts/docx_from_md.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/sample.md",
+          "--out",
+          "{out}/generated.docx",
+          "--report",
+          "{out}/generate.json"
+        ],
+        "produces": [
+          "generated.docx",
+          "generate.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "收入分析",
+          "审计意见",
+          "华东区域"
+        ],
+        "paragraphs": 15,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "there is no `baseline` because nothing was edited — this capability builds a package from nothing, so F1/F2 have no input to compare against and say so rather than pretending. That puts the whole weight on the legality checks, which is the right place for it: D2 validates every part of a hand-built package against the ECMA-376 schemas (the reason this authors its own blank document instead of starting from python-docx's template, which ships a `w:zoom` without the required `w:percent` and would fail here — gotchas §21.2 ㉗), D1 that the hyperlink and image relationships resolve, D4 that `w:sectPr` is still last after fifteen blocks were appended, D6 that every generated CJK run binds both faces, and D7 that LibreOffice lays it out non-blank. What none of them can see is the contract: that a construct this cannot map is REPORTED with its line number rather than dropped — the sample's Markdown carries a footnote and two raw HTML tags on purpose, so a generator that silently discarded them would still produce a legal document and pass everything above. scripts/test-docx-skill.py D1-D6 assert that, plus that `--strict` refuses and writes nothing, that the styles a `w:pStyle` names are actually created (naming one that does not exist is valid XML that silently formats as Normal), that nested list levels reach the numbering they claim, and that `--template` keeps a house style's parts while replacing only the body"
     }
   },
   "pending": {
-    "W4": "generating a document from Markdown needs a heading/list/table/emphasis mapping and a template to hang it on; nothing is written and nothing asserts it",
     "W14": "L2 validates artifacts against the vendored ECMA-376 schemas, but the skill itself cannot: the schemas are 984 KB and live in the ultrawork repo, not in the distributed skill. The open question is whether to ship them, point at $ECMA376_XSD_DIR, or degrade loudly — and 'degrades silently' is the one answer that is not acceptable",
     "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
-    "W19": "table and layout presets need a house style to preset, and picking one before the generation path (W4) exists would be guessing at what it has to fit"
+    "W19": "UNBLOCKED as of W4 — this reason is being kept honest rather than left as it was. It used to say the presets could not be chosen before a generation path existed to fit them to; that path now exists (scripts/docx_from_md.py authors Heading1-6, SourceCode, Quote, Caption, Hyperlink and CodeChar, and W12 can create or modify any of them). What is still missing is only the presets themselves — a named set of table and layout looks — and the assertion that would tell one apart from another, which is the harder half: 'the table looks better' is not a claim a gate can check, so a preset needs a measurable property (border weights, banding, header repeat, column width behaviour with CJK text) before it is worth writing"
   }
 }

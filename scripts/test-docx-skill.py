@@ -193,6 +193,26 @@ NEW_STYLE = "正文小字"
 # a warning nobody can verify.
 HEADING_USERS = 1
 
+# W4. sample.md carries every construct the generator maps AND three it does not —
+# a footnote and two raw HTML tags — because "what it cannot map is NAMED, never
+# dropped" needs a subject. A fixture with only supported syntax would let a
+# generator that silently discarded footnotes pass every check there is.
+SAMPLE_MD = FIXTURES / "sample.md"
+# ⚠️ TWO different paragraph counts, and they are both right. `paragraph_texts()`
+# here walks EVERY <w:p> (24: fifteen in the body plus nine inside the 3x3 table's
+# cells), while python-docx's `doc.paragraphs` — which L2's D3 uses, and which
+# capabilities.json therefore states as 15 — walks only the body's direct children.
+# Measured rather than assumed: the first version of this constant took the number
+# from the wrong ruler and fired on a correct document.
+MD_PARAGRAPHS = 24
+MD_PARAGRAPHS_PYDOCX = 15        # what capabilities.json's `expect` must say
+MD_TABLES = 1
+MD_UNSUPPORTED = 3
+MD_STYLES = ("Heading1", "Heading2", "SourceCode", "Quote", "Hyperlink", "CodeChar")
+# The deepest list nesting in the fixture: "- 华东…" then "  - 其中线上渠道…".
+MD_LIST_DEPTH = 1
+
+
 # Claims this host could not exercise. Reported separately and never folded into the
 # pass count — a skip and a pass look identical at a glance, which is exactly how a
 # wrong expectation once sat unnoticed for a month.
@@ -816,6 +836,7 @@ def collect(work: Path) -> dict:
     ctx["image"] = collect_images(work)
     ctx["fonts"] = collect_fonts(work)
     ctx["styles"] = collect_styles(work)
+    ctx["markdown"] = collect_markdown(work)
 
     # --- contracts -------------------------------------------------------------
     big = work / "big.docx"
@@ -1165,6 +1186,66 @@ def collect_styles(work: Path) -> dict:
                     "wrote": (work / "cyc.docx").exists()}
     return out
 
+
+
+# ── W4: generating from Markdown ──────────────────────────────────────────────
+def numbering_of(path: Path) -> dict:
+    """`{numId: [ilvl...]}` for the lists the document defines."""
+    if "word/numbering.xml" not in parts_of(path):
+        return {}
+    root = tree_of(path, "word/numbering.xml")
+    abstracts = {a.get(W + "abstractNumId"): [l.get(W + "ilvl")
+                                              for l in a.findall(W + "lvl")]
+                 for a in root.findall(W + "abstractNum")}
+    out = {}
+    for num in root.findall(W + "num"):
+        ref = num.find(W + "abstractNumId")
+        out[num.get(W + "numId")] = abstracts.get(
+            ref.get(W + "val") if ref is not None else None, [])
+    return out
+
+
+def list_levels_used(path: Path) -> set:
+    out = set()
+    for numpr in tree_of(path).iter(W + "numPr"):
+        ilvl = numpr.find(W + "ilvl")
+        out.add(ilvl.get(W + "val") if ilvl is not None else "0")
+    return out
+
+
+def collect_markdown(work: Path) -> dict:
+    generated = work / "generated.docx"
+    r = run_script("docx_from_md.py", "--in", SAMPLE_MD, "--out", generated,
+                   "--report", work / "generate.json")
+    out = {
+        "exit": r.returncode,
+        "report": json.loads((work / "generate.json").read_text(encoding="utf-8")),
+        "paragraphs": len(paragraph_texts(generated)),
+        "styles": sorted(styles_of(generated)),
+        "paragraph_styles": paragraph_styles(generated),
+        "numbering": numbering_of(generated),
+        "levels_used": sorted(list_levels_used(generated)),
+        "body_children": body_child_names(generated),
+        "document_xml": part_text(generated, "word/document.xml"),
+        "parts": sorted(parts_of(generated)),
+    }
+    strict = run_script("docx_from_md.py", "--in", SAMPLE_MD,
+                        "--out", work / "strict.docx", "--strict")
+    out["strict"] = {"exit": strict.returncode, "stderr": strict.stderr.strip(),
+                     "wrote": (work / "strict.docx").exists()}
+    # A template's styles, numbering, headers and footers survive; only its body is
+    # replaced. report.docx has all four, so it is the one that can prove it.
+    tpl = work / "from-template.docx"
+    tr = run_script("docx_from_md.py", "--in", SAMPLE_MD, "--out", tpl,
+                    "--template", REPORT, "--report", work / "tpl.json")
+    out["template"] = {
+        "exit": tr.returncode,
+        "report": json.loads((work / "tpl.json").read_text(encoding="utf-8")),
+        "parts": sorted(parts_of(tpl)),
+        "lost": sorted(set(parts_of(REPORT)) - set(parts_of(tpl))),
+        "texts": paragraph_texts(tpl),
+    }
+    return out
 
 def blank_document(src: Path, dst: Path) -> None:
     """A document whose body holds one empty paragraph and nothing else.
@@ -2977,6 +3058,122 @@ def s5_cycle(ctx: dict) -> list[str]:
     return out
 
 
+
+# ── W4: generating from Markdown ──────────────────────────────────────────────
+@check("D1", "every block kind in the Markdown reaches the document")
+def d1_blocks(ctx: dict) -> list[str]:
+    m = ctx["markdown"]
+    out = []
+    if m["exit"] != 0:
+        out.append(f"D1 generating exited {m['exit']}")
+    if m["paragraphs"] != MD_PARAGRAPHS:
+        out.append(f"D1 the document has {m['paragraphs']} paragraphs, expected "
+                   f"{MD_PARAGRAPHS}")
+    blocks = m["report"]["written"]["blocks"]
+    for kind in ("heading", "paragraph", "list_item", "quote", "table", "code",
+                 "rule", "image"):
+        if not blocks.get(kind):
+            out.append(f"D1 no {kind} block was written, though sample.md has one — "
+                       f"a generator that drops a block kind produces a document "
+                       f"that is missing content with nothing saying so")
+    if m["body_children"] and m["body_children"][-1] != "sectPr":
+        out.append("D1 <w:sectPr> is no longer last in the body after appending "
+                   "every block")
+    return out
+
+
+@check("D2", "what it cannot map is named with its line, not dropped")
+def d2_unsupported(ctx: dict) -> list[str]:
+    m = ctx["markdown"]
+    out = []
+    reported = m["report"]["unsupported"]
+    if len(reported) != MD_UNSUPPORTED:
+        out.append(f"D2 {len(reported)} unmappable construct(s) reported, sample.md "
+                   f"carries {MD_UNSUPPORTED} on purpose (a footnote and two raw "
+                   f"HTML tags). A generator that silently discards them still "
+                   f"produces a legal document that passes every other check")
+    kinds = {u["construct"] for u in reported}
+    for want in ("footnote reference", "raw HTML tag"):
+        if want not in kinds:
+            out.append(f"D2 a {want} in the source is not reported")
+    if any(not u.get("line") for u in reported):
+        out.append("D2 a reported construct carries no line number, so nobody can "
+                   "find it in the source")
+    return out
+
+
+@check("D3", "--strict refuses and writes nothing when something could not be mapped")
+def d3_strict(ctx: dict) -> list[str]:
+    s = ctx["markdown"]["strict"]
+    out = []
+    if s["exit"] == 0:
+        out.append("D3 --strict exited 0 on a source carrying constructs the "
+                   "generator cannot map")
+    if s["wrote"]:
+        out.append("D3 --strict wrote the document anyway, which makes the refusal "
+                   "a message rather than a refusal")
+    if "strict" not in s["stderr"]:
+        out.append(f"D3 the refusal does not say why: {s['stderr'][:120]!r}")
+    return out
+
+
+@check("D4", "the styles the document names are the styles it defines")
+def d4_styles(ctx: dict) -> list[str]:
+    m = ctx["markdown"]
+    out = []
+    defined = set(m["styles"])
+    for style in MD_STYLES:
+        if style not in defined:
+            out.append(f"D4 {style!r} is used but not defined — a w:pStyle naming a "
+                       f"style the document does not have is valid XML that silently "
+                       f"formats as Normal, and nothing anywhere explains why")
+    for used in m["paragraph_styles"]:
+        if used and used not in defined:
+            out.append(f"D4 a paragraph names style {used!r}, which is not defined")
+    return out
+
+
+@check("D5", "nested list levels reach the numbering they claim")
+def d5_lists(ctx: dict) -> list[str]:
+    m = ctx["markdown"]
+    out = []
+    numbering = m["numbering"]
+    if len(numbering) < 2:
+        out.append(f"D5 {len(numbering)} list(s) defined; a bullet list and an "
+                   f"ordered list are two different abstractNums")
+    for num_id, levels in numbering.items():
+        if len(levels) <= MD_LIST_DEPTH:
+            out.append(f"D5 numId {num_id} defines {len(levels)} level(s); the "
+                       f"fixture nests {MD_LIST_DEPTH + 1} deep and a level that is "
+                       f"not defined renders flat")
+    if str(MD_LIST_DEPTH) not in m["levels_used"]:
+        out.append(f"D5 no paragraph uses ilvl={MD_LIST_DEPTH}, so the nested bullet "
+                   f"in sample.md came out at the top level")
+    return out
+
+
+@check("D6", "--template keeps the house style and replaces only the body")
+def d6_template(ctx: dict) -> list[str]:
+    tpl = ctx["markdown"]["template"]
+    out = []
+    if tpl["exit"] != 0:
+        out.append(f"D6 --template exited {tpl['exit']}")
+        return out
+    if tpl["lost"]:
+        out.append(f"D6 the template lost {tpl['lost']} — its styles, numbering, "
+                   f"headers and footers are the whole reason to pass one")
+    if not any("header" in p for p in tpl["parts"]):
+        out.append("D6 the template's header is gone")
+    if tpl["report"]["template_blocks_replaced"] < 1:
+        out.append("D6 the report says no template block was replaced, so the "
+                   "generated content was appended to the template's own text")
+    for old in ("二零二六年第三季度经营分析报告",):
+        if any(old in text for text in tpl["texts"]):
+            out.append(f"D6 the template's own body text {old!r} is still in the "
+                       f"document — only its styles were meant to survive")
+    return out
+
+
 # ── the negative controls ─────────────────────────────────────────────────────
 # Each one is a defect an assertion above claims to catch, applied to the collected
 # context. They are the implementations somebody reaches for first, not invented
@@ -4063,6 +4260,86 @@ def flaw_chart_loses_its_density(ctx, work):
     return ctx
 
 
+
+def flaw_a_block_kind_is_dropped(ctx, work):
+    """The defect the whole contract is about: content that never arrives."""
+    m = copy.deepcopy(ctx["markdown"])
+    m["report"]["written"]["blocks"].pop("table", None)
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_sectpr_no_longer_last(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    m["body_children"] = m["body_children"][:-1] + ["sectPr", "p"]
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_unsupported_silently_dropped(ctx, work):
+    """A legal document that is missing content, and nothing says so."""
+    m = copy.deepcopy(ctx["markdown"])
+    m["report"]["unsupported"] = []
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_unsupported_reported_without_a_line(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    for u in m["report"]["unsupported"]:
+        u["line"] = 0
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_md_strict_writes_anyway(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    m["strict"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_style_named_but_never_created(ctx, work):
+    """w:pStyle naming a style that does not exist: valid XML, silently Normal."""
+    m = copy.deepcopy(ctx["markdown"])
+    m["styles"] = [s for s in m["styles"] if s != "SourceCode"]
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_nested_list_flattened(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    m["levels_used"] = ["0"]
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_only_one_list_defined(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    m["numbering"] = {"1": ["0", "1", "2"]}
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_template_parts_lost(ctx, work):
+    m = copy.deepcopy(ctx["markdown"])
+    m["template"]["lost"] = ["word/numbering.xml", "word/header1.xml"]
+    m["template"]["parts"] = [p for p in m["template"]["parts"]
+                              if "header" not in p]
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_template_body_kept_as_well(ctx, work):
+    """Appending to the template instead of replacing its body: the generated
+    document then carries somebody else's text."""
+    m = copy.deepcopy(ctx["markdown"])
+    m["template"]["report"]["template_blocks_replaced"] = 0
+    m["template"]["texts"] = ["二零二六年第三季度经营分析报告"] + m["template"]["texts"]
+    ctx["markdown"] = m
+    return ctx
+
+
 def flaw_style_written_out_of_ct_style_order(ctx, work):
     s = copy.deepcopy(ctx["styles"])
     s["create"]["styles"][NEW_STYLE]["children"] = ["rPr", "name", "basedOn"]
@@ -4372,6 +4649,20 @@ FLAWS = [
      flaw_fontless_style_stops_answering, {"V0"}, ""),
     ("CONTROL: chart.png loses its declared density", flaw_chart_loses_its_density,
      {"V0"}, ""),
+
+    ("a-block-kind-is-dropped", flaw_a_block_kind_is_dropped, {"D1"}, ""),
+    ("sectpr-no-longer-last-after-generating", flaw_sectpr_no_longer_last,
+     {"D1"}, ""),
+    ("unsupported-silently-dropped", flaw_unsupported_silently_dropped, {"D2"}, ""),
+    ("unsupported-reported-without-a-line",
+     flaw_unsupported_reported_without_a_line, {"D2"}, ""),
+    ("md-strict-writes-anyway", flaw_md_strict_writes_anyway, {"D3"}, ""),
+    ("style-named-but-never-created", flaw_style_named_but_never_created,
+     {"D4"}, ""),
+    ("nested-list-flattened", flaw_nested_list_flattened, {"D5"}, ""),
+    ("only-one-list-defined", flaw_only_one_list_defined, {"D5"}, ""),
+    ("template-parts-lost", flaw_template_parts_lost, {"D6"}, ""),
+    ("template-body-kept-as-well", flaw_template_body_kept_as_well, {"D6"}, ""),
 
     ("style-written-out-of-ct-style-order", flaw_style_written_out_of_ct_style_order,
      {"S1"}, ""),
