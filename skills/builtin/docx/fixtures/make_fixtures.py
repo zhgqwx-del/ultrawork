@@ -253,6 +253,51 @@ def document_xml() -> str:
             + "</w:body></w:document>")
 
 
+# ── revised.docx: the SAME document after a round of edits (W18) ──────────────
+# One of every change W18 calls a difference, and nothing else. Built by substituting
+# into report.docx's own markup rather than by writing a second document out longhand,
+# so the two files cannot drift apart: anything that changes report.docx changes this
+# one the same way, or the substitution stops matching and says so.
+REVISED_TEXT_FROM = "营业收入同比增长 12%，毛利率保持稳定。"
+REVISED_TEXT_TO = "营业收入同比增长 18%，毛利率保持稳定。"
+REVISED_STYLE = "Heading1"          # applied to the placeholder paragraph
+REVISED_CELL_FROM, REVISED_CELL_TO = "1,240", "1,860"
+REVISED_ADDED = "新增结论：全年目标维持不变。"
+REVISED_HEADER_FROM, REVISED_HEADER_TO = "内部资料", "机密资料"
+
+
+def _sub(text: str, old: str, new: str, what: str) -> str:
+    """Replace exactly one occurrence, or say which edit stopped applying.
+
+    A silent no-op here would produce a `revised.docx` missing one of the six changes,
+    and the assertions written for six would go looking for a difference that is not
+    there — a fixture drifting out from under its tests without a word.
+    """
+    hits = text.count(old)
+    if hits != 1:
+        raise SystemExit(f"make_fixtures: the {what} edit matched {hits} times, "
+                         f"expected exactly 1 — report.docx changed under it")
+    return text.replace(old, new, 1)
+
+
+def document_xml_revised() -> str:
+    text = document_xml()
+    text = _sub(text, REVISED_TEXT_FROM, REVISED_TEXT_TO, "paragraph text")
+    placeholder = "".join(run(t) for t in PLACEHOLDER_RUNS)
+    text = _sub(text, para(placeholder), para(placeholder, style=REVISED_STYLE),
+                "pStyle")
+    text = _sub(text, para(run(LIST_ITEMS[1]), num_id=1), "", "paragraph removal")
+    text = _sub(text, f"<w:t>{REVISED_CELL_FROM}</w:t>",
+                f"<w:t>{REVISED_CELL_TO}</w:t>", "table cell")
+    text = _sub(text, "<w:sectPr>", para(run(REVISED_ADDED)) + "<w:sectPr>",
+                "paragraph addition")
+    return text
+
+
+def header_xml_revised() -> str:
+    return _sub(header_xml(), REVISED_HEADER_FROM, REVISED_HEADER_TO, "header text")
+
+
 def document_xml_unordered() -> str:
     """The same document with three ECMA-376 order violations, for `--fix-order`.
 
@@ -731,7 +776,8 @@ def chart_png() -> bytes:
             + chunk(b"IEND", b""))
 
 
-def parts(document: str | None = None) -> list[tuple[str, bytes]]:
+def parts(document: str | None = None,
+          header: str | None = None) -> list[tuple[str, bytes]]:
     """Every part, in the order the zip stores them (content types first)."""
     text = [
         ("[Content_Types].xml", content_types_xml()),
@@ -742,7 +788,7 @@ def parts(document: str | None = None) -> list[tuple[str, bytes]]:
         ("word/numbering.xml", numbering_xml()),
         ("word/settings.xml", settings_xml()),
         ("word/fontTable.xml", font_table_xml()),
-        ("word/header1.xml", header_xml()),
+        ("word/header1.xml", header if header is not None else header_xml()),
         ("word/footer1.xml", footer_xml()),
         ("word/comments.xml", comments_xml()),
         ("docProps/core.xml", core_xml()),
@@ -789,6 +835,8 @@ def main() -> int:
     args = ap.parse_args()
     out = Path(args.out_dir)
     for name, items in (("report.docx", parts()),
+                        ("revised.docx", parts(document_xml_revised(),
+                                               header_xml_revised())),
                         ("unordered.docx", parts(document_xml_unordered())),
                         ("outline.docx", outline_parts()),
                         ("fontless.docx", outline_parts(fontless=True))):

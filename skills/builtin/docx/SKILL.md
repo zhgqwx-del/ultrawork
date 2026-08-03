@@ -12,8 +12,11 @@ description: >
   PDF so the result can be previewed at all, make edits AS TRACKED CHANGES and
   accept or reject existing ones in pure Python, add and remove comments, unpack and
   repack the OOXML package
-  byte-for-byte, and repair ECMA-376 element order in a document Word offers to
-  "repair". Not for spreadsheets — that is `xlsx`; not for PDFs — that is `pdf`;
+  byte-for-byte, repair ECMA-376 element order in a document Word offers to
+  "repair", 对比两份文档 / Word文档diff / 生成审阅稿 / 看改了什么 —— diff two
+  documents and get the differences back as a redline .docx you can accept or reject
+  in Word, and 表格美化 / 三线表 / 斑马纹表格 / 中文列宽 — apply a named table
+  preset whose every property is measurable. Not for spreadsheets — that is `xlsx`; not for PDFs — that is `pdf`;
   not for turning a document into slides — that is `deckcraft`.
 x-requires: [python3, lxml, soffice]
 ---
@@ -33,7 +36,7 @@ python3 -m pip install lxml
 
 **这里没有 `python-docx`，这是有意的。** 见下面「为什么不用 python-docx」。
 
-## 现在有什么（19 项里的 17 项，其余的没有，别假装有）
+## 现在有什么（19 项全部，一项不欠）
 
 | 能力 | 脚本 | 说明 |
 |---|---|---|
@@ -54,10 +57,11 @@ python3 -m pip install lxml
 | **样式管理** | `scripts/docx_style.py` | 改一个样式会重绘整篇，见下 |
 | **从 Markdown 生成** | `scripts/docx_from_md.py` | 看不懂的构造一律点名，见下 |
 | **XSD schema 校验** | `scripts/docx_validate.py` | schema **随技能分发**，找不到就大声报错，见下 |
+| **文档 diff + redline** | `scripts/docx_diff.py` | 一处差异 = **一段可见文字变了**；产物是**带修订的 docx**，见下 |
+| **表格排版预设** | `scripts/docx_table.py` | 只有 **3 种**，因为每种都得有能量出来的属性，见下 |
 
-`capabilities.json` 里另有 **2 项 pending，逐条写了理由** ——
-文档 diff、排版预设。
-**pending 写的不是「快好了」，是「还没有断言在证明它」。**
+`capabilities.json` 里 **pending 是空的**。19 项每一项都有断言在证明它，
+CI 的 `--no-pending pdf xlsx docx` 就是这句话的判据 —— 不是「我觉得做完了」。
 
 ## 用法
 
@@ -142,6 +146,16 @@ python3 scripts/docx_from_md.py --in notes.md --out notes.docx --strict
 python3 scripts/docx_validate.py --in report.docx
 python3 scripts/docx_validate.py --in report.docx --report validate.json
 python3 scripts/docx_validate.py --in report.docx --schemas /opt/ecma376
+
+# 文档 diff（--redline 产出「带跟踪修订的 docx」，在 Word 里逐条接受/拒绝）
+python3 scripts/docx_diff.py --a 旧.docx --b 新.docx --report diff.json
+python3 scripts/docx_diff.py --a 旧.docx --b 新.docx --redline 审阅稿.docx --strict
+
+# 表格预设（--list-presets 打印「拿什么区分这三种」，不是打印三个名字）
+python3 scripts/docx_table.py --list-presets
+python3 scripts/docx_table.py --in a.docx --out b.docx --preset finance
+python3 scripts/docx_table.py --in a.docx --out b.docx --preset banded --table 1
+python3 scripts/docx_table.py --in a.docx --measure
 ```
 
 ## 这个技能与「随手用 python-docx」的差别：一句话不是一个 run
@@ -410,6 +424,76 @@ Word 弹「发现无法读取的内容」是最不该用来得知文档有问题
 另外两件不做会让它变成没人用的东西：**`mc:Ignorable` 必须被处理**（Word 自己写的每一份
 文档都带 `w14`/`w15`/`wp14`，不剥掉就会报出一墙非缺陷）· **没有对应语法的 part 要点名**
 （「valid」的意思是「在有语法的地方 valid」，不说清楚就会被读成「全都检查过了」）。
+
+## 文档 diff：难的不是比对，是「什么才算一处差异」
+
+两个 .docx 的 XML diff 一跑就是几百行，而且**全是噪声**：Word 每次保存都重写
+`w:rsidR`、重跑拼写检查、重新切 run。所以这项能力的第一个问题不是「怎么比」，
+是「什么算差异」。定下来的答案：
+
+**一处差异 = 一个段落的可见文字变了。** 外加一份**显式白名单**的结构变化：
+段落增 / 删 / 移动 · 表格单元格文字 · 段落 `w:pStyle` · 页眉页脚文字 · 图片增删换。
+
+**下面这些不算差异，但会**逐类**报出计数** —— 「我看了，判断它不重要」和「我没看」
+是两回事，而只有前者可以被检查：
+
+`w:rsid*` · `w:proofErr` · `w:bookmarkStart/End` · `w:lang` · 空 run 合并 ·
+属性顺序 · zip 内条目顺序
+
+**两个产物出自同一次比对**，所以不可能互相矛盾：① JSON 摘要 ② **一份 redline .docx**
+—— 差异写成跟踪修订，在 Word 里逐条接受/拒绝。它用的是 W6 那套 `office/revision.py`。
+
+判据是闭环的，而且脚本**在写出文件之前先对自己的产物验一遍**：
+
+    接受 redline 里的全部修订  ->  文档逐字读起来等于 B
+    拒绝 redline 里的全部修订  ->  文档逐字读起来等于 A
+
+⚠️ 这个闭环**只针对本次比对新加的那些修订 id**（报告里的 `revision_ids` 列了）。
+A 本身可能带着别人的修订（本技能的夹具就带着一条），`--reject-all` 把那条也拒掉是
+W7 的正确行为，但不是这里要问的问题。
+
+⚠️ **它找到却表达不成跟踪修订的东西，会列进 `not_redlined` 并把 `exact` 置否**，
+`--strict` 直接拒绝写出。五处差异标了四处，比一处都不标更糟 —— 因为剩下那处
+**看起来已经审过了**。当前已知会走这条路的：表格增删行（那是 `w:trPr/w:ins`，
+白名单写的是单元格**文字**）· 图片增删换（复制 media part 和关系是包编辑，不是修订）·
+改动跨了 tab 或换行（包不进一个元素，包了就会挪走那个换行）。
+
+## 表格预设：只有 3 种，因为每一种都得有能量出来的属性
+
+「表格更好看」不是任何门禁能检查的断言 —— 这就是这项能力在另外十八项都做完之后
+才落地的原因。所以这里每个预设都由**能落到数字上的属性**定义：
+
+| | `grid` 网格 | `finance` 三线表 | `banded` 斑马纹 |
+|---|---|---|---|
+| 上 / 下框线（`w:sz`，**八分之一磅**） | 4 / 4 | **12 / 12** | 4 / 4 |
+| 左 / 右 / 竖线 | 4 | **显式 none** | 4 |
+| 表头下那条线 | 无 | **6（只此一条）** | 无 |
+| 表头底色 / 隔行底色 | 无 | 无 | **D9E2F3 / F2F2F2** |
+| 跨页重复表头（`w:tblHeader`） | 否 | **是** | **是** |
+| 按 CJK 显示宽度重算列宽 | 否 | **是** | **是** |
+| 单元格左右边距（dxa） | 108 | **144** | 108 |
+
+`--list-presets` 打印的就是上面这张表，所以「我该选哪个」由工具回答，
+不是靠打开三个文档眯着眼看。
+
+**为什么是 3 种而不是 13 种**：门禁 Q2 把三个预设的指纹**从产出的文件里读回来**逐对比较，
+要求两两不同。加第 4 种可以，但你得先说出**什么能把它和这三种区分开**。
+
+几处实测出来的数，不是拍的：
+
+- **`w:sz` 的单位是八分之一磅**。写成磅会得到一条细得像渲染 bug 的线，而且没有任何东西会报错。
+- **列宽常数 = 130 dxa / 每个显示宽度单位**。渲染实测：中日韩字符正好 **105**，
+  拉丁字符 94~122；130 是取实测最大值往上圆一档。`len()` 把一个汉字和一个字母算作一样宽，
+  于是中文列只拿到它需要的一半 —— 这就是 Q4/Q5 分开两种实现的地方。
+- **`--fit-columns` 是「按内容自动调整」**（Word 的 AutoFit to contents）：
+  内容窄，表就窄，一张声明 7500 dxa 宽却只装四个字的表**会缩**。想保留作者的列宽用
+  `--no-fit-columns`。
+- **跨页重复表头是渲染层实测的**：带 `w:tblHeader` 时表头出现在第 1、2、3 页，
+  不带时只在第 1 页。
+
+⚠️ 格式是**直接写在表上**的，不是建一个 `w:tblStyle`。样式是对读者的一个承诺 ——
+它按对方模板里那个样式的定义渲染，而对方模板和你的不一样时，文档看起来就不是被批准的
+那一份。直接格式化文件更大、但到哪儿都一样。
 
 ## 为什么不用 python-docx
 

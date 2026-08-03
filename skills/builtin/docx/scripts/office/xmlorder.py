@@ -72,6 +72,14 @@ TCPR = (
     "tcPrChange",
 )
 
+# CT_TblBorders / CT_TcBorders / CT_TblCellMar, §17.4. Each pairs a Strict name with
+# its Transitional synonym in one `xsd:choice` (`start`/`left`, `end`/`right`), so both
+# appear in the sequence and a document may use either spelling — this skill writes the
+# Transitional one. Read out of the vendored wml.xsd, not typed from memory.
+TBLBORDERS = ("top", "start", "left", "bottom", "end", "right", "insideH", "insideV")
+TCBORDERS = TBLBORDERS + ("tl2br", "tr2bl")
+CELLMAR = ("top", "start", "left", "bottom", "end", "right")
+
 TRPR = (
     "cnfStyle", "divId", "gridBefore", "gridAfter", "wBefore", "wAfter", "cantSplit",
     "trHeight", "tblHeader", "tblCellSpacing", "jc", "hidden", "ins", "del",
@@ -140,6 +148,8 @@ SEQUENCES = {
     "trPr": TRPR, "styles": STYLES, "docDefaults": DOCDEFAULTS, "style": STYLE,
     "numbering": NUMBERING, "abstractNum": ABSTRACTNUM, "lvl": LVL, "numPr": NUMPR,
     "settings": SETTINGS,
+    "tblBorders": TBLBORDERS, "tcBorders": TCBORDERS,
+    "tblCellMar": CELLMAR, "tcMar": CELLMAR,
 }
 
 # Children that must precede the free content of a mixed model, in this order.

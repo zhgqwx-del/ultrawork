@@ -522,10 +522,68 @@
         "allow_blank_pages": false
       },
       "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (it rasterizes and no page is blank) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes a .docx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that pending tracked changes and cached field results are NAMED (the picture is one resolution of the revisions, not the document anyone approved), is scripts/test-docx-skill.py Y1-Y3 — skipped and named out loud on a host with no LibreOffice, and run for real on CI's Linux runner"
+    },
+    "W19": {
+      "entry": "scripts/docx_table.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/banded.docx",
+          "--preset",
+          "banded",
+          "--report",
+          "{out}/table.json"
+        ],
+        "produces": [
+          "banded.docx",
+          "table.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告",
+          "营业收入"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact differs from its input in exactly one part — word/document.xml — so F1/F2 are the assertion that a preset is formatting and not a rewrite, and D2 checks the new `w:tblBorders`, `w:tblCellMar` and `w:tcBorders` against their CT_ sequences, which are strict and which this skill had no ordering rules for until this capability needed them (they were transcribed into office/xmlorder.py from the vendored wml.xsd, not from memory). D1/D4/D7 cover the package, the element order and the render. What L2 cannot see is the entire reason this capability was the last of the nineteen: 'the table looks better' is not a claim a gate can check, so every preset here is defined by a property that can be put a number on, and scripts/test-docx-skill.py Q1-Q7 put the numbers on. Two of those seven are settled in the RENDER rather than in the XML, because that is where this family of defect actually shows: Q3 renders a table that spans three pages and reads the header row back off pages 2 and 3 (measured — with `w:tblHeader` it lands on 1, 2 and 3, without it only on 1), and Q5 renders the fitted table and asserts the longest CJK cell survives on ONE line while the same table sized by `len()` breaks it across two. Q2 is the one that answers 'why only three presets': it reads every preset's fingerprint back out of the PRODUCED FILES and requires them pairwise distinct, so a fourth preset cannot be added without something measurable telling it apart from the three"
+    },
+    "W18": {
+      "entry": "scripts/docx_diff.py",
+      "sample": {
+        "args": [
+          "--a",
+          "{fixtures}/report.docx",
+          "--b",
+          "{fixtures}/revised.docx",
+          "--redline",
+          "{out}/redline.docx",
+          "--strict",
+          "--report",
+          "{out}/diff.json"
+        ],
+        "produces": [
+          "redline.docx",
+          "diff.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告",
+          "营业收入"
+        ],
+        "paragraphs": 10,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact is A with the differences written into it as tracked changes, so D5 (revision markup legality) is the check that owns it and F1/F2 hold everything the comparison did NOT touch still. D2 validates the `w:ins`, `w:del` and `w:pPrChange` against the schema — pPrChange in particular, whose old properties are nested one level deeper than they look. The paragraph count is 10 rather than report.docx's 9 because a redline CONTAINS both documents: the removed paragraph is still there wrapped in `w:del`, and the added one is already there wrapped in `w:ins`, which is the whole point of the form. What no legal-document check can see is whether the redline describes the RIGHT edit, and that is one claim with a closed loop: resolve it and the answer has to be the other document. scripts/test-docx-skill.py U2 does exactly that from outside this script — it resolves the redline with the shipped `docx_revise.py` using the ids the report names, and reads the result with the suite's own signature reader — because docx_diff.py also checks the round trip in-process and a claim verified only by its author is not verified. U1 asserts each of the six whitelisted change kinds is found where it is (the header edit and the table cell edit both live where a diff that walks only word/document.xml's top level never looks); U3 is the capability's reason to exist, asserting that a B differing ONLY in rsids, proofErr, bookmarks and lang yields ZERO differences while still reporting a count for each of those categories; U4 asserts that a change it cannot express as a tracked change (a table row appearing) is named in `not_redlined` and clears the exactness flag rather than being left looking reviewed; U5 that a moved paragraph is one finding and not two; U7 that a swapped picture is seen at all. The round trip is scoped to the ids THIS comparison created, and that is not a convenience: report.docx already carries a tracked change of its own, and `--reject-all` undoing that one as well is correct behaviour for W7 and the wrong question here"
     }
   },
-  "pending": {
-    "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
-    "W19": "UNBLOCKED as of W4 — this reason is being kept honest rather than left as it was. It used to say the presets could not be chosen before a generation path existed to fit them to; that path now exists (scripts/docx_from_md.py authors Heading1-6, SourceCode, Quote, Caption, Hyperlink and CodeChar, and W12 can create or modify any of them). What is still missing is only the presets themselves — a named set of table and layout looks — and the assertion that would tell one apart from another, which is the harder half: 'the table looks better' is not a claim a gate can check, so a preset needs a measurable property (border weights, banding, header repeat, column width behaviour with CJK text) before it is worth writing"
-  }
+  "pending": {}
 }

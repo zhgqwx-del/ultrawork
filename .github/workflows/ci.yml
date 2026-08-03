@@ -208,11 +208,13 @@ jobs:
       # Scoped to the skills that have finished. An unscoped --no-pending goes red
       # the moment the next skill starts its first slice (059 §6 builds one at a
       # time), and a job that is red by design is a job nobody reads. Add each skill
-      # here as it clears its debt: pdf did in S2, xlsx in S3. docx (S4) is not
-      # listed yet — it has no capabilities.json, and naming it would assert nothing.
+      # here as it clears its debt: pdf did in S2, xlsx in S3, docx in S4 — its last
+      # two capabilities (W18 diff, W19 table presets) landed together and its
+      # `pending` block is now empty. This line IS S4's acceptance judgement: the
+      # skill is done when the gate says so, not when it feels done.
       - name: L1 capability gate (acceptance tier, no pending debt)
         shell: bash
-        run: python scripts/check-office-skill-capabilities.py --no-pending pdf xlsx $ALLOW_MISSING_FLAG
+        run: python scripts/check-office-skill-capabilities.py --no-pending pdf xlsx docx $ALLOW_MISSING_FLAG
       - name: pdf skill behaviour tests
         run: python scripts/test-pdf-skill.py
       - name: xlsx skill behaviour tests

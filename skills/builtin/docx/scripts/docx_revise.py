@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
-                        open_document, run, save_checked)
+                        open_document, run, save_checked, text_parts)
 from office import document as doc  # noqa: E402
 from office import revision as rev  # noqa: E402
 from office.package import Package  # noqa: E402
@@ -74,29 +74,16 @@ def track_replace(paragraph, old: str, new: str, author: str, date: str,
     usable, refused = doc.find_occurrences(paragraph, old)
     done, skipped = 0, 0
     for occ in reversed(usable):
-        runs = doc.isolate_runs(paragraph, occ.start, occ.end)
-        if not runs:
+        # `office/revision.mark_replacement` owns the wrapping, and it is shared with
+        # docx_diff.py: the two capabilities differ only in how they arrive at a
+        # range, not in what marking one means.
+        outcome = rev.mark_replacement(
+            paragraph, occ.start, occ.end, new,
+            lambda el: stamp(el, next_id(), author, date))
+        if outcome == "unmarkable":
             skipped += 1
-            continue
-        parent = runs[0].getparent()
-        if any(r.getparent() is not parent for r in runs):
-            # Half a match inside a hyperlink and half outside cannot be wrapped in
-            # one element. Reported rather than wrapped in two, which would produce
-            # a revision a reviewer cannot accept as a unit.
-            skipped += 1
-            continue
-        dele = stamp(doc.element("del"), next_id(), author, date)
-        runs[0].addprevious(dele)
-        for r in runs:
-            parent.remove(r)
-            for node in r.iter(q("t")):
-                node.tag = q("delText")     # deleted text is a DIFFERENT element
-            dele.append(r)
-        if new:
-            ins = stamp(doc.element("ins"), next_id(), author, date)
-            ins.append(doc.run_like(runs[0], new))
-            dele.addnext(ins)
-        done += 1
+        else:
+            done += 1
     return {"replaced": done, "skipped": skipped, "refused": len(refused)}
 
 
@@ -151,9 +138,22 @@ def main() -> int:
         pkg: Package = open_document(args.src)
         root = pkg.tree(DOCUMENT)
 
+        # Reading and RESOLVING cover every text part; a revision in the letterhead is
+        # a revision. Making them stays on word/document.xml, the same opt-in split
+        # docx_edit.py draws with --in-headers: an edit somebody asked for in the body
+        # should not silently reach the letterhead, but leaving markup behind after
+        # "accept everything" is damage with no symptom.
+        parts = text_parts(pkg)
+
         if args.list:
-            emit({"in": args.src.name, "revisions": rev.inventory(root),
-                  "remaining": rev.remaining(root)}, args.report, "revisions")
+            revisions = []
+            for name in parts:
+                for item in rev.inventory(pkg.tree(name)):
+                    revisions.append({**item, "part": name})
+            emit({"in": args.src.name, "revisions": revisions,
+                  "remaining": sorted({n for name in parts
+                                       for n in rev.remaining(pkg.tree(name))})},
+                 args.report, "revisions")
             return
 
         making = args.replace or args.delete or args.insert_paragraph
@@ -222,11 +222,23 @@ def main() -> int:
             accept = bool(args.accept_all or args.accept_author or args.accept_id)
             authors = set(args.accept_author or args.reject_author) or None
             ids = set(args.accept_id or args.reject_id) or None
-            report["resolved"] = rev.apply(root, "accept" if accept else "reject",
-                                           authors=authors, ids=ids)
+            resolved = []
+            for name in parts:
+                part_root = pkg.tree(name)
+                outcome = rev.apply(part_root, "accept" if accept else "reject",
+                                    authors=authors, ids=ids)
+                pkg.put_tree(name, part_root)
+                if name == DOCUMENT:
+                    root = part_root
+                if outcome["count"] or outcome["remaining"] or name == DOCUMENT:
+                    resolved.append({**outcome, "part": name})
+            report["resolved"] = (resolved[0] if len(resolved) == 1
+                                  else {"parts": resolved,
+                                        "count": sum(r["count"] for r in resolved)})
 
         pkg.put_tree(DOCUMENT, root)
-        leftovers = rev.remaining(pkg.tree(DOCUMENT))
+        leftovers = sorted({n for name in parts
+                            for n in rev.remaining(pkg.tree(name))})
         report["remaining"] = leftovers
         if args.strict and leftovers:
             fail(f"--strict, and the document still carries revision markup: "

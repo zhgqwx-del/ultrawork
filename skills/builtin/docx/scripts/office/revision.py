@@ -28,7 +28,8 @@ still has to be handled.
 """
 from __future__ import annotations
 
-from .xmlorder import MAIN_NS, local, q
+from . import document as doc
+from .xmlorder import MAIN_NS, insert_ordered, local, q
 
 RUN_LEVEL = ("ins", "del", "moveFrom", "moveTo")
 # Bookmark-like markers that delimit a move. They carry no text, and leaving them
@@ -83,6 +84,99 @@ def remaining(root) -> list[str]:
     """Revision markup still present. The honest end of every operation."""
     names = set(RUN_LEVEL) | set(FORMAT_CHANGES) | set(RANGE_MARKERS)
     return sorted({local(el.tag) for el in root.iter() if local(el.tag) in names})
+
+
+# ── authoring: turning an edit into a revision ────────────────────────────────
+def mark_replacement(paragraph, start: int, end: int, new_text: str, stamp) -> str:
+    """Record `[start, end)` of this paragraph as deleted and `new_text` as inserted.
+
+    The one primitive both callers need: `docx_revise.py` finds its range by searching
+    for a phrase, `docx_diff.py` gets its ranges from a character-level comparison
+    with another document. They differ only in how the offsets are arrived at, so they
+    share the part that is easy to get wrong.
+
+    `stamp(element)` is the caller's id/author/date stamper. Returns one of `marked`,
+    `nothing-to-do` or `unmarkable` — the last when the range cannot be wrapped in one
+    element, which happens when half of it sits inside a hyperlink and half outside.
+    Naming that case is the point: wrapping it in two elements produces a revision a
+    reviewer cannot accept as a unit.
+
+    ⚠️ Callers MUST work back to front. Wrapping a range in `<w:del>` takes its text
+    out of the paragraph's visible character stream (deleted text is not document
+    text), so every offset after it shifts — while every offset before it stays
+    exactly where it was.
+    """
+    if end < start:
+        raise ValueError(f"range end {end} precedes start {start}")
+    # A range with a tab or a line break inside it cannot be wrapped without moving
+    # the break: `isolate_runs` returns only the TEXT runs, so the `<w:br/>` between
+    # them would be left outside the `<w:del>` and survive a change that was supposed
+    # to remove it. Refused and named, the same way `find_occurrences` refuses a match
+    # that spans one.
+    for seg in doc.segments_of(paragraph):
+        if seg.kind == "break" and start < seg.start + len(seg.text) and seg.start < end:
+            return "unmarkable"
+    anchor = None
+    reference = None
+
+    if end > start:
+        runs = doc.isolate_runs(paragraph, start, end)
+        if not runs:
+            return "unmarkable"
+        parent = runs[0].getparent()
+        if any(r.getparent() is not parent for r in runs):
+            return "unmarkable"
+        reference = runs[0]
+        dele = stamp(doc.element("del"))
+        runs[0].addprevious(dele)
+        for r in runs:
+            parent.remove(r)
+            for node in r.iter(q("t")):
+                node.tag = q("delText")     # deleted text is a DIFFERENT element
+            dele.append(r)
+        anchor = dele
+    elif new_text:
+        # A pure insertion still has to land somewhere. The run ending at `start` is
+        # the anchor; with nothing before the offset the insertion goes to the front,
+        # after `w:pPr`, which `insert_ordered` keeps first.
+        before = doc.isolate_runs(paragraph, 0, start) if start else []
+        if before:
+            anchor = before[-1]
+            reference = before[-1]
+        else:
+            reference = paragraph.find(q("r"))
+
+    if not new_text:
+        return "marked" if end > start else "nothing-to-do"
+
+    ins = stamp(doc.element("ins"))
+    ins.append(doc.run_like(reference, new_text))
+    if anchor is not None:
+        anchor.addnext(ins)
+    else:
+        insert_ordered(paragraph, ins)
+    return "marked"
+
+
+def mark_paragraph_mark(paragraph, kind: str, stamp) -> None:
+    """Mark the paragraph BREAK itself as inserted or deleted.
+
+    Without this, deleting a paragraph removes its text and leaves an empty paragraph
+    where it was, and inserting one leaves an empty paragraph behind when the change
+    is rejected. The mark lives in `<w:pPr><w:rPr>`, which is a different place from
+    every other revision and is why `is_paragraph_mark` exists.
+    """
+    ppr = paragraph.find(q("pPr"))
+    if ppr is None:
+        ppr = doc.element("pPr")
+        insert_ordered(paragraph, ppr)
+    rpr = ppr.find(q("rPr"))
+    if rpr is None:
+        rpr = doc.element("rPr")
+        insert_ordered(ppr, rpr)
+    for existing in rpr.findall(q(kind)):
+        rpr.remove(existing)
+    insert_ordered(rpr, stamp(doc.element(kind)))
 
 
 def _unwrap(el) -> None:

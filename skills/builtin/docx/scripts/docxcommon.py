@@ -35,6 +35,19 @@ from office.validate import check_package, is_wordprocessing  # noqa: E402
 DOCUMENT = "word/document.xml"
 
 
+def text_parts(pkg) -> list[str]:
+    """Every part that holds document text: the body, and each header and footer.
+
+    Written once because forgetting the headers is a defect with no symptom. A tool
+    that resolves tracked changes in word/document.xml and stops there reports "no
+    revisions left" about a file whose letterhead is still full of them — measured on
+    exactly that case, by W18's round trip, against code that had shipped.
+    """
+    return [DOCUMENT] + sorted(
+        n for n in pkg.names()
+        if n.startswith(("word/header", "word/footer")) and n.endswith(".xml"))
+
+
 class DocxError(Exception):
     """A condition the caller can act on: no such style, bad range, no LibreOffice."""
 

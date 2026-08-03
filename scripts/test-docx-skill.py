@@ -58,6 +58,7 @@ REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills" / "builtin" / "docx"
 FIXTURES = SKILL / "fixtures"
 REPORT = FIXTURES / "report.docx"
+REVISED = FIXTURES / "revised.docx"      # report.docx after a round of edits (W18)
 UNORDERED = FIXTURES / "unordered.docx"
 PY = sys.executable
 
@@ -107,7 +108,10 @@ FILL_TYPO = "客户名"        # a key that matches no placeholder
 # Assertions that need LibreOffice. On a host without it they are SKIPPED and named,
 # never folded into the pass count — and so are the negative controls that could not
 # fire, because a control nobody ran is not a control (059 §7, the recalc-drift雷).
-SOFFICE_CHECKS = {"Y1", "Y2", "Y3"}
+# Q3 and Q5 are here because W19's two most load-bearing claims are only true if a
+# layout engine agrees: a header row either does or does not reappear on page 2, and
+# a cell's text either does or does not survive on one line.
+SOFFICE_CHECKS = {"Y1", "Y2", "Y3", "Q3", "Q5"}
 
 STDOUT_BUDGET = 6000        # bytes one call may print for a long document
 SCALE_PARAGRAPHS = 2000     # comfortably past docxcommon.STDOUT_ITEM_LIMIT
@@ -116,6 +120,68 @@ SCALE_PARAGRAPHS = 2000     # comfortably past docxcommon.STDOUT_ITEM_LIMIT
 # the byte budget existed. Found by asking "is this compatible with Team mode?",
 # not by any assertion — C1 only ever exercised a long list.
 SCALE_TABLE_ROWS = 800
+
+# ── W18: the A/B pair the diff is measured on ─────────────────────────────────
+DOC_PART = "word/document.xml"
+DIFF_HEADER_PART = "word/header1.xml"
+# One of every whitelisted change, in one document, so "it found the text edit" can
+# never be mistaken for "it found everything".
+DIFF_NEW_STYLE = "Heading1"
+DIFF_ADDED = "新增结论：全年目标维持不变。"
+DIFF_REMOVED = "经营性现金流保持健康水平，Q3 无异常。"
+DIFF_CELL_NEW = "1,860"     # a table cell's text
+DIFF_HEADER_NEW = "机密资料 · 请勿外传 · 密级：{{密级}}"
+# text · style · removed · added · table cell · header = six, and the count is
+# asserted so that a seventh finding (noise leaking in) is as loud as a missing one.
+DIFF_EXPECTED = 6
+DIFF_MOVED_FROM, DIFF_MOVED_TO = 6, 2
+# The categories the report must always name, with a count for each document — even
+# when every count is zero. A report that mentions them only when it found some
+# cannot be told from one that never looked.
+DIFF_IGNORED_KEYS = ("rsid", "proofErr", "bookmark", "lang", "empty_runs",
+                     "attribute_order", "zip_entry_order")
+
+# ── W19: what the table presets are measured against ──────────────────────────
+TABLE_PRESETS = ("grid", "finance", "banded")
+# report.docx's table, its cells rewritten so that column width has something to bite
+# on: one column of Chinese, two of Latin, with the SAME character count. That is the
+# whole experiment — `len()` calls those columns equal and the page does not.
+#
+# ⚠️ Every string here occurs nowhere else in report.docx, and V0 checks that it stays
+# that way. The first draft used 二零二六年第三季度经营分析, which is a PREFIX OF THE
+# DOCUMENT'S TITLE, so "the cell's text survived on one line" read as true off the
+# title line whether the cell had wrapped or not — the assertion passed for both
+# implementations. Same shape as the 毛利 trap further up this file.
+WIDE_ROWS = [
+    ["费用项目", "REVENUE-2026", "GROWTH-RATE%"],
+    ["华南大区渠道推广费用明细表", "1,240,000", "+12.0%"],
+    ["西北大区营销费用合计数", "986,500", "+1.2pt"],
+]
+WIDE_LONGEST = "华南大区渠道推广费用明细表"
+# Display width per column (a CJK character counts two) versus len(). The two agree
+# on columns 2 and 3 and differ by a factor of two on column 1, which is the only
+# reason a naive implementation and a correct one can be told apart at all.
+WIDE_DISPLAY = [26, 12, 12]
+WIDE_LENS = [13, 12, 12]
+# dxa one display-width cell needs, MEASURED off a render (CJK came back at exactly
+# 105, Latin between 94 and 122). The skill allocates 130 — the widest measured,
+# rounded up. Repeated here rather than imported: an expectation that reads the
+# implementation's own constant agrees with it whatever that constant becomes.
+WIDE_DXA_PER_CELL = 130
+WIDE_MARGIN = {"grid": 108, "finance": 144, "banded": 108}
+# Rows that must carry w:tblHeader, by preset: the header row, or nothing at all.
+PRESET_REPEATS = {"grid": [], "finance": [0], "banded": [0]}
+# Border weights in EIGHTHS of a point, per edge, by preset. 0 means an explicit
+# `w:val="none"` — not an omitted element, which would let a table style show through.
+PRESET_BORDERS = {
+    "grid": {"top": 4, "left": 4, "bottom": 4, "right": 4, "insideH": 4, "insideV": 4},
+    "finance": {"top": 12, "left": 0, "bottom": 12, "right": 0,
+                "insideH": 0, "insideV": 0},
+    "banded": {"top": 4, "left": 4, "bottom": 4, "right": 4, "insideH": 4, "insideV": 4},
+}
+# Rows enough to push the table onto a third page, so "the header came back" is asked
+# of more than one page break.
+TALL_PRESET_ROWS = 60
 
 # W6/W7. The fixture already carries ONE revision by 张审阅 (净利润 inserted, 扣非净利
 # deleted) — that second author is what makes per-author filtering testable at all.
@@ -850,6 +916,12 @@ def collect(work: Path) -> dict:
     ctx["markdown"] = collect_markdown(work)
     ctx["validate"] = collect_validate(work)
 
+    # --- W19 table presets --------------------------------------------------------
+    ctx["tables"] = collect_tables(work)
+
+    # --- W18 document diff ---------------------------------------------------------
+    ctx["diff"] = collect_diff(work)
+
     # --- contracts -------------------------------------------------------------
     big = work / "big.docx"
     long_document(REPORT, big, SCALE_PARAGRAPHS)
@@ -894,6 +966,8 @@ def collect(work: Path) -> dict:
         # the encoding path is crossed at import of docxcommon either way.
         "docx_from_md.py": ["--help"],
         "docx_validate.py": ["--in", REPORT],
+        "docx_table.py": ["--in", REPORT, "--measure"],
+        "docx_diff.py": ["--a", REPORT, "--b", REPORT],
         "docx_edit.py": ["--in", REPORT, "--out", work / "cp.docx", "--replace", "a=b"],
         # --help rather than a conversion: it still crosses the encoding path (the
         # reconfigure happens when docxcommon is imported, before argparse runs) and
@@ -933,7 +1007,8 @@ def collect(work: Path) -> dict:
         "exit": rg.returncode,
         "identical": {name: (regen / name).is_file()
                       and (regen / name).read_bytes() == (FIXTURES / name).read_bytes()
-                      for name in ("report.docx", "unordered.docx")},
+                      for name in ("report.docx", "revised.docx",
+                                   "unordered.docx")},
     }
     return ctx
 
@@ -1199,6 +1274,443 @@ def collect_styles(work: Path) -> dict:
                     "wrote": (work / "cyc.docx").exists()}
     return out
 
+
+
+# ── W18: diffing two documents ────────────────────────────────────────────────
+def doc_signature(path: Path) -> list[tuple]:
+    """(part, style, text) for every paragraph, headers and footers included.
+
+    This file's OWN reading of what a document says, written here rather than taken
+    from the script's report, because the round trip is the whole claim and a claim
+    checked with the implementation's own ruler is not checked.
+    """
+    out = []
+    parts = parts_of(path)
+    names = [DOC_PART] + sorted(n for n in parts
+                                if n.startswith(("word/header", "word/footer"))
+                                and n.endswith(".xml"))
+    for name in names:
+        root = tree_of(path, name)
+        for para in root.iter(W + "p"):
+            ppr = para.find(W + "pPr")
+            style = None
+            if ppr is not None:
+                node = ppr.find(W + "pStyle")
+                style = node.get(W + "val") if node is not None else None
+            chunks = []
+            for node in para.iter():
+                tag = str(node.tag)
+                if tag == W + "t" and not any(str(a.tag) == W + "del"
+                                              for a in node.iterancestors()):
+                    chunks.append(node.text or "")
+                elif tag == W + "tab":
+                    chunks.append("\t")
+                elif tag == W + "br":
+                    chunks.append("\n")
+            out.append((name, style, "".join(chunks)))
+    return out
+
+
+def _edit_document(src: Path, dst: Path, mutate) -> None:
+    """Copy `src` to `dst`, passing its word/document.xml tree through `mutate`."""
+    from lxml import etree
+    root = tree_of(src)
+    mutate(root)
+    blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    rewrite_zip(src, dst, lambda n, d: blob if n == DOC_PART else d)
+
+
+def diff_fixture_facts() -> dict:
+    """How report.docx and revised.docx actually differ, measured off the two files.
+
+    V0's subject: the A/B pair is a committed fixture, and every W18 assertion is
+    written for the six changes it is supposed to carry. If a later edit to
+    report.docx quietly drops one of them, the assertions go looking for a difference
+    that is not there.
+    """
+    a, b = doc_signature(REPORT), doc_signature(REVISED)
+    a_texts = [text for part, _, text in a if part == DOC_PART]
+    b_texts = [text for part, _, text in b if part == DOC_PART]
+    # Keyed by TEXT, not by position: the restyled paragraph is the one whose words
+    # did not change, which is exactly what makes a style-only change checkable.
+    a_style = {text: style for part, style, text in a if part == DOC_PART}
+    b_style = {text: style for part, style, text in b if part == DOC_PART}
+    return {
+        # Membership, not a set difference. A set difference calls a paragraph whose
+        # TEXT was edited both "removed" and "added", so it cannot tell an edit from
+        # a deletion — which is the distinction this whole fixture exists to provide.
+        "removed_from_a": DIFF_REMOVED in a_texts and DIFF_REMOVED not in b_texts,
+        "added_in_b": DIFF_ADDED not in a_texts and DIFF_ADDED in b_texts,
+        "restyled": sorted(t for t in set(a_style) & set(b_style)
+                           if a_style[t] != b_style[t]),
+        "header_a": [text for part, _, text in a if part == DIFF_HEADER_PART],
+        "header_b": [text for part, _, text in b if part == DIFF_HEADER_PART],
+        "same_parts": sorted(parts_of(REPORT)) == sorted(parts_of(REVISED)),
+    }
+
+
+def make_noise_only(src: Path, dst: Path) -> None:
+    """B: everything this capability promises to ignore, and NOT one real change.
+
+    rsid attributes, a spell-check marker, a bookmark and a language tag — the four
+    things Word sprinkles through a file on an ordinary save. If any of these counts
+    as a difference, the report is one nobody will read.
+    """
+    from lxml import etree
+
+    def mutate(root) -> None:
+        for i, para in enumerate(root.iter(W + "p")):
+            para.set(W + "rsidR", f"00{i:06X}")
+            para.set(W + "rsidRDefault", f"00{i:06X}")
+            proof = etree.Element(W + "proofErr")
+            proof.set(W + "type", "spellStart")
+            para.insert(0, proof)
+            for r in para.findall(W + "r"):
+                rpr = r.find(W + "rPr")
+                if rpr is None:
+                    continue
+                lang = etree.SubElement(rpr, W + "lang")
+                lang.set(W + "val", "zh-CN")
+        body = root.find(W + "body")
+        start = etree.Element(W + "bookmarkStart")
+        start.set(W + "id", "900")
+        start.set(W + "name", "_noise")
+        end = etree.Element(W + "bookmarkEnd")
+        end.set(W + "id", "900")
+        body.insert(0, start)
+        body.insert(1, end)
+    _edit_document(src, dst, mutate)
+
+
+def make_row_added(src: Path, dst: Path) -> None:
+    """B: a table row appears — a real difference this capability cannot redline."""
+    import copy as _copy
+
+    def mutate(root) -> None:
+        tbl = next(root.iter(W + "tbl"))
+        rows = tbl.findall(W + "tr")
+        extra = _copy.deepcopy(rows[-1])
+        for node in extra.iter(W + "t"):
+            node.text = "新增行"
+        rows[-1].addnext(extra)
+    _edit_document(src, dst, mutate)
+
+
+def make_moved(src: Path, dst: Path) -> None:
+    """B: a paragraph is where a different one used to be, with nothing rewritten."""
+    def mutate(root) -> None:
+        body = root.find(W + "body")
+        paras = [p for p in body if str(p.tag) == W + "p"]
+        mover = paras[DIFF_MOVED_FROM]
+        body.remove(mover)
+        paras[DIFF_MOVED_TO].addprevious(mover)
+    _edit_document(src, dst, mutate)
+
+
+def with_image(src: Path, dst: Path) -> None:
+    """A of the picture pair: report.docx with a chart in it."""
+    r = run_script("docx_image.py", "--in", src, "--out", dst,
+                   "--insert", CHART, "--width-cm", "6", "--alt", "季度收入趋势图")
+    if not dst.is_file():
+        raise RuntimeError(f"could not build the picture fixture: {r.stderr[:200]}")
+
+
+def repaint_media(src: Path, dst: Path) -> None:
+    """B: the same picture slot holding different bytes."""
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (60, 40), (10, 90, 200)).save(buf, format="PNG")
+    replacement = buf.getvalue()
+
+    def mutate(name: str, data: bytes) -> bytes:
+        return replacement if name.startswith("word/media/") else data
+    rewrite_zip(src, dst, mutate)
+
+
+def collect_diff(work: Path) -> dict:
+    out: dict = {}
+
+    def compare(tag: str, left: Path, right: Path, *extra: str) -> dict:
+        redline = work / f"redline-{tag}.docx"
+        report = work / f"diff-{tag}.json"
+        r = run_script("docx_diff.py", "--a", left, "--b", right,
+                       "--redline", redline, "--report", report, *extra)
+        payload = json.loads(report.read_text(encoding="utf-8")) \
+            if report.is_file() else {}
+        return {"exit": r.returncode, "stderr": r.stderr.strip(),
+                "report": payload, "wrote": redline.is_file(),
+                "redline": str(redline)}
+
+    b = REVISED
+    out["fixture"] = diff_fixture_facts()
+    out["main"] = compare("main", REPORT, b)
+
+    # The round trip, reproduced from OUTSIDE docx_diff.py: its own check is in-process
+    # and could agree with itself. This one resolves the redline with the shipped W7
+    # implementation and reads the result with this file's own signature reader.
+    ids = out["main"]["report"].get("revision_ids") or []
+    out["signatures"] = {"a": doc_signature(REPORT), "b": doc_signature(b)}
+    for mode in ("accept", "reject"):
+        resolved = work / f"{mode}ed.docx"
+        args = ["--in", out["main"]["redline"], "--out", resolved]
+        for rid in ids:
+            args += [f"--{mode}-id", str(rid)]
+        rr = run_script("docx_revise.py", *args)
+        out[mode] = {"exit": rr.returncode,
+                     "signature": doc_signature(resolved) if resolved.is_file() else []}
+
+    noise = work / "variant-noise.docx"
+    make_noise_only(REPORT, noise)
+    out["noise"] = compare("noise", REPORT, noise)
+
+    rows = work / "variant-rows.docx"
+    make_row_added(REPORT, rows)
+    out["rows"] = compare("rows", REPORT, rows)
+    strict = run_script("docx_diff.py", "--a", REPORT, "--b", rows,
+                        "--redline", work / "strict.docx", "--strict")
+    out["rows_strict"] = {"exit": strict.returncode, "stderr": strict.stderr.strip(),
+                          "wrote": (work / "strict.docx").exists()}
+
+    moved = work / "variant-moved.docx"
+    make_moved(REPORT, moved)
+    out["moved"] = compare("moved", REPORT, moved)
+
+    illustrated = work / "with-image.docx"
+    with_image(REPORT, illustrated)
+    repainted = work / "repainted.docx"
+    repaint_media(illustrated, repainted)
+    out["image"] = compare("image", illustrated, repainted)
+
+    validated = run_script("docx_validate.py", "--in", out["main"]["redline"],
+                           "--report", work / "redline-valid.json")
+    out["redline_valid"] = {
+        "exit": validated.returncode,
+        "report": json.loads((work / "redline-valid.json").read_text(encoding="utf-8"))
+        if (work / "redline-valid.json").is_file() else {}}
+    listed = run_script("docx_revise.py", "--in", out["main"]["redline"], "--list",
+                        "--report", work / "redline-revisions.json")
+    out["redline_revisions"] = json.loads(
+        (work / "redline-revisions.json").read_text(encoding="utf-8")) \
+        if (work / "redline-revisions.json").is_file() else {}
+    out["redline_parts_changed"] = sorted(
+        n for n, d in parts_of(Path(out["main"]["redline"])).items()
+        if parts_of(REPORT).get(n) != d)
+    return out
+
+
+# ── W19: table presets ────────────────────────────────────────────────────────
+def wide_table(src: Path, dst: Path) -> None:
+    """report.docx with its table's cells replaced by WIDE_ROWS."""
+    from lxml import etree
+    parts = parts_of(src)
+    root = etree.fromstring(parts["word/document.xml"])
+    tbl = next(root.iter(W + "tbl"))
+    for tr, row in zip(tbl.findall(W + "tr"), WIDE_ROWS):
+        for tc, text in zip(tr.findall(W + "tc"), row):
+            nodes = list(tc.iter(W + "t"))
+            for extra in nodes[1:]:
+                extra.text = ""
+            if nodes:
+                nodes[0].text = text
+    blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                          standalone=True)
+    rewrite_zip(src, dst,
+                lambda name, data: blob if name == "word/document.xml" else data)
+
+
+def naive_fit(src: Path, dst: Path) -> list[int]:
+    """Size the columns by `len()` — the implementation everybody writes first.
+
+    Not a description of the defect but the defect itself, executed with the same
+    arithmetic and the same constants as the real one, so the only difference between
+    the two arms is which function measured the text.
+    """
+    from lxml import etree
+    parts = parts_of(src)
+    root = etree.fromstring(parts["word/document.xml"])
+    tbl = next(root.iter(W + "tbl"))
+    widths = [n * WIDE_DXA_PER_CELL + 2 * WIDE_MARGIN["finance"] for n in WIDE_LENS]
+    grid = tbl.find(W + "tblGrid")
+    for old in grid.findall(W + "gridCol"):
+        grid.remove(old)
+    for w in widths:
+        etree.SubElement(grid, W + "gridCol").set(W + "w", str(w))
+    for tr in tbl.findall(W + "tr"):
+        for tc, w in zip(tr.findall(W + "tc"), widths):
+            tcw = tc.find(W + "tcPr").find(W + "tcW")
+            tcw.set(W + "w", str(w))
+    blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                          standalone=True)
+    rewrite_zip(src, dst,
+                lambda name, data: blob if name == "word/document.xml" else data)
+    return widths
+
+
+def table_facts(path: Path, index: int = 0) -> dict:
+    """What a table measurably IS, read out of the XML by THIS file's own reader.
+
+    Deliberately not the skill's `fingerprint()`: an assertion that measures an
+    implementation with that implementation's ruler agrees with it by construction,
+    which this suite has already been caught doing once (V0 reading a script report).
+    """
+    tbl = list(tree_of(path).iter(W + "tbl"))[index]
+    tblpr = tbl.find(W + "tblPr")
+    borders = tblpr.find(W + "tblBorders") if tblpr is not None else None
+
+    def weight(edge: str) -> int:
+        node = borders.find(W + edge) if borders is not None else None
+        if node is None:
+            return -1
+        return 0 if node.get(W + "val") == "none" else int(node.get(W + "sz") or 0)
+
+    margin = -1
+    if tblpr is not None:
+        mar = tblpr.find(W + "tblCellMar")
+        left = mar.find(W + "left") if mar is not None else None
+        if left is not None:
+            margin = int(left.get(W + "w"))
+    rows = tbl.findall(W + "tr")
+    repeats, fills = [], []
+    for i, tr in enumerate(rows):
+        trpr = tr.find(W + "trPr")
+        if trpr is not None and trpr.find(W + "tblHeader") is not None:
+            repeats.append(i)
+        first = tr.find(W + "tc")
+        tcpr = first.find(W + "tcPr") if first is not None else None
+        shd = tcpr.find(W + "shd") if tcpr is not None else None
+        fills.append(shd.get(W + "fill") if shd is not None else None)
+    rule = -1
+    if rows:
+        tc = rows[0].find(W + "tc")
+        tcpr = tc.find(W + "tcPr") if tc is not None else None
+        tcb = tcpr.find(W + "tcBorders") if tcpr is not None else None
+        bottom = tcb.find(W + "bottom") if tcb is not None else None
+        if bottom is not None:
+            rule = 0 if bottom.get(W + "val") == "none" else int(bottom.get(W + "sz"))
+    grid = tbl.find(W + "tblGrid")
+    layout = tblpr.find(W + "tblLayout") if tblpr is not None else None
+    return {
+        "borders": {e: weight(e) for e in
+                    ("top", "left", "bottom", "right", "insideH", "insideV")},
+        "cell_margin": margin,
+        "repeat_rows": repeats,
+        "row_fills": fills,
+        "header_rule": rule,
+        "layout": layout.get(W + "type") if layout is not None else None,
+        "widths": [int(g.get(W + "w")) for g in grid.findall(W + "gridCol")]
+        if grid is not None else [],
+    }
+
+
+def rendered_lines(pdf: Path, page: int = 0) -> list[str]:
+    """One string per text baseline on a rendered page."""
+    import pdfplumber
+    with pdfplumber.open(str(pdf)) as doc:
+        if page >= len(doc.pages):
+            return []
+        tops: dict[int, list] = {}
+        for word in doc.pages[page].extract_words():
+            tops.setdefault(round(word["top"]), []).append((word["x0"], word["text"]))
+    return ["".join(t for _, t in sorted(v)) for _, v in sorted(tops.items())]
+
+
+def rendered_pages(pdf: Path) -> int:
+    import pdfplumber
+    with pdfplumber.open(str(pdf)) as doc:
+        return len(doc.pages)
+
+
+def collect_tables(work: Path) -> dict:
+    out: dict = {"presets": {}}
+    base = work / "wide.docx"
+    wide_table(REPORT, base)
+    # How many paragraphs of the document that actually gets RENDERED contain each
+    # probe string. Exactly one is the only safe answer: Q5 asks "did this cell's
+    # text survive on one line" by looking for it among the rendered lines, so a
+    # second home for the same string answers the question off the wrong line.
+    # Counted against the wide document rather than report.docx — the cells are
+    # replaced, so report.docx's own "+1.2pt" is not on the page Q5 reads.
+    out["probe_strings_unique"] = {
+        s: sum(1 for t in paragraph_texts(base) if s in t)
+        for row in WIDE_ROWS for s in row
+    }
+
+    listed = run_script("docx_table.py", "--list-presets")
+    out["listed"] = {"exit": listed.returncode,
+                     "presets": json.loads(listed.stdout)["presets"]
+                     if listed.returncode == 0 else []}
+
+    for name in TABLE_PRESETS:
+        made = work / f"preset-{name}.docx"
+        r = run_script("docx_table.py", "--in", base, "--out", made,
+                       "--preset", name, "--report", work / f"{name}.json")
+        report = json.loads((work / f"{name}.json").read_text(encoding="utf-8"))
+        out["presets"][name] = {
+            "exit": r.returncode,
+            "facts": table_facts(made),
+            # The skill's own reading of the same file. Compared against `facts`
+            # rather than trusted: a report that agrees with its intent proves
+            # nothing, and this skill family has shipped that defect once already.
+            "reported": report["fingerprints"][0],
+            "parts_changed": report["parts_changed"],
+            "path": str(made),
+        }
+
+    # The refusals.
+    empty = run_script("docx_table.py", "--in", OUTLINE, "--out", work / "no.docx",
+                       "--preset", "grid")
+    out["no_tables"] = {"exit": empty.returncode, "stderr": empty.stderr.strip(),
+                        "wrote": (work / "no.docx").exists(),
+                        "traceback": "Traceback" in empty.stderr}
+    bad = run_script("docx_table.py", "--in", base, "--out", work / "bad.docx",
+                     "--preset", "grid", "--table", "7")
+    out["bad_index"] = {"exit": bad.returncode, "stderr": bad.stderr.strip(),
+                        "wrote": (work / "bad.docx").exists()}
+
+    # The naive arm: same table, same constants, `len()` instead of display width.
+    naive = work / "naive-fit.docx"
+    out["naive_widths"] = naive_fit(work / "preset-finance.docx", naive)
+
+    sys.path.insert(0, str(SKILL / "scripts"))
+    from office.soffice import find_soffice
+    if not find_soffice():
+        SKIPS.append("W19 render (Q3, Q5): LibreOffice is not installed on this host, "
+                     "so neither the header-repeat measurement nor the column-width "
+                     "one could run, and nor could their negative controls. CI runs "
+                     "them on Linux, where libreoffice-writer is installed")
+        out["render"] = {"skipped": "no LibreOffice"}
+        return out
+
+    render: dict = {}
+    for tag, src in (("fitted", work / "preset-finance.docx"), ("naive", naive)):
+        pdf = work / f"{tag}.pdf"
+        run_script("docx_pdf.py", "--in", src, "--out", pdf)
+        lines = rendered_lines(pdf) if pdf.is_file() else []
+        render[tag] = {"produced": pdf.is_file(),
+                       "longest_intact": any(WIDE_LONGEST in ln for ln in lines),
+                       "lines": len(lines)}
+
+    # Header repeat, asked of a table long enough to break twice.
+    tall = work / "tall-wide.docx"
+    tall_table(base, tall, TALL_PRESET_ROWS)
+    for name in ("grid", "finance"):
+        styled = work / f"tall-{name}.docx"
+        run_script("docx_table.py", "--in", tall, "--out", styled, "--preset", name)
+        pdf = work / f"tall-{name}.pdf"
+        run_script("docx_pdf.py", "--in", styled, "--out", pdf)
+        if not pdf.is_file():
+            render[name] = {"produced": False, "pages": 0, "header_pages": []}
+            continue
+        pages = rendered_pages(pdf)
+        render[name] = {
+            "produced": True, "pages": pages,
+            "header_pages": [i + 1 for i in range(pages)
+                             if any(WIDE_ROWS[0][0] in ln
+                                    for ln in rendered_lines(pdf, i))],
+        }
+    out["render"] = render
+    return out
 
 
 # ── W4: generating from Markdown ──────────────────────────────────────────────
@@ -1684,6 +2196,43 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
     if f["report_unbound"]:
         out.append(f"V0 report.docx now has {f['report_unbound']} unbound CJK run(s), "
                    f"so the clean --check case is no longer clean")
+
+    # W19's probe strings have to occur NOWHERE ELSE in report.docx. Q5 answers "did
+    # this cell's text survive on one line" by looking for it among the rendered
+    # lines, and a string that is also a substring of the document's title is found
+    # on the title's line whether the cell wrapped or not. That is not a hypothetical:
+    # the first draft used one, and Q5 passed for both implementations.
+    # revised.docx has to carry all six changes W18's assertions are written for. It
+    # is generated by substituting into report.docx's markup, so an edit to
+    # report.docx that stops one substitution matching would otherwise leave the
+    # assertions hunting a difference nobody put there.
+    d = ctx.get("diff", {}).get("fixture") or {}
+    if d:
+        if not d["removed_from_a"]:
+            out.append(f"V0 revised.docx no longer drops the paragraph "
+                       f"{DIFF_REMOVED!r}, so U1's paragraph-removed finding has no "
+                       f"subject")
+        if not d["added_in_b"]:
+            out.append(f"V0 revised.docx no longer adds {DIFF_ADDED!r}")
+        if len(d["restyled"]) != 1:
+            out.append(f"V0 revised.docx restyles {d['restyled']}, expected exactly "
+                       f"one paragraph; the style-only change is what separates "
+                       f"'a paragraph was rewritten' from 'a paragraph was "
+                       f"reformatted'")
+        if d["header_a"] == d["header_b"]:
+            out.append("V0 revised.docx's header is identical to report.docx's, so "
+                       "the assertion that a diff reaches the letterhead has no "
+                       "subject")
+        if not d["same_parts"]:
+            out.append("V0 report.docx and revised.docx no longer hold the same "
+                       "parts, so a part-level difference would be mixed in with the "
+                       "six text ones")
+
+    for text, hits in (ctx.get("tables", {}).get("probe_strings_unique") or {}).items():
+        if hits != 1:
+            out.append(f"V0 the table probe string {text!r} occurs in {hits} "
+                       f"paragraph(s) of the document Q5 renders, not exactly 1 — a "
+                       f"render that finds it then proves nothing about the cell")
     return out
 
 
@@ -3337,6 +3886,384 @@ def z5_not_checked(ctx: dict) -> list[str]:
 # context. They are the implementations somebody reaches for first, not invented
 # damage.
 
+# ── W18: document diff ────────────────────────────────────────────────────────
+@check("U1", "every whitelisted change is found, and nothing else is called a change")
+def u1_findings(ctx: dict) -> list[str]:
+    d = ctx["diff"]["main"]
+    out = []
+    if d["exit"] != 0:
+        return [f"U1 the comparison exited {d['exit']}: {d['stderr'][:120]}"]
+    found = d["report"]["differences"]
+    kinds = sorted(f["kind"] for f in found)
+    want = sorted(["text", "text", "text", "style", "paragraph-removed",
+                   "paragraph-added"])
+    if kinds != want:
+        out.append(f"U1 the six changes came back as {kinds}, expected {want}")
+    if d["report"]["counted"] != DIFF_EXPECTED:
+        out.append(f"U1 counted {d['report']['counted']} differences, expected "
+                   f"{DIFF_EXPECTED}")
+    # And each one has to be found WHERE it is, not just in the right quantity.
+    places = {f["kind"]: [] for f in found}
+    for f in found:
+        places[f["kind"]].append(f.get("where", ""))
+    if not any(DIFF_HEADER_PART in w for w in places.get("text", [])):
+        out.append(f"U1 nothing was found in {DIFF_HEADER_PART}; a diff that only "
+                   f"walks word/document.xml misses every letterhead edit")
+    if not any("table" in w for w in places.get("text", [])):
+        out.append("U1 the table cell edit was not found; table cell text is on the "
+                   "whitelist and its paragraphs are nested two levels down")
+    style = [f for f in found if f["kind"] == "style"]
+    if style and style[0].get("after") != DIFF_NEW_STYLE:
+        out.append(f"U1 the style change reads {style[0].get('after')!r}, expected "
+                   f"{DIFF_NEW_STYLE!r}")
+    return out
+
+
+@check("U2", "accept every marked change and it reads like B; reject them and it reads like A")
+def u2_roundtrip(ctx: dict) -> list[str]:
+    d = ctx["diff"]
+    out = []
+    if d["accept"]["signature"] != d["signatures"]["b"]:
+        out.append("U2 accepting the redline's changes does not give B — the redline "
+                   "describes an edit that is not the edit that was made"
+                   + _sig_gap(d["accept"]["signature"], d["signatures"]["b"]))
+    if d["reject"]["signature"] != d["signatures"]["a"]:
+        out.append("U2 rejecting the redline's changes does not give A back"
+                   + _sig_gap(d["reject"]["signature"], d["signatures"]["a"]))
+    # The script's own in-process verdict has to agree with the one measured here by
+    # resolving the file with docx_revise.py. If it claims a round trip this file
+    # cannot reproduce, the claim is the defect.
+    claimed = d["main"]["report"].get("roundtrip", {})
+    if not claimed.get("exact"):
+        out.append(f"U2 the script does not claim an exact round trip on a pair where "
+                   f"every change is on its whitelist: {claimed}")
+    return out
+
+
+def _sig_gap(got: list, want: list) -> str:
+    for i, (x, y) in enumerate(zip(got, want)):
+        if x != y:
+            return f" — first difference at paragraph {i}: {x!r} vs {y!r}"
+    return f" — lengths {len(got)} vs {len(want)}"
+
+
+@check("U3", "what Word rewrites on every save is counted, and counted as NOT a change")
+def u3_noise(ctx: dict) -> list[str]:
+    d = ctx["diff"]
+    out = []
+    ignored = d["main"]["report"].get("ignored_not_counted_as_differences", {})
+    for key in DIFF_IGNORED_KEYS:
+        if key not in ignored:
+            out.append(f"U3 the report never mentions {key!r}; a category that is "
+                       f"named only when it fires cannot be told from one nobody "
+                       f"looked at")
+    noise = d["noise"]
+    if noise["exit"] != 0:
+        return out + [f"U3 the noise-only comparison exited {noise['exit']}"]
+    if noise["report"]["counted"] != 0:
+        out.append(f"U3 a document differing ONLY in rsids, proofErr, bookmarks and "
+                   f"lang produced {noise['report']['counted']} difference(s): "
+                   f"{[f['kind'] for f in noise['report']['differences']][:4]} — this "
+                   f"is the diff nobody reads, and it is what the capability exists "
+                   f"not to be")
+    seen = noise["report"].get("ignored_not_counted_as_differences", {})
+    for key in ("rsid", "proofErr", "bookmark", "lang"):
+        pair = seen.get(key) or {}
+        if not isinstance(pair, dict) or pair.get("a") == pair.get("b"):
+            out.append(f"U3 {key} reads {pair} for a pair that differs in exactly "
+                       f"that — the category is being reported without being counted")
+    return out
+
+
+@check("U4", "a change it cannot mark is named, and never left looking reviewed")
+def u4_honest_about_gaps(ctx: dict) -> list[str]:
+    rows = ctx["diff"]["rows"]
+    out = []
+    if rows["exit"] != 0:
+        return [f"U4 the row-added comparison exited {rows['exit']}"]
+    report = rows["report"]
+    if not any(f["kind"] == "table-shape" for f in report["differences"]):
+        out.append("U4 a table row appeared and no difference was reported for it")
+    if not report["not_redlined"]:
+        out.append("U4 the row change is not expressible as a tracked change by this "
+                   "capability, yet nothing said so — four of five differences marked "
+                   "is worse than none, because the fifth now looks reviewed")
+    if report.get("roundtrip", {}).get("exact"):
+        out.append("U4 an exact round trip was claimed for a comparison that left a "
+                   "difference unmarked")
+    strict = ctx["diff"]["rows_strict"]
+    if strict["exit"] == 0 or strict["wrote"]:
+        out.append("U4 --strict wrote a redline that does not round-trip")
+    return out
+
+
+@check("U5", "a paragraph that moved is reported as moved, not as a delete and an insert")
+def u5_move(ctx: dict) -> list[str]:
+    moved = ctx["diff"]["moved"]
+    if moved["exit"] != 0:
+        return [f"U5 the move comparison exited {moved['exit']}"]
+    kinds = [f["kind"] for f in moved["report"]["differences"]]
+    out = []
+    if "paragraph-moved" not in kinds:
+        out.append(f"U5 moving a paragraph was reported as {sorted(set(kinds))} — a "
+                   f"reader then checks two findings that are really one")
+    if "paragraph-removed" in kinds or "paragraph-added" in kinds:
+        out.append(f"U5 the move was ALSO reported as a removal or an addition: "
+                   f"{sorted(set(kinds))}")
+    return out
+
+
+@check("U6", "the redline is a legal Word document carrying real tracked changes")
+def u6_redline(ctx: dict) -> list[str]:
+    d = ctx["diff"]
+    out = []
+    valid = d["redline_valid"]["report"]
+    if not valid.get("valid"):
+        out.append(f"U6 the redline does not validate against the schema: "
+                   f"{valid.get('violations', [])[:2]}")
+    kinds = {r["kind"] for r in d["redline_revisions"].get("revisions", [])}
+    for needed in ("ins", "del", "pPrChange"):
+        if needed not in kinds:
+            out.append(f"U6 the redline carries no <w:{needed}>; the {needed} half of "
+                       f"the whitelist was reported but not written into the document")
+    # Marking a paragraph as deleted has to mark its BREAK too, or accepting the
+    # change empties the paragraph and leaves it there.
+    marks = [r for r in d["redline_revisions"].get("revisions", [])
+             if r.get("scope") == "paragraph-mark"]
+    if not marks:
+        out.append("U6 no revision is on a paragraph MARK, so the added and removed "
+                   "paragraphs were marked by their text alone — accepting that "
+                   "leaves an empty paragraph behind")
+    touched = set(d["redline_parts_changed"])
+    stray = {n for n in touched
+             if not (n == DOC_PART or n.startswith(("word/header", "word/footer")))}
+    if stray:
+        out.append(f"U6 the redline rewrote {sorted(stray)}; a redline is tracked "
+                   f"changes in the text parts and nothing else")
+    return out
+
+
+@check("U7", "a picture that changed is reported, and reported as not redlined")
+def u7_images(ctx: dict) -> list[str]:
+    image = ctx["diff"]["image"]
+    if image["exit"] != 0:
+        return [f"U7 the image comparison exited {image['exit']}: "
+                f"{image['stderr'][:120]}"]
+    report = image["report"]
+    kinds = [f["kind"] for f in report["differences"]]
+    out = []
+    if "image-replaced" not in kinds:
+        out.append(f"U7 the same picture slot holding different bytes was reported as "
+                   f"{sorted(set(kinds)) or 'nothing'} — a diff that reads only text "
+                   f"cannot see a swapped chart, which is the change most worth "
+                   f"catching in a report")
+    if not any("media" in note for note in report["not_redlined"]):
+        out.append("U7 the picture change was counted but nothing says it was left "
+                   "for a person; copying a media part across is a package edit, not "
+                   "a tracked change")
+    if report.get("roundtrip", {}).get("exact"):
+        out.append("U7 an exact round trip was claimed while a picture change went "
+                   "unmarked")
+    return out
+
+
+# ── W19: table presets ────────────────────────────────────────────────────────
+@check("Q1", "each preset writes the border weights it advertises, in eighths of a point")
+def q1_borders(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    out = []
+    listed = {p["name"]: p for p in t["listed"]["presets"]}
+    for name in TABLE_PRESETS:
+        got = t["presets"][name]["facts"]["borders"]
+        if got != PRESET_BORDERS[name]:
+            out.append(f"Q1 {name} produced borders {got}, expected "
+                       f"{PRESET_BORDERS[name]} (eighths of a point; a preset that "
+                       f"writes points draws hairlines and nothing complains)")
+        # --list-presets is how a caller chooses. If it describes something the file
+        # does not carry, the choice was made on a false description.
+        claimed = listed.get(name, {}).get("border_eighths")
+        if claimed != PRESET_BORDERS[name]:
+            out.append(f"Q1 --list-presets says {name} draws {claimed}, but the "
+                       f"expected weights are {PRESET_BORDERS[name]}")
+        if t["presets"][name]["facts"]["cell_margin"] != WIDE_MARGIN[name]:
+            out.append(f"Q1 {name} wrote cell margin "
+                       f"{t['presets'][name]['facts']['cell_margin']}, expected "
+                       f"{WIDE_MARGIN[name]}")
+    # An omitted border is not the same as `w:val="none"`: the sample's table names a
+    # w:tblStyle, whose borders show through anything this skill declines to state.
+    fin = t["presets"]["finance"]["facts"]["borders"]
+    if any(v == -1 for v in fin.values()):
+        out.append("Q1 finance left an edge unstated rather than writing an explicit "
+                   "none, so the table style's own border shows through")
+    return out
+
+
+@check("Q2", "no two presets produce the same measured fingerprint")
+def q2_distinct(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    out = []
+    seen: dict[str, str] = {}
+    for name in TABLE_PRESETS:
+        key = json.dumps(t["presets"][name]["facts"], sort_keys=True,
+                         ensure_ascii=False)
+        if key in seen:
+            out.append(f"Q2 {name} and {seen[key]} produce identical measured "
+                       f"tables — one of them is a name with nothing behind it, "
+                       f"which is the whole reason this capability shipped three "
+                       f"presets and not thirteen")
+        seen[key] = name
+    # And the skill's own reading of the file has to agree with this file's reading
+    # of it. A truthful report is a separate claim from a correct document.
+    for name in TABLE_PRESETS:
+        mine = t["presets"][name]["facts"]
+        theirs = t["presets"][name]["reported"]
+        for field, got in (("borders", theirs.get("borders")),
+                           ("cell_margin", theirs.get("cell_margin")),
+                           ("header_rule", theirs.get("header_rule"))):
+            if got != mine[field]:
+                out.append(f"Q2 {name}: the report says {field}={got} while the "
+                           f"document says {mine[field]} — the file and the report "
+                           f"disagree, and the report is what a caller acts on")
+    return out
+
+
+@check("Q3", "the header row really does come back on page 2 of a table that spans pages")
+def q3_header_repeat(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    if t["render"].get("skipped"):
+        return []
+    out = []
+    fin = t["render"].get("finance", {})
+    grid = t["render"].get("grid", {})
+    if not fin.get("produced") or not grid.get("produced"):
+        return ["Q3 the tall tables did not render, so nothing was measured"]
+    if fin["pages"] < 2 or grid["pages"] < 2:
+        return [f"Q3 the tall table fits on {fin['pages']} page(s); with nothing to "
+                f"break across, 'the header came back' has no subject"]
+    if fin["header_pages"] != list(range(1, fin["pages"] + 1)):
+        out.append(f"Q3 finance sets w:tblHeader, but the header row rendered only on "
+                   f"page(s) {fin['header_pages']} of {fin['pages']} — the flag is in "
+                   f"the file and the layout engine did not act on it")
+    # The control arm, and it has to stay negative: if the header repeats WITHOUT the
+    # flag, then page 2 carrying it says nothing about the preset.
+    if grid["header_pages"] != [1]:
+        out.append(f"Q3 grid does NOT set w:tblHeader, yet its header rendered on "
+                   f"page(s) {grid['header_pages']} — repeating is happening for some "
+                   f"other reason and this measurement cannot be attributed to the "
+                   f"preset")
+    return out
+
+
+@check("Q4", "column widths come from east-asian display width, not from len()")
+def q4_widths(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    out = []
+    for name in ("finance", "banded"):
+        got = t["presets"][name]["facts"]["widths"]
+        want = [n * WIDE_DXA_PER_CELL + 2 * WIDE_MARGIN[name] for n in WIDE_DISPLAY]
+        if got != want:
+            out.append(f"Q4 {name} sized the columns {got}, expected {want} "
+                       f"(display width {WIDE_DISPLAY} x {WIDE_DXA_PER_CELL} dxa plus "
+                       f"padding)")
+        if t["presets"][name]["facts"]["layout"] != "fixed":
+            out.append(f"Q4 {name} fitted the columns but left the layout auto, so "
+                       f"the widths it computed are a suggestion the renderer may "
+                       f"ignore")
+    # grid declines to refit, and that has to stay visible — otherwise `fit_columns`
+    # is not a property that distinguishes anything.
+    if t["presets"]["grid"]["facts"]["layout"] == "fixed":
+        out.append("Q4 grid is declared as leaving the author's widths alone, but it "
+                   "wrote a fixed layout")
+    # The vacuity guard: the two rulers have to DISAGREE on this fixture, or the
+    # assertion above is satisfied by both implementations at once.
+    if WIDE_DISPLAY == WIDE_LENS:
+        out.append("Q4 display width and len() give the same answer for every column "
+                   "of this fixture, so nothing here separates the two ways of "
+                   "measuring text")
+    return out
+
+
+@check("Q5", "the fitted table renders without wrapping, where len()-sized columns wrap")
+def q5_no_wrap(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    if t["render"].get("skipped"):
+        return []
+    out = []
+    fitted = t["render"].get("fitted", {})
+    naive = t["render"].get("naive", {})
+    if not fitted.get("produced") or not naive.get("produced"):
+        return ["Q5 the comparison did not render, so nothing was measured"]
+    if not fitted["longest_intact"]:
+        out.append(f"Q5 {WIDE_LONGEST!r} did not survive on one line in the fitted "
+                   f"table — the column it sits in was allocated "
+                   f"{t['presets']['finance']['facts']['widths'][0]} dxa and that was "
+                   f"not enough")
+    # The control arm. If len()-sized columns ALSO fit, this host's fonts have made
+    # the fixture stop separating the two implementations, and Q5 proves nothing —
+    # which is a finding, not a pass.
+    if naive["longest_intact"]:
+        out.append(f"Q5 the len()-sized columns ({t['naive_widths']}) also rendered "
+                   f"{WIDE_LONGEST!r} intact, so on this host the fixture no longer "
+                   f"tells a correct allocation from a naive one")
+    return out
+
+
+@check("Q6", "a preset is formatting: one part changes, and an empty request is refused")
+def q6_scope(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    out = []
+    for name in TABLE_PRESETS:
+        changed = t["presets"][name]["parts_changed"]
+        if changed != ["word/document.xml"]:
+            out.append(f"Q6 {name} changed {changed}; a table preset writes direct "
+                       f"formatting and has no business in any other part")
+        if t["presets"][name]["exit"] != 0:
+            out.append(f"Q6 {name} exited {t['presets'][name]['exit']}")
+    empty = t["no_tables"]
+    if empty["exit"] == 0 or empty["wrote"]:
+        out.append("Q6 a document with no tables was accepted; a call that changed "
+                   "nothing and reported success cannot be told from one that worked")
+    if empty["traceback"]:
+        out.append("Q6 the no-tables refusal arrived as a traceback rather than a "
+                   "sentence")
+    if t["bad_index"]["exit"] == 0 or t["bad_index"]["wrote"]:
+        out.append("Q6 --table 7 was accepted on a document with one table")
+    if "1" not in t["bad_index"]["stderr"]:
+        out.append(f"Q6 the out-of-range refusal does not say how many tables there "
+                   f"are: {t['bad_index']['stderr'][:80]!r}")
+    return out
+
+
+@check("Q7", "banding shades the rows it claims, and never counts the header as one")
+def q7_banding(ctx: dict) -> list[str]:
+    t = ctx["tables"]
+    out = []
+    banded = t["presets"]["banded"]["facts"]
+    fills = banded["row_fills"]
+    if not fills or fills[0] != "D9E2F3":
+        out.append(f"Q7 the banded header row carries fill {fills[0] if fills else None}, "
+                   f"expected D9E2F3")
+    # Bands count from the first DATA row. If the header is band 1, every stripe
+    # below it lands on the wrong row and the table is harder to read, not easier.
+    body = fills[1:]
+    want = [None if i % 2 == 0 else "F2F2F2" for i in range(len(body))]
+    if body != want:
+        out.append(f"Q7 the data rows are filled {body}, expected {want} — banding "
+                   f"has to start from the first data row, not from the header")
+    for name in ("grid", "finance"):
+        if any(t["presets"][name]["facts"]["row_fills"]):
+            out.append(f"Q7 {name} shaded a row; only banded declares a fill, and if "
+                       f"they all shade then shading distinguishes nothing")
+    if banded["header_rule"] != -1:
+        out.append("Q7 banded wrote a header rule; that is finance's property, and "
+                   "two presets sharing every property are one preset")
+    if t["presets"]["finance"]["facts"]["header_rule"] != 6:
+        out.append(f"Q7 finance's header rule is "
+                   f"{t['presets']['finance']['facts']['header_rule']}, expected 6 — "
+                   f"a three-line table is a rule under the header, not insideH")
+    return out
+
+
 def flaw_replace_run_by_run(ctx, work):
     """THE defect: iterate paragraph.runs and call str.replace on each.
 
@@ -4665,6 +5592,343 @@ def flaw_host_does_not_reproduce_the_code_page(ctx, work):
     return ctx
 
 
+# ── W18 ───────────────────────────────────────────────────────────────────────
+def _diff(ctx):
+    ctx["diff"] = copy.deepcopy(ctx["diff"])
+    return ctx["diff"]
+
+
+def flaw_revised_stops_removing_a_paragraph(ctx, work):
+    """CONTROL: the A/B fixture stops carrying one of the six changes."""
+    d = _diff(ctx)
+    d["fixture"]["removed_from_a"] = False
+    return ctx
+
+
+def flaw_revised_stops_restyling(ctx, work):
+    """CONTROL: the style-only change goes, and U1's style finding has no subject."""
+    d = _diff(ctx)
+    d["fixture"]["restyled"] = []
+    return ctx
+
+
+def flaw_revised_header_matches(ctx, work):
+    """CONTROL: the letterhead stops differing, so 'the diff reached it' is vacuous."""
+    d = _diff(ctx)
+    d["fixture"]["header_b"] = list(d["fixture"]["header_a"])
+    return ctx
+
+
+def flaw_diff_only_walks_the_body(ctx, work):
+    """The implementation everybody writes first: iterate word/document.xml and stop."""
+    d = _diff(ctx)
+    d["main"]["report"]["differences"] = [
+        f for f in d["main"]["report"]["differences"]
+        if DIFF_HEADER_PART not in f.get("where", "")]
+    d["main"]["report"]["counted"] = len(d["main"]["report"]["differences"])
+    return ctx
+
+
+def flaw_diff_flattens_tables(ctx, work):
+    d = _diff(ctx)
+    d["main"]["report"]["differences"] = [
+        f for f in d["main"]["report"]["differences"]
+        if "table" not in f.get("where", "")]
+    d["main"]["report"]["counted"] = len(d["main"]["report"]["differences"])
+    return ctx
+
+
+def flaw_style_change_not_noticed(ctx, work):
+    d = _diff(ctx)
+    d["main"]["report"]["differences"] = [
+        f for f in d["main"]["report"]["differences"] if f["kind"] != "style"]
+    d["main"]["report"]["counted"] = len(d["main"]["report"]["differences"])
+    return ctx
+
+
+def flaw_accept_does_not_give_b(ctx, work):
+    d = _diff(ctx)
+    d["accept"]["signature"] = d["signatures"]["a"]
+    return ctx
+
+
+def flaw_reject_does_not_give_a(ctx, work):
+    d = _diff(ctx)
+    d["reject"]["signature"] = d["signatures"]["b"]
+    return ctx
+
+
+def flaw_script_will_not_claim_the_roundtrip(ctx, work):
+    """The round trip holds and the script does not say so — silence reads as failure."""
+    d = _diff(ctx)
+    d["main"]["report"]["roundtrip"]["exact"] = False
+    return ctx
+
+
+def flaw_noise_counted_as_a_difference(ctx, work):
+    """The diff nobody reads: an rsid churn reported as an edit."""
+    d = _diff(ctx)
+    d["noise"]["report"]["differences"] = [
+        {"kind": "text", "where": "word/document.xml ¶1", "before": "x", "after": "x"}]
+    d["noise"]["report"]["counted"] = 1
+    return ctx
+
+
+def flaw_ignored_category_never_named(ctx, work):
+    d = _diff(ctx)
+    d["main"]["report"]["ignored_not_counted_as_differences"].pop("proofErr", None)
+    return ctx
+
+
+def flaw_category_named_but_never_counted(ctx, work):
+    """The shape of "absolutely never silent" that is, in fact, silent."""
+    d = _diff(ctx)
+    for key in ("rsid", "proofErr", "bookmark", "lang"):
+        d["noise"]["report"]["ignored_not_counted_as_differences"][key] = {
+            "a": 0, "b": 0}
+    return ctx
+
+
+def flaw_unmarkable_change_not_named(ctx, work):
+    d = _diff(ctx)
+    d["rows"]["report"]["not_redlined"] = []
+    return ctx
+
+
+def flaw_exact_claimed_over_a_gap(ctx, work):
+    d = _diff(ctx)
+    d["rows"]["report"].setdefault("roundtrip", {})["exact"] = True
+    return ctx
+
+
+def flaw_strict_writes_a_partial_redline(ctx, work):
+    d = _diff(ctx)
+    d["rows_strict"] = {"exit": 0, "stderr": "", "wrote": True}
+    return ctx
+
+
+def flaw_row_change_not_reported_at_all(ctx, work):
+    d = _diff(ctx)
+    d["rows"]["report"]["differences"] = [
+        f for f in d["rows"]["report"]["differences"] if f["kind"] != "table-shape"]
+    return ctx
+
+
+def flaw_move_reported_as_delete_and_insert(ctx, work):
+    d = _diff(ctx)
+    for f in d["moved"]["report"]["differences"]:
+        if f["kind"] == "paragraph-moved":
+            f["kind"] = "paragraph-removed" if f.get("before") else "paragraph-added"
+    return ctx
+
+
+def flaw_redline_does_not_validate(ctx, work):
+    d = _diff(ctx)
+    d["redline_valid"]["report"] = {"valid": False,
+                                    "violations": [{"part": DOC_PART, "line": 2}]}
+    return ctx
+
+
+def flaw_redline_has_no_paragraph_mark(ctx, work):
+    """Content marked, break not: accepting empties the paragraph and leaves it."""
+    d = _diff(ctx)
+    d["redline_revisions"]["revisions"] = [
+        r for r in d["redline_revisions"].get("revisions", [])
+        if r.get("scope") != "paragraph-mark"]
+    return ctx
+
+
+def flaw_redline_skips_the_style_change(ctx, work):
+    d = _diff(ctx)
+    d["redline_revisions"]["revisions"] = [
+        r for r in d["redline_revisions"].get("revisions", [])
+        if r.get("kind") != "pPrChange"]
+    return ctx
+
+
+def flaw_redline_rewrites_the_styles_part(ctx, work):
+    d = _diff(ctx)
+    d["redline_parts_changed"] = sorted(d["redline_parts_changed"] + ["word/styles.xml"])
+    return ctx
+
+
+def flaw_picture_change_invisible(ctx, work):
+    """A swapped chart, in a diff that reads only text."""
+    d = _diff(ctx)
+    d["image"]["report"]["differences"] = [
+        f for f in d["image"]["report"]["differences"]
+        if not f["kind"].startswith("image-")]
+    d["image"]["report"]["not_redlined"] = [
+        n for n in d["image"]["report"]["not_redlined"] if "media" not in n]
+    return ctx
+
+
+def flaw_picture_change_looks_reviewed(ctx, work):
+    d = _diff(ctx)
+    d["image"]["report"]["not_redlined"] = []
+    d["image"]["report"].setdefault("roundtrip", {})["exact"] = True
+    return ctx
+
+
+# ── W19 ───────────────────────────────────────────────────────────────────────
+def _tables(ctx):
+    ctx["tables"] = copy.deepcopy(ctx["tables"])
+    return ctx["tables"]
+
+
+def _sync(t, preset: str, field: str, value):
+    """Apply a defect to BOTH readings of the file — the document's and the report's.
+
+    A defect in the implementation shows up in the document AND in the report the
+    implementation writes about it: the two agree, and are both wrong. Mutating only
+    this file's reading manufactures a disagreement the modelled defect would never
+    produce, and Q2 — which owns "the report and the file disagree" — then goes red
+    for a reason that has nothing to do with the flaw under test. Both of the first
+    two W19 controls were written that way and both were caught by exactly that.
+    """
+    t["presets"][preset]["facts"][field] = value
+    t["presets"][preset]["reported"][field] = copy.deepcopy(value)
+
+
+def flaw_border_size_written_in_points(ctx, work):
+    """sz is EIGHTHS of a point; writing points gives a hairline and no complaint."""
+    t = _tables(ctx)
+    for name in TABLE_PRESETS:
+        b = dict(t["presets"][name]["facts"]["borders"])
+        for edge, v in list(b.items()):
+            if v > 0:
+                b[edge] = max(1, v // 8)
+        _sync(t, name, "borders", b)
+    return ctx
+
+
+def flaw_border_left_unstated(ctx, work):
+    """Omitting an edge instead of writing `none` lets the table style show through."""
+    t = _tables(ctx)
+    b = dict(t["presets"]["finance"]["facts"]["borders"])
+    for edge in ("left", "right", "insideV"):
+        b[edge] = -1
+    _sync(t, "finance", "borders", b)
+    return ctx
+
+
+def flaw_list_presets_describes_something_else(ctx, work):
+    t = _tables(ctx)
+    for p in t["listed"]["presets"]:
+        if p["name"] == "finance":
+            p["border_eighths"] = dict(PRESET_BORDERS["grid"])
+    return ctx
+
+
+def flaw_two_presets_are_the_same(ctx, work):
+    """A name with nothing behind it — the defect thirteen presets are made of."""
+    t = _tables(ctx)
+    t["presets"]["banded"]["facts"] = copy.deepcopy(t["presets"]["finance"]["facts"])
+    t["presets"]["banded"]["reported"] = copy.deepcopy(
+        t["presets"]["finance"]["reported"])
+    return ctx
+
+
+def flaw_report_disagrees_with_the_document(ctx, work):
+    t = _tables(ctx)
+    t["presets"]["finance"]["reported"]["cell_margin"] = 108
+    return ctx
+
+
+def flaw_header_repeat_not_rendered(ctx, work):
+    """The flag is in the file; the header still does not come back."""
+    t = _tables(ctx)
+    t["render"]["finance"]["header_pages"] = [1]
+    return ctx
+
+
+def flaw_every_preset_repeats_the_header(ctx, work):
+    """CONTROL: if it repeats without the flag, page 2 says nothing about the preset."""
+    t = _tables(ctx)
+    grid = t["render"]["grid"]
+    grid["header_pages"] = list(range(1, grid["pages"] + 1))
+    return ctx
+
+
+def flaw_columns_sized_by_len(ctx, work):
+    t = _tables(ctx)
+    for name in ("finance", "banded"):
+        t["presets"][name]["facts"]["widths"] = [
+            n * WIDE_DXA_PER_CELL + 2 * WIDE_MARGIN[name] for n in WIDE_LENS]
+    return ctx
+
+
+def flaw_fitted_widths_left_auto(ctx, work):
+    """Widths computed and then written as a suggestion the renderer may ignore."""
+    t = _tables(ctx)
+    t["presets"]["finance"]["facts"]["layout"] = None
+    return ctx
+
+
+def flaw_fitted_table_wraps_anyway(ctx, work):
+    t = _tables(ctx)
+    t["render"]["fitted"]["longest_intact"] = False
+    return ctx
+
+
+def flaw_naive_widths_fit_too(ctx, work):
+    """CONTROL: the fixture stops separating a correct allocation from a naive one."""
+    t = _tables(ctx)
+    t["render"]["naive"]["longest_intact"] = True
+    return ctx
+
+
+def flaw_preset_rewrites_the_styles_part(ctx, work):
+    t = _tables(ctx)
+    t["presets"]["banded"]["parts_changed"] = ["word/document.xml", "word/styles.xml"]
+    return ctx
+
+
+def flaw_no_tables_reported_as_done(ctx, work):
+    t = _tables(ctx)
+    t["no_tables"] = {"exit": 0, "stderr": "", "wrote": True, "traceback": False}
+    return ctx
+
+
+def flaw_out_of_range_table_accepted(ctx, work):
+    t = _tables(ctx)
+    t["bad_index"] = {"exit": 0, "stderr": "", "wrote": True}
+    return ctx
+
+
+def flaw_banding_starts_at_the_header(ctx, work):
+    """Header counted as band 1, so every stripe below it lands one row out."""
+    t = _tables(ctx)
+    fills = t["presets"]["banded"]["facts"]["row_fills"]
+    t["presets"]["banded"]["facts"]["row_fills"] = [
+        "D9E2F3"] + ["F2F2F2" if i % 2 == 0 else None for i in range(len(fills) - 1)]
+    return ctx
+
+
+def flaw_every_preset_shades(ctx, work):
+    t = _tables(ctx)
+    facts = t["presets"]["finance"]["facts"]
+    facts["row_fills"] = ["D9E2F3"] + [None] * (len(facts["row_fills"]) - 1)
+    return ctx
+
+
+def flaw_header_rule_drawn_as_insideh(ctx, work):
+    """A rule between every pair of rows is a grid, not a three-line table."""
+    t = _tables(ctx)
+    _sync(t, "finance", "header_rule", -1)
+    b = dict(t["presets"]["finance"]["facts"]["borders"])
+    b["insideH"] = 6
+    _sync(t, "finance", "borders", b)
+    return ctx
+
+
+def flaw_probe_string_also_in_the_document(ctx, work):
+    """CONTROL: the string Q5 hunts for is findable somewhere that is not the table."""
+    t = _tables(ctx)
+    t["probe_strings_unique"][WIDE_LONGEST] = 2
+    return ctx
+
+
 FLAWS = [
     ("replace-run-by-run", flaw_replace_run_by_run, {"E1", "E2"},
      "E2 also fires, and it must: a replacement that never happened leaves the old "
@@ -4904,6 +6168,87 @@ FLAWS = [
      flaw_children_left_based_on_a_deleted_style, {"S4"}, ""),
     ("basedon-cycle-written", flaw_basedon_cycle_written, {"S5"}, ""),
 
+    ("CONTROL: revised.docx stops removing a paragraph",
+     flaw_revised_stops_removing_a_paragraph, {"V0"}, ""),
+    ("CONTROL: revised.docx stops restyling a paragraph",
+     flaw_revised_stops_restyling, {"V0"}, ""),
+    ("CONTROL: revised.docx's header stops differing", flaw_revised_header_matches,
+     {"V0"}, ""),
+    ("diff-only-walks-word-document-xml", flaw_diff_only_walks_the_body, {"U1"}, ""),
+    ("diff-never-descends-into-a-table", flaw_diff_flattens_tables, {"U1"}, ""),
+    ("style-only-change-not-noticed", flaw_style_change_not_noticed, {"U1"}, ""),
+    ("accepting-the-redline-does-not-give-b", flaw_accept_does_not_give_b, {"U2"}, ""),
+    ("rejecting-the-redline-does-not-give-a", flaw_reject_does_not_give_a, {"U2"}, ""),
+    ("script-will-not-claim-a-round-trip-it-made",
+     flaw_script_will_not_claim_the_roundtrip, {"U2"}, ""),
+    ("rsid-churn-reported-as-an-edit", flaw_noise_counted_as_a_difference, {"U3"}, ""),
+    ("ignored-category-never-named", flaw_ignored_category_never_named, {"U3"}, ""),
+    ("category-named-but-never-counted", flaw_category_named_but_never_counted,
+     {"U3"}, ""),
+    ("unmarkable-change-not-named", flaw_unmarkable_change_not_named, {"U4"}, ""),
+    ("exact-round-trip-claimed-over-a-gap", flaw_exact_claimed_over_a_gap, {"U4"}, ""),
+    ("strict-writes-a-partial-redline", flaw_strict_writes_a_partial_redline,
+     {"U4"}, ""),
+    ("row-change-not-reported-at-all", flaw_row_change_not_reported_at_all,
+     {"U4"}, ""),
+    ("move-reported-as-a-delete-and-an-insert",
+     flaw_move_reported_as_delete_and_insert, {"U5"}, ""),
+    ("redline-does-not-validate", flaw_redline_does_not_validate, {"U6"}, ""),
+    ("redline-marks-the-text-but-not-the-paragraph-mark",
+     flaw_redline_has_no_paragraph_mark, {"U6"}, ""),
+    ("style-change-reported-but-never-written", flaw_redline_skips_the_style_change,
+     {"U6"}, ""),
+    ("redline-rewrites-the-styles-part", flaw_redline_rewrites_the_styles_part,
+     {"U6"}, ""),
+    ("swapped-picture-invisible-to-the-diff", flaw_picture_change_invisible,
+     {"U7"}, ""),
+    ("picture-change-left-looking-reviewed", flaw_picture_change_looks_reviewed,
+     {"U7"}, ""),
+
+    ("border-size-written-in-points-not-eighths", flaw_border_size_written_in_points,
+     {"Q1"}, ""),
+    ("border-edge-left-unstated", flaw_border_left_unstated, {"Q1"}, ""),
+    ("list-presets-describes-a-different-table",
+     flaw_list_presets_describes_something_else, {"Q1"}, ""),
+    # All four are declared rather than left to the cascade note, because a non-empty
+    # note masks EVERY unexpected check, not the ones it happens to mention. Declared
+    # as {Q2, Q7} first, this row was quietly also lighting Q1 and Q4 and the run
+    # still said PASS.
+    ("two-presets-are-the-same-table", flaw_two_presets_are_the_same,
+     {"Q1", "Q2", "Q4", "Q7"},
+     "making banded identical to finance IS banded taking on finance's borders (Q1), "
+     "finance's column padding (Q4), and losing the shading that is the only thing "
+     "banded is for (Q7). Q2 owns the claim under test — that no two presets measure "
+     "the same — and the other three are the same edit seen from each preset's own "
+     "contract"),
+    ("report-disagrees-with-the-document", flaw_report_disagrees_with_the_document,
+     {"Q2"}, ""),
+    ("header-repeat-flag-set-but-not-honoured", flaw_header_repeat_not_rendered,
+     {"Q3"}, ""),
+    ("CONTROL: every preset repeats the header", flaw_every_preset_repeats_the_header,
+     {"Q3"}, ""),
+    ("columns-sized-by-len", flaw_columns_sized_by_len, {"Q4"}, ""),
+    ("fitted-widths-left-as-a-suggestion", flaw_fitted_widths_left_auto, {"Q4"}, ""),
+    ("fitted-table-wraps-anyway", flaw_fitted_table_wraps_anyway, {"Q5"}, ""),
+    ("CONTROL: len()-sized columns fit on this host too", flaw_naive_widths_fit_too,
+     {"Q5"}, ""),
+    ("preset-rewrites-the-styles-part", flaw_preset_rewrites_the_styles_part,
+     {"Q6"}, ""),
+    ("document-with-no-tables-reported-as-done", flaw_no_tables_reported_as_done,
+     {"Q6"}, ""),
+    ("out-of-range-table-index-accepted", flaw_out_of_range_table_accepted,
+     {"Q6"}, ""),
+    ("banding-counts-the-header-as-band-one", flaw_banding_starts_at_the_header,
+     {"Q7"}, ""),
+    ("every-preset-shades-a-row", flaw_every_preset_shades, {"Q7"}, ""),
+    ("header-rule-drawn-as-insideh", flaw_header_rule_drawn_as_insideh, {"Q1", "Q7"},
+     "Q1 also fires, and that is the shape of the defect rather than a cascade: "
+     "drawing the rule with insideH means every pair of rows gets a line, which IS a "
+     "change to the advertised border weights. Q1 owns the borders, Q7 owns the "
+     "missing header rule"),
+    ("CONTROL: a table probe string also occurs in the document",
+     flaw_probe_string_also_in_the_document, {"V0"}, ""),
+
     ("entry-point-dies-on-a-windows-code-page",
      flaw_entry_point_dies_on_a_windows_code_page, {"C4"}, ""),
     ("a-new-entry-point-is-never-probed", flaw_a_new_entry_point_is_never_probed,
@@ -4929,7 +6274,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    for f in (REPORT, UNORDERED, OUTLINE, FONTLESS, CHART):
+    for f in (REPORT, REVISED, UNORDERED, OUTLINE, FONTLESS, CHART):
         if not f.is_file():
             print(f"[error] fixture missing: {f} (run fixtures/make_fixtures.py)",
                   file=sys.stderr)
