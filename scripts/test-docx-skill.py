@@ -212,6 +212,17 @@ MD_STYLES = ("Heading1", "Heading2", "SourceCode", "Quote", "Hyperlink", "CodeCh
 # The deepest list nesting in the fixture: "- 华东…" then "  - 其中线上渠道…".
 MD_LIST_DEPTH = 1
 
+# W14. The schemas ship with the skill (13 files, the transitive closure of wml.xsd).
+# Measured packaging cost: +64,761 bytes / +1.8% of the built-in skills archive —
+# NOT the "+1/3" the decision was nearly made on, which compared an uncompressed
+# 984 KB against a compressed 3.4 MB.
+SCHEMA_DIR = SKILL / "schemas"
+SCHEMA_FILES = 13
+# Parts report.docx has a grammar for. `word/document.xml` and friends; customXml and
+# docProps have none, and saying so is what stops "valid" reading as "all checked".
+VALIDATED_PARTS = 8
+
+
 
 # Claims this host could not exercise. Reported separately and never folded into the
 # pass count — a skip and a pass look identical at a glance, which is exactly how a
@@ -837,6 +848,7 @@ def collect(work: Path) -> dict:
     ctx["fonts"] = collect_fonts(work)
     ctx["styles"] = collect_styles(work)
     ctx["markdown"] = collect_markdown(work)
+    ctx["validate"] = collect_validate(work)
 
     # --- contracts -------------------------------------------------------------
     big = work / "big.docx"
@@ -881,6 +893,7 @@ def collect(work: Path) -> dict:
         # --help: this one's inputs are a Markdown file rather than a fixture, and
         # the encoding path is crossed at import of docxcommon either way.
         "docx_from_md.py": ["--help"],
+        "docx_validate.py": ["--in", REPORT],
         "docx_edit.py": ["--in", REPORT, "--out", work / "cp.docx", "--replace", "a=b"],
         # --help rather than a conversion: it still crosses the encoding path (the
         # reconfigure happens when docxcommon is imported, before argparse runs) and
@@ -1245,6 +1258,61 @@ def collect_markdown(work: Path) -> dict:
         "lost": sorted(set(parts_of(REPORT)) - set(parts_of(tpl))),
         "texts": paragraph_texts(tpl),
     }
+    return out
+
+
+# ── W14: schema validation ────────────────────────────────────────────────────
+def strip_required_attribute(src: Path, dst: Path) -> None:
+    """Reintroduce the exact defect python-docx's own template carries: a
+    `<w:zoom>` with no `w:percent`, which Transitional makes REQUIRED."""
+    def mutate(name: str, data: bytes) -> bytes:
+        if name != "word/settings.xml":
+            return data
+        return data.replace(b'<w:zoom w:percent="100"/>', b'<w:zoom w:val="bestFit"/>')
+    rewrite_zip(src, dst, mutate)
+
+
+def with_ignorable_namespace(src: Path, dst: Path) -> None:
+    """A document carrying an element from a namespace the schema predates, marked
+    `mc:Ignorable` — which is what every document Word itself writes looks like."""
+    def mutate(name: str, data: bytes) -> bytes:
+        if name != "word/document.xml":
+            return data
+        text = data.decode()
+        text = text.replace(
+            '<w:document ',
+            '<w:document xmlns:mc="http://schemas.openxmlformats.org/'
+            'markup-compatibility/2006" '
+            'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+            'mc:Ignorable="w14" ', 1)
+        return text.replace("<w:body>", '<w:body><w14:conflictIns w14:id="7"/>',
+                            1).encode()
+    rewrite_zip(src, dst, mutate)
+
+
+def collect_validate(work: Path) -> dict:
+    out: dict = {"schema_files": sorted(p.name for p in SCHEMA_DIR.glob("*.xsd"))}
+    r = run_script("docx_validate.py", "--in", REPORT, "--report", work / "ok.json")
+    out["good"] = {"exit": r.returncode,
+                   "report": json.loads((work / "ok.json").read_text(encoding="utf-8"))}
+    broken = work / "schema-broken.docx"
+    strip_required_attribute(REPORT, broken)
+    b = run_script("docx_validate.py", "--in", broken, "--report", work / "bad.json")
+    out["invalid"] = {"exit": b.returncode,
+                      "report": json.loads((work / "bad.json").read_text(encoding="utf-8"))}
+    mce = work / "ignorable.docx"
+    with_ignorable_namespace(REPORT, mce)
+    m = run_script("docx_validate.py", "--in", mce, "--report", work / "mce.json")
+    out["ignorable"] = {"exit": m.returncode,
+                        "report": json.loads((work / "mce.json").read_text(encoding="utf-8"))}
+    # No schemas anywhere: the loud degradation. Pointed at an empty directory
+    # rather than by moving the shipped one, so a failure here cannot leave the
+    # working tree without its schemas.
+    empty = work / "no-schemas"
+    empty.mkdir(exist_ok=True)
+    n = run_script("docx_validate.py", "--in", REPORT, "--schemas", empty)
+    out["missing"] = {"exit": n.returncode, "stderr": n.stderr.strip(),
+                      "stdout": n.stdout.strip()}
     return out
 
 def blank_document(src: Path, dst: Path) -> None:
@@ -3174,6 +3242,96 @@ def d6_template(ctx: dict) -> list[str]:
     return out
 
 
+
+# ── W14: schema validation ────────────────────────────────────────────────────
+@check("Z1", "the schemas ship, and a legal document validates against them")
+def z1_ships(ctx: dict) -> list[str]:
+    v = ctx["validate"]
+    out = []
+    if len(v["schema_files"]) != SCHEMA_FILES:
+        out.append(f"Z1 {len(v['schema_files'])} schema file(s) ship with the skill, "
+                   f"expected {SCHEMA_FILES} — the closure of wml.xsd. A validator "
+                   f"whose grammar the user has to fetch first is one nobody runs")
+    if v["good"]["exit"] != 0:
+        out.append(f"Z1 a document known to be legal exited {v['good']['exit']}")
+    report = v["good"]["report"]
+    if not report.get("valid"):
+        out.append(f"Z1 report.docx is reported invalid: "
+                   f"{report.get('violations', [])[:1]}")
+    if report["parts_checked"] != VALIDATED_PARTS:
+        out.append(f"Z1 {report['parts_checked']} part(s) checked, expected "
+                   f"{VALIDATED_PARTS}")
+    if report["schemas"]["resolved_from"] != "bundled with the skill":
+        out.append(f"Z1 the grammar came from {report['schemas']['resolved_from']!r} "
+                   f"rather than the copy that ships — on a user's machine there is "
+                   f"nothing else to fall back to")
+    return out
+
+
+@check("Z2", "a genuinely invalid document is rejected, with the part and the line")
+def z2_rejects(ctx: dict) -> list[str]:
+    inv = ctx["validate"]["invalid"]
+    out = []
+    if inv["exit"] == 0:
+        out.append("Z2 a document whose w:zoom is missing the REQUIRED w:percent was "
+                   "accepted — that is the exact defect python-docx's own template "
+                   "carries, so this is not a hypothetical")
+    report = inv["report"]
+    if report.get("valid"):
+        out.append("Z2 the report says valid")
+    if not report.get("violations"):
+        out.append("Z2 no violation was reported")
+        return out
+    first = report["violations"][0]
+    if first.get("part") != "word/settings.xml" or not first.get("line"):
+        out.append(f"Z2 the violation does not locate itself: {first}")
+    return out
+
+
+@check("Z3", "no schemas is a loud failure, never a quiet pass")
+def z3_loud(ctx: dict) -> list[str]:
+    m = ctx["validate"]["missing"]
+    out = []
+    if m["exit"] == 0:
+        out.append("Z3 with no schemas anywhere it exited 0. A run that checked "
+                   "NOTHING must not be reportable as a pass — that is the single "
+                   "outcome this capability was not allowed to have")
+    if '"valid": true' in m["stdout"].replace(" ", "").lower():
+        out.append("Z3 it printed a valid verdict from a run that validated nothing")
+    if "tried" not in m["stderr"]:
+        out.append(f"Z3 the failure does not name where it looked: "
+                   f"{m['stderr'][:120]!r}")
+    return out
+
+
+@check("Z4", "mc:Ignorable is honoured, or every real Word document cries wolf")
+def z4_ignorable(ctx: dict) -> list[str]:
+    ig = ctx["validate"]["ignorable"]
+    out = []
+    if ig["exit"] != 0 or not ig["report"].get("valid"):
+        out.append(f"Z4 a document carrying an element from a namespace marked "
+                   f"mc:Ignorable was reported invalid "
+                   f"({ig['report'].get('violation_count')} violation(s)). Every "
+                   f"document Word itself writes looks like this (w14, w15, wp14), "
+                   f"so a validator that does not strip them reports a wall of "
+                   f"non-defects and gets switched off")
+    return out
+
+
+@check("Z5", "parts with no grammar are named, so 'valid' cannot be misread")
+def z5_not_checked(ctx: dict) -> list[str]:
+    report = ctx["validate"]["good"]["report"]
+    out = []
+    if "not_checked" not in report:
+        out.append("Z5 the report does not say which parts were left unchecked, so "
+                   "'valid' reads as 'everything was checked' when it means 'valid "
+                   "where a grammar existed'")
+    checked = set(report.get("checked") or [])
+    if "word/document.xml" not in checked:
+        out.append("Z5 word/document.xml is not among the checked parts")
+    return out
+
+
 # ── the negative controls ─────────────────────────────────────────────────────
 # Each one is a defect an assertion above claims to catch, applied to the collected
 # context. They are the implementations somebody reaches for first, not invented
@@ -4261,6 +4419,61 @@ def flaw_chart_loses_its_density(ctx, work):
 
 
 
+
+def flaw_schemas_not_shipped(ctx, work):
+    v = copy.deepcopy(ctx["validate"])
+    v["schema_files"] = []
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_grammar_came_from_elsewhere(ctx, work):
+    """Green on the author's machine because $ECMA376_XSD_DIR happened to be set."""
+    v = copy.deepcopy(ctx["validate"])
+    v["good"]["report"]["schemas"]["resolved_from"] = "$ECMA376_XSD_DIR"
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_invalid_document_accepted(ctx, work):
+    v = copy.deepcopy(ctx["validate"])
+    v["invalid"] = {"exit": 0, "report": {"valid": True, "violations": [],
+                                          "violation_count": 0}}
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_violation_without_a_location(ctx, work):
+    v = copy.deepcopy(ctx["validate"])
+    for viol in v["invalid"]["report"]["violations"]:
+        viol["part"], viol["line"] = None, None
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_missing_schemas_pass_quietly(ctx, work):
+    """The one outcome that was ruled out before any code was written."""
+    v = copy.deepcopy(ctx["validate"])
+    v["missing"] = {"exit": 0, "stderr": "",
+                    "stdout": '{"valid": true, "violation_count": 0}'}
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_ignorable_namespace_reported_as_invalid(ctx, work):
+    v = copy.deepcopy(ctx["validate"])
+    v["ignorable"] = {"exit": 1, "report": {"valid": False, "violation_count": 12}}
+    ctx["validate"] = v
+    return ctx
+
+
+def flaw_not_checked_never_reported(ctx, work):
+    v = copy.deepcopy(ctx["validate"])
+    v["good"]["report"].pop("not_checked", None)
+    ctx["validate"] = v
+    return ctx
+
+
 def flaw_a_block_kind_is_dropped(ctx, work):
     """The defect the whole contract is about: content that never arrives."""
     m = copy.deepcopy(ctx["markdown"])
@@ -4649,6 +4862,16 @@ FLAWS = [
      flaw_fontless_style_stops_answering, {"V0"}, ""),
     ("CONTROL: chart.png loses its declared density", flaw_chart_loses_its_density,
      {"V0"}, ""),
+
+    ("schemas-not-shipped", flaw_schemas_not_shipped, {"Z1"}, ""),
+    ("grammar-came-from-somewhere-else", flaw_grammar_came_from_elsewhere,
+     {"Z1"}, ""),
+    ("invalid-document-accepted", flaw_invalid_document_accepted, {"Z2"}, ""),
+    ("violation-without-a-location", flaw_violation_without_a_location, {"Z2"}, ""),
+    ("missing-schemas-pass-quietly", flaw_missing_schemas_pass_quietly, {"Z3"}, ""),
+    ("ignorable-namespace-reported-as-invalid",
+     flaw_ignorable_namespace_reported_as_invalid, {"Z4"}, ""),
+    ("not-checked-never-reported", flaw_not_checked_never_reported, {"Z5"}, ""),
 
     ("a-block-kind-is-dropped", flaw_a_block_kind_is_dropped, {"D1"}, ""),
     ("sectpr-no-longer-last-after-generating", flaw_sectpr_no_longer_last,

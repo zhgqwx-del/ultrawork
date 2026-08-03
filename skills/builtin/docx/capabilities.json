@@ -86,62 +86,34 @@
       },
       "verified_by": "the assertion that matters is D4: `<w:sectPr>` must still be LAST in the body. `body.append(p)` is the natural way to write this and it puts the paragraph after the section properties, which Word repairs by discarding the section — page size, margins and the header/footer bindings all go. D6 covers the other half: a Chinese paragraph this skill writes must carry both @w:ascii and @w:eastAsia, or it renders in whatever face the reader's theme picks. scripts/test-docx-skill.py A1-A3 assert the placement, the numbering refusal and the font binding directly"
     },
-    "W13": {
-      "entry": "scripts/docx_package.py",
+    "W4": {
+      "entry": "scripts/docx_from_md.py",
       "sample": {
         "args": [
           "--in",
-          "{fixtures}/report.docx",
-          "--unpack",
-          "{out}/unpacked",
+          "{fixtures}/sample.md",
           "--out",
-          "{out}/rebuilt.docx",
+          "{out}/generated.docx",
           "--report",
-          "{out}/package.json"
+          "{out}/generate.json"
         ],
         "produces": [
-          "rebuilt.docx",
-          "package.json"
+          "generated.docx",
+          "generate.json"
         ]
       },
       "expect": {
-        "baseline": "{fixtures}/report.docx",
         "contains": [
-          "二零二六年第三季度经营分析报告"
+          "季度经营分析报告",
+          "收入分析",
+          "审计意见",
+          "华东区域"
         ],
-        "paragraphs": 9,
+        "paragraphs": 15,
         "tables": 1,
         "allow_blank_pages": false
       },
-      "verified_by": "the sample takes the package apart and puts it back, so L2 is being asked whether a document survives that — F1/F2 plus the whole D-series on the rebuilt file. That every one of the 17 parts comes back BYTE-identical and in the same order (which `unzip`+`zip` does not give you, and which some readers care about for [Content_Types].xml), and that a part name crafted to escape the target directory is refused rather than written, is scripts/test-docx-skill.py P1-P4"
-    },
-    "W15": {
-      "entry": "scripts/docx_package.py",
-      "sample": {
-        "args": [
-          "--in",
-          "{fixtures}/unordered.docx",
-          "--fix-order",
-          "--out",
-          "{out}/ordered.docx",
-          "--report",
-          "{out}/order.json"
-        ],
-        "produces": [
-          "ordered.docx",
-          "order.json"
-        ]
-      },
-      "expect": {
-        "baseline": "{fixtures}/unordered.docx",
-        "contains": [
-          "二零二六年第三季度经营分析报告"
-        ],
-        "paragraphs": 9,
-        "tables": 1,
-        "allow_blank_pages": false
-      },
-      "verified_by": "the input `unordered.docx` is the state a writer that appends elements in the order it thought of them leaves a document in, and it FAILS L2 on both D4 (element order) and D2 (the XSD says the same thing in stronger words) — the artifact must pass both. The pairing is the point: a repair verified only on its output cannot be told apart from a check with no teeth. scripts/test-docx-skill.py O1-O3 pin that the input really is rejected, that all three kinds of misplacement are repaired, and that nothing else in the document moved"
+      "verified_by": "there is no `baseline` because nothing was edited — this capability builds a package from nothing, so F1/F2 have no input to compare against and say so rather than pretending. That puts the whole weight on the legality checks, which is the right place for it: D2 validates every part of a hand-built package against the ECMA-376 schemas (the reason this authors its own blank document instead of starting from python-docx's template, which ships a `w:zoom` without the required `w:percent` and would fail here — gotchas §21.2 ㉗), D1 that the hyperlink and image relationships resolve, D4 that `w:sectPr` is still last after fifteen blocks were appended, D6 that every generated CJK run binds both faces, and D7 that LibreOffice lays it out non-blank. What none of them can see is the contract: that a construct this cannot map is REPORTED with its line number rather than dropped — the sample's Markdown carries a footnote and two raw HTML tags on purpose, so a generator that silently discarded them would still produce a legal document and pass everything above. scripts/test-docx-skill.py D1-D6 assert that, plus that `--strict` refuses and writes nothing, that the styles a `w:pStyle` names are actually created (naming one that does not exist is valid XML that silently formats as Normal), that nested list levels reach the numbering they claim, and that `--template` keeps a house style's parts while replacing only the body"
     },
     "W5": {
       "entry": "scripts/docx_template.py",
@@ -177,35 +149,6 @@
         "allow_blank_pages": false
       },
       "verified_by": "the sample runs under --strict, so it is also an assertion: it exits non-zero if ANY placeholder is left over or ANY supplied value matched nothing, which means L1 would fail on a filler that quietly did less than it was asked. L2 then holds the fidelity line (F1/F2) and the legality line (D1-D7) on the filled document. What --strict cannot see is asserted in scripts/test-docx-skill.py T1-T5: that a placeholder Word split across runs is filled at all, that a leftover placeholder is NAMED rather than shipped in silence, that a supplied key matching nothing is named (a typo is otherwise indistinguishable from 'not in this template'), and that the header's placeholder is filled too — half of a real template's placeholders live in the letterhead"
-    },
-    "W17": {
-      "entry": "scripts/docx_pdf.py",
-      "sample": {
-        "args": [
-          "--in",
-          "{fixtures}/report.docx",
-          "--out",
-          "{out}/preview.pdf",
-          "--png",
-          "{out}/pages",
-          "--dpi",
-          "120",
-          "--report",
-          "{out}/pdf.json"
-        ],
-        "produces": [
-          "preview.pdf",
-          "pdf.json"
-        ]
-      },
-      "expect": {
-        "contains": [
-          "二零二六年第三季度经营分析报告",
-          "营业收入"
-        ],
-        "allow_blank_pages": false
-      },
-      "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (it rasterizes and no page is blank) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes a .docx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that pending tracked changes and cached field results are NAMED (the picture is one resolution of the revisions, not the document anyone approved), is scripts/test-docx-skill.py Y1-Y3 — skipped and named out loud on a host with no LibreOffice, and run for real on CI's Linux runner"
     },
     "W6": {
       "entry": "scripts/docx_revise.py",
@@ -406,39 +349,6 @@
       },
       "verified_by": "outline.docx declares no `<Default Extension=\"png\">` and holds no word/media, so the sample is the create path and not the replace path: the picture needs the media part, a content-type Default for its extension, a relationship and a `wp:inline` drawing, and D1 fires if the `r:embed` resolves to nothing while D2 checks the drawing against the DrawingML schema. D7 is the one that catches an undeclared content type — LibreOffice renders a document Word would offer to repair. What none of them can see is the sizing: EMU are English Metric Units, 914400 to the inch, so filling the extent with a pixel count yields a thumbnail and filling it with a centimetre count yields a picture forty times the page. scripts/test-docx-skill.py M1-M5 assert the measured size against the PNG's own pHYs density, that the aspect ratio survives `--width-cm`, that the drawing extent and the inner `a:ext` agree (they are two numbers for one size and Word believes the outer one while LibreOffice draws the inner), and that replacing an image reuses the relationship instead of orphaning the old part"
     },
-    "W16": {
-      "entry": "scripts/docx_fonts.py",
-      "sample": {
-        "args": [
-          "--in",
-          "{fixtures}/fontless.docx",
-          "--out",
-          "{out}/bound.docx",
-          "--fix",
-          "--east-asia",
-          "宋体",
-          "--ascii",
-          "Calibri",
-          "--report",
-          "{out}/fonts.json"
-        ],
-        "produces": [
-          "bound.docx",
-          "fonts.json"
-        ]
-      },
-      "expect": {
-        "baseline": "{fixtures}/fontless.docx",
-        "contains": [
-          "经营概况",
-          "收入分析"
-        ],
-        "paragraphs": 10,
-        "tables": 0,
-        "allow_blank_pages": false
-      },
-      "verified_by": "this is the one capability whose gate is D6 itself, used as a before/after pair: fontless.docx FAILS D6 with exactly three findings and the artifact must pass it, which is the same pairing W15 uses (a repair verified only on its output cannot be told apart from a check with no teeth). The three findings are three different defects on purpose — a run with no `w:rPr` at all, a run whose paragraph STYLE already names a face, and a run carrying `@w:ascii` and no `@w:eastAsia` — and they do not have the same right answer. scripts/test-docx-skill.py N1-N5 assert that the inherited case takes the STYLE's face and not the fallback (writing 宋体 over a heading the document already said should be 黑体 is a silent restyle that D6 cannot distinguish from a repair), that a deliberate latin face survives, that `--check` on an already-correct document reports nothing and writes nothing, and that `--strict` refuses when a value came from the fallback because nothing in the file said what face that text wants"
-    },
     "W12": {
       "entry": "scripts/docx_style.py",
       "sample": {
@@ -479,38 +389,142 @@
       },
       "verified_by": "the artifact differs from its input in exactly one part — word/styles.xml — so F1/F2 are the assertion that the rest of the document was not touched, and D2 checks the new `w:style` against CT_Style's child order, which is a strict sequence this skill has to get right by construction rather than by remembering. D1/D4/D7 cover the package, the element order and the render. What L2 cannot see is the whole contract, because none of it is visible in a legal document: that MODIFYING a style repaints every paragraph using it (so `--set` on an existing id refuses without `--overwrite`, and the report says how many), that DELETING one Word silently replaces with Normal (so it refuses unless nothing uses it or `--reassign` says where they go), that a `w:basedOn` cycle makes Word stop resolving formatting with no error anywhere, and that a style based on a deleted one must be repointed rather than left dangling. scripts/test-docx-skill.py S1-S5 assert each, and S3 in particular pins a defect this skill shipped and fixed within the hour: the report said `properties_set: []` on a call that set six — the document was right and the REPORT was wrong, which is the harder half to notice"
     },
-    "W4": {
-      "entry": "scripts/docx_from_md.py",
+    "W13": {
+      "entry": "scripts/docx_package.py",
       "sample": {
         "args": [
           "--in",
-          "{fixtures}/sample.md",
+          "{fixtures}/report.docx",
+          "--unpack",
+          "{out}/unpacked",
           "--out",
-          "{out}/generated.docx",
+          "{out}/rebuilt.docx",
           "--report",
-          "{out}/generate.json"
+          "{out}/package.json"
         ],
         "produces": [
-          "generated.docx",
-          "generate.json"
+          "rebuilt.docx",
+          "package.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/report.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the sample takes the package apart and puts it back, so L2 is being asked whether a document survives that — F1/F2 plus the whole D-series on the rebuilt file. That every one of the 17 parts comes back BYTE-identical and in the same order (which `unzip`+`zip` does not give you, and which some readers care about for [Content_Types].xml), and that a part name crafted to escape the target directory is refused rather than written, is scripts/test-docx-skill.py P1-P4"
+    },
+    "W14": {
+      "entry": "scripts/docx_validate.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--report",
+          "{out}/validate.json"
+        ],
+        "produces": [
+          "validate.json"
+        ]
+      },
+      "verified_by": "JSON is not an artifact type L2 can read, and that is the right shape here: this capability's output IS a verdict, so what has to be asserted is that the verdict is earned. Three things make it so, and none is visible in a legal document. (1) The schemas SHIP — 13 files, the transitive closure of wml.xsd, measured at +64,761 bytes / +1.8% of the built-in skills archive (the '984 KB, about a third bigger' figure this decision was nearly made on compared an UNcompressed size against a compressed one). A validator that needs the user to fetch schemas first is one nobody runs. (2) When no schema directory resolves it exits NON-ZERO and names every path it tried — it never reports 'no problems' from a run in which nothing was checked, which was the one outcome ruled out before any code was written. (3) `mc:Ignorable` is honoured, without which every document Word itself produces (w14, w15, wp14 namespaces) reports a wall of violations that are not defects — a validator that cries wolf is one people switch off. scripts/test-docx-skill.py Z1-Z5 assert each, plus that a genuinely invalid document is rejected with its part and line (the case used is the real defect python-docx's own template carries, gotchas §21.2 ㉗), and that parts with no mapped grammar are reported as not-checked so 'valid' cannot be misread as 'everything was checked'"
+    },
+    "W15": {
+      "entry": "scripts/docx_package.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/unordered.docx",
+          "--fix-order",
+          "--out",
+          "{out}/ordered.docx",
+          "--report",
+          "{out}/order.json"
+        ],
+        "produces": [
+          "ordered.docx",
+          "order.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/unordered.docx",
+        "contains": [
+          "二零二六年第三季度经营分析报告"
+        ],
+        "paragraphs": 9,
+        "tables": 1,
+        "allow_blank_pages": false
+      },
+      "verified_by": "the input `unordered.docx` is the state a writer that appends elements in the order it thought of them leaves a document in, and it FAILS L2 on both D4 (element order) and D2 (the XSD says the same thing in stronger words) — the artifact must pass both. The pairing is the point: a repair verified only on its output cannot be told apart from a check with no teeth. scripts/test-docx-skill.py O1-O3 pin that the input really is rejected, that all three kinds of misplacement are repaired, and that nothing else in the document moved"
+    },
+    "W16": {
+      "entry": "scripts/docx_fonts.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/fontless.docx",
+          "--out",
+          "{out}/bound.docx",
+          "--fix",
+          "--east-asia",
+          "宋体",
+          "--ascii",
+          "Calibri",
+          "--report",
+          "{out}/fonts.json"
+        ],
+        "produces": [
+          "bound.docx",
+          "fonts.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/fontless.docx",
+        "contains": [
+          "经营概况",
+          "收入分析"
+        ],
+        "paragraphs": 10,
+        "tables": 0,
+        "allow_blank_pages": false
+      },
+      "verified_by": "this is the one capability whose gate is D6 itself, used as a before/after pair: fontless.docx FAILS D6 with exactly three findings and the artifact must pass it, which is the same pairing W15 uses (a repair verified only on its output cannot be told apart from a check with no teeth). The three findings are three different defects on purpose — a run with no `w:rPr` at all, a run whose paragraph STYLE already names a face, and a run carrying `@w:ascii` and no `@w:eastAsia` — and they do not have the same right answer. scripts/test-docx-skill.py N1-N5 assert that the inherited case takes the STYLE's face and not the fallback (writing 宋体 over a heading the document already said should be 黑体 is a silent restyle that D6 cannot distinguish from a repair), that a deliberate latin face survives, that `--check` on an already-correct document reports nothing and writes nothing, and that `--strict` refuses when a value came from the fallback because nothing in the file said what face that text wants"
+    },
+    "W17": {
+      "entry": "scripts/docx_pdf.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report.docx",
+          "--out",
+          "{out}/preview.pdf",
+          "--png",
+          "{out}/pages",
+          "--dpi",
+          "120",
+          "--report",
+          "{out}/pdf.json"
+        ],
+        "produces": [
+          "preview.pdf",
+          "pdf.json"
         ]
       },
       "expect": {
         "contains": [
-          "季度经营分析报告",
-          "收入分析",
-          "审计意见",
-          "华东区域"
+          "二零二六年第三季度经营分析报告",
+          "营业收入"
         ],
-        "paragraphs": 15,
-        "tables": 1,
         "allow_blank_pages": false
       },
-      "verified_by": "there is no `baseline` because nothing was edited — this capability builds a package from nothing, so F1/F2 have no input to compare against and say so rather than pretending. That puts the whole weight on the legality checks, which is the right place for it: D2 validates every part of a hand-built package against the ECMA-376 schemas (the reason this authors its own blank document instead of starting from python-docx's template, which ships a `w:zoom` without the required `w:percent` and would fail here — gotchas §21.2 ㉗), D1 that the hyperlink and image relationships resolve, D4 that `w:sectPr` is still last after fifteen blocks were appended, D6 that every generated CJK run binds both faces, and D7 that LibreOffice lays it out non-blank. What none of them can see is the contract: that a construct this cannot map is REPORTED with its line number rather than dropped — the sample's Markdown carries a footnote and two raw HTML tags on purpose, so a generator that silently discarded them would still produce a legal document and pass everything above. scripts/test-docx-skill.py D1-D6 assert that, plus that `--strict` refuses and writes nothing, that the styles a `w:pStyle` names are actually created (naming one that does not exist is valid XML that silently formats as Normal), that nested list levels reach the numbering they claim, and that `--template` keeps a house style's parts while replacing only the body"
+      "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (it rasterizes and no page is blank) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes a .docx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that pending tracked changes and cached field results are NAMED (the picture is one resolution of the revisions, not the document anyone approved), is scripts/test-docx-skill.py Y1-Y3 — skipped and named out loud on a host with no LibreOffice, and run for real on CI's Linux runner"
     }
   },
   "pending": {
-    "W14": "L2 validates artifacts against the vendored ECMA-376 schemas, but the skill itself cannot: the schemas are 984 KB and live in the ultrawork repo, not in the distributed skill. The open question is whether to ship them, point at $ECMA376_XSD_DIR, or degrade loudly — and 'degrades silently' is the one answer that is not acceptable",
     "W18": "diffing two documents needs a decision about what a difference IS (text? formatting? the XML?) before it needs code; a diff that reports every rsid change is a diff nobody reads",
     "W19": "UNBLOCKED as of W4 — this reason is being kept honest rather than left as it was. It used to say the presets could not be chosen before a generation path existed to fit them to; that path now exists (scripts/docx_from_md.py authors Heading1-6, SourceCode, Quote, Caption, Hyperlink and CodeChar, and W12 can create or modify any of them). What is still missing is only the presets themselves — a named set of table and layout looks — and the assertion that would tell one apart from another, which is the harder half: 'the table looks better' is not a claim a gate can check, so a preset needs a measurable property (border weights, banding, header repeat, column width behaviour with CJK text) before it is worth writing"
   }

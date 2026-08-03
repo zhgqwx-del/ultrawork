@@ -33,7 +33,7 @@ python3 -m pip install lxml
 
 **这里没有 `python-docx`，这是有意的。** 见下面「为什么不用 python-docx」。
 
-## 现在有什么（19 项里的 16 项，其余的没有，别假装有）
+## 现在有什么（19 项里的 17 项，其余的没有，别假装有）
 
 | 能力 | 脚本 | 说明 |
 |---|---|---|
@@ -53,9 +53,10 @@ python3 -m pip install lxml
 | **CJK 字体巡检 / 修复** | `scripts/docx_fonts.py` | 先查样式链再写，见下 |
 | **样式管理** | `scripts/docx_style.py` | 改一个样式会重绘整篇，见下 |
 | **从 Markdown 生成** | `scripts/docx_from_md.py` | 看不懂的构造一律点名，见下 |
+| **XSD schema 校验** | `scripts/docx_validate.py` | schema **随技能分发**，找不到就大声报错，见下 |
 
-`capabilities.json` 里另有 **3 项 pending，逐条写了理由** ——
-XSD 校验、文档 diff、排版预设。
+`capabilities.json` 里另有 **2 项 pending，逐条写了理由** ——
+文档 diff、排版预设。
 **pending 写的不是「快好了」，是「还没有断言在证明它」。**
 
 ## 用法
@@ -136,6 +137,11 @@ python3 scripts/docx_style.py --in a.docx --out b.docx --delete 旧标题 --reas
 python3 scripts/docx_from_md.py --in notes.md --out notes.docx
 python3 scripts/docx_from_md.py --in notes.md --out notes.docx --template house.docx
 python3 scripts/docx_from_md.py --in notes.md --out notes.docx --strict
+
+# XSD 校验（schema 随技能分发，无需任何准备）
+python3 scripts/docx_validate.py --in report.docx
+python3 scripts/docx_validate.py --in report.docx --report validate.json
+python3 scripts/docx_validate.py --in report.docx --schemas /opt/ecma376
 ```
 
 ## 这个技能与「随手用 python-docx」的差别：一句话不是一个 run
@@ -379,6 +385,32 @@ W7 的 `remaining` 是同一条契约。
 
 `--template` 让你用自己的版式：**模板的样式、编号、页眉页脚全部保留，只有正文被替换**。
 
+## XSD 校验：schema 随技能分发，找不到就大声报错
+
+Word 弹「发现无法读取的内容」是最不该用来得知文档有问题的地方 —— 到那时它已经发出去了。
+本技能其余部分检查的是**它恰好知道的规则**；这一项对照的是**已发布的语法**，
+一个不属于本仓库观点、也不与本仓库共享盲区的来源。
+
+**schema 随技能分发** —— 13 个文件（`wml.xsd` 的传递闭包），实测 **+64,761 字节 /
++1.8%**。另一条路（让用户自己去准备一个目录）会把这项能力变成**默认什么都不做**的东西，
+而它的全部价值就是在一台什么都没配过的机器上能用。不含 `sml.xsd`/`pml.xsd` ——
+这个技能只验 WordprocessingML，装它永远不加载的 430 KB 是纯负重。
+
+来源的优先级：
+
+| 顺序 | 来源 | 说明 |
+|---|---|---|
+| 1 | `--schemas DIR` | **显式指定不解析就是错误，不会回退** —— 否则你自己维护的那份 schema 一次都没被读过，却被告知「通过」 |
+| 2 | `$ECMA376_XSD_DIR` | 给有自备副本的站点 |
+| 3 | `<skill>/schemas/` | 随技能分发的那份，正常情况下就是它答的 |
+
+⚠️ **三条都不解析时它 exit 2 并列出每一个试过的路径。** 它绝不会从「什么都没检查」的
+运行里返回「没发现问题」—— 一个和空运行分不出来的绿，比一个错误更糟。
+
+另外两件不做会让它变成没人用的东西：**`mc:Ignorable` 必须被处理**（Word 自己写的每一份
+文档都带 `w14`/`w15`/`wp14`，不剥掉就会报出一墙非缺陷）· **没有对应语法的 part 要点名**
+（「valid」的意思是「在有语法的地方 valid」，不说清楚就会被读成「全都检查过了」）。
+
 ## 为什么不用 python-docx
 
 不是风格偏好，是两条实测：
@@ -396,7 +428,7 @@ W7 的 `remaining` 是同一条契约。
 
 ## 已知边界（写下来，不要以为验过了）
 
-- **19 项能力只做了 16 项**，其余 3 项在 `capabilities.json` 的 pending 里逐条写了理由。
+- **19 项能力只做了 17 项**，其余 2 项在 `capabilities.json` 的 pending 里逐条写了理由。
 - **目录的页码永远要人按一次 F9**（Word）或 Tools > Update > Fields（LibreOffice）。
   转 PDF **不会**更新它 —— 这是实测的，不是推测。
 - **`--toc` 不会替换已有的目录**，检测到就拒绝：两个目录在更新之前长得一模一样，
@@ -423,6 +455,6 @@ W7 的 `remaining` 是同一条契约。
 `validate` 一致性 / `xmlorder` ECMA-376 元素序）。**xlsx / pdf 各自带各自的副本**，
 不共享 —— 打包脚本拒绝 symlink。
 
-> 本技能的行为测试（79 条断言 + 154 条负向控制）在 **ultrawork 仓库**里，
+> 本技能的行为测试（84 条断言 + 161 条负向控制）在 **ultrawork 仓库**里，
 > **不随技能分发** —— 它需要 fixtures 之外的仓库上下文。装在你机器上的这份目录里
 > 没有它，别去找。

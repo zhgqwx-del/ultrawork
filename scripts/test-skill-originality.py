@@ -242,6 +242,63 @@ def main() -> int:
         if any(k.startswith("L1") for k in escaped):
             print("    BROKEN: even a plain rename escapes — gate provides no protection")
             ok = False
+
+    # ── the provenance exemption must not be a blanket loophole ───────────────
+    # `check-skill-originality.py` exempts a file that is byte-identical to the
+    # reference corpus AND to this repo's own vendored upstream — that is how the
+    # docx skill can ship the ECMA-376 schemas, which Anthropic's proprietary skill
+    # also bundles (measured: 6 of 13 byte-identical, 5 more identical once line
+    # endings are normalised, because they ARE the same published files).
+    #
+    # An exemption with no control is a hole. Two arms, and the second is the one
+    # that matters: a real file from the proprietary bundle, which is NOT in our
+    # upstream, must still be a VIOLATION.
+    import shutil, tempfile
+    prov_ok = True
+    ref_docx = ref_root / "claude-desktop" / "bundled-skills" / "docx" / "scripts"
+    upstream = G.upstream_digests()
+    if not upstream:
+        print("\n[provenance] SKIPPED: no vendored upstream at scripts/schemas/ecma376")
+    else:
+        with tempfile.TemporaryDirectory(prefix="prov-") as td:
+            probe = Path(td)
+            # arm A: a file that is in our upstream AND in the reference corpus, so
+            # it actually reaches the exemption. ⚠️ Picking the first .xsd by name
+            # did NOT: only 6 of the 13 overlap (the rest differ by line endings),
+            # and an arm that never enters the code path is not an arm — it reported
+            # "no finding", which looks nothing like a pass and is not one either.
+            h_all, _, _ = G.build_reference_index(ref_root)
+            sample = next((f for d, f in upstream.items() if d in h_all), None)
+            if sample is None:
+                print("\n[provenance] SKIPPED: no upstream file also present in the "
+                      "reference corpus, so the exemption cannot be exercised")
+                prov_ok = None
+            else:
+                shutil.copy2(sample, probe / sample.name)
+                # arm B: a real file from the proprietary bundle -> still a violation
+                stolen = next((f for f in sorted(ref_docx.glob("*.py"))), None)
+                if stolen is not None:
+                    shutil.copy2(stolen, probe / "_stolen.py")
+                _, s_idx, a_idx = G.build_reference_index(ref_root)
+                found = G.check_target(probe, ref_root, h_all, s_idx, a_idx,
+                                       G.DEFAULT_THRESHOLD, G.DEFAULT_AST_THRESHOLD,
+                                       set())
+                kinds = {f["file"].rsplit("/", 1)[-1]: f["severity"] for f in found}
+                exempted = kinds.get(sample.name)
+                flagged = kinds.get("_stolen.py")
+                print(f"\n[provenance] {sample.name} (ours AND theirs) -> "
+                      f"{exempted or 'NO FINDING'}; proprietary file -> "
+                      f"{flagged or 'NO FINDING'}")
+                if exempted != "note":
+                    print("    BROKEN: a file from our own documented upstream was "
+                          "not exempted, so the docx skill cannot ship the schemas")
+                    prov_ok = False
+                if stolen is not None and flagged != "violation":
+                    print("    BROKEN: a real file from the proprietary bundle was "
+                          "NOT flagged — the exemption is a blanket loophole")
+                    prov_ok = False
+    ok = ok and (prov_ok is not False)
+
     print(f"[calibrate] {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
 

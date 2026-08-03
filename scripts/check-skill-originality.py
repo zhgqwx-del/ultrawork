@@ -181,9 +181,44 @@ def best_match(mine: set[str], corpus) -> tuple[float, Path | None]:
     return best, best_ref
 
 
+# ── provenance: a published standard is not a clone of whoever else vendored it ──
+# `scripts/schemas/ecma376/` is this repository's OWN vendored copy of the ECMA-376
+# Transitional schemas, with its provenance recorded in that directory's NOTICE
+# (source archive, sha256 prefix, download date, the two documented patches).
+#
+# Anthropic's proprietary docx skill bundles the same published standard. So does
+# anyone else who validates OOXML. The result, measured: 6 of the 13 schema files the
+# docx skill ships are byte-identical to files inside that proprietary bundle, and
+# 5 more are identical once line endings are normalised — because they ARE the same
+# ECMA files. A byte-identity check cannot tell that apart from copying, and it
+# should not try to guess.
+#
+# So the exemption is by PROVENANCE, not by path: a file is exempt only when it is
+# byte-identical to something in our own documented upstream copy. That cannot
+# launder a copied file — the file would have to be placed in `scripts/schemas/`
+# first, which is a visible, reviewable act against a directory whose NOTICE says
+# exactly what is in it. And every exemption granted is REPORTED, never silent.
+VENDORED_UPSTREAM = (REPO / "scripts" / "schemas" / "ecma376",)
+
+
+def upstream_digests() -> dict[str, Path]:
+    out: dict[str, Path] = {}
+    for root in VENDORED_UPSTREAM:
+        if not root.is_dir():
+            continue
+        for f in root.rglob("*"):
+            if f.is_file():
+                try:
+                    out[hashlib.sha256(f.read_bytes()).hexdigest()] = f
+                except OSError:
+                    continue
+    return out
+
+
 def check_target(target: Path, ref_root: Path, by_hash, by_suffix, by_ast,
                  threshold: float, ast_threshold: float, allow: set[str]) -> list[dict]:
     findings: list[dict] = []
+    UPSTREAM = upstream_digests()
     for p in walk_files(target):
         rel = p.relative_to(REPO).as_posix() if p.is_relative_to(REPO) else p.as_posix()
         if rel in allow:
@@ -196,6 +231,18 @@ def check_target(target: Path, ref_root: Path, by_hash, by_suffix, by_ast,
         is_license = bool(LICENSE_NAMES.match(p.name))
         digest = hashlib.sha256(raw).hexdigest()
         if digest in by_hash and not is_license:
+            upstream = UPSTREAM.get(digest)
+            if upstream is not None:
+                # Same bytes as the reference corpus AND as our own documented
+                # upstream. Reported so the exemption is visible, never silent.
+                findings.append({
+                    "file": rel, "kind": "vendored-standard", "severity": "note",
+                    "detail": f"byte-identical to {by_hash[digest][0].relative_to(ref_root).as_posix()}, "
+                              f"AND to this repo's own vendored copy at "
+                              f"{upstream.relative_to(REPO).as_posix()} — a published "
+                              f"standard both parties vendored, not a clone",
+                })
+                continue
             findings.append({
                 "file": rel, "kind": "identical", "severity": "violation",
                 "detail": f"byte-identical to {by_hash[digest][0].relative_to(ref_root).as_posix()}",
@@ -287,10 +334,17 @@ def main() -> int:
 
     violations = [f for f in findings if f["severity"] == "violation"]
     reviews = [f for f in findings if f["severity"] == "review"]
+    # `note` = an exemption that WAS granted. It has to be printed: the first version
+    # of the provenance rule collected these and printed nothing, so six exempted
+    # files produced output identical to a clean run — and, because `findings` was
+    # non-empty, it did not even print "clean". An exemption nobody can see is the
+    # same failure as a skip nobody can see.
+    notes = [f for f in findings if f["severity"] == "note"]
 
     if args.json:
         print(json.dumps({"reference_files": ref_count, "findings": findings,
-                          "violations": len(violations), "reviews": len(reviews)},
+                          "violations": len(violations), "reviews": len(reviews),
+                          "exempted": len(notes)},
                          ensure_ascii=False, indent=2))
     else:
         print(f"[originality] reference corpus: {ref_count} files under {ref_root}")
@@ -300,9 +354,12 @@ def main() -> int:
             print(f"  VIOLATION {f['file']}: {f['detail']}")
         for f in reviews:
             print(f"  REVIEW    {f['file']}: {f['detail']}")
+        for f in notes:
+            print(f"  EXEMPT    {f['file']}: {f['detail']}")
         if not findings:
             print("  clean — no identical files, no banned phrases, nothing above threshold")
-        print(f"[originality] {len(violations)} violation(s), {len(reviews)} needing review")
+        print(f"[originality] {len(violations)} violation(s), {len(reviews)} needing "
+              f"review, {len(notes)} exempted by provenance")
 
     # REVIEW findings are not auto-red: a shared API surface (argparse flags, library
     # call sequences) can legitimately push similarity up. They must be justified in
