@@ -20,12 +20,20 @@ traceback (KeyError in pptx_read, IndexError in pptx_edit's own bounds check).
 That is the failure mode the whole family is held to: adversarial input must
 exit non-zero with one sentence, never a traceback.
 
+A third defect only exists on Windows: neither script reconfigured stdout to
+UTF-8, so a CAPTURED stdout — which is how an agent always calls them — died with
+UnicodeEncodeError on the first Chinese character. It shipped that way from the
+doc-edit days and was found by this gate's FIRST CI run. C1 reproduces the
+condition portably by forcing an ANSI code page on the child, so it is now
+catchable on macOS and Linux too.
+
 Every assertion runs twice: once against the real scripts (must stay silent) and
-once against a state carrying exactly the defect it hunts (must fire). The four
+once against a state carrying exactly the defect it hunts (must fire). The five
 LIVE controls do not fabricate output — they re-run the REAL scripts with the
 real fix reverted, i.e. they replicate the implementation that actually shipped
 until 2026-08-04. A control that cannot tell the two implementations apart is
-not a control.
+not a control — and the UTF-8 one is the sharpest example: on a UTF-8 machine the
+guarded and unguarded scripts are byte-for-byte identical in behaviour.
 
 Lives outside skills/builtin/ so it is not packed into skills-builtin.zip.
 Exit 0 = every assertion behaved, 1 = something did not.
@@ -35,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -142,10 +151,20 @@ def build_adversarial(work: Path) -> dict[str, Path]:
 
 
 # ── running the scripts ───────────────────────────────────────────────────────
-def run(script_dir: Path, name: str, *args: str) -> dict:
+def run(script_dir: Path, name: str, *args: str, env: dict | None = None) -> dict:
     proc = subprocess.run([PY, str(script_dir / name), *map(str, args)],
-                          capture_output=True, text=True, encoding="utf-8")
+                          capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, **env} if env else None)
     return {"exit": proc.returncode, "out": proc.stdout or "", "err": proc.stderr or ""}
+
+
+# An ANSI code page with no room for CJK, forced on the child. This is the same
+# condition a Windows agent creates simply by CAPTURING the script's stdout — the
+# runner's code page, not the terminal's, is what Python encodes to. Reproducing it
+# through PYTHONIOENCODING is what makes the assertion runnable on macOS and Linux
+# too; without that, the defect is invisible everywhere except a Windows CI run
+# (which is exactly how it survived from the doc-edit days until 2026-08-04).
+ANSI_ENV = {"PYTHONIOENCODING": "cp1252"}
 
 
 def sha(p: Path) -> str:
@@ -166,6 +185,8 @@ def collect(work: Path, script_dir: Path, *, with_table=True, split_phrase=True,
 
     ctx: dict = {"work": work, "script_dir": script_dir}
     ctx["read"] = run(script_dir, "pptx_read.py", deck)
+    # the same read, but with a CJK-hostile code page forced on the child
+    ctx["read_ansi"] = run(script_dir, "pptx_read.py", deck, env=ANSI_ENV)
     ctx["read_json"] = run(script_dir, "pptx_read.py", deck, "--json")
     ctx["read_nolayout"] = run(script_dir, "pptx_read.py", nolayout)
 
@@ -183,6 +204,8 @@ def collect(work: Path, script_dir: Path, *, with_table=True, split_phrase=True,
     before = sha(src1)
     ctx["replace"] = run(script_dir, "pptx_edit.py", src1, "--replace", PROBE, "XX",
                          "--out", out1)
+    ctx["replace_ansi"] = run(script_dir, "pptx_edit.py", fresh("ansi"), "--replace",
+                              PROBE, "XX", "--out", work / "ansi.pptx", env=ANSI_ENV)
     ctx["input_untouched"] = sha(src1) == before
     ctx["surviving_probe"] = count_everywhere(out1, PROBE) if out1.exists() else None
     ctx["replaced_textbox"] = count_textframes(out1, "XX") if out1.exists() else None
@@ -406,6 +429,34 @@ def a1(ctx: dict) -> list[str]:
     return out
 
 
+@check("C1", "Chinese output survives a captured stdout on an ANSI code page")
+def c1(ctx: dict) -> list[str]:
+    """A Windows-only product defect, found by this gate's FIRST CI run.
+
+    Windows encodes a captured stdout in the machine's ANSI code page, and Python
+    only defaults to UTF-8 from 3.15 (PEP 686); CI pins 3.11. Without the two-line
+    reconfigure at the top of each script, `pptx_read.py` exits 1 with
+    UnicodeEncodeError on the first Chinese character it prints — and an agent
+    ALWAYS captures stdout, so on Windows the skill simply did not work on any
+    deck with Chinese in it. It shipped that way from the doc-edit days: no gate
+    had ever covered these two scripts.
+    """
+    out = []
+    r = ctx["read_ansi"]
+    if r["exit"] != 0:
+        out.append(f"pptx_read exited {r['exit']} under an ANSI code page")
+    if "UnicodeEncodeError" in r["err"]:
+        out.append("pptx_read: UnicodeEncodeError on captured stdout")
+    if PROBE not in r["out"]:
+        out.append("pptx_read: the Chinese slide text did not survive")
+    e = ctx["replace_ansi"]
+    if e["exit"] != 0:
+        out.append(f"pptx_edit exited {e['exit']} under an ANSI code page")
+    if "UnicodeEncodeError" in e["err"]:
+        out.append("pptx_edit: UnicodeEncodeError on captured stdout")
+    return out
+
+
 @check("E1", "--out leaves the input byte-identical")
 def e1(ctx: dict) -> list[str]:
     return [] if ctx["input_untouched"] else ["--out still modified the input file"]
@@ -483,6 +534,41 @@ def live_read_walks_tables(work: Path):
     return collect(work / "c5", d)
 
 
+def live_no_utf8_guard(work: Path):
+    """Remove the reconfigure block from pptx_read — i.e. the state the skill
+    shipped in until 2026-08-04. On a UTF-8 machine this changes nothing at all,
+    which is the whole point: only the forced code page tells the two apart."""
+    d = patched(work, '''for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):        # already detached / not reconfigurable
+            pass
+
+def _require():
+    try:
+        import pptx  # noqa: F401
+        return pptx
+    except ImportError:
+        print("Missing dependency: python-pptx (pip install python-pptx)", file=sys.stderr)
+        raise SystemExit(1)
+
+def main(argv):
+    ap = argparse.ArgumentParser(description="Read slide outline from a .pptx")''',
+        '''def _require():
+    try:
+        import pptx  # noqa: F401
+        return pptx
+    except ImportError:
+        print("Missing dependency: python-pptx (pip install python-pptx)", file=sys.stderr)
+        raise SystemExit(1)
+
+def main(argv):
+    ap = argparse.ArgumentParser(description="Read slide outline from a .pptx")''',
+        "no-utf8-guard")
+    return collect(work / "c9", d)
+
+
 def fixture_no_table(work: Path):
     return collect(work / "c6", SCRIPTS, with_table=False)
 
@@ -511,6 +597,10 @@ FLAWS = [
      "an undeclared check that fires is still a failure"),
     ("LIVE: pptx_read learns to walk tables", live_read_walks_tables, {"L1"},
      "L4 does NOT fire: reading tables changes nothing about what --replace does"),
+    ("LIVE: pptx_read without the UTF-8 reconfigure (as it shipped until 2026-08-04)",
+     live_no_utf8_guard, {"C1"},
+     "V0/X1 do NOT fire: on a UTF-8 machine the unguarded script behaves identically "
+     "— only the forced ANSI code page in C1 can tell the two implementations apart"),
     ("CONTROL: fixture loses the table", fixture_no_table, {"V0", "L4"},
      "L4 also fires: with no second copy there is nothing for it to count"),
     ("CONTROL: fixture phrase is no longer split across runs", fixture_one_run,

@@ -2682,3 +2682,34 @@ desktop **863 / 102 files**（+1 = 新增的 pptx-edit 依赖断言）。
 ⚠️ **测量过程中我自己错了一次，第三次犯同一个错**：对抗性输入矩阵里 `pptx_edit` 那一列
 全是 `unrecognized arguments`，我差点当成被测对象的属性 —— 真因是 **zsh 不对未加引号的变量分词**，
 `$args` 被当成一个参数整体传了进去。**判红的是我的测量，不是被测对象。**
+
+### CI 第一跑就抓到第三个真缺陷：Windows 上这个技能根本没法用（2026-08-04）
+
+`0a5b0987` push 后 CI **10 个 job 里 9 绿 1 红**，红的是 `office skills (windows-latest)`
+的 `pptx-edit skill behaviour tests` —— **新门禁上 CI 的第一次运行就判红，判得对**。
+
+症状：干净臂里 V0 报「读正常 deck 读出来是空的」+ X1 报「裸 traceback」。
+根因**不是测试问题，是产品缺陷**：`pptx_read.py` / `pptx_edit.py` **一处 UTF-8
+reconfigure 都没有**。Windows 把**被捕获的** stdout 按机器的 ANSI 代码页编码，
+而 Python 要到 3.15（PEP 686）才默认 UTF-8、CI 钉的是 3.11 ⇒
+**打印第一个中文字就 `UnicodeEncodeError` 退出 1**。而 agent 调脚本**总是捕获 stdout**，
+所以在 Windows 上「读一份有中文的 PPT」这件事**从来就没成功过**。
+
+本机用 `PYTHONIOENCODING=cp1252` 精确复现（不是照 CI 日志猜）：
+`pptx_read.py` exit=1 / stdout 29 字节 / `UnicodeEncodeError: 'charmap' codec can't
+encode character '第'`；同条件下有防线的 `docx` 技能 exit=0 / stdout 4170 字节。
+
+**为什么它能活这么久**：`docx`/`xlsx`/`pdf`/`deckcraft` 各在**共享模块**里放了这两行，
+而 `pptx-edit` 没有共享模块（就两个脚本）；更关键的是**它从 `doc-edit` 时代起就没有任何
+门禁覆盖过** —— 这个洞不是本刀引入的，是本刀第一次让它可见。
+
+修法：两个入口点各自带上那两行。断言 **C1** 钉住，配 LIVE 控制
+「把 reconfigure 撤掉」（= 2026-08-04 前真正发货的实现）。
+⚠️ **这条控制是「控制臂必须分得出两种实现」的最锋利例子**：在一台 UTF-8 机器上，
+带防线和不带防线的脚本**行为逐字节相同** —— 只有强制 ANSI 代码页那一下能把它们分开。
+用 `PYTHONIOENCODING` 复现，也让这条断言在 macOS/Linux 上**同样能红**，
+而不是继续只有 Windows CI 才看得见。
+
+**这一条给「门禁全绿 ≠ 没缺陷」补了个新形状**：前面记的三问是「换角度提问」，
+这条是**换机器**。本机三平台兼容性扫描（零 `HOME`/`/tmp`/unix-only 命令）**全过**，
+因为它扫的是路径与命令，而这个缺陷在**编码**上。标尺 → **10/0（11 断言）**。

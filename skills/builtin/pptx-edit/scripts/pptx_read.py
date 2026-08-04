@@ -8,6 +8,23 @@ grouped shapes (GroupShape) are NOT reported. Measured, and stated in SKILL.md
 from __future__ import annotations
 import argparse, json, sys
 
+# ── stdout must be UTF-8 on every platform, and on Windows it is not ─────────
+# This script prints whatever text the slides carry, which for this project's users
+# is Chinese. Windows encodes a CAPTURED stdout in the machine's ANSI code page
+# (cp1252 on a western install), and Python only defaults to UTF-8 from 3.15
+# (PEP 686) — CI pins 3.11. Measured: WITHOUT the lines below this script exits 1
+# with `UnicodeEncodeError: 'charmap' codec can't encode character '\u7b2c'` the
+# moment its output is captured — which is exactly how an agent calls it. The other
+# office skills each carry this in a shared module; this one has no shared module,
+# so both entry points carry it. Found by the first CI run of this skill's gate,
+# not by any local run: it cannot be seen on macOS or Linux.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):        # already detached / not reconfigurable
+            pass
+
 def _require():
     try:
         import pptx  # noqa: F401
