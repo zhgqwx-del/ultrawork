@@ -5,9 +5,12 @@
 
 - `scripts/l3-corpus-manifest.json` 记录 repo + 钉死的 commit + 相对路径 + sha256 + 许可。
 - 字节落到缓存目录（默认 `~/.cache/ultrawork/l3-corpus/`，`ULTRAWORK_L3_CORPUS` 可覆盖），
-  永不入 git。理由：① 本仓库是 public，而用户手上真实的中文办公文档多半是业务文件，
-  机制必须从第一天就支持「本地语料，永不入 git」；② 第三方 PDF 的单件出处不因仓库
-  LICENSE 是 MIT 就自动干净，不再分发 = 这个问题不存在。
+  永不入 git。理由：① 用户手上真实的中文办公文档多半是业务文件，机制必须**从第一天**
+  就支持「本地语料，永不入 git」—— 这棵树会被构建、签名、分发出去，而 git 历史是永久的；
+  ② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT 就自动干净，不进源码树 = 这个问题不存在；
+  ③ 20MB 与构建无关的二进制测试数据不该进版本库。
+  ⚠️ 我最初写的第一条理由是「本仓库是 public」，**那是错的**（实测 private）。
+  决定不变，但前提得是真的。
 - 代价是网络依赖 ⇒ 语料缺失时 `test-office-l3-corpus.py` 打印大字 SKIP + 缺哪几个 sha，
   CI 传 `--require-corpus` 把 SKIP 变红（「沉默与通过长得一样」）。
 

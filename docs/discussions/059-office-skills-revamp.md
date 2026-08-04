@@ -2758,10 +2758,12 @@ read → edit → validate 环，抓到**三个真缺陷**，一个都不是手�
 `scripts/l3-corpus-manifest.json` 记 repo + 钉死的 commit + 相对路径 + sha256 + 许可；
 `scripts/fetch-l3-corpus.py` 按清单 blobless sparse clone 到缓存目录
 （`~/.cache/ultrawork/l3-corpus/`，`ULTRAWORK_L3_CORPUS` 可覆盖），逐件校 sha256。
-两条理由：① 本仓库是 public，而用户手上真实的中文办公文档多半是业务文件，
-机制必须**从第一天**就支持「本地语料，永不入 git」（`<缓存根>/local/{docx,xlsx,pdf}/`，
+两条理由：① 用户手上真实的中文办公文档多半是业务文件，而这棵树会被构建、签名、分发出去、
+git 历史永久，机制必须**从第一天**就支持「本地语料，永不入 git」（`<缓存根>/local/{docx,xlsx,pdf}/`，
 门禁单列统计并标明「这部分不进 CI」）；② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT
-就自动干净，**不再分发 = 这个问题不存在**。代价是网络依赖 ⇒ CI 传 `--require-corpus`
+就自动干净，**不进源码树 = 这个问题不存在**；③ 20MB 与构建无关的二进制不该进版本库。
+⚠️ **纠正**：我最初把第一条理由写成「本仓库是 public」，**实测是 private**。决定不变，
+但前提得是真的 —— 这条错误在 commit `5ca3d38d` 的 message 里也在，无法追改，记在这里。代价是网络依赖 ⇒ CI 传 `--require-corpus`
 把「语料缺失」从跳过变成红。
 
 | 源 | 许可（**读正文核过**） | 取用 | 为什么是它 |
@@ -2917,3 +2919,26 @@ pdfplumber / pypdf」，实测：**openpyxl 不在 GitHub**（heptapod）且 sdi
 - **合入 main**：L4 点头之后再谈。
 - 已记档的既有缺陷（`pptx_read` 大 deck 无 stdout 上限 · `pptx-edit` 漏替换静默 ·
   deckcraft 代码块围栏 · `scripts/` 下三个门禁脚本仍 `import fitz`）—— L3 没有证据表明它们挡合并。
+
+### ⚠️ 这一刀的 CI 一次都没跑成（2026-08-04，run 30908967466）
+
+push 之后 **13 个 job 全部在 3~12 秒内 failure，且 steps 为空** —— 这是「job 根本没启动」
+的形状，不是测试挂。annotation 原文：
+
+> The job was not started because recent account payments have failed or your
+> spending limit needs to be increased.
+
+**账号计费问题，与本刀代码无关**（同一分支 6 小时前的 run 30884153919 是 10/10 全绿）。
+后果必须写清楚：**新增的 `office-skills-l3` job 至今只在作者机器上跑过** ——
+而「只在作者机器上跑过的门禁」是这个仓库连续两轮漏掉缺陷的根因（§六·补六、§六·补八）。
+S6 那个 Windows 编码缺陷就是 CI 第一次运行才挖出来的，本机三平台扫描全过。
+
+**用户处理计费后必须重跑 CI，并确认「绿」不是沉默**（三平台是否都真的取到了语料、
+`--require-corpus` 有没有静默跳过）。在那之前，本刀的跨平台结论只有一句诚实的话：
+**没有验过。**
+
+本机能补的两件已经补了（都是 CI 冷启动路径的复现，不是替代）：
+- `ULTRAWORK_L3_CORPUS` 指向一个**全新空目录** → 四个源完整取回、231/231 sha256 对上、
+  全量两臂跑完仍是同一组数字（证明 CI 的 cache-miss 路径与默认缓存路径等价）。
+- `--require-corpus` 对着一个空缓存 → **判红**（rc=1，逐条列出缺失文件），证明
+  「语料没取到」不会伪装成通过。
