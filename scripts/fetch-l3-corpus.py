@@ -9,8 +9,9 @@
   就支持「本地语料，永不入 git」—— 这棵树会被构建、签名、分发出去，而 git 历史是永久的；
   ② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT 就自动干净，不进源码树 = 这个问题不存在；
   ③ 20MB 与构建无关的二进制测试数据不该进版本库。
-  ⚠️ 我最初写的第一条理由是「本仓库是 public」，**那是错的**（实测 private）。
-  决定不变，但前提得是真的。
+  ⚠️ 记一笔：我最初写的第一条理由是「本仓库是 public」，写的时候**实测是 private**
+  （2026-08-04 用户随后把它改成了 public）。所以这条理由**现在成立、当时不成立** ——
+  决定从头到尾不变，因为它站在上面那三条上，不站在可见性上。
 - 代价是网络依赖 ⇒ 语料缺失时 `test-office-l3-corpus.py` 打印大字 SKIP + 缺哪几个 sha，
   CI 传 `--require-corpus` 把 SKIP 变红（「沉默与通过长得一样」）。
 
@@ -141,9 +142,20 @@ def sparse_fetch(src: dict, ref: str, dest: Path) -> None:
     这里要钉到任意 sha ⇒ init + fetch --depth 1 <sha> + checkout FETCH_HEAD。
     """
     dest.mkdir(parents=True, exist_ok=True)
+    # `url` 只有门禁的控制臂会传（指向一个本地仓库），好让「Windows 换行」那条
+    # 回归控制**不联网**也能复现 git 的真实行为。生产路径永远走 GitHub。
+    url = src.get("url") or f"https://github.com/{src['repo']}.git"
     run(["git", "init", "-q"], cwd=dest)
-    run(["git", "remote", "add", "origin", f"https://github.com/{src['repo']}.git"], cwd=dest)
+    run(["git", "remote", "add", "origin", url], cwd=dest)
     run(["git", "config", "core.sparseCheckout", "true"], cwd=dest)
+    # ⚠️ Windows 的 git 默认 core.autocrlf=true，检出文本文件时把 LF 换成 CRLF ——
+    # 于是 LICENSE 的 sha256 与在 macOS 上建清单时记的值对不上，脚本报「许可变了」。
+    # 这是新门禁上 CI 第一跑就被抓到的、只在 Windows 上犯的错（059 §六·补九）。
+    # 修法不是把比较放宽（那会把「许可真的改了」一起藏掉），是让检出**逐字节等于上游**。
+    # 顺带也保住语料本身：.docx/.xlsx/.pdf 虽然会被 git 判为二进制而不动，
+    # 但那是启发式判断，不是保证。
+    run(["git", "config", "core.autocrlf", "false"], cwd=dest)
+    run(["git", "config", "core.eol", "lf"], cwd=dest)
     run(["git", "sparse-checkout", "init", "--cone"], cwd=dest)
     # 顶层 LICENSE 也要检出 —— cone 模式下顶层文件默认就在。
     run(["git", "sparse-checkout", "set", "--cone", *src["paths"]], cwd=dest)

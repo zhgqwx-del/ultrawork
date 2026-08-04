@@ -965,6 +965,69 @@ def _patched(skill: str, work: Path, edits: list[tuple[str, str]], name: str) ->
     return dest
 
 
+def _crlf_control(work: Path) -> tuple[bool, str]:
+    """两条臂：有 / 无 `core.autocrlf=false`，跑在一个强制 autocrlf=true 的宿主上。
+
+    返回 (通过?, 说明)。**不联网** —— origin 指向本地仓库，复现的是 git 自己的行为，
+    不是我对它的猜测。
+    """
+    import os
+    fm = fetcher_mod()
+    home = work / "crlf-home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "gitconfig").write_text("[core]\n\tautocrlf = true\n", encoding="utf-8")
+
+    origin = work / "crlf-origin"
+    (origin / "sub").mkdir(parents=True, exist_ok=True)
+    (origin / "LICENSE").write_bytes(b"MIT License\nline two\nline three\n")
+    (origin / "sub" / "a.docx").write_bytes(b"PK\x03\x04binary\x00\nnot text\n")
+    for cmd in (["git", "init", "-q"],
+                ["git", "config", "user.email", "l3@example.invalid"],
+                ["git", "config", "user.name", "l3"],
+                ["git", "add", "-A"],
+                ["git", "commit", "-q", "-m", "seed"]):
+        fm.run(cmd, cwd=origin)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(origin),
+                         capture_output=True, text=True).stdout.strip()
+
+    saved = os.environ.get("GIT_CONFIG_GLOBAL")
+    os.environ["GIT_CONFIG_GLOBAL"] = str(home / "gitconfig")
+    arms: dict[str, bytes] = {}
+    try:
+        for name, keep_fix in (("fixed", True), ("control", False)):
+            dest = work / f"crlf-{name}"
+            dest.mkdir(parents=True, exist_ok=True)
+            fm.run(["git", "init", "-q"], cwd=dest)
+            fm.run(["git", "remote", "add", "origin", origin.as_uri()], cwd=dest)
+            fm.run(["git", "config", "core.sparseCheckout", "true"], cwd=dest)
+            if keep_fix:                       # ← 被测的就是这两行
+                fm.run(["git", "config", "core.autocrlf", "false"], cwd=dest)
+                fm.run(["git", "config", "core.eol", "lf"], cwd=dest)
+            fm.run(["git", "sparse-checkout", "init", "--cone"], cwd=dest)
+            fm.run(["git", "sparse-checkout", "set", "--cone", "sub"], cwd=dest)
+            fm.run(["git", "fetch", "-q", "--depth", "1", "origin", sha], cwd=dest)
+            fm.run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
+            arms[name] = (dest / "LICENSE").read_bytes()
+    finally:
+        if saved is None:
+            os.environ.pop("GIT_CONFIG_GLOBAL", None)
+        else:
+            os.environ["GIT_CONFIG_GLOBAL"] = saved
+
+    want = (origin / "LICENSE").read_bytes()
+    fixed_ok = arms["fixed"] == want
+    differs = arms["control"] != want
+    # 生产代码里那两行确实在（不然这条控制测的是别人）。
+    present = all(x in (REPO_ROOT / "scripts" / "fetch-l3-corpus.py")
+                  .read_text(encoding="utf-8")
+                  for x in ('"core.autocrlf", "false"', '"core.eol", "lf"'))
+    note = (f"修复臂逐字节等于上游={fixed_ok}，生产代码里有那两行={present}；"
+            + ("控制臂被 autocrlf 改写了（两臂分得开）" if differs else
+               "⚠️ **控制臂与修复臂结果相同** —— 这台宿主的 git 没改写换行，"
+               "这条控制这次什么也没证明，按红处理"))
+    return fixed_ok and differs and present, note
+
+
 FAR_ROW = 1_048_576          # Excel 的最大行号
 FAR_COLS = 20
 
@@ -1325,6 +1388,14 @@ def selftest() -> int:
         expect("C24", "VALIDATE" in m24 and r_on.outcome != Outcome.REFUSED
                and r_off.outcome == Outcome.REFUSED,
                f"输入缺 w:tblPr：门控开 {r_on.outcome} / 关 {r_off.outcome}")
+
+        # ── C26 取语料的检出必须**逐字节等于上游**，与宿主的 git 换行设置无关。
+        #     这是新门禁上 CI 第一跑就被抓到的、只在 Windows 上犯的错：Windows 的 git
+        #     默认 `core.autocrlf=true`，把 LICENSE 的 LF 换成 CRLF ⇒ sha256 与在
+        #     macOS 上建清单时记的值对不上，脚本报「许可变了」并退出 1。
+        #     控制臂 = 撤掉那两行 config（= CI 上红掉的那版）。不联网：用一个本地
+        #     git 仓库复现 git 自己的行为，而不是复现我对它的猜测。
+        expect("C26", *_crlf_control(td))
 
         # ── C25 一张**声称**自己是整表大小、实际只有两行的 workbook 必须秒回，
         #     且报出的是真实范围。L3 实测：这样的 145 KB 文件让 xlsx_read 十分钟

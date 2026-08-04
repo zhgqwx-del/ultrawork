@@ -375,6 +375,8 @@
 - **Tauri 打包二进制里 webview 资源是压缩嵌入的 ⇒ `strings`/byte-scan 命令名 grep 不到 ≠ 命令没注册（2026-07-15 血泪）**：Tauri 把前端 JS/HTML 资源**压缩**后嵌进二进制，命令名字符串搜不到是正常的；**命令注册是编译期保证**（在 `generate_handler!` 里且能编译 = 已注册、能路由）。别拿 byte-scan 当「命令是否注册」的 oracle——曾据此误判「release LTO 把某命令 strip 了」并做了无效"修复"，被打包 `.app` 上真实的授权流程当场证伪。**要验命令能否路由，只能跑打包 app 触发它。**
 - **`tauri dev` 借的是终端（父进程）的 TCC 身份，不是 app 自己的（2026-07-15 现场确认）**：dev 二进制（`cargo run`/`tauri dev` 从终端拉起、未签名）没有独立代码身份，屏幕录制等 TCC 权限归到「负责进程」= 终端（如 ghostty）。所以 dev 下「截图能截到真内容」用的是终端的授权，**授权引导态（未授权分支）根本测不出**。⇒ **TCC 类功能必须 `tauri:build` 打成 `.app`、从 Finder/Dock 启动**（才有独立 ad-hoc 身份、才在系统「屏幕录制」列表里以 app 名出现、首次截图才弹真授权框）才测得准。从 Terminal/dev 里测的是终端的权限。
 
+- **Windows 的 git 默认 `core.autocrlf=true` ⇒ 任何「按 sha256 核对检出文件」的逻辑在 Windows 上必错**（2026-08-04，L3 语料获取器上 CI 第一跑就红）。检出时 LF 被换成 CRLF，于是在 macOS/Linux 上算出来的哈希对不上，脚本报出的却是别的原因（本仓库当时报的是「许可变了，必须人工复核」——**一个完全误导的结论**）。⇒ 临时克隆一律显式 `git config core.autocrlf false` + `core.eol lf`，让检出**逐字节等于上游**；**不要**改成忽略换行的比较，那会把「文件真的改了」一起藏掉。实测：`.docx`/`.xlsx`/`.pdf` 这类二进制**不受影响**（git 的二进制启发式挡住了），但那是启发式不是保证。同族提醒：`.gitattributes`、`autocrlf=input`、以及 CI runner 的默认值都可能在不同宿主上给出不同字节。
+
 ## 13. 桌面组件测试（vitest + jsdom）
 
 - **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
