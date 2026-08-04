@@ -449,9 +449,14 @@ not yet declaring capabilities.json: pdf, docx(不存在), xlsx(不存在)
 - 假阳性检验只用了 3 份产物，且 `sample.docx/xlsx` 的生成器未知。**D4/D5 从未跑过真正由 Word 保存的文档**——Word 会写入大量 python-docx 不产生的结构，元素序检查在真实文档上是否有假阳性属于未知。→ 归入 L3 真实语料回归。
 - 跨平台：全程 `pathlib` / `platform` 分支 / 无硬编码 `/tmp` / 无 unix-only 命令（soffice 与 pdftoppm 均按平台探测且可缺失），但**只在 macOS 跑过**，Windows/Linux 靠 CI。
 
-### L3 — 真实语料回归
+### L3 — 真实语料回归 ✅ **已实现（2026-08-04，S5）**
 
 > 教训来源：ADR-070 P2（LaTeX）——**手编用例 100% 通过，两个真缺陷全靠 279 个真实公式抓出来**。想象不出来的缺陷只能靠真实语料。
+
+**落地 = `scripts/fetch-l3-corpus.py`（取语料）+ `scripts/test-office-l3-corpus.py`（跑环）**，
+两条都进 CI（`office-skills-l3` job，三平台）。详细结果与教训见 **§六·补九（SSOT）**。
+下面这三行是当时写的需求，保留原文以便对照实际拿到了什么 —— **实际语料在修订/批注/中文
+这三格上是薄的，见 §六·补九的刻画表，别把「45 份 docx」读成「45 份带修订的中文 Word」。**
 
 需要准备（**这一项需要你提供或授权我去找**）：
 - 真实 `.docx`：含修订、批注、多级编号、页眉页脚、中文混排、复杂表格 —— 目标 ≥ 20 份
@@ -459,6 +464,10 @@ not yet declaring capabilities.json: pdf, docx(不存在), xlsx(不存在)
 - 真实 `.pdf`：含 AcroForm 表单、扫描件、中文、加密 —— 目标 ≥ 15 份
 
 跑法：全语料过一遍 read→edit→validate 环，统计崩溃率/损坏率，与当前 `doc-edit` 基线对比。**这是"更优"最有说服力的证据**。
+
+**实测结果（2026-08-04，231 份，两条臂，4 分 18 秒）**：xlsx **损坏率 新 0% vs 旧 66.7%**、
+崩溃率 1.0% vs 4.0%；docx 两臂皆 0/0；pdf 无前身故无基线。**并且这一跑抓到三个真缺陷**
+（两个 pdf、一个 xlsx），全部当刀修掉并配了控制臂。全文见 §六·补九。
 
 ### L4 — 人工主观验收（不可自动化，必须承认）
 
@@ -849,7 +858,7 @@ CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-miss
 | **S3** ✅ | `xlsx` 技能（含 office 底座首次实现）。**五刀**：office 底座 + X1/X2/X15 · 公式族 X3/X5/X10 · 结构性写入 X6-X9 · 双引擎重算 X4 · 收官 X11-X14。**15/15 无 pending，`--no-pending` 全技能绿**（见 §六·补二） | xlsx/ + office 底座 | 已完成 2026-08-02 |
 | **S3.5** ✅ | **去 PyMuPDF / 去 AGPL**（§5·补.8c 的路 ②）。`pdf` 技能 14 个文件 + `xlsx_pdf.py` 可选依赖（§六·补三）· `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四，新建读取层 `pdfsource.py` + **新建标尺 25 断言/28 控制**）。**`skills/builtin/` 下没有任何一个文件 `import fitz`**；`scripts/` 下三个门禁脚本仍用（不分发，单独一刀） | 商业分发无 AGPL 暴露 | 已完成 2026-08-02 |
 | **S4** ✅ | `docx` 技能（最复杂：修订/批注/XSD/CJK）。**六刀落地 19/19，`pending` 清空**（见 §六·补五、补六、补七）。纯 lxml，**刻意不依赖 python-docx**。判据 = CI 的 `--no-pending pdf xlsx docx` | docx/ | 已完成 |
-| **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | **未做**（需你提供语料，你选择先做 S6） |
+| **S5** | L3 真实语料回归（**已完成 2026-08-04**，见 §六·补九）+ L4 人工验收（**未做**，只能用户判） | `fetch-l3-corpus.py` + `test-office-l3-corpus.py` + CI `office-skills-l3` job；**231 份语料抓到 3 个真缺陷** | L3 ✅ / L4 待用户 |
 | **S6** ✅ | 收尾：路由收敛（markdown-exporter 的 DOCX 路由 → `docx` · `doc-edit` 瘦身改名 **`pptx-edit`** · `doc-export` 断链 · deckcraft 路由边界）+ **断链扫描进 CI**（check-docs §11 + `--selftest` 10 条控制）+ README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version`（见 §六·补八） | 文档同步 | 已完成 2026-08-04 |
 
 > **S1 先于 S2 是刻意的**：先有验收标尺和当前基线，才谈得上"更优"。
@@ -2736,3 +2745,175 @@ encode character '第'`；同条件下有防线的 `docx` 技能 exit=0 / stdout
 三平台各自打印出自己量到的编码 —— **Windows `cp1252` / ubuntu `utf-8` / macOS `utf-8`**，
 即那条平台相关的 cascade 在 CI 上**两个分支都真的执行过**，不是有一条被跳过。
 第二跑里那条 `node (ubuntu-latest)` 的 flake 这一跑**没有复现**（与记录的间歇性一致）。
+
+---
+
+## 六·补九 — S5 收官：L3 真实语料回归（2026-08-04）
+
+**这一刀的判据是它抓到了什么，不是它跑绿了。** 231 份别人产的文档过一遍
+read → edit → validate 环，抓到**三个真缺陷**，一个都不是手编夹具能碰到的。
+
+### 语料怎么来的：清单进 git，字节不进 git（用户 2026-08-04 拍板）
+
+`scripts/l3-corpus-manifest.json` 记 repo + 钉死的 commit + 相对路径 + sha256 + 许可；
+`scripts/fetch-l3-corpus.py` 按清单 blobless sparse clone 到缓存目录
+（`~/.cache/ultrawork/l3-corpus/`，`ULTRAWORK_L3_CORPUS` 可覆盖），逐件校 sha256。
+两条理由：① 本仓库是 public，而用户手上真实的中文办公文档多半是业务文件，
+机制必须**从第一天**就支持「本地语料，永不入 git」（`<缓存根>/local/{docx,xlsx,pdf}/`，
+门禁单列统计并标明「这部分不进 CI」）；② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT
+就自动干净，**不再分发 = 这个问题不存在**。代价是网络依赖 ⇒ CI 传 `--require-corpus`
+把「语料缺失」从跳过变成红。
+
+| 源 | 许可（**读正文核过**） | 取用 | 为什么是它 |
+|---|---|---|---|
+| `python-openxml/python-docx` `tests/test_files` + `features/steps/test_files` | MIT | 45 份 docx | 大多带 Word 的 `docProps`，是 §5「D4/D5 从未跑过真正由 Word 保存的文档」点名的空白 |
+| `tafia/calamine` `tests` | MIT | 65 份 xlsx | 用户报 bug 时贴上来的野生文件，边界最脏 |
+| `jmcnamara/XlsxWriter` `.../comparison/xlsx_files` | BSD-2 | 40 份（1000 份按 stride 25 确定性抽样） | Excel 存的对照件 |
+| `jsvine/pdfplumber` `tests/pdfs` | MIT | 81 份 pdf | 真实抓来的版面 + ClusterFuzz 畸形样本 |
+
+**明确不收**（写下来免得下次又查一遍）：`py-pdf/sample-files`（**CC-BY-SA-4.0**，share-alike，
+与「签名分发的商业软件」这个前提不该沾）· `py-pdf/pypdf` 的 `resources/`（仓库 NOASSERTION、
+目录内无 LICENSE，单件出处不明）· `openpyxl`（**不在 GitHub**，在 heptapod；且 sdist 186 KB
+**不含测试数据** —— 原计划里的两个源实测都得换掉）。
+
+⚠️ 许可判定**读的是 LICENSE 正文**，不是 gotchas §10 那个字节数捷径：XlsxWriter 的
+`LICENSE.txt` 是 **1349 B**，离「1467 B ≈ Anthropic 专有」很近，只看大小会吓一跳。
+
+### 语料刻画（下任何结论之前先看这张表）
+
+| docx 45 份 | | xlsx 105 份 | | pdf 81 份 | |
+|---|---|---|---|---|---|
+| 表格 | 13 (29%) | `<Application>` 声明 Excel | 84 (80%) | 含旋转页 | 30 (37%) |
+| 页眉/页脚 | 6 (13%) | 图表 | 19 (18%) | 无文字层(≈扫描件) | 18 (22%) |
+| 多级编号 | 3 (7%) | 合并单元格 | 6 (6%) | 含 CJK | 8 (10%) |
+| 超链接 | 3 (7%) | 跨表公式 | 2 (2%) | AcroForm 表单 | 4 (5%) |
+| 批注 | **1 (2%)** | 正文含 CJK | **1 (1%)** | 加密 | 2 (2%) |
+| **跟踪修订** | **0** | 条件格式 / 透视表 | 各 1 | 文件头不是 %PDF | 5 (6%) |
+| **正文含 CJK** | **0** | >1 万行 | 1 | | |
+
+**这张表的用处是划清没验到什么**：公开 fixtures 在**修订 / 批注 / 中文混排**三格上基本是空的。
+「45 份 docx 全过」**不等于**「45 份带修订的中文 Word 全过」。这三格只能等用户给真实文档。
+
+⚠️ 顺带纠正一句我自己差点写进结论的话：**`docProps/app.xml` 的 `<Application>` 只说明
+原始文档是谁存的，不证明这份 XML 没被手工改过**。三份被判 schema 违规的 docx 都写着
+`Microsoft Word`，而它们的 `<w:tbl>` 缺必需的 `<w:tblPr>` —— Word 不会那么写，是 fixture
+被裁过。所以表里那格写的是「`<Application>` 声明 Excel」，不是「Excel 亲手存的」。
+
+### 判据怎么量（三个数分开记，不合并成一个「通过率」）
+
+- **崩溃** = stderr 出现**裸 traceback**，或被信号打死 / 超时。**与退出码约定无关。**
+- **拒绝** = 非 0 退出但没有裸 traceback。加密件 / 损坏件 / 不支持格式的**正确行为**。
+- **损坏** = 输入过了合法性检查、环跑完（每步 rc=0），但输出没过。「没过」的定义直接
+  **import L2** 复用（`office-skills-selftest.py` 的 D1/D4/D5 · X1/X2 · F1/F2/F3/P5），
+  不是第二套标准 —— 否则 L2 绿而 L3 红时没人说得清哪个对。
+- **输入门控只做结构性判断**（能否当 zip 打开 / 必需 part 在不在 / XML 良构；pdf 用
+  **pdfminer** 判），**刻意不用被测技能站着的那个库**。输入自带的 L2 违规不扣分母，
+  只屏蔽那一条检查对输出的判定。
+
+**基线**：docx/xlsx 从 git 取 `0a5b0987^` 的旧 `doc-edit` 脚本到临时目录（**绝不落回工作树**），
+跑同一份语料同一个环，两臂完整命令行逐条打印。**pdf 没有前身**（S2 之前是零脚本的上游
+Apache 版）⇒ 它没有基线，判据只能是绝对值。这一点不编。
+
+### 结果（本机实测，231 份，4 分 18 秒，8 并行）
+
+| 臂 | 类型 | 总数 | 输入坏 | 可用 | 崩溃 | 拒绝 | 损坏 | 崩溃率 | 损坏率 |
+|---|---|---|---|---|---|---|---|---|---|
+| new | docx | 45 | 0 | 45 | 0 | 0 | 0 | 0.0% | 0.0% |
+| new | xlsx | 105 | 4 | 101 | 1 | 4 | 0 | 1.0% | 0.0% |
+| new | pdf | 81 | 8 | 73 | **1**（已具名认领） | 14 | 0 | 1.4% | 0.0% |
+| baseline | docx | 45 | 0 | 45 | 0 | 0 | 0 | 0.0% | 0.0% |
+| baseline | xlsx | 105 | 4 | 101 | 4 | 4 | **62** | 4.0% | **66.7%** |
+| baseline | pdf | — | — | — | — | — | — | 无前身 | 无前身 |
+
+**xlsx 那一行就是「更优」的全部证据，而且是数字不是形容词**：旧的 `load→save` 在真实文件上
+丢 `sharedStrings` / `calcChain` / `media/image1.jpg`(20 KB) / `printerSettings*.bin` /
+`richData` 的 rels —— 93 份里 62 份丢东西。外科式写入 0 份。
+**docx 两臂都是 0/0**：这批公开夹具对 python-docx 太温和，L3 在 docx 上**没有区分力**，
+不要拿它当「docx 也更优」的证据。
+
+### 抓到的三个真缺陷（全部当刀修掉 + 配控制臂）
+
+**① `pdf_info.py`：`/Producer` 是间接引用时整个入口崩掉。** 真实 PDF 可以把元数据值存成
+`12 0 R`，pypdf 返回 `IndirectObject`，`json.dumps` 抛 `TypeError: Object of type
+IndirectObject is not JSON serializable` —— **裸 traceback，而且是 agent 对一份文档跑的
+第一条命令**。命中 3 份真实文档（两份美国 NICS 背景调查统计、一份学区预算）。
+本仓库所有手编夹具都把元数据写成字面量，所以一次都没碰到。修法 = `_json_safe()`
+（有界地解引用 + 非 JSON 原生类型转字符串）。
+
+**② `pdfcommon.run()`：护栏装错了位置 —— pypdf 是惰性解析的。**
+`open_reader()` 只在 `PdfReader(...)` **构造时**兜 `PdfReadError`，而 pypdf 对一份页面树是
+瓦砾的文件**构造照样成功**，真正的异常等走 `reader.pages` / 对象树时才炸。9 份真实/畸形
+PDF 因此以一墙 Python 落地。修法 = `run()` 增加 `_is_pypdf_error(e)` 分支，把 pypdf 自己的
+异常族（`PyPdfError` + `DependencyError` + `DeprecationError`）落成一句话 + exit 2。
+**这个文件自己的 docstring 早就预言了它**（"a library that raises where we did not expect
+it … otherwise reaches the caller as a wall of Python"）—— 语料做的事是把预言变成计数。
+⇒ pdf 崩溃 **12 → 1**。
+
+**③ `xlsx_read.py`：145 KB 的文件跑十分钟不返回，而且把 2 行的表报成 1048576 行。**
+`MAX_SCAN_CELLS` 这个护栏只装在 `read_range()` 上，**默认路径 `sheet_inventory()` 完全无界**，
+而且它把整表**走两遍**。calamine issue 语料里有一份 workbook 在**最大行号上真的有一个
+单元格**（`<row r="1048576">`），openpyxl 于是给出 max_row = 1048576，乘以列数就是千万级。
+修法 = 单遍 + 独立的 `MAX_INVENTORY_CELLS = 2_000_000` 预算 + **超预算必须打印
+`scan_truncated`**（一个看起来像完整结果的截断结果是这里最不能有的），并且
+`rows`/`columns` 改成**从实际有值的单元格数出来**。实测 >10 min → **3.2s**，报 2 行。
+**同一个形状第二次**：①③ 都是「护栏存在，但装在没人走的那条路上」。
+
+**残余 1 份崩溃，具名认领而不是豁免**（`KNOWN_CRASHES`，每次运行都打印，名单变长会在 diff 里
+显形）：`5317294594523136.pdf` 的 `/Root` 指向一个 `NumberObject`，**pypdf 上游**在
+`_reader.py:229` 抛 `AttributeError` 而不是它自己的 `PdfReadError`，落不进②那条分支。
+把 catch-all 放宽到 `AttributeError` 会把我们自己未来的 bug 一起藏起来，不划算。
+该文件是 ClusterFuzz 生成的畸形样本。
+
+### 门禁自己的 25 条正负控制（`--selftest`）
+
+C1 正样本 · C2 崩溃探测器真会响 · C3 exit 2 不算崩溃 · C4 输入门 · C5 丢一个非惰性 part →
+F1 打红 · C6 元素序违规 → D 系打红 · C7 空语料判红 · C8 语料量不足判红 · C9 基线臂与新臂
+可区分（旧的用 python-docx、新的不用）· C10 崩溃规则与退出码约定无关 · C11 契约违规单记 ·
+C12 两臂写同一张表 · C13/C14 xlsx/pdf 环真的能跑 · C15 CJK 只数正文 · C16 探针含中文 ·
+C17 超时被抓成崩溃 · C18 「门禁判不了」≠「技能弄坏了」· C19 输入门与被测实现无关 ·
+C20 输入自带违规被屏蔽 · C21/C22 本刀两个 pdf 缺陷 · C23 每步允许的退出码 ·
+C24 输入不合 schema 时输出同样不算拒绝 · C25 最大行号语料。
+
+### 六条这一刀独有的教训
+
+**① 门禁自己打印了「绿」而崩溃率 16.4%。** 第一版判据在「没有基线可比」时只打印绝对值就
+`continue` 了 —— 于是 pdf 12/73 崩溃照样 exit 0。**沉默与通过长得一样，这次是门禁自己犯的。**
+修法：没有基线 ⇒ 判据无法求值 ⇒ 任何**未具名认领**的崩溃一律判红。
+
+**② 崩溃的定义第一版按退出码写，那会让比较变成我造的。** 新技能的契约是
+`docxcommon.run()` 写的「exit 2 = 可操作的错误，exit 1 留给真崩溃」，**旧 doc-edit 没有这个
+约定** —— 它对打不开的文件是 `print('Error opening …'); return 1`，一行干净的话。按退出码判，
+旧臂会因为**用了另一套约定**被整片记成崩溃。改成只看「有没有一墙 Python」，两条臂才是同一把尺；
+退出码另记一笔「契约违规」，且**只对声明过它的那一方有意义**。
+
+**③ 输入门控第一版是循环论证。** 它用 L2 的 X1（`openpyxl.load_workbook`）判输入好坏，而
+`xlsx_read.py` 自己就站在 openpyxl 上 ⇒ 凡是 openpyxl 读不了的都被划进「输入本来就坏」，
+**被测技能的崩溃率是它自己划的分母**。改成只做结构性判断（zip + 必需 part + XML 良构），
+pdf 换成 **pdfminer**（独立实现）。
+
+**④ 断言在正确实现上判红，三次都是我对被测对象的描述错了。**
+(a) `docx_validate.py` 的 `rc=1` 是**它写下的约定**（有 schema 违规，明细走 stdout），
+我贴的「契约违规」标签是错的 ⇒ 加每步允许退出码表。
+(b) 那 3 份被判违规的 docx **输入本来就不合规**（缺 `w:tblPr`），不是编辑造成的 ⇒
+技能自己的 schema 校验也要做输入门控。顺带答了 §5 留的未知项：**XSD 在这批文档上没有假阳性**。
+(c) C25 的夹具第一版只改 `<dimension>` 字符串，控制臂当场判绿 —— **非 read_only 的
+Worksheet 根本不看 dimension**，真实文件里是确实存在一个 `r="1048576"` 的 row。
+
+**⑤ 门禁被真实语料当场打脸：in-process 跑 L2 既没有超时也没有内存边界。** 那份最大行号的
+workbook 让 L2 的 X1 吃到 **4.7 GB RSS 且不收敛**，一份病态文件挂死整轮，CI 上会 OOM。
+改成**子进程 + 超时**，顺带守住第二件事：lxml / pypdfium 这类 C 扩展在畸形输入上会段错误，
+in-process 的话整个门禁跟着死，而且死状看起来像「跑完了」。
+判不了的那一份记 `gate_limit`（**我的局限，不是技能的缺陷**），不进任何率的分子。
+
+**⑥ 原计划里的两个语料源实测都不成立。** 用户授权时点名「优先 python-docx / openpyxl /
+pdfplumber / pypdf」，实测：**openpyxl 不在 GitHub**（heptapod）且 sdist 不含测试数据、
+**pypdf 的 resources 许可核不干净**。换成 calamine + XlsxWriter。**抄来的清单也要验**，
+包括用户给的和我自己列的。
+
+### 明确没做 / 不属于本刀
+
+- **L4 人工主观验收**：排版专不专业、财务表符不符合行业审美、PDF 版面可不可交付 —— 只能用户判。
+  **不拿门禁全绿冒充「更优」。**
+- **合入 main**：L4 点头之后再谈。
+- 已记档的既有缺陷（`pptx_read` 大 deck 无 stdout 上限 · `pptx-edit` 漏替换静默 ·
+  deckcraft 代码块围栏 · `scripts/` 下三个门禁脚本仍 `import fitz`）—— L3 没有证据表明它们挡合并。

@@ -28,6 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from xlsxcommon import XlsxError, emit, fail, has_cjk, run  # noqa: E402
 
 MAX_SCAN_CELLS = 200_000
+# The summary path gets its own, larger budget. 200k is sized for a window a caller
+# asked to see cell-by-cell; the inventory only counts, and a legitimate
+# 100k-row x 10-column sheet must not come back truncated. Measured on this machine:
+# 200k cells ~0.5s, so 2M is a few seconds — bounded, which is the whole point.
+MAX_INVENTORY_CELLS = 2_000_000
 
 
 def load_pair(path: Path):
@@ -62,24 +67,74 @@ def cell_entry(fws, vws, ref: str) -> dict:
 
 
 def sheet_inventory(fwb, vwb) -> list[dict]:
+    """Per-sheet summary, with the same cell budget --range already had.
+
+    ⚠️ MAX_SCAN_CELLS used to guard read_range() and nothing else, so the summary
+    path — the one that runs when no --range is given, i.e. the default — had no
+    bound at all. It scanned whatever `<dimension>` claimed.
+
+    That is not a theoretical hole. `<dimension ref="A1:XFD1048576"/>` on a sheet
+    holding five real rows is something non-Excel writers emit, and openpyxl
+    believes it: max_row 1048576 x max_column 16384 = 17 BILLION cells, walked
+    twice. Found by the L3 real-corpus run (059 §六·补九) on a **145 KB** file from
+    calamine's issue corpus, i.e. a workbook a real user actually hit: xlsx_read
+    had not returned after ten minutes. A file that small hanging forever is worse
+    than one that fails, because nothing about it looks like it should.
+
+    Two things change here, and the second one is a wrong ANSWER, not just a hang:
+      - one pass instead of two, under a hard cell budget that says so out loud when
+        it stops. A truncated scan that looks like a complete one is the failure this
+        whole file is written to avoid.
+      - `rows`/`columns` are now counted from cells that actually hold a value,
+        not read off `<dimension>`. That same 145 KB workbook was REPORTED as
+        1048576 rows x 16384 columns. It has two.
+
+    (`reset_dimensions()` looks like the obvious fix and is not available here:
+    openpyxl 3.1.5 defines it on ReadOnlyWorksheet only, and this entry point loads
+    two full workbooks because it needs the formula view AND the cached-value view
+    of every cell. Checked rather than assumed — a guarded call that silently never
+    runs would have left the docstring claiming a fix that was not happening.)
+    """
     out = []
     for ws in fwb.worksheets:
         vws = vwb[ws.title]
-        formulas = uncalculated = 0
+        formulas = uncalculated = scanned = 0
+        cjk = truncated = False
+        rows = cols = 0
         for row in ws.iter_rows():
             for cell in row:
-                if isinstance(cell.value, str) and cell.value.startswith("="):
-                    formulas += 1
-                    if vws[cell.coordinate].value is None:
-                        uncalculated += 1
-        out.append({
+                scanned += 1
+                if cell.value is None:
+                    continue
+                rows = max(rows, cell.row or 0)
+                cols = max(cols, cell.column or 0)
+                if isinstance(cell.value, str):
+                    if not cjk and has_cjk(cell.value):
+                        cjk = True
+                    if cell.value.startswith("="):
+                        formulas += 1
+                        if vws[cell.coordinate].value is None:
+                            uncalculated += 1
+            if scanned > MAX_INVENTORY_CELLS:
+                truncated = True
+                break
+        entry = {
             "name": ws.title, "state": ws.sheet_state,
-            "rows": ws.max_row, "columns": ws.max_column,
+            "rows": rows, "columns": cols,
             "dimensions": ws.dimensions,
             "formulas": formulas, "uncalculated_formulas": uncalculated,
-            "has_cjk": any(has_cjk(str(c.value)) for r in ws.iter_rows() for c in r
-                           if isinstance(c.value, str)),
-        })
+            "has_cjk": cjk,
+        }
+        if truncated:
+            # Never silent: a partial count that reads like a total is the one
+            # outcome worth failing over.
+            entry["scan_truncated"] = {
+                "limit": MAX_INVENTORY_CELLS,
+                "note": f"stopped after {MAX_INVENTORY_CELLS} cells; formulas, "
+                        f"uncalculated_formulas, has_cjk, rows and columns are "
+                        f"lower bounds, not totals. Use --range for a window.",
+            }
+        out.append(entry)
     return out
 
 

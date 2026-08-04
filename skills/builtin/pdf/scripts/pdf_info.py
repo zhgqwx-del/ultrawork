@@ -115,7 +115,36 @@ def safe_metadata(reader) -> dict:
         raw = dict(reader.metadata or {})
     except Exception:  # noqa: BLE001 - FileNotDecryptedError and friends
         return {}
-    return {k.lstrip("/").lower(): v for k, v in raw.items()}
+    return {k.lstrip("/").lower(): _json_safe(v) for k, v in raw.items()}
+
+
+def _json_safe(value):
+    """Resolve indirect references and reduce to something json.dumps accepts.
+
+    A PDF is free to store /Producer as `12 0 R` instead of a literal string, and
+    pypdf hands that back as an IndirectObject. Everything here then looked fine
+    until write_json ran, and the whole entry point died with
+
+        TypeError: Object of type IndirectObject is not JSON serializable
+
+    — a bare traceback, from the FIRST command an agent runs on a document. It was
+    invisible to every hand-built fixture in this repo because the fixtures write
+    their metadata as literals. Three real-world documents in the L3 corpus do not
+    (059 §六·补九): two US NICS background-check reports and a school-district
+    budget. `.get_object()` walks the reference; the str() fallback is for the
+    object types (names, byte strings, arrays) that survive resolution.
+    """
+    seen = 0
+    while hasattr(value, "get_object") and seen < 8:   # bounded: refs can cycle
+        resolved = value.get_object()
+        if resolved is value:
+            break
+        value, seen = resolved, seen + 1
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
 
 
 def describe(src: Path, password: str | None) -> dict:

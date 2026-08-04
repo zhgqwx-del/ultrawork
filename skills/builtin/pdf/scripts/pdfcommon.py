@@ -347,6 +347,21 @@ def draw_boxes_overlay(src: Path, dest: Path, boxes_by_page: dict,
         writer.write(fh)
 
 
+def _is_pypdf_error(exc: BaseException) -> bool:
+    """True for pypdf's own error family.
+
+    Imported inside the function on purpose: `pdfcommon` is imported by every entry
+    point including the ones that never touch pypdf, and a missing dependency must
+    surface as this skill's own dependency message, not as an ImportError from a
+    error-classification helper.
+    """
+    try:
+        from pypdf.errors import DependencyError, DeprecationError, PyPdfError
+    except ImportError:
+        return False
+    return isinstance(exc, (PyPdfError, DependencyError, DeprecationError))
+
+
 def run(entry) -> int:
     """Turn PdfError into one line on stderr and exit 2; keep 1 for crashes.
 
@@ -361,6 +376,24 @@ def run(entry) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     except Exception as e:  # noqa: BLE001 - deliberate boundary
+        # pypdf's own error family means "this file is broken", which is exactly the
+        # actionable half — but it does NOT arrive where open_reader() guards it.
+        # pypdf parses LAZILY: PdfReader(...) succeeds on a file whose page tree is
+        # rubble, and the PdfReadError only fires later, when pages or objects are
+        # walked. The guard sat at construction time and so covered a fraction of it.
+        #
+        # Not a hypothesis. The L3 real-corpus run (059 §六·补九) put 73 readable
+        # PDFs through read→edit and 9 of them came back as a wall of Python:
+        # "Invalid object in /Pages", "Invalid hexadecimal character b'n' in hex
+        # string", "Invalid Elementary Object starting with b'W'". Every one is a
+        # sentence an agent can act on ("this PDF is damaged"), and every one was
+        # being delivered as a crash. This file's own docstring predicted it —
+        # "a library that raises where we did not expect it" — and the corpus is
+        # what turned the prediction into a count.
+        if _is_pypdf_error(e):
+            print(f"error: this file cannot be parsed as a PDF — "
+                  f"{type(e).__name__}: {e}", file=sys.stderr)
+            return 2
         import traceback
         print(f"error: unexpected {type(e).__name__}: {e}", file=sys.stderr)
         traceback.print_exc()

@@ -197,7 +197,7 @@ Monorepo 结构：
 ### 2026-06 中旬 ~ 07 月主线 ✅（摘要；detail 是各 ADR + CHANGELOG，此处不复制）
 
 - [x] 内置技能体系 — 5 技能打包+依赖检测（ADR-032）→ ppt-master + curated 自助更新 + 确定性遮蔽（ADR-040）→ zip 分发+首启解压（ADR-041）→ 自研 HTML-first PPT 技能 deckcraft 毕业为默认、删内置 ppt-master 转 curated 长尾（ADR-061 / discussions/043 §18.5）→ deckcraft 内容密度双边带 + delivery_purpose 消费距离旋钮通用化、补三档多样 example（ADR-066 / discussions/051）✅ 2026-06-14 ~ 07-22
-- [x] Office 文档技能重做（discussions/059）— clean-room 自写 `pdf`（14/14）/ `xlsx`（15/15）/ `docx`（19/19）三技能，零 `pending`；三层门禁 L0 原创性 / L1 能力矩阵 / L2 产物合法性全部进 CI；整树去 PyMuPDF（AGPL）；路由收敛 + 跨技能断链扫描进门禁（S6）✅ 2026-08-01 ~ 08-04。**S5（L3 真实语料回归 + L4 人工验收）未做**，需用户提供语料
+- [x] Office 文档技能重做（discussions/059）— clean-room 自写 `pdf`（14/14）/ `xlsx`（15/15）/ `docx`（19/19）三技能，零 `pending`；三层门禁 L0 原创性 / L1 能力矩阵 / L2 产物合法性全部进 CI；整树去 PyMuPDF（AGPL）；路由收敛 + 跨技能断链扫描进门禁（S6）· **L3 真实语料回归（S5）—— 231 份公开语料两条臂过 read→edit→validate 环，抓到 3 个真缺陷（2 个 pdf、1 个 xlsx）并当刀修掉；xlsx 损坏率 新 0% vs 旧 66.7%**，同刀进 CI ✅ 2026-08-01 ~ 08-04。**L4（人工主观验收）未做** —— 排版/审美/可交付性只能人工判，不拿门禁全绿冒充
 - [x] 产物识别改文件系统真相 + PDF 内嵌预览（ADR-033）✅ 2026-06-16
 - [x] LLM 流式 idle 看门狗，根治静默挂死（ADR-034）✅ 2026-06-24
 - [x] 会话切换一致性 — 切回不丢流式 + 多 Team 委派按发起会话过滤（ADR-035）✅ 2026-06-25

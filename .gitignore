@@ -74,3 +74,9 @@ __pycache__/
 # deckcraft example regression-chain output (2MB+ of pdf/pptx/png per run) —
 # also excluded from the builtin-skills zip by pack/fetch-builtin-skills.ts
 skills/builtin/*/examples/*/export/
+
+# L3 真实语料（discussions/059 §5 L3，S5）：清单进 git，**字节不进 git**。
+# ① 本仓库是 public，而用户手上真实的中文办公文档多半是业务文件；
+# ② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT 就自动干净 —— 不再分发即无此问题。
+# 默认落 ~/.cache/ultrawork/l3-corpus；CI 用 ULTRAWORK_L3_CORPUS 指到这里以便缓存。
+.l3-corpus/

@@ -253,6 +253,71 @@ jobs:
       - name: xlsx formula evaluator calibration
         run: python scripts/xlsx-evaluator-calibration.py
 
+  # ── L3: real-corpus regression (059 §5 L3, S5) ────────────────────────────
+  # Separate from `office-skills` on purpose: L3 does NOT need LibreOffice (it runs
+  # none of the soffice-tier checks), and that install is the most expensive part of
+  # the other job. Keeping them apart also stops a slow corpus run from eating that
+  # job's 30-minute budget.
+  #
+  # Why it must run on all three platforms rather than just Linux: the S6 wrap-up's
+  # third real defect (pptx_read/pptx_edit with no UTF-8 reconfigure, dying on the
+  # first Chinese character when stdout is captured) was invisible on the author's
+  # machine and on the local cross-platform scan, because that scan reads paths and
+  # commands and the defect was in ENCODING. The corpus files carry CJK and the
+  # probe string is CJK on purpose — running it on Windows is the point.
+  office-skills-l3:
+    name: office skills L3 corpus (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # Uniform across platforms so actions/cache has one path to key on. The
+      # default (~/.cache/ultrawork/l3-corpus) is for developer machines.
+      ULTRAWORK_L3_CORPUS: ${{ github.workspace }}/.l3-corpus
+    steps:
+      # fetch-depth: 0 is REQUIRED, not incidental — the baseline arm reconstructs
+      # the old doc-edit scripts with `git show 0a5b0987^:…`, and a shallow clone
+      # does not have that object. Without them there is no "≤ current baseline"
+      # criterion at all, so the gate refuses to call a baseline-less run a pass.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Same list as the office-skills job minus what only the soffice tier needs.
+      # pymupdf is here because L2's P5 fidelity check still imports fitz — it is a
+      # GATE script, not distributed, so AGPL does not reach the product.
+      - name: Install the libraries the skills import
+        run: >
+          python -m pip install --disable-pip-version-check
+          pypdf pypdfium2 pdfplumber reportlab pillow
+          openpyxl lxml python-docx pymupdf
+      # Keyed on the manifest: bump a pinned commit and the cache misses, which is
+      # exactly right — a new pin must be re-fetched and re-verified by sha256.
+      - name: Cache the L3 corpus
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.l3-corpus
+          key: l3-corpus-${{ hashFiles('scripts/l3-corpus-manifest.json') }}
+      # Re-verifies every file's sha256 against the manifest even on a cache hit,
+      # and re-reads each source's LICENSE (a changed licence is a hard stop, not a
+      # warning). 231 files / ~21 MB from four MIT/BSD repos; bytes never enter git.
+      - name: Fetch the L3 corpus
+        run: python scripts/fetch-l3-corpus.py
+      # The gate's own positive/negative controls. Runs first so a broken harness
+      # is reported as a broken harness, not as a green corpus run.
+      - name: L3 corpus gate (self-test)
+        run: python scripts/test-office-l3-corpus.py --selftest
+      # --require-corpus turns "corpus missing" from a skip into a failure. Without
+      # it a network hiccup would look exactly like a pass, and silence and success
+      # are indistinguishable.
+      - name: L3 corpus regression (both arms)
+        run: python scripts/test-office-l3-corpus.py --baseline --require-corpus
+
   rust:
     name: rust (${{ matrix.os }})
     strategy:

@@ -203,6 +203,8 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `scripts/build-{opencode,gateway,knowledge,acp}.ts` — sidecar 编译（已支持全 target triple；产物 `<name>-<triple>[.exe]`，Tauri externalBin 自动解析；codesign/chmod 仅 darwin 守卫）
 - `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包；开头显式跑 pack-builtin-skills（双保险）
 - `scripts/verify-dmg-layout.ts` — 发布守卫：断言 DMG 安装窗口里 app 图标在 Applications 左边（解析 `.DS_Store` 的 Iloc 记录）；公证前跑；`--self-test` 版本跨平台、进 CI 合并门禁（gotchas §7）
+- `scripts/fetch-l3-corpus.py` + `scripts/l3-corpus-manifest.json` — **L3 真实语料获取器**（059 §5 L3 / §六·补九）：清单进 git（repo + 钉死 commit + sha256 + 许可），**字节走缓存不入 git**（`~/.cache/ultrawork/l3-corpus/`，`ULTRAWORK_L3_CORPUS` 可覆盖；`<缓存根>/local/{docx,xlsx,pdf}/` 放本地私有语料，永不入 git 也不进 CI）。四个源全部 MIT/BSD 且**读 LICENSE 正文核过**；`--rebuild-manifest` 重钉。
+- `scripts/test-office-l3-corpus.py` — **L3 门禁**：全语料过 read→edit→validate 环，分开统计**崩溃 / 拒绝 / 损坏**三个率（崩溃 = 裸 traceback，**与退出码约定无关**，两代实现才可比）；「损坏」的定义直接 import L2 复用；输入门只做结构性判断且**不用被测技能站着的那个库**；基线臂从 git 取 `0a5b0987^` 的旧 doc-edit 到临时目录。`--selftest` 25 条正负控制，`--require-corpus` 让「语料缺失」判红。
 - `scripts/pack-builtin-skills.ts` — **内置技能构建期打包**（松散树→`skills-builtin.zip`+外置 sentinel，按内容 hash 惰性；fflate 保 unix exec bit；产物在 `src-tauri/resources/builtin-skills/`，gitignore、`.gitkeep` 保 `generate_context!` 编译；beforeDevCommand/beforeBuildCommand 自动跑，ADR-041）；e2e 侧共享 helper `packages/client/desktop/e2e/builtin-zip-helper.ts`
 - `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
 - `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）

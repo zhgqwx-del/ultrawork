@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **L3 真实语料回归抓到的三个真缺陷（discussions/059 §六·补九，S5）** —— 全部由「别人产的文档」暴露，手编夹具一个都碰不到：
+  - **`pdf_info.py`：`/Producer` 是间接引用时整个入口崩掉。** 真实 PDF 可以把元数据值存成 `12 0 R`，pypdf 返回 `IndirectObject`，`json.dumps` 抛 `TypeError: Object of type IndirectObject is not JSON serializable` —— **裸 traceback，而且是 agent 对一份文档跑的第一条命令**。命中 3 份真实文档（两份美国 NICS 背景调查统计、一份学区预算）。本仓库所有手编夹具都把元数据写成字面量，所以一次都没碰到。修法 `_json_safe()`：有界解引用 + 非 JSON 原生类型转字符串。
+  - **`pdfcommon.run()`：护栏装错了位置 —— pypdf 是惰性解析的。** `open_reader()` 只在 `PdfReader(...)` **构造时**兜 `PdfReadError`，而 pypdf 对一份页面树是瓦砾的文件**构造照样成功**，异常等走 `reader.pages` / 对象树时才炸。9 份真实/畸形 PDF 因此以一墙 Python 落地。修法 = `run()` 增加 `_is_pypdf_error(e)` 分支，把 pypdf 自己的异常族落成一句话 + exit 2。**这个文件自己的 docstring 早就预言了它**，语料做的事是把预言变成计数。⇒ pdf 崩溃 **12 → 1**。
+  - **`xlsx_read.py`：145 KB 的文件跑十分钟不返回，且把 2 行的表报成 1048576 行。** `MAX_SCAN_CELLS` 只装在 `read_range()` 上，**默认路径 `sheet_inventory()` 完全无界**，还把整表走两遍。calamine issue 语料里有一份 workbook 在**最大行号上真的有一个单元格**（`<row r="1048576">`）⇒ openpyxl 给出 max_row = 1048576。修法 = 单遍 + 独立的 `MAX_INVENTORY_CELLS = 2_000_000` 预算 + 超预算必须打印 `scan_truncated`（一个看起来像完整结果的截断结果是这里最不能有的），`rows`/`columns` 改成从实际有值的单元格数出来。实测 >10 min → **3.2s**。**同一个形状第二次**：与 pdf 那条都是「护栏存在，但装在没人走的那条路上」。
+
+### Added
+
+- **S5：L3 真实语料回归门禁（discussions/059 §5 L3 + §六·补九 = SSOT）** —— `scripts/fetch-l3-corpus.py`（取语料）+ `scripts/test-office-l3-corpus.py`（跑 read→edit→validate 环）+ CI `office-skills-l3` job（三平台）。
+  - **清单进 git，字节不进 git**（用户拍板）：`scripts/l3-corpus-manifest.json` 记 repo + 钉死的 commit + sha256 + 许可，`fetch` 脚本 blobless sparse clone 到 `~/.cache/ultrawork/l3-corpus/` 并逐件校 sha256。理由：① 仓库是 public，而用户真实的中文办公文档多半是业务文件，机制必须**从第一天**就支持「本地语料，永不入 git」；② 第三方 PDF 的单件出处不因仓库 LICENSE 是 MIT 就自动干净，不再分发即无此问题。CI 传 `--require-corpus` 把「语料缺失」从跳过变成红。
+  - **语料 231 份 / 20.8 MB / 四个源，许可读正文核过**：python-docx（MIT，45 docx）· calamine（MIT，65 xlsx）· XlsxWriter（BSD-2，40 xlsx，1000 份按 stride 25 确定性抽样）· pdfplumber（MIT，81 pdf）。**明确不收** `py-pdf/sample-files`（CC-BY-SA-4.0 share-alike）与 pypdf 的 `resources/`（NOASSERTION、单件出处不明）。⚠️ 原计划里的 openpyxl 与 pypdf 实测都不成立：**openpyxl 不在 GitHub**（heptapod）且 sdist 不含测试数据。
+  - **判据三个数分开记**：崩溃（裸 traceback / 信号 / 超时，**与退出码约定无关**）· 拒绝（非 0 退出无 traceback，是正确行为）· 损坏（环跑完但输出没过，「没过」的定义直接 **import L2** 复用，不是第二套标准）。输入门控**只做结构性判断**且**刻意不用被测技能站着的那个库**（pdf 用 pdfminer 而非 pypdf）。
+  - **结果**：xlsx **损坏率 新 0% vs 旧 66.7%**（旧 `load→save` 在 93 份真实文件里 62 份丢 `sharedStrings`/`calcChain`/`media`/`printerSettings`/`richData`）、崩溃率 1.0% vs 4.0%；docx 两臂皆 0/0（**这批公开夹具对 docx 没有区分力，不要拿它当证据**）；pdf 无前身故无基线，崩溃 1 份且**具名认领**（pypdf 上游对 `/Root` 是 NumberObject 时抛 `AttributeError`）。
+  - **门禁自带 25 条正负控制**（`--selftest`），含两条本刀缺陷的 LIVE 控制臂（把修复原样撤回）。
+
 ### Changed
 
 - **S6 收官：Office 技能路由收敛 + 跨技能断链扫描进门禁（discussions/059 §六·补八）** —— ① `markdown-exporter` 的 **DOCX 路由指向 `docx` 技能**（等到 W4 `docx_from_md.py` 真能从 Markdown 生成 Word 才翻这一格；改 `fetch-builtin-skills.ts` 的 patch 常量**和**落地文件两处，只改文件的话下次 fetch 会静默还原，另写脚本核对两者逐字节相同）· ② **`doc-edit` 瘦身 + 改名 `pptx-edit`**：`docx_*`/`xlsx_*` 四个脚本已被 059 S3/S4 的专用技能整体超越故删除，`pptx_read/pptx_edit` 保留（**deckcraft 只做「生成新 deck」、`ppt-master` 自 ADR-061 起不再内置，.pptx 就地读改没有任何替代**）· ③ `doc-export` 断链随 ② 消失，**顺带发现另外两处同类断链**（`pdf`/`xlsx` 的 description 都写着「that is `doc-edit`」，改名后会当场变断链，且它们本来就该指 `docx`/`xlsx`）· ④ **deckcraft 只改 description + 路由表**（ADR-061 教训：主体不动），分界写成一句可执行的话——**按产出物判，不按源判**。
