@@ -3046,3 +3046,38 @@ stdout**，第一个中文字就 `UnicodeEncodeError` 死掉 ⇒ **管道上一�
 **这一轮的元教训**：C26/C27/C28 三条跨平台控制，**每一条第一版都在它要测的那个平台上是坏的**，
 而且坏法各不相同（换行、编码、不可诊断）。本机能跑绿的控制，**不等于在它真正要守的那台
 机器上能工作** —— 与 S6 的结论同形，只是这次连「验证工具」本身也一起中招了。
+
+#### 第四次重跑（run 30913666661）：Windows 与 macOS 的 L3 都绿了，而两边数字不一样
+
+| job | 结果 | 耗时 |
+|---|---|---|
+| **office skills L3 corpus (macOS)** | ✅ 绿 | 9.1 分钟 |
+| **office skills L3 corpus (Windows)** | ✅ **绿**（第一次跑完整个回归） | 10.5 分钟（超时 30 分钟，余量充足）|
+| office skills L3 corpus (ubuntu) | ❌ C28 的笔误（`Step.stdout` 实为 `.out`），已修 | 0.8 分钟 |
+
+**新臂的数字三平台逐格相同**（docx 0/0 · xlsx 崩溃 1 拒绝 4 损坏 0 · pdf 崩溃 1 具名认领）。
+**不同的是基线臂与输入门**，而两处差异都查清楚了，都不是抖动：
+
+**① 旧实现在 Windows 上读不了中日韩 workbook（S6 那个缺陷，长在被替换的那一方）。**
+基线臂在 Windows 上多崩 4 份：`rph.xlsx`（日文）· `whitespace_trim.xlsx`（中文）·
+`issue_553.xlsx`（韩文）· `issues.xlsx`（`☺`）。本机实测这四份的旧脚本 stdout
+**全都无法用 cp1252 编码** —— 旧 `xlsx_read.py` 没有 UTF-8 reconfigure，Windows 上
+打印即 `UnicodeEncodeError` 退出 1。⇒ 基线崩溃率 4.0%（macOS）vs **8.8%（Windows）**，
+损坏率 66.7% vs 65.2%（那四份从「损坏」挪到了「崩溃」）。
+**判据在两个平台都成立，而且 Windows 上差距更大** —— 但要说清楚差距为什么更大，
+不能只报一个更好看的数字。
+
+**② `zipfile.namelist()` 不是平台无关的。** `issue_530.xlsx` 把条目名存成
+`xl\workbook.xml`（违反 ZIP/OOXML 规范，野外真有）；CPython 的 `ZipInfo.__init__`
+会把 `os.sep` 换成 `/`，所以**同一份字节在 Windows 上读回 `xl/workbook.xml`、
+在 POSIX 上读回 `xl\workbook.xml`** ⇒ 输入门 Windows 放行、macOS 判「缺 part」，
+两边分母不同（102 vs 101）。修法：门禁自己归一化，**测量必须与平台无关**。
+控制 **C29**（断言裸 `namelist()` 的命中结果恰好等于 `platform == win32`，
+归一化后两平台一致）。契约 → gotchas §12。
+⚠️ **技能本身的行为有意未改**：openpyxl/python-docx 同样走 zipfile，所以「能不能打开
+这类文件」也是平台相关的。文件本身违规、两种行为都说得通，但**要知道它不一致**。
+
+**③ 顺带修掉主报告里的一个诊断缺口。** 崩溃行打的是 stderr 的**第一行**，而裸 traceback
+的第一行永远是 `Traceback (most recent call last):` —— 上面那四份 Windows 独有的崩溃在
+CI 日志里全是这句废话，机制只能靠本地反推。有 traceback 时改打**最后一行**。
+**一条不可诊断的报告和一条不可诊断的控制一样，会白烧一轮 CI。**

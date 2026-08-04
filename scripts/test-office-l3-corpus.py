@@ -181,15 +181,19 @@ class Step:
         return self.rc not in allowed and not self.crashed
 
     def why(self) -> str:
+        """一行说清楚它为什么没过。
+
+        ⚠️ 第一版打的是 stderr 的**第一行** —— 而裸 traceback 的第一行永远是那句
+        没有信息量的 `Traceback (most recent call last):`。CI 上四份 Windows 独有的
+        崩溃因此完全无法诊断，我不得不本地反推机制。有 traceback 时要打**最后一行**
+        （异常类型与消息就在那儿）。
+        """
         if self.rc == -9:
             return f"{self.name}: 超时 >{STEP_TIMEOUT}s"
-        first = ""
-        for line in (self.err or "").splitlines():
-            if line.strip():
-                first = line.strip()
-                break
-        tb = " [裸 traceback]" if TRACEBACK_MARK in self.err else ""
-        return f"{self.name}(rc={self.rc}){tb}: {first[:160]}"
+        lines = [x.strip() for x in (self.err or "").splitlines() if x.strip()]
+        tb = TRACEBACK_MARK in (self.err or "")
+        pick = (lines[-1] if tb and lines else (lines[0] if lines else ""))
+        return f"{self.name}(rc={self.rc}){' [裸 traceback]' if tb else ''}: {pick[:160]}"
 
 
 # L2 校验子进程的地址空间上限。⚠️ **只管得住 L2 worker（我们自己的代码）**：
@@ -396,6 +400,20 @@ def _l2_worker_body() -> int:
 REQUIRED_PART = {"docx": "word/document.xml", "xlsx": "xl/workbook.xml"}
 
 
+def zip_names(z) -> dict[str, str]:
+    """条目名 → 原始名，**斜杠归一化后**。
+
+    ⚠️ `zipfile.namelist()` 不是平台无关的：CPython 的 `ZipInfo.__init__` 里有
+    `if os.sep != "/" and os.sep in filename: filename = filename.replace(os.sep, "/")`，
+    所以一个（违反 ZIP 规范地）把条目存成 `xl\workbook.xml` 的档案，
+    **在 Windows 上读回 `xl/workbook.xml`，在 POSIX 上读回 `xl\workbook.xml`**。
+    L3 语料里 `issue_530.xlsx` 正是这样：同一份字节，输入门在两台机器上给出相反判定
+    （Windows 放行、macOS 判「没有 xl/workbook.xml」），于是两边的分母都不一样。
+    测量必须与平台无关，所以这里自己归一化，不依赖 zipfile 的平台行为。
+    """
+    return {n.replace("\\", "/"): n for n in z.namelist()}
+
+
 def input_is_bad(kind: str, src: Path) -> list[str]:
     """输入门控 —— **只做结构性判断**，不用任何被测技能站着的那个库。
 
@@ -432,16 +450,17 @@ def input_is_bad(kind: str, src: Path) -> list[str]:
             bad = z.testzip()
             if bad:
                 return [f"zip 条目损坏：{bad}"]
-            names = set(z.namelist())
+            names = set(zip_names(z))
             need = REQUIRED_PART[kind]
             if need not in names:
                 return [f"OOXML 包里没有 {need}（可能根本不是这个格式）"]
             from lxml import etree
+            raw = zip_names(z)
             for n in (need, "[Content_Types].xml"):
                 if n not in names:
                     return [f"OOXML 包里没有 {n}"]
                 try:
-                    etree.fromstring(z.read(n))
+                    etree.fromstring(z.read(raw[n]))
                 except etree.XMLSyntaxError as e:
                     return [f"{n} 不是良构 XML：{str(e)[:100]}"]
     except Exception as e:                           # noqa: BLE001
@@ -1598,6 +1617,27 @@ def selftest() -> int:
         expect("C24", "VALIDATE" in m24 and r_on.outcome != Outcome.REFUSED
                and r_off.outcome == Outcome.REFUSED,
                f"输入缺 w:tblPr：门控开 {r_on.outcome} / 关 {r_off.outcome}")
+
+        # ── C29 输入门必须与平台无关：一个把条目名存成反斜杠的（违规但真实存在的）
+        #     档案，在 Windows 与 POSIX 上 `zipfile.namelist()` 给的名字是不同的
+        #     （CPython 的 ZipInfo.__init__ 会把 os.sep 换成 "/"）。语料里
+        #     issue_530.xlsx 就是这样，害得两台机器的分母都不一样。
+        def c29():
+            bs = td / "backslash-entries.xlsx"
+            with zipfile.ZipFile(xf) as z:
+                items = [(n, z.read(n)) for n in z.namelist()]
+            with zipfile.ZipFile(bs, "w") as w:
+                for n, data in items:
+                    w.writestr(n.replace("/", "\\"), data)   # 违规写法，野外真有
+            with zipfile.ZipFile(bs) as z:
+                naive = "xl/workbook.xml" in set(z.namelist())   # 平台相关
+                fixed = "xl/workbook.xml" in set(zip_names(z))   # 归一化后
+            verdict = input_is_bad("xlsx", bs)
+            expect("C29", fixed and not verdict and naive == (sys.platform == "win32"),
+                   f"[{sys.platform}] 反斜杠条目名：裸 namelist 命中={naive}"
+                   f"（平台相关，Windows 应为 True）· 归一化后命中={fixed} · "
+                   f"输入门判定={verdict or '放行'}")
+        guarded("C29", c29)
 
         # ── C26 取语料的检出必须**逐字节等于上游**，与宿主的 git 换行设置无关。
         #     这是新门禁上 CI 第一跑就被抓到的、只在 Windows 上犯的错：Windows 的 git

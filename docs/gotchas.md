@@ -377,6 +377,9 @@
 
 - **Windows 的 git 默认 `core.autocrlf=true` ⇒ 任何「按 sha256 核对检出文件」的逻辑在 Windows 上必错**（2026-08-04，L3 语料获取器上 CI 第一跑就红）。检出时 LF 被换成 CRLF，于是在 macOS/Linux 上算出来的哈希对不上，脚本报出的却是别的原因（本仓库当时报的是「许可变了，必须人工复核」——**一个完全误导的结论**）。⇒ 临时克隆一律显式 `git config core.autocrlf false` + `core.eol lf`，让检出**逐字节等于上游**；**不要**改成忽略换行的比较，那会把「文件真的改了」一起藏掉。实测：`.docx`/`.xlsx`/`.pdf` 这类二进制**不受影响**（git 的二进制启发式挡住了），但那是启发式不是保证。同族提醒：`.gitattributes`、`autocrlf=input`、以及 CI runner 的默认值都可能在不同宿主上给出不同字节。
 
+- **`zipfile.namelist()` 不是平台无关的**（2026-08-04，L3 语料实证）。CPython 的 `ZipInfo.__init__` 里有 `if os.sep != "/" and os.sep in filename: filename = filename.replace(os.sep, "/")` ⇒ 一个（违反 ZIP/OOXML 规范地）把条目存成 `xl\workbook.xml` 的档案，**在 Windows 上读回 `xl/workbook.xml`，在 POSIX 上读回 `xl\workbook.xml`**。野外真有这种文件（calamine 语料的 `issue_530.xlsx`）。后果实测：同一份字节，同一个检查，**Windows 放行 / macOS 判「缺 xl/workbook.xml」** —— 两台机器的分母不一样，而两边看起来都「正常工作」。⇒ 凡按名字找 OOXML part 的代码，自己 `n.replace("\\", "/")` 归一化，不要依赖 zipfile 的平台行为。**连带结论：靠 openpyxl/python-docx 打开这类文件的能力也是平台相关的**（它们同样走 zipfile），本仓库有意未改技能行为——文件本身违规，两种行为都说得通，但要知道它不一致。
+- **子进程崩溃时打 stderr 的第一行等于什么都没打**：裸 traceback 的第一行永远是 `Traceback (most recent call last):`，异常类型与消息在**最后一行**。本仓库为此白烧过一轮 CI（四份只在 Windows 上崩的文件，日志里全是那句废话，机制只能靠本地反推）。⇒ 报告里遇到 traceback 取**最后一行**。
+
 ## 13. 桌面组件测试（vitest + jsdom）
 
 - **页面级组件测试：mock hook 必须返回稳定引用，否则无限重渲染循环伪装成「测试卡死」**：被测组件若有以 hook 返回值为依赖的 effect（如 HomePage 的 `useEffect(..., [agents])` 里 setState），而 mock 每次渲染返回**新对象/新数组**（`useAgents: () => ({ agents: [] })`），依赖身份每轮都变 → setState → 再渲染 → 死循环。症状极具迷惑性：vitest worker 300% CPU 空转数分钟不退出、无任何报错输出。写法：工厂内定义一次 `const value = {...}; return { useX: () => value }`。（`home-workspace-indicator.test.tsx`，2026-07-03 实测）
