@@ -140,6 +140,11 @@ class Step:
     def __init__(self, name: str, cmd: list[str], rc: int, out: str, err: str, secs: float):
         self.name, self.cmd, self.rc = name, cmd, rc
         self.out, self.err, self.secs = out, err, secs
+        self.mem_bounded = False       # 这一步有没有被 ulimit 包起来（仅 Linux）
+        # 这一步**当时**的时间预算。读全局的话，预算被临时改过再改回时报告会印错
+        # 数字（控制臂把预算压到 60s，why() 却照旧印 120s）—— 报告印错数字，
+        # 与被测对象印错数字是同一类问题。
+        self.budget = STEP_TIMEOUT
 
     @property
     def crashed(self) -> bool:
@@ -151,6 +156,8 @@ class Step:
         """
         if self.hit_mem_cap:
             return False          # 见 hit_mem_cap：这是门禁的局限，单独归类
+        if self.hit_ring_mem_bound:
+            return True           # 与超时同类
         return TRACEBACK_MARK in self.err or _died_hard(self.rc)
 
     @property
@@ -180,6 +187,12 @@ class Step:
         allowed = self.ALLOWED_RC.get(self.name, (0, 2))
         return self.rc not in allowed and not self.crashed
 
+    @property
+    def hit_ring_mem_bound(self) -> bool:
+        """撞的是**环步骤**的内存上界 —— 与超时同类，算被测实现的属性。"""
+        return self.mem_bounded and self.rc != 0 and any(
+            m in (self.err or "") for m in RING_MEM_MARKS)
+
     def why(self) -> str:
         """一行说清楚它为什么没过。
 
@@ -189,7 +202,10 @@ class Step:
         （异常类型与消息就在那儿）。
         """
         if self.rc == -9:
-            return f"{self.name}: 超时 >{STEP_TIMEOUT}s"
+            return f"{self.name}: 超时 >{self.budget}s"
+        if self.hit_ring_mem_bound:
+            return (f"{self.name}: 撞 {RING_MEM_LIMIT_KB // 1024 ** 2}GB 内存上界"
+                    f"（与超时同类：这个实现处理不了这份文件）")
         lines = [x.strip() for x in (self.err or "").splitlines() if x.strip()]
         tb = TRACEBACK_MARK in (self.err or "")
         pick = (lines[-1] if tb and lines else (lines[0] if lines else ""))
@@ -230,9 +246,36 @@ def self_cap_memory() -> str:
         return f"nocap({type(e).__name__})"
 
 
+# 环里的**外部脚本**（技能脚本、旧 doc-edit）的内存上界。
+# ⚠️ 只在 Linux 生效：macOS 的 RLIMIT_AS 设不了，Windows 没有 ulimit。
+# 走 `sh -c 'ulimit -v …; exec "$@"'` 而**不是** preexec_fn —— 后者在多线程父进程里
+# 不安全，而这个门禁正是线程池并行的。
+#
+# 为什么必须有：L3 语料里 `issue_174.xlsx`（142 KB，但 max_row=1048576）进入**基线臂**
+# 时，旧 `xlsx_read.py` 会 `openpyxl.load_workbook()` 全量加载它 —— 本机同类加载实测
+# 4.7 GB。CI 上 ubuntu runner 因此被打死两次（exit 143 + shutdown signal），
+# **两次都停在进度条的同一个字符上**，而那一刻唯一无界的进程就是它。
+#
+# 撞上界与**超时同等对待，都记崩溃**：对被测实现而言「处理不了这份文件」是它的属性
+# （新 xlsx_read 在同一份文件上 3.2 秒、几百 MB 就干完了）。这与 L2 worker 撞我自己
+# 设的上限不同 —— 那一个才是「门禁的局限」。
+RING_MEM_LIMIT_KB = 3 * 1024 * 1024
+RING_MEM_MARKS = ("MemoryError", "Cannot allocate memory", "std::bad_alloc",
+                  "Out of memory")
+
+
+def _bounded(cmd: list[str]) -> tuple[list[str], bool]:
+    if not sys.platform.startswith("linux"):
+        return cmd, False
+    return (["sh", "-c", f'ulimit -v {RING_MEM_LIMIT_KB}; exec "$@"', "sh", *cmd], True)
+
+
 def run_step(name: str, cmd: list[str], cwd: Path | None = None,
-             stdin: str | None = None) -> Step:
+             stdin: str | None = None, bound_memory: bool = False) -> Step:
     t0 = time.time()
+    bounded = False
+    if bound_memory:
+        cmd, bounded = _bounded(cmd)
     try:
         r = subprocess.run(cmd, cwd=str(cwd) if cwd else None, capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
@@ -241,7 +284,9 @@ def run_step(name: str, cmd: list[str], cwd: Path | None = None,
     except subprocess.TimeoutExpired as e:
         rc, out, err = -9, (e.stdout or b"").decode("utf-8", "replace") if isinstance(
             e.stdout, bytes) else (e.stdout or ""), f"timeout after {STEP_TIMEOUT}s"
-    return Step(name, cmd, rc, out, err, time.time() - t0)
+    st = Step(name, cmd, rc, out, err, time.time() - t0)
+    st.mem_bounded = bounded
+    return st
 
 
 # ══ 环的定义 ═══════════════════════════════════════════════════════════════════
@@ -522,7 +567,7 @@ def run_one(kind: str, src: Path, arm: str, base: Path | None,
             res.reasons = ["该臂没有对应入口"]
             return res
         for name, cmd in ring:
-            st = run_step(name, cmd)
+            st = run_step(name, cmd, bound_memory=True)
             res.steps.append(st)
             res.secs += st.secs
             if st.hit_mem_cap:
@@ -1622,6 +1667,37 @@ def selftest() -> int:
         expect("C24", "VALIDATE" in m24 and r_on.outcome != Outcome.REFUSED
                and r_off.outcome == Outcome.REFUSED,
                f"输入缺 w:tblPr：门控开 {r_on.outcome} / 关 {r_off.outcome}")
+
+        # ── C30 环里的步骤在 Linux 上有内存上界，撞上界与超时同等记崩溃。
+        #     ⚠️ 两平台走**同一条**代码路径（都调 run_step(bound_memory=True)），
+        #     只有期望值按「这台机器包得上 ulimit 吗」分叉 —— C28 的教训：
+        #     按平台提前 return 会让那一支在本机一行都不执行。
+        def c30():
+            hog = td / "ringhog.py"
+            hog.write_text(
+                "b = []\n"
+                "while True:\n"
+                "    b.append(bytearray(64 * 1024 * 1024))\n", encoding="utf-8")
+            saved, gl = STEP_TIMEOUT, globals()
+            gl["STEP_TIMEOUT"] = 60
+            try:
+                st = run_step("edit", [sys.executable, str(hog)], bound_memory=True)
+            finally:
+                gl["STEP_TIMEOUT"] = saved
+            linux = sys.platform.startswith("linux")
+            if linux:
+                ok = st.mem_bounded and st.hit_ring_mem_bound and st.crashed \
+                    and not st.hit_mem_cap
+                want = "撞上界并记崩溃（与超时同类）"
+            else:
+                # 包不上就如实说没有上界；此时它只会撞 60s 超时（也算崩溃）
+                ok = (not st.mem_bounded) and st.crashed and not st.hit_ring_mem_bound
+                want = "本平台没有内存上界，只靠超时兜底"
+            expect("C30", ok,
+                   f"[{sys.platform}] 期望「{want}」→ 包上界={st.mem_bounded} "
+                   f"撞上界={st.hit_ring_mem_bound} 崩溃={st.crashed} rc={st.rc}；"
+                   f"{st.why()[:80]}")
+        guarded("C30", c30)
 
         # ── C29 输入门必须与平台无关：一个把条目名存成反斜杠的（违规但真实存在的）
         #     档案，在 Windows 与 POSIX 上 `zipfile.namelist()` 给的名字是不同的
