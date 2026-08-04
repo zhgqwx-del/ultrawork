@@ -1341,16 +1341,13 @@ def selftest() -> int:
 
         # ── C28 L2 worker 自设的内存上限：撞上限要归成「门禁的局限」，
         #     绝不能记成「技能崩了」。控制臂 = 把上限压到 64MB（必然撞上）。
-        #     ⚠️ macOS 设不上 RLIMIT_AS —— 那就如实打印「本平台没有上限」，
-        #     而不是假装验过了。一条什么也没做的控制不许安静地绿。
+        #     ⚠️ **两个平台走同一条代码路径**，只有期望值不同 —— 第一版按平台提前
+        #     return，于是「设得上上限」那一支在 macOS 上一行都不执行，
+        #     里面一个 `st.stdout`（字段其实叫 `out`）的笔误直到 CI 才现形。
+        #     不留从未执行过的平台分支，连控制自己也不许留。
         def c28():
             import os as _os
-            probe = self_cap_memory()
-            if probe.startswith("nocap"):
-                expect("C28", True, f"[{sys.platform}] {probe} —— "
-                                    f"**本平台设不了内存上限**（如实说；"
-                                    f"L2 worker 只有 120s 时间边界）")
-                return
+            capable = not self_cap_memory().startswith("nocap")
             env = dict(_os.environ, ULTRAWORK_L3_MEMCAP_MB="64")
             r = subprocess.run(
                 [sys.executable, str(Path(__file__).resolve()), "--l2-worker"],
@@ -1361,14 +1358,20 @@ def selftest() -> int:
             st = Step("l2", [], r.returncode, r.stdout, r.stderr, 0)
             tail = " | ".join(x.strip() for x in (r.stderr or "").splitlines()
                               if x.strip())[-200:]
-            # ⚠️ 观察到什么就打什么。第一版只打判定不打观察值，CI 上红了一次
-            # 我却看不出 worker 到底死成什么样 —— 一条不可诊断的控制会浪费一整轮 CI。
-            expect("C28", not st.stdout and st.hit_mem_cap
-                   and not st.crashed and not st.refused,
-                   f"[{sys.platform}] 上限压到 64MB → rc={r.returncode} "
-                   f"hit_mem_cap={st.hit_mem_cap} crashed={st.crashed} "
-                   f"refused={st.refused} stdout空={not st.stdout}；"
-                   f"stderr: {tail or '(空)'}")
+            if capable:
+                # 设得上上限 ⇒ 必须撞上、必须归成门禁局限、必须没有产出
+                ok = (not st.out) and st.hit_mem_cap and not st.crashed \
+                    and not st.refused
+                want = "撞上限并归门禁局限"
+            else:
+                # 设不上上限 ⇒ 如实说这台机器没有内存边界，且 worker 应当正常干完活
+                ok = bool(st.out) and not st.hit_mem_cap and st.rc == 0
+                want = "本平台无内存上限，worker 正常完成"
+            expect("C28", ok,
+                   f"[{sys.platform}] 可设上限={capable} 期望「{want}」→ "
+                   f"rc={r.returncode} hit_mem_cap={st.hit_mem_cap} "
+                   f"crashed={st.crashed} refused={st.refused} "
+                   f"有产出={bool(st.out)}；stderr: {tail or '(空)'}")
         guarded("C28", c28)
 
         # ── C27 `text=True` 不给 encoding 是个**静默**陷阱，不是报错。
