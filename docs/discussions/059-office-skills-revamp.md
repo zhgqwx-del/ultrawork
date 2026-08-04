@@ -2713,3 +2713,21 @@ encode character '第'`；同条件下有防线的 `docx` 技能 exit=0 / stdout
 **这一条给「门禁全绿 ≠ 没缺陷」补了个新形状**：前面记的三问是「换角度提问」，
 这条是**换机器**。本机三平台兼容性扫描（零 `HOME`/`/tmp`/unix-only 命令）**全过**，
 因为它扫的是路径与命令，而这个缺陷在**编码**上。标尺 → **10/0（11 断言）**。
+
+**修完之后 CI 又红了一次，这次红的是我的控制臂而不是产品**：`bc5f17e7` 上 Windows 后，
+干净臂通过了（产品修复生效），但 `LIVE: 撤掉 UTF-8 防线` 那条**多点亮了 V0 和 X1**。
+原因是**这条控制的正确 cascade 依赖平台**：在 UTF-8 宿主上，带不带防线行为完全相同，
+只有强制 ANSI 那一下（C1）分得出；而在**默认捕获编码就是 ANSI 的宿主（Windows）上，
+撤掉防线会让脚本的每一次运行都崩**，所以 V0/X1 本来就该跟着亮 —— 那是真实的 Windows
+缺陷，不是需要被注释解释掉的 cascade。
+
+修法不是放宽期望集，是**把它从实测量出来**：`default_captured_encoding()` 起一个子进程
+问 `sys.stdout.encoding`，据此选 `{C1}` 还是 `{C1,V0,X1}`，并把量到的编码**打印在结果行里**。
+⚠️ **然后我把两个分支都在本机跑过了**（`PYTHONIOENCODING=cp1252` 让整套门禁进入 Windows
+那个条件）：utf-8 宿主 10/0，cp1252 宿主 10/0 —— **不留「从未执行过的平台分支」**，
+那是这个仓库反复付过学费的形状。
+
+**同一跑里 `node (ubuntu-latest)` 也红了，但那是已知 flake，不是本刀**：
+失败的是 `command-selector.test.tsx > D: Enter still picks the highlighted command`。
+证据不是记忆：本刀两个 commit **一个相关文件都没碰**（`git show --name-only` 核对），
+而上一跑同一 job 同样的代码是绿的。

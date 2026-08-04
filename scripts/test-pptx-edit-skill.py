@@ -167,6 +167,26 @@ def run(script_dir: Path, name: str, *args: str, env: dict | None = None) -> dic
 ANSI_ENV = {"PYTHONIOENCODING": "cp1252"}
 
 
+def default_captured_encoding() -> str:
+    """What a child process ACTUALLY gets for stdout when its output is captured.
+
+    Measured, not assumed: on macOS/Linux this is utf-8, on Windows it is the
+    machine's ANSI code page. It decides how much of the skill breaks when the
+    UTF-8 reconfigure is removed — on a UTF-8 host only the forced-ANSI assertion
+    (C1) can see the difference, while on Windows EVERY run of the script breaks,
+    because there the default already is the hostile code page. Declaring one
+    fixed cascade for that control would be wrong on one of the two platforms;
+    the first CI run of this gate proved it by going red on Windows alone.
+    """
+    proc = subprocess.run([PY, "-c", "import sys; print(sys.stdout.encoding)"],
+                          capture_output=True, text=True)
+    return (proc.stdout or "").strip().lower()
+
+
+CAPTURED_ENC = default_captured_encoding()
+HOST_CAPTURES_UTF8 = CAPTURED_ENC.replace("-", "") == "utf8"
+
+
 def sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
@@ -598,9 +618,15 @@ FLAWS = [
     ("LIVE: pptx_read learns to walk tables", live_read_walks_tables, {"L1"},
      "L4 does NOT fire: reading tables changes nothing about what --replace does"),
     ("LIVE: pptx_read without the UTF-8 reconfigure (as it shipped until 2026-08-04)",
-     live_no_utf8_guard, {"C1"},
-     "V0/X1 do NOT fire: on a UTF-8 machine the unguarded script behaves identically "
-     "— only the forced ANSI code page in C1 can tell the two implementations apart"),
+     live_no_utf8_guard,
+     {"C1"} if HOST_CAPTURES_UTF8 else {"C1", "V0", "X1"},
+     f"this host hands a captured child stdout `{CAPTURED_ENC}`. "
+     + ("On a UTF-8 host V0/X1 do NOT fire — the guarded and unguarded scripts behave "
+        "identically and only the forced ANSI code page in C1 can tell them apart."
+        if HOST_CAPTURES_UTF8 else
+        "On a host whose default captured encoding is ALREADY the hostile code page, "
+        "removing the guard breaks EVERY run of the script, so V0/X1 fire too — that "
+        "is the real Windows defect, not a cascade to be explained away.")),
     ("CONTROL: fixture loses the table", fixture_no_table, {"V0", "L4"},
      "L4 also fires: with no second copy there is nothing for it to count"),
     ("CONTROL: fixture phrase is no longer split across runs", fixture_one_run,
@@ -671,7 +697,8 @@ def main() -> int:
             for d in r["detail"]:
                 print(f"        {d}")
         print(f"\n[pptx-edit-skill] {passed} passed, {failed} failed, "
-              f"{len(CHECKS)} assertions")
+              f"{len(CHECKS)} assertions "
+              f"(captured-stdout encoding on this host: {CAPTURED_ENC})")
     return 0 if failed == 0 else 1
 
 
