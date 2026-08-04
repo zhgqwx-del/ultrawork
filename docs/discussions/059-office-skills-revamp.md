@@ -2731,3 +2731,8 @@ encode character '第'`；同条件下有防线的 `docx` 技能 exit=0 / stdout
 失败的是 `command-selector.test.tsx > D: Enter still picks the highlighted command`。
 证据不是记忆：本刀两个 commit **一个相关文件都没碰**（`git show --name-only` 核对），
 而上一跑同一 job 同样的代码是绿的。
+
+**第三跑全绿（run 30883555929，sha `7db1c1da`，10/10）**。并且核实了「绿」不是沉默：
+三平台各自打印出自己量到的编码 —— **Windows `cp1252` / ubuntu `utf-8` / macOS `utf-8`**，
+即那条平台相关的 cascade 在 CI 上**两个分支都真的执行过**，不是有一条被跳过。
+第二跑里那条 `node (ubuntu-latest)` 的 flake 这一跑**没有复现**（与记录的间歇性一致）。
