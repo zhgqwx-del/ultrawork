@@ -160,7 +160,9 @@ class Step:
         只对 L2 worker 成立：上限是它自己给自己设的。环里的外部脚本**没有**上限，
         它们真的抛 MemoryError 时那是一次真实的资源失败，不该被我洗成「门禁局限」。
         """
-        return self.name == "l2" and MEMCAP_MARK in self.err
+        if self.name != "l2":
+            return False
+        return self.rc == MEMCAP_RC or any(m in self.err for m in MEMCAP_MARKS)
 
     @property
     def refused(self) -> bool:
@@ -201,7 +203,12 @@ class Step:
 # **所以这个上限在 Windows 上没有生效，别当成三平台都有的保证。**
 STEP_MEM_LIMIT = int(__import__("os").environ.get(
     "ULTRAWORK_L3_MEMCAP_MB", str(3 * 1024))) * 1024 ** 2
-MEMCAP_MARK = "MemoryError"
+MEMCAP_MARK = "__L3_MEMCAP__"          # worker 自己打的、确定的标记
+MEMCAP_RC = 3                          # 以及一个不与 0/1/2 撞车的退出码
+# 分配失败在不同层会以不同措辞出现：Python 抛 MemoryError，C 扩展可能是
+# glibc / libstdc++ 的话。全都算「撞上限」，因为它们说的是同一件事。
+MEMCAP_MARKS = (MEMCAP_MARK, "MemoryError", "Cannot allocate memory",
+                "Out of memory", "std::bad_alloc")
 
 
 def self_cap_memory() -> str:
@@ -363,6 +370,16 @@ def l2_findings(path: Path, only: set[str], baseline: Path | None = None,
 
 def l2_worker() -> int:
     print(self_cap_memory(), file=sys.stderr)   # 让「有没有上限」在结果里看得见
+    try:
+        return _l2_worker_body()
+    except MemoryError:
+        # 撞上限最可能发生在 import lxml/openpyxl/fitz 那一步，所以兜的是整个函数体。
+        # 打一个**确定的**标记而不是指望上游措辞 —— 上游措辞是会变的。
+        print(MEMCAP_MARK, file=sys.stderr)
+        return MEMCAP_RC
+
+
+def _l2_worker_body() -> int:
     spec = json.loads(sys.stdin.read())
     expect: dict = {}
     if spec["baseline"]:
@@ -1341,11 +1358,17 @@ def selftest() -> int:
                                   "only": ["X1"], "baseline": None, "touched": []}),
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", env=env)
-            hit = MEMCAP_MARK in r.stderr
             st = Step("l2", [], r.returncode, r.stdout, r.stderr, 0)
-            expect("C28", hit and st.hit_mem_cap and not st.crashed and not st.refused,
-                   f"[{sys.platform}] 上限压到 64MB → 撞上限={hit}，"
-                   f"归类 crashed={st.crashed} refused={st.refused}（都应为 False）")
+            tail = " | ".join(x.strip() for x in (r.stderr or "").splitlines()
+                              if x.strip())[-200:]
+            # ⚠️ 观察到什么就打什么。第一版只打判定不打观察值，CI 上红了一次
+            # 我却看不出 worker 到底死成什么样 —— 一条不可诊断的控制会浪费一整轮 CI。
+            expect("C28", not st.stdout and st.hit_mem_cap
+                   and not st.crashed and not st.refused,
+                   f"[{sys.platform}] 上限压到 64MB → rc={r.returncode} "
+                   f"hit_mem_cap={st.hit_mem_cap} crashed={st.crashed} "
+                   f"refused={st.refused} stdout空={not st.stdout}；"
+                   f"stderr: {tail or '(空)'}")
         guarded("C28", c28)
 
         # ── C27 `text=True` 不给 encoding 是个**静默**陷阱，不是报错。
@@ -1364,14 +1387,25 @@ def selftest() -> int:
             # 所以随便一句中文只会被静默解成**乱码**（内容悄悄错了，不报错）。
             # 探针的字是实测挑的：「不」= E4 B8 8D，命中 cp1252 未定义字节 0x8D；
             # CI 那次撞上的是 0x90。
+            # ⚠️ 探针必须**绕过子进程自己的文本编码**直接写原始字节。
+            # 第一版用 print()，在 Windows 上子进程按 cp1252 编码 stdout，打第一个
+            # 中文字就 UnicodeEncodeError 死掉 ⇒ 管道上**一个字节都没有**，
+            # 父进程拿到 ''，解码路径压根没被走到 —— 一条测编码陷阱的控制，
+            # 自己被同一个编码陷阱废掉了（S6 那个缺陷的形状，长在控制身上）。
+            # 写 sys.stdout.buffer 之后，管道上的字节在三平台完全一致，
+            # 唯一变量才是**父进程怎么解码**，也正是要测的东西。
             probe = td / "cjk_out.py"
-            probe.write_text("print('不可解码探针')\n", encoding="utf-8")
+            probe.write_text(
+                "import sys; sys.stdout.buffer.write('不可解码探针'.encode('utf-8'))\n",
+                encoding="utf-8")
             plain = td / "mojibake_out.py"
             # 乱码臂的字也是**实测挑的**：它的每个字节都必须能被 cp1252 映射，
             # 否则这一臂也会变成「解不动」那一臂，两种坏法就分不开了。
             # （第一版随手写「中文乱码探针」，「码」= E7 A0 81 命中未定义字节 0x81，
             #   控制当场自爆 —— 断言判红三次都是我对被测对象的描述错了。）
-            plain.write_text("print('乮垺敱知')\n", encoding="utf-8")
+            plain.write_text(
+                "import sys; sys.stdout.buffer.write('乮垺敱知'.encode('utf-8'))\n",
+                encoding="utf-8")
 
             def run_as(f, enc, **kw):
                 return subprocess.run([sys.executable, str(f)], capture_output=True,
@@ -1399,7 +1433,7 @@ def selftest() -> int:
                    and good.stdout is not None and "不可解码探针" in good.stdout,
                    f"[{sys.platform}] 未定义字节 → 量到 {observed}（该平台应为 "
                    f"{expected}）：{branch}；可映射字节 → "
-                   f"{moji.stdout.strip()[:12]!r} 内容悄悄错了；utf-8 → 正确")
+                   f"{(moji.stdout or '').strip()[:12]!r} 内容悄悄错了；utf-8 → 正确")
         guarded("C27", c27)
 
         # ── C9 基线臂真的取得到，且与新臂**不是同一个东西**
