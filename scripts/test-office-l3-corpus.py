@@ -1367,7 +1367,12 @@ def selftest() -> int:
         def c28():
             import os as _os
             capable = not self_cap_memory().startswith("nocap")
-            env = dict(_os.environ, ULTRAWORK_L3_MEMCAP_MB="64")
+            # 8MB 而不是 64MB：CI 第五轮实测 **64MB 不够小** —— worker 打印了
+            # `cap=64MB` 之后照样干完了活，因为这条路径上的库（openpyxl 是纯 Python、
+            # fitz 只在 pdf 检查里才 import）加起来没超过 64MB。
+            # 8MB 一定低于解释器自身已经映射的地址空间 ⇒ 之后任何新映射都必然失败。
+            # **这个数字是量出来的，不是拍的。**
+            env = dict(_os.environ, ULTRAWORK_L3_MEMCAP_MB="8")
             r = subprocess.run(
                 [sys.executable, str(Path(__file__).resolve()), "--l2-worker"],
                 input=json.dumps({"path": str(SKILLS / "xlsx/fixtures/book.xlsx"),
@@ -1387,7 +1392,7 @@ def selftest() -> int:
                 ok = bool(st.out) and not st.hit_mem_cap and st.rc == 0
                 want = "本平台无内存上限，worker 正常完成"
             expect("C28", ok,
-                   f"[{sys.platform}] 可设上限={capable} 期望「{want}」→ "
+                   f"[{sys.platform}] 可设上限={capable} 上限=8MB 期望「{want}」→ "
                    f"rc={r.returncode} hit_mem_cap={st.hit_mem_cap} "
                    f"crashed={st.crashed} refused={st.refused} "
                    f"有产出={bool(st.out)}；stderr: {tail or '(空)'}")
