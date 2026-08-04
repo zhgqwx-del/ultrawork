@@ -6,9 +6,13 @@ description: >
   presentation / slides / deck / slideshow, either from a topic or from source
   documents (PDF/DOCX/XLSX/PPTX/URL/Markdown). Produces a styled single-file HTML deck
   plus PDF, an image-type PPTX (with speaker notes) and — optionally — an editable PPTX
-  (text/shapes native in PowerPoint). Not for beautifying/templating an EXISTING .pptx
-  1:1 or building reusable template packs — for those, ppt-master can be installed from
-  设置 → 技能 (see routing table below).
+  (text/shapes native in PowerPoint). Route by the DELIVERABLE, not by the source: a
+  deck coming out means this skill whatever went in, so 「把这份 PDF/Word/Excel 做成 PPT」
+  is this skill and not `pdf`/`docx`/`xlsx` — those three are for when the thing being
+  delivered is a PDF/Word/Excel file itself. Not for beautifying/templating an EXISTING
+  .pptx 1:1 or building reusable template packs — for those, ppt-master can be installed
+  from 设置 → 技能; not for changing a few words in an existing deck or appending one
+  slide to it — that is `pptx-edit` (see routing table below).
 x-requires: [python3.10+, python-pptx, pillow, chrome-or-edge]
 x-requires-optional: [node, pdfplumber, pypdf, pypdfium2, openpyxl, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, curl_cffi]
 ---
@@ -33,9 +37,15 @@ x-requires-optional: [node, pdfplumber, pypdf, pypdfium2, openpyxl, mammoth, ebo
 
 ## 路由边界（先于一切判断）
 
+**按产出物判，不按源判**：用户要拿到的东西是 deck，就是本技能——源是 PDF / Word / Excel /
+另一份 PPT / 网页都不影响。反过来，源是 PPT 而产出物是 Word/Excel/PDF，那也不是本技能。
+
 | 用户意图 | 归属 |
 |---|---|
 | 做PPT / 生成PPT / 演示文稿 / 幻灯片 / slides / deck——从主题或文档生成新 deck（HTML / PDF / 图片型 pptx / 可编辑 pptx 交付） | ✅ 本技能（做 PPT 的默认技能） |
+| 「把这份 PDF / Word / Excel 做成 PPT」——源是别的格式，产出物是 deck | ✅ 本技能（用 `source_to_md/` 读源，见 Phase 1） |
+| 产出物是 **Word / Excel / PDF 文件本身**（哪怕源是一份 PPT） | ❌ 分别是 `docx` / `xlsx` / `pdf` 技能 |
+| 已有 pptx，只是**改几处文字 / 追加一页 / 看看里面写了什么** | ❌ `pptx-edit` 技能（薄工具，不重做版式） |
 | 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 | ❌ 非本技能范围：告知用户可在「设置 → 技能」安装 `ppt-master` 处理此类需求（安装后同名遮蔽会让它接管这些意图），并停止本技能 |
 
 **「生成后还想改」有两条路，先讲清再选交付形态**：

@@ -13,8 +13,12 @@
  *   7. requirements.md 新鲜度（warning）：落后 decisions/ 最新提交超 45 天提示回填（git 时间，取不到则跳过）
  *   8. 版本一致性：root/desktop package.json、tauri.conf.json、Cargo.toml、app-version.ts 五处版本号相同
  *   9. 繁体中文生成产物新鲜度：i18n-zh-hant.generated.ts == gen-zh-hant.ts 从 zh-Hans 复算结果（ADR-058 D3）
+ *  10. 内置技能 SKILL.md 指向的**技能内文件**必须真的随包发布（059 §1 的 `doc-export` 断链同一类）
+ *  11. 内置技能 SKILL.md 里的**跨技能引用**（`x` 技能 / `x` skill / that is `x`）必须指向真实存在的
+ *      技能或设置页可安装技能——description 是模型路由的唯一依据，指错就静默退化成不用技能硬写
  *
  * 用法：bun run --bun scripts/check-docs.ts
+ *       bun run --bun scripts/check-docs.ts --selftest   # 只跑 §11 的正负控制（11 条）
  * 退出码：0 = 通过；1 = 有硬性漂移（CI / pre-commit 可据此拦截；CI job 见 .github/workflows/ci.yml docs）。
  */
 import { Glob } from "bun"
@@ -51,6 +55,80 @@ function stripFences(text: string): string {
     out.push(line)
   }
   return out.join("\n")
+}
+
+/**
+ * 一行 SKILL.md 文本里「被当作技能名使用」的 token（供 §11 跨技能引用检查）。
+ *
+ * 只认三种写法——都是历史上真出过缺陷的形态，不做宽泛猜测：
+ *   ① `X` 技能        （059 §1 的 `doc-export` 断链原文就是「改用 `doc-export` 技能」）
+ *   ② `X` skill       （doc-edit 旧 description 原文 "use the `doc-export` skill"）
+ *   ③ that is / use the / install `X`   （pdf 与 xlsx 的 description 用的就是这个句式，
+ *      2026-08-04 doc-edit→pptx-edit 改名时那两处会当场变断链）
+ * 外加 ①的列举写法 `a` / `b` / `c` 技能，以及中文引导词（改用/安装/请用/那是）——
+ * **中文引导词额外要求同一行出现「技能」二字**：实测 deckcraft 的跨平台启动器说明写着
+ * 「就改用 `python`」，指的是命令名；不加这道闸它会误报，而加了也不会漏掉 `doc-export`
+ * 那条真缺陷（它本来就带「技能」二字）。
+ *
+ * token 收紧成 ^[a-z][a-z0-9-]*$：带点/斜杠/下划线的是文件名或工具名，不是技能名——
+ * skill-creator 里的 `package_skill.py` / `eval_metadata.json` / `present_files` 因此不误报。
+ */
+function skillRefsInLine(line: string): Set<string> {
+  const NAME = String.raw`\`([a-z][a-z0-9-]{1,40})\``
+  const forms = [
+    new RegExp(NAME + String.raw`(?:\s*/\s*\`[a-z][a-z0-9-]{1,40}\`)*\s*技能`, "g"),
+    new RegExp(NAME + String.raw`\s+skill\b`, "gi"),
+    // `install` needs the package-manager forms excluded, or the day someone writes
+    // "pip install `md-exporter`" this check starts hunting for a skill by that name.
+    new RegExp(
+      String.raw`(?:that is|use the|(?<!pip |npm |brew |uv |apt |cargo |yarn |pnpm |go )install)\s+` + NAME,
+      "gi",
+    ),
+  ]
+  const listRe = new RegExp(String.raw`\`([a-z][a-z0-9-]{1,40})\`(?=\s*/\s*\`)`, "g")
+  const cnLead = new RegExp(String.raw`(?:那是|改用|安装|请用)\s*` + NAME, "g")
+  const refs = new Set<string>()
+  for (const re of forms) for (const m of line.matchAll(re)) refs.add(m[1])
+  if (line.includes("技能")) {
+    for (const m of line.matchAll(listRe)) refs.add(m[1])
+    for (const m of line.matchAll(cnLead)) refs.add(m[1])
+  }
+  return refs
+}
+
+// ── --selftest：§11 跨技能引用扫描的正负控制（常驻，CI 与门禁同跑） ──────
+// 负向控制复刻的是**真实出过的错误写法**（不是随便一种破坏）：059 §1 的 `doc-export`
+// 三处原文，以及本刀改名后 pdf/xlsx description 里会变成断链的 "that is `doc-edit`"。
+// 正向控制复刻的是**已经误报过一次的那些行**——`python` 那条就是这个检查第一版判红的。
+// 每条都打印结果：沉默与通过长得一样。
+if (process.argv.includes("--selftest")) {
+  const DIRS = new Set(["docx", "xlsx", "pdf", "deckcraft", "pptx-edit", "skill-creator"])
+  const INSTALLABLE = new Set(["ppt-master"])
+  const resolves = (line: string) =>
+    [...skillRefsInLine(line)].filter((r) => !DIRS.has(r) && !INSTALLABLE.has(r))
+  // [描述, 行, 期望打红的名字（null = 必须不打红）]
+  const cases: [string, string, string | null][] = [
+    ["负①059 §1 断链原文（中文·带「技能」）", "- 需要**从零按 Markdown 生成**文档 → 改用 `doc-export` 技能（本技能不做生成）", "doc-export"],
+    ["负②旧 description 原文（英文 skill）", "For generating new documents from Markdown use the `doc-export` skill; for PDF use the `pdf` skill.", "doc-export"],
+    ["负③改名后 pdf/xlsx 的 that-is 句式", "  editing — that is `doc-edit`.", "doc-edit"],
+    ["负④路由表格里的 ❌ 指向", "| 已有 pptx，只改文字 | ❌ `ghost-skill` 技能（薄工具） |", "ghost-skill"],
+    ["负⑤列举写法只坏中间一个", "| 产出物是 Word / Excel / PDF | ❌ 分别是 `docx` / `ghost-skill` / `pdf` 技能 |", "ghost-skill"],
+    ["负⑥install 句式", "install `ghost-master` from 设置 → 技能", "ghost-master"],
+    ["正①命令名不是技能（这条真误报过）", "第一步先跑 `python3 --version`；若报 command not found 就改用 `python`，", null],
+    ["正②可安装技能是合法目标", "告知用户可在「设置 → 技能」安装 `ppt-master` 处理此类需求", null],
+    ["正③文件名/工具名不是技能", "The `package_skill.py` script works anywhere; see the `assertions` field.", null],
+    ["正④真实存在的技能引用", "not for .docx — that is `docx`; not for .pptx — that is `pptx-edit`.", null],
+    ["正⑤包管理器的 install 不是技能引用", "Run `pip install `md-exporter`` first, or brew install `pandoc`.", null],
+  ]
+  let bad = 0
+  for (const [desc, line, expect] of cases) {
+    const got = resolves(line)
+    const ok = expect === null ? got.length === 0 : got.includes(expect)
+    if (!ok) bad++
+    console.log(`  ${ok ? "✅" : "❌"} ${desc} → ${got.length ? got.join(",") : "(无)"}` + (ok ? "" : `  期望：${expect ?? "(无)"}`))
+  }
+  console.log(bad === 0 ? `✅ §11 自检 ${cases.length}/${cases.length} 通过` : `❌ §11 自检 ${bad} 条失败`)
+  process.exit(bad === 0 ? 0 : 1)
 }
 
 // ── 0. 活文档一次性读入（各检查共享，勿在检查块里重复读盘） ──────────
@@ -341,6 +419,56 @@ if (await memFile.exists()) {
           errors.push(
             `skills/builtin/${name.name}/SKILL.md 指向 \`${ref}\`，但它不在该技能的发布树里 → ` +
               `用户装完照着做会扑空；改成不随包发布的说明，或把文件放进技能目录。`,
+          )
+        }
+      }
+    }
+  }
+}
+
+// ── 11. SKILL.md 里的**跨技能引用**必须指向真实存在的技能 ─────────────
+// §10 管的是「技能内的文件路径」，这一条管的是「技能名」。两者是同一个缺陷的两半：
+// description 是模型路由的唯一依据，指向一个不存在的技能，agent 找不到就静默退化成
+// 不用技能硬写。059 §1 记的 `doc-export` 断链（doc-edit/SKILL.md 三处）是靠人肉读
+// SKILL.md 才发现的；2026-08-04 改名 doc-edit→pptx-edit 时，pdf/ 与 xlsx/ 的
+// description 里又各有一处「that is `doc-edit`」会当场变成断链。没有这条检查，
+// 这类缺陷每次动路由都会再来一次。
+//
+// 合法目标有两类：① skills/builtin/ 下真实存在的目录；② 设置页「可安装」目录里的
+// curated 技能（如 ppt-master —— 它 ADR-061 起不再内置，但路由到它是对的）。第二类
+// 从 Settings.tsx 的 INSTALLABLE_SKILLS 现读，避免这里的名单自己腐烂。
+{
+  const builtinRoot = path.join(rootDir, "skills/builtin")
+  const settings = path.join(rootDir, "packages/client/desktop/src/pages/Settings.tsx")
+  const installable = new Set<string>()
+  if (await Bun.file(settings).exists()) {
+    const text = await Bun.file(settings).text()
+    // \b 是必要的：不加的话 `const INSTALLABLE_SKILLS_RENAMED` 也会前缀命中，
+    // 于是「名单被改名成了别的东西」这种漂移会被静默当成解析成功（实测过）。
+    const block = text.match(/const INSTALLABLE_SKILLS\b[\s\S]*?\n\]/)
+    for (const m of (block?.[0] ?? "").matchAll(/\{\s*name:\s*"([^"]+)"/g)) installable.add(m[1])
+    if (installable.size === 0)
+      errors.push(
+        "check-docs §11：没能从 Settings.tsx 解析出 INSTALLABLE_SKILLS —— 它的写法变了，" +
+          "跨技能引用检查会把 ppt-master 这类可安装技能误判成断链，请更新解析。",
+      )
+  }
+  if (await isDir(builtinRoot)) {
+    const dirs = new Set(
+      (await fs.readdir(builtinRoot, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name),
+    )
+    for (const name of dirs) {
+      const md = path.join(builtinRoot, name, "SKILL.md")
+      if (!(await Bun.file(md).exists())) continue
+      const seen = new Set<string>()
+      for (const line of (await Bun.file(md).text()).split("\n")) {
+        for (const ref of skillRefsInLine(line)) {
+          if (seen.has(ref) || dirs.has(ref) || installable.has(ref)) continue
+          seen.add(ref)
+          errors.push(
+            `skills/builtin/${name}/SKILL.md 把 \`${ref}\` 当技能引用，但 skills/builtin/ 下没有这个` +
+              `目录，设置页的可安装技能里也没有 → 模型按指引去找会扑空，静默退化成不用技能硬写` +
+              `（059 §1 的 \`doc-export\` 断链同一类）。改成真实技能名，或删掉这处指引。`,
           )
         }
       }

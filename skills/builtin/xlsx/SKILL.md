@@ -10,7 +10,7 @@ description: >
   circular chains, and set column widths that count Chinese characters as the two
   display units they actually occupy. Not for turning a spreadsheet into slides —
   that is `deckcraft`; not for PDFs — that is `pdf`; not for .docx — that is
-  `doc-edit`.
+  `docx`.
 x-requires: [python3, openpyxl, lxml, soffice]
 ---
 

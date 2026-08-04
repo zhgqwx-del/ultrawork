@@ -5,7 +5,7 @@ import { BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, type DepMap } from "@/lib/use-
 describe("isBuiltinLocation", () => {
   it("classifies skills under skills/builtin as built-in", () => {
     expect(isBuiltinLocation("/Users/me/.config/ultrawork/skills/builtin/pdf/SKILL.md")).toBe(true)
-    expect(isBuiltinLocation("/Users/me/.config/ultrawork/skills/builtin/doc-edit/SKILL.md")).toBe(true)
+    expect(isBuiltinLocation("/Users/me/.config/ultrawork/skills/builtin/pptx-edit/SKILL.md")).toBe(true)
   })
 
   it("treats user-installed / project skills as not built-in", () => {
@@ -29,9 +29,26 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
   it("covers all eleven built-in skills", () => {
     // ppt-master was removed from the bundle in P3 (ADR-061 / discussions/043 §18.5);
     // it lives on only as a curated INSTALLABLE_SKILLS entry, not a builtin dep-map key.
+    // `doc-edit` became `pptx-edit` in 059 S6 — same directory, four of its six
+    // scripts dropped once `docx` and `xlsx` superseded them.
     expect(Object.keys(BUILTIN_DEP_MAP).sort()).toEqual(
-      ["deckcraft", "dingtalk-assistant", "doc-edit", "docx", "feishu-assistant", "markdown-exporter", "pdf", "skill-creator", "skill-installer", "wecom-assistant", "xlsx"].sort(),
+      ["deckcraft", "dingtalk-assistant", "docx", "feishu-assistant", "markdown-exporter", "pdf", "pptx-edit", "skill-creator", "skill-installer", "wecom-assistant", "xlsx"].sort(),
     )
+    // The old key must be gone, not merely shadowed: a stale `doc-edit` entry would
+    // keep rendering a badge for a skill that is no longer in the bundle.
+    expect(BUILTIN_DEP_MAP["doc-edit"]).toBeUndefined()
+  })
+
+  it("pptx-edit requires python-pptx — it stopped being optional when the docx/xlsx scripts left", () => {
+    expect(missingDeps("pptx-edit", present("python3", "python-pptx"))).toEqual([])
+    // Both remaining scripts import pptx unconditionally, so python3 alone is NOT
+    // ready. As `doc-edit` the map declared only python3, which was defensible while
+    // four of the six scripts ran on python-docx/openpyxl instead; with those gone,
+    // a machine without python-pptx can run nothing in this skill.
+    expect(missingDeps("pptx-edit", present("python3"))).toEqual(["python-pptx"])
+    // python-pptx is optional for NOBODY here: deckcraft requires it too (image-type
+    // pptx export), so it must not drift into OPTIONAL_DEPS as a bare name.
+    expect(missingDeps("deckcraft", present("python3.10+", "pillow", "chrome-or-edge"))).toEqual(["python-pptx"])
   })
 
   it("xlsx requires openpyxl, lxml and LibreOffice — soffice is not optional", () => {
@@ -129,7 +146,7 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     // than PATH lookups.
     expect(missingDeps("pdf", present("python3", "pypdfium2", "pypdf", "pdfplumber",
                                       "reportlab"))).toEqual([])
-    expect(missingDeps("doc-edit", present("python3"))).toEqual([])
+    expect(missingDeps("pptx-edit", present("python3", "python-pptx"))).toEqual([])
   })
 
   it("lists exactly the missing tools", () => {

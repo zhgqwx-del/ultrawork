@@ -52,7 +52,7 @@ spec.loader.exec_module(G)
 # Our own scripts: written for this repo, never derived from the reference corpus.
 # Whatever they score is the detector's false-positive floor.
 #
-# KNOWN LIMIT of this negative sample: deckcraft/doc-edit do DIFFERENT jobs than the
+# KNOWN LIMIT of this negative sample: deckcraft/pptx-edit do DIFFERENT jobs than the
 # reference skills, so their score is a floor for "unrelated code", not for "same job,
 # written independently". `pdf` was added 2026-08-01 (059 S2) precisely because it IS
 # same-job code — it reads the same PDFs as four of the reference skills — so it is the
@@ -69,7 +69,7 @@ spec.loader.exec_module(G)
 # and stayed the same file pair (pdf_form_inspect.py <- qa_text.py), so nothing about
 # the threshold changed — but the sample's strength did, and only `xlsx` still carries
 # the same-library case.
-OWN_SKILLS = ["deckcraft", "doc-edit", "docx", "pdf", "xlsx"]
+OWN_SKILLS = ["deckcraft", "docx", "pdf", "pptx-edit", "xlsx"]
 
 RENAMES = [("field", "entry"), ("writer", "out_doc"), ("reader", "in_doc"),
            ("annotation", "annot"), ("value", "val"), ("page", "pg"),

@@ -849,8 +849,8 @@ CI 的 `ALLOW_MISSING_FLAG` 现在 ubuntu 为空、mac/Windows 仅 `--allow-miss
 | **S3** ✅ | `xlsx` 技能（含 office 底座首次实现）。**五刀**：office 底座 + X1/X2/X15 · 公式族 X3/X5/X10 · 结构性写入 X6-X9 · 双引擎重算 X4 · 收官 X11-X14。**15/15 无 pending，`--no-pending` 全技能绿**（见 §六·补二） | xlsx/ + office 底座 | 已完成 2026-08-02 |
 | **S3.5** ✅ | **去 PyMuPDF / 去 AGPL**（§5·补.8c 的路 ②）。`pdf` 技能 14 个文件 + `xlsx_pdf.py` 可选依赖（§六·补三）· `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四，新建读取层 `pdfsource.py` + **新建标尺 25 断言/28 控制**）。**`skills/builtin/` 下没有任何一个文件 `import fitz`**；`scripts/` 下三个门禁脚本仍用（不分发，单独一刀） | 商业分发无 AGPL 暴露 | 已完成 2026-08-02 |
 | **S4** ✅ | `docx` 技能（最复杂：修订/批注/XSD/CJK）。**六刀落地 19/19，`pending` 清空**（见 §六·补五、补六、补七）。纯 lxml，**刻意不依赖 python-docx**。判据 = CI 的 `--no-pending pdf xlsx docx` | docx/ | 已完成 |
-| **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | 新窗口 |
-| **S6** | 收尾：README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version` | 文档同步 | 新窗口 |
+| **S5** | L3 真实语料回归 + L4 你真机验收 + 决定是否替换 | 验收报告 | **未做**（需你提供语料，你选择先做 S6） |
+| **S6** ✅ | 收尾：路由收敛（markdown-exporter 的 DOCX 路由 → `docx` · `doc-edit` 瘦身改名 **`pptx-edit`** · `doc-export` 断链 · deckcraft 路由边界）+ **断链扫描进 CI**（check-docs §11 + `--selftest` 10 条控制）+ README / AGENTS / gotchas / conventions / ADR / CHANGELOG / `.builtin-version`（见 §六·补八） | 文档同步 | 已完成 2026-08-04 |
 
 > **S1 先于 S2 是刻意的**：先有验收标尺和当前基线，才谈得上"更优"。
 > 教训来源：稳定性 review 的六条教训之一——**先自证通过、后被推翻**，就是因为标尺是事后凑的。
@@ -2005,7 +2005,7 @@ W17 的三条断言需要 LibreOffice。没装的机器上：**断言跳过、�
 - **替换不认识域**：`{ PAGE }` 是五个 run，其中一个存着缓存值；替换串正好命中缓存值就会被当普通文字改掉。
 - **`markdown-exporter` 的 DOCX 路由仍写「建设中」，故意的** —— 那条路由指的是
   「从 Markdown 生成 Word」= **W4，仍在 pending**。指向一个做不到这件事的技能，就是 §1 那个 `doc-export` 断链。
-- **`doc-edit` 去留仍未决**（§7 第 2 条），docx 19 项齐活前不动路由。
+- ~~**`doc-edit` 去留仍未决**~~ —— 2026-08-04 S6 已决：瘦身改名 `pptx-edit`（§六·补八）。
 - **CI 的 `--no-pending` 仍只列 `pdf xlsx`**，docx 清完 12 项欠债才加进去。
 
 ### 门禁结果（全部本机实测，退出码直读不经管道）
@@ -2420,8 +2420,8 @@ pdf 53/0 · xlsx 71/0 · deckcraft 30/0 · L0 0.191~0.736 · check-docs · deskt
    `libreoffice-calc + libreoffice-writer`。
    ⚠️ **Windows 上必须 `shell: bash`**：默认 pwsh 下 `$ALLOW_MISSING` 会静默展开成空，
    等于把严格档偷偷打开、为一个不相干的原因判红。
-2. **`doc-edit` 是删是退化成路由页**（形态 B 下二选一）——删则要清理 `README.md` / `AGENTS.md` / 可能的 ADR 引用。**S4 收尾时决定，不阻塞。**
-3. **`doc-export` 断链修复**（§1，实测 `doc-edit/SKILL.md` 的 `:3`/`:22`/`:53` 三处）——**放 S6**，与 deckcraft 的路由边界同批（两者都要等 docx/xlsx 齐了才谈得上指向谁）。改动本身 3 行，但 `skills/builtin/` 一动就要重算 `.builtin-version`；归批原则见 §6「每个技能阶段的收尾义务」第 3 条。
+2. ~~**`doc-edit` 是删是退化成路由页**~~ —— **2026-08-04 已决**：瘦身 + 改名 `pptx-edit`，只留 .pptx 就地读改（见 §六·补八 ②）。
+3. ~~**`doc-export` 断链修复**~~ —— **2026-08-04 已修**（随 `doc-edit` 重写消失），并**顺带发现另外两处同类断链**（`pdf`/`xlsx` 的 description 都指着 `doc-edit`）。同刀把「断链扫描」做成常驻门禁 `check-docs.ts §11`，见 §六·补八。
 
 ---
 
@@ -2547,3 +2547,138 @@ K1-K6 没抓到，因为它们用的 `report.docx` 只有正文修订；W18 的 
 
 ⚠️ 复审过程中我自己的探针错了两次（读 `out_of_order` 而字段叫 `findings`；拿被 LibreOffice
 同名覆写的文件当原件）——**两次都是「判红的是我的描述，不是被测对象」**。
+
+---
+
+## 六·补八 — S6 收官：路由收敛 + 断链扫描进门禁（2026-08-04）
+
+S5（L3 真实语料回归 + L4 人工验收）需要用户提供语料，用户选择先做 S6。本节是 S6 的落地记录。
+
+### 做了什么
+
+| # | 项 | 落地 |
+|---|---|---|
+| ① | `markdown-exporter` 的 DOCX 路由 | 指向 `docx` 技能。**这一格等到现在才翻是对的**——W4（`docx_from_md.py`）落地前指过去就是「指向一个做不到这件事的技能」，与 §1 的 `doc-export` 断链同一类。改 `fetch-builtin-skills.ts` 的 `EXPORTER_DESCRIPTION` patch 常量**和**落地文件两处（只改文件的话下次 fetch 静默还原），并写了脚本核对两者逐字节相同 |
+| ② | `doc-edit` 去留 | **瘦身 + 改名 `pptx-edit`**（用户 2026-08-04 拍板）。六个脚本里 `docx_*`/`xlsx_*` 四个已被 059 S3/S4 的专用技能整体超越，删除；`pptx_read/pptx_edit` **没有任何替代**（deckcraft 只做「生成新 deck」，`ppt-master` 自 ADR-061 起不再内置）故保留。SKILL.md 重写 |
+| ③ | `doc-export` 断链 | 随 ② 消失（三处都在被重写的 `doc-edit/SKILL.md` 里）。**顺带发现另外两处同类断链**：`pdf/SKILL.md` 与 `xlsx/SKILL.md` 的 description 都写着「that is `doc-edit`」，改名后会当场变断链，且它们本来就该指 `docx`/`xlsx` |
+| ④ | deckcraft 路由边界 | 只改 description + 路由表（ADR-061 血泪教训：主体不动）。分界写成一句可执行的话：**按产出物判，不按源判**，并把三条新边界进表 |
+| ⑤ | 依赖声明三处同步 | `x-requires` / `BUILTIN_DEP_MAP` / `PY_MODULES` + 测试断言。`pptx-edit` 现在声明 `python-pptx`——见下 |
+| ⑥ | **断链扫描进门禁** | `check-docs.ts` §11 + `--selftest`（11 条正负控制），CI docs job 两条都跑 |
+
+### 一个必须点名的诚实边界
+
+**改的是 description，而 description 是模型路由的唯一依据——没有任何门禁能验「模型会不会选对技能」。**
+那是 L4 类的主观验收，本刀不声称做到了。能机器验的只有三件，也只验了这三件：
+断链不再指向不存在的技能（新门禁）· 依赖三处声明一致（测试）· 打包 hash 对齐。
+
+### 断链扫描：设计与它自己踩的坑
+
+任务书原话是「扫所有 SKILL.md 里形如 `xxx` 技能 的引用」。实现时发现要认四种写法才够用——
+`doc-export` 那次是「改用 \`doc-export\` 技能」和 "use the \`doc-export\` skill"，
+而本刀这次是 "that is \`doc-edit\`"（description 里的句式，不带「技能」二字）。
+
+**第一版就误报了一次，而且误报的形状值得记下来**：中文引导词「改用」单独用不成立——
+deckcraft 的跨平台启动器说明写着「就改用 \`python\`」，指的是命令名。修法不是加黑名单，
+是**给中文引导词加一道闸：同一行必须出现「技能」二字**。这不会漏掉真缺陷，因为
+`doc-export` 那三处原文本来就带「技能」。英文的 `that is` / `use the` / `install` 句式
+不需要这道闸（实测全树零误报），token 再收紧成 `^[a-z][a-z0-9-]*$` 就挡掉了
+skill-creator 里的 `package_skill.py` / `eval_metadata.json` / `present_files`。
+
+**合法目标有两类**：`skills/builtin/` 下真实存在的目录，**加上**设置页 `INSTALLABLE_SKILLS`
+里的 curated 技能——`ppt-master` 不内置但路由到它是对的。这份名单从 `Settings.tsx` 现读，
+不在门禁里另抄一份。
+
+**负向控制的两个层次**（缺一不可，本刀两个都做了）：
+- `--selftest`（常驻，11 条）：六条负向**复刻的是真实出过的错误写法**，不是随便一种破坏；
+  四条正向复刻的是**已经误报过一次的那些行**。
+- 端到端注入（一次性）：往真 `pdf/SKILL.md` 里加一句「改用 \`doc-export\` 技能」，
+  全量扫描必须打红并点名 —— **这一步不能省**，`--selftest` 只证明匹配器对，
+  证明不了「全量扫描真的遍历到了文件」（空遍历长得和通过一模一样，S3.5 栽过一次）。
+  改完逐字节还原并复验 sha256。
+
+⚠️ **第二个控制臂第一版是假的**：我把 `const INSTALLABLE_SKILLS` 改名成 `..._RENAMED`
+想制造「解析失败」，结果门禁照样绿——因为正则是**前缀匹配**，改名后仍然命中。
+换成真实会发生的漂移（条目字段引号风格变化）才打红。**顺带把正则加了 `\b`**，
+否则「名单被改名成了别的东西」这种漂移会被静默当成解析成功。
+——又一次印证：**控制臂分不出两种实现，就不是控制臂**。
+
+### `pptx-edit` 的限制是实测出来的，不是抄的
+
+写 SKILL.md 的「限制」一节前，先拿它自己的两个脚本量了一遍（合成夹具：文本框 + 表格 +
+被切成两个 run 的短语）。三条实测结果，全部写进 SKILL.md 与脚本 docstring：
+
+| 现象 | 实测 |
+|---|---|
+| 表格单元格里的文字 | `pptx_read.py` **读不出**，`--replace` **也改不到**（两个脚本都只遍历顶层 shape 且只处理 `has_text_frame`，而表格是 GraphicFrame、组合是 GroupShape） |
+| 组合形状里的文字 | 同上，一个只含组合形状的页面读出来是空的 |
+| 跨 run 的短语 | `毛利率保持稳定` 被切成 `毛利` + `率保持稳定` 时，`--replace 毛利率` 匹配数 **0** |
+| ⚠️ 漏替换的可见性 | 它打印 `replacements: 1` 而文件里另有一处同样的文字原样留着——**漏替换是静默的** |
+
+**这四条都是既有行为，本刀有意不修**（S6 是收尾，不是新实现）。但它们从「没人说过」变成
+「写在 SKILL.md 里、模型看得见」。⚠️ 最后一条是真缺陷，已进 Pending Issues：
+`replacements: N` 只数改掉的，不报「还有几处我看不见」。
+
+顺带：`pptx-edit` 的 `BUILTIN_DEP_MAP` 从 `["python3"]` 改成 `["python3","python-pptx"]`。
+作为 `doc-edit` 时只声明 python3 是**当时说得通的**——六个脚本里四个跑在 python-docx/
+openpyxl 上，缺 python-pptx 仍能用四个。那四个走了之后这个前提就没了：
+一台没有 python-pptx 的机器**一个脚本都跑不了**，却会显示「就绪」。
+
+### 门禁（全部本机实测，2026-08-04）
+
+docx **205/0**（99 断言）· pdf **53/0** · xlsx **71/0** · deckcraft **30/0** ·
+L2 **65/0 零跳过** · capabilities selftest **16/0** · L1 全量 **48/48**（37 产物过 L2）·
+`--no-pending pdf xlsx docx` OK · 求值器 **64/0** · L0 分离带 **0.191~0.736**（阈值 0.55，
+负样本从 84 个 .py 变 80 个但最大值与最近邻文件对**未变**）· provenance 6 条豁免逐条打印 ·
+check-docs 绿 + **§11 自检 10/10** · typecheck **8/8** · Rust **155** ·
+desktop **863 / 102 files**（+1 = 新增的 pptx-edit 依赖断言）。
+
+### 明确没做
+
+- **S5 未做**：L3 真实语料回归需要用户提供语料（docx ≥20 / xlsx ≥15 / pdf ≥15），L4 是人工验收。
+- **`command-menu.test.ts` / `command-selector.test.tsx` 里的 `doc-edit` 字样保留**：那是菜单渲染逻辑的
+  合成夹具（任意命令名 + 任意描述），不是技能注册表的断言。改它会动到一个已知间歇性红的文件的
+  排序期望，收益为零。
+- **`xlsx_write.py` / `make_fixtures.py` 注释里的「the old doc-edit skill」保留**：那是历史陈述，仍然成立。
+
+### 收工复审：三问抓到两个门禁抓不到的真崩溃（2026-08-04）
+
+按既定的三个提问角度做，**每一问都问出了东西**：
+
+| 问 | 办法 | 结果 |
+|---|---|---|
+| **打包到客户机器能工作吗** | 从真 zip 解压到 `…/客户机 测试/`（含中文+空格），cwd 设在 `$HOME` 跑读与改 | ✅ 全过；零硬编码路径；缺 python-pptx 时 stderr 一句话 + exit 1 |
+| **team 协作模式下兼容吗** | 量 `pptx_read.py` 的 stdout 字节 | ⚠️ **没有上限**：10 页 5.2 KB · 20 页 10.5 KB · **60 页 87,227 字节**（其它三个技能的预算是 6,000） |
+| **换成别人产的文档呢** | deckcraft 的可编辑 pptx（pptxgenjs）· 图片型 pptx · LibreOffice 重存 · 一份最小化生成器产的 pptx | ❌ **最后一种让两个脚本都抛裸 traceback** |
+
+**两个真崩溃（都已修，都进了新门禁）**：一份没有 `slideLayout` 关系、也没有 `slideMaster`
+的 `.pptx`（最小化 OOXML 生成器会产，PowerPoint 不会）——
+`pptx_read.py` 在 `slide.slide_layout.name` 抛 **KeyError**；
+`pptx_edit.py --add-slide` 更讽刺，**是它自己的边界检查崩的**：`len(prs.slide_layouts)`
+要穿过 `slide_masters[0]`，于是 `IndexError`。修法：版式名读不到就记 `(no layout)`
+**正文照读**（版式名是装饰，不该让整份文档读不出来）· 加母版失败给一句话 exit 1。
+
+**stdout 那条有意不修**：加上限需要设计一套与另外三个技能一致的裁剪契约（S4 的 C3 是
+按字节裁的），那是实现工作不是收尾工作。**已写进 SKILL.md 的「限制」并进 Pending Issues** ——
+写下来的、模型看得见的限制，和没人说过的缺陷，是两回事。
+
+### 新门禁 `scripts/test-pptx-edit-skill.py`（9/0，10 断言，同刀进 CI）
+
+**为什么非要有**：S6 把四条限制当作实测事实写进了 SKILL.md。**一条没人检查的 SKILL.md
+声明是会腐烂的声明** —— 哪天有人教会 `pptx_read.py` 走表格，SKILL.md 就开始往反方向撒谎。
+所以四条限制在这里是**双向断言**：现在成立要绿，将来不成立也要红（红了就得去改 SKILL.md，
+而不是让它默默失真）。另一半守两个崩溃修复。
+
+**四条 LIVE 控制不是编造的输出，是把修复原样撤回** —— 即复刻 2026-08-04 之前真正发货的那个
+实现。`patched()` 在锚点命中次数不等于 1 时**直接 SystemExit**：一个没贴上去的控制臂，
+和一个贴上去但什么都没测出来的控制臂，从外面看一模一样。
+
+⚠️ **两条控制的 cascade 我第一版声明少了，harness 当场判红**（这正是「非空 cascade 注释会
+屏蔽掉全部意外触发的检查」那条教训要防的形状）：`--out 被忽略` 还会点亮 L4/W1（产物压根没写出来，
+凡是读那个产物的断言都没得读）· `无版式夹具其实有版式` 还会点亮 X2（有母版时 `--add-slide`
+**理应成功**，而那正是 X2 盯的分支）。**如实声明，不靠注释兜。**
+顺带修掉一处顺序耦合：每次编辑改用**各自独立的输入副本**，否则「忽略 --out」的控制臂会就地
+改坏共享夹具，让后面每条断言都在读被上一条改过的文档。
+
+⚠️ **测量过程中我自己错了一次，第三次犯同一个错**：对抗性输入矩阵里 `pptx_edit` 那一列
+全是 `unrecognized arguments`，我差点当成被测对象的属性 —— 真因是 **zsh 不对未加引号的变量分词**，
+`$args` 被当成一个参数整体传了进去。**判红的是我的测量，不是被测对象。**

@@ -10,8 +10,8 @@ description: >
   document spec with the font genuinely embedded so Chinese survives on machines
   that have no CJK font installed, and
   merge/split/extract/rotate pages, encrypt or decrypt, and pull tables out to CSV.
-  Not for making slide decks from a PDF — that is `deckcraft`; not for .docx/.xlsx
-  editing — that is `doc-edit`.
+  Not for making slide decks from a PDF — that is `deckcraft`; not for .docx — that
+  is `docx`; not for .xlsx — that is `xlsx`; not for .pptx — that is `pptx-edit`.
 x-requires: [python3, pypdfium2, pypdf, pdfplumber, reportlab]
 ---
 

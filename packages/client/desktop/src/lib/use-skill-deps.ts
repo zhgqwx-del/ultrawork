@@ -14,8 +14,8 @@ export type DepMap = Record<string, DepStatus>
  * SSOT mapping built-in skill name -> external tools it shells out to.
  * Keyed by the SKILL.md frontmatter `name`. The `x-requires` frontmatter in each
  * SKILL.md mirrors this for human readers; this map drives the readiness badges.
- * Python libraries (python-docx/openpyxl/python-pptx) can't be probed via PATH —
- * doc-edit only checks for `python3`; its scripts error gracefully on missing libs.
+ * Python libraries can't be probed via PATH; they are import-probed inside the
+ * interpreter instead (see PY_MODULES in src-tauri check_skill_dependencies).
  */
 export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   "skill-creator": ["python3"],
@@ -50,7 +50,13 @@ export const BUILTIN_DEP_MAP: Record<string, string[]> = {
   // becomes visible (059 §7).
   docx: ["python3", "lxml", "soffice"],
   "markdown-exporter": ["markdown-exporter", "pandoc"],
-  "doc-edit": ["python3"],
+  // Was `doc-edit` (thin docx/xlsx/pptx read+edit) until 059 S6; the dedicated
+  // `docx` and `xlsx` skills superseded four of its six scripts, leaving in-place
+  // .pptx editing, which nothing else covers. python-pptx is now declared: the two
+  // remaining scripts import it unconditionally, so a machine without it can run
+  // neither. It used to be undeclared because the docx/xlsx scripts could still
+  // work without it — that stopped being true when they left.
+  "pptx-edit": ["python3", "python-pptx"],
   // HTML-first deck generator (discussions/043). python3.10+ (not plain
   // python3): the source_to_md converters copied from ppt-master use module/
   // signature-level `X | None` unions without `from __future__ import

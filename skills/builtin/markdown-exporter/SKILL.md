@@ -1,6 +1,6 @@
 ---
 name: markdown-exporter
-description: "Long-tail Markdown conversion: turn Markdown text into HTML, IPYNB, MD, CSV, JSON, JSONL or XML files, and extract fenced code blocks into Python/Bash/JS files. NOT the route for PDF (use the `pdf` skill), Excel workbooks (use the `xlsx` skill) or slide decks (use `deckcraft`). It can still emit DOCX via the md-exporter CLI, but only as a quick one-shot conversion — a dedicated docx skill is being built and will take that route over."
+description: "Long-tail Markdown conversion: turn Markdown text into HTML, IPYNB, MD, CSV, JSON, JSONL or XML files, and extract fenced code blocks into Python/Bash/JS files. NOT the route for Word documents (use the `docx` skill), PDF (use the `pdf` skill), Excel workbooks (use the `xlsx` skill) or slide decks (use `deckcraft`) — those four have dedicated skills that keep tracked changes, formulas, embedded fonts and layout intact, which a one-shot CLI conversion cannot."
 license: Apache-2.0
 metadata:
    author: bowenliang123

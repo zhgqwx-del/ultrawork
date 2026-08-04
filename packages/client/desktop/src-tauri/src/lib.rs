@@ -4490,6 +4490,8 @@ fn python_probe_allowed(python: &str) -> bool {
 /// is a bug waiting to happen — `pillow` imports as `PIL`, `beautifulsoup4` as
 /// `bs4`, `python-pptx` as `pptx`.
 const PY_MODULES: &[(&str, &str)] = &[
+    // Required by deckcraft (image-type .pptx export) AND by `pptx-edit`, whose two
+    // remaining scripts import it unconditionally (059 S6).
     ("python-pptx", "pptx"),
     ("pypdfium2", "pypdfium2"),
     ("pypdf", "pypdf"),
@@ -7740,7 +7742,7 @@ mod builtin_skills_tests {
                 // Same string prefix but a different dir — must NOT match
                 // (component-wise strip_prefix, not starts_with on the string).
                 ("ppt-master-extra/SKILL.md", "c"),
-                ("doc-edit/SKILL.md", "d"),
+                ("pptx-edit/SKILL.md", "d"),
             ],
         );
         let dest = root.join("out");
@@ -7748,7 +7750,7 @@ mod builtin_skills_tests {
         assert_eq!(n, 2);
         assert!(dest.join("SKILL.md").is_file(), "prefix must be stripped");
         assert!(dest.join("scripts/tool.py").is_file());
-        assert!(!dest.join("doc-edit").exists());
+        assert!(!dest.join("pptx-edit").exists());
         assert!(!dest.join("ppt-master-extra").exists());
 
         // Zero matches is an error — a rename of a hollow staging dir would
@@ -7772,7 +7774,7 @@ mod builtin_skills_tests {
                 // Deleting target/.builtin-version via a restore would
                 // thrash-reinstall forever — dot-prefixed dirs are rejected.
                 (".builtin-version/SKILL.md", "---\nname: alpha\ndescription: x\n---\n"),
-                ("doc-edit/SKILL.md", "---\nname: doc-edit\ndescription: bundled\n---\n"),
+                ("pptx-edit/SKILL.md", "---\nname: pptx-edit\ndescription: bundled\n---\n"),
             ],
         );
         // A user skill whose name the hostile entry claims — the bait.
@@ -7784,7 +7786,7 @@ mod builtin_skills_tests {
 
         assert!(config.join("skills").exists(), "skills root must survive");
         assert!(user.join("SKILL.md").is_file(), "user skill must survive");
-        assert!(target.join("doc-edit/SKILL.md").is_file(), "builtin must survive");
+        assert!(target.join("pptx-edit/SKILL.md").is_file(), "builtin must survive");
         assert!(
             !status.bundled.iter().any(|n| n == "alpha"),
             "hostile entries must not enter the bundled list: {:?}",
@@ -7970,8 +7972,8 @@ mod builtin_skills_tests {
             &[
                 ("ppt-master/SKILL.md", "---\nname: ppt-master\ndescription: bundled\n---\n"),
                 ("ppt-master/scripts/tool.py", "print('hi')\n"),
-                ("doc-edit/SKILL.md", "---\nname: doc-edit\ndescription: bundled\n---\n"),
-                ("doc-edit/scripts/tool.py", "print('hi')\n"),
+                ("pptx-edit/SKILL.md", "---\nname: pptx-edit\ndescription: bundled\n---\n"),
+                ("pptx-edit/scripts/tool.py", "print('hi')\n"),
                 ("README.md", "not a skill\n"),
             ],
         );
@@ -7994,9 +7996,9 @@ mod builtin_skills_tests {
         assert_eq!(status.shadowed, vec!["ppt-master"]);
         assert!(status.changed, "prune must report changed");
         assert!(status.bundled.contains(&"ppt-master".to_string()));
-        assert!(status.bundled.contains(&"doc-edit".to_string()));
+        assert!(status.bundled.contains(&"pptx-edit".to_string()));
         assert!(!target.join("ppt-master").exists(), "builtin copy must be pruned");
-        assert!(target.join("doc-edit/SKILL.md").is_file(), "unrelated builtin untouched");
+        assert!(target.join("pptx-edit/SKILL.md").is_file(), "unrelated builtin untouched");
         assert!(user.join("SKILL.md").is_file(), "user install untouched");
 
         // Idempotent: a second run keeps the exact same state and reports no change.
@@ -8106,7 +8108,7 @@ mod builtin_skills_tests {
         assert!(!names.contains(&"root"), "root SKILL.md must not be reported");
         assert!(!names.contains(&"lower"), "lowercase skill.md must not be reported");
         assert!(
-            !names.contains(&"deckcraft") && !names.contains(&"doc-edit"),
+            !names.contains(&"deckcraft") && !names.contains(&"pptx-edit"),
             "builtin/ and dot-dir content leaked into user skills: {:?}",
             names
         );

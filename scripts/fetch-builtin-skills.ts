@@ -8,7 +8,7 @@
  * 全部源技能均为可再分发许可（Apache-2.0 / MIT，已逐个核对 LICENSE）。Anthropic 的
  * docx/pdf/pptx/xlsx 是专有许可、禁止再分发，**不在此列**（详见 docs/gotchas.md、ADR）。
  *
- * ⚠️ 自写技能（doc-edit / deckcraft / pdf / *-assistant）**不在 SOURCES 里**，本脚本不碰它们。
+ * ⚠️ 自写技能（deckcraft / docx / xlsx / pdf / pptx-edit / *-assistant）**不在 SOURCES 里**，本脚本不碰它们。
  * `pdf` 曾经取自 openai/skills，059 S2 重写为自写后已从 SOURCES 移除 —— fetchSubdir 会
  * 先 rmSync 落地目录，留在表里等于每次 fetch 都把自写实现删掉换回上游版本。
  *
@@ -178,16 +178,18 @@ function applyInstallerPatches(dir: string) {
  * 直接双命中 —— description 是模型路由的唯一依据，冲突不改就是让模型随机挑。
  * 这里做成 patch 而不是手改文件：手改的话下一次 fetch 会静默还原。
  */
-// Routing flips one format at a time, as each dedicated skill actually lands
-// (059 §6 batching rule). XLSX moved here in S3; DOCX still says "being built"
-// because there is no `docx` skill yet, and pointing at a skill that does not exist
-// is precisely the `doc-export` broken-link defect recorded in 059 §1.
+// Routing flipped one format at a time, as each dedicated skill actually landed
+// (059 §6 batching rule): PDF in S2, XLSX in S3, DOCX in S6 — the last one waited
+// until `docx` could genuinely generate a document from Markdown (W4,
+// scripts/docx_from_md.py), because pointing at a skill that cannot do the job is
+// the same class of defect as the `doc-export` broken link recorded in 059 §1.
 const EXPORTER_DESCRIPTION =
   "description: \"Long-tail Markdown conversion: turn Markdown text into HTML, IPYNB, MD, CSV, " +
   "JSON, JSONL or XML files, and extract fenced code blocks into Python/Bash/JS files. NOT the " +
-  "route for PDF (use the `pdf` skill), Excel workbooks (use the `xlsx` skill) or slide decks " +
-  "(use `deckcraft`). It can still emit DOCX via the md-exporter CLI, but only as a quick " +
-  "one-shot conversion — a dedicated docx skill is being built and will take that route over.\""
+  "route for Word documents (use the `docx` skill), PDF (use the `pdf` skill), Excel workbooks " +
+  "(use the `xlsx` skill) or slide decks (use `deckcraft`) — those four have dedicated skills " +
+  "that keep tracked changes, formulas, embedded fonts and layout intact, which a one-shot CLI " +
+  "conversion cannot.\""
 
 function applyExporterPatches(dir: string) {
   const p = join(dir, "SKILL.md")
@@ -229,7 +231,7 @@ async function main() {
     console.log("ok")
   }
 
-  // sentinel：基于全部内置内容（含自写 doc-edit）的哈希，内容变即触发桌面端刷新。
+  // sentinel：基于全部内置内容（含自写技能）的哈希，内容变即触发桌面端刷新。
   // 喂相对路径 + \0 分隔（非裸 basename）：目录改名/文件搬家也改变 hash。
   // ⚠️ hash 算法须与 scripts/pack-builtin-skills.ts 逐字节一致（对账不变式）；排除规则
   // （JUNK/GENERATED）已抽到 builtin-skills-exclude.ts 共享，不再手抄。

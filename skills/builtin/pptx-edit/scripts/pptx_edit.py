@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Edit a .pptx: replace text, add a slide with a title. ultrawork doc-edit skill."""
+"""Edit a .pptx: replace text, add a slide with a title. ultrawork pptx-edit skill.
+
+Two measured limits, both stated in SKILL.md 「限制」: replacement is per-run, so a
+phrase PowerPoint split across runs does not match; and only top-level shapes with a
+text frame are visited, so text inside tables/groups is left untouched — while the
+printed `replacements: N` counts only what WAS replaced and cannot warn about that.
+"""
 from __future__ import annotations
 import argparse, sys
 
@@ -44,8 +50,17 @@ def main(argv):
                 total += _replace_in_shape(shape, old, new)
     added = 0
     if args.add_slide:
-        if args.layout < 0 or args.layout >= len(prs.slide_layouts):
-            print(f"Bad --layout {args.layout} (have 0..{len(prs.slide_layouts) - 1})", file=sys.stderr)
+        # len(prs.slide_layouts) itself reaches through slide_masters[0], which
+        # raises IndexError on a .pptx that carries no master — minimal OOXML
+        # generators produce those, and the bound check must not be the thing that
+        # crashes (measured on a real 10-part .pptx with no ppt/slideMasters).
+        try:
+            n_layouts = len(prs.slide_layouts)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Cannot add a slide to {args.file}: it has no slide master ({exc})", file=sys.stderr)
+            return 1
+        if args.layout < 0 or args.layout >= n_layouts:
+            print(f"Bad --layout {args.layout} (have 0..{n_layouts - 1})", file=sys.stderr)
             return 1
         slide = prs.slides.add_slide(prs.slide_layouts[args.layout])
         if args.title and slide.shapes.title is not None:
