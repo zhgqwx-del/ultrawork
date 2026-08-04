@@ -2975,3 +2975,51 @@ git 的二进制启发式确实挡住了，受影响的只有文本文件。但�
   全量两臂跑完仍是同一组数字（证明 CI 的 cache-miss 路径与默认缓存路径等价）。
 - `--require-corpus` 对着一个空缓存 → **判红**（rc=1，逐条列出缺失文件），证明
   「语料没取到」不会伪装成通过。
+
+#### 第二次重跑（run 30911346681）：macOS 首绿，Windows 与 ubuntu 各暴露一个新问题
+
+| job | 结果 |
+|---|---|
+| docs · node ×3 · rust ×3 · office skills ×3 | ✅ 全绿 |
+| **office skills L3 corpus (macOS)** | ✅ **绿** —— 新门禁第一次在不是作者的机器上全绿 |
+| office skills L3 corpus (Windows) | ❌ fetch 过了（CRLF 修复生效），自检挂 |
+| office skills L3 corpus (ubuntu) | ❌ runner 被打死（exit 143） |
+
+**① Windows：`text=True` 不给 encoding 是一个「静默」陷阱，不是报错。**
+`materialize_baseline` 用 `subprocess.run(..., text=True)` 取旧 `doc-edit` 脚本，
+Windows 的 locale 编码是 cp1252，而那些脚本带中文注释。关键在于：**解码发生在
+`subprocess` 的读取线程里**（`_readerthread` 是 **Windows 专有**的，POSIX 在主线程解码），
+那个线程抛异常只把 traceback 打到 stderr，`run()` 照常返回，只是 `stdout` 变成 **None** ——
+于是真正炸出来的是十万八千里外的 `TypeError: data must be str, not NoneType`。
+⇒ 所有 `subprocess.run` 一律显式 `encoding="utf-8", errors="replace"`；
+`materialize_baseline` 另加「rc=0 却没有内容」的一句话出口。
+
+固化成 **C27**，而这条控制**连判红三次，三次都是我对被测对象的描述错了**：
+(a) cp1252 对绝大多数字节**有**映射，随便一句中文只会被静默解成**乱码**（内容悄悄错了），
+只有 `0x81/0x8D/0x8F/0x90/0x9D` 五个未定义字节才给 None —— 两种坏法都要钉；
+(b) 期望集**依赖平台**（Windows 静默 None / POSIX 抛异常），只能实测量出来并**打印走了
+哪个分支**；(c) 「乱码臂」的探针里「码」= `E7 A0 81` 恰好命中 0x81，两条臂又分不开了。
+现在两个探针的字都是**算出来挑的**（「不」= E4 B8 8D 命中未定义字节；乱码臂全字节可映射）。
+
+另外补了 **`guarded()`**：一条控制抛异常时记 FAIL 并继续。第一版没有这层，Windows 上
+C9 一炸，**后面 17 条控制一条都没跑** —— 一个崩掉的 harness 比一个判红的 harness
+告诉你的少得多。
+
+**② ubuntu：不是断言失败，是 runner 被打死。** `exit 143` +
+`The runner has received a shutdown signal`，死在 baseline/xlsx 走到那份最大行号
+workbook 附近 —— 而那一份的 L2 校验本机实测吃 **4.7 GB**。
+暴露的是我的设计缺口：**每步有超时，却没有内存边界**，而「机器扛不住」绝不能被记成
+「技能崩了」。修法：L2 worker **自己给自己**设地址空间上限（撞上限归 `gate_limit`），
+CI 并行度降到 2。
+⚠️ **不用 `preexec_fn`**，两个原因都是实测的：macOS 上 `RLIMIT_AS` 设不了
+（`preexec_fn` 直接抛 `SubprocessError`）；且 `preexec_fn` 在**多线程父进程**里本就不安全，
+而这个门禁正是线程池并行的。
+
+**这一条要留三句诚实的话：**
+- **「大概是 OOM」是从退出码与进度条位置推的，不是量到的** —— GitHub 不报 runner OOM。
+  ubuntu 若再死一次，这个推断就是错的。
+- **内存上限只管得住 L2 worker**（我们自己的代码）。环里的外部脚本（技能脚本、旧
+  doc-edit）只有 120s 时间边界，**没有内存边界**。
+- **C28 的 Linux 分支在作者机器上从未执行过**（macOS 设不了那个 limit，控制如实打印
+  `nocap(ValueError)` 而不是假装验过）。它只能由 CI 执行 —— 验收方式是**在 ubuntu 的
+  日志里看到 `cap=3072MB` 被打印出来**。

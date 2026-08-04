@@ -315,8 +315,17 @@ jobs:
       # --require-corpus turns "corpus missing" from a skip into a failure. Without
       # it a network hiccup would look exactly like a pass, and silence and success
       # are indistinguishable.
+      # --jobs 2 (not the default = CPU count): the ubuntu runner was killed
+      # mid-run on the first real attempt (run 30911346681, exit 143 + "The runner
+      # has received a shutdown signal"), right around the corpus workbook whose
+      # L2 check was measured at 4.7 GB locally. The L2 worker now caps its own
+      # address space, but the RING steps (skill scripts, old doc-edit) are only
+      # time-bounded, never memory-bounded — so peak is still cut by running fewer
+      # of them at once. ⚠️ "Probably OOM" is inference from the exit code and the
+      # position in the progress line, not a measurement: GitHub does not report
+      # runner OOM. If ubuntu dies here again, that inference was wrong.
       - name: L3 corpus regression (both arms)
-        run: python scripts/test-office-l3-corpus.py --baseline --require-corpus
+        run: python scripts/test-office-l3-corpus.py --baseline --require-corpus --jobs 2
 
   rust:
     name: rust (${{ matrix.os }})

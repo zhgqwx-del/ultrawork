@@ -122,6 +122,20 @@ class Outcome:
                                # 但从可用分母里扣掉并具名，否则它冒充「通过」。
 
 
+
+# POSIX 上被信号打死 = 负退出码；**Windows 上没有负数** —— 硬崩溃返回的是
+# NTSTATUS 异常码这样的大正数（0xC0000005 访问违例 = 3221225477，
+# 0xC000013A Ctrl-C = 3221225786）。只写 `rc < 0` 的话，Windows 上的段错误会被
+# 判成「拒绝」，也就是**把崩溃记成正确行为** —— 错的方向里最糟的那个。
+# 这不是从 CI 学来的，是本刀在 Windows 换行缺陷之后自查出来的：
+# 「不留从未执行过的平台分支」。
+NTSTATUS_FAILURE = 0xC0000000
+
+
+def _died_hard(rc: int) -> bool:
+    return rc < 0 or rc >= NTSTATUS_FAILURE
+
+
 class Step:
     def __init__(self, name: str, cmd: list[str], rc: int, out: str, err: str, secs: float):
         self.name, self.cmd, self.rc = name, cmd, rc
@@ -135,11 +149,22 @@ class Step:
         它对打不开的文件是 `print(...); return 1`，一行干净的话，不是一墙 Python。
         那样比出来的差距是我造的，不是两个实现的差距。
         """
-        return TRACEBACK_MARK in self.err or self.rc < 0
+        if self.hit_mem_cap:
+            return False          # 见 hit_mem_cap：这是门禁的局限，单独归类
+        return TRACEBACK_MARK in self.err or _died_hard(self.rc)
+
+    @property
+    def hit_mem_cap(self) -> bool:
+        """撞的是**我给的**内存上限 —— 那是门禁的局限，不是被测对象的缺陷。
+
+        只对 L2 worker 成立：上限是它自己给自己设的。环里的外部脚本**没有**上限，
+        它们真的抛 MemoryError 时那是一次真实的资源失败，不该被我洗成「门禁局限」。
+        """
+        return self.name == "l2" and MEMCAP_MARK in self.err
 
     @property
     def refused(self) -> bool:
-        return self.rc != 0 and not self.crashed
+        return self.rc != 0 and not self.crashed and not self.hit_mem_cap
 
     # 每个入口自己声明过的退出码。docx_validate 用 **rc=1 表示「有 schema 违规」**，
     # 明细走 stdout —— 那是它 docstring 里写下的约定，不是契约违规。
@@ -163,6 +188,35 @@ class Step:
                 break
         tb = " [裸 traceback]" if TRACEBACK_MARK in self.err else ""
         return f"{self.name}(rc={self.rc}){tb}: {first[:160]}"
+
+
+# L2 校验子进程的地址空间上限。⚠️ **只管得住 L2 worker（我们自己的代码）**：
+# 环里的外部脚本（技能脚本、旧 doc-edit）只有 120s 的时间边界，**没有内存边界**。
+# 每个子进程的地址空间上限。**「机器扛不住」不能被记成「技能崩了」** ——
+# 语料里那份最大行号的 workbook 让 L2 的 openpyxl 校验实测吃到 4.7 GB，
+# CI 上 4 路并行时把 ubuntu runner 整个打死（run 30911346681：exit 143 +
+# "The runner has received a shutdown signal"）。给了上限之后，撞上限的那一份
+# 落成 `gate_limit`（门禁自己的局限，具名打印、不进任何率的分子），
+# 而不是让整轮消失。POSIX 才有 setrlimit；Windows 上这条是 no-op，
+# **所以这个上限在 Windows 上没有生效，别当成三平台都有的保证。**
+STEP_MEM_LIMIT = int(__import__("os").environ.get(
+    "ULTRAWORK_L3_MEMCAP_MB", str(3 * 1024))) * 1024 ** 2
+MEMCAP_MARK = "MemoryError"
+
+
+def self_cap_memory() -> str:
+    """让**子进程自己**给自己设地址空间上限，并把结果说出来。
+
+    ⚠️ 不用 `preexec_fn`：① macOS 上 `RLIMIT_AS` 设不了（实测 preexec_fn 直接抛
+    `SubprocessError`）；② `preexec_fn` 在**多线程父进程**里本来就不安全，而这个
+    门禁正是线程池并行的。所以上限由 worker 在自己进程里设，设不上就如实说。
+    """
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (STEP_MEM_LIMIT, STEP_MEM_LIMIT))
+        return f"cap={STEP_MEM_LIMIT // 1024 ** 2}MB"
+    except Exception as e:                           # noqa: BLE001
+        return f"nocap({type(e).__name__})"
 
 
 def run_step(name: str, cmd: list[str], cwd: Path | None = None,
@@ -308,6 +362,7 @@ def l2_findings(path: Path, only: set[str], baseline: Path | None = None,
 
 
 def l2_worker() -> int:
+    print(self_cap_memory(), file=sys.stderr)   # 让「有没有上限」在结果里看得见
     spec = json.loads(sys.stdin.read())
     expect: dict = {}
     if spec["baseline"]:
@@ -434,6 +489,11 @@ def run_one(kind: str, src: Path, arm: str, base: Path | None,
             st = run_step(name, cmd)
             res.steps.append(st)
             res.secs += st.secs
+            if st.hit_mem_cap:
+                res.outcome = Outcome.GATE_LIMIT
+                res.reasons.append(f"{st.name}: 撞到门禁给的 "
+                                   f"{STEP_MEM_LIMIT // 1024**3} GB 内存上限")
+                return res
             if st.breaks_contract:
                 res.contract.append(st.why())
             if st.crashed:
@@ -515,11 +575,24 @@ def materialize_baseline(td: Path) -> tuple[Path | None, str]:
     dest = td / "baseline-doc-edit"
     dest.mkdir(parents=True, exist_ok=True)
     for name in ("docx_read", "docx_edit", "xlsx_read", "xlsx_edit"):
+        # ⚠️ encoding 必须显式给。`text=True` 不带 encoding 时用宿主的 locale 编码，
+        # Windows 上就是 cp1252，而旧 doc-edit 的脚本里有中文注释 ⇒ 解码失败。
+        # 而这个失败**不会以异常的形式交给你**：解码发生在 subprocess 的读取线程里，
+        # 那个线程抛异常只会把 traceback 打到 stderr，run() 照常返回，
+        # 只是 `stdout` 变成 **None** —— 于是下一行 write_text(None) 才炸，
+        # 报的是 `TypeError: data must be str`，离真因十万八千里。
+        # CI 第一跑（run 30911346681）就是这么红的。
         r = subprocess.run(["git", "show", f"{BASELINE_REF}:{BASELINE_DIR}/{name}.py"],
-                           cwd=str(REPO_ROOT), capture_output=True, text=True)
+                           cwd=str(REPO_ROOT), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             return None, (f"取不到 {BASELINE_REF}:{BASELINE_DIR}/{name}.py —— "
-                          f"浅克隆？CI 里要 fetch-depth: 0。{r.stderr.strip()[:120]}")
+                          f"浅克隆？CI 里要 fetch-depth: 0。"
+                          f"{(r.stderr or '').strip()[:120]}")
+        if not r.stdout:
+            # 上面那条已经堵死了已知的成因，但「rc=0 却没有内容」必须是一句话，
+            # 不是一个 TypeError —— 沉默地写出一个空基线比失败更糟。
+            return None, (f"{BASELINE_REF}:{BASELINE_DIR}/{name}.py 退出码为 0 却没有内容")
         (dest / f"{name}.py").write_text(r.stdout, encoding="utf-8")
     return dest, ""
 
@@ -988,7 +1061,8 @@ def _crlf_control(work: Path) -> tuple[bool, str]:
                 ["git", "commit", "-q", "-m", "seed"]):
         fm.run(cmd, cwd=origin)
     sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(origin),
-                         capture_output=True, text=True).stdout.strip()
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stdout.strip()
 
     saved = os.environ.get("GIT_CONFIG_GLOBAL")
     os.environ["GIT_CONFIG_GLOBAL"] = str(home / "gitconfig")
@@ -1144,7 +1218,22 @@ def selftest() -> int:
 
     def expect(cid: str, cond: bool, msg: str) -> None:
         (passed if cond else failed).append(f"{cid}: {msg}")
-        print(f"   {'PASS' if cond else 'FAIL'}  {cid}  {msg}")
+        print(f"   {'PASS' if cond else 'FAIL'}  {cid}  {msg}", flush=True)
+
+    def guarded(cid: str, fn) -> None:
+        """一条控制抛异常时记 FAIL 并继续。
+
+        ⚠️ 第一版没有这层：Windows 上 C9 抛 TypeError，**后面 17 条控制一条都没跑**，
+        CI 日志里只剩一个与真因无关的 traceback。一个崩掉的 harness 比一个判红的
+        harness 告诉你的少得多。
+        """
+        try:
+            fn()
+        except Exception as e:                       # noqa: BLE001 - 故意的边界
+            import traceback
+            failed.append(f"{cid}: 控制自身抛异常 {type(e).__name__}: {e}")
+            print(f"   FAIL  {cid}  控制自身抛异常 {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
 
     print("══ L3 门禁自检 ══")
     td = Path(tempfile.mkdtemp(prefix="l3-selftest-"))
@@ -1233,6 +1322,86 @@ def selftest() -> int:
         expect("C8", any("≥ 20" in p for p in probs2),
                f"docx 只有 1 份 → 报「要求 ≥ 20」（{len(probs2)} 条问题）")
 
+        # ── C28 L2 worker 自设的内存上限：撞上限要归成「门禁的局限」，
+        #     绝不能记成「技能崩了」。控制臂 = 把上限压到 64MB（必然撞上）。
+        #     ⚠️ macOS 设不上 RLIMIT_AS —— 那就如实打印「本平台没有上限」，
+        #     而不是假装验过了。一条什么也没做的控制不许安静地绿。
+        def c28():
+            import os as _os
+            probe = self_cap_memory()
+            if probe.startswith("nocap"):
+                expect("C28", True, f"[{sys.platform}] {probe} —— "
+                                    f"**本平台设不了内存上限**（如实说；"
+                                    f"L2 worker 只有 120s 时间边界）")
+                return
+            env = dict(_os.environ, ULTRAWORK_L3_MEMCAP_MB="64")
+            r = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--l2-worker"],
+                input=json.dumps({"path": str(SKILLS / "xlsx/fixtures/book.xlsx"),
+                                  "only": ["X1"], "baseline": None, "touched": []}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", env=env)
+            hit = MEMCAP_MARK in r.stderr
+            st = Step("l2", [], r.returncode, r.stdout, r.stderr, 0)
+            expect("C28", hit and st.hit_mem_cap and not st.crashed and not st.refused,
+                   f"[{sys.platform}] 上限压到 64MB → 撞上限={hit}，"
+                   f"归类 crashed={st.crashed} refused={st.refused}（都应为 False）")
+        guarded("C28", c28)
+
+        # ── C27 `text=True` 不给 encoding 是个**静默**陷阱，不是报错。
+        #     解码发生在 subprocess 的读取线程里：那个线程抛异常只把 traceback 打到
+        #     stderr，run() 照常返回，只是 stdout 变成 **None**。Windows 的 locale
+        #     编码是 cp1252，而旧 doc-edit 的脚本带中文注释 ⇒ CI 第一跑就死在这。
+        #     两条臂用同一段 UTF-8 中文输出，只差 encoding 参数。
+        def c27():
+            # ⚠️ 这条控制的**正确期望集依赖平台**，实测量出来的，不是猜的：
+            #   subprocess 的读取线程（`_readerthread`）是 **Windows 专有**的，
+            #   POSIX 用 selector 在主线程解码。所以同一个解码失败：
+            #     Windows → 线程里抛、traceback 打到 stderr、run() 照常返回 stdout=None
+            #     POSIX   → 直接抛 UnicodeDecodeError 给调用方
+            #   前者是**静默**的，后者不是 —— CI 第一跑正是死在前者上。
+            # 另一半在两个平台都成立且更阴：cp1252 对绝大多数字节**有**映射，
+            # 所以随便一句中文只会被静默解成**乱码**（内容悄悄错了，不报错）。
+            # 探针的字是实测挑的：「不」= E4 B8 8D，命中 cp1252 未定义字节 0x8D；
+            # CI 那次撞上的是 0x90。
+            probe = td / "cjk_out.py"
+            probe.write_text("print('不可解码探针')\n", encoding="utf-8")
+            plain = td / "mojibake_out.py"
+            # 乱码臂的字也是**实测挑的**：它的每个字节都必须能被 cp1252 映射，
+            # 否则这一臂也会变成「解不动」那一臂，两种坏法就分不开了。
+            # （第一版随手写「中文乱码探针」，「码」= E7 A0 81 命中未定义字节 0x81，
+            #   控制当场自爆 —— 断言判红三次都是我对被测对象的描述错了。）
+            plain.write_text("print('乮垺敱知')\n", encoding="utf-8")
+
+            def run_as(f, enc, **kw):
+                return subprocess.run([sys.executable, str(f)], capture_output=True,
+                                      text=True, encoding=enc, **kw)
+
+            # ① 两平台共有：可映射字节 → 内容悄悄错了，不抛异常
+            moji = run_as(plain, "cp1252")
+            common = (moji.stdout is not None
+                      and "乮垺敱知" not in moji.stdout)
+            # ② 平台相关：未定义字节
+            try:
+                none_arm = run_as(probe, "cp1252")
+                branch = f"stdout={none_arm.stdout!r}（不抛异常）"
+                platform_ok = none_arm.returncode == 0 and none_arm.stdout is None
+                observed = "silent-None"
+            except UnicodeDecodeError as e:
+                branch = f"抛 UnicodeDecodeError: {str(e)[:48]}"
+                platform_ok = True
+                observed = "raises"
+            expected = "silent-None" if sys.platform == "win32" else "raises"
+            # ③ 修复本身：utf-8 一定拿得到原文
+            good = run_as(probe, "utf-8", errors="replace")
+            expect("C27",
+                   common and platform_ok and observed == expected
+                   and good.stdout is not None and "不可解码探针" in good.stdout,
+                   f"[{sys.platform}] 未定义字节 → 量到 {observed}（该平台应为 "
+                   f"{expected}）：{branch}；可映射字节 → "
+                   f"{moji.stdout.strip()[:12]!r} 内容悄悄错了；utf-8 → 正确")
+        guarded("C27", c27)
+
         # ── C9 基线臂真的取得到，且与新臂**不是同一个东西**
         base, err = materialize_baseline(td)
         if base is None:
@@ -1253,10 +1422,14 @@ def selftest() -> int:
         clean1 = Step("t", [], 1, "", "Error opening x.docx: not a zip", 0)   # 旧实现的形状
         clean2 = Step("t", [], 2, "", "error: not a Word document", 0)        # 新实现的形状
         sig = Step("t", [], -9, "", "timeout", 0)
-        expect("C10", tb.crashed and sig.crashed
+        # Windows 上没有负退出码：硬崩溃是 NTSTATUS 大正数。只写 rc<0 的话，
+        # Windows 的段错误会被判成「拒绝」= 把崩溃记成正确行为。
+        winseg = Step("t", [], 0xC0000005, "", "", 0)      # 访问违例
+        expect("C10", tb.crashed and sig.crashed and winseg.crashed
                and not clean1.crashed and clean1.refused
                and not clean2.crashed and clean2.refused,
-               "裸 traceback / 信号 = 崩溃；旧的 rc=1 干净报错与新的 rc=2 都只算拒绝")
+               f"裸 traceback / 信号 / Windows NTSTATUS({0xC0000005}) = 崩溃；"
+               f"旧的 rc=1 干净报错与新的 rc=2 都只算拒绝")
 
         # ── C11 契约违规单独记一笔，且只有新臂才有意义
         expect("C11", clean1.breaks_contract and not clean2.breaks_contract

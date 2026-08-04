@@ -129,8 +129,12 @@ def sha256_of(p: Path) -> str:
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
+    # encoding 显式给：不给的话 Windows 用 cp1252，git 输出里的非 ASCII（提交信息、
+    # 文件名）会让 subprocess 的**读取线程**抛异常 —— 而那不会变成异常交给调用方，
+    # 只会让 stdout 静默变成 None（059 §六·补九，CI 第一跑实证）。
     r = subprocess.run(cmd, cwd=str(cwd) if cwd else None,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise SystemExit(f"命令失败（rc={r.returncode}）：{' '.join(cmd)}\n{r.stdout}")
 
@@ -228,7 +232,8 @@ def rebuild(pin: str | None) -> int:
         for src in SOURCES:
             ref = pin or subprocess.run(
                 ["gh", "api", f"/repos/{src['repo']}/commits/HEAD", "--jq", ".sha"],
-                stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+                stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                errors="replace", check=True).stdout.strip()
             tree = Path(td) / src["id"]
             print(f"[{src['id']}] fetch {src['repo']}@{ref[:12]} …")
             sparse_fetch(src, ref, tree)
