@@ -227,6 +227,9 @@ TOC_PLACEHOLDER = "—"
 # took number 1 and the real first chapter became 2 — "1. 目录 / 2. 经营概况 /
 # 2.1 收入分析 / 3. 风险提示". Nothing in the package was invalid.
 TOC_HEADING_STYLE = "TOCHeading"
+# 0-8 = Heading 1-9. A style resolving to any of these is a heading to a reader,
+# whatever it is called; 9 is body text and is what cancels the inheritance.
+HEADING_OUTLINE_LEVELS = {str(n) for n in range(9)}
 
 # W11. Measured from the fixture rather than assumed, and the two numbers are far
 # enough apart that an implementation reading the file's own pHYs density and one
@@ -551,6 +554,21 @@ def style_numbering(path: Path) -> dict[str, str | None]:
         num_id = numpr.find(W + "numId")
         out[style.get(W + "styleId")] = num_id.get(W + "val") if num_id is not None \
             else None
+    return out
+
+
+def style_outline(path: Path) -> dict[str, str | None]:
+    """`{styleId: outlineLvl}` for every style whose pPr carries one.
+
+    0-8 are Heading 1-9; 9 is body text. Absent means "whatever basedOn says", which
+    is the whole point — it is inherited exactly like numbering is.
+    """
+    out = {}
+    for style in tree_of(path, "word/styles.xml").findall(W + "style"):
+        ppr = style.find(W + "pPr")
+        lvl = ppr.find(W + "outlineLvl") if ppr is not None else None
+        if lvl is not None:
+            out[style.get(W + "styleId")] = lvl.get(W + "val")
     return out
 
 
@@ -1084,6 +1102,7 @@ def collect_toc(work: Path) -> dict:
         "document_xml": part_text(contents, "word/document.xml"),
         "settings_tags": settings_tags(contents),
         "style_numbering": style_numbering(contents),
+        "style_outline": style_outline(contents),
         "style_based_on": style_based_on(contents),
         "abstract_levels": abstract_levels(contents),
     }
@@ -3337,6 +3356,22 @@ def g6_contents_not_numbered(ctx: dict) -> list[str]:
                    f"measured in a rendered PDF, the contents page then takes number "
                    f"1 and the real first chapter becomes 2. Nothing in the package "
                    f"is invalid and no other check can see it")
+    # The OTHER half of the same inheritance, and the one that needed a real field
+    # update to see: basedOn="Heading1" also hands down `outlineLvl=0`, so a reader
+    # treats the contents title as a level-1 heading and pulls it into the list it
+    # heads. Measured in WPS (2026-08-05): the 7 cached entries became 8, the new
+    # first one being "目录 ... 1". No preview through this skill could show it —
+    # the cache written here has no such entry and LibreOffice never updates fields.
+    outline = t["style_outline"]
+    effective = outline.get(TOC_HEADING_STYLE)
+    if effective is None:
+        effective = next((outline[s] for s in chain if s in outline), None)
+    if effective is None or effective in HEADING_OUTLINE_LEVELS:
+        out.append(f"G6 {TOC_HEADING_STYLE} resolves to outlineLvl={effective!r} "
+                   f"(via {chain[:1] or ['itself']}), i.e. a heading level — a reader "
+                   f"that updates the field then lists the contents page inside its "
+                   f"own contents. Cancel it with <w:outlineLvl w:val=\"9\"/> "
+                   f"(9 = body text). Measured in WPS: 7 entries became 8")
     return out
 
 
@@ -5187,6 +5222,20 @@ def flaw_contents_heading_takes_chapter_one(ctx, work):
     return ctx
 
 
+def flaw_contents_heading_stays_a_heading(ctx, work):
+    """The OTHER half: TOCHeading no longer cancels the inherited outline level.
+
+    Replicates exactly what shipped until 2026-08-05 — numId 0 present (so the
+    numbering half is clean), outlineLvl absent, inherited from Heading1. Every
+    package check stays green and the preview shows the right 7 entries; the reader
+    that updates the field gets 8, the first being the contents page itself.
+    """
+    t = copy.deepcopy(ctx["toc"])
+    t["style_outline"].pop(TOC_HEADING_STYLE, None)
+    ctx["toc"] = t
+    return ctx
+
+
 # ── W11 ───────────────────────────────────────────────────────────────────────
 def flaw_image_without_a_content_type(ctx, work):
     i = copy.deepcopy(ctx["image"])
@@ -6147,6 +6196,9 @@ FLAWS = [
      {"G5"}, ""),
     ("numbering-levels-name-no-style", flaw_numbering_levels_name_no_style, {"G5"}, ""),
     ("contents-heading-takes-chapter-one", flaw_contents_heading_takes_chapter_one,
+     {"G6"}, ""),
+    # The half a real field update found: numbering cancelled, outline level not.
+    ("contents-heading-stays-a-heading", flaw_contents_heading_stays_a_heading,
      {"G6"}, ""),
 
     ("image-written-with-no-content-type", flaw_image_without_a_content_type,

@@ -149,12 +149,23 @@ def ensure_toc_styles(styles_root, levels: int) -> list[str]:
     # PDF: "1. 目录 / 2. 经营概况 / 2.1 收入分析 / 3. 风险提示". Nothing in the
     # package is invalid, every check stays green, and the document is wrong.
     # numId 0 is the value ECMA-376 §17.9.18 reserves for "remove the numbering".
+    #
+    # ⚠️ `<w:outlineLvl w:val="9"/>` cancels the OTHER half of that inheritance, and
+    # it took a real field update to see it. basedOn="Heading1" also hands down
+    # `outlineLvl=0`, so to a reader the contents page's own title IS a level-1
+    # heading — and updating the field pulls it into the list it heads. Measured in
+    # WPS (2026-08-05): the 7 entries this script cached became 8, the new first one
+    # being "目录 ....... 1". Invisible until then, because the cache this script
+    # writes has no such entry and LibreOffice never updates fields — so every
+    # preview through this skill showed the correct 7 and the reader saw 8.
+    # 9 is the value ECMA-376 uses for body text (0-8 are Heading 1-9).
     if sty.ensure_style(styles_root, "TOCHeading", name="TOC Heading",
                         based_on="Heading1", next_style="Normal", ui_priority=39,
                         ppr_xml='<w:pPr>'
                                 '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/>'
                                 "</w:numPr>"
                                 '<w:spacing w:before="240" w:after="120"/>'
+                                '<w:outlineLvl w:val="9"/>'
                                 "</w:pPr>"):
         created.append("TOCHeading")
     for level in range(1, levels + 1):
