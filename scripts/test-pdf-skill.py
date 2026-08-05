@@ -178,6 +178,86 @@ def png_ink(path: Path) -> int:
 FORMS_ANCHOR = 'doc.uw_forms_note = "initialised" if doc.init_forms() else FORMS_NONE'
 
 
+# The three anchors the LIVE page-op controls back out. Each must match exactly once.
+CARRY_ANCHOR = "    note = carry_acroform(writer, sources)"
+KEYS_ANCHOR = 'ACROFORM_KEYS = ("/DR", "/DA", "/Q", "/NeedAppearances", "/SigFlags", "/XFA")'
+REFUSE_ANCHOR = "    if len(withform) > 1:"
+
+
+def collect_pageops_form(scripts: Path, work: Path, tag: str) -> dict:
+    """Put a FILLED form through the page ops and ask whether it is still a form.
+
+    `pdf_form_fill.py` (not the committed fixture) is the subject on purpose: the
+    fixture's /AcroForm carries only /Fields, while a real filled document also has
+    /DA and /NeedAppearances — the form-level keys a viewer needs when it rebuilds an
+    appearance. A control that backs those out would score identically against the
+    fixture, so the fixture cannot be the subject.
+    """
+    filled = work / f"n5-{tag}-filled.pdf"
+    r = run_script_from(scripts, "pdf_form_fill.py", "--in", FORM, "--out", filled,
+                        "--values", FORM_VALUES, "--report", work / f"n5-{tag}-fill.json")
+    if r.returncode != 0:
+        raise SystemExit(f"[setup] pdf_form_fill.py failed: {r.stdout}{r.stderr}")
+
+    def ink_of(pdf: Path, page: int) -> int:
+        d = work / f"n5-{tag}-{pdf.stem}-png"
+        rr = run_script_from(scripts, "pdf_render.py", "--in", pdf, "--out", d,
+                             "--pages", str(page), "--dpi", RENDER_DPI)
+        if rr.returncode != 0:
+            raise SystemExit(f"[setup] pdf_render.py on {pdf.name}: {rr.stdout}{rr.stderr}")
+        return png_ink(d / f"page-{page:03d}.png")
+
+    # The form-level keys the SOURCE actually has. Asserting a hardcoded list was
+    # wrong: /DA comes from the document, not from the fill, and the committed
+    # fixture has none while a regenerated one does — the assertion has to be
+    # "nothing the input had was lost", which is also the only thing carry can promise.
+    out: dict = {"standalone_ink": ink_of(filled, 1), "ops": {},
+                 "source_keys": acroform_of(filled)["keys"]}
+    ops = {
+        # The form page lands SECOND, so a carry that only ever looks at input one
+        # would be caught too.
+        "merge": (["--op", "merge", "--in", REPORT, filled], 4),
+        "extract": (["--op", "extract", "--in", filled, "--pages", "1"], 1),
+        "rotate": (["--op", "rotate", "--in", filled, "--pages", "1", "--degrees", "90"], 1),
+    }
+    for name, (args, form_page) in ops.items():
+        target, rep = work / f"n5-{tag}-{name}.pdf", work / f"n5-{tag}-{name}.json"
+        rr = run_script_from(scripts, "pdf_pages.py", *args, "--out", target,
+                             "--report", rep)
+        if rr.returncode != 0:
+            raise SystemExit(f"[setup] pdf_pages.py {name}: {rr.stdout}{rr.stderr}")
+        report = json.loads(rep.read_text(encoding="utf-8"))
+        out["ops"][name] = {"note": report.get("acroform"),
+                            "catalog": acroform_of(target),
+                            # rotate turns the page, which changes the raster — the ink
+                            # comparison only means something on the two that do not.
+                            "ink": ink_of(target, form_page) if name != "rotate" else None}
+    # A merge of two documents with no form at all must NOT invent one.
+    plain, prep = work / f"n5-{tag}-plain.pdf", work / f"n5-{tag}-plain.json"
+    run_script_from(scripts, "pdf_pages.py", "--op", "merge", "--in", REPORT, TABLE_GRID,
+                    "--out", plain, "--report", prep)
+    out["plain_note"] = json.loads(prep.read_text(encoding="utf-8")).get("acroform")
+    # Two form documents in one output: same field names, so a viewer would fuse them.
+    two = run_script_from(scripts, "pdf_pages.py", "--op", "merge", "--in", filled, FORM,
+                          "--out", work / f"n5-{tag}-two.pdf")
+    out["two_forms"] = {"exit": two.returncode, "stderr": two.stderr}
+    return out
+
+
+def acroform_of(pdf: Path) -> dict:
+    """What the OUTPUT file's catalog says — read back from disk, not from the report.
+    A report claiming success and a file that carries it are two different facts."""
+    from pypdf import PdfReader
+
+    root = PdfReader(str(pdf)).trailer["/Root"]
+    acro = root.get("/AcroForm")
+    if acro is None:
+        return {"present": False, "fields": 0, "keys": []}
+    obj = acro.get_object()
+    return {"present": True, "fields": len(obj.get("/Fields", [])),
+            "keys": sorted(k for k in obj.keys() if k != "/Fields")}
+
+
 def collect_forms_render(scripts: Path, work: Path, tag: str) -> dict:
     """Rasterize the same paper form three ways through the real entry point."""
     out = {}
@@ -289,7 +369,16 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
             # And the empty form must actually carry ink, or the ratio R6 measures
             # is a division into a number that means nothing.
             ("ink on the empty form (R6's denominator)",
-             ctx["forms_render"]["unfilled"]["ink"], 1000)):
+             ctx["forms_render"]["unfilled"]["ink"], 1000),
+            # N5 compares three ops; with fewer it stops covering the shared exit.
+            ("page ops run against a form (N5's subjects)",
+             len(ctx["pageops_form"]["ops"]), 3),
+            ("ink on the standalone filled form (N5's denominator)",
+             ctx["pageops_form"]["standalone_ink"], 1000),
+            # Without at least one form-level key on the input, N5's second half has
+            # nothing to lose and its control could not fire.
+            ("form-level keys on the input (N5's half-B subjects)",
+             len(ctx["pageops_form"]["source_keys"]), 1)):
         if got < need:
             out.append(f"V0 only {got} {label}, need >= {need} — assertions covering "
                        f"them would pass by having nothing to check")
@@ -1005,9 +1094,64 @@ def r6_forms_render(ctx: dict) -> list[str]:
     return out
 
 
+@check("N5", "a page op keeps a form document a form document")
+def n5_pageops_form(ctx: dict) -> list[str]:
+    """`add_page` brings the widgets, their /V and their /AP — and leaves the
+    catalog's /AcroForm behind. Every value is still in the file and the form is
+    gone: viewers that paint /AP directly (Preview, Acrobat) show it, viewers that
+    go through the form module (PDFium ⇒ Chrome, and this skill's own renderer)
+    show an empty page. Which one you happen to open decides whether you notice.
+
+    Three halves, three controls: the form survives · its form-level keys survive ·
+    two form documents are refused rather than silently fused.
+    """
+    out = []
+    po = ctx["pageops_form"]
+    base = po["standalone_ink"]
+    for name, got in po["ops"].items():
+        note, cat = got["note"] or {}, got["catalog"]
+        if note.get("state") != "carried":
+            out.append(f"N5 {name} reports acroform {note.get('state')!r}, expected "
+                       f"'carried' ({note})")
+        if not cat["present"] or cat["fields"] != EXPECT_FORM_FIELDS:
+            out.append(f"N5 {name} output catalog: present={cat['present']} "
+                       f"fields={cat['fields']}, expected {EXPECT_FORM_FIELDS}")
+        # Half B: the form-level keys, not just /Fields. Measured against what the
+        # input actually had — a fixed list would demand a key the source never carried.
+        lost = [k for k in po["source_keys"] if k not in cat["keys"]]
+        if lost:
+            out.append(f"N5 {name} lost {', '.join(lost)} — input carried "
+                       f"{po['source_keys']}, output carries {cat['keys']}")
+        # Half A, at the pixel level: is it still a form to the form module?
+        if got["ink"] is not None and got["ink"] < base * FORMS_INK_MARGIN_OP:
+            out.append(f"N5 {name} renders {got['ink']} dark px vs {base} standalone "
+                       f"(ratio {got['ink'] / base:.3f}, need >= {FORMS_INK_MARGIN_OP}) "
+                       f"— the values are in the file but nothing paints them")
+    if (po["plain_note"] or {}).get("state") != "none":
+        out.append(f"N5 merging two form-less PDFs reported "
+                   f"{(po['plain_note'] or {}).get('state')!r}, expected 'none'")
+    # Half C: two forms with the same field names must be refused, and the message
+    # has to name them — "merge failed" alone leaves the caller nothing to do.
+    tf = po["two_forms"]
+    if tf["exit"] != 2:
+        out.append(f"N5 merging two AcroForm documents exited {tf['exit']}, expected 2 "
+                   f"— identical field names become ONE field in a viewer")
+    elif "applicant" not in tf["stderr"]:
+        out.append(f"N5 the two-form refusal does not name a colliding field: "
+                   f"{tf['stderr'].strip()[:120]!r}")
+    return out
+
+
 # ── collecting the real output ────────────────────────────────────────────────
 NEEDLES = {1: ["季度经营分析报告", "Quarterly"], 2: ["科目", "营业收入"],
            3: ["第三页为横向版面"]}
+
+# What fixtures/form-acroform.pdf holds (also spelled out in EXPECT_FIELDS above).
+EXPECT_FORM_FIELDS = 5
+# Measured 2026-08-05: a merged/extracted form renders 22291 dark px against the
+# standalone 22291 — identical, because it is the same page. The margin only has to
+# separate that from the broken implementation, which scores the EMPTY form (13540).
+FORMS_INK_MARGIN_OP = 0.95
 
 # Measured 2026-08-05 at RENDER_DPI: 6555 dark px unfilled vs 8078 filled = 1.232.
 # The margin sits well below that and well above 1.0, which is what the broken
@@ -1064,6 +1208,7 @@ def collect(work: Path) -> dict:
         "create": create,
         "ops": ops,
         "forms_render": collect_forms_render(SKILL / "scripts", work, "real"),
+        "pageops_form": collect_pageops_form(SKILL / "scripts", work, "real"),
         "render": {"dir": str(render_dir), "dpi": RENDER_DPI,
                    "requested": list(RENDER_PAGES),
                    "report": json.loads(render_report.read_text(encoding="utf-8"))},
@@ -1823,6 +1968,32 @@ def flaw_live_forms_note_lies(ctx, work):
     return ctx
 
 
+def flaw_live_no_acroform_carry(ctx, work):
+    """The implementation that shipped until 2026-08-05: every op builds a fresh
+    writer, copies the pages in, and leaves the catalog's /AcroForm behind."""
+    scripts = patched_scripts(work, CARRY_ANCHOR,
+                              '    note = {"state": "none", "detail": "not carried"}',
+                              "nocarry")
+    ctx["pageops_form"] = collect_pageops_form(scripts, work, "nocarry")
+    return ctx
+
+
+def flaw_live_fields_only(ctx, work):
+    """Carries /Fields and nothing else. The pixels come out right, so only the
+    form-level keys tell it apart — which is exactly why N5 asserts them separately."""
+    scripts = patched_scripts(work, KEYS_ANCHOR, "ACROFORM_KEYS = ()", "fieldsonly")
+    ctx["pageops_form"] = collect_pageops_form(scripts, work, "fieldsonly")
+    return ctx
+
+
+def flaw_live_fuses_two_forms(ctx, work):
+    """Takes the first form and merges anyway. The output opens, looks filled, and
+    two unrelated fields now share one value the moment anybody types."""
+    scripts = patched_scripts(work, REFUSE_ANCHOR, "    if False:", "fusetwo")
+    ctx["pageops_form"] = collect_pageops_form(scripts, work, "fusetwo")
+    return ctx
+
+
 FLAWS = [
     ("writer-overwrites-its-own-input", flaw_in_place_allowed, {"O2"}, ""),
     ("writer-fails-with-a-raw-traceback", flaw_in_place_raw_traceback, {"O2"}, ""),
@@ -1893,6 +2064,12 @@ FLAWS = [
      flaw_live_no_form_env, {"R6"}, ""),
     ("LIVE: form env is up but the report says it is not",
      flaw_live_forms_note_lies, {"R6"}, ""),
+    ("LIVE: page ops as they shipped until 2026-08-05 (no /AcroForm carry)",
+     flaw_live_no_acroform_carry, {"N5"}, ""),
+    ("LIVE: carries /Fields and drops the form-level keys",
+     flaw_live_fields_only, {"N5"}, ""),
+    ("LIVE: merges two form documents instead of refusing",
+     flaw_live_fuses_two_forms, {"N5"}, ""),
 ]
 
 
