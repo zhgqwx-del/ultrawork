@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,99 @@ def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=300)
+
+
+def run_script_from(scripts, name: str, *args: str) -> subprocess.CompletedProcess:
+    """Same call against an arbitrary copy of the scripts — for LIVE controls, which
+    re-run the REAL entry point with the fix backed out instead of editing the numbers
+    this file collected."""
+    return subprocess.run([PY, str(Path(scripts) / name), *map(str, args)],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=300)
+
+
+def patched_scripts(work: Path, edits: list[tuple[str, str]], name: str) -> Path:
+    """A copy of the skill's scripts with each edit applied exactly once.
+
+    Raises when an anchor does not match exactly once: a control arm that silently
+    failed to apply is indistinguishable from one that applied and changed nothing.
+    """
+    dest = work / f"patched-{name}"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(SKILL / "scripts", dest,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    for old, new in edits:
+        hits = 0
+        for py in list(dest.glob("*.py")) + list(dest.glob("office/*.py")):
+            text = py.read_text(encoding="utf-8")
+            if old in text:
+                hits += text.count(old)
+                py.write_text(text.replace(old, new), encoding="utf-8")
+        if hits != 1:
+            raise SystemExit(f"control {name!r}: anchor matched {hits} times, expected "
+                             f"1 — the control did not replicate the defect")
+    return dest
+
+
+# The shipped-until-2026-08-05 shape: widths applied AFTER the first append, which
+# write_only silently discards. The second edit removes the self-check, so the run
+# succeeds while lying — which is precisely what shipped.
+IMPORT_ORDER_ANCHOR = """    if widest:
+        from openpyxl.utils import get_column_letter
+        for i, w in widest.items():
+            ws.column_dimensions[get_column_letter(i)].width = w
+    for row in rows:
+        ws.append([coerce_cell(v) for v in row])"""
+IMPORT_ORDER_BROKEN = """    for row in rows:
+        ws.append([coerce_cell(v) for v in row])
+    if widest:
+        from openpyxl.utils import get_column_letter
+        for i, w in widest.items():
+            ws.column_dimensions[get_column_letter(i)].width = w"""
+SELFCHECK_ANCHOR = """    if in_file != len(widest):"""
+SELFCHECK_OFF = """    if False:"""
+
+
+# The CSV comes from 利润表, whose headers are CJK: counted in display units the
+# widest is well past this, counted with len() it would be about half. Measured
+# rather than guessed — the point of the floor is to separate the two.
+CJK_IMPORT_MIN_WIDTH = 12
+
+
+def collect_import_autofit(scripts, work: Path, tag: str, csv_src: Path) -> dict:
+    """`--from <csv> --autofit` — the creation path, which had no coverage at all."""
+    out_x = work / f"imp-{tag}.xlsx"
+    r = run_script_from(scripts, "xlsx_convert.py", "--from", csv_src, "--out", out_x,
+                        "--sheet", "导入", "--autofit")
+    report = {}
+    if r.returncode == 0 and r.stdout.strip():
+        try:
+            report = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            report = {}
+    return {"exit": r.returncode, "report": report,
+            "cols_in_file": cols_in_xlsx(out_x) if out_x.is_file() else 0,
+            "widths": widths_in_xlsx(out_x) if out_x.is_file() else {}}
+
+
+def cols_in_xlsx(path: Path) -> int:
+    import re
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        name = next((n for n in z.namelist()
+                     if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")), None)
+        return len(re.findall(rb"<col\b", z.read(name))) if name else 0
+
+
+def widths_in_xlsx(path: Path) -> dict:
+    """Column letter -> width, read straight out of the artifact."""
+    import openpyxl
+    from contextlib import closing
+    wb = openpyxl.load_workbook(path)
+    with closing(wb):
+        ws = wb.worksheets[0]
+        return {k: d.width for k, d in ws.column_dimensions.items() if d.width}
 
 
 def parts_of(path: Path) -> dict[str, bytes]:
@@ -607,6 +701,9 @@ def collect(work: Path) -> dict:
     jsonl_r1 = work / "rows-r1.jsonl"
     run_script("xlsx_convert.py", "--in", calc, "--to", "jsonl", "--out", jsonl_r1,
                "--sheet", "利润表")
+    ctx["_csv_src"] = csv_out
+    ctx["import_autofit"] = collect_import_autofit(SKILL / "scripts", work,
+                                                    "real", csv_out)
     ctx["convert"] = {
         "csv_head": csv_out.read_bytes()[:3],
         "csv_text": csv_out.read_text(encoding="utf-8-sig"),
@@ -1007,6 +1104,44 @@ def c3_merges(ctx: dict) -> list[str]:
                 f"has to fit ({MERGE_VERTICAL!r} needs {MERGE_EXPECT_WIDTH})"]
     return [f"C3 column A width {got:g}, expected {MERGE_EXPECT_WIDTH} "
             f"for the vertically merged {MERGE_VERTICAL!r}"]
+
+
+@check("C4", "importing a CSV with --autofit puts the widths in the FILE, not only "
+             "in the report")
+def c4_import_autofit(ctx: dict) -> list[str]:
+    """`--from x.csv --autofit` reported `widths_set: 5` and wrote no <cols> at all.
+
+    openpyxl's write_only sheet streams out as rows arrive and emits <cols> at the
+    START of it, so widths set after the first append are dropped without a word.
+    Nothing here or anywhere else was looking: this is the creation path, and every
+    width assertion above tests the EDIT path (`xlsx_write.py --autofit`), which
+    writes the sheet XML surgically and was always fine. Two different code paths,
+    one of them uncovered.
+    """
+    out = []
+    got = ctx["import_autofit"]
+    if got["exit"] != 0:
+        out.append(f"C4 the import exited {got['exit']} — no widths to check")
+        return out
+    claimed = got["report"].get("widths_set")
+    if not claimed:
+        out.append(f"C4 --autofit reported widths_set={claimed!r} on a CSV that has "
+                   f"text in every column")
+    # The file is the fact; the report is a claim about it.
+    if got["cols_in_file"] != claimed:
+        out.append(f"C4 report says widths_set={claimed} but the sheet carries "
+                   f"{got['cols_in_file']} <col> entr(ies) — a width that is not in "
+                   f"the artifact is not a width")
+    if got["report"].get("widths_in_file") != got["cols_in_file"]:
+        out.append(f"C4 report's widths_in_file={got['report'].get('widths_in_file')!r} "
+                   f"disagrees with the file's {got['cols_in_file']}")
+    # And they must be CJK-aware, or this passes with widths that truncate.
+    widest = max(got["widths"].values(), default=0)
+    if widest < CJK_IMPORT_MIN_WIDTH:
+        out.append(f"C4 widest imported column is {widest}, expected >= "
+                   f"{CJK_IMPORT_MIN_WIDTH} for a header counted in wide characters "
+                   f"(got {got['widths']})")
+    return out
 
 
 @check("E1", "cols is written before sheetData, as the ECMA-376 sequence requires")
@@ -2072,8 +2207,32 @@ def flaw_finance_resets_the_font(ctx, work):
     return ctx
 
 
+def flaw_live_import_widths_after_append(ctx, work):
+    """Widths applied after the first append — write_only drops them. The self-check
+    added with the fix catches it, so this arm proves that check is load-bearing."""
+    scripts = patched_scripts(work, [(IMPORT_ORDER_ANCHOR, IMPORT_ORDER_BROKEN)],
+                              "impafter")
+    ctx["import_autofit"] = collect_import_autofit(scripts, work, "impafter",
+                                                   ctx["_csv_src"])
+    return ctx
+
+
+def flaw_live_import_reports_widths_it_did_not_write(ctx, work):
+    """The same order bug WITH the self-check removed — exactly what shipped: exit 0,
+    `widths_set: 5`, and not one <col> in the file."""
+    scripts = patched_scripts(work, [(IMPORT_ORDER_ANCHOR, IMPORT_ORDER_BROKEN),
+                                     (SELFCHECK_ANCHOR, SELFCHECK_OFF)], "impsilent")
+    ctx["import_autofit"] = collect_import_autofit(scripts, work, "impsilent",
+                                                   ctx["_csv_src"])
+    return ctx
+
+
 FLAWS = [
     ("csv-written-without-a-bom", flaw_csv_without_bom, {"N1"}, ""),
+    ("LIVE: import applies widths after the first append (write_only drops them)",
+     flaw_live_import_widths_after_append, {"C4"}, ""),
+    ("LIVE: import reports widths it did not write (as it shipped until 2026-08-05)",
+     flaw_live_import_reports_widths_it_did_not_write, {"C4"}, ""),
     ("csv-roundtrip-turns-numbers-into-text", flaw_csv_roundtrip_stringifies_numbers,
      {"N1"}, ""),
     ("header-row-accepted-then-ignored", flaw_header_row_ignored, {"N2"}, ""),

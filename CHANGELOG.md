@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **L4 备料查出的剩余三条（discussions/059 §六·补十）** —— 一刀做完，各配自己的门禁与负向控制：
+  - **`xlsx_convert.py --from <csv|json> --autofit` 报了数不干活。** 报告写 `widths_set: 5`，产物里**一个 `<cols>` 都没有**。根因：`Workbook(write_only=True)` 的工作表是**边到边流式写出**的，`<cols>` 写在它的**开头**，所以在第一次 `append` 之后设的列宽被**静默丢弃**（openpyxl 3.1.5 最小复现：设在 append 之前 `<cols>` 在、之后就没有）。修法 = 宽度单独一遍先量完再建 workbook（`rows` 对 CSV 和 JSON 本来就全量物化，这一遍是免费的）+ **写完把自己报的数从文件里读回来核对**，对不上直接拒绝报告成功。⚠️ **这是创建路径，而此前所有列宽断言测的都是编辑路径**（`xlsx_write.py --autofit` 走外科式写 sheet XML，一直是对的）—— 两条不同的代码路径，其中一条零覆盖。
+    - 门禁 `test-xlsx-skill.py` 新增 **C4** + **两条 LIVE 控制**：一条把宽度挪回 append 之后（自检当场抓住 ⇒ 证明那道自检是吃劲的），一条**连自检一起撤掉**（= 真正发过货的形状：exit 0、报 5、文件里 0）。71/0(50) → **73/0（51 断言）**。
+  - **L2 的 P3 对 multiline 域是假阳性。** 它拿整串的单行宽度比框宽，**不看 multiline 标志**，于是一个折成两行、完全可见的值被判成溢出（实测：整串 490.0pt vs 300pt 框，而最宽的一折行是 295.44）。而技能自己的 `pdf_form_check.py` 早就按折行逐行量 —— **两个门禁量的不是同一件事，错的是 L2**。修法：认 `/Ff` 第 13 位，multiline 走自带的折行（**刻意不 import 技能的实现** —— 一个门禁要能在技能错时和它唱反调，就不能借用被测对象的代码），并把真正会出事的那一面补上：**高度**（折出的行数超过框高 ⇒ 尾巴没了且没有别的症状）。
+    - 新增**一对**用例（与 X5 合并标题、P4 旋转页同一形状）：`multiline 折行且装得下`**必须沉默** + `multiline 装不下`**必须打红**，原有的单行溢出照旧打红 —— **靠让检查变瞎买来的沉默不是修好**。L2 65/0 → **67/0**。
+  - **deckcraft 的 11 个可选依赖，声明了、探测了，UI 上一处都不显示。** `OPTIONAL_DEPS` 的注释写着「Declaring them makes the badge say WHICH format is unavailable」，而 `isOptionalDep` 的**唯一消费者是 `missingDeps`，它把这些依赖过滤掉了**；`DepBadge` 只渲染 `missingDeps` 的结果。**注释描述的是意图，代码发的是反面，两边都是绿的。** 修法 = 新增 `OPTIONAL_FEATURE_GROUPS`（依赖 → 它买的能力，**一组要齐全**：读 PDF 源少任何一个库就用不了）+ `unavailableFeatures()`，设置页在「就绪 / 缺少」之后补一个**灰色副徽标**，按**能力**报而不是按包名报（`curl_cffi` 没人认识，`URL` 有人认识），tooltip 给具体的 pip 命令。i18n 两个新键 + 繁体重生成。
+    - 门禁 `skills-builtin.test.ts` 新增**双向断言**：每个可选依赖都必须出现在某个能力组里（**声明了却不说它买什么，直接判红**），且能力组不许提技能没声明过的依赖；外加 `unavailableFeatures` 的行为断言（`beautifulsoup4` 被四个读取器共用，掉一个包正好带走 DOCX/EPUB/IPYNB/URL 四组 —— 按包名列会报错的正是这种情况）。desktop **866 → 868**。
+
 - **页面操作会把表单文档变成非表单（discussions/059 §六·补十的「下一刀」第 2 条，提前做）** —— `add_page` 把 widget 连同 `/V` 和 `/AP` 都带过去，**catalog 的 `/AcroForm` 不带**：每个值都还在文件里，而这份文档已经不是表单了。**先打开哪个阅读器决定你会不会发现** —— 直接画 `/AP` 的（预览 / Acrobat / PyMuPDF，实测前后都是 9903）照样显示；走表单模块的（PDFium ⇒ Chrome，以及本技能自己的 `pdf_render.py`）显示成一张空表（13540 = 空表的墨量）。
   - ⚠️ **范围比报出来的大**：不只 merge，**`extract` / `delete` / `rotate` / `split` 全中** —— 凡「新建 writer 再把页面拷进去」都是这个形状。所以修法装在五个操作**共同的那个 `save()`** 上，而不是 `op_merge` 里；只修 merge 就是第三次「护栏装在没人走的那条路上」。`save()` 的签名同时改成必须传入源 reader，**漏改的那个 op 会当场 TypeError**。
   - 三条搬运规则都是实测定的：`/Fields` 从**产出的页面**重建（`add_page` 克隆了注释，输入的 `/Fields` 指的不是这份文档现在装着的对象）· widget 可能挂在父域下，要**上溯到根域再去重** · `/DR`（表单字体资源）与 `/DA` 一起带走，否则重建外观流的阅读器把中文值画成空白。报告里的 `acroform` 字段**有没有表单都说一句**。实测：合并后 PDFium 渲染 **22291**，与未合并的那份**完全相同**。

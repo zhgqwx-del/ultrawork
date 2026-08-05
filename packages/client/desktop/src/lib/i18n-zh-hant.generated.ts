@@ -666,6 +666,8 @@ export const zhHant: Record<string, string> = {
   "skills.depNone": "無依賴",
   "skills.depMissing": "缺少",
   "skills.depMissingHint": "安裝後啟用",
+  "skills.depPartial": "可選未裝",
+  "skills.depPartialHint": "不裝也能用；每一項對應下面那個能力用不了",
   "skills.install": "安裝",
   "skills.installed": "已安裝",
   "skills.installPrompt": "使用 skill-installer 技能，從 {repo} 安裝 \"{name}\" 技能（路徑：{path}）。大倉庫請用 `--method git`（只 sparse checkout 技能子目錄）。",

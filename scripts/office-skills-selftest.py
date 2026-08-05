@@ -824,6 +824,41 @@ def p2_text(path: Path, expect: dict) -> list[str]:
             if n not in text]
 
 
+# /Ff bit 13 (PDF 32000 §12.7.4.3): the field wraps instead of scrolling sideways.
+MULTILINE_FLAG = 1 << 12
+# Line advance as a multiple of the font size. Deliberately generous — the job here
+# is to catch "the tail of the value is gone", not to reproduce a viewer's leading.
+LINE_LEADING = 1.2
+# Real remark text from a filled form: 49 characters that wrap to two lines in a
+# 300pt box at 10pt. Tripled it needs six lines, which a 34pt box cannot show.
+MULTILINE_FITS = ("2026Q3 经营分析随附登记：应收账款专项清收责任人，"
+                  "负责账龄 90 天以上的 7 家客户对账。")
+
+
+def wrap_to(text: str, width: float, measure) -> list[str]:
+    """Greedy wrap, breaking anywhere between CJK and only at spaces in Latin.
+
+    Written here rather than imported from the skill on purpose: this gate exists to
+    disagree with the skill when the skill is wrong, and a measurement that borrows
+    the subject's own code cannot do that. (`xlsx_read` measuring itself with
+    openpyxl is the same mistake, 059 §六·补九 ㊽.)
+    """
+    if width <= 0:
+        return [text]
+    lines: list[str] = []
+    for para in text.split("\n"):
+        cur = ""
+        for token in re.findall(r"[^⺀-鿿＀-￯]+|.", para):
+            trial = cur + token
+            if cur and (measure(trial.strip()) or 0) > width:
+                lines.append(cur.strip())
+                cur = token.lstrip()
+            else:
+                cur = trial
+        lines.append(cur.strip())
+    return [l for l in lines if l] or [""]
+
+
 @check("P3", "pdf", "filled form values stay inside their field boxes")
 def p3_field_bbox(path: Path, expect: dict) -> list[str]:
     import fitz
@@ -844,21 +879,44 @@ def p3_field_bbox(path: Path, expect: dict) -> list[str]:
                     continue
                 rect = wd.rect
                 size = wd.text_fontsize or 0
+                multiline = bool((wd.field_flags or 0) & MULTILINE_FLAG)
                 if size:
                     font = "china-s" if has_cjk(val) else \
                         (wd.text_font or "helv").lower().replace(" ", "")
-                    try:
-                        natural = fitz.get_text_length(val, fontname=font, fontsize=size)
-                    except Exception:  # noqa: BLE001 - unmapped font name
+
+                    def width_of(text: str) -> float | None:
                         try:
-                            natural = fitz.get_text_length(val, fontname="helv", fontsize=size)
-                        except Exception:  # noqa: BLE001
-                            natural = None
+                            return fitz.get_text_length(text, fontname=font, fontsize=size)
+                        except Exception:  # noqa: BLE001 - unmapped font name
+                            try:
+                                return fitz.get_text_length(text, fontname="helv",
+                                                            fontsize=size)
+                            except Exception:  # noqa: BLE001
+                                return None
+
+                    if multiline:
+                        # A multiline field WRAPS, so "does the whole string fit on one
+                        # line" is the wrong question — asking it reds a value that is
+                        # entirely visible. Measured on a real filled form: the whole
+                        # string wanted 490.0pt against a 300pt box while the widest
+                        # wrapped line was 295.44 and both lines rendered in full.
+                        # What can still go wrong is HEIGHT: more lines than the box
+                        # has room for, and the tail is gone with no other symptom.
+                        lines = wrap_to(val, rect.width - 2, width_of)
+                        natural = max((width_of(l) or 0) for l in lines) if lines else 0
+                        needed_h = len(lines) * size * LINE_LEADING
+                        if needed_h > rect.height + 1:
+                            out.append(f"P3 page {pno} field {wd.field_name!r}: value "
+                                       f"wraps to {len(lines)} line(s) needing "
+                                       f"{needed_h:.1f}pt, box is {rect.height:.1f}pt tall")
+                    else:
+                        natural = width_of(val)
                     # A viewer silently clips the overflow, so the damage is invisible
                     # in the raster: the value is simply gone. Measure the text instead.
                     if natural is not None and natural > rect.width - 2:
                         out.append(f"P3 page {pno} field {wd.field_name!r}: value needs "
-                                   f"{natural:.1f}pt, box is {rect.width:.1f}pt wide")
+                                   f"{natural:.1f}pt, box is {rect.width:.1f}pt wide"
+                                   + (" (widest wrapped line)" if multiline else ""))
                 for text, bbox in spans:
                     if not bbox.intersects(rect) or not text.strip():
                         continue
@@ -1626,13 +1684,30 @@ def build_pdf(path: Path, flaw: str | None = None) -> dict:
         wd.text_fontsize = 11
         page.add_widget(wd)
 
+    # A MULTILINE field, which wraps instead of scrolling sideways. P3 asked the
+    # single-line question of these until 2026-08-05 and reddened a value that was
+    # completely visible (measured: whole string 490.0pt against a 300pt box, widest
+    # wrapped line 295.44, both lines rendered). The pair below pins both halves —
+    # one that must stay silent, one that must still fire — because a fix that buys
+    # silence by deleting the check is not a fix.
+    if flaw in ("multiline-fits", "multiline-too-tall"):
+        ml = fitz.Widget()
+        ml.field_name = "remark"
+        ml.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+        ml.rect = fitz.Rect(40, 220, 340, 254)          # 300pt wide, 34pt tall
+        ml.field_flags = MULTILINE_FLAG
+        ml.text_fontsize = 10
+        ml.field_value = (MULTILINE_FITS if flaw == "multiline-fits"
+                          else MULTILINE_FITS * 3)
+        page.add_widget(ml)
+
     if rotate:
         for pg in doc:
             pg.set_rotation(90)
     doc.save(str(path))
     doc.close()
     if flaw not in (None, "blank", "missing-text", "cjk-mojibake", "tofu",
-                    "field-overflow"):
+                    "field-overflow", "multiline-fits", "multiline-too-tall"):
         raise ValueError(f"unknown pdf flaw {flaw!r}")
     return {"contains": [PDF_LATIN, PDF_CJK]}
 
@@ -2086,6 +2161,14 @@ CASES: list[tuple[str, str, str | None, str, bool]] = [
     ("P1 page renders blank", "pdf", "blank", "P1", True),
     ("P2 written text is not extractable", "pdf", "missing-text", "P2", True),
     ("P3 field value overflows its box", "pdf", "field-overflow", "P3", True),
+    # The pair that pins P3's multiline handling. The first FAILED before 2026-08-05:
+    # a value that wraps to two visible lines was measured as one long line and
+    # reported as overflow. The second is the control — the fix must not have bought
+    # that silence by making P3 blind to a value whose tail is genuinely cut off.
+    ("P3 multiline value that wraps and fits stays silent", "pdf", "multiline-fits",
+     "", False),
+    ("P3 multiline value too tall for its box still fires", "pdf",
+     "multiline-too-tall", "P3", True),
     ("P4 CJK comes back as mojibake", "pdf", "cjk-mojibake", "P4", True),
     ("P4 CJK renders as tofu boxes", "pdf", "tofu", "P4", True),
     # The pair that pins cjk_center_ink_fraction's rotation handling. Before the fix

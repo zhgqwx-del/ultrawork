@@ -154,6 +154,34 @@ export const OPTIONAL_DEPS = new Set<string>([
   "deckcraft:openpyxl", "deckcraft:curl_cffi",
 ])
 
+/**
+ * What each optional dependency BUYS, so a missing one can be reported as the
+ * capability it costs rather than as a package name nobody recognises.
+ *
+ * ⚠️ Declaring the optional deps was supposed to "make the badge say WHICH format
+ * is unavailable" — and until 2026-08-05 nothing rendered them at all: the only
+ * reader of `isOptionalDep` was `missingDeps`, which FILTERS THEM OUT. The comment
+ * described an intention, the code shipped the opposite, and both were green. The
+ * test below now requires every optional dep to appear in some group here, so
+ * declaring one without saying what it enables reds instead of going quiet.
+ *
+ * A group needs ALL of its deps: reading a PDF source is unavailable when any one
+ * of the three is missing, not only when all three are.
+ */
+export const OPTIONAL_FEATURE_GROUPS: Record<string, { label: string; deps: string[] }[]> = {
+  deckcraft: [
+    { label: "PDF", deps: ["pdfplumber", "pypdf", "pypdfium2"] },
+    { label: "DOCX", deps: ["mammoth", "markdownify", "beautifulsoup4"] },
+    { label: "EPUB", deps: ["ebooklib", "markdownify", "beautifulsoup4"] },
+    { label: "IPYNB", deps: ["nbconvert", "markdownify", "beautifulsoup4"] },
+    { label: "XLSX", deps: ["openpyxl"] },
+    { label: "URL", deps: ["curl_cffi", "requests", "beautifulsoup4"] },
+    // Not a source: the editable-pptx export (P2b). Named anyway — "the deck came
+    // out but you cannot edit the text" is exactly the surprise this list exists for.
+    { label: "PPTX-edit", deps: ["node"] },
+  ],
+}
+
 /** Whether `dep` is tolerated as missing — globally, or just for this skill. */
 export function isOptionalDep(skillName: string, dep: string): boolean {
   return OPTIONAL_DEPS.has(dep) || OPTIONAL_DEPS.has(`${skillName}:${dep}`)
@@ -163,6 +191,28 @@ export function isOptionalDep(skillName: string, dep: string): boolean {
 export function missingDeps(skillName: string, deps: DepMap): string[] {
   const required = BUILTIN_DEP_MAP[skillName] ?? []
   return required.filter((d) => !isOptionalDep(skillName, d) && !deps[d]?.available)
+}
+
+/** Optional tools this skill declares that are currently missing. */
+export function missingOptionalDeps(skillName: string, deps: DepMap): string[] {
+  const declared = BUILTIN_DEP_MAP[skillName] ?? []
+  return declared.filter((d) => isOptionalDep(skillName, d) && !deps[d]?.available)
+}
+
+/**
+ * Labels of the optional capabilities currently unavailable, and the packages that
+ * would restore them. Empty when everything optional is present — the badge stays
+ * out of the way on a fully-equipped machine.
+ */
+export function unavailableFeatures(
+  skillName: string,
+  deps: DepMap,
+): { label: string; missing: string[] }[] {
+  const missing = new Set(missingOptionalDeps(skillName, deps))
+  if (missing.size === 0) return []
+  return (OPTIONAL_FEATURE_GROUPS[skillName] ?? [])
+    .map((g) => ({ label: g.label, missing: g.deps.filter((d) => missing.has(d)) }))
+    .filter((g) => g.missing.length > 0)
 }
 
 /**

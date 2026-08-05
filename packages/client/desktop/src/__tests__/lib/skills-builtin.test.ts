@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { isBuiltinLocation } from "@/lib/use-skills"
-import { BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, type DepMap } from "@/lib/use-skill-deps"
+import { BUILTIN_DEP_MAP, PIP_HINTS, OPTIONAL_FEATURE_GROUPS, isOptionalDep, missingDeps, unavailableFeatures, type DepMap } from "@/lib/use-skill-deps"
 
 describe("isBuiltinLocation", () => {
   it("classifies skills under skills/builtin as built-in", () => {
@@ -85,6 +85,40 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     expect(missingDeps("deckcraft", present("python3.10+", "python-pptx", "chrome-or-edge"))).toEqual(["pillow"])
     // plain python3 is NOT enough — the copied converters need 3.10+ unions
     expect(missingDeps("deckcraft", present("python3", "python-pptx", "pillow", "chrome-or-edge"))).toEqual(["python3.10+"])
+  })
+
+  it("every optional dep says what it enables — declaring one silently is the bug", () => {
+    // Until 2026-08-05 the optional deps were declared, probed, and rendered
+    // NOWHERE: `isOptionalDep`'s only reader was `missingDeps`, which filters them
+    // out. The comment claimed the badge would name the unavailable format; nothing
+    // did. This is the invariant that keeps the claim true.
+    for (const [skill, declared] of Object.entries(BUILTIN_DEP_MAP)) {
+      const optional = declared.filter((d) => isOptionalDep(skill, d))
+      if (optional.length === 0) continue
+      const grouped = new Set((OPTIONAL_FEATURE_GROUPS[skill] ?? []).flatMap((g) => g.deps))
+      expect(optional.filter((d) => !grouped.has(d))).toEqual([])
+    }
+    // and the groups must not name deps the skill never declared
+    for (const [skill, groups] of Object.entries(OPTIONAL_FEATURE_GROUPS)) {
+      const declared = new Set(BUILTIN_DEP_MAP[skill] ?? [])
+      expect(groups.flatMap((g) => g.deps).filter((d) => !declared.has(d))).toEqual([])
+    }
+  })
+
+  it("a missing optional dep is reported as the capability it costs, not the package", () => {
+    const everything = present(...BUILTIN_DEP_MAP["deckcraft"])
+    expect(unavailableFeatures("deckcraft", everything)).toEqual([])
+    // One package gone takes exactly the groups that need it — beautifulsoup4 is
+    // shared by four readers, which is the case a per-package list would misreport.
+    const noSoup: DepMap = { ...everything, beautifulsoup4: { name: "beautifulsoup4", available: false } }
+    expect(unavailableFeatures("deckcraft", noSoup).map((g) => g.label))
+      .toEqual(["DOCX", "EPUB", "IPYNB", "URL"])
+    // A group needs ALL of its deps: one of the three PDF libraries is enough.
+    const noPlumber: DepMap = { ...everything, pdfplumber: { name: "pdfplumber", available: false } }
+    expect(unavailableFeatures("deckcraft", noPlumber))
+      .toEqual([{ label: "PDF", missing: ["pdfplumber"] }])
+    // A skill with no optional deps never grows this chip.
+    expect(unavailableFeatures("docx", {})).toEqual([])
   })
 
   it("deckcraft's source readers are declared but do not gate readiness", () => {

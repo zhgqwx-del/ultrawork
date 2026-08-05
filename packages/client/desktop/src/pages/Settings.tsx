@@ -27,7 +27,7 @@ import { useCliConnectors } from "@/lib/use-cli-connectors"
 import { CopyButton } from "@/components/chat/copy-button"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
-import { useSkillDeps, BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, type DepMap } from "@/lib/use-skill-deps"
+import { useSkillDeps, BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, unavailableFeatures, type DepMap } from "@/lib/use-skill-deps"
 import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 import { Button } from "@/components/ui/button"
 import {
@@ -2284,11 +2284,28 @@ function DepBadge({
     )
   }
   const missing = missingDeps(skillName, deps)
+  // Optional deps never gate readiness, but staying silent about them is how a user
+  // finds out that "make a deck from this PDF" does nothing — by trying it. Named
+  // as the capability, not the package: `curl_cffi` means nothing, "URL" does.
+  const partial = unavailableFeatures(skillName, deps)
+  const partialChip = partial.length ? (
+    <span
+      title={`${t("skills.depPartialHint")}: ${partial
+        .map((g) => `${g.label} — ${g.missing.map((m) => DEP_HINTS[m] ?? m).join(", ")}`)
+        .join("; ")}`}
+      className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
+    >
+      {t("skills.depPartial")}: {partial.map((g) => g.label).join(", ")}
+    </span>
+  ) : null
   if (missing.length === 0) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
-        <CheckCircle2 className="size-3" />
-        {t("skills.depReady")}
+      <span className="inline-flex shrink-0 items-center gap-1.5">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+          <CheckCircle2 className="size-3" />
+          {t("skills.depReady")}
+        </span>
+        {partialChip}
       </span>
     )
   }
@@ -2306,6 +2323,7 @@ function DepBadge({
         <AlertTriangle className="size-3" />
         {t("skills.depMissing")}: {missing.join(", ")}
       </span>
+      {partialChip}
       {onGuide && (
         <button
           type="button"

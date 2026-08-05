@@ -200,22 +200,53 @@ def import_rows(src: Path, out: Path, sheet: str, autofit: bool) -> dict:
 
     # write_only: the import mirror of read_only. Building a normal Workbook holds
     # every cell in memory, which is the same wall the export side hits.
-    wb = openpyxl.Workbook(write_only=True)
-    ws = wb.create_sheet(sheet)
+    #
+    # ⚠️ In write_only mode the sheet is streamed out as rows arrive, and <cols> is
+    # written at the START of it — so column widths set AFTER the first append are
+    # silently discarded. That is not an error and nothing warns: the report said
+    # `widths_set: 5` while the file carried no <cols> at all (measured 2026-08-05,
+    # openpyxl 3.1.5). Widths are therefore measured in a pass of their own, before
+    # the workbook exists, and asserted against the file afterwards.
     widest: dict[int, float] = {}
-    for row in rows:
-        ws.append([coerce_cell(v) for v in row])
-        if autofit:
+    if autofit:
+        for row in rows:
             for i, v in enumerate(row, 1):
                 if isinstance(v, str) and v:
                     widest[i] = max(widest.get(i, 0.0), needed_width(v))
-    if autofit and widest:
+
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet(sheet)
+    if widest:
         from openpyxl.utils import get_column_letter
         for i, w in widest.items():
             ws.column_dimensions[get_column_letter(i)].width = w
+    for row in rows:
+        ws.append([coerce_cell(v) for v in row])
     wb.save(out)
     wb.close()
-    return {"sheet": sheet, "rows": len(rows), "widths_set": len(widest) if autofit else 0}
+    # Read the claim back out of the artifact. `widths_set` was a count of what this
+    # function INTENDED; for a while it disagreed with the file by five columns and
+    # nothing anywhere noticed. A number a report prints has to be a number the file
+    # would agree with.
+    in_file = cols_in_file(out)
+    if in_file != len(widest):
+        fail(f"wrote {len(widest)} column width(s) but the file carries {in_file} — "
+             f"refusing to report a width that is not in the artifact")
+    return {"sheet": sheet, "rows": len(rows),
+            "widths_set": len(widest) if autofit else 0, "widths_in_file": in_file}
+
+
+def cols_in_file(path: Path) -> int:
+    """How many <col> entries the written sheet actually has."""
+    import re
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        name = next((n for n in z.namelist()
+                     if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")), None)
+        if name is None:
+            return 0
+        return len(re.findall(rb"<col\b", z.read(name)))
 
 
 def coerce_cell(v):
