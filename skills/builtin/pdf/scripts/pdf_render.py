@@ -56,8 +56,12 @@ def render(src: Path, out_dir: Path, pages: str | None, dpi: int, prefix: str,
                             "points": [round(w_pt, 2), round(h_pt, 2)],
                             "rotation": page.get_rotation()})
             page.close()
+        # Always stated, never only on failure: a reader who sees no field values in
+        # the images has to be able to tell "this document has none" from "the layer
+        # that paints them was not up".
         return {"source": str(src), "dpi": dpi, "format": fmt,
-                "page_count": page_count, "rendered": written}
+                "page_count": page_count, "rendered": written,
+                "forms": getattr(doc, "uw_forms_note", "unknown")}
     finally:
         doc.close()
 

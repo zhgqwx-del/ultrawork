@@ -301,7 +301,7 @@
 - **skill 以 frontmatter `name` 索引、不是目录名**（vendor `skill/index.ts:86`，zod `Info.pick({name,description})`）——`zod .pick` **剥离未知 frontmatter 键**，故自定义键（如 `x-requires`）安全、不破坏发现；也意味着目录名与 `name` 可不一致（如 `markdown-exporter`）。同名 skill 在同一次 glob 扫描里 unbounded 并发 add、谁赢不确定（仅 `duplicate skill name` warn）——**builtin vs 用户安装的同名竞态已由 Rust `reconcile_builtin_shadowing` 在文件层根治**（见下方遮蔽条目，ADR-040 阶段 2）。
 - **内置技能注入走方案 C（解压落地），不动 opencode.json（2026-07-03 起 zip 分发，原松散树拷贝）**：bundle 携带单个 `skills-builtin.zip` + 并排**外置** sentinel `.builtin-version`（`scripts/pack-builtin-skills.ts` 构建期从 git 松散树 `skills/builtin/` 按内容 hash 惰性打包，beforeDev/beforeBuild/build-release 自动跑）；`ensure_builtin_skills` 首启解压到 `~/.config/ultrawork/skills/builtin/`，被 `{skill,skills}/**/SKILL.md` 自动扫描。**sentinel 控升级刷新，刷新只 `remove_dir_all(builtin/)`——绝不碰同级用户安装技能**（用户/skill-installer 装的技能落在 `skills/<name>`，是 `builtin/` 的兄弟，不在刷新范围）。唯二会动用户目录的入口：`remove_user_skill_override`（用户在设置页显式点「恢复内置」）；唯一会按用户状态删 builtin 子目录的：遮蔽 prune（见下方遮蔽条目）。收益：app Resources 53MB/1.2 万文件 → 10MB/4 文件（mac 签名公证与 CI 打包显著提速、MSI 复活前提成立），首启解压实测 ~1.3s。
 - **Tauri `bundle.resources` 对 `..` 源路径的落地层级不确定**：array/glob 形式会把 `..` 改写成 `_up_` 段，map 形式按 value 直放——跨版本/平台有差异。**不要硬编码资源子路径**；`find_builtin_source` 用**有界递归查找 `.builtin-version` 锚点**兼容 map/glob/`_up_` 三种布局。`resource_dir()` 在 `tauri dev` 与打包态解析到不同目录（dev=target 下，打包=`.app/Contents/Resources`）。
-- **运行依赖检测靠 `rich_path()` 而非 `std::env PATH`**：Finder 启动的 app 只有最小 PATH，`check_skill_dependencies` 复用 `rich_path()` 探测 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter。**Python 解释器版本 / pip 库现在可探**（2026-07-02 起，ppt-master 引入）：`run_python_feature_probe` 对解析到的 python 跑一次 `-c`（`sys.version_info>=(3,10)` + `importlib.util.find_spec('pptx')`，find_spec 不真 import、快且无副作用）→ `python3.10+`/`python-pptx` 两个虚拟依赖项。`pptx-edit`（原 `doc-edit`）059 S6 起声明 `python3 + python-pptx`——它瘦身后剩下的两个脚本都无条件 import pptx，只检 python3 会把一台跑不了任何东西的机器显示成「就绪」。**动任何技能的依赖声明，四处必须同步**（漏一处 CI 就红，2026-08-04 又走了一遍）：① `skills/builtin/<skill>/SKILL.md` 的 `x-requires`（人读）· ② `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（徽标 SSOT）· ③ `src-tauri/src/lib.rs` 的 `PY_MODULES`（**只有 pip 库需要**，它是解释器内 `find_spec` 探测表，PATH 类工具不在这里）· ④ `__tests__/lib/skills-builtin.test.ts` 断言 key 集合。**改技能名同理**，另加 e2e 的 `BUNDLED` 列表与 `test-skill-originality.py` 的 `OWN_SKILLS`。
+- **运行依赖检测靠 `rich_path()` 而非 `std::env PATH`**：Finder 启动的 app 只有最小 PATH，`check_skill_dependencies` 复用 `rich_path()` 探测 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter。**Python 解释器版本 / pip 库现在可探**（2026-07-02 起，ppt-master 引入）：`run_python_feature_probe` 对解析到的 python 跑一次 `-c`（`sys.version_info>=(3,10)` + `importlib.util.find_spec('pptx')`，find_spec 不真 import、快且无副作用）→ `python3.10+`/`python-pptx` 两个虚拟依赖项。`pptx-edit`（原 `doc-edit`）059 S6 起声明 `python3 + python-pptx`——它瘦身后剩下的两个脚本都无条件 import pptx，只检 python3 会把一台跑不了任何东西的机器显示成「就绪」。**动任何技能的依赖声明，四处必须同步**（漏一处 CI 就红，2026-08-04 又走了一遍）：① `skills/builtin/<skill>/SKILL.md` 的 `x-requires`（人读）· ② `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（徽标 SSOT）· ③ `src-tauri/src/lib.rs` 的 `PY_MODULES`（**只有 pip 库需要**，它是解释器内 `find_spec` 探测表，PATH 类工具不在这里）· ④ `__tests__/lib/skills-builtin.test.ts` 断言 key 集合。**改技能名同理**，另加 e2e 的 `BUNDLED` 列表与 `test-skill-originality.py` 的 `OWN_SKILLS`。⚠️ **这条规则本身腐烂过：四处里只有 ②③④ 有测试，① 没有**，于是 059 S3.5 给 deckcraft 的 `BUILTIN_DEP_MAP` 加了 12 个 source reader 而 `x-requires` 停在 4 个，漂了整整一个阶段。2026-08-05 起由 `skills-builtin.test.ts` 的「x-requires ↔ BUILTIN_DEP_MAP 对账」双向守着（直接 import 映射表不解析 TS + 断言真的扫到 ≥11 个技能目录）。**一条没人检查的规则会腐烂，和一条没人检查的 SKILL.md 声明是同一件事。**
 - **python 探针的四个防御（改探针前必读，均有 cargo 单测）**：① `check_skill_dependencies` 必须是 `#[tauri::command(async)]`——探针 spawn 真进程，同步跑在主线程会卡 UI、病态解释器会永久冻结 app；② `run_probe` 统一 **5s 超时 + 超时 kill + Windows `CREATE_NO_WINDOW`**（防挂死探测态转圈 / GUI 下黑窗闪现）；③ **macOS 无 CLT 时 `/usr/bin/python3` 是 Xcode shim，执行它会弹系统"安装开发者工具"对话框**——`python_probe_allowed` 先跑 `xcode-select -p`（无害）判定 CLT 在位才执行；④ **Windows 回退候选 `python`**（python.org/winget 只装 `python.exe` 不装 python3；商店 App-Execution-Alias 假可执行靠"执行式探针非零退出"天然过滤，不能靠 is_file 判断）。
 - **探针刻意锚定 `python3` 命令而非任意 python3.x（引导收敛标准）**：ppt-master 脚本通篇裸调 `python3`，所以徽标以「PATH 上 `python3` 解析到的那个解释器」为准——用户装出 `python3.11` 版本化命令而 `python3` 仍是 3.9 时徽标继续红是**正确行为**（真机验收实测踩过：AI 引导安装装了 uv 的 python3.11 就交差）。两道防线：`depGuidePrompt` 写死收敛标准（新终端 `python3 --version` ≥3.10 且 `import pptx` 成功，版本化命令须 symlink 指过去）+ 徽标 tooltip 透出实际探测的解释器路径（`DepStatus.path`，显示 `[/usr/bin/python3]`）。另注意 zsh 老会话有 command hash 缓存，`hash -r` 或开新终端才能看到新 symlink；技能运行时每次新起 shell、无此缓存。
 - **内置技能落地是「解压到 staging + rename」原子交换，sentinel 后置写入**：`install_builtin_tree`（lib.rs）把 zip 解压到 `skills/.builtin.staging`（点目录，opencode `{skill,skills}/**` glob 不带 dot 选项扫不到），**zip 内刻意不含 sentinel——全量解压成功后才把外置 sentinel 写进 staging 再 rename**，不变式强化为「sentinel 可见 ⇔ 整树完整」（中途退出/磁盘满只会留下旧一致树或无树，有 cargo 测试锚定 extract-先于-删旧树 的顺序）。staging（`.builtin.staging`/`.builtin.restore`）每次调用先经 `clear_staging` 清理——**必须用它而非裸 `remove_dir_all`**（后者对预置 symlink 静默失败，解压会穿透写进 link 指向的外部目录）；**install/reconcile/override 三入口由 `BUILTIN_SKILLS_LOCK` 串行化**——async 命令（thread pool）并发共享固定 staging 路径时，两个 restore 交错可让 rename 落一棵残缺树且 sentinel 仍有效、永不自愈（对抗审查实证的组合竞态）。
@@ -752,6 +752,28 @@ deck.pdf 第 4/7 页各中一枪：产出 `||` / `|---|` 这种废话 Markdown�
 **0.399**，上下翻转的错误裁剪 **0.587——更高**（翻过去正好落在一张图上）。⇒ 判「裁对了没有」
 只能拿**整页渲染后按同一个框裁下来的那块**逐像素比（该路径不做任何 PDF 坐标换算，所以独立）：
 正确 0.00，翻转 66.13。墨占比只能证明「不是白纸」，证不了「是这块」。
+
+**㊿ PDFium 不调 `init_forms()` 就不画表单值，而填过的表和空表因此逐像素相同。**
+用户填进 AcroForm 的值活在 widget 的 `/AP` 外观流里（⑩），PDFium **只有在表单环境存在时**
+才画它。`pypdfium2` 的 `PdfDocument(...)` 不会自动建，`page.render(draw_annots=…)` 也管不着
+（那个参数在 v5 已经不是具名形参，传进去落进 `**kwargs` 静默无效）。实测同一份
+`form-filled.pdf`：不调 **13540** 暗像素、调了 **22291**；而未填的空表两种情况都是 13540 ——
+也就是说**「表单没填」和「画表单的那层没起来」是同一张图**，没有任何东西会报错。
+⇒ ① `init_forms()` 必须在**构造之后、取页数或页句柄之前**调（PDFium 的硬性要求）；
+② 放在**共享的打开函数**里，不要放在某个渲染入口里 —— 后者就是本仓库栽过两次的
+「护栏装在没人走的那条路上」；③ 结果（`initialised` / `none` / 失败原因）**无论成败都要报**。
+对非表单 PDF 零影响（实测普通文档 / 无 widget 的扁平件 / 加密件差值全为 0），`init_forms()`
+在无 AcroForm 时返回 `False` 而不抛。
+⚠️ **量这个缺陷不能用 PyMuPDF 重渲染**：fitz 无论有没有表单环境都画 `/AP`（实测未填 5778 /
+已填 9903），拿它当尺子的话修复与「撤回修复」得分完全相同，缺陷直接隐形 ——
+必须读被测入口**自己写出的那张 PNG**。这也是「两个门禁量的不是同一件事」的一个新形状：
+L2 的 P1/P4 走 PyMuPDF 光栅化，所以它看得见的东西，产品的用户看不见。
+
+**⓫ 合并页面会把 catalog 里的 `/AcroForm` 丢掉，而后果取决于阅读器实现。**（现象已确认，
+未修，2026-08-05）`pypdf` 的合并保留每个 widget 的 `/V` 与 `/AP`，但不搬 catalog 的
+`/AcroForm` ⇒ 直接画 `/AP` 的阅读器（PyMuPDF 实测合并前后都是 9903，macOS 预览属这一类）
+照样看得见；走表单模块的（PDFium ⇒ Chrome 内置阅读器，以及本仓库的 `pdf_render`）
+**看不见**。而且合并之后它**不再是一份可填表单**。⇒ 报告里至少要说这件事发生了。
 
 ---
 

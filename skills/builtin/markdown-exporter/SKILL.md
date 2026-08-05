@@ -13,7 +13,7 @@ metadata:
          - kind: uv
            package: md-exporter
            bins: [ markdown-exporter ]
-x-requires: [python3, pandoc]
+x-requires: [markdown-exporter, pandoc]
 ---
 
 

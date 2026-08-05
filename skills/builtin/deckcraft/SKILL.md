@@ -13,7 +13,7 @@ description: >
   .pptx 1:1 or building reusable template packs — for those, ppt-master can be installed
   from 设置 → 技能; not for changing a few words in an existing deck or appending one
   slide to it — that is `pptx-edit` (see routing table below).
-x-requires: [python3.10+, python-pptx, pillow, chrome-or-edge]
+x-requires: [python3.10+, python-pptx, pillow, chrome-or-edge, node, pdfplumber, pypdf, pypdfium2, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, openpyxl, curl_cffi]
 x-requires-optional: [node, pdfplumber, pypdf, pypdfium2, openpyxl, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, curl_cffi]
 ---
 

@@ -122,9 +122,75 @@ SIGNATURE_TOLERANCE = 0.02
 
 
 def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
+    return run_script_from(SKILL / "scripts", name, *args)
+
+
+def run_script_from(scripts: Path, name: str, *args: str) -> subprocess.CompletedProcess:
+    """Same call against an arbitrary copy of the scripts — used by LIVE controls,
+    which re-run the REAL entry point with the fix backed out rather than editing the
+    numbers this file collected. A control that only rewrites the observed facts
+    proves the assertion reads a dict, not that it would catch the defect."""
+    return subprocess.run([PY, str(Path(scripts) / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=180)
+
+
+def patched_scripts(work: Path, old: str, new: str, name: str) -> Path:
+    """A copy of the skill's scripts with one edit applied.
+
+    Raises if the anchor is not found exactly once: a control arm that silently
+    failed to apply is indistinguishable from one that applied and changed nothing.
+    """
+    dest = work / f"patched-{name}"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(SKILL / "scripts", dest,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    hits = 0
+    for py in dest.glob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        if old in text:
+            hits += text.count(old)
+            py.write_text(text.replace(old, new), encoding="utf-8")
+    if hits != 1:
+        raise SystemExit(f"control {name!r}: anchor matched {hits} times, expected 1 "
+                         f"— the control did not replicate the defect")
+    return dest
+
+
+def png_ink(path: Path) -> int:
+    """Dark pixels in an image pdf_render.py actually wrote.
+
+    ⚠️ Deliberately NOT a re-render through PyMuPDF: fitz paints widget appearance
+    streams whether or not a form env exists, so measuring that way would make the
+    defect this guards against invisible — the control arm and the fix would score
+    the same. The subject has to be the product's own output file.
+    """
+    from PIL import Image
+    with Image.open(path) as img:
+        hist = img.convert("L").histogram()
+    return sum(c for v, c in enumerate(hist) if v < DARK)
+
+
+# `open_raster` initialises PDFium's form env; backing that single line out is what
+# the skill shipped until 2026-08-05, and it renders a filled AcroForm identically to
+# an empty one (measured: 13540 dark pixels either way at 150 dpi).
+FORMS_ANCHOR = 'doc.uw_forms_note = "initialised" if doc.init_forms() else FORMS_NONE'
+
+
+def collect_forms_render(scripts: Path, work: Path, tag: str) -> dict:
+    """Rasterize the same paper form three ways through the real entry point."""
+    out = {}
+    for key, src in (("unfilled", FORM), ("filled", FORM_FILLED), ("flat", FORM_FLAT)):
+        d, rep = work / f"forms-{tag}-{key}", work / f"forms-{tag}-{key}.json"
+        r = run_script_from(scripts, "pdf_render.py", "--in", src, "--out", d,
+                            "--dpi", RENDER_DPI, "--report", rep)
+        if r.returncode != 0:
+            raise SystemExit(f"[setup] pdf_render.py {key} failed: {r.stdout}{r.stderr}")
+        page = d / "page-001.png"
+        out[key] = {"ink": png_ink(page),
+                    "forms": json.loads(rep.read_text(encoding="utf-8")).get("forms")}
+    return out
 
 
 # ── raster helpers ────────────────────────────────────────────────────────────
@@ -216,7 +282,14 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
             ("generated pages measured", len(ctx["create"]["page_boxes"]), 2),
             ("pages carrying a detected table", len(ctx["ops"]["tables"]["pages"]), 2),
             ("CSV files exported", len(ctx["ops"]["csv"]), 2),
-            ("split parts", len(ctx["ops"]["split"]["report"]["parts"]), 2)):
+            ("split parts", len(ctx["ops"]["split"]["report"]["parts"]), 2),
+            # R6 compares three rasters; with fewer than three it would be comparing
+            # a document against itself and could not fail.
+            ("form rasters (R6's only subjects)", len(ctx["forms_render"]), 3),
+            # And the empty form must actually carry ink, or the ratio R6 measures
+            # is a division into a number that means nothing.
+            ("ink on the empty form (R6's denominator)",
+             ctx["forms_render"]["unfilled"]["ink"], 1000)):
         if got < need:
             out.append(f"V0 only {got} {label}, need >= {need} — assertions covering "
                        f"them would pass by having nothing to check")
@@ -901,9 +974,45 @@ def o2_in_place(ctx: dict) -> list[str]:
     return out
 
 
+@check("R6", "a filled AcroForm rasterizes differently from an empty one, and the "
+             "form layer's state is always reported")
+def r6_forms_render(ctx: dict) -> list[str]:
+    """The values a user typed into a form live in the widget's /AP appearance
+    stream, and PDFium paints those only once a form env exists. Without it the two
+    documents come out byte-identical — so "the form is empty" and "the layer that
+    draws it is off" are the same picture, in the one channel where an artifact is
+    visible inside the app at all.
+
+    Two halves, each with its own control: the pixels must differ, AND the report
+    must say which state the form layer was in (a right picture with a lying note
+    is still a report nobody can act on).
+    """
+    out = []
+    fr = ctx["forms_render"]
+    unfilled, filled, flat = fr["unfilled"]["ink"], fr["filled"]["ink"], fr["flat"]["ink"]
+    # Observed values go in the message whether it fires or not: a threshold with no
+    # measurement next to it costs a whole run to diagnose.
+    if filled < unfilled * FORMS_INK_MARGIN:
+        out.append(f"R6 filled form renders {filled} dark px vs {unfilled} empty "
+                   f"(ratio {filled / unfilled:.3f}, need >= {FORMS_INK_MARGIN}) — the "
+                   f"field values are not being painted")
+    for key, want in (("unfilled", "initialised"), ("filled", "initialised"),
+                      ("flat", "none")):
+        got = fr[key]["forms"]
+        if got != want:
+            out.append(f"R6 {key} form reports forms={got!r}, expected {want!r} "
+                       f"(ink {fr[key]['ink']})")
+    return out
+
+
 # ── collecting the real output ────────────────────────────────────────────────
 NEEDLES = {1: ["季度经营分析报告", "Quarterly"], 2: ["科目", "营业收入"],
            3: ["第三页为横向版面"]}
+
+# Measured 2026-08-05 at RENDER_DPI: 6555 dark px unfilled vs 8078 filled = 1.232.
+# The margin sits well below that and well above 1.0, which is what the broken
+# implementation scores exactly (the two renders are the same file).
+FORMS_INK_MARGIN = 1.05
 
 
 def collect(work: Path) -> dict:
@@ -954,6 +1063,7 @@ def collect(work: Path) -> dict:
         "form": form,
         "create": create,
         "ops": ops,
+        "forms_render": collect_forms_render(SKILL / "scripts", work, "real"),
         "render": {"dir": str(render_dir), "dpi": RENDER_DPI,
                    "requested": list(RENDER_PAGES),
                    "report": json.loads(render_report.read_text(encoding="utf-8"))},
@@ -1690,6 +1800,29 @@ def flaw_in_place_raw_traceback(ctx, work):
     return ctx
 
 
+def flaw_live_no_form_env(ctx, work):
+    """The implementation that shipped until 2026-08-05: open, never init_forms.
+
+    Not a mutation of the numbers above — the real pdf_render.py runs again from a
+    copy with that one line backed out, so what R5 sees is what the old code would
+    actually have produced.
+    """
+    scripts = patched_scripts(work, FORMS_ANCHOR,
+                              "doc.uw_forms_note = FORMS_NONE", "noforms")
+    ctx["forms_render"] = collect_forms_render(scripts, work, "noforms")
+    return ctx
+
+
+def flaw_live_forms_note_lies(ctx, work):
+    """Pixels right, report wrong. Controls R5's second half on its own: without it
+    the note assertions could be deleted and every row would stay green."""
+    scripts = patched_scripts(work, FORMS_ANCHOR,
+                              "doc.init_forms()\n        doc.uw_forms_note = FORMS_NONE",
+                              "notelies")
+    ctx["forms_render"] = collect_forms_render(scripts, work, "notelies")
+    return ctx
+
+
 FLAWS = [
     ("writer-overwrites-its-own-input", flaw_in_place_allowed, {"O2"}, ""),
     ("writer-fails-with-a-raw-traceback", flaw_in_place_raw_traceback, {"O2"}, ""),
@@ -1756,6 +1889,10 @@ FLAWS = [
     ("info-accepts-a-wrong-password", flaw_accepts_bad_password, {"I4"}, ""),
     ("CONTROL: fixture loses the rotated page", flaw_fixture_loses_the_rotated_page,
      {"V0"}, ""),
+    ("LIVE: pdf_render as it shipped until 2026-08-05 (no form env)",
+     flaw_live_no_form_env, {"R6"}, ""),
+    ("LIVE: form env is up but the report says it is not",
+     flaw_live_forms_note_lies, {"R6"}, ""),
 ]
 
 

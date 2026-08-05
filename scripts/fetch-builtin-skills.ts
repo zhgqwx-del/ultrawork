@@ -76,11 +76,20 @@ const SOURCES: Source[] = [
   },
 ]
 
-/** x-requires frontmatter 注入（人读文档用；与前端 BUILTIN_DEP_MAP 保持一致） */
+/**
+ * x-requires frontmatter 注入（人读文档用）。
+ *
+ * ⚠️ 必须与 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP` **逐项相同** —— 这条不变式
+ * 由 `skills-builtin.test.ts` 的「x-requires 与 BUILTIN_DEP_MAP 对账」守着（2026-08-05
+ * 起）。在那之前它只写在注释里，deckcraft 就漂了 12 项：BUILTIN_DEP_MAP 声明 16 个，
+ * SKILL.md 还停在 4 个。一条没人检查的声明是会腐烂的声明。
+ * markdown-exporter 要的是**那个 CLI 本身**（pip 装出来的 `markdown-exporter`），
+ * 不是 python3 —— 徽标探的就是它，写 python3 会让人以为装了解释器就行。
+ */
 const X_REQUIRES: Record<string, string[]> = {
   "skill-creator": ["python3"],
   "skill-installer": ["python3", "git"],
-  "markdown-exporter": ["python3", "pandoc"],
+  "markdown-exporter": ["markdown-exporter", "pandoc"],
 }
 
 /** 把取到的源目录整理进落地目录（keepOnly/drop 共用逻辑）。 */

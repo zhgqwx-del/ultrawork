@@ -16,9 +16,13 @@
  *  10. 内置技能 SKILL.md 指向的**技能内文件**必须真的随包发布（059 §1 的 `doc-export` 断链同一类）
  *  11. 内置技能 SKILL.md 里的**跨技能引用**（`x` 技能 / `x` skill / that is `x`）必须指向真实存在的
  *      技能或设置页可安装技能——description 是模型路由的唯一依据，指错就静默退化成不用技能硬写
+ *  12. 内置技能 SKILL.md 里**对自己能力矩阵的断言**（「N 项」/「零 pending」/「在 pending 里」）
+ *      必须与同目录 capabilities.json 对得上——§11 管「指错了别的技能」，这一条管「说错了
+ *      自己会不会做」。同一个病：模型只读得到 SKILL.md，一句过期的「不做」会让它绕开一个
+ *      已经能用的脚本，产物和别的门禁都看不出来（docx/xlsx 各腐烂过一句，2026-08-05 修）
  *
  * 用法：bun run --bun scripts/check-docs.ts
- *       bun run --bun scripts/check-docs.ts --selftest   # 只跑 §11 的正负控制（11 条）
+ *       bun run --bun scripts/check-docs.ts --selftest   # §11 + §12 的正负控制（11 + 11 条）
  * 退出码：0 = 通过；1 = 有硬性漂移（CI / pre-commit 可据此拦截；CI job 见 .github/workflows/ci.yml docs）。
  */
 import { Glob } from "bun"
@@ -96,7 +100,50 @@ function skillRefsInLine(line: string): Set<string> {
   return refs
 }
 
-// ── --selftest：§11 跨技能引用扫描的正负控制（常驻，CI 与门禁同跑） ──────
+// ── §12 助手：SKILL.md 对自己能力矩阵的断言 ────────────────────────────
+// 一句「这些在 pending 里」在 pending 清空之后就是**假话**，而假话的代价不在文档：
+// description 与 SKILL.md 正文是模型判断「我会不会做这件事」的唯一依据，一句过期的
+// 「不做」会让它绕开一个已经能用的脚本，任何产物上都看不出来。docx 与 xlsx 各烂了一句
+// （059 S4/S3 落地后没回头改「已知边界」），2026-08-05 修，同刀加这个检查。
+export type CapClaim = { kind: "count"; n: number } | { kind: "empty" } | { kind: "nonempty" } | { kind: "unclear" }
+
+/** 一行 SKILL.md 里对能力矩阵的断言。null = 这一行没说任何相关的事。 */
+export function capClaimsInLine(line: string): CapClaim[] {
+  const out: CapClaim[] = []
+  // `--no-pending` 是 CI 的命令行开关，不是对状态的断言。先剥掉，否则每处都判 unclear。
+  const s = line.replace(/--no-pending/g, "")
+  for (const m of s.matchAll(/(\d+)\s*项/g)) out.push({ kind: "count", n: Number(m[1]) })
+  if (/pending/i.test(s)) {
+    // 断言「空」：零 / 无 / 没有 / 是空的 / empty
+    if (/(零|无|没有|空)\s*pending|pending\s*(是空的|为空|is empty)/i.test(s)) out.push({ kind: "empty" })
+    // 断言「非空」：在 pending 里 / pending 里逐条
+    else if (/pending\s*(的)?\s*里|里的\s*pending/i.test(s)) out.push({ kind: "nonempty" })
+    // 认不出来的写法必须显形，不能默默放行——这个检查最不能有的就是「静默通过」
+    else out.push({ kind: "unclear" })
+  }
+  return out
+}
+
+/** 断言 vs 事实，返回人话的问题列表（空 = 一致）。 */
+export function capClaimProblems(claims: CapClaim[], total: number, pending: number): string[] {
+  const done = total - pending
+  // 三个都是这份 capabilities.json 说得出口的数：总数 · 已实现 · 还欠着的。
+  // 「其余 2 项见 pending」在 pending=2 时是**对的**——第一版只放行 {total, done}，
+  // 于是它在一份完全正确的 SKILL.md 上判红。⚠️ 补上 pending 不会放过腐烂的那两行：
+  // 它们的 pending 是 0，而「17 项」「2 项」都不在 {19, 19, 0} 里，照样红。
+  const allowed = new Set([total, done, pending])
+  const bad: string[] = []
+  for (const c of claims) {
+    if (c.kind === "count" && !allowed.has(c.n))
+      bad.push(`写着「${c.n} 项」，而 capabilities.json 是 ${total} 项（已实现 ${done}）`)
+    if (c.kind === "empty" && pending !== 0) bad.push(`声称 pending 是空的，实际有 ${pending} 项`)
+    if (c.kind === "nonempty" && pending === 0) bad.push(`声称有东西在 pending 里，实际 pending 是空的`)
+    if (c.kind === "unclear") bad.push(`提到 pending 但写法认不出来，无法对账（改成明确的「零 pending」或「在 pending 里」）`)
+  }
+  return bad
+}
+
+// ── --selftest：§11 跨技能引用扫描 + §12 能力断言对账的正负控制（常驻，CI 同跑） ──
 // 负向控制复刻的是**真实出过的错误写法**（不是随便一种破坏）：059 §1 的 `doc-export`
 // 三处原文，以及本刀改名后 pdf/xlsx description 里会变成断链的 "that is `doc-edit`"。
 // 正向控制复刻的是**已经误报过一次的那些行**——`python` 那条就是这个检查第一版判红的。
@@ -128,7 +175,46 @@ if (process.argv.includes("--selftest")) {
     console.log(`  ${ok ? "✅" : "❌"} ${desc} → ${got.length ? got.join(",") : "(无)"}` + (ok ? "" : `  期望：${expect ?? "(无)"}`))
   }
   console.log(bad === 0 ? `✅ §11 自检 ${cases.length}/${cases.length} 通过` : `❌ §11 自检 ${bad} 条失败`)
-  process.exit(bad === 0 ? 0 : 1)
+
+  // §12：负向控制复刻的是**真实腐烂过的那两行原文**（docx:515 / xlsx:266-268），
+  // 不是随便一种破坏。正向控制复刻的是同一份文件里必须保持沉默的写法。
+  console.log("\n§12 能力断言对账（SKILL.md ↔ capabilities.json）：")
+  // [描述, 行, total, pending, 期望的问题条数]
+  const capCases: [string, string, number, number, number][] = [
+    // 三条：「17 项」「2 项」都不在 {19,19,0} 里，外加「在 pending 里」而 pending 是空的。
+    ["负①docx:515 腐烂原文（19/17，而 pending 已空）",
+      "- **19 项能力只做了 17 项**，其余 2 项在 `capabilities.json` 的 pending 里逐条写了理由。", 19, 0, 3],
+    ["负②xlsx:268 腐烂原文（声称在 pending 里）",
+      "  这些在 `capabilities.json` 的 pending 里。", 15, 0, 1],
+    // 13 既不是总数 15、也不是已实现 12、也不是欠着的 3 —— 第一版这里写的是 12，
+    // 而 12 恰好就是已实现数，于是这条「负向」控制根本分不出两种实现。
+    ["负③数字对不上（pending 非空时也要对）",
+      "`capabilities.json` 里 **13 项全部实现**。", 15, 3, 1],
+    ["负④反过来：声称零 pending 而 pending 非空",
+      "`capabilities.json` 里 **15 项全部实现，零 pending**。", 15, 3, 1],
+    ["负⑤提到 pending 但写法认不出来",
+      "关于 pending 的事情请自行体会。", 15, 0, 1],
+    ["正①docx:63 现行原文", "`capabilities.json` 里 **pending 是空的**。19 项每一项都有断言在证明它，", 19, 0, 0],
+    ["正②xlsx:54 现行原文", "`capabilities.json` 里 **15 项全部实现，零 pending**。", 15, 0, 0],
+    ["正③pdf:55 现行原文", "`capabilities.json` 里 **14 项能力全部已实现，无 pending**。", 14, 0, 0],
+    ["正④CI 开关不是状态断言", "CI 的 `--no-pending pdf xlsx docx` 就是这句话的判据 —— 不是「我觉得做完了」。", 19, 0, 0],
+    ["正⑤已实现数也是合法的数字", "19 项里已经落地 17 项，其余 2 项见 pending 里的理由。", 19, 2, 0],
+    ["正⑥中文数字不参与（「一项不欠」不是计数断言）", "## 现在有什么（19 项全部，一项不欠）", 19, 0, 0],
+  ]
+  let capBad = 0
+  for (const [desc, line, total, pending, want] of capCases) {
+    const got = capClaimProblems(capClaimsInLine(line), total, pending)
+    const ok = got.length === want
+    if (!ok) capBad++
+    console.log(`  ${ok ? "✅" : "❌"} ${desc} → ${got.length} 条` + (ok ? "" : `（期望 ${want}）：${got.join(" / ")}`))
+  }
+  console.log(capBad === 0 ? `✅ §12 自检 ${capCases.length}/${capCases.length} 通过` : `❌ §12 自检 ${capBad} 条失败`)
+
+  const total = bad + capBad
+  console.log(total === 0
+    ? `\n✅ 自检合计 ${cases.length + capCases.length}/${cases.length + capCases.length} 通过`
+    : `\n❌ 自检合计 ${total} 条失败`)
+  process.exit(total === 0 ? 0 : 1)
 }
 
 // ── 0. 活文档一次性读入（各检查共享，勿在检查块里重复读盘） ──────────
@@ -474,6 +560,52 @@ if (await memFile.exists()) {
       }
     }
   }
+}
+
+// ── 12. SKILL.md 对能力矩阵的断言必须与 capabilities.json 对得上 ────────
+// §11 管「指向别的技能指错了」，这一条管「说自己会不会做某件事说错了」。同一个病：
+// 模型只读得到 SKILL.md，读到一句过期的「不做」就会绕开一个已经能用的脚本，
+// 而任何产物、任何门禁都看不出来它绕过去了。
+{
+  const builtinRoot = path.join(rootDir, "skills", "builtin")
+  let scanned = 0
+  if (await isDir(builtinRoot)) {
+    for (const d of await fs.readdir(builtinRoot, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue
+      const md = path.join(builtinRoot, d.name, "SKILL.md")
+      const caps = path.join(builtinRoot, d.name, "capabilities.json")
+      // 没有 capabilities.json 的技能没有事实源，跳过——并且下面会把跳过的数量说出来。
+      if (!(await Bun.file(md).exists()) || !(await Bun.file(caps).exists())) continue
+      let total = 0
+      let pending = 0
+      try {
+        const j = JSON.parse(await Bun.file(caps).text())
+        total = Object.keys(j.capabilities ?? {}).length
+        pending = Object.keys(j.pending ?? {}).length
+      } catch (e) {
+        errors.push(`skills/builtin/${d.name}/capabilities.json 解析失败：${e} —— 无法对账`)
+        continue
+      }
+      if (total === 0) {
+        errors.push(`skills/builtin/${d.name}/capabilities.json 里一个 capability 都没有 —— ` +
+          `对账会因为没有事实而永远通过，这和检查不存在是一回事`)
+        continue
+      }
+      scanned++
+      const lines = (await Bun.file(md).text()).split("\n")
+      for (const [i, line] of lines.entries()) {
+        for (const p of capClaimProblems(capClaimsInLine(line), total, pending)) {
+          errors.push(`skills/builtin/${d.name}/SKILL.md:${i + 1} ${p}。SKILL.md 是模型` +
+            `判断「我会不会做这件事」的唯一依据，一句过期的断言会让它绕开一个已经能用的` +
+            `脚本，而产物上看不出来。改这一行，或改 capabilities.json。`)
+        }
+      }
+    }
+  }
+  // 空遍历长得和通过一模一样：扫到几个技能必须说出来，且不能是 0。
+  if (scanned === 0) errors.push(`§12 一个带 capabilities.json 的技能都没扫到（${builtinRoot}）—— ` +
+    `空遍历和通过长得一样，这里必须至少有 pdf/xlsx/docx 三个`)
+  else console.log(`   §12 能力断言对账：${scanned} 个技能有 capabilities.json`)
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────

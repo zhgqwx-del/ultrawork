@@ -83,18 +83,36 @@ def open_reader(path: Path, password: str | None = None,
     fail(f"{path.name} is password-protected: pass --password")
 
 
+#: Value of `uw_forms_note` when the document carries no AcroForm at all.
+FORMS_NONE = "none"
+
+
 def open_raster(path: Path, password: str | None = None):
     """Pixel/geometry reader (pypdfium2). Caller must close it.
 
     PDFium takes the password up front and raises if it is wrong, so the two
     failure messages below are the same ones open_reader produces — a caller should
     not be able to tell which library refused it.
+
+    ⚠️ `init_forms()` happens HERE, not in the caller. A filled AcroForm keeps its
+    value in the widget's `/AP` appearance stream, and PDFium only paints those once
+    a form env exists — without it a filled form and an empty one rasterize to
+    *byte-identical* images (measured on `form-filled.pdf`: 13540 dark pixels either
+    way, 22291 once the form env is up). Putting it in the shared open means a future
+    rasterizing caller cannot forget it; putting it in `pdf_render` alone would be
+    the same shape as the guards this tree has twice found installed on a path
+    nobody walks. PDFium requires the call right after construction, before the page
+    count or any page handle is taken — which is exactly where it sits.
+
+    The outcome is recorded on the document as `uw_forms_note` and reported by the
+    caller, so "the form layer is off" can never look like "this document has no
+    form values".
     """
     import pypdfium2 as pdfium
 
     _check_exists(path)
     try:
-        return pdfium.PdfDocument(str(path), password=password)
+        doc = pdfium.PdfDocument(str(path), password=password)
     except pdfium.PdfiumError as e:
         text = str(e).lower()
         if "password" in text:
@@ -104,6 +122,13 @@ def open_raster(path: Path, password: str | None = None):
         fail(f"cannot open {path.name} as a PDF: {type(e).__name__}: {e}")
     except (OSError, ValueError) as e:
         fail(f"cannot open {path.name} as a PDF: {type(e).__name__}: {e}")
+    try:
+        doc.uw_forms_note = "initialised" if doc.init_forms() else FORMS_NONE
+    except Exception as e:  # noqa: BLE001 - a broken form env must not block pixels
+        # Refusing to rasterize a readable page because its form env failed would be
+        # worse than rendering it without the widget layer. Say which one happened.
+        doc.uw_forms_note = f"unavailable: {type(e).__name__}: {e}"
+    return doc
 
 
 def is_encrypted(path: Path) -> bool:

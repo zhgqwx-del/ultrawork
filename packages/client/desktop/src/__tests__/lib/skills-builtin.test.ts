@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { isBuiltinLocation } from "@/lib/use-skills"
 import { BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, type DepMap } from "@/lib/use-skill-deps"
 
@@ -170,5 +173,73 @@ describe("BUILTIN_DEP_MAP + missingDeps", () => {
     // ppt-master is no longer in BUILTIN_DEP_MAP — the dep-badge machinery treats it
     // as unknown (its curated-catalog install carries its own deps at install time).
     expect(missingDeps("ppt-master", present())).toEqual([])
+  })
+})
+
+/**
+ * gotchas §10 says a dependency change has to land in FOUR places: the skill's
+ * `x-requires`, BUILTIN_DEP_MAP, PY_MODULES and this file's key set. Three of them
+ * were already asserted somewhere; `x-requires` was not, and it rotted — deckcraft
+ * declared 4 while the badge map declared 16 (059 S3.5 added the source readers and
+ * only touched the map). A rule nobody checks is a rule that decays, which is the
+ * same thing 059 S6 said about SKILL.md descriptions.
+ *
+ * Read from disk on purpose: BUILTIN_DEP_MAP is imported (no parsing, so no
+ * prefix-matching regex to get wrong), and the frontmatter is the only thing parsed.
+ */
+describe("x-requires in SKILL.md mirrors BUILTIN_DEP_MAP", () => {
+  const builtinDir = (() => {
+    let d = dirname(fileURLToPath(import.meta.url))
+    for (let i = 0; i < 12; i++) {
+      const c = join(d, "skills", "builtin")
+      if (existsSync(join(c, "docx", "SKILL.md"))) return c
+      d = dirname(d)
+    }
+    throw new Error("skills/builtin not found walking up from the test file")
+  })()
+
+  /** `x-requires: [a, b]` -> ["a","b"]; null when the key is absent entirely. */
+  const readXRequires = (skill: string): string[] | null => {
+    const text = readFileSync(join(builtinDir, skill, "SKILL.md"), "utf8")
+    const m = text.match(/^x-requires:\s*\[(.*?)\]\s*$/m)
+    if (!m) return null
+    return m[1].split(",").map((s) => s.trim()).filter(Boolean)
+  }
+
+  /** Both directions, so "declared but not required" is caught as well. */
+  const drift = (declared: string[] | null, live: string[]) =>
+    declared === null
+      ? ["no x-requires at all"]
+      : [
+          ...live.filter((d) => !declared.includes(d)).map((d) => `missing from SKILL.md: ${d}`),
+          ...declared.filter((d) => !live.includes(d)).map((d) => `extra in SKILL.md: ${d}`),
+        ]
+
+  it("finds the skills on disk — an empty sweep looks exactly like a pass", () => {
+    const dirs = readdirSync(builtinDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(builtinDir, e.name, "SKILL.md")))
+    expect(dirs.length).toBeGreaterThanOrEqual(11)
+    // and every mapped skill must actually be one of them
+    for (const name of Object.keys(BUILTIN_DEP_MAP)) {
+      expect(dirs.map((d) => d.name)).toContain(name)
+    }
+  })
+
+  it("every built-in skill declares exactly what the badge map requires", () => {
+    const problems: string[] = []
+    for (const [skill, live] of Object.entries(BUILTIN_DEP_MAP)) {
+      for (const d of drift(readXRequires(skill), live)) problems.push(`${skill}: ${d}`)
+    }
+    expect(problems).toEqual([])
+  })
+
+  it("CONTROL: the comparison actually reports drift (both directions)", () => {
+    // Replicates the shape that rotted — the map grew, the SKILL.md did not.
+    const live = BUILTIN_DEP_MAP["deckcraft"]
+    expect(drift(live.slice(0, 4), live)).toHaveLength(live.length - 4)
+    expect(drift([...live, "invented-dep"], live)).toEqual(["extra in SKILL.md: invented-dep"])
+    expect(drift(null, live)).toEqual(["no x-requires at all"])
+    // and it stays silent when they agree, or the assertion above proves nothing
+    expect(drift([...live], live)).toEqual([])
   })
 })
