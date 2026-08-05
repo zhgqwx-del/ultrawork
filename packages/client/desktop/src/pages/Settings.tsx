@@ -2293,14 +2293,19 @@ function DepBadge({
       title={`${t("skills.depPartialHint")}: ${partial
         .map((g) => `${g.label} — ${g.missing.map((m) => DEP_HINTS[m] ?? m).join(", ")}`)
         .join("; ")}`}
-      className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
+      // NOT shrink-0, unlike the verdict chip beside it. Measured at 700px: seven
+      // groups make this 300px wide and it pushed 72px of content out of the row
+      // (0px without it — the control says this one is mine, not the pre-existing
+      // narrow-width defect). The verdict must never be squeezed; this is extra
+      // information and gives way first, with the full list one hover away.
+      className="inline-flex min-w-0 cursor-help items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
     >
       {t("skills.depPartial")}: {partial.map((g) => g.label).join(", ")}
     </span>
   ) : null
   if (missing.length === 0) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1.5">
+      <span className="inline-flex min-w-0 items-center gap-1.5">
         <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
           <CheckCircle2 className="size-3" />
           {t("skills.depReady")}
@@ -2315,7 +2320,7 @@ function DepBadge({
     .map((m) => (DEP_HINTS[m] ?? m) + (deps[m]?.path ? ` [${deps[m].path}]` : ""))
     .join("; ")
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span className="inline-flex min-w-0 items-center gap-1.5">
       <span
         title={`${t("skills.depMissingHint")}: ${hint}`}
         className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"

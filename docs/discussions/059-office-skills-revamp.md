@@ -3267,3 +3267,21 @@ multiline 标志（实测整串 490.0pt vs 框 300pt，折行后最宽 295.44pt�
 ① **同一个能力有两条代码路径，门禁只覆盖了其中一条**（列宽的编辑路径 vs 创建路径）；
 ② **注释写的和代码做的相反**，而没有任何东西对照它们 —— 与 S6 的 SKILL.md 描述、
 本节的 x-requires 是同一个病的第三个面。
+
+#### ③ 的后续：修「不可见」的改动，自己带着同一类洞发了出去
+
+`unavailableFeatures()` 有单元测试，**渲染零覆盖** —— `settings-skills.test.tsx` 里
+`depReady`/`depMissing`/`depPartial` 一个都没出现过。于是补了真浏览器走查
+`e2e/skills-dep-badge-ui-walkthrough.e2e.ts`，**第一次跑就量出一个我引入的缺陷**：
+700px 下那个 `shrink-0` 的徽标把行内容顶出去 **72px**。
+
+⚠️ **判据必须是差值，不是绝对值。** 这一行在窄宽度下本来就有既有的溢出问题
+（gotchas §13.1），所以「700px 溢出了」本身说明不了是谁的锅 —— 每个宽度量两遍
+（最坏情况七组 vs 全装无徽标），**对照臂 0px、带徽标 72px**，责任才落定。
+修法 = 判定徽标（就绪 / 缺少）保持 `shrink-0`，**可选徽标可收缩 + 截断**
+（完整清单本来就在 tooltip 里）。修完 **Chrome 与 WebKit、en 与 zh、1200/900/700px
+全部 cost = 0px**。
+
+⚠️ 两条附带的：**WKWebView 才是 Tauri 在 macOS 上真正渲染的引擎**，Chrome 量到的版面
+数字不自动转移，所以两个引擎都跑了 · 这条走查**不在 CI 里**（仓库所有 `*-ui-walkthrough`
+都不在，要 Chrome + 编译好的 opencode sidecar），得手跑 —— 记在这里免得下次以为它有人守。
