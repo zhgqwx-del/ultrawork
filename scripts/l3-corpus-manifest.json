@@ -1,0 +1,1702 @@
+{
+  "_": "L3 真实语料清单（discussions/059 §5）。字节不入 git，见 scripts/fetch-l3-corpus.py 顶部。",
+  "rejected": [
+    {
+      "source": "py-pdf/sample-files",
+      "license": "CC-BY-SA-4.0",
+      "why": "share-alike，与「签名分发的商业软件」这个前提不该沾"
+    },
+    {
+      "source": "py-pdf/pypdf resources/",
+      "license": "仓库 NOASSERTION，目录内无 LICENSE",
+      "why": "单件出处不明，逐个核不动"
+    },
+    {
+      "source": "openpyxl",
+      "license": "MIT 但不在 GitHub（heptapod）",
+      "why": "sdist 186KB 不含测试数据；calamine + XlsxWriter 已超量覆盖 xlsx"
+    }
+  ],
+  "sources": [
+    {
+      "id": "python-docx",
+      "repo": "python-openxml/python-docx",
+      "commit": "e45454602b53e8e572b179ccf1c91093ec9f4ed7",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "7652f271e46d0d533e9dc463f3b5fcbdcacf4d6a9c8d6b554d15efd0f37f6132",
+      "paths": [
+        "tests/test_files",
+        "features/steps/test_files"
+      ],
+      "include": "\\.docx$",
+      "stride": null,
+      "kind": "docx",
+      "why": "python-docx 自己的测试夹具，绝大多数由 Word 保存 —— 正是 059 §5「D4/D5 从未跑过真正由 Word 保存的文档」点名的空白"
+    },
+    {
+      "id": "calamine",
+      "repo": "tafia/calamine",
+      "commit": "0a24c2a9f1e38c0932c1299e633270dc730db505",
+      "license": "MIT",
+      "license_path": "LICENSE-MIT.md",
+      "license_sha256": "f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc",
+      "paths": [
+        "tests"
+      ],
+      "include": "\\.xlsx$",
+      "stride": null,
+      "kind": "xlsx",
+      "why": "用户报 bug 时贴上来的野生 xlsx，边界最脏"
+    },
+    {
+      "id": "xlsxwriter",
+      "repo": "jmcnamara/XlsxWriter",
+      "commit": "cf3fe78d3eab5e4c7d825d4451af3a60e2a04011",
+      "license": "BSD-2-Clause",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "cf08b60a4ded986b58a617cb8304373bda5c4eff42fb4e30d7597b616e116e87",
+      "paths": [
+        "xlsxwriter/test/comparison/xlsx_files"
+      ],
+      "include": "\\.xlsx$",
+      "stride": 25,
+      "kind": "xlsx",
+      "why": "Excel 亲手存的对照件（不是 XlsxWriter 产的），补「真正由 Excel 保存的文档」这一格"
+    },
+    {
+      "id": "pdfplumber",
+      "repo": "jsvine/pdfplumber",
+      "commit": "4c64b92d5caccd71c645e98e0fabb0c4dba7ff45",
+      "license": "MIT",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "0d48994da4d1321e395b5e64a724ed4dec63fb96b88ac5b88fc014771e690821",
+      "paths": [
+        "tests/pdfs"
+      ],
+      "include": "\\.pdf$",
+      "stride": null,
+      "kind": "pdf",
+      "why": "真实世界抓来的 PDF（政府报告 / 扫描件 / 表格），手编夹具产不出这种版面"
+    }
+  ],
+  "files": [
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/any_sheets.xlsx",
+      "bytes": 14804,
+      "sha256": "fba48e0141f847d80738a4417f0a336cba92e4ac692d8dd7516eac41e32c9e4f"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/column_row_ranges.xlsx",
+      "bytes": 10274,
+      "sha256": "2e2fb35620c5ac2d042d9a54c700c3204a3d21b4b86938096a0c4d93487aad8c"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/date.xlsx",
+      "bytes": 4659,
+      "sha256": "0440916ec1b76ee4dd54955d59c2f42b266e9f5e4fccafb8cc1ed875908b26d2"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/date_1904.xlsx",
+      "bytes": 4922,
+      "sha256": "8b9f2b71a46833d7b9d2250d60b3c0948024f3d2b26f38ef990c0f2b2683fe08"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/date_iso.xlsx",
+      "bytes": 5057,
+      "sha256": "773ffd1dc5049bd6dd61f81baf7d1aa276dea2bcd803fa0ed5858abe2effa5a4"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/date_quoted_format.xlsx",
+      "bytes": 4996,
+      "sha256": "20d65b62486fd168a5c6307aba787bc0474724cc4351ed0fc02d4058a47da350"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/empty_s_attribute.xlsx",
+      "bytes": 7700,
+      "sha256": "8d7ff2e8dc3dde647aeee80112eaf1d843b8d53c7dabba87a32fdb2184c33321"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/empty_shared_string.xlsx",
+      "bytes": 5811,
+      "sha256": "88bcdff00d736ca11e578e7dc5d5072b29af99d8a2f6594fe479eb5c66c57c9f"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/empty_shared_string_value.xlsx",
+      "bytes": 2886,
+      "sha256": "9e8efcb8ecfc35ce46abfe37b8054c9f8cc02b94570063a76b8e8ec02334319b"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/empty_sheet.xlsx",
+      "bytes": 3551,
+      "sha256": "a388c9659cab5586ad0f4947945cce45d6c95d1bb872662e43c9562db4234d98"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/encoded_entities.xlsx",
+      "bytes": 5821,
+      "sha256": "e67b578bb047871764ac821e7f18ed6dba3c247850b741d88a9c5b6d74831d9a"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/errors.xlsx",
+      "bytes": 9540,
+      "sha256": "8d2b17a3170a47647f18798dc3dbe7504aaeb256f9b73485c69d103b0e0021f8"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/formula.issue.xlsx",
+      "bytes": 8626,
+      "sha256": "6df6d17418d03256c8df2aedb3f066ac00c0cdd65fa235ab21d5dbc5471ab053"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/has_x000D_.xlsx",
+      "bytes": 8248,
+      "sha256": "c69c913718bfdeea38ac4f4347334967c9beae9e8a3ba260cdc8ddf568392bb1"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/has_x000D_inline.xlsx",
+      "bytes": 4968,
+      "sha256": "3a7f67ed202636416bd103f302347978101439bc0721c7351281fd1958c034e3"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/header-row.xlsx",
+      "bytes": 9753,
+      "sha256": "cd0b97da106cf58a4f49dbc4b942bf57fcbd002450dad6387e297f604d97a17b"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/hyperlinks.xlsx",
+      "bytes": 6079,
+      "sha256": "ab148c6f8889d1a27d8a2dcc87156513a9ae54df9f2213a70e56c7710a108b2d"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/inlineStr_cdata.xlsx",
+      "bytes": 1938,
+      "sha256": "e83c8f57b354e05c65d2cb0518716a2b1be3733826e5088b6c952e818cecc67b"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/inlineStr_with_value.xlsx",
+      "bytes": 5654,
+      "sha256": "cca8e17d029b43672ff0ff381d5ae679ab31eb533033f5acf7e8fae1c6450df7"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/inventory-table.xlsx",
+      "bytes": 8347,
+      "sha256": "d63fa89e938aad9635cd556f683b901cc1c118bf11b494b1156c4711e5329631"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue127.xlsx",
+      "bytes": 10660,
+      "sha256": "7aa77af474c6badf74dc4bd7e3d4a165fca5756898807cb4b4a1ba50cfc55e78"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue252.xlsx",
+      "bytes": 6142,
+      "sha256": "9f8fec3a71c50076b78a4a429819943029a8c3387c1c2d45a3be09caa2c08979"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue438.xlsx",
+      "bytes": 15362,
+      "sha256": "8d22ddf71ce21c014fd25c2f94f52b9023212d6db7d67973f4194a354f955907"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue446.xlsx",
+      "bytes": 9770,
+      "sha256": "34f2fe682aee3c00dfcff7f05f5120450166f9338f41c72f2e0098a8d2acd0cd"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue644.xlsx",
+      "bytes": 6501,
+      "sha256": "28024006f012cf72c7ef24e90dac30900aac0dbc5200361be24dc13f5564e36e"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue9.xlsx",
+      "bytes": 8498,
+      "sha256": "b8f7362e3c347442b2ed453eed3bad99b6cae19fbf819a06502aa0934a71a6d5"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_174.xlsx",
+      "bytes": 145592,
+      "sha256": "6bcfec7da59c0ba9fdaef1f9835c51bb48c84e83a47e2009753a4339fab8d0e2"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_261.xlsx",
+      "bytes": 15975,
+      "sha256": "390bab89749f06bb867290ec6b2d3e078e8374688dbc0955bd79f33397658b14"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_261_fixed_by_excel.xlsx",
+      "bytes": 21302,
+      "sha256": "fc722fe62860af54cca1b625268b8bf5b8e1e8819627ef322fcc292f484b5770"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_391.xlsx",
+      "bytes": 8051,
+      "sha256": "60ec18b2f7be206704f00f09ea73b48a634fac316eb0191fd60be916bc0d4590"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_419.xlsx",
+      "bytes": 5787,
+      "sha256": "ce349c383557cf93b9a22c44f8aa27eee4442af522f10554cb65b2bd87a49e89"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_530.xlsx",
+      "bytes": 41148,
+      "sha256": "17270be2c9b871781527ef5d4f3356df25c6d9602312858ecd14c89019d9e524"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_553.xlsx",
+      "bytes": 39918,
+      "sha256": "e2d4b686c10ba04c8659acab50fdba198b298ea754cb4ff897ba2d8e63ab10fa"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_565_multi_axis_shared.xlsx",
+      "bytes": 9056,
+      "sha256": "66767c7fa40273ebba9d5e92b9f371b314c1d75c44eebc6e0c3744e58af5b52a"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_567_absolute_shared.xlsx",
+      "bytes": 9025,
+      "sha256": "a864970403fe21caedb19d386ae9a8c2a0b734dbbb650105cac66e17a771da80"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issue_644.xlsx",
+      "bytes": 6501,
+      "sha256": "28024006f012cf72c7ef24e90dac30900aac0dbc5200361be24dc13f5564e36e"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/issues.xlsx",
+      "bytes": 13571,
+      "sha256": "f41bbd13cb3f9648b2492bc7ffce4c0544a27d0c62daec5c670ac15bdfe04bbc"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/merge_cells.xlsx",
+      "bytes": 8948,
+      "sha256": "34f6b2779f49991859045791d8be0c5027e09b395f067c4363e38813d1e6431c"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/merged_range.xlsx",
+      "bytes": 10741,
+      "sha256": "13553289594edda304fdd66e0176e8cb5dce365eff8f589b6d1290090f1bc575"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/minimal_package.xlsx",
+      "bytes": 26928,
+      "sha256": "655b1003ead7a4ec711733ef0f1139ef72c5b5465a8df30514206d1ee959ff72"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/no-header.xlsx",
+      "bytes": 4716,
+      "sha256": "54cd49194bde6c04ae89b1ff5e9b129e1447393e49256f41cfa8ce0351594bff"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/non_monotonic_si.xlsx",
+      "bytes": 9103,
+      "sha256": "af3e7621784d15e8caea0c16ae79dba48d4bd4a0ba44bf73f73279419c17711c"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/nonstandard-xml-ns-prefix.xlsx",
+      "bytes": 3081,
+      "sha256": "bb4c4bd4b90a742abf32dc57bec07c261e7671516a81339adf712fd32f0ba3c7"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/pass_protected.xlsx",
+      "bytes": 14848,
+      "sha256": "caae96225a5fbe2f33b0224d638de88ba37700e1af5f14e3b95a7e92aa96453f"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/picture.xlsx",
+      "bytes": 56544,
+      "sha256": "e9a3243170755319fc54bf14991bb623636866cb37ba1676784b39bea631496c"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/picture_richdata.xlsx",
+      "bytes": 185998,
+      "sha256": "d530b333405b18ce9f29fcc5be54b7a7b0d3a9e1cdfea1d1b91f65991377c585"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/pictures_in_cell_and_over_cell.xlsx",
+      "bytes": 12878,
+      "sha256": "3460ee84d72a1b5d43bc0ef6676b5712868e1292060dbfd67a646ea477703c4a"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/pivots.xlsx",
+      "bytes": 34944,
+      "sha256": "632407ef8f5a5b45d93781b78b303c662aeea83c11d43e04ce5b07da96595235"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/readings.xlsx",
+      "bytes": 8976,
+      "sha256": "561beb646c7cc30e65109f17779dd23a99231a6e8f53dfb5945a1173c58134b3"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/richtext-after-plain.xlsx",
+      "bytes": 8210,
+      "sha256": "874eb815ab79ff6a6b5524c6980c9f8e8b5840fb950cfe18ee21b0f123ef4842"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/richtext-namespaced.xlsx",
+      "bytes": 10070,
+      "sha256": "b495b2bf4d4d2edc66daaca107981a66c5ec608cc46476251498ce0af8507a88"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/rph.xlsx",
+      "bytes": 5867,
+      "sha256": "d08c63dcee4f6ecf2c600e237901e1bf6681f11410d8055c0e5580f30ee77604"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/shared_formula_bench.xlsx",
+      "bytes": 11785,
+      "sha256": "fe5953d4508fdf3d8c2e8697aa073f1d5d931d11c6706cd22bd04b316e7d2a99"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/shared_formula_reversed.xlsx",
+      "bytes": 9789,
+      "sha256": "0c536a9c1a5ab1d7ab8fef61e5029b0527f2fb6e6abd522f17a15b8415ff6f66"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/shared_formula_simple.xlsx",
+      "bytes": 10178,
+      "sha256": "aa951fd8c55f7a9104515736e497e2dd393daec1077cf9401162070555ee6fe4"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/strict_iso_paths.xlsx",
+      "bytes": 21205,
+      "sha256": "45ddc3571627cd4fb37df8b1a7d97b56724fea3e2e7073896f2a0c24300fe201"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/string-ref.xlsx",
+      "bytes": 10031,
+      "sha256": "e48cc42f0290f3284bb50015ea791833da1b91273ede58e591d241c4f0ec170c"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/table-multiple.xlsx",
+      "bytes": 11520,
+      "sha256": "8d39e98b17bcd2937171dacbae296c2f3cd975bbf41809738c05c7ffdccc977f"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/table_with_absolute_paths.xlsx",
+      "bytes": 5953,
+      "sha256": "c764ab03573cae80c808ff42cc9bf90f054c43e598857ef522ec767b3d8dd5a1"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/table_with_insertrow_attribute.xlsx",
+      "bytes": 14337,
+      "sha256": "46c11dd034dae5a520cec869a256efba2dc6399d25936fc92ce908fbd752591a"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/temperature-fallible.xlsx",
+      "bytes": 8825,
+      "sha256": "86bf47cd04fedabc6a1d0b1bcb1906c9e5436727166634493398d0d6195aecc6"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/temperature-in-middle.xlsx",
+      "bytes": 5837,
+      "sha256": "23da8d6463707d1286cb1ad64491ce98ccd0e2f4c30a0ab45e6282d6f036f872"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/temperature-table.xlsx",
+      "bytes": 11478,
+      "sha256": "2770aa2fdf782414e83ee80c7b25b4a102204a28a19f15fe5177661e1174eb4b"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/temperature.xlsx",
+      "bytes": 3599,
+      "sha256": "1b7b26626405830d3f39cca681e77eee7fc4975dd987502470d8e750982ff6a1"
+    },
+    {
+      "source": "calamine",
+      "kind": "xlsx",
+      "path": "tests/whitespace_trim.xlsx",
+      "bytes": 2901,
+      "sha256": "95a2d8a49f17923986ff1a5b4ebd4f0e233a6aafddb0086b01e874ed6171fef5"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/150109DSP-Milw-505-90D.pdf",
+      "bytes": 30255,
+      "sha256": "901409e8e3d504a07ca1793e0b05d4b58e333760026dc1996d27edee9365a513"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/2023-06-20-PV.pdf",
+      "bytes": 35535,
+      "sha256": "8e01f32e6a40f956aad593b0e54c5cec7684285ff4be0c7b754dce3711c67bb4"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/WARN-Report-for-7-1-2015-to-03-25-2016.pdf",
+      "bytes": 478619,
+      "sha256": "f52f80bd057313c8abec2e854c65c4d96658e72744c836e81d3048d8a5861046"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/annotations-rotated-180.pdf",
+      "bytes": 170175,
+      "sha256": "b8910d64033eeb7560e11a1bbc397751261597f8bc781ba79ca1a77362386ceb"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/annotations-rotated-270.pdf",
+      "bytes": 170175,
+      "sha256": "2fa32eb26559bd5762e70bc8f1bb85d05dd5ae2d15c2fe1e4910b05d468cf65b"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/annotations-rotated-90.pdf",
+      "bytes": 170174,
+      "sha256": "0c680ab11ec73b71cd879d5af80f698dfbfce1d1e2086365fbacb6225fd23468"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/annotations-unicode-issues.pdf",
+      "bytes": 57927,
+      "sha256": "e774f5c98d25a725ca2163a52b9cd36113a9694bf4a07b452e3819bf3b268250"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/annotations.pdf",
+      "bytes": 132177,
+      "sha256": "ad2a4eee7b71d554f37b4e37f2447e106f0751b70b673bc0ab7c46c851d451b9"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/chelsea_pdta.pdf",
+      "bytes": 2944560,
+      "sha256": "e9823b5527fed648c9b4a891b0c018d75a4acfa3697f9bfa91b2f8e5097579e0"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/cupertino_usd_4-6-16.pdf",
+      "bytes": 80578,
+      "sha256": "944ab863d7c83521d6250cc8682d2c985a6ae82622de1d461bb80c21a654206a"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/empty.pdf",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/extra-attrs-example.pdf",
+      "bytes": 15170,
+      "sha256": "76cfc3645bdb76d2e670774ea1dc474b9ab0e3f1599f82403ab095a349f19a98"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/federal-register-2020-17221.pdf",
+      "bytes": 713992,
+      "sha256": "ac419e4e084ea7a7a33a7be3f129dd07bc705b1a9e45ad751e33357f17d60f5c"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/figure_structure.pdf",
+      "bytes": 24694,
+      "sha256": "46ffbb251fbefd6f0b0e7410f504a3b0370f7f5c98f374b10cd1907fb400ee65"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4591020179783680.pdf",
+      "bytes": 134494,
+      "sha256": "1fa395f36909b6bae45a86b0611f95bd7bbc07ef6d8fe3c01b4bc9651d89888c"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4646567755972608.pdf",
+      "bytes": 2746,
+      "sha256": "c2c4efbc27e61f7302f25b69a790b3bc0c41c88c21745704d0f64510f5b2efd2"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4652594248613888.pdf",
+      "bytes": 125448,
+      "sha256": "bc7cac33fa6a69568661a9a0db515402e029c4f4f4b46f3b949610d8bfed89c0"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4691742750474240.pdf",
+      "bytes": 1581,
+      "sha256": "28ba22794afc99978a51006cdca55f2561aa8e8e731d46e19eb8bd6c522a856d"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4715311080734720.pdf",
+      "bytes": 140222,
+      "sha256": "0c0bd494344002b53edf0f3dfbcdd769f61c5b339c12f5aec4911dd903cc2c86"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4736668896133120.pdf",
+      "bytes": 4753,
+      "sha256": "608407d60ac531afaf5bed5711c8b78651e0497f3c87b3dcabf45c8d82dd0a64"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4833695495684096.pdf",
+      "bytes": 3759,
+      "sha256": "d68eb487c9b2c9d6ec8499eaebf8cdd931a77a4d830d46f279d522d1aedc296d"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/4927662560968704.pdf",
+      "bytes": 121587,
+      "sha256": "b195cc3ad97d753defe0389d529ed1cc798ba743bcbf5e87aa7ee376274ff573"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5177159198507008.pdf",
+      "bytes": 1464,
+      "sha256": "f0d110e67572cc3be55a1aef11f484969a6a1cabd75cabb2fe625a57842ee6e5"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5317294594523136.pdf",
+      "bytes": 139713,
+      "sha256": "50dc70a42f43a0676f6bb776a0fb4651e5b0149a846475db1289544db3ed47f8"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5452007745323008.pdf",
+      "bytes": 6838,
+      "sha256": "fd95500e37c767c79e7ea82c2bc7b42a024ccc7f7c2acb37857a74ec079ba4e5"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5592736912179200.pdf",
+      "bytes": 120570,
+      "sha256": "b16e93d599cfe1409fe36ba6fdf36eafa04a4773f2db59800a59b69f48dbc563"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5809779695484928.pdf",
+      "bytes": 114947,
+      "sha256": "f9aa195dfe87c5dde89710e962695af872f247cd7ba3ebabe5c64f1c7aed19fb"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5903429863538688.pdf",
+      "bytes": 134462,
+      "sha256": "7ae027bd97daf40553925b38ec1b1f25b349bdded27d99925bf7f844314b4ba0"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/5914823472250880.pdf",
+      "bytes": 2716,
+      "sha256": "62144e76824f3b99162f68303ca0dce751b3da8461fe4e555880261a175c808c"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/6013812888633344.pdf",
+      "bytes": 1817,
+      "sha256": "d27e210d1c14bd093ed048c820526a73f4319e3c1335a8954748702d02c5dc0b"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/6085913544818688.pdf",
+      "bytes": 527,
+      "sha256": "91c46fe061b16b4c055aff84b4c22ba9ddd2fad5c36c6c13f9f3c5fa95963d93"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/6400141380878336.pdf",
+      "bytes": 1334,
+      "sha256": "4418f36f97b0e0b07be734bbeee1ef4a7becf20527857d7d0ea2665a35c69ec3"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/from-oss-fuzz/load/6515565732102144.pdf",
+      "bytes": 3863,
+      "sha256": "49fd77a03424107c138743923645e77e406ec1ccfb8f2303a1513b58ddacc537"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/hello_structure.pdf",
+      "bytes": 2641,
+      "sha256": "949dccc013e2cc2f44e515225ace59bd5e4aa53ee38db1297094e7640d6e4f2a"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/image_structure.pdf",
+      "bytes": 45966,
+      "sha256": "ce664b97ca3f765ad6a82352c2555cbfcd687d554722341413d633178164fad4"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-1054-example.pdf",
+      "bytes": 15374,
+      "sha256": "87c424c0833734a4d2dff996a20b686c0cc252f3231fe067fbcffaf2d90723de"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-1114-dedupe-chars.pdf",
+      "bytes": 43483,
+      "sha256": "0d94eb9541b68404ce5e3fc524614dc87e6bba470cb3e83bccecaf2f873b8ed5"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-1147-example.pdf",
+      "bytes": 1826244,
+      "sha256": "39e9d5e5876c0fc833fdc01e84019a0f5d2f74a203cf99070d359ac20603de45"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-1181.pdf",
+      "bytes": 13437,
+      "sha256": "5c699a86d22a859da0f3124642ebba8bbc22b648578d94f212d97816fa023eb1"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-1279-example.pdf",
+      "bytes": 37214,
+      "sha256": "ebca9104debf6177df939ed8402435f3e9fd12d22b07845b280b4b71a4e80292"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-13-151201DSP-Fond-581-90D.pdf",
+      "bytes": 108121,
+      "sha256": "ea25af844e659c5f760de43bff7232272af34a1feec717b43de4a94bee5abb92"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-140-example.pdf",
+      "bytes": 5251,
+      "sha256": "0b5accf5702d12b9a58eba9f4d11295c9e268c8c6333b4cd4ac07e46768b023b"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-192-example.pdf",
+      "bytes": 169520,
+      "sha256": "705af4b4e52a68d4d574216618a7d037001d9fbd1b7fa5a75aba25c903e230d9"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-203-decimalize.pdf",
+      "bytes": 137384,
+      "sha256": "dfd0a34e0509d4d0666ba94810b3b2346180115b9a2fef89f3d700061e1b0746"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-297-example.pdf",
+      "bytes": 472,
+      "sha256": "875bd20fe4074abc91772ae33781ac3de895d7af55826c93d28067e50d23d295"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-316-example.pdf",
+      "bytes": 138691,
+      "sha256": "19b0ab7b2e0cddc96c1bfaf96fd928547811d1dd2e451d0410b618308fe986f9"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-33-lorem-ipsum.pdf",
+      "bytes": 60367,
+      "sha256": "951e9ab1d5ec310429f89173357a7c9f84b08153fd7f81b5d060ed2487869f16"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-336-example.pdf",
+      "bytes": 650330,
+      "sha256": "59ad0eb8dc9601782a72bc4cabe2390ee2e4eed03d545f874c7425b6d40492cd"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-461-example.pdf",
+      "bytes": 154889,
+      "sha256": "34f3fe05d1c8e242f0e2d2204399f46aebcbef630834d544deb4a0d625846d63"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-463-example.pdf",
+      "bytes": 88676,
+      "sha256": "7337e4267970818c55692f371d1fbaeb18a6dbc2d2d58739a07df94a4e3b7999"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-466-example.pdf",
+      "bytes": 13569,
+      "sha256": "da49286d9f6f985136c6a1788ca4a33f20bbdcbe4ea8153b81bb87841e95cba4"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-53-example.pdf",
+      "bytes": 133586,
+      "sha256": "ddddc6f90cdc61457164abf04e36cfda00b16718b534b1069a34e88272ce4b5b"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-598-example.pdf",
+      "bytes": 504551,
+      "sha256": "022dc4c57d995bea2317537fd91ca3b08d267f1c20469b9104e3a682e0b7dad8"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-67-example.pdf",
+      "bytes": 238143,
+      "sha256": "517c394a000b3dc2c0f3b21198e0fad725ff65cd82c90915bbeca4f60383d176"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-71-duplicate-chars-2.pdf",
+      "bytes": 541788,
+      "sha256": "0acf672dc1143f49baaa12e1e130ca131070b0d54eb487e48b24921d21e53b11"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-71-duplicate-chars.pdf",
+      "bytes": 72467,
+      "sha256": "c0f4504ee7c5f0e98d091db6ff866c8421694baa5f053efa6b82d9e19233e8ca"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-842-example.pdf",
+      "bytes": 287855,
+      "sha256": "1c49e633f46097016b41113160de375ae7367d607706b3a042580baed90defeb"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-848.pdf",
+      "bytes": 71805,
+      "sha256": "7ac8ec08037168a6c55e770e577341483b6bff4de604c3410857248ae9f371c6"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-90-example.pdf",
+      "bytes": 98330,
+      "sha256": "9ed459c53bdd5ae91a08b3bacc5d93f3944dfddac9b6a140a4ea6b5e6eea2a61"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-905.pdf",
+      "bytes": 13656,
+      "sha256": "26bf4eadb94944ec61fb7c3120f190db74b7a067bbeb9489ea02a2b11f228a55"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-912.pdf",
+      "bytes": 1202189,
+      "sha256": "317f8e045ec0a67a272bcfd0d38e33f6aaf1110d0a57a26faa739dbdc4bc09bb"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-982-example.pdf",
+      "bytes": 1029061,
+      "sha256": "c18ea7dc2e8d075f22ca0030e83000adc05cd4f75218c1d774564aa91b5edd94"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/issue-987-test.pdf",
+      "bytes": 8805,
+      "sha256": "353c84f0bdd88d17f04b87896e02bc0a54ad169da56b8ecf1aeacab9a75213bc"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/la-precinct-bulletin-2014-p1.pdf",
+      "bytes": 20188,
+      "sha256": "a87eb3ca32462296ad07e6c62ab05c85527a5d7daca6f33d531eb4ae3f263b95"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/line-char-render-example.pdf",
+      "bytes": 13649,
+      "sha256": "10ceede5e884a1566d96ab888bc378576167292cae53d72498a6b89388107fdf"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/malformed-from-issue-932.pdf",
+      "bytes": 61037,
+      "sha256": "471f16c8716a7fa8cda228ad293a4df97fe16f184ff3d952f26fc9e38a348ff3"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/mcid_example.pdf",
+      "bytes": 24694,
+      "sha256": "46ffbb251fbefd6f0b0e7410f504a3b0370f7f5c98f374b10cd1907fb400ee65"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/nics-background-checks-2015-11-rotated.pdf",
+      "bytes": 90415,
+      "sha256": "3820767f7b9c8a80d20916daa8664afee49421c4bc6d6efb70bb21ae5f9a7195"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/nics-background-checks-2015-11.pdf",
+      "bytes": 90468,
+      "sha256": "4f0ae6e017b0e97de211da8fd97316e55bd927af5740d6ce95e1b7b1539f9407"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/page-boxes-example.pdf",
+      "bytes": 1187,
+      "sha256": "e0be9f61f14ec31f14d77fa0db26c1013eed67b662d8fdd4aa77fd4226cebb5f"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/password-example.pdf",
+      "bytes": 49755,
+      "sha256": "76593a57d9787a86050815e830a4c69425f5c95017fdb6f509074658932056e2"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/pdf_structure.pdf",
+      "bytes": 34467,
+      "sha256": "247db629cecbb2d6c58eaac7531dfb82125608881c6433e620689c807900c64c"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/pdffill-demo.pdf",
+      "bytes": 108017,
+      "sha256": "2594a5364ea598047a7389b4f35a5e0908c973c7aa4bc6d8c5e8fb34baaba426"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/pr-136-example.pdf",
+      "bytes": 3388137,
+      "sha256": "bd7d7a3c3114e0c809d275227439e4997578a7fa3de57b5110a594172320cb74"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/pr-138-example.pdf",
+      "bytes": 89950,
+      "sha256": "20bd9ee89a10cc92f679085a0d6cab85baa05ca3f781543f23f19d1e5ea7409f"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/pr-88-example.pdf",
+      "bytes": 95332,
+      "sha256": "70840f0da97cffe9b833780f4bb192e4455d0d086291cf60f35b37bb2b35d84f"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/scotus-transcript-p1.pdf",
+      "bytes": 84509,
+      "sha256": "c63508c7b195e6b6c398311fb1f3a36de31f604e3ae94b486a6776f1f144b379"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/senate-expenditures.pdf",
+      "bytes": 53481,
+      "sha256": "16921f0fc9b2c6039b23b694e0317917118ad7dd2b3a95a88518b7e144df527c"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/table-curves-example.pdf",
+      "bytes": 153741,
+      "sha256": "d68dce5cfaae86c5282b50603d60bc2601af23ecfd26245a9966382b5d3fdb70"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/test-punkt.pdf",
+      "bytes": 14806,
+      "sha256": "576e8eef9551291538bf96323776c39fc1a0f15acafb488ec90bf514cf148089"
+    },
+    {
+      "source": "pdfplumber",
+      "kind": "pdf",
+      "path": "tests/pdfs/word365_structure.pdf",
+      "bytes": 99253,
+      "sha256": "3301c8da647514abf8fa145470bd0367daa3d8b0a1e7281f1c6850b50889ee53"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/blk-containing-table.docx",
+      "bytes": 25142,
+      "sha256": "5e036b49ff8d24f9f7eed8ae60a39f7a570f66f9bbebcf76b3ed8f2f28f89b3d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/blk-paras-and-tables.docx",
+      "bytes": 15649,
+      "sha256": "93f40c8a23dbcbc75b073e0f7050a5f064e6aff58c1bc6c6003359122e9faf79"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/comments-rich-para.docx",
+      "bytes": 20023,
+      "sha256": "8ee6b9bd84c59169bc7e5838003806edefb2c51920f40035b7879d4a3414deed"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-access-sections.docx",
+      "bytes": 25591,
+      "sha256": "871f058319e155fa5d76625a4e019d63f804e9b17da24f7047b38c6b1ee353d1"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-add-section.docx",
+      "bytes": 17956,
+      "sha256": "fc5879727f3c8b513c4b4a32dd58e37aa16aee6c0699b520d5536dee1670f68d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-coreprops.docx",
+      "bytes": 11992,
+      "sha256": "358ba16289fc12f9c50a22d74ab610ef4dc74563c5ed7c889ac48f372b956dd0"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-default.docx",
+      "bytes": 21366,
+      "sha256": "0cde4019e31cf05f229e5955c6021fd07c863a2936a7f4de0d9169d426f4fe59"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-no-coreprops.docx",
+      "bytes": 11394,
+      "sha256": "546b286667a8891d6e9206f754014112de86c05e9d9dc4500aef8ce5410cc2bd"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-odd-even-hdrs.docx",
+      "bytes": 17711,
+      "sha256": "2c29ec565cc971743f95ea7bba0b716c146c09ddfb9e5b414400b5fe33a387d7"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/doc-word-default-blank.docx",
+      "bytes": 21309,
+      "sha256": "560b0e299a592f6b7d1ec9abab98648f1d92bf8fa684ce544a0424fdde798903"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/fnt-color.docx",
+      "bytes": 15846,
+      "sha256": "b4f97dfacde60d114e91fcd38b85fb941b4d60537922eff07dbb460dff0fbe9d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/hdr-header-footer.docx",
+      "bytes": 18079,
+      "sha256": "5a4cb270680d1365688073e4816be98c2ab1a7ba2921d86cb3efadca97a72d27"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/num-having-numbering-part.docx",
+      "bytes": 24334,
+      "sha256": "66b45ace7afa65acab6036bdc63d9416554576df633c13a6774bf41d4a60a47e"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-alignment.docx",
+      "bytes": 15126,
+      "sha256": "8a276964f84b5104fffdf0e29ecb96744e1c3d0139543f6feba0e2152619a7e0"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-hlink-frags.docx",
+      "bytes": 12071,
+      "sha256": "28a23ab5ad87a927fcf1e82111ee6843e1f9bc29b3e2d825b869b41847a750bf"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-hyperlinks.docx",
+      "bytes": 12385,
+      "sha256": "206539619eb347b1cd5b3fe88031cc18327accfe5d34a886f3d9120115f6bdad"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-known-paragraphs.docx",
+      "bytes": 27969,
+      "sha256": "0e1381929a0833057ef0095e42f0d34f9a456821b8e9053489b596b1b417b3c9"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-known-styles.docx",
+      "bytes": 20901,
+      "sha256": "0a2155da9b7eb69af16b33f0012e53f67d179d6bafa9ee2e460c0c91ff5e47db"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/par-rendered-page-breaks.docx",
+      "bytes": 12244,
+      "sha256": "a87b16cbd3b86bda5a5a3a7d02dde898094074455126dee89216b9e7a36ee960"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/run-char-style.docx",
+      "bytes": 26645,
+      "sha256": "cd647c103be2a6f6af62f5d093236796ac2d515307ddf44dd774b74941b79d15"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/run-enumerated-props.docx",
+      "bytes": 14645,
+      "sha256": "b66ecfd9c0c886b0454c2844b28f6be9be2ec93eb214ea60a2c741ad856e2d7b"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sct-first-page-hdrftr.docx",
+      "bytes": 14849,
+      "sha256": "9e7e7b1bd132fe889d43d57fbe1e99c126544326fa21364695f2eec7cd336578"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sct-inner-content.docx",
+      "bytes": 12051,
+      "sha256": "d92e9ca7b09fab7b475c57dfba08f6acba2742aff2691cc7284649c640059c73"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sct-section-props.docx",
+      "bytes": 28168,
+      "sha256": "0d741b9f881f3a1583711f0d85227768b01fa13760ebf972c43e1496b18ab3d5"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/set-no-settings-part.docx",
+      "bytes": 10760,
+      "sha256": "cef04e3a5b3c040e5210e02eb20ca0357768cf2f6e80b38df4f2f57a0f848845"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/shp-inline-shape-access.docx",
+      "bytes": 122610,
+      "sha256": "8fcf0f0433be0968d9305c564ce69601931695ffe163d264fb69b7782feff517"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sty-behav-props.docx",
+      "bytes": 12195,
+      "sha256": "eb885bd1892b1c4a67c5ce7d997b24323aa63233f8bf10939e71f661b180083d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sty-having-no-styles-part.docx",
+      "bytes": 8358,
+      "sha256": "b5e861d2d5cc53ba0d2ab3115bf51d270621c484c9b3fef6569c48ed9423b295"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sty-having-styles-part.docx",
+      "bytes": 21573,
+      "sha256": "c57dae87cc43ef35a85b25c78d15d4506075a289c0d8de78617930ec82aee84b"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/sty-known-styles.docx",
+      "bytes": 13560,
+      "sha256": "97a0978dfb941a7041867a2432616e3b5e3bbf6f7efb76bc5be2e722cd6cb012"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tab-stops.docx",
+      "bytes": 13170,
+      "sha256": "cf1ab27e6cf523b57b3166d2e927b688aea0f5e10590b21745b334b56a0f418d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-2x2-table.docx",
+      "bytes": 25129,
+      "sha256": "c2f09412ae551d52b6a35b974f1fc428f0c9a3de2ccacfdb7ab5d55985f137c2"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-cell-access.docx",
+      "bytes": 36051,
+      "sha256": "dc01708a24c5e940c94b99b7ee496606e5f17152bc41cec211c9f8c72334cb22"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-cell-props.docx",
+      "bytes": 13773,
+      "sha256": "612ab03dfde001588d0081706238c08d2938b55807de5342677cfcc0bcd53e6d"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-col-props.docx",
+      "bytes": 13654,
+      "sha256": "4a3d8bb3570a798c5c6a59d14b092a8ef579a89d41a2ec9a31e7c4f2ef77e892"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-having-applied-style.docx",
+      "bytes": 50294,
+      "sha256": "761802878f363b57dce41b77657946ae5dc70d745261561242c9ed5a769260d9"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-having-tables.docx",
+      "bytes": 32010,
+      "sha256": "5e23ecb6ec09b5db467ddeb22110c2aab83d1218662e8f7c8db444f085e081cc"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-on-off-props.docx",
+      "bytes": 16017,
+      "sha256": "2513f8adbe54b1dcc769a2da8da61746758ea96b588d0ba22b606185b43dc51a"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/tbl-props.docx",
+      "bytes": 20419,
+      "sha256": "70f6a24488b85609e5d3ceaed653e584d23e6867a7f22bd267827d73fbfc2cad"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/txt-font-highlight-color.docx",
+      "bytes": 12859,
+      "sha256": "27d22be137f8c1c63356f917ce74b3ca21ba5638a7c7c2899acb887013ef0686"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "features/steps/test_files/txt-font-props.docx",
+      "bytes": 37924,
+      "sha256": "a5de256a9cd1598d4e63ba0883995899ddb72ec9390c04d46474c2b093ffde96"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "tests/test_files/blk-inner-content.docx",
+      "bytes": 11949,
+      "sha256": "16243dd05f686d6d5fab331843691492ad78ae3eb4f13cc8686077b44718c0ba"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "tests/test_files/having-images.docx",
+      "bytes": 132875,
+      "sha256": "72f40baa1b89e4849e817121dbbf148ed78e51be9bf04d8e6f4bc1494aa517b7"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "tests/test_files/sct-inner-content.docx",
+      "bytes": 12051,
+      "sha256": "d92e9ca7b09fab7b475c57dfba08f6acba2742aff2691cc7284649c640059c73"
+    },
+    {
+      "source": "python-docx",
+      "kind": "docx",
+      "path": "tests/test_files/test.docx",
+      "bytes": 31773,
+      "sha256": "fba1c76b66ff30982e5281941ca1111eaeaeb092abb6dfbe1730bed3774f40b6"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/array_formula01.xlsx",
+      "bytes": 7382,
+      "sha256": "86e378e08a38771235ffb54fdc4a919d1870f904e1502f340f462d75bf39b01c"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/autofit10.xlsx",
+      "bytes": 7520,
+      "sha256": "df56ea9c97460cbf8c338e5b837f7869ee8a92997ce1947f5fdccd16bb800d32"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/button12.xlsx",
+      "bytes": 11163,
+      "sha256": "21911528e520cce8f7d74ba53b95e3d52ec65e97478d0c00daca6ff6ed316d26"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_axis18.xlsx",
+      "bytes": 9301,
+      "sha256": "2fcd42f9dbb0833f33a6939883095093767112a158066b046bb8c172e2a2431e"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_axis43.xlsx",
+      "bytes": 9279,
+      "sha256": "7fd0fe3a46e5a134527af3193d60518419cb1be2743c45e928df20d1b9dc48af"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_bar14.xlsx",
+      "bytes": 13879,
+      "sha256": "c4ed1e8117b4a0e014b95f42361c7e060728b398d4ea650395d902557429cdd2"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_column02.xlsx",
+      "bytes": 9287,
+      "sha256": "d4bf1a86850fdf346fc54aca473faacc41c9119ae65817ef847dea27b2525c76"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_crossing03.xlsx",
+      "bytes": 9275,
+      "sha256": "70450065e5a94d246f443b3f6dc7508adf214abef905f13b6a29b3d3b7e866ab"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_data_labels21.xlsx",
+      "bytes": 9206,
+      "sha256": "1b3433ce3ead29f4dbb488af943894a2e3e119230380a4f656de1d1d620531c6"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_data_labels46.xlsx",
+      "bytes": 9483,
+      "sha256": "017f5c20ea369fb87ed2c979bf73f73e7da0f677e33b4182f267f6556a1ed44e"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_display_units12.xlsx",
+      "bytes": 9184,
+      "sha256": "3499f08c7537c12b0f256b73b996a1c6c159986c4ba9b526d165cad3e57336ca"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_font04.xlsx",
+      "bytes": 9491,
+      "sha256": "cbb33ddf303aa1a9f159671f31afe39978a51f08817437282eecd957bcfb8f4b"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_format20.xlsx",
+      "bytes": 10337,
+      "sha256": "728a0419fca26e869ffc282c91e5ce4b40274e1920c725b713188a9cf4c3f52a"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_gradient05.xlsx",
+      "bytes": 9434,
+      "sha256": "8c266778fbc62bd9208c957ef5babfe72d721678f76529f4c45ae9cdb3ec943d"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_layout06.xlsx",
+      "bytes": 9433,
+      "sha256": "432d674a94eebc023674bcdcf6358aff422f2e097504884de77f8844edb04866"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_pattern05.xlsx",
+      "bytes": 9436,
+      "sha256": "920e3f1498f691fc5cfdc31096700678813297ea906b5c3ac69d97c28e63a1e4"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_scatter06.xlsx",
+      "bytes": 9312,
+      "sha256": "0fcb726d1274fdf41d498905af2e186e377f36cc125c71dec7853d6254d1a150"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/chart_theme08.xlsx",
+      "bytes": 9478,
+      "sha256": "f3a05c92b9888c4868b1220548c389d3ec73e87f0b6c550058a21def3cd04e6b"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/checkbox03.xlsx",
+      "bytes": 6643,
+      "sha256": "8f88773eecf8ca4fe91e677f0aae0d64be48b30afc072ca420e100e86e0e1d48"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/cond_format06.xlsx",
+      "bytes": 7166,
+      "sha256": "aea31a1ee7a679b384ebcc45785fba39ce5053112825e82253c102c48a93aac2"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/default_format03.xlsx",
+      "bytes": 8600,
+      "sha256": "8d51e6431526e6ff1bfba16f2fdf72ef1418fe367aba781d1a8eef0fe2dd7b6c"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/dynamic_array02.xlsx",
+      "bytes": 5541,
+      "sha256": "480bf24d597289d18bf96485e97d92e188ea3effa51598f75b9d59ae6058fcb7"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/excel2003_style02.xlsx",
+      "bytes": 8077,
+      "sha256": "0190080172b3a19f27954853ed7a7006bdf6294b868ef2ad264cfc7c408f1af6"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/format22.xlsx",
+      "bytes": 7410,
+      "sha256": "e8a4a8a8027aad7fa4969c8cb5835c2fab2b7f04eafb5b29a2593a7a8a714f92"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/header_image17.xlsx",
+      "bytes": 10286,
+      "sha256": "602458ee8df57ef61d9924fe4d574669c176d89833acc7c2e836916a632cfa95"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/hyperlink19.xlsx",
+      "bytes": 7689,
+      "sha256": "0d2f607f6885cf17e1ce68e2f47b49a1a2a339ecddf88d700ff0af2ec7654bc4"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/hyperlink44.xlsx",
+      "bytes": 8663,
+      "sha256": "9b54dac9bdcc94c54bf33c61626ebd79c3571b2a3e443a15c747a16de1e84f7d"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/image11.xlsx",
+      "bytes": 16977,
+      "sha256": "c44945ba5332714c8cbf05ac48ed25e84d0d9ae209167cf457cd47e2e60ed5fa"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/image37.xlsx",
+      "bytes": 12192,
+      "sha256": "f63cb598cd62674c99b4fbd23c88c9ce298a011aeb370d5b265c6541a25d01c1"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/image_anchor03.xlsx",
+      "bytes": 8602,
+      "sha256": "db4e33a7f8cf6ad2f7f31441b2b757a5b571b11974a73f810bba38195a5c57b8"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/object_position14.xlsx",
+      "bytes": 8659,
+      "sha256": "68277dca2012e3a994da119c9ecec5da4f57b784c438b7f326468ccbc53682e5"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/outline06.xlsx",
+      "bytes": 8076,
+      "sha256": "714bae970584f2c9659a7b40d4e4714e8435a26ffbf12c0cc6535e4554c254cd"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/print_options07.xlsx",
+      "bytes": 7415,
+      "sha256": "0bf66c0936cf4f845b61ac38c3a37a44d9b7968a6e955d70ec5e7ab34a2dbce4"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/quote_name11.xlsx",
+      "bytes": 9425,
+      "sha256": "bb7044f02079fd553289544045c6877cd3c87f7fb85e0647fa840a9ed22c4284"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/set_column06.xlsx",
+      "bytes": 9717,
+      "sha256": "491bc3c2d1b0f465da5a4667bfb98a12a6115c036ccceedc65791a7cfce130f7"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/table03.xlsx",
+      "bytes": 8275,
+      "sha256": "c484629d2983b479b116a2001be2dddcf7c47423f3213edd96dfa06cf84db74d"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/table30.xlsx",
+      "bytes": 12451,
+      "sha256": "60e7bff712efb3cd1e79a8b87bfe1ace4206fecce67b2e85d835dc19a14355ed"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/textbox16.xlsx",
+      "bytes": 8098,
+      "sha256": "4b747e2ed2cadb136be88081100dacc58dde66119431316c6bb71098c32e750d"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/textbox41.xlsx",
+      "bytes": 8244,
+      "sha256": "3d0572d6790ff3ce5229cae9d030a3e4601e0e7021259a6a2f5ba416beb738a4"
+    },
+    {
+      "source": "xlsxwriter",
+      "kind": "xlsx",
+      "path": "xlsxwriter/test/comparison/xlsx_files/types10.xlsx",
+      "bytes": 7343,
+      "sha256": "471eaa2bf182c152ffd9924699bcbf1b26c7416197b1a6136aec92680e2bbe64"
+    }
+  ]
+}

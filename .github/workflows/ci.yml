@@ -32,6 +32,11 @@ jobs:
         with:
           bun-version: 1.3.12
       # No `bun install` needed: the script only uses bun/node builtins.
+      # --selftest first: §11's cross-skill link scan is only worth trusting if it
+      # can still go red. It runs six broken-link forms — several of them verbatim
+      # from defects that actually shipped (059 §1 `doc-export`) — plus five lines
+      # that must NOT trip it, each one a shape that already false-positived once.
+      - run: bun run --bun scripts/check-docs.ts --selftest
       - run: bun run --bun scripts/check-docs.ts
 
   # ── TS: typecheck + unit tests on all three OSes ──────────────────
@@ -79,6 +84,249 @@ jobs:
         run: bun run --bun scripts/verify-dmg-layout.ts --self-test
 
   # ── Rust: compile (all #[cfg] branches for the host OS) + cargo test ─
+  # Office-skill gates (discussions/059). Three platforms because the skills ship to
+  # all three and the whole family is pure Python driving PyMuPDF — until this job
+  # existed every one of these had only ever run on one developer's macOS box, which
+  # is exactly how the harness came to hardcode /System/Library/Fonts.
+  #
+  # L0 (clean-room originality) is NOT here: it needs the reference corpus, which is
+  # deliberately outside the repo. It exits 2 = skipped when absent, and is run by
+  # hand before a PR that adds skill content.
+  office-skills:
+    name: office skills (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    # Measured 2026-08-02 on the author's machine with LibreOffice present: the gate
+    # steps total ~195s, of which the L2 self-test is ~116s. From 2026-08-03 all
+    # three runners install LibreOffice, so every platform pays that ~195s AND a
+    # several-hundred-megabyte install (brew cask / choco are far slower than apt).
+    # 15 minutes was sized for "one platform installs it"; 30 is sized for three.
+    timeout-minutes: 30
+    env:
+      # The ECMA-376 schemas are vendored (scripts/schemas/ecma376), so the `xsd`
+      # tier is available everywhere. LibreOffice is now installed on ALL THREE
+      # platforms (see the install step), so no runner declares a missing tier and
+      # this expands to nothing everywhere — it is kept rather than deleted because
+      # an empty --allow-missing is an argparse error, not a no-op, and a developer
+      # reproducing this job without LibreOffice needs the hook.
+      ALLOW_MISSING_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # ⚠️ This list went stale the moment the pdf skill moved off PyMuPDF (059
+      # §六·补三/补四) and nobody noticed, because the branch was never pushed —
+      # the same shape as the recalc-drift landmine in §7. On the author's machine
+      # every library is installed, so the gap was invisible there too.
+      #
+      #   pypdfium2 / pdfplumber / reportlab  what the pdf skill and deckcraft's
+      #                                       pdf_to_md now actually stand on
+      #   pillow                              deckcraft's core export path (PIL);
+      #                                       pdfplumber pulls it in, named anyway
+      #                                       so the reason survives a dep change
+      #   pymupdf                             NOT for the skills — skills/ has zero
+      #                                       fitz imports. Three GATE scripts still
+      #                                       use it (office-skills-selftest,
+      #                                       test-pdf-skill, test-xlsx-skill); they
+      #                                       are not distributed, so AGPL does not
+      #                                       reach the product. Drop this when they
+      #                                       are swapped.
+      #   python-docx                         S4's skill; already here for L1/L2 stubs
+      #   python-pptx                         the `pptx-edit` skill (S6) — both of its
+      #                                       scripts import it unconditionally, and
+      #                                       its gate builds its own fixtures with it
+      - name: Install the libraries the skills import
+        run: >
+          python -m pip install --disable-pip-version-check
+          pypdf pypdfium2 pdfplumber reportlab pillow
+          openpyxl lxml python-docx python-pptx pymupdf
+      # LibreOffice on ALL THREE platforms (059 §7, upgraded from option B on
+      # 2026-08-03 after the first CI run this branch ever had).
+      #
+      # Why it is not optional dressing: the L2 gate's X3 negative control
+      # (recalc-drift) can only fire where a recalculation actually happens, and the
+      # L1 ACCEPTANCE tier runs each capability's sample for real — W17 (docx→PDF)
+      # and X13 (xlsx→PDF) call `soffice` themselves and exit 2 without it. That
+      # second half is what option B could not cover: `--allow-missing soffice`
+      # relaxes L2's tier check, it cannot make a script that needs LibreOffice run
+      # without it. Measured on the first push: macOS and Windows both red there.
+      #
+      # It also closes a gap 059 §7 wrote down and left open: find_soffice()'s macOS
+      # and Windows branches had never been executed anywhere. They are now.
+      #
+      # calc AND writer on Linux. Writer is not S4 scope creep — the L2 gate's D7
+      # converts a .docx to PDF on EVERY docx case, and with calc alone the binary
+      # exists, exits 0 on a .docx and writes no file.
+      #
+      # ⚠️ TWO CJK font packages, and they are not redundant — they serve two
+      # consumers with incompatible requirements. The runner image ships neither.
+      #
+      #   fonts-noto-cjk    for LIBREOFFICE. Without it D7's tofu detector fires:
+      #                     measured, "only 10% of 72 CJK glyphs have interior
+      #                     strokes (need 50%)", four cases red.
+      #   fonts-wqy-zenhei  for REPORTLAB, which the pdf skill writes with.
+      #                     Noto Sans CJK has CFF/PostScript outlines and reportlab
+      #                     cannot embed those (gotchas §21.1 ⑯) — measured, with
+      #                     61 MB of Noto installed the skill still reported "no CJK
+      #                     font on this machine" and P7/P8/P13/P14 refused to run.
+      #                     wqy-zenhei is TrueType and lands on the exact path
+      #                     pdffont.py already probes.
+      #
+      # macOS and Windows ship CJK faces of their own, so this is a Linux-only need.
+      - name: Install LibreOffice (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-calc libreoffice-writer fonts-noto-cjk fonts-wqy-zenhei
+      - name: Install LibreOffice (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask libreoffice
+      - name: Install LibreOffice (Windows)
+        if: runner.os == 'Windows'
+        run: choco install libreoffice-fresh --no-progress -y
+      # find_soffice() probes PATH and the per-platform install locations. Proving it
+      # resolves BEFORE the gates run means a failure below is about the code, not
+      # about an installer that quietly did nothing — `soffice` is a launcher that
+      # exits 0 on inputs it silently refuses (gotchas §21 ⑧/㉖).
+      - name: Prove LibreOffice is reachable on this platform
+        shell: bash
+        run: |
+          python - <<'PY'
+          import importlib.util, pathlib, sys
+          spec = importlib.util.spec_from_file_location(
+              "l2", pathlib.Path("scripts/office-skills-selftest.py"))
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          found = m.find_soffice()
+          print(f"find_soffice() -> {found!r}")
+          sys.exit(0 if found else 1)
+          PY
+      # shell: bash on every gate step below — the default on Windows is pwsh, where
+      # $ALLOW_MISSING silently expands to nothing instead of the env var, which
+      # would quietly turn the strict tier back on and go red for the wrong reason.
+      - name: L2 artifact gate (self-test)
+        shell: bash
+        run: python scripts/office-skills-selftest.py $ALLOW_MISSING_FLAG
+      - name: L1 capability gate (self-test)
+        run: python scripts/check-office-skill-capabilities.py --selftest
+      # Scoped to the skills that have finished. An unscoped --no-pending goes red
+      # the moment the next skill starts its first slice (059 §6 builds one at a
+      # time), and a job that is red by design is a job nobody reads. Add each skill
+      # here as it clears its debt: pdf did in S2, xlsx in S3, docx in S4 — its last
+      # two capabilities (W18 diff, W19 table presets) landed together and its
+      # `pending` block is now empty. This line IS S4's acceptance judgement: the
+      # skill is done when the gate says so, not when it feels done.
+      - name: L1 capability gate (acceptance tier, no pending debt)
+        shell: bash
+        run: python scripts/check-office-skill-capabilities.py --no-pending pdf xlsx docx $ALLOW_MISSING_FLAG
+      - name: pdf skill behaviour tests
+        run: python scripts/test-pdf-skill.py
+      - name: xlsx skill behaviour tests
+        run: python scripts/test-xlsx-skill.py
+      # Added in the same slice that created the gate, deliberately: "a gate that
+      # only ever runs on the author's machine" is how the last two rounds each
+      # shipped defects that reproduced nowhere else.
+      - name: docx skill behaviour tests
+        run: python scripts/test-docx-skill.py
+      # deckcraft's pdf_to_md, which S3.5 moved off PyMuPDF. Its fixtures are built
+      # into a temp dir at run time (reportlab/pypdf), so this needs no committed
+      # corpus beyond the example deck already in the tree. Listed here because a
+      # gate that only ever runs on the author's machine is how the last round
+      # shipped two defects that only reproduced on someone else's.
+      - name: deckcraft pdf_to_md behaviour tests
+        run: python scripts/test-deckcraft-pdf-md.py
+      # pptx-edit (the skill formerly named doc-edit). Half of it guards two crash
+      # fixes the S6 wrap-up review found — a .pptx written by a minimal OOXML
+      # generator, with no slideLayout and no slideMaster, made BOTH scripts die
+      # with a bare traceback. The other half asserts the LIMITS SKILL.md claims
+      # (table/group text invisible, cross-run phrases unmatched), in both
+      # directions, so those claims cannot silently rot.
+      - name: pptx-edit skill behaviour tests
+        run: python scripts/test-pptx-edit-skill.py
+      # The evaluator's coverage boundary. Its LibreOffice half is skipped here and
+      # named out loud; the pinned values themselves are still checked against the
+      # python engine on every platform.
+      - name: xlsx formula evaluator calibration
+        run: python scripts/xlsx-evaluator-calibration.py
+
+  # ── L3: real-corpus regression (059 §5 L3, S5) ────────────────────────────
+  # Separate from `office-skills` on purpose: L3 does NOT need LibreOffice (it runs
+  # none of the soffice-tier checks), and that install is the most expensive part of
+  # the other job. Keeping them apart also stops a slow corpus run from eating that
+  # job's 30-minute budget.
+  #
+  # Why it must run on all three platforms rather than just Linux: the S6 wrap-up's
+  # third real defect (pptx_read/pptx_edit with no UTF-8 reconfigure, dying on the
+  # first Chinese character when stdout is captured) was invisible on the author's
+  # machine and on the local cross-platform scan, because that scan reads paths and
+  # commands and the defect was in ENCODING. The corpus files carry CJK and the
+  # probe string is CJK on purpose — running it on Windows is the point.
+  office-skills-l3:
+    name: office skills L3 corpus (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # Uniform across platforms so actions/cache has one path to key on. The
+      # default (~/.cache/ultrawork/l3-corpus) is for developer machines.
+      ULTRAWORK_L3_CORPUS: ${{ github.workspace }}/.l3-corpus
+    steps:
+      # fetch-depth: 0 is REQUIRED, not incidental — the baseline arm reconstructs
+      # the old doc-edit scripts with `git show 0a5b0987^:…`, and a shallow clone
+      # does not have that object. Without them there is no "≤ current baseline"
+      # criterion at all, so the gate refuses to call a baseline-less run a pass.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Same list as the office-skills job minus what only the soffice tier needs.
+      # pymupdf is here because L2's P5 fidelity check still imports fitz — it is a
+      # GATE script, not distributed, so AGPL does not reach the product.
+      - name: Install the libraries the skills import
+        run: >
+          python -m pip install --disable-pip-version-check
+          pypdf pypdfium2 pdfplumber reportlab pillow
+          openpyxl lxml python-docx pymupdf
+      # Keyed on the manifest: bump a pinned commit and the cache misses, which is
+      # exactly right — a new pin must be re-fetched and re-verified by sha256.
+      - name: Cache the L3 corpus
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.l3-corpus
+          key: l3-corpus-${{ hashFiles('scripts/l3-corpus-manifest.json') }}
+      # Re-verifies every file's sha256 against the manifest even on a cache hit,
+      # and re-reads each source's LICENSE (a changed licence is a hard stop, not a
+      # warning). 231 files / ~21 MB from four MIT/BSD repos; bytes never enter git.
+      - name: Fetch the L3 corpus
+        run: python scripts/fetch-l3-corpus.py
+      # The gate's own positive/negative controls. Runs first so a broken harness
+      # is reported as a broken harness, not as a green corpus run.
+      - name: L3 corpus gate (self-test)
+        run: python scripts/test-office-l3-corpus.py --selftest
+      # --require-corpus turns "corpus missing" from a skip into a failure. Without
+      # it a network hiccup would look exactly like a pass, and silence and success
+      # are indistinguishable.
+      # --jobs 2 (not the default = CPU count): the ubuntu runner was killed
+      # mid-run on the first real attempt (run 30911346681, exit 143 + "The runner
+      # has received a shutdown signal"), right around the corpus workbook whose
+      # L2 check was measured at 4.7 GB locally. The L2 worker now caps its own
+      # address space, but the RING steps (skill scripts, old doc-edit) are only
+      # time-bounded, never memory-bounded — so peak is still cut by running fewer
+      # of them at once. ⚠️ "Probably OOM" is inference from the exit code and the
+      # position in the progress line, not a measurement: GitHub does not report
+      # runner OOM. If ubuntu dies here again, that inference was wrong.
+      - name: L3 corpus regression (both arms)
+        run: python scripts/test-office-l3-corpus.py --baseline --require-corpus --jobs 2
+
   rust:
     name: rust (${{ matrix.os }})
     strategy:

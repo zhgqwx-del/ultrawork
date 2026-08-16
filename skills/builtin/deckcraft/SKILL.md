@@ -6,10 +6,15 @@ description: >
   presentation / slides / deck / slideshow, either from a topic or from source
   documents (PDF/DOCX/XLSX/PPTX/URL/Markdown). Produces a styled single-file HTML deck
   plus PDF, an image-type PPTX (with speaker notes) and — optionally — an editable PPTX
-  (text/shapes native in PowerPoint). Not for beautifying/templating an EXISTING .pptx
-  1:1 or building reusable template packs — for those, ppt-master can be installed from
-  设置 → 技能 (see routing table below).
-x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
+  (text/shapes native in PowerPoint). Route by the DELIVERABLE, not by the source: a
+  deck coming out means this skill whatever went in, so 「把这份 PDF/Word/Excel 做成 PPT」
+  is this skill and not `pdf`/`docx`/`xlsx` — those three are for when the thing being
+  delivered is a PDF/Word/Excel file itself. Not for beautifying/templating an EXISTING
+  .pptx 1:1 or building reusable template packs — for those, ppt-master can be installed
+  from 设置 → 技能; not for changing a few words in an existing deck or appending one
+  slide to it — that is `pptx-edit` (see routing table below).
+x-requires: [python3.10+, python-pptx, pillow, chrome-or-edge, node, pdfplumber, pypdf, pypdfium2, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, openpyxl, curl_cffi]
+x-requires-optional: [node, pdfplumber, pypdf, pypdfium2, openpyxl, mammoth, ebooklib, nbconvert, markdownify, beautifulsoup4, requests, curl_cffi]
 ---
 
 # deckcraft — HTML-first 快速演示文稿
@@ -32,9 +37,15 @@ x-requires: [python3.10+, python-pptx, chrome-or-edge, node]
 
 ## 路由边界（先于一切判断）
 
+**按产出物判，不按源判**：用户要拿到的东西是 deck，就是本技能——源是 PDF / Word / Excel /
+另一份 PPT / 网页都不影响。反过来，源是 PPT 而产出物是 Word/Excel/PDF，那也不是本技能。
+
 | 用户意图 | 归属 |
 |---|---|
 | 做PPT / 生成PPT / 演示文稿 / 幻灯片 / slides / deck——从主题或文档生成新 deck（HTML / PDF / 图片型 pptx / 可编辑 pptx 交付） | ✅ 本技能（做 PPT 的默认技能） |
+| 「把这份 PDF / Word / Excel 做成 PPT」——源是别的格式，产出物是 deck | ✅ 本技能（用 `source_to_md/` 读源，见 Phase 1） |
+| 产出物是 **Word / Excel / PDF 文件本身**（哪怕源是一份 PPT） | ❌ 分别是 `docx` / `xlsx` / `pdf` 技能 |
+| 已有 pptx，只是**改几处文字 / 追加一页 / 看看里面写了什么** | ❌ `pptx-edit` 技能（薄工具，不重做版式） |
 | 美化已有 pptx（1:1 保页序文字）/ 用品牌 pptx 模板生成 / 建模板包 / 配音·动画增强 | ❌ 非本技能范围：告知用户可在「设置 → 技能」安装 `ppt-master` 处理此类需求（安装后同名遮蔽会让它接管这些意图），并停止本技能 |
 
 **「生成后还想改」有两条路，先讲清再选交付形态**：
@@ -99,6 +110,19 @@ python3 -c "from pathlib import Path; [Path('.deckcraft/<name>', d).mkdir(parent
 > 非点目录——一旦写到点目录外，就会污染产物面板。
 
 有源文档：用 `source_to_md/` 转换，产物放 `.deckcraft/<name>/sources/`。
+
+> **每个转换器有各自的第三方依赖，且都是 OPTIONAL**（缺了不影响「从主题/Markdown 做 deck」，
+> 只影响读那一类源文件）。缺哪个就 `pip install` 哪个，**不要让用户为用不到的格式装东西**：
+>
+> | 源格式 | 脚本 | 依赖 |
+> |---|---|---|
+> | PDF | `pdf_to_md.py` | `pdfplumber` `pypdf` `pypdfium2` |
+> | DOCX / EPUB / .ipynb | `doc_to_md.py` | `mammoth` `ebooklib` `nbconvert` `markdownify` `beautifulsoup4` `requests` |
+> | XLSX | `excel_to_md.py` | `openpyxl` |
+> | PPTX | `ppt_to_md.py` | `python-pptx`（核心依赖，本来就必需） |
+> | 网页 URL | `web_to_md.py` | `curl_cffi` `requests` `beautifulsoup4` |
+>
+> 三处声明（`x-requires` / `BUILTIN_DEP_MAP` / Rust `PY_MODULES`）必须同步，改一处就要改三处。
 
 **无源文档（只给了主题）→ Research 阶段 MANDATORY**：Read `references/content-engineering.md` §一，
 把主题拆 3-6 个检索问题，用联网工具至少 3 轮检索，写 `research/research.md` + `research/facts.json`
@@ -167,9 +191,20 @@ scenario 数据页页脚必须有可见「示意数据」标注；首次生成�
 ### Phase 6 — 视觉审查 + 导出交付
 
 1. `export_deck.py --shots` → Read `references/visual-review.md`，截图交**独立评审**（不带生成上下文的子代理；无子代理则新视角逐页过 rubric R1-R8），结果进 `qa_report.json`；`fix` 页只改定位/间距，回炉 ≤1 轮。
+   > **⚠️ 这一环跑不了的时候，它是唯一一个「不做也看不出来」的门禁。**机器门禁失败会给你非零退出码，视觉审查失败只是没有结果——而一份没人看过的 deck 和一份看过的，产物字节完全一样。
+   > 读不了图时（子代理或本模型返回 `does not support image input` / `Cannot read image`），**照做以下两步，不要当它没发生**：
+   > - `qa_report.json` 的 `visual` 段写 `{"pages_reviewed": 0, "reason": "…"}`；
+   > - **交付报告里单列一行**「视觉审查：未执行（原因）」。
+   >
+   > 实测（L4 §四）：两次运行都跳过了这一环，`qa_report` 里一次记了 `pages_reviewed: 0`、一次连 `visual` 段都没有，而两次的交付报告都只列了机器门禁全绿。**写进 qa_report ≠ 用户知道了**——用户看不到 qa_report。
 2. 概念终审（换名测试，一票否决——失败回大纲层补内容）。
 3. 导出 + 发布：`export_deck.py .deckcraft/<name> --pdf --pptx --publish .`（按用户选的形态；可编辑 pptx 用 `--pptx-editable` 取代 `--pptx`；`--publish .` 把 `<name>.html/.pdf/.pptx` 拷到工作区根——**只有这几个文件应出现在产物面板**）。
-4. 交付报告：published 路径 + qa_report 摘要 + low-confidence 页清单 + scenario 页声明 + pptx 形态明示（图片型「文字不可编辑」/ 可编辑型逐页转述「第 N 页含 M 个不可编辑元素」，若为 0 则说明全部可编辑）。
+4. 交付报告，以下逐项都要有（缺一项就是漏报，不是精简）：
+   - published 路径；
+   - **视觉审查状态**：评审了几页 / `fix` 了几页；**未执行时写「未执行」并给原因**——不能只报机器门禁就收尾；
+   - 机器门禁摘要（validate_outline / validate_deck / probe_overflow）；
+   - low-confidence 页清单 + scenario 页声明；
+   - pptx 形态明示（图片型「文字不可编辑」/ 可编辑型逐页转述「第 N 页含 M 个不可编辑元素」，若为 0 则说明全部可编辑）。
 
 ## Progressive disclosure（省上下文）
 

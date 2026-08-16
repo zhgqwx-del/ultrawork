@@ -1,0 +1,92 @@
+ECMA-376 (Office Open XML) Transitional XML Schemas — vendored copy
+==================================================================
+
+WHAT THIS IS
+------------
+The XSD schemas that the L2 artifact gate (scripts/office-skills-selftest.py, check
+D2) validates generated .docx/.xlsx parts against. They are a DEVELOPMENT-TIME
+dependency of the gate: they are not shipped in the application, are not part of
+skills-builtin.zip, and no runtime code reads them.
+
+
+PROVENANCE
+----------
+Source   ECMA-376 Part 4, 5th edition (December 2016), "Office Open XML File
+         Formats — Transitional Migration Features"
+         https://ecma-international.org/publications-and-standards/standards/ecma-376/
+File     ECMA-376-4_5th_edition_december_2016.zip
+         sha256 prefix bd25da1109f73762356596918bf5ff8b… (downloaded 2026-08-02)
+Member   OfficeOpenXML-XMLSchema-Transitional.zip  (26 .xsd files)
+
+WHY PART 4 AND NOT PART 1. Part 1 is "the" specification and is the natural thing to
+reach for, but it ships the STRICT schemas, whose targetNamespace is
+`purl.oclc.org/ooxml/...`. Every document Word and Excel actually produce — and every
+fixture in this repository — is TRANSITIONAL, `schemas.openxmlformats.org/...`.
+Validating real documents against the Strict schemas fails at the namespace level for
+all of them, which reads as "our output is non-conformant" when nothing is wrong with
+it. Verified 2026-08-02 by comparing targetNamespace against this repo's own
+fixtures.
+
+
+LICENCE
+-------
+ECMA-376 carries NO copyright notice and NO licence text. This was verified rather
+than assumed: a full-text scan of Part 1 (5,039 pages) and Part 4 (1,553 pages) finds
+no Ecma copyright statement anywhere — the only "Copyright" strings in Part 1 are W3C
+notices inside example markup — and neither XSD package contains any file that is not
+a .xsd. Ecma's general text-copyright policy applies only to documents that carry its
+notice, which was introduced in 2009 and not applied retrospectively; ECMA-376
+originates in 2006.
+
+The operative statement is therefore Ecma's by-laws, article 9.4
+(https://ecma-international.org/policies/by-laws/):
+
+    "All documents when approved shall be made available to all interested parties
+     without restriction."
+
+The same reasoning is what the Apache Software Foundation relies on to ship XmlBeans
+generated from these schemas inside Apache POI (poi-ooxml-full) under Apache-2.0 —
+see that artifact's NOTICE, which cites article 9.4 together with the patent
+declarations Microsoft and Adobe filed with Ecma, and which Oracle among others
+redistributes commercially.
+
+Microsoft's Open Specification Promise and the Microsoft and Adobe patent
+declarations to Ecma cover the patent side.
+
+This is a record of the basis for including these files. It is not legal advice.
+
+
+MODIFICATIONS
+-------------
+Two files are modified from the upstream package. Both changes are recorded here so
+the copy is not silently divergent:
+
+  wml.xsd, shared-math.xsd
+      `<xsd:import namespace="http://www.w3.org/XML/1998/namespace"/>`
+    → `<xsd:import namespace="http://www.w3.org/XML/1998/namespace"
+                   schemaLocation="xml.xsd"/>`
+
+    As shipped, these imports name the XML namespace but give no schemaLocation, and
+    the package contains no xml.xsd. The schema therefore fails to LOAD at all:
+    "The QName value '{http://www.w3.org/XML/1998/namespace}space' does not resolve
+    to a(n) attribute declaration". This is a defect in the upstream distribution,
+    not a change to the schema's meaning.
+
+No other file is altered.
+
+
+ADDED FILE
+----------
+xml.xsd    The W3C schema for the XML namespace (xml:base, xml:lang, xml:space,
+           xml:id), fetched from https://www.w3.org/2001/xml.xsd on 2026-08-02.
+           Required by the modification above. Published by W3C under the W3C
+           Software Notice and License (permissive, BSD-style).
+
+
+VERIFIED
+--------
+2026-08-02, with lxml:
+
+    book.xlsx    xl/workbook.xml           valid=True   (sml.xsd, unpatched)
+    book.xlsx    xl/worksheets/sheet1.xml  valid=True   (sml.xsd, unpatched)
+    sample.docx  word/document.xml         valid=True   (wml.xsd, after the fix above)

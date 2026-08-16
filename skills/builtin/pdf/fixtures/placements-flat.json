@@ -1,0 +1,36 @@
+{
+  "placements": [
+    {
+      "name": "applicant",
+      "text": "张国强",
+      "anchor": "姓名：",
+      "offset": [
+        8,
+        2
+      ],
+      "width": 150
+    },
+    {
+      "name": "id_no",
+      "text": "110101199001011234",
+      "anchor": "证件号：",
+      "offset": [
+        8,
+        2
+      ],
+      "width": 170,
+      "size": 9
+    },
+    {
+      "name": "remark",
+      "text": "入职材料齐全",
+      "page": 1,
+      "rect": [
+        122,
+        256,
+        422,
+        274
+      ]
+    }
+  ]
+}

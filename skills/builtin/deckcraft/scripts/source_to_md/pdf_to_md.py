@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
 PDF to Markdown Converter
-Uses PyMuPDF to extract PDF text content and convert to Markdown format.
-Supports heading levels, bold, italic, and list detection.
+Extracts PDF text content and converts it to Markdown, preserving heading
+levels, bold/italic runs, lists and ruled tables.
+
+Reading is done by ``pdfsource``, a thin layer over pdfplumber / pypdf /
+pypdfium2 (MIT / BSD-3 / Apache-2.0). It replaced PyMuPDF, whose AGPL-3.0
+licence a commercially distributed product cannot carry — see that module's
+docstring for the four places the two libraries genuinely disagree.
 """
 
 import argparse
@@ -23,9 +28,11 @@ from console_encoding import configure_utf8_stdio  # noqa: E402
 configure_utf8_stdio()
 
 try:
-    import fitz  # PyMuPDF
-except ImportError:
-    print("[ERROR] PyMuPDF not installed. Run: pip install PyMuPDF", file=sys.stderr)
+    import pdfsource
+    from pdfsource import Rect
+except ImportError as _e:
+    print(f"[ERROR] PDF reading stack not installed ({_e}). "
+          f"Run: pip install pdfplumber pypdf pypdfium2", file=sys.stderr)
     sys.exit(1)
 
 FONT_BODY_SIZE = 12
@@ -37,7 +44,7 @@ HEADER_FOOTER_EDGE_SAMPLE_SIZE = 20
 CONTROL_CHARS_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
 
 
-def analyze_font_sizes(doc: fitz.Document) -> dict[str, float]:
+def analyze_font_sizes(doc: pdfsource.Document) -> dict[str, float]:
     """Analyze font size distribution to infer heading levels.
 
     Args:
@@ -213,7 +220,7 @@ def remove_page_footer(text: str) -> str:
     return text.rstrip()
 
 
-def detect_headers_footers(doc: fitz.Document, threshold_ratio: float = 0.6) -> set[str]:
+def detect_headers_footers(doc: pdfsource.Document, threshold_ratio: float = 0.6) -> set[str]:
     """
     Detect headers and footers statistically.
 
@@ -241,13 +248,13 @@ def detect_headers_footers(doc: fitz.Document, threshold_ratio: float = 0.6) -> 
         h = rect.height
 
         # Define top and bottom regions (15% each)
-        top_rect = fitz.Rect(0, 0, rect.width, h * 0.15)
-        bottom_rect = fitz.Rect(0, h * 0.85, rect.width, h)
+        top_rect = Rect(0, 0, rect.width, h * 0.15)
+        bottom_rect = Rect(0, h * 0.85, rect.width, h)
 
         # Extract text blocks
         blocks = page.get_text("blocks")
         for b in blocks:
-            b_rect = fitz.Rect(b[:4])
+            b_rect = Rect(b[:4])
             text = b[4].strip()
             if not text:
                 continue
@@ -359,7 +366,7 @@ FIGURE_CAPTION_RE = re.compile(r'^(?:Figure|Fig\.?)\s*\d+\s*[:.|｜]', re.IGNORE
 
 def should_keep_image(
     block: dict[str, object],
-    page_rect: fitz.Rect,
+    page_rect: Rect,
     seen_hashes: set[str] | None = None,
 ) -> bool:
     """Filter out small, decorative, or duplicate images.
@@ -419,9 +426,9 @@ def should_keep_image(
     return True
 
 
-def _clip_rect_to_page(rect: fitz.Rect, page_rect: fitz.Rect) -> fitz.Rect:
+def _clip_rect_to_page(rect: Rect, page_rect: Rect) -> Rect:
     """Clamp a rectangle to the current PDF page."""
-    return fitz.Rect(
+    return Rect(
         max(page_rect.x0, rect.x0),
         max(page_rect.y0, rect.y0),
         min(page_rect.x1, rect.x1),
@@ -429,7 +436,7 @@ def _clip_rect_to_page(rect: fitz.Rect, page_rect: fitz.Rect) -> fitz.Rect:
     )
 
 
-def _is_rect_contained(inner: fitz.Rect, outer: fitz.Rect, threshold: float = 0.9) -> bool:
+def _is_rect_contained(inner: Rect, outer: Rect, threshold: float = 0.9) -> bool:
     """Return whether ``inner`` is mostly covered by ``outer``."""
     inner_area = inner.get_area()
     if inner_area <= 0:
@@ -437,7 +444,7 @@ def _is_rect_contained(inner: fitz.Rect, outer: fitz.Rect, threshold: float = 0.
     return ((inner & outer).get_area() / inner_area) >= threshold
 
 
-def _overlaps_table(rect: fitz.Rect, tab_rects: list[fitz.Rect]) -> bool:
+def _overlaps_table(rect: Rect, tab_rects: list[Rect]) -> bool:
     """Skip vector regions that are already handled as extracted tables."""
     rect_area = rect.get_area()
     if rect_area <= 0:
@@ -461,7 +468,7 @@ def _is_background_drawing(drawing: dict[str, object]) -> bool:
     return _is_white(drawing.get("fill")) and drawing.get("color") is None
 
 
-def find_figure_caption_rects(page: fitz.Page) -> list[fitz.Rect]:
+def find_figure_caption_rects(page: pdfsource.Page) -> list[Rect]:
     """Return text-line rectangles that look like figure captions."""
     caption_rects = []
     for block in page.get_text("dict")["blocks"]:
@@ -470,14 +477,14 @@ def find_figure_caption_rects(page: fitz.Page) -> list[fitz.Rect]:
         for line in block["lines"]:
             text = "".join(span["text"] for span in line["spans"]).strip()
             if FIGURE_CAPTION_RE.match(text):
-                caption_rects.append(fitz.Rect(line["bbox"]))
+                caption_rects.append(Rect(line["bbox"]))
     return caption_rects
 
 
-def _expand_rect(rect: fitz.Rect, padding: float, page_rect: fitz.Rect) -> fitz.Rect:
+def _expand_rect(rect: Rect, padding: float, page_rect: Rect) -> Rect:
     """Pad a rectangle and clamp it to the current PDF page."""
     return _clip_rect_to_page(
-        fitz.Rect(
+        Rect(
             rect.x0 - padding,
             rect.y0 - padding,
             rect.x1 + padding,
@@ -487,20 +494,20 @@ def _expand_rect(rect: fitz.Rect, padding: float, page_rect: fitz.Rect) -> fitz.
     )
 
 
-def _union_rects(rects: list[fitz.Rect]) -> fitz.Rect:
+def _union_rects(rects: list[Rect]) -> Rect:
     """Return the bounding union for one or more rectangles."""
-    result = fitz.Rect(rects[0])
+    result = Rect(rects[0])
     for rect in rects[1:]:
         result |= rect
     return result
 
 
 def _find_captioned_vector_figures(
-    page: fitz.Page,
-    drawing_rects: list[fitz.Rect],
-    background_rects: list[fitz.Rect],
-    caption_rects: list[fitz.Rect],
-) -> list[fitz.Rect]:
+    page: pdfsource.Page,
+    drawing_rects: list[Rect],
+    background_rects: list[Rect],
+    caption_rects: list[Rect],
+) -> list[Rect]:
     """Build tight figure crops from non-background drawings above captions."""
     figure_rects = []
     page_rect = page.rect
@@ -539,7 +546,7 @@ def _find_captioned_vector_figures(
     return figure_rects
 
 
-def detect_vector_figure_rects(page: fitz.Page, tab_rects: list[fitz.Rect]) -> list[fitz.Rect]:
+def detect_vector_figure_rects(page: pdfsource.Page, tab_rects: list[Rect]) -> list[Rect]:
     """Detect large vector drawing regions that should be rasterized as figures.
 
     Some academic PDFs store charts and diagrams as vector drawing commands,
@@ -557,7 +564,7 @@ def detect_vector_figure_rects(page: fitz.Page, tab_rects: list[fitz.Rect]) -> l
         if not rect:
             continue
 
-        rect = fitz.Rect(rect)
+        rect = Rect(rect)
         if rect.is_empty:
             continue
 
@@ -685,7 +692,7 @@ def extract_pdf_to_markdown(
         vector_figure_dpi: DPI used for rendered vector figure PNGs.
     """
     try:
-        doc = fitz.open(pdf_path)
+        doc = pdfsource.open_document(pdf_path)
     except Exception as e:
         print(f"[ERROR] Failed to open PDF file: {e}")
         return ""
@@ -733,7 +740,7 @@ def extract_pdf_to_markdown(
         except Exception:
             tabs = []
 
-        tab_rects = [fitz.Rect(t.bbox) for t in tabs]
+        tab_rects = [Rect(t.bbox) for t in tabs]
 
         page_elements = []
 
@@ -757,7 +764,7 @@ def extract_pdf_to_markdown(
         blocks = page.get_text("dict")["blocks"]
 
         for block in blocks:
-            block_rect = fitz.Rect(block["bbox"])
+            block_rect = Rect(block["bbox"])
 
             # Check if this is table content
             is_in_table = False
@@ -1000,18 +1007,13 @@ def extract_pdf_to_markdown(
 
                     try:
                         img_dir.mkdir(parents=True, exist_ok=True)
-                        scale = vector_figure_dpi / 72
-                        pix = page.get_pixmap(
-                            matrix=fitz.Matrix(scale, scale),
-                            clip=figure_rect,
-                            alpha=False,
-                        )
-                        pix.save(str(image_path))
+                        pix_w, pix_h = page.render_clip(
+                            figure_rect, vector_figure_dpi, image_path)
 
                         if prev_was_list:
                             markdown_content += "\n"
                         markdown_content += f"![{image_name}]({rel_img_dir}/{image_name})\n\n"
-                        ratio = pix.width / pix.height if pix.width > 0 and pix.height > 0 else None
+                        ratio = pix_w / pix_h if pix_w > 0 and pix_h > 0 else None
                         image_manifest.append({
                             "index": len(image_manifest) + 1,
                             "filename": image_name,
@@ -1023,8 +1025,8 @@ def extract_pdf_to_markdown(
                             "source_ext": ".png",
                             "page_index": page_num,
                             "occurrence_index": img_count + 1,
-                            "pixel_width": pix.width,
-                            "pixel_height": pix.height,
+                            "pixel_width": pix_w,
+                            "pixel_height": pix_h,
                             "pixel_ratio": round(ratio, 6) if ratio else None,
                             "display_ratio": round(ratio, 6) if ratio else None,
                             "bbox": [

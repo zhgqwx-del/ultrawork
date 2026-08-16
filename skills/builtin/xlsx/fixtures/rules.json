@@ -1,0 +1,20 @@
+[
+  {
+    "range": "D3:D5",
+    "type": "cellIs",
+    "operator": "lessThan",
+    "formula": ["0"],
+    "font_color": "FF9C0006",
+    "fill": "FFFFC7CE"
+  },
+  {
+    "range": "B3:B5",
+    "type": "colorScale",
+    "colors": ["FFF8696B", "FFFCFCFF", "FF63BE7B"]
+  },
+  {
+    "range": "C3:C5",
+    "type": "dataBar",
+    "color": "FF638EC6"
+  }
+]

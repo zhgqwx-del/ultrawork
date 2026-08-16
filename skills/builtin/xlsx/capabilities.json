@@ -1,0 +1,478 @@
+{
+  "skill": "xlsx",
+  "matrix": "docs/discussions/059-office-skills-revamp.md §3.3",
+  "capabilities": {
+    "X1": {
+      "entry": "scripts/xlsx_read.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--sheet",
+          "利润表",
+          "--range",
+          "A1:D5",
+          "--out",
+          "{out}/cells.json"
+        ],
+        "produces": [
+          "cells.json"
+        ]
+      },
+      "verified_by": "JSON is not an artifact type L2 can read. That the two views are BOTH reported — the cached value and the formula text — and that a formula with no cached result is flagged `uncalculated` rather than reported as empty, is asserted in scripts/test-xlsx-skill.py (R1-R4)"
+    },
+    "X2": {
+      "entry": "scripts/xlsx_write.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/edited.xlsx",
+          "--sheet",
+          "利润表",
+          "--set",
+          "B3=1310",
+          "--append-row",
+          "其他业务收入,88,74",
+          "--report",
+          "{out}/write.json"
+        ],
+        "produces": [
+          "edited.xlsx",
+          "write.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1310,
+            "B5": "=B3-B4",
+            "A6": "其他业务收入"
+          },
+          "汇总": {
+            "B2": "=利润表!B5"
+          }
+        },
+        "recalc": {
+          "B5": 541
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2 checks the edited workbook end to end — X1 (values and formulas read back), X2 (no error tokens), X3 (LibreOffice recalculates B5 to 541, so the edit really did reach the formula graph), X5 (widths), and above all F1/F3: the fidelity assertions are the point of this capability. That the SURGICAL write keeps parts a load→save round trip drops is scripts/test-xlsx-skill.py W1-W3; `finance_colors: false` is a deliberate statement that this fixture is an ordinary workbook, not an unstated opt-in"
+    },
+    "X3": {
+      "entry": "scripts/xlsx_write.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/formula.xlsx",
+          "--sheet",
+          "利润表",
+          "--set-formula",
+          "B7==B3*2",
+          "--report",
+          "{out}/formula.json"
+        ],
+        "produces": [
+          "formula.xlsx",
+          "formula.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B7": "=B3*2"
+          }
+        },
+        "recalc": {
+          "B7": 2480
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's X3 is the proof that matters: LibreOffice recalculates B7 to 2480, so the formula reached the evaluation graph rather than merely being stored as a string. That a formula naming a sheet the workbook lacks — the way a #REF! is actually born — is REFUSED before it reaches the file is scripts/test-xlsx-skill.py Q1-Q2"
+    },
+    "X4": {
+      "entry": "scripts/xlsx_recalc.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/calculated.xlsx",
+          "--report",
+          "{out}/recalc.json"
+        ],
+        "produces": [
+          "calculated.xlsx",
+          "recalc.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "TWO engines, and the point is that they check each other rather than that either is trusted. L2's F1/F3 hold the fidelity line; L2's X1 asserts the FORMULA survived (a recalculation that replaces =B3-B4 with 471 has destroyed the model to produce a number). The evaluator's coverage boundary is MEASURED, not claimed: scripts/xlsx-evaluator-calibration.py pins 55 values taken from LibreOffice plus 9 constructs that must be refused, and scripts/test-xlsx-skill.py K1-K7 assert the python engine matches every pin (runs in CI), that LibreOffice still agrees with the pins where it exists (K4 — skipped and named out loud otherwise, because that is the exact hole a wrong X3 expectation sat in for a month), that every name in SUPPORTED is actually exercised, that anything outside the boundary is refused rather than guessed, and that a single-engine run never presents itself as cross-checked"
+    },
+    "X5": {
+      "entry": "scripts/xlsx_audit.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/audit.json"
+        ],
+        "produces": [
+          "audit.json"
+        ]
+      },
+      "verified_by": "JSON is not an L2 artifact type, and the sample deliberately runs on a CLEAN workbook: it proves the scan executes and reports no error/missing/circular finding. DETECTION is asserted separately in scripts/test-xlsx-skill.py (A1-A4), which builds the broken workbook itself — a deliberately corrupt fixture could not also be handed to L2 as a good artifact. A6 pins the two false positives the parser had to survive: a reference inside a string literal, and LOG10( parsing as cell LOG10"
+    },
+    "X6": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/formatted.xlsx",
+          "--sheet",
+          "利润表",
+          "--range",
+          "B3:C5",
+          "--number-format",
+          "#,##0",
+          "--font-color",
+          "0000FF",
+          "--bold",
+          "--fill",
+          "FFF2CC",
+          "--border",
+          "thin",
+          "--report",
+          "{out}/format.json"
+        ],
+        "produces": [
+          "formatted.xlsx",
+          "format.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "this is the FIRST capability to go through office/rebuild.py — openpyxl rebuilds the package and the graft puts back what it dropped. L2's F1/F3 are the assertion that matters: the three customXml parts openpyxl loses on every save must be back, and the chart/conditional-format/freeze/filter the fixture already had must survive a rebuild that was only asked to change a font. That the format lands on the named range and nowhere else, and that setting only a colour does not reset the size and face, is scripts/test-xlsx-skill.py S1-S2"
+    },
+    "X7": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/conditional.xlsx",
+          "--sheet",
+          "利润表",
+          "--rules",
+          "{fixtures}/rules.json",
+          "--report",
+          "{out}/conditional.json"
+        ],
+        "produces": [
+          "conditional.xlsx",
+          "conditional.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's F3 asserts the rule count does not DECREASE, which is the fidelity half. That all three rule kinds (cellIs / colorScale / dataBar) actually arrive, on the ranges asked for, and that the rule the fixture already carried is still there, is scripts/test-xlsx-skill.py S3"
+    },
+    "X8": {
+      "entry": "scripts/xlsx_chart.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/charted.xlsx",
+          "--sheet",
+          "汇总",
+          "--type",
+          "column",
+          "--data",
+          "利润表!B2:C4",
+          "--categories",
+          "利润表!A3:A4",
+          "--anchor",
+          "D18",
+          "--title",
+          "季度对比",
+          "--report",
+          "{out}/chart.json"
+        ],
+        "produces": [
+          "charted.xlsx",
+          "chart.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's F3 counts chart parts from the PACKAGE rather than through openpyxl (a chart it failed to parse would read as absent on both sides and cancel out), so it catches a rebuild that dropped the fixture's existing chart. That a SECOND chart really was added, that its series take their names from the header row rather than coming out as Series1/Series2, and that its data reference points at the requested range on the requested sheet, is scripts/test-xlsx-skill.py S5"
+    },
+    "X9": {
+      "entry": "scripts/xlsx_format.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/panes.xlsx",
+          "--sheet",
+          "利润表",
+          "--freeze",
+          "C6",
+          "--filter",
+          "A2:C5",
+          "--report",
+          "{out}/panes.json"
+        ],
+        "produces": [
+          "panes.xlsx",
+          "panes.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "the sample deliberately sets values DIFFERENT from the fixture's own (which already freezes at A3 and filters A2:D5) — reusing them would make the sample pass whether or not it did anything. That the new values are the ones in the artifact is scripts/test-xlsx-skill.py S4"
+    },
+    "X10": {
+      "entry": "scripts/xlsx_write.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/linked.xlsx",
+          "--sheet",
+          "利润表",
+          "--set-formula",
+          "C7==汇总!B2",
+          "--report",
+          "{out}/linked.json"
+        ],
+        "produces": [
+          "linked.xlsx",
+          "linked.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "C7": "=汇总!B2"
+          },
+          "汇总": {
+            "B2": "=利润表!B5"
+          }
+        },
+        "recalc": {
+          "C7": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "the recalc expectation is the whole point: 471 can only appear if LibreOffice followed 利润表!C7 -> 汇总!B2 -> 利润表!B5 -> B3-B4, i.e. the cross-sheet link resolves in BOTH directions between the two sheets. Writing a link to a sheet that does not exist is refused (test-xlsx-skill.py Q1); reading cross-sheet formulas back is X1's inventory, asserted at R4"
+    },
+    "X11": {
+      "entry": "scripts/xlsx_convert.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--to",
+          "jsonl",
+          "--out",
+          "{out}/rows.jsonl",
+          "--sheet",
+          "利润表",
+          "--header-row",
+          "2",
+          "--report",
+          "{out}/convert.json"
+        ],
+        "produces": [
+          "rows.jsonl",
+          "convert.json"
+        ]
+      },
+      "verified_by": "JSONL is not an L2 artifact type. That a CSV round trip (xlsx -> csv -> xlsx) preserves the values, that the CSV carries a UTF-8 BOM (without it Chinese opens as mojibake in Excel, which is where a CSV export almost always goes), and that --header-row drops the merged title above the real headers instead of turning it into a column name, is scripts/test-xlsx-skill.py N1-N2"
+    },
+    "X12": {
+      "entry": "scripts/xlsx_convert.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--stats",
+          "--sheet",
+          "利润表",
+          "--header-row",
+          "2",
+          "--report",
+          "{out}/stats.json"
+        ],
+        "produces": [
+          "stats.json"
+        ]
+      },
+      "verified_by": "the sample only proves the streaming path RUNS and computes correct aggregates on a small file — the claim of this beyond-reference item is BOUNDED MEMORY, and a small fixture cannot demonstrate that. Measured instead in scripts/test-xlsx-skill.py N3, which generates 10k- and 50k-row workbooks and runs THIS script under tracemalloc against the same script with read_only forced off: 5.91 MB vs 63.15 MB at 50k rows, and a per-row cost that FALLS with size (0.252 -> 0.118 MB per 1k rows) where the eager path stays flat at ~1.3. A large fixture is deliberately not committed: it would dominate the builtin-skills sentinel"
+    },
+    "X13": {
+      "entry": "scripts/xlsx_pdf.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/preview.pdf",
+          "--png",
+          "{out}/pages",
+          "--dpi",
+          "120",
+          "--report",
+          "{out}/pdf.json"
+        ],
+        "produces": [
+          "preview.pdf",
+          "pdf.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "营业收入"
+        ],
+        "allow_blank_pages": false
+      },
+      "verified_by": "the artifact is a PDF, so L2 checks it directly — P1 (rasterizes, no blank page) and P2/P4 (the Chinese survives the round trip through LibreOffice and renders as glyphs rather than tofu). This is the capability that makes an .xlsx visible at all inside ultrawork, whose artifact panel renders PDF and shows a binary info card for everything else. That a blank render is REFUSED rather than handed back as a preview, and that an uncalculated workbook is warned about (its formula cells render EMPTY — the picture is wrong in a way the picture cannot show), is scripts/test-xlsx-skill.py N5-N7"
+    },
+    "X14": {
+      "entry": "scripts/xlsx_finance.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/book.xlsx",
+          "--out",
+          "{out}/finance.xlsx",
+          "--apply",
+          "--report",
+          "{out}/finance.json"
+        ],
+        "produces": [
+          "finance.xlsx",
+          "finance.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/book.xlsx",
+        "sheets": {
+          "利润表": {
+            "B3": 1240,
+            "B5": "=B3-B4"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": true
+      },
+      "verified_by": "`finance_colors: true` here is the whole point: this is the ONE artifact in the skill that claims to follow the convention, so L2's X4 runs in earnest on it — blue hard-coded inputs, black formulas, green cross-sheet links. Every other sample declares false, which is a statement that the workbook is ordinary rather than an unstated opt-in. That --check reports the right violations by role on a workbook that never claimed the convention, that --apply then clears them, and that applying changes ONLY the colour (size, face, bold carried across), is scripts/test-xlsx-skill.py N8-N9"
+    },
+    "X15": {
+      "entry": "scripts/xlsx_write.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/narrow.xlsx",
+          "--out",
+          "{out}/wide.xlsx",
+          "--autofit",
+          "--report",
+          "{out}/widths.json"
+        ],
+        "produces": [
+          "wide.xlsx",
+          "widths.json"
+        ]
+      },
+      "expect": {
+        "baseline": "{fixtures}/narrow.xlsx",
+        "sheets": {
+          "利润表": {
+            "A6": "营业收入合计（含其他业务）"
+          }
+        },
+        "recalc": {
+          "B5": 471
+        },
+        "finance_colors": false
+      },
+      "verified_by": "L2's X5 is the assertion: every column holding CJK must be wide enough counted in DISPLAY width. The input `narrow.xlsx` fails X5 (it is the state a writer that does not think about width leaves a workbook in) and the artifact must pass it. That a merged title does NOT drive its first column's width — and that a merge inside one column still does — is a matching pair in the L2 selftest; scripts/test-xlsx-skill.py C1-C3 assert the arithmetic (a Han character is two units, formulas do not count, the cap holds)"
+    }
+  },
+  "pending": {}
+}

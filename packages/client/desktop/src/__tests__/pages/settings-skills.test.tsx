@@ -29,7 +29,16 @@ const shadowApi = {
 }
 vi.mock("@/lib/use-skills", () => ({ useSkills: () => skillsApi }))
 vi.mock("@/lib/use-builtin-shadow", () => ({ useBuiltinShadow: () => shadowApi }))
-vi.mock("@/lib/use-skill-deps", () => ({
+// Partial mock, deliberately: a hand-written factory has to list every export the
+// component under test touches, and it silently rots the moment the module grows one.
+// It did — `PIP_HINTS` was added to use-skill-deps in 028d59b5 and Settings.tsx reads
+// it, so this whole FILE stopped loading (101 passed / 1 failed, and the 5 tests in
+// here never ran at all). Nothing local caught it for two cuts because the gate list
+// only ever ran skills-builtin.test.ts; CI on ubuntu and macOS did.
+// `importOriginal` keeps the real exports and overrides only what the test needs, so
+// the next export added upstream cannot break this file again.
+vi.mock("@/lib/use-skill-deps", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/use-skill-deps")>()),
   useSkillDeps: () => ({ deps: {}, loading: false }),
   BUILTIN_DEP_MAP: {} as Record<string, string[]>,
   missingDeps: () => [] as string[],

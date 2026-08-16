@@ -1,0 +1,370 @@
+{
+  "skill": "pdf",
+  "matrix": "docs/discussions/059-office-skills-revamp.md §3.1",
+  "capabilities": {
+    "P1": {
+      "entry": "scripts/pdf_render.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "--out",
+          "{out}",
+          "--pages",
+          "1,3",
+          "--dpi",
+          "120",
+          "--report",
+          "{out}/render.json"
+        ],
+        "produces": [
+          "page-001.png",
+          "page-003.png",
+          "render.json"
+        ]
+      },
+      "verified_by": "PNGs are not an artifact type L2 can read; the claims that the images ARE the requested pages and that --dpi is honoured are asserted in scripts/test-pdf-skill.py (R1-R3, R5)"
+    },
+    "P2": {
+      "entry": "scripts/pdf_extract.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "--out",
+          "{out}/text.json",
+          "--granularity",
+          "line",
+          "--overlay",
+          "{out}/boxes.pdf"
+        ],
+        "produces": [
+          "text.json",
+          "boxes.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "营业收入"
+        ],
+        "baseline": "{fixtures}/report-cjk.pdf"
+      },
+      "verified_by": "L2 checks the overlay PDF (P1/P2/P4 legality + P5 fidelity: the boxes must not disturb the text layer); the boxes actually landing on glyphs is scripts/test-pdf-skill.py E1-E4"
+    },
+    "P3": {
+      "entry": "scripts/pdf_tables.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/table-grid.pdf",
+          "--out",
+          "{out}/tables.json",
+          "--csv-dir",
+          "{out}/csv",
+          "--overlay",
+          "{out}/tables.pdf"
+        ],
+        "produces": [
+          "tables.json",
+          "tables.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "营业收入",
+          "本季度"
+        ],
+        "baseline": "{fixtures}/table-grid.pdf"
+      },
+      "verified_by": "L2 checks the overlay PDF (legal, and P5 fidelity: boxing the tables must not disturb the text). That the RULED page yields exactly the 4x3 table and the identical UNRULED page falls back to a guess flagged unreliable is scripts/test-pdf-skill.py T1-T3. scripts/test-pdf-skill.py T4 covers the horizontally-ruled table (rows drawn, columns inferred) and T5 that a page of prose is not exported as a one-column table; three control arms restore the shipped order, keep the single-column result, and take the region from the rules alone"
+    },
+    "P4": {
+      "entry": "scripts/pdf_info.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "--out",
+          "{out}/info.json"
+        ],
+        "produces": [
+          "info.json"
+        ]
+      },
+      "verified_by": "JSON is not an L2 artifact type; page count, geometry, rotation and the three encryption states are asserted in scripts/test-pdf-skill.py (I1-I4)"
+    },
+    "P5": {
+      "entry": "scripts/pdf_form_inspect.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-acroform.pdf",
+          "--summary",
+          "--out",
+          "{out}/form-summary.json"
+        ],
+        "produces": [
+          "form-summary.json"
+        ]
+      },
+      "verified_by": "JSON is not an L2 artifact type; that has_acroform is true for the widget form and false for the flat one — the answer a filler routes on — is asserted in scripts/test-pdf-skill.py (M1)"
+    },
+    "P6": {
+      "entry": "scripts/pdf_form_inspect.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-acroform.pdf",
+          "--out",
+          "{out}/fields.json"
+        ],
+        "produces": [
+          "fields.json"
+        ]
+      },
+      "verified_by": "types, choices, max_length, flags and both coordinate frames are asserted against the known fixture in scripts/test-pdf-skill.py (M2)"
+    },
+    "P7": {
+      "entry": "scripts/pdf_form_fill.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-acroform.pdf",
+          "--out",
+          "{out}/filled.pdf",
+          "--values",
+          "{fixtures}/values-acroform.json",
+          "--report",
+          "{out}/fill.json"
+        ],
+        "produces": [
+          "filled.pdf",
+          "fill.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "张国强",
+          "技术部"
+        ],
+        "baseline": "{fixtures}/form-acroform.pdf",
+        "touched_pages": [
+          1
+        ]
+      },
+      "verified_by": "L2 checks the filled PDF end to end — P3 (values inside their field boxes) runs on real widgets here for the first time, P4 (CJK renders as glyphs, not tofu), P5 (page count holds). Refusal paths (unknown field, value outside a combobox's choices, over /MaxLen) are scripts/test-pdf-skill.py M3"
+    },
+    "P8": {
+      "entry": "scripts/pdf_form_fill.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-flat.pdf",
+          "--out",
+          "{out}/flat-filled.pdf",
+          "--values",
+          "{fixtures}/placements-flat.json",
+          "--mode",
+          "overlay",
+          "--report",
+          "{out}/flat-fill.json"
+        ],
+        "produces": [
+          "flat-filled.pdf",
+          "flat-fill.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "张国强",
+          "入职材料齐全"
+        ],
+        "baseline": "{fixtures}/form-flat.pdf",
+        "touched_pages": [
+          1
+        ]
+      },
+      "verified_by": "L2 checks the overlaid PDF; that the text landed next to the right label (and that an ambiguous or missing anchor is refused rather than guessed) is scripts/test-pdf-skill.py M4"
+    },
+    "P9": {
+      "entry": "scripts/pdf_form_check.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-filled.pdf",
+          "--out",
+          "{out}/overflow.json"
+        ],
+        "produces": [
+          "overflow.json"
+        ]
+      },
+      "verified_by": "the sample runs on a fixture whose values all fit, so it proves the measurement runs and reports clean. DETECTION is asserted separately in scripts/test-pdf-skill.py (M5), which builds the overflowing case itself — a deliberately broken fixture could not also be handed to L2"
+    },
+    "P10": {
+      "entry": "scripts/pdf_form_check.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/form-filled.pdf",
+          "--out",
+          "{out}/overflow.json",
+          "--proof",
+          "{out}/proof.pdf"
+        ],
+        "produces": [
+          "overflow.json",
+          "proof.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "张国强",
+          "applicant"
+        ],
+        "baseline": "{fixtures}/form-filled.pdf",
+        "touched_pages": [
+          1
+        ]
+      },
+      "verified_by": "L2 checks the proof sheet is a legal PDF that kept the filled values; that a box is drawn per field in the right colour and the right frame is scripts/test-pdf-skill.py M6"
+    },
+    "P11": {
+      "entry": "scripts/pdf_pages.py",
+      "sample": {
+        "args": [
+          "--op",
+          "merge",
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "{fixtures}/form-flat.pdf",
+          "--out",
+          "{out}/merged.pdf",
+          "--report",
+          "{out}/merge.json"
+        ],
+        "produces": [
+          "merged.pdf",
+          "merge.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "员工信息登记表"
+        ],
+        "baseline": [
+          "{fixtures}/report-cjk.pdf",
+          "{fixtures}/form-flat.pdf"
+        ]
+      },
+      "verified_by": "L2's P5 now accepts a LIST of baselines (added for this capability) and walks every input's pages in order — a merge that drops its second input produces a legal PDF that page count alone cannot fault. split/extract/delete/rotate are scripts/test-pdf-skill.py N1-N5"
+    },
+    "P12": {
+      "entry": "scripts/pdf_encrypt.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/report-cjk.pdf",
+          "--out",
+          "{out}/locked.pdf",
+          "--set-password",
+          "s3cret",
+          "--owner-password",
+          "admin",
+          "--allow",
+          "print,copy",
+          "--report",
+          "{out}/encrypt.json"
+        ],
+        "produces": [
+          "locked.pdf",
+          "encrypt.json"
+        ]
+      },
+      "expect": {
+        "password": "s3cret",
+        "contains": [
+          "季度经营分析报告"
+        ],
+        "baseline": "{fixtures}/report-cjk.pdf"
+      },
+      "verified_by": "the artifact is a genuinely encrypted PDF; L2 gained a `password` in expectations for it (before that it raised an uncaught ValueError on any encrypted file). Removing a password, refusing to strip one without it, and the owner-password trap are scripts/test-pdf-skill.py K1-K4"
+    },
+    "P13": {
+      "entry": "scripts/pdf_create.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/document.json",
+          "--out",
+          "{out}/report.pdf"
+        ],
+        "produces": [
+          "report.pdf"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "营业收入",
+          "附注"
+        ]
+      },
+      "verified_by": "L2 checks the generated PDF (P1 no blank page, P2 the text extracts back, P4 CJK renders as glyphs). Auto-pagination, margin containment and the block types are scripts/test-pdf-skill.py G3-G4"
+    },
+    "P14": {
+      "entry": "scripts/pdf_create.py",
+      "sample": {
+        "args": [
+          "--in",
+          "{fixtures}/document.json",
+          "--out",
+          "{out}/cjk.pdf",
+          "--font-report",
+          "{out}/fonts.json"
+        ],
+        "produces": [
+          "cjk.pdf",
+          "fonts.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "季度经营分析报告",
+          "毛利率"
+        ]
+      },
+      "verified_by": "the font report names every font and whether it is EMBEDDED; scripts/test-pdf-skill.py G1 asserts embedded+subset (the negative control is the old insert_text(fontname='china-s') path, which reports ext 'n/a'), G2 asserts subsetting kept the file small, G5 asserts an uncoverable character is refused and that forcing it through produces a document L2 rejects"
+    },
+    "P15": {
+      "entry": "scripts/pdf_pages.py",
+      "sample": {
+        "args": [
+          "--op",
+          "flatten",
+          "--in",
+          "{fixtures}/form-filled.pdf",
+          "--out",
+          "{out}/flattened.pdf",
+          "--report",
+          "{out}/flatten.json"
+        ],
+        "produces": [
+          "flattened.pdf",
+          "flatten.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "员工信息登记表"
+        ],
+        "baseline": [
+          "{fixtures}/form-filled.pdf"
+        ]
+      },
+      "verified_by": "scripts/test-pdf-skill.py N6 (values reach the page, land inside the widget's own rectangle, and the ink total is unchanged) and N7 (a value whose appearance cannot be drawn is refused rather than silently dropped); three control arms reproduce the hand-rolled flatten that motivated it"
+    }
+  }
+}

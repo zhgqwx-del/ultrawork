@@ -27,7 +27,7 @@ import { useCliConnectors } from "@/lib/use-cli-connectors"
 import { CopyButton } from "@/components/chat/copy-button"
 import { useKnowledgeBase, type KBSource } from "@/lib/use-knowledge-base"
 import { useSkills } from "@/lib/use-skills"
-import { useSkillDeps, BUILTIN_DEP_MAP, missingDeps, type DepMap } from "@/lib/use-skill-deps"
+import { useSkillDeps, BUILTIN_DEP_MAP, PIP_HINTS, missingDeps, unavailableFeatures, type DepMap } from "@/lib/use-skill-deps"
 import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 import { Button } from "@/components/ui/button"
 import {
@@ -2207,6 +2207,7 @@ function ShadowedSkillCard({ name, onRestore }: { name: string; onRestore: () =>
 // Install-guidance hints shown when a dependency is missing (per host platform).
 const DEP_HINTS: Record<string, string> = isWindows
   ? {
+      ...PIP_HINTS,
       python3: "winget install Python.Python.3.12 / python.org",
       "python3.10+": "winget install Python.Python.3.12 / python.org",
       node: "winget install OpenJS.NodeJS.LTS / nodejs.org",
@@ -2215,7 +2216,6 @@ const DEP_HINTS: Record<string, string> = isWindows
       pdftoppm: "scoop/choco install poppler",
       git: "winget install Git.Git / git-scm.com",
       "markdown-exporter": "pip install md-exporter",
-      "python-pptx": "pip install python-pptx",
       "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
       "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
@@ -2223,6 +2223,7 @@ const DEP_HINTS: Record<string, string> = isWindows
     }
   : isMacOS
     ? {
+        ...PIP_HINTS,
         python3: "brew install python / python.org",
         "python3.10+": "brew install python / python.org (>= 3.10)",
         node: "brew install node / nodejs.org",
@@ -2231,13 +2232,13 @@ const DEP_HINTS: Record<string, string> = isWindows
         pdftoppm: "brew install poppler",
         git: "brew install git / git-scm.com",
         "markdown-exporter": "pip install md-exporter",
-        "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "chrome-or-edge": "brew install --cask google-chrome / google.com/chrome",
       }
     : {
+        ...PIP_HINTS,
         python3: "apt/dnf install python3",
         "python3.10+": "apt/dnf install python3 (>= 3.10)",
         node: "apt/dnf install nodejs / nodejs.org",
@@ -2246,7 +2247,6 @@ const DEP_HINTS: Record<string, string> = isWindows
         pdftoppm: "apt/dnf install poppler-utils",
         git: "apt/dnf install git",
         "markdown-exporter": "pip install md-exporter",
-        "python-pptx": "pip install python-pptx",
         "lark-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         dws: "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
         "wecom-cli": "设置 → 连接器 → 办公 CLI / Settings → Connectors → Office CLI",
@@ -2284,11 +2284,33 @@ function DepBadge({
     )
   }
   const missing = missingDeps(skillName, deps)
+  // Optional deps never gate readiness, but staying silent about them is how a user
+  // finds out that "make a deck from this PDF" does nothing — by trying it. Named
+  // as the capability, not the package: `curl_cffi` means nothing, "URL" does.
+  const partial = unavailableFeatures(skillName, deps)
+  const partialChip = partial.length ? (
+    <span
+      title={`${t("skills.depPartialHint")}: ${partial
+        .map((g) => `${g.label} — ${g.missing.map((m) => DEP_HINTS[m] ?? m).join(", ")}`)
+        .join("; ")}`}
+      // NOT shrink-0, unlike the verdict chip beside it. Measured at 700px: seven
+      // groups make this 300px wide and it pushed 72px of content out of the row
+      // (0px without it — the control says this one is mine, not the pre-existing
+      // narrow-width defect). The verdict must never be squeezed; this is extra
+      // information and gives way first, with the full list one hover away.
+      className="inline-flex min-w-0 cursor-help items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-fg-muted)]"
+    >
+      {t("skills.depPartial")}: {partial.map((g) => g.label).join(", ")}
+    </span>
+  ) : null
   if (missing.length === 0) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
-        <CheckCircle2 className="size-3" />
-        {t("skills.depReady")}
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+          <CheckCircle2 className="size-3" />
+          {t("skills.depReady")}
+        </span>
+        {partialChip}
       </span>
     )
   }
@@ -2298,7 +2320,7 @@ function DepBadge({
     .map((m) => (DEP_HINTS[m] ?? m) + (deps[m]?.path ? ` [${deps[m].path}]` : ""))
     .join("; ")
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span className="inline-flex min-w-0 items-center gap-1.5">
       <span
         title={`${t("skills.depMissingHint")}: ${hint}`}
         className="inline-flex shrink-0 cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -2306,6 +2328,7 @@ function DepBadge({
         <AlertTriangle className="size-3" />
         {t("skills.depMissing")}: {missing.join(", ")}
       </span>
+      {partialChip}
       {onGuide && (
         <button
           type="button"

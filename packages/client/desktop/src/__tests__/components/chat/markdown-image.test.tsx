@@ -15,6 +15,20 @@ import {
 const getFileContent = vi.fn()
 const apiStub = { getFileContent }
 vi.mock("@/lib/use-api", () => ({ useApi: () => apiStub }))
+// t() resolves against the REAL zh-Hans dictionary, not `(k) => k`: a mistyped
+// key would then render as the raw key and these assertions would still pass,
+// while the UI showed `message.imageUnreadable` to the user.
+vi.mock("@/lib/i18n-context", async (orig) => {
+  const actual = (await orig()) as { translations: Record<string, Record<string, string>> }
+  return {
+    ...actual,
+    useI18n: () => ({
+      language: "zh-Hans",
+      setLanguage: () => {},
+      t: (k: string) => actual.translations["zh-Hans"][k] ?? k,
+    }),
+  }
+})
 
 const WS = "/Users/z/.ultrawork/workspace"
 
@@ -109,6 +123,48 @@ describe("MarkdownImage", () => {
     const img = await screen.findByAltText("octo")
     fireEvent.click(img)
     expect(onArtifactClick).toHaveBeenCalledWith({ type: "file", path: "octopus.svg" })
+  })
+
+  // ── 兜底卡片必须说出是哪一种失败 ─────────────────────────────────────
+  // 2026-08-15 L4：用户报「预览图不显示」，三种失败长得一模一样（同一个灰色
+  // ImageOff + 同一段文字），分清「在工作区外」「读不到」「这是 PDF 不是图」
+  // 花掉了整整一轮调查。这三条断言钉住的就是那个区别。（059 §十七/§十九）
+  it("says WHY when the path is outside the workspace (and stays unclickable)", () => {
+    renderImg({ src: "/tmp/filled_preview/page-001.png", alt: "form" }, { workspaceDir: WS })
+    const chip = screen.getByTestId("markdown-image-fallback")
+    expect(chip.getAttribute("data-fallback-kind")).toBe("outside")
+    expect(chip.textContent).toContain("在工作区外")
+    expect((chip as HTMLButtonElement).disabled).toBe(true) // 点了也没用，就别装成能点
+    expect(getFileContent).not.toHaveBeenCalled()
+  })
+
+  it("calls a PDF a FILE, not a broken image, and keeps it clickable", async () => {
+    // 端点对 PDF 和「文件不存在」返回同一个空 body，分不出来的只能靠扩展名。
+    getFileContent.mockResolvedValue({ content: "", mimeType: undefined })
+    const onArtifactClick = vi.fn()
+    renderImg({ src: "输出/合并文件.pdf", alt: "合并文件" }, { workspaceDir: WS, onArtifactClick })
+    const chip = await screen.findByTestId("markdown-image-fallback")
+    expect(chip.getAttribute("data-fallback-kind")).toBe("document")
+    expect(chip.textContent).toContain("不是图片，点击查看")
+    fireEvent.click(chip)
+    // 产物面板用 pdf.js 自己读字节，所以这一点不是空头支票。
+    expect(onArtifactClick).toHaveBeenCalledWith({ type: "file", path: "输出/合并文件.pdf" })
+  })
+
+  it("refuses an ENCODED parent traversal (decode happens before the `..` check)", () => {
+    // `%2E%2E%2F` 解码后才是 `..`。解码放在遍历检查之前是有意的：先检查再解码，
+    // 这条会被判成一个普通的相对路径原样发出去。
+    renderImg({ src: "%2E%2E%2F%2E%2E%2Fetc/passwd.png", alt: "trav" }, { workspaceDir: WS })
+    expect(getFileContent).not.toHaveBeenCalled()
+    expect(screen.getByTestId("markdown-image-fallback").getAttribute("data-fallback-kind")).toBe("outside")
+  })
+
+  it("says 读不到 when an image really cannot be read", async () => {
+    getFileContent.mockResolvedValue({ content: "", mimeType: undefined })
+    renderImg({ src: "输出/page-001.png", alt: "第1页" }, { workspaceDir: WS })
+    const chip = await screen.findByTestId("markdown-image-fallback")
+    expect(chip.getAttribute("data-fallback-kind")).toBe("unreadable")
+    expect(chip.textContent).toContain("读不到")
   })
 
   it("serves a repeated image from cache without a second fetch", async () => {

@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { useBuiltinShadow } from "@/lib/use-builtin-shadow"
 
 const STATUS = {
-  bundled: ["deckcraft", "doc-edit"],
+  bundled: ["deckcraft", "pptx-edit"],
   shadowed: ["deckcraft"],
   changed: false,
 }
@@ -94,7 +94,7 @@ describe("useBuiltinShadow", () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mockInvoke.mockRejectedValue(new Error("not shadowed"))
-    await expect(result.current.removeOverride("doc-edit")).rejects.toThrow("not shadowed")
+    await expect(result.current.removeOverride("pptx-edit")).rejects.toThrow("not shadowed")
     // Status is untouched on failure.
     expect(result.current.status).toEqual(STATUS)
   })

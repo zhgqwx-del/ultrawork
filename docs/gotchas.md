@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-07-30 -->
+<!-- last-synced: 2026-08-03 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -297,11 +297,11 @@
 
 ## 10. 内置技能（built-in skills，`skills/builtin/` + Settings 技能页）
 
-- **Anthropic 官方 docx/pdf/pptx/xlsx 文档技能是专有许可、禁止再分发**（`anthropics/skills` 各目录 `LICENSE.txt`）——**不能打包进 ultrawork**。判定捷径：**LICENSE.txt 1467B ≈ 专有 / 11345B ≈ Apache-2.0**。故 PDF 用 OpenAI 的 Apache 版（`openai/skills/.curated/pdf`），Office 读改自写 `doc-edit`（python-docx/openpyxl/python-pptx），生成用 `markdown-exporter`（md_exporter）。新增内置技能前**先核对该目录 LICENSE 是 Apache-2.0/MIT 等可再分发许可**。
+- **Anthropic 官方 docx/pdf/pptx/xlsx 文档技能是专有许可、禁止再分发**（`anthropics/skills` 各目录 `LICENSE.txt`）——**不能打包进 ultrawork**。判定捷径：**LICENSE.txt 1467B ≈ 专有 / 11345B ≈ Apache-2.0**。故 PDF 用 OpenAI 的 Apache 版（`openai/skills/.curated/pdf`），Office 读改自写：docx/xlsx 见 059 S3/S4 的专用技能，.pptx 就地读改见 `pptx-edit`（原 `doc-edit`，059 S6 瘦身改名）；长尾格式转换用 `markdown-exporter`（md_exporter）。新增内置技能前**先核对该目录 LICENSE 是 Apache-2.0/MIT 等可再分发许可**。
 - **skill 以 frontmatter `name` 索引、不是目录名**（vendor `skill/index.ts:86`，zod `Info.pick({name,description})`）——`zod .pick` **剥离未知 frontmatter 键**，故自定义键（如 `x-requires`）安全、不破坏发现；也意味着目录名与 `name` 可不一致（如 `markdown-exporter`）。同名 skill 在同一次 glob 扫描里 unbounded 并发 add、谁赢不确定（仅 `duplicate skill name` warn）——**builtin vs 用户安装的同名竞态已由 Rust `reconcile_builtin_shadowing` 在文件层根治**（见下方遮蔽条目，ADR-040 阶段 2）。
 - **内置技能注入走方案 C（解压落地），不动 opencode.json（2026-07-03 起 zip 分发，原松散树拷贝）**：bundle 携带单个 `skills-builtin.zip` + 并排**外置** sentinel `.builtin-version`（`scripts/pack-builtin-skills.ts` 构建期从 git 松散树 `skills/builtin/` 按内容 hash 惰性打包，beforeDev/beforeBuild/build-release 自动跑）；`ensure_builtin_skills` 首启解压到 `~/.config/ultrawork/skills/builtin/`，被 `{skill,skills}/**/SKILL.md` 自动扫描。**sentinel 控升级刷新，刷新只 `remove_dir_all(builtin/)`——绝不碰同级用户安装技能**（用户/skill-installer 装的技能落在 `skills/<name>`，是 `builtin/` 的兄弟，不在刷新范围）。唯二会动用户目录的入口：`remove_user_skill_override`（用户在设置页显式点「恢复内置」）；唯一会按用户状态删 builtin 子目录的：遮蔽 prune（见下方遮蔽条目）。收益：app Resources 53MB/1.2 万文件 → 10MB/4 文件（mac 签名公证与 CI 打包显著提速、MSI 复活前提成立），首启解压实测 ~1.3s。
 - **Tauri `bundle.resources` 对 `..` 源路径的落地层级不确定**：array/glob 形式会把 `..` 改写成 `_up_` 段，map 形式按 value 直放——跨版本/平台有差异。**不要硬编码资源子路径**；`find_builtin_source` 用**有界递归查找 `.builtin-version` 锚点**兼容 map/glob/`_up_` 三种布局。`resource_dir()` 在 `tauri dev` 与打包态解析到不同目录（dev=target 下，打包=`.app/Contents/Resources`）。
-- **运行依赖检测靠 `rich_path()` 而非 `std::env PATH`**：Finder 启动的 app 只有最小 PATH，`check_skill_dependencies` 复用 `rich_path()` 探测 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter。**Python 解释器版本 / pip 库现在可探**（2026-07-02 起，ppt-master 引入）：`run_python_feature_probe` 对解析到的 python 跑一次 `-c`（`sys.version_info>=(3,10)` + `importlib.util.find_spec('pptx')`，find_spec 不真 import、快且无副作用）→ `python3.10+`/`python-pptx` 两个虚拟依赖项。`doc-edit` 仍只检 `python3`（脚本自身缺库时 stderr+exit1 优雅报错）。前端 `BUILTIN_DEP_MAP`（`use-skill-deps.ts`）是技能→依赖 SSOT，与 SKILL.md 的 `x-requires` 各一份（徽标 vs 人读），改一处记得对齐另一处。
+- **运行依赖检测靠 `rich_path()` 而非 `std::env PATH`**：Finder 启动的 app 只有最小 PATH，`check_skill_dependencies` 复用 `rich_path()` 探测 python3/node/pandoc/soffice/pdftoppm/git/markdown-exporter。**Python 解释器版本 / pip 库现在可探**（2026-07-02 起，ppt-master 引入）：`run_python_feature_probe` 对解析到的 python 跑一次 `-c`（`sys.version_info>=(3,10)` + `importlib.util.find_spec('pptx')`，find_spec 不真 import、快且无副作用）→ `python3.10+`/`python-pptx` 两个虚拟依赖项。`pptx-edit`（原 `doc-edit`）059 S6 起声明 `python3 + python-pptx`——它瘦身后剩下的两个脚本都无条件 import pptx，只检 python3 会把一台跑不了任何东西的机器显示成「就绪」。**动任何技能的依赖声明，四处必须同步**（漏一处 CI 就红，2026-08-04 又走了一遍）：① `skills/builtin/<skill>/SKILL.md` 的 `x-requires`（人读）· ② `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP`（徽标 SSOT）· ③ `src-tauri/src/lib.rs` 的 `PY_MODULES`（**只有 pip 库需要**，它是解释器内 `find_spec` 探测表，PATH 类工具不在这里）· ④ `__tests__/lib/skills-builtin.test.ts` 断言 key 集合。**改技能名同理**，另加 e2e 的 `BUNDLED` 列表与 `test-skill-originality.py` 的 `OWN_SKILLS`。⚠️ **这条规则本身腐烂过：四处里只有 ②③④ 有测试，① 没有**，于是 059 S3.5 给 deckcraft 的 `BUILTIN_DEP_MAP` 加了 12 个 source reader 而 `x-requires` 停在 4 个，漂了整整一个阶段。2026-08-05 起由 `skills-builtin.test.ts` 的「x-requires ↔ BUILTIN_DEP_MAP 对账」双向守着（直接 import 映射表不解析 TS + 断言真的扫到 ≥11 个技能目录）。**一条没人检查的规则会腐烂，和一条没人检查的 SKILL.md 声明是同一件事。**
 - **python 探针的四个防御（改探针前必读，均有 cargo 单测）**：① `check_skill_dependencies` 必须是 `#[tauri::command(async)]`——探针 spawn 真进程，同步跑在主线程会卡 UI、病态解释器会永久冻结 app；② `run_probe` 统一 **5s 超时 + 超时 kill + Windows `CREATE_NO_WINDOW`**（防挂死探测态转圈 / GUI 下黑窗闪现）；③ **macOS 无 CLT 时 `/usr/bin/python3` 是 Xcode shim，执行它会弹系统"安装开发者工具"对话框**——`python_probe_allowed` 先跑 `xcode-select -p`（无害）判定 CLT 在位才执行；④ **Windows 回退候选 `python`**（python.org/winget 只装 `python.exe` 不装 python3；商店 App-Execution-Alias 假可执行靠"执行式探针非零退出"天然过滤，不能靠 is_file 判断）。
 - **探针刻意锚定 `python3` 命令而非任意 python3.x（引导收敛标准）**：ppt-master 脚本通篇裸调 `python3`，所以徽标以「PATH 上 `python3` 解析到的那个解释器」为准——用户装出 `python3.11` 版本化命令而 `python3` 仍是 3.9 时徽标继续红是**正确行为**（真机验收实测踩过：AI 引导安装装了 uv 的 python3.11 就交差）。两道防线：`depGuidePrompt` 写死收敛标准（新终端 `python3 --version` ≥3.10 且 `import pptx` 成功，版本化命令须 symlink 指过去）+ 徽标 tooltip 透出实际探测的解释器路径（`DepStatus.path`，显示 `[/usr/bin/python3]`）。另注意 zsh 老会话有 command hash 缓存，`hash -r` 或开新终端才能看到新 symlink；技能运行时每次新起 shell、无此缓存。
 - **内置技能落地是「解压到 staging + rename」原子交换，sentinel 后置写入**：`install_builtin_tree`（lib.rs）把 zip 解压到 `skills/.builtin.staging`（点目录，opencode `{skill,skills}/**` glob 不带 dot 选项扫不到），**zip 内刻意不含 sentinel——全量解压成功后才把外置 sentinel 写进 staging 再 rename**，不变式强化为「sentinel 可见 ⇔ 整树完整」（中途退出/磁盘满只会留下旧一致树或无树，有 cargo 测试锚定 extract-先于-删旧树 的顺序）。staging（`.builtin.staging`/`.builtin.restore`）每次调用先经 `clear_staging` 清理——**必须用它而非裸 `remove_dir_all`**（后者对预置 symlink 静默失败，解压会穿透写进 link 指向的外部目录）；**install/reconcile/override 三入口由 `BUILTIN_SKILLS_LOCK` 串行化**——async 命令（thread pool）并发共享固定 staging 路径时，两个 restore 交错可让 rename 落一棵残缺树且 sentinel 仍有效、永不自愈（对抗审查实证的组合竞态）。
@@ -311,7 +311,8 @@
 - **ppt-master（MIT，pin v2.12.0）专属注意——P3 起「curated 可安装、非内置」**：2026-07-18（ADR-061 / discussions/043 §18.5）deckcraft 毕业为做 PPT 的默认技能后，**内置 ppt-master 整树已删**（`fetch-builtin-skills.ts` 的 SOURCES/`applyPptMasterPatches`/`X_REQUIRES` 条目一并移除）；ppt-master 仅保留为 `INSTALLABLE_SKILLS` 的 curated 长尾退路（`method:"git"`，装到 `~/.config/ultrawork/skills`，**无 builtin 副本可遮蔽**）。**用户安装后**仍适用的坑：① **图片生成 API key `.env` 放 `~/.ppt-master/.env`（上游原生支持）或工作区 `./.env`**，别放技能目录；② 八项确认/实时预览走本地 `localhost:5050` 网页（confirm_ui 与 svg_editor 分时共用端口，chat fallback 是上游一等公民）——刻意不改成 question dock；③ 单次完整 deck 生成消耗几十万 token 是上游刻意设计（主模型逐页手写 SVG、禁子代理），用户侧要有成本预期。历史（bundle 期）的 fetch sparse/post-patch/drop 复核细节见 git history + discussions/025 §9。
 - **zip 分发管线坑点合集（2026-07-03，八路对抗审查产出，改 pack/extract 前必读）**：① Rust zip crate `enclosed_name()` 对绝对路径条目是**消毒**（剥前导 `/`）而非拒绝——防篡改需显式 raw name 检查（extract 已拒 `/` 开头、`\`、`:`、symlink entry；**凡从 entry 名派生再用于 join+删除的路径必须同套设防**）；② pack/fetch 的 sentinel hash 算法**必须逐字节一致**（对账不变式，改一处同步另一处）——2026-07-03 起喂「相对路径+`\0` 分隔」（裸 basename 对目录改名/文件搬家失明→会发布陈旧 zip）；③ tauri v2 string 形式 beforeDevCommand 是 **wait:false**（spawn 后轮询 devUrl 不等退出）——孤儿 vite 占 1420 时 cargo build 与钩子并发，钩子产出的构建产物必须 temp+rename 原子落位且 **tmp 名带 pid**（并行 e2e/dev+release 共享固定 tmp 名会互相截断）；hooks cwd=frontend dir（含 package.json 的 CLI 调用目录）；④ `tauri::generate_context!` **编译期**要求 bundle.resources 源路径存在——gitignore 的构建产物目录须以 `.gitkeep` 入 git，否则 CI 裸 cargo test 编译失败；⑤ fflate zipSync `os:3 + attrs:(0o100000|mode)<<16` 保 unix exec bit（Rust 侧解压回写 `mode & 0o777`）；unzipSync **不暴露 attrs**（e2e helper 不恢复 exec bit 的已知分叉）；⑥ **Windows CI 打的 zip sentinel 与 git 提交值不同**（CRLF checkout 改文本字节，仓库无 .gitattributes）——per-platform 自洽（zip+sentinel 同一次遍历产出、同机比对），别拿 sentinel 跨平台对账；⑦ bump 复核项：Windows 保留设备名（CON/PRN/…）/尾点尾空格未设防（pack 期不报、用户首启 File::create 才炸）；文件名含 `:`/`\` pack 期已 fail-fast。
 - **deckcraft（自写，HTML-first PPT，ADR-061）专属注意**：① **P3 已毕业为做 PPT 的默认技能**（2026-07-18，ADR-061 / discussions/043 §18.5）——description 从验证期窄触发放宽到接管「做PPT/生成PPT/演示文稿/幻灯片/slides/deck」全意图；内置 ppt-master 已删、ADR-040 的「两 tab 同见 ppt-master」混合形态随之消解（ppt-master 转 curated 长尾退路，见上一条）；② **浏览器双清单同步义务**：`find_chrome.py` 候选集必须 ⊇ Rust `detect_chrome`+`detect_export_browser` 清单（绿徽标必须蕴含脚本可用，反向红灯可用可接受）——两侧都有交叉注释，改一侧必查另一侧；③ **skill 工作目录必须点目录**（`.deckcraft/`）：中间文件（页面片段/截图/spec_lock/tokens.css 等几十个）放点目录才不淹没产物面板，交付走 `export_deck.py --publish`。**血泪（真机走查暴露）**：产物面板有**两条来源**且对 dotdir 处理曾不一致——Rust fs 扫描器（`lib.rs` `collect_changed_files`，`name.starts_with('.')` continue）跳 dotdir，但前端 tool-derived 提取器（`artifacts-panel.tsx` `extractArtifacts`，从 Write/Edit 工具调用抠路径）**原本零 dotdir 过滤**，agent 写进 `.deckcraft/` 的文件照样泄漏进面板。已在两源共同入口 `isValidArtifactPath` 补对称的 dotdir 过滤（拒绝相对路径含 `.` 开头目录段）。**点目录不足以隐身、还需 tool-derived 侧同样过滤——两侧都要**；④ shell.html 模板**注释里不能出现字面 `{{占位符}}`**（build 的全局 str.replace 会把内容塞进注释——曾致 split 数出 2 倍页 + 截图全白）；⑤ **headless `--print-to-pdf` 会执行页面 JS**：屏幕适配脚本写的 inline zoom（旧为 transform）会污染 PDF（默认视口 800px → 全 deck 缩 60%），解法=`@media print` 里 `#stage{zoom:1!important}`（stylesheet !important 压 inline style；见 ⑬）；⑥ `__pycache__` 绝不能进技能树（pack hash 漂移 → 全量重打包 + 存量用户技能重装；pack JUNK 集与 .gitignore 已双重设防，本地跑过 skill 脚本后提交前自查）；⑦ **P2b 可编辑 pptx（`--pptx-editable`）：pptxgenjs 官方 `dist/pptxgen.bundle.js` 在 Node `require()` 下返回的是 JSZip 不是 PptxGenJS**（那是浏览器 `<script>` UMD，外层 `module.exports=t()` 里 `t()` 产出的是内联的 JSZip）——必须用 **esbuild 自打包 CJS 单文件**（`entry.cjs = module.exports=require('pptxgenjs')` → `esbuild --bundle --platform=node --format=cjs`）才拿到 PptxGenJS 类，产物 vendor 进 `scripts/html2pptx/vendor/pptxgen.vendor.cjs`（零 node_modules——`node_modules` **不在** pack JUNK 排除集，走 `npm i` 会把整个 node_modules 打进 zip 污染 sentinel；单文件避开）；⑧ **Node 双清单同步义务**（与②浏览器同构）：`find_node.py` 的嵌入式路径（`~/.ultrawork/node/{bin/node|node.exe}`）+ 版本门必须与 Rust `get_node_path_internal`/`embedded_node_bin`/`detect_system_node`（≥18）一致——徽标 `node` 由 Rust 探针算、脚本按同规则找，改一侧查另一侧；⑨ 可编辑 pptx 的**中间产物（layout.json / raster/ 裁剪图）必须落 `export/` 目录**（`out_dir`，已被 pack `isGeneratedDir` 与 .gitignore 双重排除）——写到项目根会污染产物面板 + 改动例子字节基准；⑩ 坐标映射 SSOT 在 Node 侧（1280px 舞台恰 96 px/in → `in=px/96`、`pt=px×0.75`），抽取侧（scale 1）与栅格化裁剪侧（device-scale-factor 2）**同用 per-page 隔离页**（丢掉 fit() 脚本、slide 在 0,0），故 bbox×2 对齐 2x 截图；⑪ **Team 委派下 question 门不可达（已知限制，2026-07-18 全分支审查发现，defer 修复）**：deckcraft 两轮 question（Phase 2/3，SKILL.md 硬门禁无降级）在**单 agent 直连 opencode 正常**；但 Team 模式 Leader 委派给 `opencode:default` 子会话时，子会话抛的 `question.asked` 被 `delegate.ts` 的 `onEvent` 丢弃（它**只中继 `permission.asked/replied`**，不中继 question），子会话阻塞到 orchestrator `timeoutMs`（默认 600s）超时失败。根因是既有 Team 委派架构缺口（delegate 从来只中继 permission），deckcraft 是首个把 question 设为核心硬门禁的默认技能才暴露它。**规避**：Team 场景直连而非委派跑 deckcraft。**根治**（follow-up）：delegate `onEvent` 对称中继 `question.asked/replied` 到 DelegateDock + 前端支持回答委派会话的 question；⑫ **内联进页面的 `<script>`（PROBE_JS / extract_layout 注入脚本）源码与注释里绝不能出现字面闭合 script 标签**（`<` + `/script` + `>`）：HTML 解析器在 script-data 状态遇到该序列立即闭合 script 元素——写在注释里也照样触发，会把脚本从中间截断、measure()/抽取器不再运行、`__probe__`/`__layout__` 节点不生成 → 门以「no report」失败。血泪：修「可见文本含该标签致 json.loads 崩溃」时，第一版修复的**解释性注释里**写了字面标签、自身复现同一 bug，经 Chrome `--dump-dom` 实测才定位。转义用 `String.fromCharCode(60)`（`<`）拆分、`fromCharCode(92)`（`\`）+`u003c` 拼 JSON unicode 转义，避免源码里出现字面 `<` 与多层反斜杠转义（selftest 锁「extract survives </script> in visible text」）；⑬ **fit 脚本用 `zoom` 缩放、不用 `transform:scale`（+ 负 margin）**（discussions/050，2026-07-22，取代 ADR-062 的 transform+translateX 方案）：`.stage` 固定 1280px，`transform:scale(s)` **不缩布局盒**、`scrollHeight` 仍是未缩放全高 `h`，而负 `marginBottom` 补偿又**改不动 `scrollHeight`**（负 margin 只减 body 高度、盒子仍溢出到 `h` 并计入滚动区）→ 应用内预览（面板 <1312px → s<1）**末尾留 `(1−s)·h` 大片深色可滚空白**（真机 lhopital 14 页 vw=1188 实测 983px；`scrollHeight==offsetHeight` 排除 margin-collapse）；直接开文件因浏览器窗口 ≥1312→s=1 不缩放故正常，独立 HTML 无此机制也正常。解法=`st.style.zoom = min(1,(vw-32)/1280)`：**zoom 同时缩布局+绘制**，`scrollHeight` 自动=视觉高度、无空白；横向居中交回 `.stage{margin:0 auto}`（zoom 后正确居中），删掉 translateX / 负 margin / `h` 缓存（后者顺带消除「字体/图片未加载完就采集 `h`」的时序隐患）。`@media print` 从 `#stage{transform:none!important}` 改 **`#stage{zoom:1!important}`**（headless print-to-pdf 会先跑 fit 写下 zoom≈0.6，须压制）。`probe_overflow.py`/`--shots`/`extract_layout.py` 拆单页且**丢弃 fit 脚本**、原生 scale=1 → PDF/pptx 零影响。护栏：e2e `html-preview-iframe.e2e.ts` 断言从 transform 改 zoom + **新增「末页下方无空白 gap≤30px」门禁**（旧机制此处 ~950px）；改 `shell.html` 后照例重跑 pack + 同步两 sentinel。lucide 版本坑（顺带）：0.562 把 `FileVideo`→`file-play`、`FileAudio`→`file-headphone` glyph 别名，断言 lucide 渲染 class 时以实际 glyph 为准（`lucide-<glyph>`）；⑭ **`--c-on-dark` 是深底页专用浅字，放到浅卡片上近乎隐形**（ADR-067 / discussions/052，2026-07-23 真机暴露）：模型偶发把 S04 栏头染成 `--c-on-dark` 留在 `--c-bg2` 浅卡片上 → 对比度 **1.10:1**。**注意这不是引导缺失**——`layouts.html` 模板与三个内置 example 的 S04 栏头全是正确的 `--c-primary`（9.96:1），正确 few-shot 齐备模型仍偏离，故**纯改文档不保险**，已加机器门禁：`probe_overflow.py` 逐文本元素测 WCAG 对比度（前景 computed `color` + **合成**背景——合成是关键，只有它能区分同一个 on-dark 色在 `data-dark` 页正确 vs 在浅卡片是缺陷，静态 lint 做不到），双档下界 **2.3:1 正文 / 1.8:1 large**，报 `CONTRAST` 行即判负。**合成必须取真实绘制栈（`elementsFromPoint`）而非只走祖先链**：浅字绝对定位压在**兄弟**深色块上时（观感完全可读）祖先链只看到卡片浅底 → 误杀合法设计，该假阳性由自测抓出并已修（命中测试看不到元素时退回祖先链降级）。**读不懂的颜色语法（`oklch()`/`color()`/`lab()`）必须计数并播报，绝不静默跳过**——静默会让「0 low-contrast」实际等于「一个都没检查」，是门禁唯一不能有的失败模式（首版就是静默，已修）。**阈值别顺手调低**：它由四例 369 个实测元素标定（合法最低 2.57 = showcase 大号装饰数字，缺陷 1.10），discussions/052 的手算表预测 3.61 偏高、照抄会误杀；新配色触线先看 `--dump-contrast` 判断是真缺陷还是调色板本身偏浅。透明字与 `background-image` 底刻意不判负（宁漏报不误杀）；⑮ **headless `--window-size` 是外窗、真实视口更小**（ADR-068，2026-07-24 实测）：macOS headless 固定吃 **87px**（720→633、1400→1313，与窗口高无关）→ `document.elementsFromPoint` 在视口高度以下**返空栈**，依赖命中测试的逻辑**静默退回次优路径**（probe 曾因此在每页底部 12% 退回祖先链、丢掉脚注/页码/来源标注区的对比度判定）。修=窗口给足余量（现 `1280×1400`，slide 恒 720、多余是空白无成本）**＋页面里自检 `document.documentElement.clientHeight` 装不下即 `exit`，绝不静默降级**。凡用 `elementsFromPoint`/视口坐标做判定的 headless 脚本都要先自检视口；⑯ **`getComputedStyle().backgroundImage` 认不出 `<img>`/`<svg>`/`<video>` 元素**（只反映 CSS `background-image`）：文字压在 `<img>` 上时「背景不可读」检测会漏，拿覆盖层颜色合成到白底当真背景＝**一个自信的错数比一个声明的盲点更糟**。修=遍历绘制栈时同时按 `el.tagName` 判 IMG/SVG/VIDEO/CANVAS，标记为不可判（不判负，宁漏报）；⑰ **CSS 变量 token 化的三个隐形失效**（ADR-068）：(a) 页面**内联硬编码同名尺寸＝token 白做**——四例里 19 处 `width:48px;height:8px` 手抄版绕开 `--bar-w`/`--bar-h`，改风格骨相看不出变化，**必须用结构类（`.bar`）承载、禁内联硬编码**；(b) **注释里连写 `*/`**（结构层注释写 token 通配 `--sl-*` 紧跟 `/--fw-*`）提前终止 `<style>` 注释、吞掉后续整段规则（症状＝版面**整体错位**而非局部溢出，probe 从 0→69 overflow；排查＝`git archive HEAD` 抽纯净副本 A/B）；(c) **门禁读 `tokens.css` 前必须 `re.sub(r"/\*.*?\*/"," ")` 剥注释**，否则注释里的 `/* --radius: 圆角用 */` 假声明被当真（放宽 E3 白名单 / 凭空造 O10 越界）。深色风格 `--c-primary` 曾同时当「data-dark 底」与「浅底标题墨色」（相反明度）已由新增 `--c-head` 语义 token 修，详见 ADR-068 D8。
-- **更新内置技能用 `scripts/fetch-builtin-skills.ts`**（上游 tarball / 大仓库 sparse clone + 打补丁 + 注入 `x-requires` + 写 NOTICE + 刷新 `.builtin-version`；支持按名过滤 `bun run --bun scripts/fetch-builtin-skills.ts pdf`——避免顺带把 pin 在 main 的其它技能拉到未审内容），结果**提交入库**。**不要手改 `skills/builtin/{skill-creator,skill-installer,pdf,markdown-exporter}/`**——重跑脚本会覆盖；`deckcraft` 与 `doc-edit` 是自写、可直接改（deckcraft 改后须重跑 `pack-builtin-skills.ts` 并把 `resources/builtin-skills/.builtin-version` 同步写回 `skills/builtin/.builtin-version`）。skill-installer 的安装目标已由脚本补丁从 `$CODEX_HOME/skills` 改指 `~/.config/ultrawork/skills`（装到 `builtin/` 同级，免被 sentinel 刷新清掉）。
+- **SKILL.md 里指向别的技能，指错了没人会告诉你——除非门禁去看**（2026-08-04 起 `check-docs.ts` §11）。`description` 是模型路由的**唯一依据**，指向一个不存在的技能，agent 找不到就**静默退化成不用技能硬写**，看起来只是「这次没用技能」。059 §1 的 `doc-export` 断链（三处）是靠人肉读 SKILL.md 才发现的；S6 把 `doc-edit` 改名时，`pdf`/`xlsx` 的 description 里各有一处「that is `doc-edit`」会当场变断链。§11 认四种写法（`x` 技能 / `x` skill / that is·use the·install `x` / 列举 `a` / `b` / `c` 技能），合法目标 = `skills/builtin/` 下真实目录 **+** 设置页 `INSTALLABLE_SKILLS`（`ppt-master` 不内置但指它是对的，名单从 Settings.tsx 现读不另抄）。⚠️ **中文引导词「改用/安装」必须同行有「技能」二字才算**——deckcraft 写着「就改用 `python`」指的是命令名，第一版因此误报。`bun run --bun scripts/check-docs.ts --selftest` 是它的 11 条正负控制（负向复刻的是真实出过的错误写法），CI 与全量扫描一起跑。
+- **更新内置技能用 `scripts/fetch-builtin-skills.ts`**（上游 tarball / 大仓库 sparse clone + 打补丁 + 注入 `x-requires` + 写 NOTICE + 刷新 `.builtin-version`；支持按名过滤 `bun run --bun scripts/fetch-builtin-skills.ts pdf`——避免顺带把 pin 在 main 的其它技能拉到未审内容），结果**提交入库**。**不要手改 `skills/builtin/{skill-creator,skill-installer,pdf,markdown-exporter}/`**——重跑脚本会覆盖；`deckcraft` / `docx` / `xlsx` / `pdf` / `pptx-edit` 是自写、可直接改（deckcraft 改后须重跑 `pack-builtin-skills.ts` 并把 `resources/builtin-skills/.builtin-version` 同步写回 `skills/builtin/.builtin-version`）。skill-installer 的安装目标已由脚本补丁从 `$CODEX_HOME/skills` 改指 `~/.config/ultrawork/skills`（装到 `builtin/` 同级，免被 sentinel 刷新清掉）。
 
 ## 11. OpenCode 配置 / 数据路径地图（隔离机制 SSOT，2026-06-23）
 
@@ -373,6 +374,11 @@
   - **`clipboard-manager` 的 `read_image()` 不能在主线程调用**（插件文档明示，Linux 会死锁冻结整个 app）⇒ 放进 `spawn_blocking`。顺带：**Rust 直接调插件 API 绕过 JS 侧 ACL**，所以 capability 里**不要**为此加 `clipboard-manager:allow-read-image`（那只放行 renderer、纯过度授权）。
 - **Tauri 打包二进制里 webview 资源是压缩嵌入的 ⇒ `strings`/byte-scan 命令名 grep 不到 ≠ 命令没注册（2026-07-15 血泪）**：Tauri 把前端 JS/HTML 资源**压缩**后嵌进二进制，命令名字符串搜不到是正常的；**命令注册是编译期保证**（在 `generate_handler!` 里且能编译 = 已注册、能路由）。别拿 byte-scan 当「命令是否注册」的 oracle——曾据此误判「release LTO 把某命令 strip 了」并做了无效"修复"，被打包 `.app` 上真实的授权流程当场证伪。**要验命令能否路由，只能跑打包 app 触发它。**
 - **`tauri dev` 借的是终端（父进程）的 TCC 身份，不是 app 自己的（2026-07-15 现场确认）**：dev 二进制（`cargo run`/`tauri dev` 从终端拉起、未签名）没有独立代码身份，屏幕录制等 TCC 权限归到「负责进程」= 终端（如 ghostty）。所以 dev 下「截图能截到真内容」用的是终端的授权，**授权引导态（未授权分支）根本测不出**。⇒ **TCC 类功能必须 `tauri:build` 打成 `.app`、从 Finder/Dock 启动**（才有独立 ad-hoc 身份、才在系统「屏幕录制」列表里以 app 名出现、首次截图才弹真授权框）才测得准。从 Terminal/dev 里测的是终端的权限。
+
+- **Windows 的 git 默认 `core.autocrlf=true` ⇒ 任何「按 sha256 核对检出文件」的逻辑在 Windows 上必错**（2026-08-04，L3 语料获取器上 CI 第一跑就红）。检出时 LF 被换成 CRLF，于是在 macOS/Linux 上算出来的哈希对不上，脚本报出的却是别的原因（本仓库当时报的是「许可变了，必须人工复核」——**一个完全误导的结论**）。⇒ 临时克隆一律显式 `git config core.autocrlf false` + `core.eol lf`，让检出**逐字节等于上游**；**不要**改成忽略换行的比较，那会把「文件真的改了」一起藏掉。实测：`.docx`/`.xlsx`/`.pdf` 这类二进制**不受影响**（git 的二进制启发式挡住了），但那是启发式不是保证。同族提醒：`.gitattributes`、`autocrlf=input`、以及 CI runner 的默认值都可能在不同宿主上给出不同字节。
+
+- **`zipfile.namelist()` 不是平台无关的**（2026-08-04，L3 语料实证）。CPython 的 `ZipInfo.__init__` 里有 `if os.sep != "/" and os.sep in filename: filename = filename.replace(os.sep, "/")` ⇒ 一个（违反 ZIP/OOXML 规范地）把条目存成 `xl\workbook.xml` 的档案，**在 Windows 上读回 `xl/workbook.xml`，在 POSIX 上读回 `xl\workbook.xml`**。野外真有这种文件（calamine 语料的 `issue_530.xlsx`）。后果实测：同一份字节，同一个检查，**Windows 放行 / macOS 判「缺 xl/workbook.xml」** —— 两台机器的分母不一样，而两边看起来都「正常工作」。⇒ 凡按名字找 OOXML part 的代码，自己 `n.replace("\\", "/")` 归一化，不要依赖 zipfile 的平台行为。**连带结论：靠 openpyxl/python-docx 打开这类文件的能力也是平台相关的**（它们同样走 zipfile），本仓库有意未改技能行为——文件本身违规，两种行为都说得通，但要知道它不一致。
+- **子进程崩溃时打 stderr 的第一行等于什么都没打**：裸 traceback 的第一行永远是 `Traceback (most recent call last):`，异常类型与消息在**最后一行**。本仓库为此白烧过一轮 CI（四份只在 Windows 上崩的文件，日志里全是那句废话，机制只能靠本地反推）。⇒ 报告里遇到 traceback 取**最后一行**。
 
 ## 13. 桌面组件测试（vitest + jsdom）
 
@@ -481,6 +487,8 @@
 - **opencode `/file/content`（vendor `File.read`，`file/index.ts:513`）只认 workspace 相对路径**：`path.join(Instance.directory, file)` + `containsPath` 禁逃逸。绝对路径（`/Users/…/ws/x.svg`）会被 `path.join` 拼坏→返回空。→ 前端必须先 `toWorkspaceRelative`（`@/lib/path-utils`）剥 workspaceDir 前缀转相对再取；workspace 外的图取不到（安全边界），降级兜底。图片扩展名走 base64 分支返回 `{mimeType, encoding:"base64"}`，前端拼 `data:${mime};base64,${content}`（与产物预览同通道）。
 - **markdown 把 `\` 当转义符** → `![]（C:\a\b.png）` 纯反斜杠路径解析阶段即被破坏（renderer 无法挽回）。可存活形态＝相对路径 + 正斜杠绝对（`C:/…`）；rich-output 引导推模型用相对路径。
 - **`useApi` 必须返回稳定引用**：`MarkdownImage` 的解析 `useEffect` 依赖 `api`；若 mock/实现每渲染返回新对象 → 每渲染重跑 effect+setState → **无限渲染循环**（e2e 单测踩过）。生产 `useApi` 由 connector 记忆化，稳定。
+- **⚠️ markdown 管线会把 src 百分号编码，而这一层在组件之外（2026-08-15 L4 实测）**：`mdast-util-to-hast` 的 image handler 是 `{src: normalizeUri(node.url)}`（`lib/handlers/image.js`，上游按设计如此 —— 它产的是给浏览器的 URI）。于是 `![](输出/page-001.png)` 到达 `MarkdownImage` 时**已经是** `%E8%BE%93%E5%87%BA/page-001.png`。后果两条，都只在**非 ASCII 路径**上出现：① 相对路径 → 客户端再 `encodeURIComponent` 一次 ⇒ 请求的是名字里真含 `%E8…` 的文件 ⇒ 空 body ⇒ 兜底卡片；② **工作区名本身带中文**时更狠 —— 编码后前缀不再等于 `workspaceDir`，`toWorkspaceRelative` 返回 null ⇒ **请求根本不发出**。→ 解析本地路径前必须**解码一次**（`toLocalPath`）；`classify()` 仍在**原始 src** 上跑（`a%3Ab.png` 解码后会像个 scheme）。解码放在 `..` 检查**之前**，`%2E%2E%2F` 才拦得住。⚠️ **此前 18 条组件测试全绿而功能是坏的，因为每条路径都是纯 ASCII，且单测直接喂 src、绕开了加编码的那一层** —— 这类断言必须走 `MarkdownContent` 全管线。
+- **`/file/content` 对「不是图也不是文本」的文件返回 `{content:""}`，与「文件不存在」逐字节相同**（PDF 实测如此）。→ 客户端分不出「这是 PDF」和「没这个文件」，只能靠扩展名；产物预览面板另走 pdf.js 自己读字节（`artifact-preview.tsx` 对 pdf 跳过取内容），所以把 PDF 兜底成**可点的文件卡片**是有依据的，不是空头支票。
 - **本机验证陷阱（非产品）**：① 新编译的 sidecar 二进制带 `com.apple.provenance` xattr → macOS 静默杀（`--version` 零输出 exit 0），bash 直接 spawn 起不来；`xattr -c` + `codesign --force --sign -` 恢复（打包正式签名不受影响）。② e2e 连跑双引擎时前一轮 opencode 偶尔没及时释放端口，需按端口清理。
 
 ## 18. 数学公式渲染（KaTeX，ADR-070 / discussions/055，2026-07-27）
@@ -600,3 +608,482 @@ ref 跨 effect 运行共享：新一轮把它重置为 `false` **早于**上一�
 **⑰ ⚠️ 边跑 harness 边改源码 = Vite HMR 把页面刷了，测量对象在你脚下被换掉。**
 症状很好认但极易误判：非空转门报 `ui 19->0` —— **marker 数不是没长，是掉到 0**（整条转录被重新挂载）。第一反应会以为是产品缺陷。
 ⇒ 判据：**变多 = 传输层根本没断**（Playwright `setOffline` 的典型症状）；**变少 = 页面被重置了**，先想 HMR。`stream-gap-resync.e2e.ts` 的失败信息已经把这两种分开报了。
+
+---
+
+## 21. OOXML 文档技能（`skills/builtin/{pdf,xlsx}`，discussions/059，2026-08-02）
+
+> ⚠️ **①（PyMuPDF）对 `skills/builtin/` 已经完全不适用了** —— `pdf` 技能（059 §六·补三）与
+> `deckcraft/scripts/source_to_md/pdf_to_md.py`（§六·补四）都已换成
+> pypdfium2 + pypdf + pdfplumber + reportlab，**技能树里没有任何一个文件 `import fitz`**。
+> ① 仍然对 `scripts/` 下那三个门禁脚本有效（它们不分发）。
+> 新工具链自己的契约见 **⑨–㉑**；坐标系那一族尤其要连着读 **⑨ + ⑳ + ㉑**，
+> 它们是三个不同的坐标系陷阱，**没有一个会在未旋转页上现形**。
+
+**① PyMuPDF 有三个坐标系，旋转页必踩。** `get_text` / `get_text("rawdict")` 返回的框是
+**页面坐标系**（未旋转），`page.draw_rect` 吃的**也是**页面坐标系，但 `get_pixmap` 渲染的是
+**显示坐标系**（旋转后）。实测旋转 90° 的页：抽出的框内 36 个暗像素，乘 `page.rotation_matrix`
+后 2282 个。**同一个错误在一轮里出现两次**（技能自己的 bbox 输出 + L2 门禁的豆腐块判据），
+后者被判红的还是未改动的源文件。凡「读坐标 → 画到位图上」都要先乘 `rotation_matrix`。
+
+**② `openpyxl.load_workbook(f)` → `save()` 是有损的，损的是「它不认识的 part」。**
+实测本仓库 `sample.xlsx` 做**空操作** round-trip（一个字节都不打算改）丢 `xl/metadata.xml`
+（904B 动态数组元数据）；自建 fixture 丢 3 个 customXml part。**part 级还不是全部** ——
+存活下来的 `sheet1.xml` 内部也会丢 `<ignoredErrors>`。
+纠偏一条免得选型时被传闻带偏：**图表 / 条件格式 / 数据验证 / 冻结窗格 / 自动筛选都不丢**
+（换个库解决不了也不需要解决）。真正丢的只有它没有模型的 part：customXml、metadata、
+线程批注、透视缓存、宏。
+⇒ 编辑既有 workbook 的正确姿势是**别把包交给库重建**（见 conventions §26）。
+
+**③ 删一个 OOXML part 是三件事，加回来也是三件事。** part 字节 +
+`[Content_Types].xml` 的 `Override` + 每一个指向它的 `Relationship`。只删字节 ⇒ 留下指向空气
+的关系（本仓库的 `validate` 层实测咬到过）；只加字节 ⇒ 孤儿 part。
+**加回来时 `rId` 必须重新分配，不能照抄** —— 库重建包时会重编号，旧 `rId` 在新包里多半已经
+指着别的东西，照抄等于静默改接线。
+
+**④ `xl/calcChain.xml` 是求值顺序的缓存：公式变了必须删，只改值必须留。**
+留着旧的 ⇒ Excel 报「发现部分内容有问题」并进入修复流程；无脑删 ⇒ 白白让人重算一遍。
+
+**⑤ 入 git 的 Office fixture 必须逐字节可复现，而不可复现有两个来源。**
+`skills/builtin/` 下所有文件都进 `.builtin-version` 哈希 ⇒ 重生成一次 fixture，全体桌面端
+重装内置技能。openpyxl 的两个来源：zip 条目时间戳用「现在」，**并且把保存时刻盖进
+`docProps/core.xml` 的 `dcterms:modified`，覆盖掉你设的 `wb.properties.modified`**。
+后者是跑两遍 diff 才发现的 —— 第一遍以为设了 property 就够了。
+PyMuPDF 同族：默认每次 save 换 `/ID`，`doc.save(..., no_new_id=True)` + 固定 metadata 日期可解；
+**加密件解不了**（AES 密钥每次随机），只能标注「别随手重跑」。
+
+**⑥ Excel 列宽单位是「默认字体下的字符数」，一个汉字占两格。**
+`len()+2` 正好差一半，值老老实实在文件里、屏幕上被截断或显示成 `####`。三条配套规则见
+conventions §26；其中**横跨多列的合并标题不算它第一列的宽度**这条，本仓库的 L2 门禁曾因此
+把一份渲染完全正常的表判红（转 PDF 读回 20 个字全在）。
+
+**⑦ `fetch-builtin-skills.ts` 的 SOURCES 里留着已改成自写的技能 = 每次 fetch 把自写实现删掉。**
+`fetchSubdir` 先 `rmSync(into)` 再拷上游。pdf 重写为自写后已从 SOURCES + `X_REQUIRES` 移除。
+另：对上游技能做的任何手改（如 markdown-exporter 的 description 重路由）**必须写成 patch 函数**
+（`applyExporterPatches`），否则下次 fetch 静默还原 —— 且改完要**逐字节核对** patch 产出与提交
+的文件一致。
+
+**⑧ `soffice` 必须用 `-env:UserInstallation` 指定隔离 profile。** 否则它写进用户真实的
+`~/.config` profile（跑一次技能就改了用户的机器），且两次并发转换会抢同一把 profile 锁、
+其中一个以一个与文档毫无关系的错误失败。另：**soffice 对它悄悄拒绝的输入也退出 0** ⇒
+判成功必须看输出文件在不在，不能看退出码。
+
+---
+
+### 21.1 宽松许可 PDF 工具链（pypdfium2 / pypdf / pdfplumber / reportlab，2026-08-02）
+
+**⑨ 坐标系两个方向相反，且只在旋转页现形。** `pdfplumber` 给的是**显示坐标系**（旋转已应用），
+而 widget 的 `/Rect`、页面内容流、要画回文件里的框全是**页面坐标系**；`/Rect` 还额外是
+**左下原点**。⇒ 从 pdfplumber 拿的框要**逆**旋转回页面系，从 `/Rect` 拿的框要先转左上原点
+再**正向**旋转到显示系。对照值（`report-cjk.pdf` 第 3 页，旋转 90°）：显示
+`(502,60,517,450)` ↔ 页面 `(60,78,450,93)`。**方向搞反在未旋转页上完全看不出来**（两个框
+一模一样），只有旋转页会把框画到空白纸上。
+
+**⑩ AcroForm 里填的值，pdfplumber / pdfminer / PDFium 一个都看不见。** 三者都只读**页面内容
+流**，而域里的值活在 widget 的 `/AP` 外观流里。⇒ 想量「字实际落在哪」必须先把外观**压平**
+到页面内容（临时副本），压平规则是 PDF 32000 §12.5.5：`/BBox` 过 `/Matrix` 得到框，再缩放
+平移贴到 `/Rect`。（PyMuPDF 的 `get_text()` **会**带上 widget 文字，所以从它迁过来时这一层
+是凭空多出来的工作，不迁就以为不存在。）
+
+**⑪ pypdf 的 `replace_contents()` 会把它替换掉的那批 `/Contents` 对象全部置 Null，
+而两个页面可以共享内容对象。** `page.merge_page()` 内部走这条路。实测 `table-grid.pdf`
+（两页只差格线，MuPDF `garbage=4` 把前 13 个对象去重合并了）：给第 1 页画个框，
+**第 2 页整页变空白**（文字 66 字符 → 0）。⇒ 合并任何叠加层之前，先把该页内容拼成一份
+**私有**流（`pdfcommon.detach_contents()`）。pypdf 自己也警告 `replace_contents()`
+"has proved being unreliable"。**页面之间不共享对象的文档试不出这个**，本仓库是靠 capability
+门（P3 的 L2 fidelity）咬出来的，行为测试的 E4 表达不了。
+
+**⑫ pypdf 对加密文件的守卫是「按对象」而不是「按值」。** 加密只覆盖**字符串和流**，页树是
+明文，`/Root → /Pages → /Count` 本来就答得出来；但 `len(reader.pages)` 会直接抛
+`FileNotDecryptedError`。⇒ 只为这一个数字临时置 `reader._override_encryption = True` 是正确
+的（读的是明文数字），但**目录在压缩对象流里时那个流是加密的** ⇒ 拿不到就老实返回 null。
+
+**⑬ pypdf 无论用哪个口令打开，都返回文件里存的那一份 `/P`。** 实测同一个文件 user / owner
+都读到 20。⇒ **「以 owner 打开会看到全部允许」这条规范事实用 pypdf 验不出来**（PyMuPDF 会施加
+owner 语义，所以从它迁过来的验证代码会静默失去意义）。防线只能放在**写入前**：限制性
+`--allow` 且没给独立 owner 口令，就拒绝写。
+
+**⑭ reportlab 的三个静默失败。**
+- **`setPageSize()` 只在第一页生效**，后续页面照样继承文档级 `/MediaBox`（实测：canvas 要
+  842×595，第 3 页写出来还是 595×842）。内容流坐标是绝对的，所以事后用 pypdf 改
+  `/MediaBox` 是对的。
+- **标准 14 号字画中文不报错**，会静默掉进 ZapfDingbats、把每个汉字画成黑方块（抽出来是
+  `nnnnnnnn`）。⇒ 写之前必须自己查字形覆盖（TTF 用 `face.charToGlyph`，标准字用 cp1252 可编码性）。
+- **`Canvas` 会把一个从没用过的 Helvetica 写进每一页的资源字典**，于是「这份文件的字体是不是
+  都嵌入了」答案是「否」而理由与正文毫无关系。⇒ 传 `initialFontName=<你的字体>`。
+
+**⑮ reportlab 的 `acroForm.choice()` 遇到非拉丁选项值直接崩**（`escapePDF` 是按字节做的，
+`KeyError: 25216`）。⇒ 中文表单域只能用 pypdf 手工构造 widget 字典，`/Opt` 用
+`TextStringObject`（它会自动写 UTF-16BE）。
+
+**⑯ macOS 上第一个能找到的 CJK 字体恰恰是嵌不了的那个。** `/System/Library/Fonts/
+Supplemental/Hiragino Sans GB.ttc` 是 PostScript(CFF) 轮廓，reportlab 报
+`postscript outlines are not supported`。⇒ 字体候选必须**逐个试注册**而不是「路径存在就用」。
+实测可用：`Songti.ttc`(subfontIndex=0) · `Arial Unicode.ttf`。另：`.ttc` 要给 subfont 索引，
+有用的那一张脸不一定是 0。
+
+**⑰ pdfminer 会把中文读成「康熙部首」，而这一层折叠要分两半做。** Chrome 的 print-to-PDF
+把中文导成 Type3 字体，其 ToUnicode 把不少字映射到部首块：`力`(U+529B) 到手是 `⼒`(U+2F12)，
+`同比`→`同⽐`、`时长`→`时⻓`。**长得一模一样，比较不相等** ⇒ 搜索/diff/喂模型全部受影响
+（PyMuPDF 静默折叠了，从它迁出来才冒出来）。**康熙部首块 (U+2F00–2FD5) 每个码位都有 NFKC
+分解**，逐字符 NFKC 即可；⚠️ **CJK 部首补充块 (U+2E80–2EF3) 的 113 个码位一个分解都没有**，
+同样的招数对它完全无效，只能查表 —— 且**只该折「本身就是独立汉字」的简化部首**（⻅见 ⻓长
+⻛风），`⺅` `⻌` `讠` `纟` 这类**部件**折了等于替文档说它没说的话。
+**整串 NFKC 是错的**：会连 `①`→`1`、`％`→`%`、`Ａ`→`A`、`ﬁ`→`fi` 一起改掉。
+
+**⑱ PDF 里没有「空格」只有距离，所以「要不要插空格」是个必须实测标定的阈值。** 同一基线上
+分处两地的两段文字之间没有空格字符，直接拼接就粘成 `+31%-24%83%`。实测 deck.pdf 的 1044 对
+相邻字符：**CSS letter-spacing 占 0.0180~0.2500（字号倍数），真正的分段从 1.2934 起，中间
+5.17 倍宽的带里一对都没有**。阈值必须落在那条空带里（本仓库取 0.9）。**调低的代价不是没效果
+而是重现 PyMuPDF 的老毛病** —— 它就是把 letter-spacing 当词间空格，把 kicker 拆成
+`E N G I N E E R I N G`。
+
+**⑲ pdfplumber 把「有边框的方块」报成 1×1 的表格。** 幻灯片正是由这种卡片组成的，实测
+deck.pdf 第 4/7 页各中一枪：产出 `||` / `|---|` 这种废话 Markdown，**并且顺手吞掉卡片里的
+正文**（惯例是丢弃与表格区域重叠的文本块）。⇒ 判据加**「≥2 行且 ≥2 列」**：网格才是表格，
+边框不是。
+
+**⑳ 「显示坐标系」之外还有第三个坐标系：文字的阅读系。** ⑨ 讲的是页面系 ↔ 显示系；这一条是
+显示系 ↔ **阅读系**。任何按「文字向右走、行往下叠」写的逻辑（按 `y0` 排序、把上方 15% 当页眉带）
+在旋转页上都不成立，因为 pdfplumber 给的是 /Rotate 之后的框。**只改行聚类的轴不够** ——
+交给上层的每一个几何量（文字/图片/表格/矢量图/页面尺寸）都要换算到同一个阅读系，
+渲染时再换回去。附带独立一坑：**页面文字不横向走时 pdfplumber 的 `size` 报的是字的前进宽度
+而不是字号**（实测 24pt 标题报成 18.67，连带正文/标题排序全错）—— 字号要从阅读系的框高取。
+
+**㉑ 裁剪框翻转了 y，「有墨」这个判据会给它发通行证。** 实测同一个夹具：正确裁剪墨占比
+**0.399**，上下翻转的错误裁剪 **0.587——更高**（翻过去正好落在一张图上）。⇒ 判「裁对了没有」
+只能拿**整页渲染后按同一个框裁下来的那块**逐像素比（该路径不做任何 PDF 坐标换算，所以独立）：
+正确 0.00，翻转 66.13。墨占比只能证明「不是白纸」，证不了「是这块」。
+
+**㊿ PDFium 不调 `init_forms()` 就不画表单值，而填过的表和空表因此逐像素相同。**
+用户填进 AcroForm 的值活在 widget 的 `/AP` 外观流里（⑩），PDFium **只有在表单环境存在时**
+才画它。`pypdfium2` 的 `PdfDocument(...)` 不会自动建，`page.render(draw_annots=…)` 也管不着
+（那个参数在 v5 已经不是具名形参，传进去落进 `**kwargs` 静默无效）。实测同一份
+`form-filled.pdf`：不调 **13540** 暗像素、调了 **22291**；而未填的空表两种情况都是 13540 ——
+也就是说**「表单没填」和「画表单的那层没起来」是同一张图**，没有任何东西会报错。
+⇒ ① `init_forms()` 必须在**构造之后、取页数或页句柄之前**调（PDFium 的硬性要求）；
+② 放在**共享的打开函数**里，不要放在某个渲染入口里 —— 后者就是本仓库栽过两次的
+「护栏装在没人走的那条路上」；③ 结果（`initialised` / `none` / 失败原因）**无论成败都要报**。
+对非表单 PDF 零影响（实测普通文档 / 无 widget 的扁平件 / 加密件差值全为 0），`init_forms()`
+在无 AcroForm 时返回 `False` 而不抛。
+⚠️ **量这个缺陷不能用 PyMuPDF 重渲染**：fitz 无论有没有表单环境都画 `/AP`（实测未填 5778 /
+已填 9903），拿它当尺子的话修复与「撤回修复」得分完全相同，缺陷直接隐形 ——
+必须读被测入口**自己写出的那张 PNG**。这也是「两个门禁量的不是同一件事」的一个新形状：
+L2 的 P1/P4 走 PyMuPDF 光栅化，所以它看得见的东西，产品的用户看不见。
+
+**⓫ 用 `add_page` 重建文档会把 catalog 里的 `/AcroForm` 丢掉，而后果取决于阅读器实现。**
+（2026-08-05 修）每个 widget 的 `/V` 与 `/AP` 都跟着页面走，catalog 的 `/AcroForm` 不走 ⇒
+直接画 `/AP` 的阅读器（PyMuPDF 实测前后都是 9903，macOS 预览属这一类）照样看得见；
+走表单模块的（PDFium ⇒ Chrome 内置阅读器，以及本仓库的 `pdf_render`）**看不见**
+（实测 13540 = 空表）。而且它**不再是一份可填表单**。
+⚠️ **范围比想象的大**：`merge` / `extract` / `delete` / `rotate` / `split` **五个操作全中** ——
+凡是「新建 writer 再把页面拷进去」都是这个形状，只盯着 merge 修就是又一次「护栏装在
+没人走的那条路上」。修法装在五个操作**共同的那个 `save()`** 上。
+三条搬运规则：① `/Fields` 必须从**产出的页面**重建（`add_page` 克隆了注释，输入的 `/Fields`
+数组指的不是这份文档现在装着的那些对象）；② 一个 widget 可能挂在父域下（一个域多个页面上
+的多个 widget），要**上溯到根域再去重**；③ `/DR`（表单的字体资源）与 `/DA` 得一起带走 ——
+一个决定重建外观流的阅读器找不到字体时，把中文值画成空白。
+⚠️ **两份都带表单的文件不能默默合并**：同名域在阅读器眼里**就是同一个域**（在一个里打字
+另一个跟着变），两份 `/DR` 里同名字体也可能不是一回事。本仓库的选择是**拒绝并点名冲突的域**。
+⚠️ 附带一条量它的教训：`/DA` 来自**源文档**而不是填充脚本，本仓库 committed 的
+`form-acroform.pdf` 没有它、重生成的那份有 ⇒ 断言写成一张固定的键表会在正确实现上判红。
+正确的判据是**「输入有的一个都不能丢」**，这也是搬运唯一能承诺的事。
+
+**⓮ `.ttc` 里「第一个能注册成功的面」不是「适合排整份文档的面」，而两者的差别没有任何东西会报。**
+（2026-08-06 L4 人工验收抓的，用户原话是「字体上好像都是黑色粗字体」。）
+实测 macOS 15 的 `/System/Library/Fonts/Supplemental/Songti.ttc` 八个面：
+`0=SC-Black 1=SC-Bold 2=TC-Bold 3=SC-Light 4=STSong 5=TC-Light 6=SC-Regular 7=TC-Regular`。
+而本仓库的候选表把 **index 0 写在第一位**并「注册成功即采用」⇒ 选中的是**最重的 Black**，
+又因为一个 face 要画完整份文档，**正文也变成了展示字重**。
+⚠️ **面序跨 OS 版本会变，所以修法不是改成 index 6**，是按**字体自述的名字**判字重
+（`Black/Heavy/Bold/…`），文字字重直接胜出、展示字重只在别无选择时兜底，并把
+「只剩展示字重」这件事报出来（`heavy_weight_only`）。同一个文件里再找**配套的 Bold** 给标题用
+——只靠字号分级的标题在 h3（1.25×正文）上读起来是平的；`font-synthesis` 那类合成粗体在
+中文上尤其难看，**没有真字重就报 None，不要伪造**。
+⚠️ **顺带一条更普遍的**：`Songti.ttc` 的八个面里，**唯独 index 0 没有 U+2022** ——
+「哪个面能画哪些字」和「哪个面是第几个」毫无关系，凭位置选面是在赌两件事。
+
+**⓯ 字形覆盖检查只查了调用方写的字，而列表标记是排版自己补的 ⇒ 圆点画成空白，报告说一切正常。**
+（同一天、同一份产物，与 ⓮ 是一个因两个果。）`pdf_create.py` 的 `BULLET = "• "` 是**代码常量**，
+`collect_text()` 收 `text`/`items`/`header`/`rows` —— 没有任何调用方会在 spec 里声明这个圆点，
+于是它**从来没进过覆盖检查**。配上 ⓮ 选中的无 U+2022 的面，每个圆点都画成 `.notdef`：
+**纸上是空白，文本层是 `\x00`，报告里是 `missing_glyphs: []`，没有任何一处报错。**
+⇒ 通用形状：**「凡是要画的字符都查过」这句话，必须把代码自己注入的那部分也算进去**，
+否则守卫在、输入短一截，看起来和通过一模一样。
+⚠️ 修法上还有一层取舍：**调用方的字缺字形要拒绝**（从用户的句子里删掉一个字是撒谎），
+**标记缺字形应当降级**成 ASCII 替身并报出换了什么（为一个圆点让整份文档失败不划算）——
+两者不是同一类东西，用同一条规则处理必然有一头是错的。
+⚠️ 量它只能读**产出文件的文本层**：`\x00` 是 `.notdef` 唯一留下的痕迹，问写入方它会说没问题。
+
+**⓰ 「中文任意两字之间都可以断行」差一点点就对，而差的那一点每个中文读者一眼就看见。**
+（2026-08-06 L4 自查 B10 路径抓的，缺陷比这一刀老得多。）`pdffont.wrap()` 把每个 CJK 字符
+都当成一个断行机会，而 `is_cjk()` 的范围本来就包含 U+3000–303F（`。`）和 U+FF00–FFEF（`，`）
+⇒ **标点会被顶到行首**。实测一份四段的中文报告：**823 行里 57 行违规（6.9%）；
+试过的 80 个栏宽里有 40 个至少出现一次**。行尾禁则（`（「` 留在行末）在自然语料里罕见，
+但在窄栏（表格单元格）下稳定复现。
+⇒ 修法是**押出（push-out）**：把标点焊在它所属的那个字上一起挪行，而不是悬挂到版心外
+——一个偶尔外挂的栏和真的溢出很难分辨，而本技能的检查正是从页面上读溢出的。
+⚠️ **逃生舱比规则本身更要紧**：焊起来的那一串如果本身就宽于整栏（窄单元格里成串标点），
+强行不断会把正文推出版心 —— **拿一个排版瑕疵换一个看得见的溢出是亏的**。这种情况必须拆开断，
+并且这条让步要写进 SKILL.md，否则下一个人会把它当成漏网。
+⚠️ **两个 shipped 夹具都恰好在别处断行** ⇒ 这个缺陷存在于**每一份产物**、而**一个测试都没红**。
+所以断言必须自带「夹具还在不在真的考这条」的守卫：拿从页面上量到的字宽模拟一次贪心断行，
+证明**不带禁则的话本来会违规**；守卫失败要报「失败的是守卫不是规则」，而不是悄悄变绿。
+
+---
+
+### 21.2 WordprocessingML（`skills/builtin/docx`，discussions/059 S4，2026-08-02）
+
+**㉒ 一句话不是一个 run，而错误实现是「部分正确」的。** Word 因为格式变化、拼写检查、
+每次保存的修订 id 把段落切成多个 `<w:r>`。所有人第一反应的
+`for r in p.runs: r.text = r.text.replace(a, b)` 在本仓库夹具上实测 **1/2** ——
+标题里那次（单 run）找得到，正文里被切成 `"2026 年第"` + `"三季度"` 的那次找不到。
+⇒ 必须建**段落字符流**（`<w:t>` 节点 ↔ 偏移映射）再匹配。
+⚠️ **一处都找不到的工具一分钟内会被报 bug；十处对九处的工具会一直用下去** ——
+所以这条坑的危险不在难度，在它不报错。
+附带：替换应继承**第一个** run 的格式（另一种做法会在用户没要求的地方插入格式边界）；
+穿过 `<w:tab>`/`<w:br>` 的匹配应拒绝并点名，而不是悄悄把换行删掉。
+
+**㉓ `<w:sectPr>` 必须是 `<w:body>` 的最后一个子元素，而 `body.append(p)` 恰好违反它。**
+追加段落是最常见的 docx 编辑，自然写法就是错的。Word 的反应是「修复」文件，
+**修掉的正是那个 section** —— 页面尺寸、页边距、页眉页脚绑定一起没。
+同族三种序规则都要建模：SEQUENCES（`pPr`/`rPr`/`sectPr`/`tblPr`/`tcPr`/`trPr` 是严格
+`xsd:sequence`）· LEADING（`w:p` 的 `pPr`、`w:r` 的 `rPr`、`w:tbl` 的 `tblPr`+`tblGrid` 必须领先）·
+TRAILING（就是这条）。
+
+**㉔ 删除的文字是 `<w:delText>`，插入的文字是普通 `<w:t>`，两者都不能按直觉处理。**
+`<w:del>` 里的文字**已经不在文档里**，把它折进正文会让文档说出相反的话；
+`<w:ins>` 里的文字**在文档里**，漏掉它同样是失真。
+⚠️ **python-docx 的 `paragraph.text` 只遍历直接的 `<w:r>` 子元素 ⇒ 读不到被跟踪插入的文字**
+（实测本仓库夹具：它给出「本季度同比增长。」，漏掉 `净利润`）。从它迁出来或与它对照时必须知道。
+
+**㉕ python-docx 的 round-trip 不丢东西 —— 不要把 openpyxl 的结论搬过来。**
+实测：`Document(p).save(q)` 后 **17/17 part 逐字节相同**（openpyxl 同样操作会丢 customXml/
+metadata，见 ②）。它只丢**没有任何关系指向的孤儿 part**（注入一个，保存后消失）。
+⇒ docx 用「外科式编辑」的理由**不是**补库的窟窿，而是做库表达不了的事（修订、批注、域、跨 run）。
+**照抄 xlsx 的叙事就是一句没有数据的形容词。**
+
+**㉖ 转 .docx 要的是 LibreOffice **Writer**，不只是 `soffice`。** 只装 `libreoffice-calc`
+的机器上 `soffice` 二进制存在、**对 .docx 退出 0 且不产出任何文件** —— 与 ⑧ 是同一条规则的
+更强版本：判成功只能看输出文件在不在。本仓库 CI 因此一直红着（L2 的 D7 对每个 docx 用例
+都转 PDF），只是分支没 push 所以没响。
+
+**㉗ python-docx 自带的 `default.docx` 不合规，所以它不能当门禁的正样本。**
+`<w:zoom w:val="bestFit"/>` 缺 Transitional 要求的 `w:percent`（§5·补.8d 首次跑 D2 时发现）
+⇒ **它产出的每一份文档都带这条**。要一份能过 XSD 的 docx 夹具，只能手写 ——
+本仓库 17 个 part 共 8.3 KB，一次通过 D1–D7 零 finding，且逐字节可复现。
+
+**㉘ 模板填充与文本替换的契约必须不同。** 替换找不到叫「没找到」；
+**模板填不上叫「合同带着窟窿发出去了」**。所以模板路径必须额外回答：还剩哪些占位符
+（`unfilled`）· 你给的哪个值一个都没匹配上（`unused_values`，基本都是键名打错，
+而它与「模板里本来就没这个占位符」在报告里长得一模一样）· 并提供 `--strict` 拒绝写出。
+另：**模板默认要填页眉页脚**（普通替换则应 opt-in）—— 信笺抬头里的占位符和正文一样多。
+
+**㉙ 「按条数裁 stdout」挡不住「条数少但每条巨大」，而这一半是两个技能共有的。**
+`compact()` 按**列表长度**裁剪，所以一份含 **1 张 800 行表格**的报告列表长度是 1、
+直接放行 —— 实测 `docx_read.py --tables` 打出 **130,602 字节**（同一脚本长文档路径的预算是 6,000）。
+stdout 由 agent 读、按 token 付费，**team 委派下还要跨边界再付一次**。
+⇒ 两道闸都要：**条数**（多而小）+ **字节**（少而大），且**过度修正本身是另一个缺陷** ——
+裁完必须仍然说得出「这里有一张多大的表被省略了」，否则「巨大的表」和「没有表」分不出来。
+⚠️ **这个缺陷是「换个角度提问」抓的，不是门禁抓的**：C1 只喂过「很多段落」，
+从没喂过「一张很大的表」。gotchas §21.1 那条 pdfminer stdout 是同一族。
+
+**㉚ 跟踪修订有五种形态，只认识 `<w:ins>`/`<w:del>` 会毁掉文档。** 另外三种：
+`moveFrom`/`moveTo`（+ 区间标记，只解一半等于留半个移动）· **段落标记上的修订**
+（`<w:pPr><w:rPr><w:ins/>`，它表示**段落分隔符**被插入/删除，接受或拒绝意味着**合并两个段落**，
+当成行内修订解包会「文档看起来没变、编辑其实没生效」）· `<w:pPrChange>` 等格式修订
+（**旧属性存在它内部**，拒绝时要放回去；直接删掉 = 报告说拒绝了、格式却留着新的。
+⚠️ 还要注意旧属性比看上去深一层：`<w:pPrChange>` 里装的是一个 `<w:pPr>`，
+要放回去的是**它的子元素**，直接上提会得到 `<w:pPr><w:pPr>`）。
+⇒ 唯一诚实的契约是**每次操作后重扫并报告 `remaining`**，让不认识的形态显形而不是被当成成功。
+**段落标记必须最后处理**：它在文档序里是段落的第一个元素，按文档序扫会在段落还装着
+即将删掉的内容时就去问「空了吗」⇒ 拒绝一个被插入的段落会留下一个空段落。
+
+**㉛ `<w:ins>` 里嵌 `<w:del>` 是合法的、也是最普通的评审流水**（插入的文字后来又被删了）。
+本仓库的 L2 D5 曾用 `.iter()` 后代遍历把它判红 —— **裁决来自 vendored 的 ECMA-376 XSD**
+（`CT_RunTrackChange` 的内容模型含 `EG_ContentRunContent`，其中就有 `w:ins`/`w:del`）：
+D2 判 VALID、D5 判红 ⇒ D5 错。**放宽必须配正样本用例**，否则分不出「修好了」和「没牙了」。
+附带：**python-docx 的 `paragraph.text` 读不到跟踪插入的文字**，所以带未处理修订的文档
+用它断言「正文里有没有某句话」会得到错误答案 —— L1 的 sample 写 `contains` 时要点名修订之外的文字。
+
+**㉜ 一条批注是五样东西，删掉最后一条时那个 part 也要走。**
+`word/comments.xml` · `[Content_Types].xml` 的 Override · document.xml 到它的关系 ·
+`<w:commentRangeStart/End>` · 装着 `<w:commentReference>` 的 run。写三样 = Word 提示修复。
+而删一个 part 又是三件事（见 ③）。⇒ 门禁侧同样要有出口：**「这个 part 是有意删掉的」
+必须能被表达**，否则唯一的出路是谎报产物 —— 与 `finance_colors` 那条（§21 之外，059 §六·补二）
+是同一个病。本仓库的做法是让 `may_drop` 对保真度检查的**每一条**规则生效，并配「不声明就照样打红」的控制臂。
+
+**㉝ 页眉页脚是四样东西，而首页 / 奇偶页变体是五样 —— 第五样才决定前四样有没有用。**
+四样 = part · `[Content_Types].xml` 的 Override · document.xml 到它的关系 ·
+`<w:sectPr>` 里的 `<w:headerReference>`。第五样是**开关**：`first` 要
+`<w:titlePg/>`（同一个 `sectPr` 里），`even` 要 `<w:evenAndOddHeaders/>` ——
+**它不在 section 里，在 `word/settings.xml`**（CT_Settings 是一个 97 个子元素的
+`xsd:sequence`，`evenAndOddHeaders` 在第 48 位、`updateFields` 在第 78 位，追加即非法）。
+四样全对、schema 全过、Word 打开一看还是原来那个页眉，**没有任何东西报错**。
+反向同理：删掉首页页眉必须把 `<w:titlePg/>` 一起关掉，否则第一页变成**完全没有页眉**。
+
+**㉞ 目录是一个域，域的结果是缓存，而 LibreOffice 转 PDF 时也不更新域（实测）。**
+所以「写好页码，下游会有人更新」不成立 —— 缓存里写什么，PDF 里就是什么。
+本仓库的取舍：**条目缓存**（标题文字 + 层级 + 指向书签的超链接，打开即可读可点）、
+**页码不写**（放一个不会被误认成数字的占位符），另加 `w:dirty` +
+`<w:updateFields w:val="true"/>` 请阅读器自己算，并把这三条写进报告。
+⚠️ 附带：TOC 条目活在 `<w:hyperlink>` 里，**python-docx 的 `paragraph.text` 看不见它们**
+（与 ㉔/㉛ 同一个原因）⇒ L1 sample 的 `contains` 只能点名标题自身或 TOC 标题。
+
+**㉟ 多级编号有两半，只写一半的 XML 看起来完全正确；而写对了两半会连累第三个东西。**
+一半是 `<w:abstractNum>` 的每一级用 `<w:pStyle>` 点名 `HeadingN`，另一半是**标题样式自己的
+`pPr` 里要有对应的 `<w:numPr>`** —— 少了后者，编号一个都不出现。
+⚠️ 而两半都写对之后：`TOCHeading` 按惯例 `basedOn="Heading1"`，于是**继承**了这套编号，
+**目录页自己占掉第 1 号**，真正的第一章变成 2。实测渲染是
+「1. 目录 / 2. 经营概况 / 2.1 收入分析 / 3. 风险提示」，**包里没有一处非法**。
+解法是给它写 `<w:numId w:val="0"/>`（§17.9.18 留给「取消编号」的值）。
+**这个缺陷只有把产物渲染出来才看得见**，结构检查和 XSD 都是绿的。
+⚠️ **而这是同一条继承的一半 —— 另一半要真的更新一次域才看得见。**
+`basedOn="Heading1"` 同时传下 `outlineLvl=0`，于是「目录」这个标题在阅读器眼里
+**就是一级标题**，更新目录时把自己列了进去。实测 WPS（2026-08-05）：技能写的 7 条缓存
+变成 8 条，新的第一条是「目录 …… 1」。**渲染也看不见它** —— 渲染出来的是技能自己写的
+缓存，而 LibreOffice 从不更新域。两样都要显式取消：`numId=0` + **`outlineLvl=9`**（正文级）。
+**这一条给「门禁全绿≠没缺陷」补了一个新形状：有些东西只有在一个会更新域的阅读器里更新
+一次才存在** —— 静态检查、XSD、连渲染都路过了它。
+附带一条同族的：**目录页码属于最后更新它的那个引擎**。实测同一文件 WPS 排 2 页、
+LibreOffice 排 3 页，在 WPS 更新后的页码经 LibreOffice 排版 6 条里 3 条对不上 ——
+「下游按一次 F9 就好了」只对**按 F9 的那个阅读器**成立。
+
+**㊱ Word 的图片尺寸单位是 EMU（1 英寸 = 914400），而且一张图要写两个尺寸。**
+`<wp:extent>`（排版框）与 `<a:ext>`（图被拉伸成的大小）**必须一致**，
+不一致时 Word 画一个尺寸的框、把另一个尺寸的图塞进去 —— 看起来像「导出模糊」不像 bug。
+把**像素数**填进 extent ⇒ 图宽 0.00026 英寸（等于没有）；填**厘米数** ⇒ 图几十页高；
+**两个都不报错**。尺寸要从图片自己声明的分辨率算（PNG 的 `pHYs` / JPEG 的 JFIF density）：
+实测 240px 的图，读 `pHYs`（150 dpi）得 1462919 EMU，按「大家都用 96 dpi」得 2286000 —— 差 56%。
+另：往一个从没装过图的包里插图，`<Default Extension="png">` 是**必须新加**的
+（它是 Default 不是 Override），少了它 Word 提示修复。
+
+**㊲ 一个 run 没有 `w:rFonts` 不等于它没有字体，而「给每个中文 run 写上宋体」是错的。**
+字体沿四层解析（§17.7.2）：run 自己的 `rPr` → `w:rStyle` 字符样式及其 `basedOn` 祖先 →
+`w:pStyle` 段落样式及其祖先 → `w:docDefaults`。值可能**早就被说过了**，
+覆盖掉任何一层都是在给作者已经做过决定的文字改样式 —— 而改完**一样过 D6、一样能渲染**，
+只是不再是交进来的那份文档。⇒ 巡检必须先走样式链并逐 run 报告**这个值从哪来**，
+只有「四层都没说」时用默认值才是诚实的（本仓库为这一类单列计数 + `--strict` 拒绝）。
+附带：`@w:eastAsiaTheme` **算已绑定**（它是一层间接，不是缺失），
+要「显式化」它只能复制那个**属性**，把值 `theme:minorEastAsia` 当字体名写进去是新缺陷。
+
+**㊳ 「哪些 part 有正文」只能有一个答案，忘掉页眉页脚是一种没有症状的缺陷。**
+`docx_revise.py` 出厂时**只处理 `word/document.xml`**：页眉里的跟踪修订
+`--accept-all` 会**静默留下**，而 `remaining` 也只扫正文 ⇒ 它一边留着修订、
+一边报告「没有剩余」。⚠️ **发现它的不是任何针对 W7 的断言，是 W18 的闭环校验**
+（接受全部修订后逐字等于 B）在**别的能力**上跑出来的。
+⇒ 本仓库把它收进 `docxcommon.text_parts()`（正文 + 全部 header/footer）：
+**读与解析覆盖全部 part，写仍是 opt-in**（`docx_edit.py --in-headers` 那套）——
+「用户要求改正文」不该悄悄改到信笺抬头，但「接受全部修订」之后还剩修订是纯粹的损坏。
+
+**㊴ 表格边框 `w:sz` 的单位是八分之一磅，而「不写这条边」不等于「这条边没有」。**
+写成磅会得到一条细得像渲染 bug 的线，**没有任何东西会报错**。
+更隐蔽的是省略：表格若已声明 `w:tblStyle`，你**没有写**的那条边会由样式定义**显出来** ⇒
+要「无边框」必须显式写 `w:val="none"`。`CT_TblBorders`/`CT_TcBorders` 的子元素序是
+`top, (start|left), bottom, (end|right), insideH, insideV`（Strict 与 Transitional 两套拼写
+同处一个 `xsd:choice`）；`CT_TblCellMar` 同理。三张表都是 strict sequence，顺序错即非法。
+另：**三线表的那条线不能用 `insideH`** —— `insideH` 画在每一对行之间，那是网格加粗外框，
+不是三线表；表头下那一条要写在表头**单元格**的 `w:tcBorders/bottom` 上。
+
+**㊵ 中文列宽：一个显示宽度单位实测 = 105 dxa（中日韩字符），拉丁字符 94~122。**
+标定办法是把每个字符串**单独成段**渲染（不可能折行）再从 PDF 量回 x 跨度 ——
+不要凭字号推算。`len()` 把一个汉字和一个字母算作等宽 ⇒ 中文列只拿到需要量的**一半**，
+而旁边的数字列坐在富余上。本仓库分配用 **130 dxa/单位**（实测最大值往上圆一档）+
+两侧 `tblCellMar`。⚠️ **`w:tblLayout` 不写 `fixed` 时，你算出来的 `gridCol` 只是建议**，
+渲染器可以不理。以及 **AutoFit-to-contents 会让表变窄** ——
+一张声明 7500 dxa 宽却只装四个字的表，「适应内容」之后就是窄的，这是对的，不是缺陷。
+
+**㊶ 跨页重复表头是 `w:tblHeader`，写在表头行的 `w:trPr` 里（实测有效）。**
+实测：带它时表头出现在第 1/2/3 页，不带时只在第 1 页 ⇒ 这是**二值、可在渲染层断言**的属性，
+也是「表格预设」这类主观能力里少数能被门禁检查的东西之一。
+斑马纹底色要**从第一个数据行开始数**，把表头算作第 1 条带 ⇒ 下面每一条都错位一行。
+
+**㊷ 两份 .docx 的 XML diff 几乎必然是噪声，因为 Word 每次保存都重写这些东西：**
+`w:rsid*` · `w:proofErr` · `w:bookmarkStart/End` · `w:lang` · 空 run 合并 · 属性顺序 · zip 条目顺序。
+⇒ 有用的 diff 必须先定义「什么算一处差异」（本仓库：**一个段落的可见文字变了** + 显式白名单），
+并且把上面这些**逐类报出计数而不计为差异** —— 「我看了并判断它不重要」和「我没看」
+是两回事，而只有前者可以被检查。
+⚠️ **「接受全部修订后等于 B」这条判据必须限定在本次新加的修订 id 上**：
+文档可能自带别人的修订，`--reject-all` 把那条也拒掉是正确行为、却不是你要问的问题。
+
+---
+
+### 21.3 真实语料暴露的形状（L3，discussions/059 §六·补九，2026-08-04）
+
+> 下面每一条都**只有别人产的文档才碰得到**：本仓库全部手编夹具跑绿的同时它们是坏的。
+> 教训来源见 059 §六·补九「六条独有的教训」。
+
+**㊸ pypdf 是惰性解析的：装在 `PdfReader(...)` 构造处的兜底只盖住一小半。**
+一份页面树是瓦砾的 PDF **构造照样成功**，`PdfReadError` / `PdfStreamError` 要等走
+`reader.pages` 或对象树时才炸。实测 73 份可读 PDF 里 **9 份**因此把一墙 Python 交给调用方。
+⇒ 错误边界要放在**整个入口**上，把 `pypdf.errors.PyPdfError`（+ `DependencyError`）
+当成「这个文件坏了」= 一句话 + 非零退出，而不是当成「我们的 bug」。
+
+**㊹ PDF 的元数据值可以是间接引用，`json.dumps` 会当场炸。**
+`/Producer` 存成 `12 0 R` 时 pypdf 返回 `IndirectObject`；库写的夹具**永远**把它写成字面量，
+所以这条在自建夹具上不可见。⇒ 任何要序列化的 PDF 元数据都得先 `.get_object()`
+（**有界地**解，引用可以成环），再把非 JSON 原生类型转字符串。
+
+**⓬ openpyxl 的 `write_only` 工作表是边到边流式写出的，`<cols>` 写在它的开头 ——
+所以第一次 `append` 之后设的列宽被静默丢弃。** 不报错、不警告：实测
+`xlsx_convert.py --from csv --autofit` 报 `widths_set: 5` 而产物里一个 `<cols>` 都没有
+（openpyxl 3.1.5；最小复现是同一段代码把设宽挪到 append 之前，`<cols>` 就在了）。
+⇒ ① `write_only` 下**列宽必须在第一次 append 之前设**；② 报告里的数要**从写出的文件里
+读回来核对**——这个缺陷能活下来，全靠没有人问过「你报的 5 在文件里吗」。
+⚠️ 附带一条覆盖面的教训：本仓库所有列宽断言测的都是**编辑路径**
+（`xlsx_write.py --autofit`，走外科式写 sheet XML，一直是对的），**创建路径零覆盖** ——
+同一个能力两条代码路径，只测了一条。
+
+**⓭ 一个 multiline 表单域会折行，所以「整串装不装得下一行」是个错的问题。**
+实测同一个域：整串要 490.0pt、框宽 300pt，而折行后最宽的一行是 295.44pt，两行都完整渲染。
+按单行判会把一个完全可见的值报成溢出。⇒ 认 `/Ff` 第 13 位（`1 << 12`），multiline 走折行后
+**逐行**比宽度；真正会出事的是**高度**（行数超过框高 ⇒ 尾巴没了，且没有别的症状）。
+⚠️ 门禁里的折行**不要 import 被测技能的实现** —— 一个门禁要能在技能错时和它唱反调，
+就不能借用被测对象的代码（与 ㊽「不能用被测对象自己站着的库判输入」同一条规矩）。
+
+**㊺ `<row r="1048576">` 是野外真实存在的，openpyxl 会照单全收。**
+非 read_only 的 `Worksheet` **不看 `<dimension>`**（那串字符串是摆设），它的 `max_row` 是从
+实际单元格算的 —— 而一份 145 KB 的 workbook 完全可以在最大行号上放一个单元格，于是
+`max_row × max_column` = 千万级。实测：默认的整表扫描 **10 分钟没返回**，并把一张 2 行的表
+**报成 1048576 行**（后者是错答案，不只是慢）。
+⇒ ① 任何「遍历整张表」的路径都要有**单元格预算**，超了必须**打印出来**（一个看起来像完整
+结果的截断结果比报错更糟）；② `rows`/`columns` 要从**实际有值的单元格**数出来。
+⚠️ `reset_dimensions()` 看着像解药，但 openpyxl 3.1.5 **只在 `ReadOnlyWorksheet` 上有它** ——
+在普通 worksheet 上 `hasattr` 直接 False，一个静默不执行的守卫会让注释里的修复变成谎话。
+
+**㊻ `docProps/app.xml` 的 `<Application>` 不是这份 XML 的出处证明。**
+它说的是**原始文档**是谁存的；夹具被手工裁过之后它照样留在那里。实测：三份写着
+`Microsoft Word` 的 .docx，`<w:tbl>` 缺必需的 `<w:tblPr>` —— Word 不会那么写。
+⇒ 想说「这是 Word/Excel 亲手存的」时，只能说「它**声称**是」。
+
+**㊼ 两套实现比崩溃率时，判据不能是退出码。** 退出码是**约定**，而两代实现的约定可以不同：
+本仓库新技能是「exit 2 = 可操作的错误，exit 1 留给真崩溃」，被它取代的旧脚本是
+`print('Error opening …'); return 1`（一行干净的话）。按退出码判，旧的会因为**用了另一套约定**
+被整片记成崩溃，比出来的差距是测量造的。⇒ 判据取**与约定无关**的那个量：
+stderr 里有没有裸 traceback（外加信号/超时）；退出码另记一笔，且只对声明过它的那一方有意义。
+
+**㊽ 「输入好不好」不能用被测对象自己站着的库去判。** 用 openpyxl 判 xlsx 输入是否合法，
+而被测的 `xlsx_read.py` 也站在 openpyxl 上 ⇒ 凡是它读不了的都被划进「输入本来就坏」，
+**它的崩溃率是它自己划的分母**。⇒ 输入门只做**结构性**判断（能否当 zip 打开 / 必需 part
+在不在 / XML 良构），PDF 换一个独立实现（pdfminer，不是 pypdf）。
+另：输入**自带**的规范违规不该扣分母，只该**屏蔽那一条检查**对输出的判定。
+
+**㊾ 拿真实语料喂门禁，会先打脸门禁自己。** in-process 跑校验既没有超时也没有内存边界：
+上面㊺那份 workbook 让 L2 的 openpyxl 校验吃到 **4.7 GB RSS 且不收敛**，一份病态文件挂死整轮。
+⇒ 校验跑在**子进程 + 超时**里，顺带守住第二件事：lxml / pypdfium 这类 C 扩展在畸形输入上
+会**段错误**，in-process 的话整个门禁跟着死，而且死状看起来像「跑完了」。
+判不了的那些要单列成「**门禁自己的局限**」，不进任何率的分子 —— 它不是被测对象的缺陷。
+
+**㉚ python-pptx：表格与组合里的文字对「顶层 shape + `has_text_frame`」这条遍历不存在，
+而 `prs.save()` 即使一个字都没改也是整包重打。**（2026-08-16 L4 §四 实测，059 §三十六。）
+两件事各自都不难，合起来才是那个真缺陷：表格是 `GraphicFrame`、组合是 `GroupShape`，
+两者的 `has_text_frame` 都是 `False` ⇒ 一张只有表格的幻灯片，遍历出来和一张空白页
+**逐字节相同**；而替换类工具打出的 `replacements: N` **只能往上数**，
+「一处都没漏」和「漏了九处」在 stdout 上长得一模一样。
+⇒ 凡是「只覆盖一部分容器」的读/改工具，**必须把「我看得见但够不到几处」也报成一个数**
+（本仓库 `pptx-edit` 的 `[unread]` / `[!]` 就是这个形状），
+否则调用方唯一能做的推断是「没有别的了」。
+**写侧**：`prs.save()` 重建整个 zip —— 实测拿一份 46 part 的 deck 替换一个文件里不存在的词，
+`replacements: 0` 而 sha 变了：**46 个 part 内容逐字节全同，条目顺序与全部时间戳全变**。
+这一份没丢东西不代表它不会丢（同 ②/㉕ 的道理，python-pptx 对它没有模型的 part 一样没有承诺）。
+⇒ **没有任何改动时不要写**；`--out` 这类「调用方明确要一份产物」的路径除外。

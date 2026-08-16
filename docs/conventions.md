@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-07-30 -->
+<!-- last-synced: 2026-08-02 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -396,11 +396,11 @@ setTimeout(() => fetchSources(), 500)
 
 ## 12. 内置技能 authoring（`skills/builtin/`，ADR-032）
 
-**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter/ppt-master）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（doc-edit、feishu-assistant）可直接编辑（改完重打 zip 同步 sentinel）。**生效链路（2026-07-03 起 zip 分发，ADR-041）**：改任意内容 → 重跑 fetch 脚本刷新 `.builtin-version`（内容 hash）→ 构建期 `scripts/pack-builtin-skills.ts` 按 hash 惰性重打 `skills-builtin.zip`（beforeDevCommand/beforeBuildCommand/build-release 自动跑）→ 桌面端 sentinel 变化触发升级重装。注意：**已在跑的 `tauri dev` 期间直接改 `skills/builtin/` 不会进 bundle**——需重启 dev 或手动 `bun run --bun scripts/pack-builtin-skills.ts`；pack/fetch 两脚本的 hash 算法必须逐字节一致（gotchas §10）。
+**目录约定**：每个内置技能一目录，含 `SKILL.md`（frontmatter `name`+`description`+自定义 `x-requires:[...]`）+ 可选 `scripts/` + `LICENSE.txt`（第三方上游许可，须 Apache-2.0/MIT 等**可再分发**）+ `NOTICE`（来源 commit + 改动说明）。上游技能（skill-creator/skill-installer/pdf/markdown-exporter/ppt-master）**由 `scripts/fetch-builtin-skills.ts` 拉取+打补丁，勿手改**；自写技能（deckcraft / docx / xlsx / pdf / pptx-edit / *-assistant）可直接编辑（改完重打 zip 同步 sentinel）。**生效链路（2026-07-03 起 zip 分发，ADR-041）**：改任意内容 → 重跑 fetch 脚本刷新 `.builtin-version`（内容 hash）→ 构建期 `scripts/pack-builtin-skills.ts` 按 hash 惰性重打 `skills-builtin.zip`（beforeDevCommand/beforeBuildCommand/build-release 自动跑）→ 桌面端 sentinel 变化触发升级重装。注意：**已在跑的 `tauri dev` 期间直接改 `skills/builtin/` 不会进 bundle**——需重启 dev 或手动 `bun run --bun scripts/pack-builtin-skills.ts`；pack/fetch 两脚本的 hash 算法必须逐字节一致（gotchas §10）。
 
 **新增上游技能条目流程**（fetch 脚本 `SOURCES`）：核对 LICENSE 可再分发 → `ref` **pin release tag**（勿 main，bump 时改 tag 重跑）→ 大仓库（整仓 tarball 过大）设 `sparse: true`（blobless sparse clone 只拉 `subdir`；`--branch` 不接受 commit SHA）→ 用 `drop`/`keepOnly` 裁非功能大文件（纯文档图等）→ `X_REQUIRES` 与前端 `BUILTIN_DEP_MAP` 同步 → 专属适配写成 `applyXxxPatches`（先例：skill-installer 改安装目标、ppt-master 注 `.env` 警告+清悬空引用）→ 跑 `bun run --bun scripts/fetch-builtin-skills.ts <name>`（按名过滤）并提交产物。
 
-**自写技能脚本模式**（参考 `doc-edit/scripts/*.py`）：argv 驱动、`--json` 可选结构化输出、依赖缺失时 stderr 打印缺失库名 + `sys.exit(1)`（让 agent 据此提示安装）、无网络副作用、就地改默认/`--out` 另存。保持「薄」：只覆盖高频操作，复杂场景让 agent 直接写库 API 代码。
+**自写技能脚本模式**（参考 `pptx-edit/scripts/*.py`）：argv 驱动、`--json` 可选结构化输出、依赖缺失时 stderr 打印缺失库名 + `sys.exit(1)`（让 agent 据此提示安装）、无网络副作用、就地改默认/`--out` 另存。保持「薄」：只覆盖高频操作，复杂场景让 agent 直接写库 API 代码。
 
 **要模型「随机/多样地选」必须落脚本，写进 SKILL.md 无效**（ADR-068 D1）：① LLM 的伪随机有强偏向（让它「随机选」≈ 选它见得最多的那个）；② 更硬的证据——SKILL.md 明写的规则也会被整轮跳过（discussions/053 §2.1 实测 deckcraft 第 2 轮 question 被跳）。所以把「打乱候选顺序 / 强制跨档」这类抗收敛逻辑做成 CLI 脚本，让脚本决定顺序、模型只答后续问题（deckcraft `pick_variants.py`：`sha256(seed+id)` 排序做**确定性**打乱——可复现、跨平台稳定、无 PRNG 依赖，seed 取 `项目名|主题` 故跨机器同输入同结果；并强制候选跨 ≥2 个温度档，防「候选全是安静档＝没给选择」）。真机验证：真实模型确实先跑脚本、按 `variants.json` 顺序弹提问轮给用户选。**边界**：脚本纯随机不做主题-风格匹配（刻意，为破「总选 swiss」的收敛）——有交互时用户看信号表会选对；无交互 fallback 用 `variants[0]` 才可能不适配主题。
 
@@ -727,3 +727,54 @@ const resolvedPlaceholder =
 **拼接用插值键，不要在代码里 `+` 字符串**：`"{base}（Shift+Enter 换行）"` / `"{base} (Shift+Enter for a new line)"` —— 英文要在 `(` 前留半角空格、中文的全角 `（` 自带间距，**间距属于译文，不属于代码**；靠在译文值里塞前导空格则是隐形字符，diff 里看不见。`t()` 的插值已是 split/join（`i18n-context.tsx`），base 里含 `$&` 也安全。
 
 **各语言的 base 长度可以不同**：同一条提示追加后，长 base 会让英文在半屏窗口（可用宽约 340px）折成两行而中文仍是一行 ⇒ 英文用短 base（`Reply…`）、中文保留 `继续对话…`。分语言给不同长度是常规做法，不是不一致。阈值与测量方法见 `gotchas.md §13.1`。
+
+---
+
+## 26. 编辑既有 OOXML 文档：外科式改，不要让库重建包（discussions/059 S3，2026-08-02）
+
+**结论先行**：对「把这个值写进那个单元格」这类编辑，正确做法是直接改
+`xl/worksheets/sheetN.xml` 并把包里其余每个字节原样保留，**不要走
+`load_workbook → save()`**。理由是量出来的，不是风格偏好（gotchas §21②）：
+
+| 同一次编辑、同一个文件 | 产物 part 数 | 逐字节未变的 part | LibreOffice 重算 |
+|---|---|---|---|
+| `openpyxl load → save` | 14（丢 3 个） | 10 / 17 | 一致 |
+| 外科式（`skills/builtin/xlsx/scripts/office/sheet.py`） | **17（一个没丢）** | **16 / 17** | 一致 |
+
+两条路重算出同样的数 ⇒ **保真度不是拿正确性换来的**。
+
+配套四条：
+
+1. **单元格已有的样式索引 `s` 必须保留** —— 格式是单元格的属性不是值的属性，
+   改一个数不该让整列变成「常规」。
+2. **文本用 inline string**（`t="inlineStr"`），不去动 `xl/sharedStrings.xml` ——
+   否则写一个词要改整个包。代价是重复词不复用，文件略大。
+3. **共享公式的主格拒绝覆盖**：`<f t="shared" ref="D3:D5">` 是一份定义服务一片区域，
+   覆盖主格会让其余单元格指向一个不存在的定义（文件能打开、数字没了）。
+   拒绝要**精确到那一格**，不能升级成「拒绝编辑这个文件」。
+4. **写完重新打开产物验一致性，且只对本次编辑「新引入」的问题判负** ——
+   文件本来就带的毛病照实报告但不拦着，否则最需要被修的文件恰好是修不了的。
+
+结构性改动（条件格式 / 图表 / 数字格式的**创建**）仍然只能走库重建，那条路配
+`graft_missing_parts`（把库丢掉的 part 连同 CT 与 rel 一起放回，见 gotchas §21③）。
+
+### 26.1 列宽要按显示宽度算，且有三条例外
+
+汉字占两格（gotchas §21⑥）。三条例外都会让「看起来对」的实现出错：
+
+- **公式文本不算** —— `=B2/利润表!B3` 从不显示，按它算会撑出一列空白。
+- **横跨多列的合并单元格不算它第一列** —— 标题显示在整片合并区上；Excel 自己的
+  autofit 也跳过合并单元格。
+- **同一列内的纵向合并照算** —— 竖着合并不多出任何横向空间。
+
+第二、三条必须成对写断言：只写第二条时，「跳过所有合并单元格」这种实现同样会通过。
+
+## 27. opt-in 断言必须区分「答案是否」与「没人说」（discussions/059 S3，2026-08-02）
+
+布尔型 opt-in 判据若用真值（`expect.get(k)`）判断是否「有东西可断」，
+`false` 和「根本没写这个键」就无法区分。当上层把「什么也没断言」判负时（本仓库 L1 对
+非保真度 INERT 就是这样），后果是：**一个普通对象永远无法成为「验过的产物」，唯一出路是
+谎称它属于那个特例** —— 默认打开的问题从另一扇门绕回来了。
+
+⇒ 这类键用 `k in expect` 判断存在性，并**必须配控制臂**：同一份输入把它设为 `true` 时必须
+打红。否则「opt-out 让它闭嘴」和「这条检查本来就没牙」在报告上长得一模一样。

@@ -153,6 +153,28 @@ def main() -> int:
                                      f"--screenshot={shots / f'p{i:02d}.png'}", page.resolve().as_uri()])
         n_pages = len(sections)
         print(f"OK: {shots} ({n_pages} pages)")
+        # Nobody has looked at these yet, and nothing downstream will notice if
+        # nobody ever does. Measured twice in the L4 review §四: one run sent them
+        # to a sub-agent that answered "this model does not support image input"
+        # and 0 pages were reviewed; the next run skipped the review outright and
+        # went straight to --publish. Both delivery reports listed the machine
+        # gates as all-green and said nothing about the visual pass — the omission
+        # is invisible from the artifacts, because an unreviewed deck and a
+        # reviewed one are the same bytes.
+        #
+        # So the reminder is printed HERE, in the model's context at the moment it
+        # holds the screenshots, rather than left in SKILL.md Phase 6 to be
+        # remembered. It names the action, not the state: in §二, notes that only
+        # stated a condition were dropped 3 times out of 3, while the one that
+        # named a command to run was acted on.
+        print(f"NEXT: 这 {n_pages} 张截图还没有任何人看过。Phase 6 要求把它们交独立评审"
+              f"过 R1-R8（见 references/visual-review.md）。")
+        print("      读不了图时（子代理或本模型返回 \"does not support image input\" / "
+              "\"Cannot read image\"）**不要静默跳过**：在 qa_report.json 的 visual 段写下 "
+              "{\"pages_reviewed\": 0, \"reason\": \"...\"}，"
+              "并在给用户的交付报告里单列一行「视觉审查：未执行（原因）」。")
+        print("      交付报告只列机器门禁而不提视觉审查，等于把一份没人看过的 deck "
+              "报成了全绿。")
 
     if a.pptx:
         pptx_out = build_image_pptx(out_dir / "shots", out_dir / "deck.pptx",

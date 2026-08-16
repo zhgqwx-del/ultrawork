@@ -58,7 +58,7 @@ const userPdf = join(skillsRoot, "pdf")
 const env = { HOME: tmp, XDG_CONFIG_HOME: join(tmp, ".config"), XDG_DATA_HOME: join(tmp, ".local/share") }
 const auth = "Basic " + Buffer.from(`opencode:${PW}`).toString("base64")
 
-const BUNDLED = ["skill-creator", "skill-installer", "pdf", "markdown-exporter", "doc-edit", "deckcraft", "feishu-assistant"]
+const BUNDLED = ["skill-creator", "skill-installer", "pdf", "markdown-exporter", "pptx-edit", "deckcraft", "feishu-assistant"]
 const USER_MARKER = "USER-INSTALLED raw upstream copy of pdf."
 
 // Post-reconcile shadowed state: full first-boot install from the real bundled

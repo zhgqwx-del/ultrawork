@@ -24,9 +24,9 @@ OpenCode sidecar 已支持 skill 发现（`vendor/.../skill/index.ts`）：扫�
 | `skill-installer`（= find） | openai/skills `.system/skill-installer`（Apache-2.0，改安装目标） | 从 GitHub 列出/安装技能到本机 |
 | `pdf` | openai/skills `.curated/pdf`（Apache-2.0） | 读/建/审 PDF |
 | `markdown-exporter` | bowenliang123/md_exporter（Apache-2.0，pip 模式） | Markdown→DOCX/PPTX/XLSX/PDF 等 |
-| `doc-edit` | **ultrawork 自写** | 读/改现有 docx/xlsx/pptx |
+| `doc-edit` | **ultrawork 自写** | 读/改现有 docx/xlsx/pptx（**已于 059 S6 瘦身改名为 `pptx-edit`**：docx/xlsx 由 059 S3/S4 的专用技能取代，只留 .pptx 就地读改） |
 
-文档读改自写 `doc-edit`（python-docx/openpyxl/python-pptx），规避专有许可同时补 OpenAI/md_exporter 不覆盖的「就地编辑」能力。
+文档读改自写 `doc-edit`（python-docx/openpyxl/python-pptx），规避专有许可同时补 OpenAI/md_exporter 不覆盖的「就地编辑」能力。（2026-08-04 更新：059 S3/S4 落地专用 `xlsx`/`docx` 技能后，`doc-edit` 于 S6 瘦身改名 `pptx-edit`，只保留 .pptx 就地读改。）
 
 ### D2 — 注入方案 C（拷贝到 configDir/skills/builtin）
 内置技能源码在仓库 `skills/builtin/`，经 Tauri `bundle.resources` 打包；首启时 `src-tauri` 幂等拷贝到 `~/.config/ultrawork/skills/builtin/`（被 sidecar 自动扫描）。

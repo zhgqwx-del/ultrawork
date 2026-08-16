@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react"
-import { ImageOff } from "lucide-react"
+import { FileText, ImageOff } from "lucide-react"
 import type { Artifact } from "@/components/session/artifact-preview"
 import { useApi } from "@/lib/use-api"
+import { useI18n } from "@/lib/i18n-context"
 import { cn } from "@/lib/utils"
 import { toWorkspaceRelative, pathBasename } from "@/lib/path-utils"
 
@@ -64,14 +65,31 @@ function classify(src: string): Scheme {
   return "local" // relative or POSIX-absolute path
 }
 
-/** `file:///Users/x/a.svg` → `/Users/x/a.svg` (drop scheme + optional host). */
-function stripFileScheme(src: string): string {
+/**
+ * A markdown `src` → the local filesystem path it means.
+ *
+ * Two steps, both mandatory:
+ *  1. `file:///Users/x/a.svg` → `/Users/x/a.svg` (drop scheme + optional host).
+ *  2. **Decode ONE layer of percent-encoding.** mdast-util-to-hast's image
+ *     handler is `{src: normalizeUri(node.url)}` — by the time this component
+ *     sees it, `输出/page-001.png` has become `%E8%BE%93%E5%87%BA/page-001.png`.
+ *     Feeding that to the file endpoint (which encodes again) asks for a file
+ *     whose name literally contains `%E8…`, and prefix-matching it against the
+ *     workspace root fails outright when the WORKSPACE name is non-ASCII.
+ *     ⇒ every inline image under a Chinese path silently fell back to a chip
+ *     (2026-08-15 L4: measured 3 broken, the only working one was pure ASCII).
+ *
+ * Decoding is the exact inverse: a filename with a literal `%` arrives as `%25`,
+ * so one decode restores it. `classify()` runs on the RAW src on purpose — a
+ * name containing an encoded colon (`a%3Ab.png`) must not read as a URL scheme.
+ */
+function toLocalPath(src: string): string {
   const m = src.match(/^file:\/\/(?:localhost)?(\/.*)$/i)
-  if (!m) return src
+  const raw = m ? m[1] : src
   try {
-    return decodeURIComponent(m[1])
+    return decodeURIComponent(raw)
   } catch {
-    return m[1]
+    return raw // malformed escapes (a bare `%`): use it as written
   }
 }
 
@@ -95,23 +113,51 @@ function InlineImg({ src, alt, onClick }: { src: string; alt?: string; onClick?:
   )
 }
 
-function ImageFallback({ alt, label, onClick }: { alt?: string; label?: string; onClick?: () => void }) {
+/**
+ * Why an inline image did not render. All three used to look IDENTICAL — the
+ * same grey `ImageOff` chip with the same text — which is exactly why telling
+ * "the file is outside the workspace" from "this is a PDF, not an image" took a
+ * full investigation round (059 §十七/§十九). The chip now says which one it is.
+ */
+export type FallbackKind = "outside" | "unreadable" | "document" | "blocked"
+
+/** Extensions the artifact preview can do something useful with (pdf/html render). */
+const DOCUMENT_RE = /\.(pdf|docx?|xlsx?|pptx?|csv|html?)$/i
+
+function ImageFallback({
+  alt,
+  label,
+  kind,
+  reason,
+  onClick,
+}: {
+  alt?: string
+  label?: string
+  kind: FallbackKind
+  reason?: string
+  onClick?: () => void
+}) {
   const text = alt || label || "image"
+  const Icon = kind === "document" ? FileText : ImageOff
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      title={label || alt}
+      data-testid="markdown-image-fallback"
+      data-fallback-kind={kind}
+      // The title carries BOTH, because the reason is what the name cannot say.
+      title={reason ? `${label || alt || ""} — ${reason}` : label || alt}
       className={cn(
-        "my-1.5 inline-flex max-w-[240px] items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-1.5 text-xs align-middle",
+        "my-1.5 inline-flex max-w-[320px] items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-1.5 text-xs align-middle",
         onClick
           ? "cursor-pointer hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-accent)]"
           : "cursor-default",
       )}
     >
-      <ImageOff className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+      <Icon className="size-3.5 shrink-0 text-[var(--color-fg-muted)]" />
       <span className="min-w-0 truncate text-[var(--color-fg)]">{text}</span>
+      {reason && <span className="shrink-0 text-[var(--color-fg-muted)]">· {reason}</span>}
     </button>
   )
 }
@@ -119,12 +165,13 @@ function ImageFallback({ alt, label, onClick }: { alt?: string; label?: string; 
 export function MarkdownImage({ src = "", alt }: { src?: string; alt?: string }) {
   const ctx = useContext(MarkdownImageContext)
   const api = useApi()
+  const { t } = useI18n()
 
   const scheme = classify(src)
   const passthrough = scheme === "data" || scheme === "http"
   // Only local paths WITH a workspace context are resolvable; `null` otherwise.
   const rel =
-    scheme === "local" && ctx.workspaceDir ? toWorkspaceRelative(stripFileScheme(src), ctx.workspaceDir) : null
+    scheme === "local" && ctx.workspaceDir ? toWorkspaceRelative(toLocalPath(src), ctx.workspaceDir) : null
   const cacheKey = rel ? `${ctx.workspaceDir}|${rel}` : null
 
   // Hooks run unconditionally (scheme can change across streaming re-renders, so
@@ -169,13 +216,38 @@ export function MarkdownImage({ src = "", alt }: { src?: string; alt?: string })
   if (rel) {
     const openPreview = ctx.onArtifactClick ? () => ctx.onArtifactClick!({ type: "file", path: rel }) : undefined
     if (resolved.uri) return <InlineImg src={resolved.uri} alt={alt} onClick={openPreview} />
-    if (resolved.error) return <ImageFallback alt={alt} label={pathBasename(rel)} onClick={openPreview} />
+    if (resolved.error) {
+      // The file endpoint answers `{content: ""}` for BOTH "not an image" (it
+      // only serves text + images; a PDF comes back empty) and "no such file",
+      // so the response cannot tell them apart — the extension can. A PDF is a
+      // FILE the preview panel renders properly, not a broken image; saying so
+      // (and keeping the chip clickable) is the whole difference for the user.
+      const doc = DOCUMENT_RE.test(rel)
+      return (
+        <ImageFallback
+          alt={alt}
+          label={pathBasename(rel)}
+          kind={doc ? "document" : "unreadable"}
+          reason={doc ? t("message.imageNotAnImage") : t("message.imageUnreadable")}
+          onClick={openPreview}
+        />
+      )
+    }
     // Loading (or a still-incomplete src mid-stream) → light alt placeholder,
     // never a broken glyph. Re-resolves automatically when `cacheKey` changes.
     return <span className="text-sm text-[var(--color-fg-muted)]">{alt || "…"}</span>
   }
 
-  // 3) Non-resolvable: blocked scheme, or a local path with no workspace context
-  //    / outside the workspace. Show alt text, no preview affordance.
-  return <ImageFallback alt={alt} label={src} />
+  // 3) Non-resolvable. Two different things that used to look the same: a local
+  //    path that lands OUTSIDE the workspace (the file endpoint only reads
+  //    inside it, so this can never be shown — say that), and a blocked scheme.
+  const outside = scheme === "local" && !!ctx.workspaceDir
+  return (
+    <ImageFallback
+      alt={alt}
+      label={src}
+      kind={outside ? "outside" : "blocked"}
+      reason={outside ? t("message.imageOutsideWorkspace") : undefined}
+    />
+  )
 }

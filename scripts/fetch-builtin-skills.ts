@@ -8,6 +8,10 @@
  * 全部源技能均为可再分发许可（Apache-2.0 / MIT，已逐个核对 LICENSE）。Anthropic 的
  * docx/pdf/pptx/xlsx 是专有许可、禁止再分发，**不在此列**（详见 docs/gotchas.md、ADR）。
  *
+ * ⚠️ 自写技能（deckcraft / docx / xlsx / pdf / pptx-edit / *-assistant）**不在 SOURCES 里**，本脚本不碰它们。
+ * `pdf` 曾经取自 openai/skills，059 S2 重写为自写后已从 SOURCES 移除 —— fetchSubdir 会
+ * 先 rmSync 落地目录，留在表里等于每次 fetch 都把自写实现删掉换回上游版本。
+ *
  * 用法：bun run --bun scripts/fetch-builtin-skills.ts
  * 依赖：`gh`（已认证）、`tar`。
  */
@@ -57,15 +61,6 @@ const SOURCES: Source[] = [
       "Derived from openai/skills `skills/.system/skill-installer` (Apache-2.0). Modified for ultrawork: install target repointed from $CODEX_HOME/skills to ~/.config/ultrawork/skills (see applyInstallerPatches in scripts/fetch-builtin-skills.ts); Codex `agents/` dropped.",
   },
   {
-    dest: "pdf",
-    repo: "openai/skills",
-    ref: "main",
-    subdir: "skills/.curated/pdf",
-    drop: ["agents"],
-    notice:
-      "Derived from openai/skills `skills/.curated/pdf` (Apache-2.0). Read/create/review PDF via reportlab/pdfplumber/pypdf + Poppler. Codex `agents/` dropped.",
-  },
-  {
     // 上游 frontmatter name 即 "markdown-exporter"；按 pip 模式分发：只内置 SKILL.md（指导
     // `pip install md-exporter` + `markdown-exporter` CLI），不 vendor 整个 Python 包（用户安装
     // md-exporter 时其依赖会一并装上，与「检测+引导」策略一致）。
@@ -81,12 +76,20 @@ const SOURCES: Source[] = [
   },
 ]
 
-/** x-requires frontmatter 注入（人读文档用；与前端 BUILTIN_DEP_MAP 保持一致） */
+/**
+ * x-requires frontmatter 注入（人读文档用）。
+ *
+ * ⚠️ 必须与 `use-skill-deps.ts` 的 `BUILTIN_DEP_MAP` **逐项相同** —— 这条不变式
+ * 由 `skills-builtin.test.ts` 的「x-requires 与 BUILTIN_DEP_MAP 对账」守着（2026-08-05
+ * 起）。在那之前它只写在注释里，deckcraft 就漂了 12 项：BUILTIN_DEP_MAP 声明 16 个，
+ * SKILL.md 还停在 4 个。一条没人检查的声明是会腐烂的声明。
+ * markdown-exporter 要的是**那个 CLI 本身**（pip 装出来的 `markdown-exporter`），
+ * 不是 python3 —— 徽标探的就是它，写 python3 会让人以为装了解释器就行。
+ */
 const X_REQUIRES: Record<string, string[]> = {
   "skill-creator": ["python3"],
   "skill-installer": ["python3", "git"],
-  pdf: ["python3", "pdftoppm"],
-  "markdown-exporter": ["python3", "pandoc"],
+  "markdown-exporter": ["markdown-exporter", "pandoc"],
 }
 
 /** 把取到的源目录整理进落地目录（keepOnly/drop 共用逻辑）。 */
@@ -178,6 +181,64 @@ function applyInstallerPatches(dir: string) {
   }
 }
 
+/**
+ * markdown-exporter 降级为「长尾格式转换」（discussions/059 §4·补 + §6 S2）。
+ * 上游 description 白纸黑字写着能产 DOCX/PPTX/XLSX/PDF，与自写 `pdf` 技能、`deckcraft`
+ * 直接双命中 —— description 是模型路由的唯一依据，冲突不改就是让模型随机挑。
+ * 这里做成 patch 而不是手改文件：手改的话下一次 fetch 会静默还原。
+ */
+// Routing flipped one format at a time, as each dedicated skill actually landed
+// (059 §6 batching rule): PDF in S2, XLSX in S3, DOCX in S6 — the last one waited
+// until `docx` could genuinely generate a document from Markdown (W4,
+// scripts/docx_from_md.py), because pointing at a skill that cannot do the job is
+// the same class of defect as the `doc-export` broken link recorded in 059 §1.
+const EXPORTER_DESCRIPTION =
+  "description: \"Long-tail Markdown conversion: turn Markdown text into HTML, IPYNB, MD, CSV, " +
+  "JSON, JSONL or XML files, and extract fenced code blocks into Python/Bash/JS files. NOT the " +
+  "route for Word documents (use the `docx` skill), PDF (use the `pdf` skill), Excel workbooks " +
+  "(use the `xlsx` skill) or slide decks (use `deckcraft`) — those four have dedicated skills " +
+  "that keep tracked changes, formulas, embedded fonts and layout intact, which a one-shot CLI " +
+  "conversion cannot.\""
+
+/**
+ * `md_to_html` 产的是 HTML **片段**：实测一份产物第一行就是 `<h1>`，全文零个
+ * `<!doctype>`/`<html>`/`<head>`/`<style>`，表格因此没有任何框线 —— 内容对、结构对，
+ * 差的是一层壳。上游文档只说 "Converts Markdown text to HTML format file"，不说这件事，
+ * 于是模型会把裸片段交出去并报告「转好了」。
+ *
+ * 和 description 一样做成 patch：手改 SKILL.md 下一次 fetch 会静默还原。
+ */
+const EXPORTER_HTML_NOTE = `
+---
+
+## ⚠️ ultrawork 注记（非上游内容）
+
+**\`md_to_html\` 产出的是 HTML *片段*，不是能直接打开的页面。** 实测一份产物：
+第一行就是 \`<h1>\`，全文 **零个** \`<!doctype>\` / \`<html>\` / \`<head>\` / \`<style>\`。
+没有 CSS ⇒ 表格走浏览器默认样式，**一条框线都没有**，看起来比原始 Markdown 还乱。
+内容和结构本身是对的（表格、有序/无序列表、引用、转义都在），差的只是一层壳。
+
+所以：
+
+- 用户要的是**能嵌进别的页面的片段** → 直接用，这就是它的设计。
+- 用户要的是**能双击打开来看的文档**（「转成 HTML 给我看看」通常是这个意思）
+  → 拿到片段后自己包一层 \`<!doctype html>\` + \`<meta charset>\` + 一段最小样式
+  （表格 \`border-collapse:collapse\` 加边框、正文 \`max-width\` 加行距）再写文件。
+  **别只交那个裸片段然后说「转好了」。**
+- 拿不准就问一句用哪种。
+`
+
+function applyExporterPatches(dir: string) {
+  const p = join(dir, "SKILL.md")
+  if (!existsSync(p)) return
+  const s = readFileSync(p, "utf8")
+  const next = s.replace(/^description:.*$/m, EXPORTER_DESCRIPTION)
+  if (next === s) throw new Error("markdown-exporter: 没找到 description 行，上游 frontmatter 变了，patch 需要重写")
+  // 幂等：注记已在就不重复追加（fetch 可以对同一目录跑两次）。
+  const marker = "## ⚠️ ultrawork 注记"
+  writeFileSync(p, next.includes(marker) ? next : next + EXPORTER_HTML_NOTE)
+}
+
 /** 给 SKILL.md frontmatter 注入 x-requires（若缺） */
 function injectXRequires(dir: string, deps: string[]) {
   const p = join(dir, "SKILL.md")
@@ -203,12 +264,13 @@ async function main() {
     process.stdout.write(`• ${src.dest} <- ${src.repo}/${src.subdir} ... `)
     await fetchSubdir(src, into)
     if (src.dest === "skill-installer") applyInstallerPatches(into)
+    if (src.dest === "markdown-exporter") applyExporterPatches(into)
     injectXRequires(into, X_REQUIRES[src.dest])
     writeFileSync(join(into, "NOTICE"), src.notice + "\n")
     console.log("ok")
   }
 
-  // sentinel：基于全部内置内容（含自写 doc-edit）的哈希，内容变即触发桌面端刷新。
+  // sentinel：基于全部内置内容（含自写技能）的哈希，内容变即触发桌面端刷新。
   // 喂相对路径 + \0 分隔（非裸 basename）：目录改名/文件搬家也改变 hash。
   // ⚠️ hash 算法须与 scripts/pack-builtin-skills.ts 逐字节一致（对账不变式）；排除规则
   // （JUNK/GENERATED）已抽到 builtin-skills-exclude.ts 共享，不再手抄。

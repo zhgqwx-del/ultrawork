@@ -1,0 +1,10 @@
+pptx-edit is authored by the ultrawork project (not derived from Anthropic's proprietary
+document skills). It is licensed under the same terms as the ultrawork repository.
+
+It was named `doc-edit` until 2026-08-04 and also carried thin .docx/.xlsx read/edit
+scripts; those were dropped once the dedicated `docx` and `xlsx` skills superseded them
+(discussions/059 S6), leaving in-place .pptx editing — which nothing else covers.
+
+It invokes the following third-party Python library at runtime (NOT bundled; installed by
+the user per the SKILL.md instructions):
+  - python-pptx (MIT)

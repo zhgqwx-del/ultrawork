@@ -1,1 +1,20 @@
-Derived from openai/skills `skills/.curated/pdf` (Apache-2.0). Read/create/review PDF via reportlab/pdfplumber/pypdf + Poppler. Codex `agents/` dropped.
+The pdf skill is authored by the ultrawork project. It is not derived from Anthropic's
+proprietary document skills, and the earlier openai/skills `skills/.curated/pdf`
+(Apache-2.0) content it replaced was removed in full — SKILL.md, scripts, fixtures and
+capabilities.json are written from scratch (see docs/discussions/059 §5 L0 for the
+clean-room gate that checks this).
+
+It invokes the following third-party Python libraries at runtime (NOT bundled; installed
+by the user per the SKILL.md instructions):
+  - pypdfium2 (Apache-2.0 / BSD-3-Clause; wraps PDFium, BSD-3-Clause)
+  - pypdf (BSD-3-Clause)
+  - pdfplumber (MIT; pulls in pdfminer.six, MIT, and Pillow, MIT-CMU)
+  - reportlab (BSD-3-Clause)
+
+This skill was originally built on PyMuPDF and has been moved off it in full. PyMuPDF is
+AGPL-3.0-or-commercial, and its rightsholder (Artifex, also the Ghostscript rightsholder,
+cf. Artifex v. Hancom) enforces that licence — a commercially distributed product cannot
+carry it without buying one. No file in this skill imports fitz.
+
+Fonts: generated documents embed a CJK face found on the machine doing the generating.
+No font is redistributed by this repository.
