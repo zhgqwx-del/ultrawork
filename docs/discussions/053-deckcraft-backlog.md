@@ -37,6 +37,8 @@ ADR-066（密度轴，O9）和 ADR-067（对比度轴）都是同一套路：**�
 | 4.3 | 每页起一个 Chrome 进程 | 7–14 页即 7–14 次冷启动，是门禁链耗时大头（对比度测量本身只占 0.38%） | 复用单实例可显著提速，但要处理页面间状态污染；属性能优化，非正确性 |
 | 4.4 | **ADR-068 的 Windows/Linux 真机欠账**（纯 skill 门禁性质，非桌面壳那批；**CI 只跑 TS+Rust、不覆盖 deckcraft python 门禁 ⇒ 只能真机**） | macOS 已过（真机测试 1/2：浅底 academic + 深底 tech-dark，9/9 维度不同、深底反转达标、门禁全绿） | 三条：**A（中·最该验）** probe `--window-size=1400` 在 Win/Linux 的实际视口——macOS 装饰固定吃 87px（720→633、1400→1313），Win/Linux 开销未测；**有视口自检兜底**（装不下 720 即 `exit 2` 报错、绝不静默出错）。**B（低·观感）** 新字体配对 serif/mono/humanist 回退（Win 退 Consolas/SimSun、Linux 需 `fonts-noto-cjk`、humanist〔Avenir/Optima〕基本 mac 专有）——字形变宽的溢出由客户机 probe 自愈、对比度不受字体影响、humanist 风格非 mac 视觉打折。**C（低·既有约束）** `pick_variants.py` 在 Windows `python`（非 `python3`）下（SKILL.md 已有跨平台启动器指引）。三条均**不致数据损坏/崩溃**（最坏=报错/观感打折/换命令名）。验法：同真机测试 1/2、换 Win/Linux 机器，重点看 probe 是否正常跑完（A）+ 中文/字体有无方块退化（B）。**并入 Windows 真机验收批次（同 4.2）** |
 
+| 4.5 | **陈旧项目目录会让本次运行读到上一次的 `qa_report`** | L4 §四观察（059 §三十六）：`.deckcraft/<name>/` 复用同名目录时，上一轮留下的 `qa_report.json` 原样躺在那里，本轮即使跳过视觉审查也能「读到」一份看起来完整的报告 | 与缺陷 30（视觉评审空转）互相掩护：报告在、字段全，而没有任何一页被人看过。修法候选 = 运行开始时把上轮 `qa_report.json` 归档或按 run 打时间戳；**未动手**，先记档 |
+
 ## 五、交给人的判断（机器不该替）
 
 | # | 项 |

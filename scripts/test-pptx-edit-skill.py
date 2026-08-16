@@ -74,6 +74,7 @@ TABLE_ONLY = "表内独有文字"
 GROUP_ONLY = "组合内独有文字"
 SPLIT_HEAD, SPLIT_TAIL = "毛利", "率保持稳定"   # one phrase, two runs
 SINGLE_RUN = "费用率同比下降"
+ABSENT = "这份文件里根本没有的词"               # matches nothing, anywhere
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -238,6 +239,39 @@ def collect(work: Path, script_dir: Path, *, with_table=True, split_phrase=True,
                                 SINGLE_RUN, "ZZ", "--out", out3)
     ctx["single_applied"] = count_textframes(out3, "ZZ") if out3.exists() else None
 
+    # A string that exists ONLY inside the group. The table case alone cannot tell
+    # a census that walks tables from one that walks both.
+    ctx["replace_group"] = run(script_dir, "pptx_edit.py", fresh("group"), "--replace",
+                               GROUP_ONLY, "GG", "--out", work / "group.pptx")
+
+    # ── in-place writes: does a run that changed nothing still rewrite the file? ──
+    # No --out on purpose. Every case above passes --out, so the in-place path — the
+    # DEFAULT one, and the one L4 §四 caught the model taking on the user's own deck
+    # — had no coverage at all until now.
+    noop = fresh("noop")
+    noop_before = sha(noop)
+    ctx["replace_noop"] = run(script_dir, "pptx_edit.py", noop, "--replace", ABSENT, "QQ")
+    ctx["noop_untouched"] = sha(noop) == noop_before
+
+    # The same shape, but the needle exists ONLY in a table: 0 replacements AND
+    # something out of reach. This is 🚧C5 verbatim — E in the L4 §四 rerun ran
+    # exactly this against the real deck.
+    unreach = fresh("unreach")
+    unreach_before = sha(unreach)
+    ctx["replace_unreachable"] = run(script_dir, "pptx_edit.py", unreach,
+                                     "--replace", TABLE_ONLY, "QQ")
+    ctx["unreachable_untouched"] = sha(unreach) == unreach_before
+
+    # The other direction. Without this, an implementation that never writes in
+    # place at all satisfies both cases above — and "it silently did nothing" is
+    # a worse defect than the one being fixed.
+    inplace = fresh("inplace")
+    inplace_before = sha(inplace)
+    ctx["replace_inplace"] = run(script_dir, "pptx_edit.py", inplace,
+                                 "--replace", SINGLE_RUN, "WW")
+    ctx["inplace_written"] = sha(inplace) != inplace_before
+    ctx["inplace_applied"] = count_textframes(inplace, "WW")
+
     ctx["add_nolayout"] = run(script_dir, "pptx_edit.py", nolayout, "--add-slide",
                               "--layout", "0", "--out", work / "added.pptx")
     ctx["layout_high"] = run(script_dir, "pptx_edit.py", fresh("hi"), "--add-slide",
@@ -265,8 +299,13 @@ def describe(path: Path) -> dict:
     from pptx import Presentation
     prs = Presentation(str(path))
     tf_texts, cell_texts, runs, group_texts = [], [], [], []
+    n_tables = n_groups = 0
     for slide in prs.slides:
         for sh in slide.shapes:
+            if getattr(sh, "has_table", False) and sh.has_table:
+                n_tables += 1
+            elif getattr(sh, "shapes", None) is not None and not sh.has_text_frame:
+                n_groups += 1
             if sh.has_text_frame:
                 tf_texts.append(sh.text_frame.text)
                 for para in sh.text_frame.paragraphs:
@@ -283,7 +322,53 @@ def describe(path: Path) -> dict:
                     if inner.has_text_frame and inner.text_frame.text.strip():
                         group_texts.append(inner.text_frame.text)
     return {"textframes": tf_texts, "cells": cell_texts, "multirun": runs,
-            "group_texts": group_texts}
+            "group_texts": group_texts,
+            "n_tables": n_tables, "n_groups": n_groups}
+
+
+def unreachable_truth(path: Path, needle: str) -> int:
+    """How many RUNS carrying `needle` sit where --replace cannot reach.
+
+    Counted here with the library directly, never with the script under test —
+    otherwise the assertion would be comparing the tool's report against the tool.
+    Same unit the script prints: one per matching run.
+    """
+    from pptx import Presentation
+
+    def tf_hits(tf) -> int:
+        return sum(1 for para in tf.paragraphs for run in para.runs if needle in run.text)
+
+    def walk(shape) -> int:
+        n = 0
+        if getattr(shape, "has_table", False) and shape.has_table:
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    n += tf_hits(cell.text_frame)
+            return n
+        subs = getattr(shape, "shapes", None)
+        if subs is not None and not shape.has_text_frame:
+            for inner in subs:
+                if inner.has_text_frame:
+                    n += tf_hits(inner.text_frame)
+                n += walk(inner)
+        return n
+
+    prs = Presentation(str(path))
+    return sum(walk(sh) for slide in prs.slides for sh in slide.shapes)
+
+
+def reported_unread(out: str) -> tuple[int, int]:
+    """(tables, groups) as the READ script claims them. Absent line == (0, 0),
+    which is precisely what the silent implementation reports."""
+    t = re.search(r"表格 ×(\d+)", out)
+    g = re.search(r"组合 ×(\d+)", out)
+    return (int(t.group(1)) if t else 0, int(g.group(1)) if g else 0)
+
+
+def reported_missed(out: str, needle: str) -> int:
+    """What the EDIT script claims it could see but not reach. Absent == 0."""
+    m = re.search(rf"另有 (\d+) 处「{re.escape(needle)}」", out)
+    return int(m.group(1)) if m else 0
 
 
 def count_everywhere(path: Path, needle: str) -> int:
@@ -317,6 +402,12 @@ CHECKS: dict[str, dict] = {}
 
 def check(cid: str, title: str):
     def deco(fn):
+        # A duplicate id silently REPLACES the earlier assertion while the printed
+        # total keeps climbing — the xlsx gate lost N9 that way on 2026-08-16 and
+        # the count never noticed. Refuse loudly instead.
+        if cid in CHECKS:
+            raise SystemExit(f"duplicate check id {cid!r}: the earlier assertion "
+                             f"({CHECKS[cid]['title']!r}) would be silently replaced")
         CHECKS[cid] = {"id": cid, "title": title, "fn": fn}
         return fn
     return deco
@@ -367,12 +458,16 @@ def l3(ctx: dict) -> list[str]:
     return []
 
 
-@check("L4", "a missed replacement is silent — and the count does not admit it")
+@check("L4", "a missed replacement stays missed — the reach did not change")
 def l4(ctx: dict) -> list[str]:
-    """The probe is in a textbox AND in a table cell. The tool changes one, leaves
-    the other, and prints `replacements: 1` — which names neither fact. This is the
-    defect SKILL.md warns about; it is asserted so the warning stays true, and so
-    that fixing it becomes a deliberate, visible change."""
+    """The probe is in a textbox AND in a table cell. The tool changes one and
+    leaves the other; `replacements:` counts the one it changed.
+
+    This pins the REACH, which is still deliberately narrow — the skill is thin on
+    purpose and the table copy must survive. What changed on 2026-08-16 is only
+    whether the tool ADMITS the miss; N2 asserts that half. Keeping them apart
+    matters: a future edit that quietly teaches --replace to walk tables would make
+    N2 pass for the wrong reason, and only this check would catch it."""
     out = []
     if ctx["replaced_textbox"] != 1:
         out.append(f"the text-frame copy was not replaced ({ctx['replaced_textbox']})")
@@ -381,6 +476,133 @@ def l4(ctx: dict) -> list[str]:
                    f"{ctx['surviving_probe']}")
     if reported_count(ctx["replace"]) != 1:
         out.append(f"reported count was {reported_count(ctx['replace'])}, expected 1")
+    return out
+
+
+@check("N1", "pptx_read reports HOW MANY containers it could not read, truthfully")
+def n1(ctx: dict) -> list[str]:
+    """L4 review §四: a model recovered the table on a real deck only because that
+    slide's title happened to say 「（表格）」. Strip that hint and the page reads
+    exactly like a title-only page — an empty walk looked identical to a pass.
+
+    Asserted against the fixture's real shape count (measured with python-pptx
+    here, not with the script under test), so it fires when the script goes silent
+    AND when it over-reports. It deliberately does NOT check that any table TEXT
+    appears — L1 asserts the opposite of that, and both must hold at once:
+    the existence is reported, the content still is not.
+    """
+    out = []
+    f = ctx["fixture"]
+    want = (f["n_tables"], f["n_groups"])
+    got = reported_unread(ctx["read"]["out"])
+    if got != want:
+        out.append(f"plain output claims {got} unread (table, group), fixture has {want}")
+    try:
+        payload = json.loads(ctx["read_json"]["out"])
+        jt = payload.get("unread_total", {})
+        gotj = (jt.get("table", 0), jt.get("group", 0))
+        if gotj != want:
+            out.append(f"--json unread_total {gotj}, fixture has {want}")
+        if any("unread" not in s for s in payload.get("slides", [])):
+            out.append("--json: a slide carries no `unread` key")
+    except (ValueError, TypeError) as exc:
+        out.append(f"--json output did not parse ({exc})")
+    # Line-anchored on purpose. A substring test passes on the closing summary,
+    # whose own wording contains the token 「上面已按页用 [unread] 标出」 — so
+    # `"[unread]" in out` stayed true even with every per-slide marker suppressed.
+    # Caught by the silent-read control, which was supposed to break this and did
+    # not: the check was measuring the prose, not the markers.
+    if want != (0, 0) and not re.search(r"(?m)^\[unread\] ", ctx["read"]["out"]):
+        out.append("no per-slide [unread] marker — the caller cannot tell WHICH page")
+    return out
+
+
+@check("N2", "pptx_edit reports how many matches it could see but not reach")
+def n2(ctx: dict) -> list[str]:
+    """The other half of L4. `replacements: N` can only go up, so on its own it
+    reads the same whether the run missed nothing or missed nine — 🚧C5 in the L4
+    review was built to catch exactly that and could not, because the model walked
+    around the script entirely.
+
+    Truth is counted with python-pptx directly. Both the table case and the
+    group case are checked: a census that walks tables but not groups passes the
+    first and is still half blind.
+    """
+    out = []
+    src = ctx["work"] / "in-replace.pptx"
+    if src.exists():
+        want = unreachable_truth(src, PROBE)
+        got = reported_missed(ctx["replace"]["out"], PROBE)
+        if got != want:
+            out.append(f"table case: reported {got} unreachable, truth is {want}")
+    grp = ctx["work"] / "in-group.pptx"
+    if grp.exists():
+        wantg = unreachable_truth(grp, GROUP_ONLY)
+        gotg = reported_missed(ctx["replace_group"]["out"], GROUP_ONLY)
+        if gotg != wantg:
+            out.append(f"group case: reported {gotg} unreachable, truth is {wantg}")
+    return out
+
+
+@check("N3", "it stays quiet when there is genuinely nothing out of reach")
+def n3(ctx: dict) -> list[str]:
+    """A warning that fires on every run is furniture, and gets read as furniture.
+    SINGLE_RUN lives in a plain textbox and nowhere else, so this replacement has
+    nothing unreachable and must print no `[!]` line at all."""
+    if reported_missed(ctx["replace_single"]["out"], SINGLE_RUN) != 0:
+        return ["warned about unreachable matches when there were none"]
+    if "[!]" in ctx["replace_single"]["out"]:
+        return ["printed a [!] line on a replacement with nothing out of reach"]
+    return []
+
+
+@check("N4", "a run that changed nothing leaves the input file alone")
+def n4(ctx: dict) -> list[str]:
+    """L4 §四, measured on the user's real deck: `--replace` on a word that lives
+    only in a table reported 0 replacements and rewrote the file anyway. All 46
+    parts came back byte-identical in CONTENT, but every zip entry was reordered
+    and every timestamp reset — and a full python-pptx repackage is exactly where
+    the parts it does not model get dropped. Nothing was gained by writing.
+
+    Both no-change shapes are checked: nothing to find at all, and something found
+    but out of reach. The second one must ALSO keep printing its `[!]` line — an
+    early return that skips the write is one line away from skipping the warning
+    that made this run worth reporting.
+    """
+    out = []
+    r = ctx["replace_noop"]
+    if not ctx["noop_untouched"]:
+        out.append("a 0-replacement run rewrote the input file")
+    if r["exit"] != 0:
+        out.append(f"exit {r['exit']} on a run with nothing to replace")
+    if not re.search(r"(?m)^Unchanged ", r["out"]):
+        out.append("it did not say the file was left alone")
+    if re.search(r"(?m)^Saved ", r["out"]):
+        out.append("it still claims it saved something")
+    if reported_count(r) != 0:
+        out.append(f"reported {reported_count(r)} replacements, expected 0")
+    u = ctx["replace_unreachable"]
+    if not ctx["unreachable_untouched"]:
+        out.append("a run whose only match was out of reach rewrote the input file")
+    if not re.search(r"(?m)^Unchanged ", u["out"]):
+        out.append("the out-of-reach case did not say the file was left alone")
+    if reported_missed(u["out"], TABLE_ONLY) != 1:
+        out.append("skipping the write also swallowed the [!] out-of-reach line")
+    return out
+
+
+@check("W2", "an in-place run that DID change something writes the file")
+def w2(ctx: dict) -> list[str]:
+    """The other direction of N4, and the reason N4 cannot be satisfied by simply
+    never writing in place. Every other assertion in this gate passes --out, so
+    without this one the default path is only ever asserted to do nothing."""
+    out = []
+    if not ctx["inplace_written"]:
+        out.append("an in-place replacement did not write the file")
+    if ctx["inplace_applied"] != 1:
+        out.append(f"the in-place replacement did not apply ({ctx['inplace_applied']})")
+    if not re.search(r"(?m)^Saved ", ctx["replace_inplace"]["out"]):
+        out.append("it did not report saving the file")
     return out
 
 
@@ -505,14 +727,28 @@ def patched(work: Path, old: str, new: str, name: str) -> Path:
     return dest
 
 
+def patched_in(script_dir: Path, old: str, new: str) -> int:
+    """Apply one more edit to an ALREADY patched copy. Returns the hit count so the
+    caller can refuse a control that did not fully apply."""
+    hits = 0
+    for py in script_dir.glob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        if old in text:
+            hits += text.count(old)
+            py.write_text(text.replace(old, new), encoding="utf-8")
+    return hits
+
+
 def live_read_crashes(work: Path):
     """Restore the implementation that shipped until 2026-08-04, verbatim."""
     d = patched(work, """        try:
             layout = slide.slide_layout.name
         except Exception:  # noqa: BLE001
             layout = "(no layout)"
-        slides.append({"index": idx, "layout": layout, "texts": texts})""",
-        """        slides.append({"index": idx, "layout": slide.slide_layout.name, "texts": texts})""",
+        slides.append({"index": idx, "layout": layout, "texts": texts,
+                       "unread": _census(slide)})""",
+        """        slides.append({"index": idx, "layout": slide.slide_layout.name, "texts": texts,
+                       "unread": _census(slide)})""",
         "read-crash")
     return collect(work / "c1", d)
 
@@ -534,7 +770,16 @@ def live_bounds_crashes(work: Path):
 
 
 def live_replaces_nothing(work: Path):
-    d = patched(work, "            if old in run.text:", "            if False:", "no-op")
+    # Anchored on the ASSIGNMENT, not on the bare `if old in run.text:` — the same
+    # condition now also appears (more deeply indented) in the reach census, and a
+    # short anchor is a SUBSTRING of the longer line. Matching both would have
+    # disabled the census too, turning a clean control into a cascade.
+    d = patched(work, """            if old in run.text:
+                run.text = run.text.replace(old, new)
+                n += 1""",
+        """            if False:
+                run.text = run.text.replace(old, new)
+                n += 1""", "no-op")
     return collect(work / "c3", d)
 
 
@@ -573,8 +818,7 @@ def _require():
         print("Missing dependency: python-pptx (pip install python-pptx)", file=sys.stderr)
         raise SystemExit(1)
 
-def main(argv):
-    ap = argparse.ArgumentParser(description="Read slide outline from a .pptx")''',
+def _unread_kind(shape):''',
         '''def _require():
     try:
         import pptx  # noqa: F401
@@ -583,10 +827,67 @@ def main(argv):
         print("Missing dependency: python-pptx (pip install python-pptx)", file=sys.stderr)
         raise SystemExit(1)
 
-def main(argv):
-    ap = argparse.ArgumentParser(description="Read slide outline from a .pptx")''',
+def _unread_kind(shape):''',
         "no-utf8-guard")
     return collect(work / "c9", d)
+
+
+def live_read_silent_on_unread(work: Path):
+    """pptx_read as it shipped until 2026-08-16: it skipped tables and groups and
+    said nothing, so a table-only slide printed exactly like a title-only one."""
+    # Anchored on BOTH halves of the reporting — per-slide marker and the closing
+    # summary. A first cut disabled only the per-slide half, and the summary line
+    # went on printing the correct counts, so N1 stayed green against a control
+    # that was supposed to break it. The control was wrong, and it also exposed a
+    # hole in N1 (see the line-anchored regex there).
+    d = patched(work, """            u = s["unread"]
+            if u["table"] or u["group"]:""",
+        """            u = {"table": 0, "group": 0}
+            if False:""",
+        "read-silent")
+    quiet = patched_in(d, """        if totals["table"] or totals["group"]:""",
+                       """        if False:""")
+    if not quiet:
+        raise SystemExit("control 'read-silent': the summary half did not apply")
+    return collect(work / "c10", d)
+
+
+def live_edit_silent_on_missed(work: Path):
+    """pptx_edit as it shipped until 2026-08-16: `replacements: N` and not one word
+    about what it could see but could not reach."""
+    d = patched(work, "    for old, n in missed:", "    for old, n in []:", "edit-silent")
+    return collect(work / "c11", d)
+
+
+def live_always_rewrites(work: Path):
+    """pptx_edit as it shipped until 2026-08-16 evening: it saved unconditionally,
+    so asking for a replacement that matched nothing still repackaged the file."""
+    d = patched(work, "    if args.out or total or added:", "    if True:",
+                "always-rewrites")
+    return collect(work / "c13", d)
+
+
+def live_never_writes_in_place(work: Path):
+    """The overcorrection: skip the write whenever there is no --out, changes or
+    not. N4 cannot tell this apart from the fix — W2 is the only thing that can,
+    which is the whole reason it exists."""
+    d = patched(work, "    if args.out or total or added:", "    if args.out:",
+                "never-writes-in-place")
+    return collect(work / "c14", d)
+
+
+def live_census_skips_groups(work: Path):
+    """A half-blind census: it walks tables and forgets groups.
+
+    This is the likeliest way to get the fix wrong, and the table-only fixture
+    cannot see it — which is why N1/N2 each carry a group case.
+    """
+    d = patched(work, """        if not shape.has_text_frame and getattr(shape, "shapes", None) is not None:
+            return "group\"""",
+        """        if False:
+            return "group\"""",
+        "census-skips-groups")
+    return collect(work / "c12", d)
 
 
 def fixture_no_table(work: Path):
@@ -606,9 +907,13 @@ FLAWS = [
      live_read_crashes, {"X1"}, ""),
     ("LIVE: pptx_edit as it shipped until 2026-08-04 (bounds check reaches the master)",
      live_bounds_crashes, {"X2"}, ""),
-    ("LIVE: --replace matches nothing at all", live_replaces_nothing, {"W1", "L4"},
+    ("LIVE: --replace matches nothing at all", live_replaces_nothing,
+     {"W1", "L4", "W2"},
      "L4 also fires, and must: 'the text-frame copy was replaced' is the half of "
-     "L4 that a do-nothing implementation breaks"),
+     "L4 that a do-nothing implementation breaks. W2 also fires, and must: with "
+     "every replacement disabled the in-place run has nothing to write, so the "
+     "file is correctly left alone — for the wrong reason. That is the second "
+     "detector of a do-nothing tool, not a cascade to be suppressed"),
     ("LIVE: --out is ignored and it writes in place", live_out_ignored,
      {"E1", "L4", "W1"},
      "L4/W1 also fire, and must: nothing is ever written to the --out path, so "
@@ -627,8 +932,37 @@ FLAWS = [
         "On a host whose default captured encoding is ALREADY the hostile code page, "
         "removing the guard breaks EVERY run of the script, so V0/X1 fire too — that "
         "is the real Windows defect, not a cascade to be explained away.")),
-    ("CONTROL: fixture loses the table", fixture_no_table, {"V0", "L4"},
-     "L4 also fires: with no second copy there is nothing for it to count"),
+    ("LIVE: pptx_read as it shipped until 2026-08-16 (silent about unread containers)",
+     live_read_silent_on_unread, {"N1"},
+     "L1 does NOT fire: staying silent about tables is not the same as printing "
+     "their text, and L1 only watches the text"),
+    ("LIVE: pptx_edit as it shipped until 2026-08-16 (silent about unreachable matches)",
+     live_edit_silent_on_missed, {"N2", "N4"},
+     "L4 does NOT fire, and must not: the silent version replaced exactly the same "
+     "runs. L4 pins the reach, N2 pins the admission — this control is what proves "
+     "they are two different properties. N4 also fires, by design and declared: one "
+     "of its sub-assertions says the skipped write must not swallow the [!] line, "
+     "and this control removes that line. The overlap is the guard against a future "
+     "early return in the no-change branch taking the warning with it"),
+    ("LIVE: pptx_edit as it shipped until 2026-08-16 evening (rewrites even with "
+     "nothing to change)", live_always_rewrites, {"N4"},
+     "W2 does NOT fire: writing too often still writes when there IS a change. "
+     "N2 does not fire either — the unconditional save never touched the [!] line"),
+    ("LIVE: the in-place write is skipped even when something DID change",
+     live_never_writes_in_place, {"W2"},
+     "N4 does NOT fire, and that is the point: a tool that never writes in place "
+     "satisfies every no-change assertion. Only the other direction sees it"),
+    ("LIVE: the census walks tables but forgets groups", live_census_skips_groups,
+     {"N1"},
+     "N2 does NOT fire: pptx_edit's own reach census is separate code, so a blind "
+     "spot in pptx_read's does not travel to it"),
+    ("CONTROL: fixture loses the table", fixture_no_table, {"V0", "L4", "N4"},
+     "L4 also fires: with no second copy there is nothing for it to count. "
+     "N1/N2 do NOT fire: both compare the report against the fixture's real "
+     "contents, and a fixture with no table is honestly reported as having none. "
+     "N4 fires on its out-of-reach half only — with no table there is no "
+     "out-of-reach match to warn about, i.e. that half of N4 has lost its subject, "
+     "which is exactly what this fixture control is for"),
     ("CONTROL: fixture phrase is no longer split across runs", fixture_one_run,
      {"V0", "L3"}, "L3 also fires: a single-run phrase DOES match, which is the "
                    "very thing L3 asserts cannot happen"),

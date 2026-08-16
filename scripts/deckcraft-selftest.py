@@ -14,6 +14,7 @@ Exit 0 = all cases behave, 1 = a gate failed to catch (or a positive case failed
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -250,6 +251,9 @@ def main() -> int:
                 expect("probe oversized image", code, out, "out-of-canvas")
 
     if not no_chrome:
+        shots_reminder_cases()
+
+    if not no_chrome:
         editable_cases()
 
     print(f"\ndeckcraft-selftest: {PASS} passed · {FAIL} failed")
@@ -259,6 +263,79 @@ def main() -> int:
 def node_available() -> bool:
     code, _ = run("find_node.py")
     return code == 0
+
+
+def shots_reminder_cases() -> None:
+    """--shots must hand the caller a reminder that nobody has looked at them yet.
+
+    L4 review §四, two runs: one sent the screenshots to a sub-agent that replied
+    "does not support image input" and reviewed 0 pages; the next skipped the
+    review entirely. Both delivery reports listed the machine gates as all-green
+    and never mentioned the visual pass. Nothing could have caught it — an
+    unreviewed deck and a reviewed one are byte-identical, and the only place the
+    requirement lived was SKILL.md Phase 6.
+
+    What IS checkable is whether the reminder reaches the model's context at the
+    moment it holds the screenshots. That is all this asserts. It cannot assert
+    that the model then tells the user — no gate can; §二 measured the same model
+    saying it on one run and not on the next.
+    """
+    global PASS, FAIL
+    with tempfile.TemporaryDirectory() as td:
+        proj = project(td, {1: page('<h1>x</h1>')})
+        code, out = run("build_deck.py", str(proj))
+        if code != 0:
+            expect("shots reminder (build)", code, out, "", want_fail=False)
+            return
+        code, out = run("export_deck.py", str(proj), "--shots")
+        if code != 0:
+            expect("shots reminder (export)", code, out, "", want_fail=False)
+            return
+        for needle in ("NEXT:", "视觉审查", "pages_reviewed"):
+            expect(f"--shots reminder names {needle!r}",
+                   0 if needle in out else 1, out, needle, want_fail=False)
+
+        # Negative control: the same export with the reminder removed — i.e. the
+        # implementation that shipped until 2026-08-16. Without this, the three
+        # assertions above are also satisfied by a run that prints the reminder
+        # for some unrelated reason.
+    with tempfile.TemporaryDirectory() as td2:
+        stripped = Path(td2) / "scripts-silent"
+        shutil.copytree(SCRIPTS, stripped)
+        target = stripped / "export_deck.py"
+        text = target.read_text(encoding="utf-8")
+        anchor = '        print(f"NEXT: 这 {n_pages} 张截图还没有任何人看过。'
+        if text.count(anchor) != 1:
+            FAIL += 1
+            print(f"FAIL  --shots reminder control: anchor matched "
+                  f"{text.count(anchor)} times, expected 1 — the control did not "
+                  f"replicate the pre-2026-08-16 implementation")
+            return
+        head, _, tail = text.partition(anchor)
+        # drop the reminder block: from the anchor to the next top-level `if`
+        rest = tail.split("\n    if a.pptx:", 1)
+        if len(rest) != 2:
+            FAIL += 1
+            print("FAIL  --shots reminder control: could not find the end of the "
+                  "reminder block — the control did not apply")
+            return
+        target.write_text(head + "\n    if a.pptx:" + rest[1], encoding="utf-8")
+        proj2 = project(td2, {1: page('<h1>x</h1>')})
+        subprocess.run([PY, str(SCRIPTS / "build_deck.py"), str(proj2)],
+                       capture_output=True, text=True, timeout=180)
+        r = subprocess.run([PY, str(target), str(proj2), "--shots"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180)
+        silent = (r.stdout or "") + (r.stderr or "")
+        if r.returncode != 0:
+            FAIL += 1
+            print(f"FAIL  --shots reminder control: the stripped export itself "
+                  f"failed (exit {r.returncode}) — a control that cannot run is "
+                  f"not a control\n--- output ---\n{silent}")
+            return
+        fired = [n for n in ("NEXT:", "视觉审查", "pages_reviewed") if n in silent]
+        expect("--shots reminder control: silent build says none of it",
+               1 if fired else 0, f"still present: {fired}", "", want_fail=False)
 
 
 def editable_cases() -> None:

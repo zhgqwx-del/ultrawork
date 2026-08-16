@@ -191,9 +191,20 @@ scenario 数据页页脚必须有可见「示意数据」标注；首次生成�
 ### Phase 6 — 视觉审查 + 导出交付
 
 1. `export_deck.py --shots` → Read `references/visual-review.md`，截图交**独立评审**（不带生成上下文的子代理；无子代理则新视角逐页过 rubric R1-R8），结果进 `qa_report.json`；`fix` 页只改定位/间距，回炉 ≤1 轮。
+   > **⚠️ 这一环跑不了的时候，它是唯一一个「不做也看不出来」的门禁。**机器门禁失败会给你非零退出码，视觉审查失败只是没有结果——而一份没人看过的 deck 和一份看过的，产物字节完全一样。
+   > 读不了图时（子代理或本模型返回 `does not support image input` / `Cannot read image`），**照做以下两步，不要当它没发生**：
+   > - `qa_report.json` 的 `visual` 段写 `{"pages_reviewed": 0, "reason": "…"}`；
+   > - **交付报告里单列一行**「视觉审查：未执行（原因）」。
+   >
+   > 实测（L4 §四）：两次运行都跳过了这一环，`qa_report` 里一次记了 `pages_reviewed: 0`、一次连 `visual` 段都没有，而两次的交付报告都只列了机器门禁全绿。**写进 qa_report ≠ 用户知道了**——用户看不到 qa_report。
 2. 概念终审（换名测试，一票否决——失败回大纲层补内容）。
 3. 导出 + 发布：`export_deck.py .deckcraft/<name> --pdf --pptx --publish .`（按用户选的形态；可编辑 pptx 用 `--pptx-editable` 取代 `--pptx`；`--publish .` 把 `<name>.html/.pdf/.pptx` 拷到工作区根——**只有这几个文件应出现在产物面板**）。
-4. 交付报告：published 路径 + qa_report 摘要 + low-confidence 页清单 + scenario 页声明 + pptx 形态明示（图片型「文字不可编辑」/ 可编辑型逐页转述「第 N 页含 M 个不可编辑元素」，若为 0 则说明全部可编辑）。
+4. 交付报告，以下逐项都要有（缺一项就是漏报，不是精简）：
+   - published 路径；
+   - **视觉审查状态**：评审了几页 / `fix` 了几页；**未执行时写「未执行」并给原因**——不能只报机器门禁就收尾；
+   - 机器门禁摘要（validate_outline / validate_deck / probe_overflow）；
+   - low-confidence 页清单 + scenario 页声明；
+   - pptx 形态明示（图片型「文字不可编辑」/ 可编辑型逐页转述「第 N 页含 M 个不可编辑元素」，若为 0 则说明全部可编辑）。
 
 ## Progressive disclosure（省上下文）
 
