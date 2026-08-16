@@ -2888,6 +2888,7 @@ def flaw_create_first_face_that_registers(ctx, work):
     preferring heavy makes the control say the same thing on any machine that HAS
     one, and `lists_control_available` skips it, loudly, on machines that do not.
     """
+    before = ((ctx.get("lists") or {}).get("report") or {}).get("typeface")
     scripts = patched_scripts(work, "        if _is_heavy(face_name(name)):",
                               "        if not _is_heavy(face_name(name)):", "heavybody")
     try:
@@ -2898,6 +2899,16 @@ def flaw_create_first_face_that_registers(ctx, work):
         raise ControlUnavailable(
             "this machine has no display-weight CJK face, so 'the first face that "
             "registers wins' cannot be made to pick one here") from exc
+    # ⚠️ 「有 CJK 字体」不等于「有第二个字重」。ubuntu CI 2026-08-16 实测：候选里
+    # 一个 display 字重都没有 ⇒ 反转选择规则**选中的还是同一个面**，两条臂的产物
+    # 逐字相同，G8 当然不响 —— 而这从外面看和「护栏坏了」一模一样。
+    # 上面那个 SystemExit 分支只挡得住「一个 CJK 面都没有」，挡不住这一种重合。
+    after = (ctx["lists"].get("report") or {}).get("typeface")
+    if before and after == before:
+        raise ControlUnavailable(
+            f"inverting the rule selected the same face ({after}) — this machine's "
+            f"CJK candidates carry no display weight, so 'the first that registers' "
+            f"and 'the lightest that registers' cannot be told apart here")
     return ctx
 
 

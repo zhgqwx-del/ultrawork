@@ -300,6 +300,15 @@ VALIDATED_PARTS = 8
 SKIPS: list[str] = []
 
 
+class ControlUnavailable(Exception):
+    """这台机器上复刻不出这个缺陷 —— 跳过并**说明原因**。
+
+    不是失败（缺陷不在这台机器上成立，不是护栏坏了），也不能算通过（什么都没测）。
+    与「没装 LibreOffice 就跳过」是同一条规矩，只是原因由控制臂自己判定：有些重合
+    只有把两条臂都跑出来、拿到数字之后才看得见。
+    """
+
+
 def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
@@ -5875,9 +5884,23 @@ def flaw_from_md_restores_the_line_grid(ctx, work):
     re-measure. Not a simulated number: the docs are rebuilt and re-rendered, so
     this arm is the real defective artifact."""
     m = copy.deepcopy(ctx["markdown"])
-    if (m.get("spacing") or {}).get("skipped"):
+    sp = m.get("spacing") or {}
+    if sp.get("skipped"):
         return ctx
-    m["spacing"] = measure_spacing(work, "spacing-grid", grid=True)
+    gridded = measure_spacing(work, "spacing-grid", grid=True)
+    # ⚠️ 控制臂得先证明它真的把纸改了。Windows CI 2026-08-16 实测：注入 docGrid
+    # 之后渲染出来的行距**没变**（该平台的字体度量下这条线格不产生量化），于是 D7
+    # 不响 —— 而「缺陷在这台机器上不成立」与「D7 坏了」从外面看一模一样。
+    # 判据取渲染出来的绝对行高：ratio 是两条臂相除的结果，两边一起被缩放时它看不见。
+    if sp.get("spaced") and gridded.get("spaced") and \
+            abs(gridded["spaced"] - sp["spaced"]) < 0.5:
+        raise ControlUnavailable(
+            f"injecting <w:docGrid> changed nothing on this host "
+            f"({sp['spaced']}pt/line without it, {gridded['spaced']}pt with it; "
+            f"ratio {sp.get('ratio')} → {gridded.get('ratio')}) — the line grid does "
+            f"not quantise the rendered spacing here, so the defect it guards "
+            f"against cannot be reproduced on this machine")
+    m["spacing"] = gridded
     ctx["markdown"] = m
     return ctx
 
@@ -6909,7 +6932,14 @@ def main() -> int:
             if no_soffice and expected <= SOFFICE_CHECKS:
                 SKIPS.append(f"negative control {name!r}: needs LibreOffice")
                 continue
-            ctx = mutate(copy.deepcopy(base), work)
+            try:
+                ctx = mutate(copy.deepcopy(base), work)
+            except ControlUnavailable as exc:
+                # 与上面那条同规矩：跳过要**留名**，且不进 matrix 的「都响了」那一栏。
+                SKIPS.append(f"negative control {name!r}: {exc}")
+                results.append({"case": f"flaw: {name}", "expect": "SKIPPED",
+                                "ok": True, "detail": [str(exc)], "fired": []})
+                continue
             got = fired(ctx)
             unexpected = set(got) - expected
             missing = expected - set(got)

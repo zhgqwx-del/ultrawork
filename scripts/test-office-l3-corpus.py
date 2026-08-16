@@ -224,6 +224,9 @@ class Step:
 STEP_MEM_LIMIT = int(__import__("os").environ.get(
     "ULTRAWORK_L3_MEMCAP_MB", str(3 * 1024))) * 1024 ** 2
 MEMCAP_MARK = "__L3_MEMCAP__"          # worker 自己打的、确定的标记
+# L2 worker 的结果标记：stdout 上除了结果还可能有别人打的字（实测 pymupdf 1.28 的
+# `import fitz` 弃用警告），所以结果自带一个只有它会打的前缀，读的一侧只取它之后的。
+L2_JSON_MARK = "__L3_L2_JSON__"
 MEMCAP_RC = 3                          # 以及一个不与 0/1/2 撞车的退出码
 # 分配失败在不同层会以不同措辞出现：Python 抛 MemoryError，C 扩展可能是
 # glibc / libstdc++ 的话。全都算「撞上限」，因为它们说的是同一件事。
@@ -407,12 +410,25 @@ def l2_findings(path: Path, only: set[str], baseline: Path | None = None,
             "baseline": str(baseline) if baseline else None, "touched": touched or []}
     st = run_step("l2", [sys.executable, str(Path(__file__).resolve()), "--l2-worker"],
                   stdin=json.dumps(spec))
+    parse_err = ""
     if st.rc == 0:
-        try:
-            return json.loads(st.out)["findings"]
-        except Exception:                            # noqa: BLE001
-            pass
+        # 只取标记之后的那一段。整条 stdout 当 JSON 读是错的 —— 见 L2_JSON_MARK。
+        head, mark, payload = st.out.rpartition(L2_JSON_MARK)
+        if not mark:
+            parse_err = (f"stdout 里没有 {L2_JSON_MARK}（worker 没走到写结果那一步？）"
+                         f" 前 160 字：{st.out.strip()[:160]!r}")
+        else:
+            try:
+                return json.loads(payload)["findings"]
+            except Exception as e:                   # noqa: BLE001
+                parse_err = f"标记后的内容不是 JSON（{type(e).__name__}）：{payload[:160]!r}"
+        del head
+    # ⚠️ 三种情况此前塌陷成同一句话，而它引用的是 stderr 的最后一行 ——
+    # 那一行永远是 self_cap_memory() 的 cap=/nocap()，与失败原因毫无关系。
+    # CI 2026-08-16 三平台同时红在这里：pymupdf 1.28 起 `import fitz` 往 **stdout**
+    # 打一行弃用警告，把 JSON 协议冲掉了，而报出来的却是 `rc=0: nocap(ValueError)`。
     why = ("超时 >%ds" % STEP_TIMEOUT if st.rc == -9 else
+           f"L2 子进程 rc=0 但结果读不出来：{parse_err}" if parse_err else
            f"L2 子进程 rc={st.rc}: {(st.err or '').strip().splitlines()[-1][:120] if st.err else ''}")
     return [f"{GATE_TIMEOUT_MARK} {'/'.join(sorted(only))} 判不了：{why}"]
 
@@ -429,16 +445,34 @@ def l2_worker() -> int:
 
 
 def _l2_worker_body() -> int:
+    """结果走 stdout，而 stdout 不是我们独占的。
+
+    ⚠️ 2026-08-16 CI 三平台同时红：**pymupdf 1.28 起 `import fitz` 会往 stdout 打**
+    「warning: The `fitz` API is deprecated…」，而 L2 的 P5 正是 `import fitz`。
+    那一行混进结果里 ⇒ `json.loads` 失败 ⇒ 每一份健康 pdf 都被记成「判不了」，
+    **而退出码是 0**，所以从外面看像是门禁自己的局限，不像上游改了行为。
+    本机（pymupdf 1.27.2.3）一个字都不打，所以本机全绿 —— 又一次「只在别的机器上现形」。
+
+    两道都要，因为它们防的不是同一件事：
+    ① 把 stdout 让出来 —— 检查函数与它们 import 的任何库打的字一律去 stderr；
+    ② 结果前面打一个标记，读的一侧只取标记之后 —— 万一有 C 扩展直接往 fd 1 写，
+       ① 拦不住，而 ② 仍然读得对。
+    """
     spec = json.loads(sys.stdin.read())
     expect: dict = {}
     if spec["baseline"]:
         expect["baseline"] = spec["baseline"]
     if spec["touched"]:
         expect["touched_pages"] = spec["touched"]
-    findings, _skipped, _inert = l2().run_checks(
-        Path(spec["path"]), expect, only=set(spec["only"]),
-        allow_missing=l2().ALL_TIERS)
-    sys.stdout.write(json.dumps({"findings": findings}))
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        findings, _skipped, _inert = l2().run_checks(
+            Path(spec["path"]), expect, only=set(spec["only"]),
+            allow_missing=l2().ALL_TIERS)
+    finally:
+        sys.stdout = real_stdout
+    real_stdout.write(L2_JSON_MARK + json.dumps({"findings": findings}))
     return 0
 
 
@@ -1561,6 +1595,33 @@ def selftest() -> int:
         r = run_one("pdf", pf, "new", None, [])
         expect("C14", r.outcome == Outcome.OK,
                f"健康 pdf 过环 → {r.outcome} {r.reasons[:1]}")
+
+        # ── C31 结果协议扛得住「别人也在往 stdout 打字」
+        #     真实来源：pymupdf 1.28 起 `import fitz`（L2 的 P5 就是这么导的）会往
+        #     **stdout** 打一行弃用警告。2026-08-16 的 CI 三平台同时红在 C14 上，
+        #     而本机 pymupdf 1.27 一个字不打 ⇒ 本机全绿。这条控制臂**不绑定某个库、
+        #     也不绑定某个版本**：用 sitecustomize 让子进程在启动时就往 stdout 打字，
+        #     等价于「某个被 import 的东西打了字」。修复前它必红（实测：C14 那句
+        #     `rc=0: nocap(...)` 的形状），修复后必绿。
+        import os as _os
+        noise_dir = td / "stdout-noise"
+        noise_dir.mkdir(exist_ok=True)
+        (noise_dir / "sitecustomize.py").write_text(
+            "import sys\n"
+            "print('warning: some library is chatty on import', file=sys.stdout)\n",
+            encoding="utf-8")
+        old_pp = _os.environ.get("PYTHONPATH")
+        _os.environ["PYTHONPATH"] = (str(noise_dir) + _os.pathsep + old_pp) if old_pp \
+            else str(noise_dir)
+        try:
+            noisy = run_one("pdf", pf, "new", None, [])
+        finally:
+            if old_pp is None:
+                _os.environ.pop("PYTHONPATH", None)
+            else:
+                _os.environ["PYTHONPATH"] = old_pp
+        expect("C31", noisy.outcome == Outcome.OK,
+               f"子进程 stdout 被别人打了字 → 仍然 {noisy.outcome} {noisy.reasons[:1]}")
 
         # ── C15 刻画函数不再把 theme 里的字体名当成正文 CJK。
         #     这是它第一版真犯过的错：105 份报「84% 含 CJK」，真值 1 份 —— 因为
