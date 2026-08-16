@@ -38,6 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import docxcommon as dc  # noqa: E402
 from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run)
 from office.soffice import convert, find_soffice  # noqa: E402
@@ -54,6 +55,52 @@ def revision_counts(pkg) -> dict:
     root = pkg.tree(DOCUMENT)
     return {"insertions": len(list(root.iter(q("ins")))),
             "deletions": len(list(root.iter(q("del"))))}
+
+
+def deleted_texts(pkg, limit: int = 5) -> list[str]:
+    """The strings sitting in <w:delText> — text a reviewer asked to remove.
+
+    Used to ANSWER a question instead of assuming it: does the converter's PDF show
+    the revision marks, or one resolved version? Both are legitimate outputs and
+    they look nothing alike, so the report must not guess.
+    """
+    root = pkg.tree(DOCUMENT)
+    out = []
+    for el in root.iter(q("delText")):
+        text = (el.text or "").strip()
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def texts_in_pdf(pdf: Path, needles: list[str]) -> bool | None:
+    """Whether any of `needles` is in the produced PDF's text layer.
+
+    None = could not look (pypdfium2 is optional here, see inspect_pdf) — and a
+    question that could not be asked must not be answered.
+    """
+    if not needles:
+        return None
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return None
+    doc = pdfium.PdfDocument(str(pdf))
+    try:
+        for i in range(len(doc)):
+            page = doc[i]
+            tp = page.get_textpage()
+            try:
+                text = tp.get_text_range()
+            finally:
+                tp.close()
+            if any(n in text for n in needles):
+                return True
+    finally:
+        doc.close()
+    return False
 
 
 def field_count(pkg) -> int:
@@ -154,7 +201,10 @@ def main() -> int:
                  "pure-Python substitute. Install from libreoffice.org, and make sure "
                  "the Writer component is included")
         revisions = revision_counts(pkg)
+        removed = deleted_texts(pkg)
         fields = field_count(pkg)
+        # Ask BEFORE writing: afterwards the answer is always "yes".
+        replaced = dc.replaces_existing(args.out)
 
         with tempfile.TemporaryDirectory(prefix="docx-pdf-") as td:
             produced, err = convert(args.src, "pdf", Path(td) / "out",
@@ -174,13 +224,35 @@ def main() -> int:
                  f"--allow-blank if a blank page is genuinely expected")
 
         report = {"in": args.src.name, "out": str(args.out), "engine": "LibreOffice",
-                  "revisions": revisions, "fields": fields, **info}
+                  "revisions": revisions, "fields": fields,
+                  "replaced_existing": replaced, **info}
+        if replaced:
+            report["replaced_note"] = (
+                f"{args.out} already existed and was overwritten. Say so to whoever "
+                f"asked: a preview written next to its source takes the name of "
+                f"whatever was already there")
         if revisions["insertions"] or revisions["deletions"]:
+            # WHICH of the two very different things this PDF is gets measured, not
+            # assumed. LibreOffice's default is to render the MARKS — deleted text
+            # struck through, inserted underlined, a change bar in the margin — so
+            # the file is neither the before nor the after version. The old wording
+            # said "shows one resolution of them", which is what it does only when
+            # the marks are hidden; on 2026-08-16 (L4 B5-b) it said that about a PDF
+            # full of strikethrough, and the agent relayed the false half verbatim.
+            marks = texts_in_pdf(args.out, removed)
+            report["revision_marks_visible"] = marks
+            shows = ("renders the revision MARKS (deleted text struck through, "
+                     "inserted text underlined), so it is neither the before nor the "
+                     "after version" if marks is True else
+                     "renders ONE resolution of them and does not show the marks"
+                     if marks is False else
+                     "may render the marks or one resolution of them — this could "
+                     "not be checked (pip install pypdfium2)")
             report["warning"] = (
                 f"this document has {revisions['insertions']} tracked insertion(s) and "
-                f"{revisions['deletions']} deletion(s); the PDF shows one resolution of "
-                f"them, not the document anyone has approved. Accept or reject the "
-                f"revisions first if the PDF is the deliverable")
+                f"{revisions['deletions']} deletion(s); the PDF {shows}, and is not "
+                f"the document anyone has approved. Accept or reject the revisions "
+                f"first if the PDF is the deliverable")
         if fields:
             report["fields_note"] = (
                 f"{fields} field(s) (page numbers, a table of contents, cross "

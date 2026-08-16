@@ -18,6 +18,13 @@ const getFileContent = vi.fn()
 // render → refetch → re-render loop.
 const apiStub = { getFileContent }
 vi.mock("@/lib/use-api", () => ({ useApi: () => apiStub }))
+vi.mock("@/lib/i18n-context", async (orig) => {
+  const actual = (await orig()) as { translations: Record<string, Record<string, string>> }
+  return {
+    ...actual,
+    useI18n: () => ({ language: "zh-Hans", setLanguage: () => {}, t: (k: string) => actual.translations["zh-Hans"][k] ?? k }),
+  }
+})
 // MarkdownLink pulls in the tauri opener; stub it so links don't explode.
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }))
 
@@ -45,6 +52,37 @@ describe("MarkdownContent — inline image wiring", () => {
     render(<MarkdownContent text={`![octo](${WS}/octopus.svg)`} workspaceDir={WS} />)
     await waitFor(() => expect(screen.getByAltText("octo")).toBeTruthy())
     expect(getFileContent).toHaveBeenCalledWith("octopus.svg")
+  })
+
+  // ── 中文路径：这一条是真机缺陷，而且只有走真管线才看得见 ────────────────
+  // mdast-util-to-hast 的 image handler 是 `{src: normalizeUri(node.url)}`，
+  // 于是 `输出/page-001.png` 到达组件时已经是 `%E8%BE%93%E5%87%BA/page-001.png`。
+  // 客户端再 encodeURIComponent 一次 ⇒ 请求的是一个名字里真含 `%E8…` 的文件。
+  // 2026-08-15 L4 实测：中文工作区下三张内联图全灭，唯一显示出来的那张是纯 ASCII。
+  // ⚠️ 这两条断言在 MarkdownImage 单测里写不出来 —— 单测直接喂 src，绕开了加编码的那一层，
+  // 而此前 18 条用例里每一条路径都是纯 ASCII，所以门禁全绿而功能是坏的。
+  it("resolves a Chinese RELATIVE path (percent-encoded by the markdown pipeline)", async () => {
+    getFileContent.mockResolvedValue({ content: "AAAA", mimeType: "image/png" })
+    render(<MarkdownContent text="![第1页](输出/page-001.png)" workspaceDir={WS} />)
+    await waitFor(() => expect(screen.getByAltText("第1页")).toBeTruthy())
+    expect(getFileContent).toHaveBeenCalledWith("输出/page-001.png")
+  })
+
+  it("resolves a Chinese ABSOLUTE path inside a Chinese WORKSPACE (prefix match must survive encoding)", async () => {
+    // 工作区名本身带中文时更狠：编码后前缀不再等于 workspaceDir ⇒ 连请求都不会发出，
+    // 直接落到「无法解析」那一支。
+    const cnWs = "/Users/z/Desktop/技能自测"
+    getFileContent.mockResolvedValue({ content: "BBBB", mimeType: "image/png" })
+    render(<MarkdownContent text={`![第2页](${cnWs}/输出/page-002.png)`} workspaceDir={cnWs} />)
+    await waitFor(() => expect(screen.getByAltText("第2页")).toBeTruthy())
+    expect(getFileContent).toHaveBeenCalledWith("输出/page-002.png")
+  })
+
+  it("keeps a literal percent in a filename intact (decode is the exact inverse)", async () => {
+    getFileContent.mockResolvedValue({ content: "CCCC", mimeType: "image/png" })
+    render(<MarkdownContent text="![p](100%25-done.png)" workspaceDir={WS} />)
+    await waitFor(() => expect(screen.getByAltText("p")).toBeTruthy())
+    expect(getFileContent).toHaveBeenCalledWith("100%-done.png")
   })
 
   it("passes a base64 data:image URI straight through (NOT blanked by urlTransform)", () => {

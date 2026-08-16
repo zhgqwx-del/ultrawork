@@ -118,8 +118,22 @@ def audit(fwb, vwb) -> dict:
                                   f"shows 0 and warns only in the status bar"})
 
     by_class = {c: sum(1 for f in findings if f["class"] == c) for c in CLASSES}
-    return {"sheets": fwb.sheetnames, "counts": {**counts, **stats},
+    return {"sheets": fwb.sheetnames,
+            # `formulas_evaluated: 0` is a COUNT, next to the counts a reader already
+            # quotes, and that is deliberate. SKILL.md states this boundary twice, in
+            # bold, in the exact words the acceptance criterion asks for — and on
+            # 2026-08-16 a model that had the whole document in context still
+            # answered "没有任何问题 / 所有公式引用均合法" (059 §三十一). It did,
+            # however, transcribe "45 个单元格，其中 17 个是公式" verbatim out of
+            # this dict. A sentence in a document 20KB back is not where the answer
+            # comes from; the artifact being quoted is.
+            "counts": {**counts, **stats, "formulas_evaluated": 0},
             "by_class": by_class, "findings": findings,
+            "scope": "references, not values: every formula was resolved to the "
+                     "cells and sheets it points at, and none of them was "
+                     "evaluated. A clean audit means every reference resolves — it "
+                     "does NOT mean the numbers are right. For numbers run "
+                     "xlsx_recalc.py, which cross-checks two engines",
             # Truncation is a fact about the audit, not about the workbook, so it
             # rides in the report rather than being silently absorbed.
             "graph_truncated": stats["truncated"]}

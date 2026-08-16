@@ -6,6 +6,7 @@
     python3 pdf_pages.py --op delete  --in a.pdf --pages 2 --out fewer.pdf
     python3 pdf_pages.py --op rotate  --in a.pdf --pages 1 --degrees 90 --out r.pdf
     python3 pdf_pages.py --op split   --in a.pdf --out ./parts [--every 2]
+    python3 pdf_pages.py --op flatten --in filled.pdf --out flat.pdf
 
 Every operation writes a report (--report) naming the inputs, the pages that moved
 and the page count it produced, so `office-skills-selftest.py --check` can be given
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfcommon import (compact, ensure_distinct, fail, open_reader,  # noqa: E402
                        parse_pages, run, write_json)
 
-OPS = ("merge", "split", "extract", "delete", "rotate")
+OPS = ("merge", "split", "extract", "delete", "rotate", "flatten")
 LEGAL_ROTATIONS = (0, 90, 180, 270)
 
 
@@ -169,6 +170,234 @@ def op_merge(srcs: list[Path], out: Path, password: str | None) -> dict:
     return {"op": "merge", "inputs": contributed, "pages": pages, "acroform": note}
 
 
+def appearance_for(annot) -> object | None:
+    """The appearance stream a viewer would actually paint for this widget.
+
+    `/AP /N` is either a stream, or a dictionary of states keyed by on-state name
+    (checkbox, radio) from which `/AS` selects. Taking the dictionary itself, or the
+    wrong branch of it, is how a ticked box flattens into an empty one.
+    """
+    ap = annot.get("/AP")
+    normal = ap.get_object().get("/N") if ap is not None else None
+    normal = normal.get_object() if normal is not None else None
+    if normal is None:
+        return None
+    if hasattr(normal, "get_data"):
+        return normal
+    state = annot.get("/AS")
+    if state is not None and state in normal:
+        return normal[state].get_object()
+    return None
+
+
+def appearance_matrix(rect, bbox, matrix) -> tuple[float, ...]:
+    """Map an appearance's /BBox, through its /Matrix, onto the annotation /Rect.
+
+    PDF 12.5.5: transform the BBox by /Matrix, take the bounding box of the result,
+    and compute the matrix that maps THAT onto /Rect. `Do` applies the form's own
+    /Matrix again, so what gets written as `cm` is this mapping alone — writing the
+    product would apply /Matrix twice, which is invisible for the identity matrix
+    every form filler writes and wrong for every rotated field.
+    """
+    a, b, c, d, e, f = [float(v) for v in matrix]
+    xs, ys = [], []
+    for x, y in ((bbox[0], bbox[1]), (bbox[2], bbox[1]),
+                 (bbox[2], bbox[3]), (bbox[0], bbox[3])):
+        x, y = float(x), float(y)
+        xs.append(a * x + c * y + e)
+        ys.append(b * x + d * y + f)
+    tx0, tx1, ty0, ty1 = min(xs), max(xs), min(ys), max(ys)
+    rx0, rx1 = sorted((float(rect[0]), float(rect[2])))
+    ry0, ry1 = sorted((float(rect[1]), float(rect[3])))
+    sx = (rx1 - rx0) / (tx1 - tx0) if tx1 > tx0 else 1.0
+    sy = (ry1 - ry0) / (ty1 - ty0) if ty1 > ty0 else 1.0
+    return (sx, 0.0, 0.0, sy, rx0 - tx0 * sx, ry0 - ty0 * sy)
+
+
+def field_value(annot):
+    """A widget's effective /V, walking up to the parent field that holds it."""
+    node, guard = annot, 0
+    while node is not None and guard < 32:
+        if node.get("/V") is not None:
+            return node.get("/V")
+        parent = node.get("/Parent")
+        node = parent.get_object() if parent is not None else None
+        guard += 1
+    return None
+
+
+def op_flatten(src: Path, out: Path, password: str | None) -> dict:
+    """Paint every widget's appearance into the page and stop being a form.
+
+    Why this exists: `carry_acroform` refuses to merge two form documents and tells
+    the caller to flatten first. A refusal that prescribes a remedy the skill does
+    not provide is an invitation to hand-roll one, and hand-rolled flattening is the
+    kind of job that half-works in silence — measured on 2026-08-15, where a model
+    asked to do exactly this produced a file whose five `/__flat_ Do` calls all
+    pointed at bare dictionaries with no stream body: every `Do` a no-op, both pages
+    rendering identically, and the report saying it had verified by rendering.
+
+    So this refuses rather than half-works, and checks the OUTPUT before reporting
+    success: a widget carrying a value whose appearance cannot be drawn is a value
+    about to disappear, and the caller is told instead of being handed a blank.
+    """
+    from pypdf import PdfWriter
+    from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject,
+                               NameObject)
+
+    reader = open_reader(src, password)
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+
+    drawn, blanks, kept, painted = 0, [], 0, []
+    for pno, page in enumerate(writer.pages, 1):
+        annots = list(page.get("/Annots") or [])
+        if not annots:
+            continue
+        resources = page.get("/Resources")
+        resources = resources.get_object() if resources is not None else None
+        if resources is None:
+            resources = DictionaryObject()
+            page[NameObject("/Resources")] = writer._add_object(resources)
+        xobjects = resources.get("/XObject")
+        xobjects = xobjects.get_object() if xobjects is not None else None
+        if xobjects is None:
+            xobjects = DictionaryObject()
+            resources[NameObject("/XObject")] = writer._add_object(xobjects)
+
+        ops, survivors = [], []
+        for ref in annots:
+            annot = ref.get_object()
+            if annot.get("/Subtype") != "/Widget":
+                survivors.append(ref)       # links, notes: not ours to remove
+                kept += 1
+                continue
+            stream = appearance_for(annot)
+            value = field_value(annot)
+            if stream is None or not stream.get_data():
+                # An /Off checkbox draws nothing and that is correct. A field with a
+                # VALUE and nothing to draw is the defect this whole op exists for.
+                if value is not None and str(value) not in ("/Off", ""):
+                    fail(f"page {pno}: field {str(annot.get('/T'))!r} holds "
+                         f"{str(value)[:40]!r} but its appearance stream is empty — "
+                         f"flattening it would delete the value. Fill the form with "
+                         f"pdf_form_fill.py (which writes appearances) and retry.")
+                blanks.append(str(annot.get("/T")))
+                continue
+            # Unique against what is ALREADY in this page's resources, not just
+            # against this run. Re-flattening a document that has been flattened
+            # before restarts the numbering at 0, and `/uwflat0` would then overwrite
+            # the appearance the first pass painted — content lost with no error.
+            name = NameObject(_free_name(xobjects))
+            xobjects[name] = _stream_ref(annot)
+            painted.append(str(name))
+            mtx = appearance_matrix(annot["/Rect"], stream.get("/BBox", [0, 0, 1, 1]),
+                                    stream.get("/Matrix", [1, 0, 0, 1, 0, 0]))
+            ops.append("q {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} cm {} Do Q"
+                       .format(*mtx, name))
+            drawn += 1
+
+        if not ops:
+            page[NameObject("/Annots")] = ArrayObject(survivors)
+            continue
+        # The page's own content is wrapped in q/Q first: if it ends with the graphics
+        # state unbalanced (a stray `q`), everything appended after it inherits that
+        # CTM and lands somewhere else entirely.
+        before = DecodedStreamObject()
+        before.set_data(b"q\n")
+        after = DecodedStreamObject()
+        after.set_data(("Q\n" + "\n".join(ops) + "\n").encode("latin-1"))
+        current = page.get("/Contents")
+        current = current.get_object() if current is not None else None
+        existing = list(current) if isinstance(current, ArrayObject) else \
+            ([page.raw_get("/Contents")] if current is not None else [])
+        page[NameObject("/Contents")] = ArrayObject(
+            [writer._add_object(before), *existing, writer._add_object(after)])
+        page[NameObject("/Annots")] = ArrayObject(survivors)
+
+    note = save(writer, out, [(src, reader)])
+    verified = verify_flat(out, painted)
+    return {"op": "flatten", "inputs": [{"file": str(src), "pages": len(reader.pages)}],
+            "pages": len(writer.pages), "flattened": drawn,
+            "annotations_kept": kept, "no_appearance": blanks,
+            "acroform": note, "verified": verified}
+
+
+def _stream_ref(annot):
+    """The appearance as an INDIRECT reference to the stream itself.
+
+    Deliberately the object, not a copy of its dictionary: a `/Subtype /Form` entry
+    with a /BBox and no stream body is legal, silent, and paints nothing — which is
+    precisely the file this op was written after.
+    """
+    ap = annot.raw_get("/AP").get_object()
+    normal = ap.raw_get("/N")
+    target = normal.get_object()
+    if hasattr(target, "get_data"):
+        return normal
+    return target.raw_get(annot["/AS"])
+
+
+def _free_name(xobjects) -> str:
+    """A /uwflatN this page is not already using."""
+    n = 0
+    while f"/uwflat{n}" in xobjects:
+        n += 1
+    return f"/uwflat{n}"
+
+
+def verify_flat(out: Path, painted: list[str]) -> dict:
+    """Re-open and confirm the file really stopped being a form AND really draws.
+
+    Structural, not rendered, but it catches the exact shape that got past a model
+    claiming it had rendered: every XObject this op registered must be a stream with
+    bytes in it, and there must be one `Do` per widget flattened.
+    """
+    import re
+
+    from pypdf import PdfReader
+    from pypdf.generic import ArrayObject
+
+    reader = PdfReader(str(out))
+    widgets = sum(1 for page in reader.pages for ref in (page.get("/Annots") or [])
+                  if ref.get_object().get("/Subtype") == "/Widget")
+    # Only the names THIS run wrote. A document flattened twice already carries the
+    # first pass's XObjects and its draw calls; counting those made re-running the
+    # op — which should be a no-op — fail with "5 draw calls for 0 widgets".
+    wanted, empty, calls = set(painted), [], 0
+    for page in reader.pages:
+        res = page.get("/Resources")
+        res = res.get_object() if res is not None else {}
+        xo = res.get("/XObject")
+        xo = xo.get_object() if xo is not None else {}
+        for name in xo:
+            if str(name) not in wanted:
+                continue
+            obj = xo[name].get_object()
+            if not hasattr(obj, "get_data") or not obj.get_data():
+                empty.append(str(name))
+        contents = page.get("/Contents")
+        contents = contents.get_object() if contents is not None else None
+        parts = list(contents) if isinstance(contents, ArrayObject) else \
+            ([contents] if contents is not None else [])
+        blob = b"".join(p.get_object().get_data() for p in parts)
+        calls += sum(len(re.findall(name.encode() + rb"\s+Do", blob))
+                     for name in wanted)
+    if widgets:
+        fail(f"{widgets} widget annotation(s) survived the flatten — the file is "
+             f"still a form and the values are still living in the annotations")
+    if empty:
+        fail(f"{len(empty)} flattened appearance(s) carry no stream data ({empty[:4]}) "
+             f"— they would draw nothing at all, which is how flattening deletes a "
+             f"form in silence")
+    if calls != len(painted):
+        fail(f"{calls} draw call(s) in the page content for {len(painted)} flattened "
+             f"widget(s) — registering the appearance without painting it leaves a "
+             f"file that looks right in the structure and blank on the page")
+    return {"widgets_left": 0, "draw_calls": calls, "empty_appearances": 0}
+
+
 def op_extract(src: Path, spec: str | None, out: Path, password: str | None) -> dict:
     from pypdf import PdfWriter
 
@@ -280,6 +509,8 @@ def main() -> None:
         report = op_delete(src, args.pages, args.out, args.password)
     elif args.op == "rotate":
         report = op_rotate(src, args.pages, args.degrees, args.out, args.password)
+    elif args.op == "flatten":
+        report = op_flatten(src, args.out, args.password)
     else:
         report = op_split(src, args.out, args.every, args.password)
     report["out"] = str(args.out)

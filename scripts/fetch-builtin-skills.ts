@@ -200,13 +200,43 @@ const EXPORTER_DESCRIPTION =
   "that keep tracked changes, formulas, embedded fonts and layout intact, which a one-shot CLI " +
   "conversion cannot.\""
 
+/**
+ * `md_to_html` 产的是 HTML **片段**：实测一份产物第一行就是 `<h1>`，全文零个
+ * `<!doctype>`/`<html>`/`<head>`/`<style>`，表格因此没有任何框线 —— 内容对、结构对，
+ * 差的是一层壳。上游文档只说 "Converts Markdown text to HTML format file"，不说这件事，
+ * 于是模型会把裸片段交出去并报告「转好了」。
+ *
+ * 和 description 一样做成 patch：手改 SKILL.md 下一次 fetch 会静默还原。
+ */
+const EXPORTER_HTML_NOTE = `
+---
+
+## ⚠️ ultrawork 注记（非上游内容）
+
+**\`md_to_html\` 产出的是 HTML *片段*，不是能直接打开的页面。** 实测一份产物：
+第一行就是 \`<h1>\`，全文 **零个** \`<!doctype>\` / \`<html>\` / \`<head>\` / \`<style>\`。
+没有 CSS ⇒ 表格走浏览器默认样式，**一条框线都没有**，看起来比原始 Markdown 还乱。
+内容和结构本身是对的（表格、有序/无序列表、引用、转义都在），差的只是一层壳。
+
+所以：
+
+- 用户要的是**能嵌进别的页面的片段** → 直接用，这就是它的设计。
+- 用户要的是**能双击打开来看的文档**（「转成 HTML 给我看看」通常是这个意思）
+  → 拿到片段后自己包一层 \`<!doctype html>\` + \`<meta charset>\` + 一段最小样式
+  （表格 \`border-collapse:collapse\` 加边框、正文 \`max-width\` 加行距）再写文件。
+  **别只交那个裸片段然后说「转好了」。**
+- 拿不准就问一句用哪种。
+`
+
 function applyExporterPatches(dir: string) {
   const p = join(dir, "SKILL.md")
   if (!existsSync(p)) return
   const s = readFileSync(p, "utf8")
   const next = s.replace(/^description:.*$/m, EXPORTER_DESCRIPTION)
   if (next === s) throw new Error("markdown-exporter: 没找到 description 行，上游 frontmatter 变了，patch 需要重写")
-  writeFileSync(p, next)
+  // 幂等：注记已在就不重复追加（fetch 可以对同一目录跑两次）。
+  const marker = "## ⚠️ ultrawork 注记"
+  writeFileSync(p, next.includes(marker) ? next : next + EXPORTER_HTML_NOTE)
 }
 
 /** 给 SKILL.md frontmatter 注入 x-requires（若缺） */

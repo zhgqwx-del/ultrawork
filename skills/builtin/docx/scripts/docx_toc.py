@@ -324,6 +324,28 @@ def outline_numbering(pkg: Package, levels: int) -> dict:
         fail(f"none of Heading1..Heading{levels} is defined in word/styles.xml, so "
              f"there is nothing to attach outline numbering to")
 
+    # Same guard the TOC half has, for the same reason. A document whose heading
+    # styles are ALREADY bound to a numbering definition renders 1. / 1.1 / 1.1.1
+    # already; numbering it again writes a SECOND definition, repoints the styles
+    # at it, and leaves the first one orphaned in numbering.xml — with the rendered
+    # page byte-for-byte what it was. Nothing on paper says the run did anything,
+    # so the caller reports "numbering added" and is wrong. (2026-08-16 L4 B3: the
+    # TOC half refused this document correctly, this half did not.)
+    already = {}
+    for style_id in targets:
+        num_pr = index[style_id].find(q("pPr") + "/" + q("numPr"))
+        if num_pr is None:
+            continue
+        num_id = num_pr.find(q("numId"))
+        already[style_id] = num_id.get(q("val")) if num_id is not None else "?"
+    if already:
+        bound = ", ".join(f"{k} -> numId {v}" for k, v in sorted(already.items()))
+        fail(f"these heading styles are already bound to a numbering definition "
+             f"({bound}), so this document already numbers its headings. Adding a "
+             f"second definition would orphan the first one and change nothing on "
+             f"the page; remove the existing binding first if you meant to replace "
+             f"it, or edit that definition instead")
+
     root, part_created = numbering_root(pkg)
     used_abstract = [int(a.get(q("abstractNumId"))) for a in root.findall(q("abstractNum"))
                      if (a.get(q("abstractNumId")) or "").lstrip("-").isdigit()]

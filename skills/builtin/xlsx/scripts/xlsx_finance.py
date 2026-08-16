@@ -127,7 +127,7 @@ def main() -> int:
             state["bad"] = len(bad) if args.fail_on_violation else 0
             return
 
-        ensure_distinct(args.src, args.out)
+        replaced = ensure_distinct(args.src, args.out)
         changed: list[dict] = []
 
         def mutate(book):
@@ -159,7 +159,8 @@ def main() -> int:
             report = rebuild(args.src, args.out, mutate)
         except RebuildError as e:
             fail(str(e))
-        emit({"in": args.src.name, "out": args.out.name, **report},
+        emit({"in": args.src.name, "out": args.out.name,
+              "replaced_existing": replaced, **report},
              args.report, "recoloured", "grafted")
 
     rc = run(entry)

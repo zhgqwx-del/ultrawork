@@ -106,7 +106,15 @@ def blank_package() -> Package:
             '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
             'w:header="851" w:footer="992" w:gutter="0"/>'
             '<w:cols w:space="425"/>'
-            '<w:docGrid w:type="lines" w:linePitch="312"/>'
+            # NO <w:docGrid>. It used to say `type="lines" linePitch="312"`, and a
+            # line grid inflates the rendered line height on top of whatever the
+            # styles declare. Measured on one long CJK paragraph, same document,
+            # LibreOffice, median within-paragraph gap:
+            #   no grid: single 17.8pt · 1.3 spacing 23.1pt   (ratio 1.30 = declared)
+            #   grid:    single 31.2pt · 1.3 spacing 40.6pt   (2.28x the reference)
+            # The declared 1.3 below therefore reached paper as ~2.3 line spacing; an
+            # L4 product rendered at 40.3pt/line and grew a third page holding three
+            # lines. Found by reading that product, not by any assertion — 059 §二十二.
             "</w:sectPr></w:body></w:document>").encode(),
         "word/_rels/document.xml.rels": DECL + (
             f'<Relationships xmlns="{PKG_REL}">'

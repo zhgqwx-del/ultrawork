@@ -91,7 +91,7 @@ def main() -> int:
 
     def entry():
         from openpyxl.chart import Reference
-        ensure_distinct(args.src, args.out)
+        replaced = ensure_distinct(args.src, args.out)
         info: dict = {}
 
         def mutate(wb):
@@ -136,7 +136,8 @@ def main() -> int:
             report = rebuild(args.src, args.out, mutate)
         except RebuildError as e:
             fail(str(e))
-        emit({"in": args.src.name, "out": args.out.name, **report},
+        emit({"in": args.src.name, "out": args.out.name,
+              "replaced_existing": replaced, **report},
              args.report, "grafted")
 
     return run(entry)

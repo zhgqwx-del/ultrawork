@@ -708,3 +708,21 @@ Remember to thank the audience and invite questions.
 - All scripts only support file paths as input
 - For scripts that generate multiple files (e.g., multiple tables, multiple code blocks), the output filename will be automatically numbered
 - Use the `--strip-wrapper` option to remove code block wrappers (```) from the input Markdown
+
+---
+
+## ⚠️ ultrawork 注记（非上游内容）
+
+**`md_to_html` 产出的是 HTML *片段*，不是能直接打开的页面。** 实测一份产物：
+第一行就是 `<h1>`，全文 **零个** `<!doctype>` / `<html>` / `<head>` / `<style>`。
+没有 CSS ⇒ 表格走浏览器默认样式，**一条框线都没有**，看起来比原始 Markdown 还乱。
+内容和结构本身是对的（表格、有序/无序列表、引用、转义都在），差的只是一层壳。
+
+所以：
+
+- 用户要的是**能嵌进别的页面的片段** → 直接用，这就是它的设计。
+- 用户要的是**能双击打开来看的文档**（「转成 HTML 给我看看」通常是这个意思）
+  → 拿到片段后自己包一层 `<!doctype html>` + `<meta charset>` + 一段最小样式
+  （表格 `border-collapse:collapse` 加边框、正文 `max-width` 加行距）再写文件。
+  **别只交那个裸片段然后说「转好了」。**
+- 拿不准就问一句用哪种。

@@ -77,7 +77,7 @@
         ],
         "baseline": "{fixtures}/table-grid.pdf"
       },
-      "verified_by": "L2 checks the overlay PDF (legal, and P5 fidelity: boxing the tables must not disturb the text). That the RULED page yields exactly the 4x3 table and the identical UNRULED page falls back to a guess flagged unreliable is scripts/test-pdf-skill.py T1-T3"
+      "verified_by": "L2 checks the overlay PDF (legal, and P5 fidelity: boxing the tables must not disturb the text). That the RULED page yields exactly the 4x3 table and the identical UNRULED page falls back to a guess flagged unreliable is scripts/test-pdf-skill.py T1-T3. scripts/test-pdf-skill.py T4 covers the horizontally-ruled table (rows drawn, columns inferred) and T5 that a page of prose is not exported as a one-column table; three control arms restore the shipped order, keep the single-column result, and take the region from the rules alone"
     },
     "P4": {
       "entry": "scripts/pdf_info.py",
@@ -337,6 +337,34 @@
         ]
       },
       "verified_by": "the font report names every font and whether it is EMBEDDED; scripts/test-pdf-skill.py G1 asserts embedded+subset (the negative control is the old insert_text(fontname='china-s') path, which reports ext 'n/a'), G2 asserts subsetting kept the file small, G5 asserts an uncoverable character is refused and that forcing it through produces a document L2 rejects"
+    },
+    "P15": {
+      "entry": "scripts/pdf_pages.py",
+      "sample": {
+        "args": [
+          "--op",
+          "flatten",
+          "--in",
+          "{fixtures}/form-filled.pdf",
+          "--out",
+          "{out}/flattened.pdf",
+          "--report",
+          "{out}/flatten.json"
+        ],
+        "produces": [
+          "flattened.pdf",
+          "flatten.json"
+        ]
+      },
+      "expect": {
+        "contains": [
+          "员工信息登记表"
+        ],
+        "baseline": [
+          "{fixtures}/form-filled.pdf"
+        ]
+      },
+      "verified_by": "scripts/test-pdf-skill.py N6 (values reach the page, land inside the widget's own rectangle, and the ink total is unchanged) and N7 (a value whose appearance cannot be drawn is refused rather than silently dropped); three control arms reproduce the hand-rolled flatten that motivated it"
     }
   }
 }

@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -196,6 +197,261 @@ def widths_in_xlsx(path: Path) -> dict:
     with closing(wb):
         ws = wb.worksheets[0]
         return {k: d.width for k, d in ws.column_dimensions.items() if d.width}
+
+
+def with_wide_ranges(dst: Path, rows: int, formulas: int) -> None:
+    """A workbook whose reference SPAN is past the sweep's bound, carrying caches.
+
+    Shape breaks the precise dependency walk, not size: every one of these formulas
+    reads the whole of column A, so `formulas x rows` cells have to be expanded to
+    build the graph. openpyxl never writes cached values and the whole point here is
+    to have some, so they go into the sheet XML directly afterwards.
+    """
+    import openpyxl
+    import re
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "宽"
+    for r in range(1, rows + 1):
+        ws.cell(row=r, column=1, value=r)
+    for r in range(1, formulas + 1):
+        ws.cell(row=r, column=2, value=f"=SUM(A1:A{rows})")
+    wb.save(dst)
+    wb.close()
+    with zipfile.ZipFile(dst) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    # openpyxl emits `<f>...</f><v></v>` — an EMPTY cached value, which reads back as
+    # None. Filling it is the difference between a fixture with caches and one that
+    # only looks like it has them.
+    parts[sheet] = re.sub(rb"</f>(<v>[^<]*</v>)?", rb"</f><v>1</v>", parts[sheet])
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, blob in parts.items():
+            z.writestr(name, blob)
+
+
+# Shape, not size: 2,000 formulas each reading 6,000 rows is 12,000,000 referenced
+# cells, well past the 500,000 the precise walk is bounded to.
+WIDE_ROWS, WIDE_FORMULAS = 6_000, 2_000
+# Measured on this host: bounded 0.26s, bound removed 6.9s, and the version that
+# cleared cell by cell through `set_cached` 2.2s here and **54s** on a 10,000-row
+# chain — the first implementation of the sweep never returned at all and was killed
+# after nine minutes. 60s is far above every working number and far below every
+# broken one; it pins "does not hang", not a performance target.
+WIDE_SECONDS_CEILING = 60.0
+
+
+def with_percent_column(dst: Path, col_b_width: float, wide: bool = False) -> None:
+    """利润表 in miniature: a percent column too narrow for what it displays.
+
+    `1.0877...` under `0.0%` shows as `108.8%` — six characters in a column six
+    units wide, which Excel and LibreOffice both print as `###`. The value is a
+    CACHED formula result, because that is the shape the real file has and the shape
+    a width routine that only looks at text cells cannot see.
+    """
+    import openpyxl
+    import re
+    from openpyxl.utils import get_column_letter
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "利润表"
+    ws["A1"], ws["B1"] = "科目", "同比"
+    ws["A2"], ws["B2"] = "营业利润", "=1.0877192982456141"
+    ws["B2"].number_format = "0.0%"
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = col_b_width
+    if wide:
+        # Wider than the paper: LibreOffice moves 同比 to a page of its own. The extra
+        # rows are not decoration — at two rows spread over two sheets of paper the
+        # ink fraction falls under BLANK_INK and the blank-page guard refuses to write
+        # the preview at all, so the fixture never reaches the check it is for.
+        for r in range(3, 24):
+            ws.cell(row=r, column=1, value=f"科目{r}")
+            ws.cell(row=r, column=2, value=r / 7)
+            ws.cell(row=r, column=2).number_format = "0.0%"
+        for i in range(1, 3):
+            ws.column_dimensions[get_column_letter(i)].width = 60
+    wb.save(dst)
+    wb.close()
+    with zipfile.ZipFile(dst) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    parts[sheet] = re.sub(rb"</f>(<v>[^<]*</v>)?",
+                          rb"</f><v>1.0877192982456141</v>", parts[sheet])
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, blob in parts.items():
+            z.writestr(name, blob)
+
+
+def collect_percent_width(scripts, work: Path, tag: str) -> dict:
+    """`--autofit` over a column whose NUMBER is what does not fit."""
+    src = work / "pct-narrow.xlsx"
+    if not src.exists():
+        with_percent_column(src, col_b_width=6)
+    first = work / f"pct-{tag}.xlsx"
+    r1 = run_script_from(scripts, "xlsx_write.py", "--in", src, "--out", first,
+                         "--autofit", "--report", work / f"pct-{tag}.json")
+    # Running it again over its own output is the no-op case: nothing left to widen,
+    # and the report has to be able to say that.
+    again = work / f"pct-{tag}-again.xlsx"
+    run_script_from(scripts, "xlsx_write.py", "--in", first, "--out", again,
+                    "--autofit", "--report", work / f"pct-{tag}-again.json")
+    pdf = work / f"pct-{tag}.pdf"
+    run_script_from(scripts, "xlsx_pdf.py", "--in", first, "--out", pdf)
+    return {"exit": r1.returncode,
+            "report": json.loads((work / f"pct-{tag}.json").read_text(encoding="utf-8")),
+            "noop": json.loads(
+                (work / f"pct-{tag}-again.json").read_text(encoding="utf-8")),
+            "width_before": widths_of(src, "利润表").get("B"),
+            "width_after": widths_of(first, "利润表").get("B"),
+            "rendered": pdf_text(pdf)}
+
+
+def collect_split(scripts, work: Path, tag: str) -> dict:
+    """A sheet wider than the paper — the columns on the right end up alone."""
+    src = work / "pct-wide.xlsx"
+    if not src.exists():
+        with_percent_column(src, col_b_width=90, wide=True)
+    report = work / f"split-{tag}.json"
+    run_script_from(scripts, "xlsx_pdf.py", "--in", src,
+                    "--out", work / f"split-{tag}.pdf", "--report", report)
+    return json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+
+
+def collect_replaced(scripts, work: Path, tag: str) -> dict:
+    """Each writing script, run twice at the same --out: fresh, then over itself."""
+    src = BOOK
+    runs: dict[str, list] = {}
+    plans = (
+        ("xlsx_write.py", lambda out: ("--in", src, "--out", out, "--sheet", "利润表",
+                                       "--set", "B3=1240")),
+        ("xlsx_recalc.py", lambda out: ("--in", src, "--out", out)),
+        ("xlsx_pdf.py", lambda out: ("--in", work / "calc.xlsx", "--out", out)),
+    )
+    for name, argv in plans:
+        out = work / f"rep-{tag}-{name}.{'pdf' if 'pdf' in name else 'xlsx'}"
+        out.unlink(missing_ok=True)
+        seen = []
+        for _ in range(2):
+            r = run_script_from(scripts, name, *argv(out))
+            try:
+                seen.append(json.loads(r.stdout).get("replaced_existing"))
+            except json.JSONDecodeError:
+                seen.append(f"no JSON on stdout (exit {r.returncode})")
+        runs[name] = seen
+    # Structural coverage: every script that guards its output must also report on
+    # it. A new writer that forgets the field is the way this rots.
+    missing = sorted(p.name for p in Path(scripts).glob("*.py")
+                     if "ensure_distinct(" in p.read_text(encoding="utf-8")
+                     and p.name != "xlsxcommon.py"
+                     and "replaced_existing" not in p.read_text(encoding="utf-8"))
+    return {"runs": runs, "scripts_without_the_field": missing}
+
+
+def collect_hash_marks(scripts, work: Path, tag: str) -> dict:
+    """Render a sheet whose number does not fit, and one that says `###` for real."""
+    narrow = work / "pct-narrow.xlsx"
+    if not narrow.exists():
+        with_percent_column(narrow, col_b_width=6)
+    literal = work / "pct-literal.xlsx"
+    if not literal.exists():
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "利润表"
+        ws["A1"], ws["B1"] = "科目", "备注"
+        ws["A2"], ws["B2"] = "营业利润", "###"      # a cell that really holds it
+        ws.column_dimensions["A"].width = 12
+        ws.column_dimensions["B"].width = 12
+        wb.save(literal)
+        wb.close()
+    out = {}
+    for label, src in (("narrow", narrow), ("literal", literal)):
+        report = work / f"hash-{tag}-{label}.json"
+        run_script_from(scripts, "xlsx_pdf.py", "--in", src,
+                        "--out", work / f"hash-{tag}-{label}.pdf", "--report", report)
+        out[label] = json.loads(report.read_text(encoding="utf-8")) \
+            if report.exists() else {}
+    return out
+
+
+def collect_stale_images(scripts, work: Path, tag: str) -> dict:
+    """Render a 1-page document into a directory holding a longer render's tail."""
+    src = work / "pct-narrow.xlsx"
+    if not src.exists():
+        with_percent_column(src, col_b_width=6)
+    png_dir = work / f"pngdir-{tag}"
+    png_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("page-002.png", "page-009.png", "notes.png"):
+        (png_dir / name).write_bytes(b"")
+    report = work / f"stale-img-{tag}.json"
+    run_script_from(scripts, "xlsx_pdf.py", "--in", src,
+                    "--out", work / f"stale-img-{tag}.pdf", "--png", png_dir,
+                    "--report", report)
+    return {"report": json.loads(report.read_text(encoding="utf-8"))
+            if report.exists() else {},
+            "left": sorted(p.name for p in png_dir.iterdir())}
+
+
+def pdf_text(pdf: Path) -> str | None:
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return None
+    if not pdf.is_file():
+        return ""
+    doc = pdfium.PdfDocument(str(pdf))
+    try:
+        return "\n".join(doc[i].get_textpage().get_text_range() for i in range(len(doc)))
+    finally:
+        doc.close()
+
+
+def collect_audit_spotless(scripts, work: Path, tag: str, src: Path) -> dict:
+    """An audit of a workbook with nothing wrong with it."""
+    out = work / f"audit-spotless-{tag}.json"
+    r = run_script_from(scripts, "xlsx_audit.py", "--in", src, "--out", out)
+    return {"exit": r.returncode,
+            "report": json.loads(out.read_text(encoding="utf-8"))
+            if out.exists() else {}}
+
+
+def collect_stale_bound(scripts, work: Path, tag: str) -> dict:
+    """`--set` on a workbook whose dependency graph is too big to expand."""
+    # NOT "wide.xlsx": the autofit section already owns that name in this work dir,
+    # and reusing it silently handed this collector that file instead — 0 cached
+    # cells, which the non-vacuity guard below caught on the first run.
+    wide = work / "wide-ranges.xlsx"
+    if not wide.exists():
+        with_wide_ranges(wide, WIDE_ROWS, WIDE_FORMULAS)
+    out_x = work / f"wide-ranges-{tag}.xlsx"
+    report = work / f"wide-ranges-{tag}.json"
+    started = time.monotonic()
+    r = run_script_from(scripts, "xlsx_write.py", "--in", wide, "--out", out_x,
+                        "--sheet", "宽", "--set", "A1=5", "--report", report)
+    return {"exit": r.returncode, "seconds": time.monotonic() - started,
+            "report": json.loads(report.read_text(encoding="utf-8"))
+            if report.exists() else {},
+            "cached_before": cached_cells(wide),
+            "cached_after": cached_cells(out_x) if out_x.exists() else set()}
+
+
+def cached_cells(path: Path) -> set[str]:
+    """`{"Sheet!REF"}` for every formula cell that carries a cached result."""
+    import openpyxl
+    from contextlib import closing
+    f = openpyxl.load_workbook(path, data_only=False)
+    v = openpyxl.load_workbook(path, data_only=True)
+    out: set[str] = set()
+    with closing(f), closing(v):
+        for name in f.sheetnames:
+            for frow, vrow in zip(f[name].iter_rows(),
+                                  v[name].iter_rows(values_only=True)):
+                for cell, value in zip(frow, vrow):
+                    if isinstance(cell.value, str) and cell.value.startswith("=") \
+                            and value is not None:
+                        out.add(f"{name}!{cell.coordinate}")
+    return out
 
 
 def parts_of(path: Path) -> dict[str, bytes]:
@@ -691,6 +947,35 @@ def collect(work: Path) -> dict:
     # --- X11 conversions -------------------------------------------------------
     calc = work / "calc.xlsx"
     run_script("xlsx_recalc.py", "--in", BOOK, "--out", calc)
+
+    # --- stale caches: an edit must not leave results that no longer match -------
+    # `calc` is the only fixture here that HAS cached values — book.xlsx is
+    # library-written and carries none, so this assertion run against it would pass
+    # while looking at nothing.
+    stale_out = work / "stale.xlsx"
+    st = run_script("xlsx_write.py", "--in", calc, "--out", stale_out,
+                    "--sheet", "利润表", "--set", "B3=1310",
+                    "--report", work / "stale.json")
+    ctx["stale"] = {
+        "exit": st.returncode,
+        "report": json.loads((work / "stale.json").read_text(encoding="utf-8")),
+        # Read from the FILES by this gate. The report's own list is the claim under
+        # test and cannot also be the evidence for it.
+        "cached_before": cached_cells(calc),
+        "cached_after": cached_cells(stale_out),
+    }
+    ctx["stale_bound"] = collect_stale_bound(SKILL / "scripts", work, "real")
+
+    # A report with NOTHING in it — the shape most easily read as "no problems".
+    # book.xlsx cannot play this part: it is library-written, so every formula is
+    # `uncalc` and the audit always has findings. `calc.xlsx` has cached values.
+    ctx["audit"] = {**ctx["audit"], "spotless": collect_audit_spotless(
+        SKILL / "scripts", work, "real", calc)}
+    ctx["percent_width"] = collect_percent_width(SKILL / "scripts", work, "real")
+    ctx["split"] = collect_split(SKILL / "scripts", work, "real")
+    ctx["hash"] = collect_hash_marks(SKILL / "scripts", work, "real")
+    ctx["stale_images"] = collect_stale_images(SKILL / "scripts", work, "real")
+    ctx["replaced"] = collect_replaced(SKILL / "scripts", work, "real")
     csv_out, back = work / "sheet.csv", work / "back.xlsx"
     run_script("xlsx_convert.py", "--in", calc, "--to", "csv", "--out", csv_out,
                "--sheet", "利润表")
@@ -827,6 +1112,10 @@ def collect(work: Path) -> dict:
     ctx["scale"] = {
         "stdout_bytes": len(scale.stdout.encode("utf-8")),
         "file_cells": len(big_json.get("cells", [])),
+        "note": json.loads(scale.stdout).get("cells_note", ""),
+        # Stat'd here, by the gate, not read out of the report — the size in the note
+        # is the thing under test and cannot also be the evidence for it.
+        "file_bytes": (work / "big.json").stat().st_size,
         "in_place": in_place,
     }
     return ctx
@@ -838,6 +1127,13 @@ CHECKS: dict[str, dict] = {}
 
 def check(cid: str, title: str):
     def deco(fn):
+        # A repeated id silently REPLACED the earlier check, taking its assertion out
+        # of the run while the pass count went up. Caught 2026-08-16 by a control arm
+        # that stopped firing for no visible reason: a second N9 had removed the
+        # first. Deleting an assertion has to be louder than adding one.
+        if cid in CHECKS:
+            raise SystemExit(f"duplicate check id {cid!r}: {CHECKS[cid]['fn'].__name__}"
+                             f" would be replaced by {fn.__name__}")
         CHECKS[cid] = {"id": cid, "title": title, "fn": fn}
         return fn
     return deco
@@ -1058,6 +1354,98 @@ def w7_pre_existing(ctx: dict) -> list[str]:
     return out
 
 
+# Worked out by hand from book.xlsx and pinned here on purpose: deriving them from
+# the fixture's formulas would re-implement the dependency walk that is under test.
+# 利润表!B3 is read by D3 (=B3/C3-1) and B5 (=B3-B4); B5 is read by D5 and by
+# 汇总!B2, which 汇总!B3 reads in turn — so the closure crosses a sheet boundary.
+STALE_EXPECTED = {"利润表!D3", "利润表!B5", "利润表!D5", "汇总!B2", "汇总!B3"}
+# Cells the edit cannot reach. If these lose their cached values the implementation
+# is clearing every formula in the book — honest, but it throws away numbers that
+# are still true.
+STALE_UNTOUCHED = {"利润表!D4", "利润表!C5"}
+
+
+@check("W8", "an edit clears the cached results it invalidated, and only those")
+def w8_stale_caches(ctx: dict) -> list[str]:
+    """A cached `<v>` over a changed input is not a stale number with a warning next
+    to it — it is a WRONG number that reports itself as calculated.
+
+    Measured 2026-08-16 on the L4 input (059 §三十): `--set B2=1350` left 毛利 488.2
+    and 营业利润 47.6 in the file, `xlsx_read` marked both `uncalculated: false`, and
+    the PDF preview put that table on the page — LibreOffice renders stale caches
+    verbatim because it does not honour `fullCalcOnLoad`. Clearing them makes the
+    same render produce the right numbers, because a formula cell with no cached
+    result IS computed at load.
+
+    Two-sided on purpose: clearing EVERY formula cache satisfies the first half and
+    is the lazy implementation the second half exists to reject.
+    """
+    s = ctx["stale"]
+    out = []
+    before, after = s["cached_before"], s["cached_after"]
+    absent = (STALE_EXPECTED | STALE_UNTOUCHED) - before
+    if absent:
+        return [f"W8 the fixture carries no cached value for {sorted(absent)}, so "
+                f"this assertion is looking at nothing — a workbook with no caches "
+                f"cannot show a stale one"]
+    if s["exit"] != 0:
+        return [f"W8 the edit exited {s['exit']}"]
+    left_stale = sorted(STALE_EXPECTED & after)
+    if left_stale:
+        out.append(f"W8 {left_stale} were computed from the edited cell and still "
+                   f"carry their old cached result — a reader sees those numbers as "
+                   f"current, and LibreOffice renders them onto the page")
+    over_cleared = sorted(STALE_UNTOUCHED - after)
+    if over_cleared:
+        out.append(f"W8 {over_cleared} do not depend on the edited cell and lost "
+                   f"their cached values anyway — that discards numbers that are "
+                   f"still true")
+    reported = set(s["report"].get("caches_invalidated") or [])
+    if reported != STALE_EXPECTED:
+        out.append(f"W8 the report claims it invalidated {sorted(reported)} while "
+                   f"the file says {sorted(before - after)} — a report that does not "
+                   f"match the artifact is the failure this check is about")
+    if not s["report"].get("caches_invalidated_note"):
+        out.append("W8 caches were cleared and nothing in the report says so; the "
+                   "caller finds out by reading an empty cell")
+    return out
+
+
+@check("W9", "the staleness sweep is bounded, and says so when it falls back")
+def w9_stale_bound(ctx: dict) -> list[str]:
+    """The precise walk expands every reference to single cells, which is quadratic
+    on a shape real workbooks have.
+
+    Measured 2026-08-16 (059 §三十): the first version of the sweep ran **over nine
+    minutes** on a 10,000-row sheet of widening SUM ranges and had to be killed. A
+    correctness fix that turns a sub-second command into a hang is not a fix. The
+    fallback has to be safe as well as fast: clearing more than necessary throws away
+    true numbers, but leaving one stale value behind is the original defect.
+    """
+    s = ctx["stale_bound"]
+    out = []
+    if len(s["cached_before"]) < WIDE_FORMULAS:
+        return [f"W9 the fixture carries {len(s['cached_before'])} cached formula "
+                f"cell(s), not {WIDE_FORMULAS} — nothing here can go stale, so the "
+                f"assertion would pass on an implementation that does nothing"]
+    if s["exit"] != 0:
+        return [f"W9 the edit exited {s['exit']} on a workbook with a wide "
+                f"dependency graph"]
+    if s["seconds"] > WIDE_SECONDS_CEILING:
+        out.append(f"W9 the edit took {s['seconds']:.1f}s (ceiling "
+                   f"{WIDE_SECONDS_CEILING:.0f}s) — the dependency walk is being run "
+                   f"on a graph it cannot afford to expand")
+    if s["cached_after"]:
+        out.append(f"W9 {len(s['cached_after'])} formula cell(s) kept a cached "
+                   f"result the edit invalidated; falling back is allowed, leaving a "
+                   f"wrong number behind is not")
+    if not s["report"].get("caches_invalidated_coarse"):
+        out.append("W9 the sweep gave up precision and the report does not say so — "
+                   "the caller cannot tell 'only the dependents were cleared' from "
+                   "'everything was cleared' without being told")
+    return out
+
+
 @check("C1", "column width counts a CJK character as two units, not one")
 def c1_display_width(ctx: dict) -> list[str]:
     got = ctx["autofit"]["widths"].get("A")
@@ -1144,7 +1532,156 @@ def c4_import_autofit(ctx: dict) -> list[str]:
     return out
 
 
-@check("E1", "cols is written before sheetData, as the ECMA-376 sequence requires")
+@check("C5", "a number too wide for its column is measured through its format")
+def c5_number_width(ctx: dict) -> list[str]:
+    """`###` is what a too-narrow NUMBER column shows, and the width routine used to
+    skip every cell that was not text.
+
+    Measured 2026-08-16 (059 §三十二): in 利润表 the only cell that actually failed
+    to display was 营业利润's 同比 — `1.0877…` under `0.0%`, i.e. `108.8%`, six
+    characters in a six-unit column — and it is precisely the kind of cell
+    `--autofit` could not see. The判据 is taken off the PAGE, not out of the report:
+    the report is the thing under test.
+    """
+    p = ctx["percent_width"]
+    out = []
+    if p["width_before"] != 6:
+        return [f"C5 the fixture's percent column starts at {p['width_before']}, not "
+                f"6 — it has to be too narrow or there is nothing to widen"]
+    if p["rendered"] is None:
+        SKIPS.append("C5 rendered check: pypdfium2 is not installed")
+    elif "###" in p["rendered"]:
+        out.append("C5 the rendered page still shows ### — the column was not made "
+                   "wide enough for the number it displays")
+    elif "108.8%" not in p["rendered"]:
+        out.append(f"C5 neither ### nor 108.8% is on the page; the fixture did not "
+                   f"render what this check is about")
+    if (p["width_after"] or 0) <= 6:
+        out.append(f"C5 the column is still {p['width_after']} units wide; the value "
+                   f"it displays needs 8")
+    widened = [w for w in p["report"].get("widths", [])
+               if w.get("column") == "B" and w.get("reason", "").startswith("'108.8%'")]
+    if not widened:
+        out.append(f"C5 nothing in the report attributes the widening to the "
+                   f"DISPLAYED text: {p['report'].get('widths')}")
+    return out
+
+
+@check("C6", "a run that widened nothing still says what it measured")
+def c6_measured_when_nothing_changed(ctx: dict) -> list[str]:
+    """An empty `changes` and a `--autofit` that did nothing look identical.
+
+    Measured 2026-08-16 (059 §三十二): handed `changes: []` twice, a model went
+    around the skill and set five widths by hand — larger than its own reading of
+    this skill's formula said were needed — and split the table across two pages.
+    """
+    noop = ctx["percent_width"]["noop"]
+    out = []
+    if noop.get("widths"):
+        return [f"C6 the second pass still widened {noop['widths']}; this check needs "
+                f"the run that changed nothing"]
+    measured = noop.get("widths_measured") or []
+    if not measured:
+        out.append("C6 a run that changed nothing reports nothing it measured — "
+                   "indistinguishable from --autofit never having run")
+    elif not any(m.get("verdict") == "already wide enough" and m.get("current")
+                 for m in measured):
+        out.append(f"C6 the measurements carry no current-vs-needed verdict: "
+                   f"{measured[:2]}")
+    if not noop.get("widths_note"):
+        out.append("C6 nothing in the report says the columns were checked and found "
+                   "wide enough")
+    return out
+
+
+@check("N10", "a table split across pages by its own width is reported")
+def n10_split_columns(ctx: dict) -> list[str]:
+    """Page 1 looks like a complete table. It is not: the columns that did not fit
+    are on a page of their own, with no row labels beside them.
+    """
+    s = ctx["split"]
+    out = []
+    if s.get("pages") in (None, 0):
+        SKIPS.append("N10 split check: the preview reported no page count")
+        return []
+    if s.get("pages") < 2:
+        return [f"N10 the wide fixture rendered on {s.get('pages')} page(s); this "
+                f"check needs a sheet that does not fit"]
+    off = s.get("columns_off_first_page")
+    if off is None:
+        out.append("N10 the report does not say whether any column left page 1")
+    elif "同比" not in off:
+        out.append(f"N10 同比 is on page 2 of this preview and the report lists {off}")
+    if not s.get("split_warning"):
+        out.append("N10 columns were moved to their own page and no warning says so — "
+                   "page 1 reads as the whole table")
+    return out
+
+
+@check("N11", "a number rendered as ### is reported, and not guessed at")
+def n11_hash_marks(ctx: dict) -> list[str]:
+    """`###` passes every other check on this preview: the page has ink, one page,
+    no column moved off it — and the number the reader came for is not there.
+
+    Measured 2026-08-16 (059 §三十三): the B9 deliverable rendered 营业利润's 同比,
+    108.8%, as ### while every field in the report said the preview was fine.
+    """
+    h = ctx["hash"]
+    out = []
+    narrow, literal = h.get("narrow", {}), h.get("literal", {})
+    if narrow.get("pages") is None:
+        SKIPS.append("N11: the narrow preview reported no page count")
+        return []
+    if narrow.get("blank_pages") or narrow.get("columns_off_first_page"):
+        return [f"N11 the narrow fixture also trips the blank/split checks "
+                f"({narrow.get('blank_pages')}, "
+                f"{narrow.get('columns_off_first_page')}) — then it does not show "
+                f"that THIS check catches something they miss"]
+    if narrow.get("hash_marked_cells") is not True:
+        out.append(f"N11 a page showing ### was reported as "
+                   f"{narrow.get('hash_marked_cells')!r}")
+    if "利润表!B" not in (narrow.get("hash_marked_columns") or []):
+        out.append(f"N11 the too-narrow column was not named: "
+                   f"{narrow.get('hash_marked_columns')}")
+    if not narrow.get("hash_warning"):
+        out.append("N11 nothing warns that a value is in the file and not in the "
+                   "picture")
+    # The other half: a sheet that really holds "###" must not be called truncated.
+    if literal.get("hash_marked_cells") is not None:
+        out.append(f"N11 a sheet whose cell literally contains ### was judged "
+                   f"{literal.get('hash_marked_cells')!r} instead of reported as "
+                   f"undecidable")
+    elif not literal.get("hash_marked_note"):
+        out.append("N11 the undecidable case says nothing about why")
+    return out
+
+
+@check("N12", "a shorter render does not leave the previous one's pages behind")
+def n12_stale_images(ctx: dict) -> list[str]:
+    """Measured 2026-08-16 (059 §三十三): a 1-page preview landed in a folder that
+    still held page-002.png from a 2-page render, and the report listed only the one
+    image it wrote. The leftover reads as part of this document.
+    """
+    s = ctx["stale_images"]
+    left, report = s["left"], s["report"]
+    out = []
+    if report.get("pages") != 1:
+        return [f"N12 the fixture rendered {report.get('pages')} page(s); this check "
+                f"needs a render shorter than what was already in the directory"]
+    orphans = [n for n in left if n.startswith("page-") and n != "page-001.png"]
+    if orphans:
+        out.append(f"N12 {orphans} survived a render that produced one page")
+    if "notes.png" not in left:
+        out.append("N12 notes.png was deleted — only the page-NNN.png names this "
+                   "script itself writes may be removed")
+    removed = report.get("stale_images_removed") or []
+    if sorted(removed) != ["page-002.png", "page-009.png"]:
+        out.append(f"N12 the report says it removed {removed}; deleting a user's "
+                   f"files without listing them is the silent part of this")
+    return out
+
+
+@check("E1","cols is written before sheetData, as the ECMA-376 sequence requires")
 def e1_element_order(ctx: dict) -> list[str]:
     order = ctx["autofit"]["sheet_order"]
     if "cols" not in order:
@@ -1168,6 +1705,59 @@ def o1_stdout_budget(ctx: dict) -> list[str]:
     if s["file_cells"] < SCALE_ROWS * 3:
         out.append(f"O1 the file written by --out holds only {s['file_cells']} cells; "
                    f"trimming stdout must not mean dropping the data")
+    return out
+
+
+@check("O3", "the pointer to the untrimmed file states that file's size")
+def o3_pointer_size(ctx: dict) -> list[str]:
+    """Trimming stdout MOVES the bytes; the note decides whether they come back.
+
+    Measured in a live session on 2026-08-16: handed `"the full list is in <path>"`,
+    a model answered `--out /tmp/cells.json && cat /tmp/cells.json` and pulled 5,752
+    bytes through a trim that had held stdout to 259. The same move on a 2000x30
+    sheet is 6,439,603 bytes. Whether following the pointer is safe is decided by one
+    number — the size of the file — and that is the number the message omitted.
+    """
+    s = ctx["scale"]
+    note, size = s["note"], s["file_bytes"]
+    if not note:
+        return ["O3 the trimmed report carries no pointer to the full data at all"]
+    if size < 10_000:
+        # Non-vacuity: on a tiny file the byte count could collide with a row number
+        # or a cell count already in the note and pass for the wrong reason.
+        return [f"O3 the --out file is only {size} bytes — too small for this "
+                f"assertion to distinguish a stated size from a coincidence"]
+    if str(size) not in note:
+        return [f"O3 the note points at a {size}-byte file without saying how big it "
+                f"is ({note[:110]!r}) — an agent decides whether to print that file "
+                f"back into the conversation, and this is the message it decides on"]
+    return []
+
+
+@check("O4", "a run that replaced an existing file says so, and one that did not")
+def o4_replaced_existing(ctx: dict) -> list[str]:
+    """`--out == --in` is refused. A different path holding somebody else's bytes is
+    not, and nothing in this skill said a word about it.
+
+    The docx skill grew this field in §二十四 after a preview overwrote a fixture;
+    xlsx had seven scripts that write files and not one of them mentioned it. Two
+    directions on purpose — a field that is always True says nothing, which is the
+    trap §二十四 named when it added the same thing next door.
+
+    Three scripts are exercised by running them; the rest are covered structurally,
+    because inventing valid arguments for every writer is how coverage lists stop
+    matching the code.
+    """
+    r = ctx["replaced"]
+    out = []
+    for name, seen in sorted(r["runs"].items()):
+        if seen != [False, True]:
+            out.append(f"O4 {name} reported {seen} for [fresh path, same path again]; "
+                       f"expected [False, True] — one value for both cases is not an "
+                       f"answer")
+    if r["scripts_without_the_field"]:
+        out.append(f"O4 {r['scripts_without_the_field']} guard their output with "
+                   f"ensure_distinct and never report replaced_existing")
     return out
 
 
@@ -1270,6 +1860,45 @@ def a6_false_positives(ctx: dict) -> list[str]:
         out.append("A6 LOG10( was parsed as a reference to cell LOG10")
     if "汇总!A1" in flagged:
         out.append("A6 a legitimate cross-sheet reference was flagged")
+    return out
+
+
+@check("A7", "the audit report says what it did NOT check, clean or not")
+def a7_scope_in_the_report(ctx: dict) -> list[str]:
+    """A clean audit proves every reference resolves. It proves nothing about the
+    numbers, and `findings: []` does not say so.
+
+    SKILL.md states this boundary twice, in bold, in the words the acceptance
+    criterion asks for. Measured 2026-08-16 (059 §三十一): a model with the entire
+    document in context still answered "没有任何问题 / 所有公式引用均合法" — while
+    transcribing "45 个单元格，其中 17 个是公式" straight out of `counts`. So the
+    statement belongs in the artifact being quoted, not only in the document.
+
+    ⚠️ This assertion checks that the report CARRIES the scope. Nothing here — and
+    nothing that can be written — checks that a model passes it on. See 059 §六·补八.
+    """
+    out = []
+    spotless = ctx["audit"]["spotless"]["report"]
+    broken = ctx["audit"]["broken"]
+    if spotless.get("findings") or any(spotless.get("by_class", {"x": 1}).values()):
+        return [f"A7 the spotless fixture reports "
+                f"{spotless.get('by_class')} — this assertion is about the report "
+                f"with NOTHING in it, and that is not this one"]
+    if not spotless.get("counts", {}).get("formulas"):
+        return ["A7 the spotless fixture has no formulas, so `formulas_evaluated: 0` "
+                "sits next to nothing and says nothing"]
+    for label, report in (("clean", spotless), ("with findings", broken)):
+        scope = report.get("scope")
+        if not scope:
+            out.append(f"A7 the {label} report does not say what it checked; "
+                       f"`findings` alone reads as 'no problems', and on the clean "
+                       f"report that is exactly when it is over-read")
+        elif "xlsx_recalc" not in scope:
+            out.append(f"A7 the {label} report draws the boundary without naming "
+                       f"what to run instead")
+        if report.get("counts", {}).get("formulas_evaluated") != 0:
+            out.append(f"A7 the {label} report has no `formulas_evaluated: 0` beside "
+                       f"its formula count — a number is the part a reader copies")
     return out
 
 
@@ -1533,6 +2162,19 @@ def k7_single_engine(ctx: dict) -> list[str]:
                    f"cells; nothing checked it")
     if not both["cross_checked_by_two_engines"] and ctx["calibration"]["soffice_available"]:
         out.append("K7 the two-engine run does not report itself as cross-checked")
+    # The boolean above was the whole story until 2026-08-16, and it was not enough:
+    # a model ran --engine python, took the numbers, and told the user they were
+    # recalculated without a word about how many engines had seen them (059 §三十五).
+    # A skippable flag next to a sentence loses; so the fact gets a sentence.
+    note = solo.get("single_engine_note") or ""
+    if not note:
+        out.append("K7 a single-engine run says so only in a boolean — the one field "
+                   "a reader skips is a boolean among numbers")
+    elif "python" not in note:
+        out.append(f"K7 the single-engine note does not name which engine: {note[:80]!r}")
+    if both.get("single_engine_note") and ctx["calibration"]["soffice_available"]:
+        out.append("K7 a cross-checked run carries the single-engine caveat too — a "
+                   "warning on every run is a warning on none")
     return out
 
 
@@ -1655,16 +2297,38 @@ def n6_blank(ctx: dict) -> list[str]:
     return out
 
 
-@check("N7", "an uncalculated workbook is warned about before it renders empty")
+@check("N7", "an uncalculated workbook is warned about, without claiming what the "
+             "renderer did")
 def n7_uncalculated(ctx: dict) -> list[str]:
+    """The warning may state what the FILE holds. It may not state what came out on
+    paper, because nothing in that script looks at the page.
+
+    It used to say the cells "therefore render EMPTY — the picture is wrong in a way
+    the picture cannot show". Measured 2026-08-16 (059 §三十) on two workbooks —
+    one with 7 cleared caches, one library-written with none at all — LibreOffice
+    computed every one of them and the numbers were in the PDF text layer. The claim
+    was not merely unmeasured, it was **inverted**: it fired on a correct picture,
+    and said nothing in the one case where the page really was wrong (stale caches,
+    which LibreOffice renders verbatim).
+    """
     r = ctx["render"]
     if not r["uncalc_count"]:
         return ["N7 the uncalculated fixture reported 0 formula cells without a "
                 "cached value, so nothing is proven"]
-    if not r["uncalc_warning"]:
-        return ["N7 no warning for a workbook whose formulas render EMPTY — the "
-                "picture is wrong in a way the picture cannot show"]
-    return []
+    warning = r["uncalc_warning"]
+    if not warning:
+        return ["N7 no warning for a workbook whose formula cells hold no result — "
+                "every consumer that reads values sees those cells as empty"]
+    out = []
+    for claim in ("render EMPTY", "renders EMPTY", "render empty"):
+        if claim in warning:
+            out.append(f"N7 the warning asserts {claim!r}, which this script never "
+                       f"measured and which LibreOffice contradicts — it computes a "
+                       f"formula cell that has no cached result")
+            break
+    if "xlsx_recalc" not in warning:
+        out.append("N7 the warning does not name the one command that fixes it")
+    return out
 
 
 @check("N8", "the finance convention is audited by role, applied, and then clean")
@@ -1833,6 +2497,295 @@ def flaw_inventory_forgets_a_sheet(ctx, work):
     read = copy.deepcopy(ctx["read"]["json"])
     read["sheets"] = [s for s in read["sheets"] if s["name"] != "汇总"]
     ctx["read"] = {**ctx["read"], "json": read}
+    return ctx
+
+
+# The shape that shipped until 2026-08-16: no staleness sweep at all, so a value
+# edit left every dependent formula holding the result it had before the edit.
+STALE_SWEEP_ANCHOR = """        stale = invalidate_stale_caches(args.src, wb, edited) if edited else \\
+            {"cells": [], "truncated": [], "coarse": None}"""
+STALE_SWEEP_OFF = """        stale = {"cells": [], "truncated": [], "coarse": None}"""
+# The lazy alternative: clear every cached formula in the book instead of the ones
+# the edit can actually reach. Honest, and it throws away numbers still true.
+STALE_CLOSURE_ANCHOR = """sorted(n for n in seen if n in cached)"""
+STALE_CLOSURE_BLANKET = """sorted(cached)"""
+
+
+def collect_stale(scripts, work: Path, tag: str) -> dict:
+    """Re-run the real writer from `scripts` and re-measure the FILES it produced."""
+    out_x = work / f"stale-{tag}.xlsx"
+    report = work / f"stale-{tag}.json"
+    r = run_script_from(scripts, "xlsx_write.py", "--in", work / "calc.xlsx",
+                        "--out", out_x, "--sheet", "利润表", "--set", "B3=1310",
+                        "--report", report)
+    return {"exit": r.returncode,
+            "report": json.loads(report.read_text(encoding="utf-8"))
+            if report.exists() else {},
+            "cached_before": cached_cells(work / "calc.xlsx"),
+            "cached_after": cached_cells(out_x) if out_x.exists() else set()}
+
+
+def flaw_live_stale_caches_left_behind(ctx, work):
+    """Exactly what shipped: 毛利 and 营业利润 keep the values they had before the
+    edit, and every reader is told they are current."""
+    scripts = patched_scripts(work, [(STALE_SWEEP_ANCHOR, STALE_SWEEP_OFF)], "stalekeep")
+    ctx["stale"] = collect_stale(scripts, work, "stalekeep")
+    return ctx
+
+
+def flaw_live_stale_sweep_clears_everything(ctx, work):
+    """No dependency walk — blank every cached formula in the workbook."""
+    scripts = patched_scripts(work, [(STALE_CLOSURE_ANCHOR, STALE_CLOSURE_BLANKET)],
+                              "staleall")
+    ctx["stale"] = collect_stale(scripts, work, "staleall")
+    return ctx
+
+
+# The shape that shipped until 2026-08-16: a single-engine run said so in a boolean
+# and nowhere else.
+SINGLE_ENGINE_ANCHOR = """        if len(engines) < 2:"""
+SINGLE_ENGINE_OFF = """        if False:"""
+# ...and the other way it rots: put the caveat on every run, including the ones that
+# really were cross-checked.
+SINGLE_ENGINE_ALWAYS = """        if True:"""
+
+
+def flaw_live_single_engine_note_missing(ctx, work):
+    scripts = patched_scripts(work, [(SINGLE_ENGINE_ANCHOR, SINGLE_ENGINE_OFF)],
+                              "nosolonote")
+    ctx["recalc"] = {**ctx["recalc"], **_reengine(scripts, work, "nosolonote")}
+    return ctx
+
+
+def flaw_live_single_engine_note_on_every_run(ctx, work):
+    scripts = patched_scripts(work, [(SINGLE_ENGINE_ANCHOR, SINGLE_ENGINE_ALWAYS)],
+                              "alwaysnote")
+    ctx["recalc"] = {**ctx["recalc"], **_reengine(scripts, work, "alwaysnote")}
+    return ctx
+
+
+def _reengine(scripts, work: Path, tag: str) -> dict:
+    """Re-run both engine modes against the mixed fixture and re-read the reports."""
+    out = {}
+    for key, extra in (("python_only", ("--engine", "python")), ("mixed", ())):
+        report = work / f"eng-{tag}-{key}.json"
+        run_script_from(scripts, "xlsx_recalc.py", "--in", work / "mixed.xlsx",
+                        "--report", report, *extra)
+        out[key] = json.loads(report.read_text(encoding="utf-8")) \
+            if report.exists() else {}
+    return out
+
+
+# The shape that shipped until 2026-08-16: the guard refused --out == --in and said
+# nothing about replacing anybody else's file.
+REPLACED_ANCHOR = """    return out.exists()"""
+REPLACED_OFF = """    return False"""
+REPLACED_FIELD_ANCHOR = """                  "replaced_existing": replaced,
+                  "changes": changes, "widths": fit["changes"],"""
+REPLACED_FIELD_OFF = """                  "changes": changes, "widths": fit["changes"],"""
+
+
+def flaw_live_replacement_never_reported(ctx, work):
+    """The field exists and is always False — present, and saying nothing."""
+    scripts = patched_scripts(work, [(REPLACED_ANCHOR, REPLACED_OFF)], "norep")
+    ctx["replaced"] = collect_replaced(scripts, work, "norep")
+    return ctx
+
+
+def flaw_live_one_writer_drops_the_field(ctx, work):
+    scripts = patched_scripts(work, [(REPLACED_FIELD_ANCHOR, REPLACED_FIELD_OFF)],
+                              "dropfield")
+    ctx["replaced"] = collect_replaced(scripts, work, "dropfield")
+    return ctx
+
+
+# Nothing looked at whether a number survived the column it was printed in.
+HASH_ANCHOR = """            out.update(hash_marks(doc, src, sheet))"""
+HASH_OFF = """            pass"""
+# ...and the plausible half-measure: call every ### a truncation, including the ones
+# a sheet really contains.
+HASH_LITERAL_ANCHOR = """    if literal:"""
+HASH_LITERAL_OFF = """    if False:"""
+# ...and a shorter render left the previous one's pages in place.
+STALE_IMG_ANCHOR = """            for name in stale:
+                (png_dir / name).unlink()"""
+STALE_IMG_OFF = """            stale = []"""
+
+
+def flaw_live_no_hash_check(ctx, work):
+    scripts = patched_scripts(work, [(HASH_ANCHOR, HASH_OFF)], "nohash")
+    ctx["hash"] = collect_hash_marks(scripts, work, "nohash")
+    return ctx
+
+
+def flaw_live_hash_ignores_literal_content(ctx, work):
+    scripts = patched_scripts(work, [(HASH_LITERAL_ANCHOR, HASH_LITERAL_OFF)], "hashlit")
+    ctx["hash"] = collect_hash_marks(scripts, work, "hashlit")
+    return ctx
+
+
+def flaw_live_stale_images_kept(ctx, work):
+    scripts = patched_scripts(work, [(STALE_IMG_ANCHOR, STALE_IMG_OFF)], "staleimg")
+    ctx["stale_images"] = collect_stale_images(scripts, work, "staleimg")
+    return ctx
+
+
+# The shape that shipped until 2026-08-16: only text drove the width, so the one
+# cell in 利润表 that actually failed to display — a percentage — was invisible to it.
+NUMBER_WIDTH_ANCHOR = """                        shown = displayed_text(cached, cell.number_format)"""
+NUMBER_WIDTH_OFF = """                        shown = None"""
+# ...and the report listed only what it CHANGED, so "measured, all fine" and "the
+# flag did nothing" were the same two bytes.
+MEASURED_ANCHOR = """                measured.append(note)"""
+MEASURED_OFF = """                pass"""
+# ...and nothing looked at whether the table survived the paper it was printed on.
+SPLIT_ANCHOR = """            out["columns_off_first_page"] = split_columns(doc, src, sheet)"""
+SPLIT_OFF = """            pass"""
+
+
+def flaw_live_width_ignores_numbers(ctx, work):
+    scripts = patched_scripts(work, [(NUMBER_WIDTH_ANCHOR, NUMBER_WIDTH_OFF)], "numblind")
+    ctx["percent_width"] = collect_percent_width(scripts, work, "numblind")
+    return ctx
+
+
+def flaw_live_width_reports_only_changes(ctx, work):
+    scripts = patched_scripts(work, [(MEASURED_ANCHOR, MEASURED_OFF)], "nomeasure")
+    ctx["percent_width"] = collect_percent_width(scripts, work, "nomeasure")
+    return ctx
+
+
+def flaw_live_split_not_detected(ctx, work):
+    scripts = patched_scripts(work, [(SPLIT_ANCHOR, SPLIT_OFF)], "nosplit")
+    ctx["split"] = collect_split(scripts, work, "nosplit")
+    return ctx
+
+
+# The shape that shipped until 2026-08-16: the report drew no boundary at all, and
+# `findings: []` was the whole answer.
+AUDIT_SCOPE_ANCHOR = """            "scope": "references, not values: every formula was resolved to the \""""
+AUDIT_SCOPE_OFF = """            "unused_scope": "references, not values: every formula was resolved to the \""""
+AUDIT_COUNT_ANCHOR = """"counts": {**counts, **stats, "formulas_evaluated": 0},"""
+AUDIT_COUNT_OFF = """"counts": {**counts, **stats},"""
+# The plausible half-measure: say it only when there is something to say. That
+# removes the sentence from the one report most likely to be read as "all clear".
+AUDIT_SCOPE_ONLY_WHEN_DIRTY = """            "scope": None if not findings else "references, not values: every formula was resolved to the \""""
+
+
+def flaw_live_audit_states_no_scope(ctx, work):
+    scripts = patched_scripts(work, [(AUDIT_SCOPE_ANCHOR, AUDIT_SCOPE_OFF),
+                                     (AUDIT_COUNT_ANCHOR, AUDIT_COUNT_OFF)], "noscope")
+    ctx["audit"] = {**ctx["audit"],
+                    "spotless": collect_audit_spotless(scripts, work, "noscope",
+                                                       work / "calc.xlsx"),
+                    "broken": _reaudit(scripts, work, "noscope")}
+    return ctx
+
+
+def flaw_live_audit_scope_only_when_dirty(ctx, work):
+    scripts = patched_scripts(work, [(AUDIT_SCOPE_ANCHOR,
+                                      AUDIT_SCOPE_ONLY_WHEN_DIRTY)], "dirtyonly")
+    ctx["audit"] = {**ctx["audit"],
+                    "spotless": collect_audit_spotless(scripts, work, "dirtyonly",
+                                                       work / "calc.xlsx"),
+                    "broken": _reaudit(scripts, work, "dirtyonly")}
+    return ctx
+
+
+def _reaudit(scripts, work: Path, tag: str) -> dict:
+    out = work / f"audit-broken-{tag}.json"
+    run_script_from(scripts, "xlsx_audit.py", "--in", work / "broken.xlsx",
+                    "--out", out, "--fail-on", "error,missing,circular")
+    return json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
+
+
+# Removing the bound puts the precise walk back on a graph it cannot afford: the
+# 12M-reference fixture takes 6.9s here instead of 0.26s, and the report stops
+# saying it fell back at all.
+SPAN_BOUND_ANCHOR = """MAX_DEPENDENCY_SPAN = 500_000"""
+SPAN_BOUND_OFF = """MAX_DEPENDENCY_SPAN = 10_000_000_000"""
+# Falling back to coarse and then not clearing anything — fast, reports the
+# fallback, and leaves every stale number exactly where it was.
+COARSE_KEEPS_ANCHOR = """        stale, coarse = sorted(cached), ("""
+COARSE_KEEPS_BROKEN = """        stale, coarse = [], ("""
+
+
+def flaw_live_dependency_walk_unbounded(ctx, work):
+    scripts = patched_scripts(work, [(SPAN_BOUND_ANCHOR, SPAN_BOUND_OFF)], "nobound")
+    ctx["stale_bound"] = collect_stale_bound(scripts, work, "nobound")
+    return ctx
+
+
+def flaw_live_coarse_fallback_clears_nothing(ctx, work):
+    scripts = patched_scripts(work, [(COARSE_KEEPS_ANCHOR, COARSE_KEEPS_BROKEN)],
+                              "coarsenoop")
+    ctx["stale_bound"] = collect_stale_bound(scripts, work, "coarsenoop")
+    return ctx
+
+
+# The sentence that shipped until 2026-08-16 — a claim about the rendered page that
+# the script never looked at, and that LibreOffice contradicts.
+UNCALC_WARNING_ANCHOR = """            report["warning"] = (
+                f"{blank_formulas} formula cell(s) carry no cached result in the "
+                f"file. Anything that reads values instead of rendering — this "
+                f"skill's own reader included — sees them as empty; whether they "
+                f"appear on the page depends on the renderer computing them, which "
+                f"this script does not check. Run xlsx_recalc.py to put the numbers "
+                f"into the file")"""
+UNCALC_WARNING_SHIPPED = """            report["warning"] = (
+                f"{blank_formulas} formula cell(s) have no cached value and therefore "
+                f"render EMPTY — the picture is wrong in a way the picture cannot "
+                f"show. Run xlsx_recalc.py first")"""
+
+
+def flaw_live_uncalc_warning_claims_the_page(ctx, work):
+    scripts = patched_scripts(work, [(UNCALC_WARNING_ANCHOR, UNCALC_WARNING_SHIPPED)],
+                              "uncalcclaim")
+    report = work / "raw-claim.json"
+    run_script_from(scripts, "xlsx_pdf.py", "--in", BOOK,
+                    "--out", work / "raw-claim.pdf", "--report", report)
+    raw = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+    ctx["render"] = {**ctx["render"], "uncalc_warning": raw.get("warning"),
+                     "uncalc_count": raw.get("uncalculated_formulas")}
+    return ctx
+
+
+# The wording that shipped until 2026-08-16: a bare path, no size. Backing the fix
+# out means re-running the real reader with it, not editing the string this file
+# collected — the defect is what the entry point PRINTS.
+POINTER_ANCHOR = """    return (f"; the full list is in {out} ({size} bytes) — read the entries you need "
+            f"out of it, or re-run with a narrower --range/--cells. Printing a file "
+            f"that size back is the context blowout this trim exists to prevent")"""
+POINTER_SHIPPED = """    return f"; the full list is in {out}\""""
+POINTER_WRONG_SIZE = """    return (f"; the full list is in {out} ({size // 10} bytes) — read the entries "
+            f"you need out of it")"""
+
+
+def collect_scale_note(scripts, work: Path, tag: str) -> dict:
+    """Re-run the real reader from `scripts` and re-measure what it printed."""
+    out_json = work / f"big-{tag}.json"
+    r = run_script_from(scripts, "xlsx_read.py", "--in", work / "big.xlsx",
+                        "--sheet", "明细", "--range", f"A1:C{SCALE_ROWS}",
+                        "--out", out_json)
+    return {"stdout_bytes": len(r.stdout.encode("utf-8")),
+            "file_cells": len(json.loads(out_json.read_text(encoding="utf-8"))
+                              .get("cells", [])),
+            "note": json.loads(r.stdout).get("cells_note", ""),
+            "file_bytes": out_json.stat().st_size}
+
+
+def flaw_live_pointer_without_a_size(ctx, work):
+    """Exactly what shipped: `the full list is in <path>` and nothing about its size."""
+    scripts = patched_scripts(work, [(POINTER_ANCHOR, POINTER_SHIPPED)], "ptrbare")
+    ctx["scale"] = {**ctx["scale"], **collect_scale_note(scripts, work, "ptrbare")}
+    return ctx
+
+
+def flaw_live_pointer_states_a_wrong_size(ctx, work):
+    """A size that was not measured. Stating one is worse than stating none: the
+    caller now has a number to plan against and it is off by an order of magnitude."""
+    scripts = patched_scripts(work, [(POINTER_ANCHOR, POINTER_WRONG_SIZE)], "ptrwrong")
+    ctx["scale"] = {**ctx["scale"], **collect_scale_note(scripts, work, "ptrwrong")}
     return ctx
 
 
@@ -2229,6 +3182,44 @@ def flaw_live_import_reports_widths_it_did_not_write(ctx, work):
 
 FLAWS = [
     ("csv-written-without-a-bom", flaw_csv_without_bom, {"N1"}, ""),
+    ("LIVE: the pointer names the file but not its size (as it shipped until "
+     "2026-08-16)", flaw_live_pointer_without_a_size, {"O3"}, ""),
+    ("LIVE: the pointer states a size nobody measured",
+     flaw_live_pointer_states_a_wrong_size, {"O3"}, ""),
+    ("LIVE: an edit leaves the cached results it invalidated (as it shipped until "
+     "2026-08-16)", flaw_live_stale_caches_left_behind, {"W8"}, ""),
+    ("LIVE: the staleness sweep blanks every formula instead of the dependents",
+     flaw_live_stale_sweep_clears_everything, {"W8"}, ""),
+    ("LIVE: the uncalculated warning asserts what the page shows",
+     flaw_live_uncalc_warning_claims_the_page, {"N7"}, ""),
+    ("LIVE: a single-engine run says so only in a boolean (as it shipped until "
+     "2026-08-16)", flaw_live_single_engine_note_missing, {"K7"}, ""),
+    ("LIVE: the single-engine caveat is attached to every run",
+     flaw_live_single_engine_note_on_every_run, {"K7"}, ""),
+    ("LIVE: replacing an existing file is never reported (as it shipped until "
+     "2026-08-16)", flaw_live_replacement_never_reported, {"O4"}, ""),
+    ("LIVE: one writer drops the replaced_existing field",
+     flaw_live_one_writer_drops_the_field, {"O4"}, ""),
+    ("LIVE: nothing notices a number rendered as ###", flaw_live_no_hash_check,
+     {"N11"}, ""),
+    ("LIVE: every ### is called a truncation, including real content",
+     flaw_live_hash_ignores_literal_content, {"N11"}, ""),
+    ("LIVE: a shorter render leaves the previous one's pages in place",
+     flaw_live_stale_images_kept, {"N12"}, ""),
+    ("LIVE: column width ignores numbers, so ### stays (as it shipped until "
+     "2026-08-16)", flaw_live_width_ignores_numbers, {"C5"}, ""),
+    ("LIVE: the width report lists only what it changed",
+     flaw_live_width_reports_only_changes, {"C6"}, ""),
+    ("LIVE: nothing notices the table was split across pages",
+     flaw_live_split_not_detected, {"N10"}, ""),
+    ("LIVE: the audit report draws no boundary at all (as it shipped until "
+     "2026-08-16)", flaw_live_audit_states_no_scope, {"A7"}, ""),
+    ("LIVE: the audit states its scope only when it found something",
+     flaw_live_audit_scope_only_when_dirty, {"A7"}, ""),
+    ("LIVE: the dependency walk runs unbounded on a graph it cannot expand",
+     flaw_live_dependency_walk_unbounded, {"W9"}, ""),
+    ("LIVE: the coarse fallback reports itself and then clears nothing",
+     flaw_live_coarse_fallback_clears_nothing, {"W9"}, ""),
     ("LIVE: import applies widths after the first append (write_only drops them)",
      flaw_live_import_widths_after_append, {"C4"}, ""),
     ("LIVE: import reports widths it did not write (as it shipped until 2026-08-05)",

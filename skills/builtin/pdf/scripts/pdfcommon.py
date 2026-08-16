@@ -215,6 +215,27 @@ def write_json(path: Path, payload: dict) -> None:
 STDOUT_ITEM_LIMIT = 20
 
 
+def pointer(out: Path | None, fallback: str) -> str:
+    """Where the untrimmed data went — **with its size**.
+
+    Trimming stdout only MOVES the bytes; it does not stop them. The note is read by
+    an agent, and the shipped wording ("the full list is in <path>") reads as an
+    instruction to go fetch it — measured 2026-08-16 in a live session, a model
+    answered `--out ... && cat ...` and pulled 22x what the trim had allowed through.
+    The one number that decides whether following the pointer is safe is the size of
+    what it points at, and that is exactly what the message left out.
+    """
+    if out is None:
+        return fallback
+    try:
+        size = out.stat().st_size
+    except OSError:
+        return f"; the full list is in {out}"
+    return (f"; the full list is in {out} ({size} bytes) — read the entries you need "
+            f"out of it, or re-run with a narrower --pages. Printing a file that size "
+            f"back is the context blowout this trim exists to prevent")
+
+
 def compact(payload: dict, key: str, out: Path | None,
             limit: int = STDOUT_ITEM_LIMIT) -> dict:
     """A stdout-sized copy of `payload`: long lists replaced by a count + pointer."""
@@ -225,8 +246,7 @@ def compact(payload: dict, key: str, out: Path | None,
     trimmed[f"{key}_count"] = len(items)
     trimmed[f"{key}_note"] = (
         f"{len(items)} entries omitted from stdout"
-        + (f"; the full list is in {out}" if out else
-           "; pass --out to write the full list to a file"))
+        + pointer(out, "; pass --out to write the full list to a file"))
     return trimmed
 
 

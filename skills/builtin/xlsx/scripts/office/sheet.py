@@ -213,6 +213,28 @@ class Worksheet:
             kind = "text"
         return {"cell": ref, "written": True, "kind": kind}
 
+    def clear_cached(self, refs: set[str]) -> list[str]:
+        """Drop the cached `<v>` of many formula cells in ONE pass over the sheet.
+
+        `set_cached` is right for a handful of cells and quadratic for thousands:
+        `_row` rescans every row on every call. Measured 2026-08-16 — clearing
+        19,998 cells that way took 54s on a 10,000-row sheet, against 0.3s for the
+        scan that decided which cells they were. Same result, one traversal.
+        """
+        wanted = {r.upper() for r in refs}
+        cleared: list[str] = []
+        for row in self._sheet_data().findall(q("row")):
+            for cell in row.findall(q("c")):
+                ref = (cell.get("r") or "").upper()
+                if ref not in wanted or cell.find(q("f")) is None:
+                    continue
+                for child in list(cell):
+                    if child.tag != q("f"):
+                        cell.remove(child)
+                cell.attrib.pop("t", None)
+                cleared.append(ref)
+        return cleared
+
     def formula_cells(self) -> dict[str, str]:
         """Every cell on this sheet holding a formula, as {ref: '=...'}."""
         out: dict[str, str] = {}

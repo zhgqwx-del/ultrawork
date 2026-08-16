@@ -293,10 +293,11 @@ def main() -> int:
         if args.source:
             if not args.out:
                 fail("--from needs --out to say where the workbook goes")
-            ensure_distinct(args.source, args.out)
+            replaced = ensure_distinct(args.source, args.out)
             report = import_rows(args.source, args.out,
                                  args.sheet or "Sheet1", args.autofit)
-            emit({"from": args.source.name, "out": args.out.name, **report},
+            emit({"from": args.source.name, "out": args.out.name,
+                  "replaced_existing": replaced, **report},
                  args.report)
             return
         if not args.src:
@@ -308,7 +309,7 @@ def main() -> int:
             return
         if not args.to or not args.out:
             fail("exporting needs --to csv|json|jsonl and --out")
-        ensure_distinct(args.src, args.out)
+        replaced = ensure_distinct(args.src, args.out)
         blank = uncalculated_count(args.src, args.sheet) if args.sheet else 0
         if args.header_row < 1:
             fail(f"--header-row {args.header_row} must be 1 or more (rows are 1-based)")

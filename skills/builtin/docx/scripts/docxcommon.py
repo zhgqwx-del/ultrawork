@@ -108,6 +108,25 @@ def ensure_distinct(src: Path, out: Path, label: str = "--out") -> None:
              f"replace it afterwards if that is what you meant")
 
 
+def replaces_existing(out: Path) -> bool:
+    """Whether `--out` is about to land on a file that is already there.
+
+    Call it BEFORE writing and put the answer in the report. `ensure_distinct`
+    above only catches out == in; it cannot catch "a different file that someone
+    else's work is in". 2026-08-16 (L4 B3): asked to add numbering to a .docx, the
+    agent also rendered a preview to `<same stem>.pdf` next to it and destroyed an
+    unrelated fixture — silently, because nothing anywhere said a file was replaced.
+
+    Deliberately NOT a refusal: re-running a conversion over its own previous
+    output is the normal case, and a tool that needs --force for that is a tool
+    people wrap in --force. Saying it is what was missing.
+    """
+    try:
+        return out.exists()
+    except OSError:
+        return False
+
+
 def save_checked(pkg: Package, out: Path, pre_existing: list[str]) -> list[str]:
     """Write the package, but only if this edit did not break it.
 
@@ -138,6 +157,27 @@ def write_json(path: Path, payload: dict) -> None:
 STDOUT_ITEM_LIMIT = 20
 
 
+def pointer(out: Path | None, fallback: str) -> str:
+    """Where the untrimmed data went — **with its size**.
+
+    Trimming stdout only MOVES the bytes; it does not stop them. The note is read by
+    an agent, and the shipped wording ("the full list is in <path>") reads as an
+    instruction to go fetch it — measured 2026-08-16 in a live session, a model
+    answered `--out ... && cat ...` and pulled 22x what the trim had allowed through.
+    The one number that decides whether following the pointer is safe is the size of
+    what it points at, and that is exactly what the message left out.
+    """
+    if out is None:
+        return fallback
+    try:
+        size = out.stat().st_size
+    except OSError:
+        return f"; the full list is in {out}"
+    return (f"; the full list is in {out} ({size} bytes) — read the entries you need "
+            f"out of it. Printing a file that size back is the context blowout this "
+            f"trim exists to prevent")
+
+
 def compact(payload: dict, key: str, out: Path | None,
             limit: int = STDOUT_ITEM_LIMIT) -> dict:
     """A stdout-sized copy of `payload`: a long list becomes a count and a pointer."""
@@ -148,8 +188,7 @@ def compact(payload: dict, key: str, out: Path | None,
     trimmed[f"{key}_count"] = len(items)
     trimmed[f"{key}_note"] = (
         f"{len(items)} entries omitted from stdout"
-        + (f"; the full list is in {out}" if out else
-           "; pass --out to write the full list to a file"))
+        + pointer(out, "; pass --out to write the full list to a file"))
     return trimmed
 
 
@@ -169,8 +208,7 @@ def _summarise(payload: dict, key: str, out: Path | None, why: str) -> dict:
     trimmed[f"{key}_count"] = len(items)
     trimmed[f"{key}_note"] = (
         f"{why}; omitted from stdout"
-        + (f". The full list is in {out}" if out else
-           ". Pass --out to write the full report to a file"))
+        + pointer(out, ". Pass --out to write the full report to a file"))
     return trimmed
 
 

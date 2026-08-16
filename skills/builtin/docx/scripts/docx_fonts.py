@@ -89,6 +89,39 @@ def audit_part(root, styles_root, part: str) -> list[dict]:
     return out
 
 
+def binding_sources(root, styles_root) -> dict[str, int]:
+    """Where each CJK run's `eastAsia` face comes from, counted.
+
+    `--check` answered "is anything unbound"; it could not answer the question a
+    caller actually asks next: *if I change the style, will anything move?* A run
+    whose face is direct formatting (source `run`) ignores every style there is, so
+    a style-level edit leaves it exactly as it was. Without this number the only way
+    to find that out is to change the style and compare renders. (2026-08-16, L4 C1:
+    asked to make the body 微软雅黑, an agent hard-wrote `w:rFonts` onto all 83 runs
+    — 72 of which already carried a direct face, which is precisely the count that
+    would have told everyone what the honest options were.)
+    """
+    counts = {"run": 0, "style": 0, "docDefaults": 0, "theme": 0, "nothing": 0}
+    for paragraph in doc.iter_paragraphs(root):
+        for node in paragraph.iter(q("r")):
+            text = "".join(t.text or "" for t in node.iter(q("t")))
+            if not doc.has_cjk(text):
+                continue
+            value, source = sty.resolve_font(node, paragraph, styles_root, "eastAsia")
+            if source == "run":
+                key = "run"
+            elif isinstance(source, str) and source.startswith("style"):
+                key = "style"
+            elif source == "docDefaults":
+                key = "docDefaults"
+            elif value and str(value).startswith("theme:"):
+                key = "theme"
+            else:
+                key = "nothing"
+            counts[key] += 1
+    return counts
+
+
 def repair(root, styles_root, findings: list[dict], part: str,
            east_asia: str, ascii_font: str) -> list[dict]:
     """Write the resolved value onto each run. Returns what was written."""
@@ -166,12 +199,18 @@ def main() -> int:
                     1 for node in paragraph.iter(q("r"))
                     if doc.has_cjk("".join(t.text or "" for t in node.iter(q("t")))))
             findings += audit_part(root, styles_root, part)
+        sources_total = {k: 0 for k in
+                         ("run", "style", "docDefaults", "theme", "nothing")}
+        for root in trees.values():
+            for key, n in binding_sources(root, styles_root).items():
+                sources_total[key] += n
 
         report: dict = {
             "in": args.src.name,
             "parts_examined": parts,
             "runs_with_cjk": cjk_runs,
             "unbound_runs": len(findings),
+            "binding_sources": sources_total,
             "problems": findings,
             "not_examined": [
                 "word/styles.xml — a style binds every run that uses it, so "
@@ -181,6 +220,13 @@ def main() -> int:
             ],
         }
         if args.check:
+            direct = sources_total["run"]
+            if direct:
+                report["restyle_note"] = (
+                    f"{direct} of {cjk_runs} CJK run(s) state their face as DIRECT "
+                    f"formatting. Changing a style will not move those — only "
+                    f"rewriting the runs will, and that overrides a decision the "
+                    f"document already recorded. Say which of the two you mean")
             report["verdict"] = ("every CJK run states both faces"
                                  if not findings else
                                  f"{len(findings)} CJK run(s) do not state their own "

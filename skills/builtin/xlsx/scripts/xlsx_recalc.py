@@ -138,7 +138,7 @@ def main() -> int:
         if not args.src.is_file():
             fail(f"no such file: {args.src}")
         if args.out:
-            ensure_distinct(args.src, args.out)
+            state["replaced"] = ensure_distinct(args.src, args.out)
 
         pkg = Package.open(args.src)
         wb = Workbook(pkg)
@@ -155,15 +155,13 @@ def main() -> int:
                 if args.engine == "soffice":
                     fail("--engine soffice was requested but LibreOffice is not "
                          "installed; install it or use --engine python")
-                notes.append("LibreOffice is not installed, so only the python "
-                             "engine ran — nothing cross-checked it")
+                notes.append("LibreOffice is not installed, so it could not run")
             else:
                 vals, err = soffice_values(args.src, args.timeout)
                 if err:
                     if args.engine == "soffice":
                         fail(err)
-                    notes.append(f"LibreOffice failed ({err}); only the python "
-                                 f"engine ran — nothing cross-checked it")
+                    notes.append(f"LibreOffice failed ({err})")
                 else:
                     engines["soffice"] = vals
 
@@ -227,6 +225,7 @@ def main() -> int:
             "file": args.src.name,
             "engines": sorted(engines),
             "values_written_from": chosen if args.out else None,
+            "replaced_existing": state.get("replaced") if args.out else None,
             "formulas": total,
             "cross_checked": agreed + disagreed,
             "agreed": agreed, "disagreed": disagreed,
@@ -239,6 +238,24 @@ def main() -> int:
             "cross_checked_by_two_engines": len(engines) == 2,
             "notes": notes,
         }
+        if len(engines) < 2:
+            # `cross_checked_by_two_engines: false` is the same fact, and it was not
+            # enough: measured 2026-08-16 (059 §三十五) a model ran `--engine python`,
+            # took the numbers, and reported them as settled without a word about how
+            # many engines had looked at them. A boolean is skippable; the sentence
+            # sits next to the numbers it qualifies. Independent of WHY only one ran —
+            # asking for one engine is the commonest reason and used to produce no
+            # note at all.
+            only = ", ".join(sorted(engines)) or "no"
+            report["single_engine_note"] = (
+                f"these numbers come from the {only} engine alone — nothing "
+                f"cross-checked them, so they are a result, not an agreed result"
+                + (". They were written into the output file"
+                   if args.out and chosen else "")
+                + (". The python engine is deliberately incomplete and refuses what "
+                   "it cannot do, which is not the same as being right about what it "
+                   "can" if "python" in engines else "")
+                + ". Run --engine both for a cross-checked answer")
         emit(report, args.report, "findings", "supported_functions")
         state["hit"] = sum(by_class[c] for c in wanted)
 

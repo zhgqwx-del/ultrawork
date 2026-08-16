@@ -20,9 +20,12 @@
  *      必须与同目录 capabilities.json 对得上——§11 管「指错了别的技能」，这一条管「说错了
  *      自己会不会做」。同一个病：模型只读得到 SKILL.md，一句过期的「不做」会让它绕开一个
  *      已经能用的脚本，产物和别的门禁都看不出来（docx/xlsx 各腐烂过一句，2026-08-05 修）
+ *  13. 内置技能 SKILL.md 的**示例命令**不许把产物写到工作区外（`--out /tmp/…`），且 pdf/docx/
+ *      xlsx 必须把这条规则写在正文里——产物面板只扫工作区、内联图只读工作区内的文件，
+ *      写到外面就是「文件真的在、用户永远看不见」（2026-08-15 L4 实测，059 §十七）
  *
  * 用法：bun run --bun scripts/check-docs.ts
- *       bun run --bun scripts/check-docs.ts --selftest   # §11 + §12 的正负控制（11 + 11 条）
+ *       bun run --bun scripts/check-docs.ts --selftest   # §11/§12/§13 的正负控制（11+11+11 条）
  * 退出码：0 = 通过；1 = 有硬性漂移（CI / pre-commit 可据此拦截；CI job 见 .github/workflows/ci.yml docs）。
  */
 import { Glob } from "bun"
@@ -143,6 +146,31 @@ export function capClaimProblems(claims: CapClaim[], total: number, pending: num
   return bad
 }
 
+// ── §13 助手：示例命令里的输出路径 ────────────────────────────────────
+// 产物写到工作区外 = 用户永远看不到它：产物面板只扫工作区，回复里的内联图只走
+// `/file/content`（只读工作区内），两条通道一条都不通。2026-08-15 L4 实测：模型把表单
+// 预览渲染到 `/tmp/filled_preview/`，三张 PNG 文件真的在、内容也对，UI 上就是不显示。
+// SKILL.md 的示例是模型照抄的模板，所以这里管的是**示例本身**：输出参数不许指向绝对路径。
+//
+// 只认「输出参数 + 绝对路径」这一种形态，两个刻意的边界：
+//   ① `--in /Users/x/report.pdf` **不算** —— 输入本来就常是用户给的绝对路径。
+//   ② 散文里提到 `/tmp` **不算** —— 否则新加的那条「别写 /tmp」规则会把自己判红（实测）。
+// ⚠️ 只收**带值**的输出参数。deckcraft 的 `--pdf` / `--pptx` 是布尔开关，收进来的话
+// `--pdf --pptx` 会把后一个开关当成前一个的值 —— 今天不误报，明天换个写法就误报。
+const OUTPUT_FLAG_RE = /(--(?:out-dir|output|out|png|overlay|publish)\b)[=\s]+(['"]?)([^\s'"`|)]+)/g
+
+/** 一行里指向工作区外的输出路径（空 = 这一行没问题）。 */
+export function absOutputPathsInLine(line: string): string[] {
+  const bad: string[] = []
+  for (const m of line.matchAll(OUTPUT_FLAG_RE)) {
+    const v = m[3]
+    if (v.startsWith("-")) continue // 后面跟的是下一个开关，不是路径
+    // 绝对：POSIX 根 / 家目录 / Windows 盘符。其余（`输出/x.png`、`./png`、`.`）都是相对。
+    if (/^~|^\/|^[A-Za-z]:[\\/]/.test(v)) bad.push(`${m[1]} ${v}`)
+  }
+  return bad
+}
+
 // ── --selftest：§11 跨技能引用扫描 + §12 能力断言对账的正负控制（常驻，CI 同跑） ──
 // 负向控制复刻的是**真实出过的错误写法**（不是随便一种破坏）：059 §1 的 `doc-export`
 // 三处原文，以及本刀改名后 pdf/xlsx description 里会变成断链的 "that is `doc-edit`"。
@@ -210,10 +238,39 @@ if (process.argv.includes("--selftest")) {
   }
   console.log(capBad === 0 ? `✅ §12 自检 ${capCases.length}/${capCases.length} 通过` : `❌ §12 自检 ${capBad} 条失败`)
 
-  const total = bad + capBad
-  console.log(total === 0
-    ? `\n✅ 自检合计 ${cases.length + capCases.length}/${cases.length + capCases.length} 通过`
-    : `\n❌ 自检合计 ${total} 条失败`)
+  // §13：负向控制复刻的是 2026-08-15 L4 里**模型真写过的那条命令**，不是随便一种破坏。
+  // 正向控制里有一条特别重要：新写进 SKILL.md 的那句「别写 /tmp」自己必须不被判红。
+  console.log("\n§13 示例命令里的输出路径（必须落在工作区内）：")
+  // [描述, 行, 期望命中条数]
+  const pathCases: [string, string, number][] = [
+    ["负①L4 实测：模型把预览渲染到 /tmp（三张图一张没显示出来）",
+      "python3 scripts/pdf_render.py --in filled.pdf --out /tmp/filled_preview --dpi 150", 1],
+    ["负②家目录也在工作区外", "python3 scripts/docx_pdf.py --in a.docx --out ~/Desktop/预览.pdf", 1],
+    ["负③Windows 盘符路径", String.raw`python3 scripts/xlsx_pdf.py --in b.xlsx --png C:\temp\pages`, 1],
+    ["负④绝对路径即便在用户家目录下也一样看不见",
+      "python3 scripts/pdf_render.py --in r.pdf --out /Users/me/Desktop/png", 1],
+    ["负⑤一行里两个输出参数都写错", "xlsx_pdf.py --out /tmp/b.pdf --png /tmp/pages", 2],
+    ["负⑥`=` 写法与引号", `pdf_extract.py --in r.pdf --overlay="/tmp/boxes.pdf"`, 1],
+    ["正①相对路径（中文目录）", "python3 scripts/pdf_render.py --in r.pdf --out 输出/png --dpi 220", 0],
+    ["正②`./` 前缀与当前目录", "export_deck.py .deckcraft/x --pdf --pptx --publish .", 0],
+    ["正③**输入**用绝对路径是合法的，用户就是这么给的",
+      "python3 scripts/pdf_info.py --in /Users/me/Desktop/报告.pdf --out info.json", 0],
+    ["正④规则本身提到 /tmp 不算违规（否则这条规则会把自己判红）",
+      "⚠️ **写到 `/tmp`、`~/…` 或任何工作区外的绝对路径 = 用户永远看不到它。**", 0],
+    ["正⑤布尔开关后面跟的是下一个开关，不是路径", "export_deck.py deck --pdf --pptx --publish .", 0],
+  ]
+  let pathBad = 0
+  for (const [desc, line, want] of pathCases) {
+    const got = absOutputPathsInLine(line)
+    const ok = got.length === want
+    if (!ok) pathBad++
+    console.log(`  ${ok ? "✅" : "❌"} ${desc} → ${got.length} 条` + (ok ? "" : `（期望 ${want}）：${got.join(" / ")}`))
+  }
+  console.log(pathBad === 0 ? `✅ §13 自检 ${pathCases.length}/${pathCases.length} 通过` : `❌ §13 自检 ${pathBad} 条失败`)
+
+  const total = bad + capBad + pathBad
+  const n = cases.length + capCases.length + pathCases.length
+  console.log(total === 0 ? `\n✅ 自检合计 ${n}/${n} 通过` : `\n❌ 自检合计 ${total} 条失败`)
   process.exit(total === 0 ? 0 : 1)
 }
 
@@ -282,7 +339,9 @@ for (const [ref, docs] of missing) {
 // 校验活文档里 [text](target) 的本地相对目标；跳过 http(s)/mailto/纯锚点/含空格与 <> 的伪链接、
 // 围栏代码块内的示例链接。目标里 `#锚点`/`?query` 剥掉；`%` 解码失败按原文处理（不崩）。
 for (const [rel, rawText] of mdTexts) {
-  const text = stripFences(rawText)
+  // 行内代码里的 `![](输出/x.png)` 是**被引用的语法**，不是一条链接 —— 与围栏同理。
+  // （2026-08-15：gotchas §17 记录「管线会给 src 编码」时引了这行 markdown，当场误报。）
+  const text = stripFences(rawText).replace(/`+[^`\n]*`+/g, "")
   for (const m of text.matchAll(/\[[^\]]*\]\(([^)\s<>]+)\)/g)) {
     let target = m[1]
     if (/^(https?:|mailto:|#)/.test(target)) continue
@@ -606,6 +665,49 @@ if (await memFile.exists()) {
   if (scanned === 0) errors.push(`§12 一个带 capabilities.json 的技能都没扫到（${builtinRoot}）—— ` +
     `空遍历和通过长得一样，这里必须至少有 pdf/xlsx/docx 三个`)
   else console.log(`   §12 能力断言对账：${scanned} 个技能有 capabilities.json`)
+}
+
+// ── 13. SKILL.md 的示例命令必须把产物写在工作区内 ──────────────────────
+// 见上面 §13 助手的注释。两半：① 示例本身（模型照抄的模板）不许把输出指到工作区外；
+// ② 三个「转 PDF 是产物唯一可见通道」的技能必须把这条规则写在正文里 —— 一条没人检查的
+// SKILL.md 声明是会腐烂的声明（§12 就是被两句烂掉的断言逼出来的）。
+{
+  const builtinRoot = path.join(rootDir, "skills", "builtin")
+  // 规则必须在场的三个技能：它们各自产出用户要看的 PDF/PNG，且 SKILL.md 里都写着
+  // 「转 PDF 是产物在应用内可见的唯一通道」——通道开在工作区外就是白开。
+  const MUST_STATE = ["pdf", "docx", "xlsx"]
+  const RULE_MARKER = "工作区外的绝对路径"
+  let scanned = 0
+  if (await isDir(builtinRoot)) {
+    for (const d of await fs.readdir(builtinRoot, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue
+      const md = path.join(builtinRoot, d.name, "SKILL.md")
+      if (!(await Bun.file(md).exists())) continue
+      scanned++
+      const text = await Bun.file(md).text()
+      const lines = text.split("\n")
+      for (const [i, line] of lines.entries()) {
+        for (const hit of absOutputPathsInLine(line)) {
+          errors.push(
+            `skills/builtin/${d.name}/SKILL.md:${i + 1} 示例把产物写到工作区外（\`${hit}\`）→ ` +
+              `产物面板只扫工作区、内联图只读工作区内的文件，用户永远看不到它。改成相对路径` +
+              `（如 \`输出/x.png\`）。示例是模型照抄的模板，写错一次就会一直被抄下去。`,
+          )
+        }
+      }
+      // 去掉空白再找：这条规则该不该在，和它折在哪一行无关。（第一版按原文找，
+      // 当场把我自己折了行的那句判红 —— 这半条检查的负向控制是实测出来的。）
+      if (MUST_STATE.includes(d.name) && !text.replace(/\s+/g, "").includes(RULE_MARKER))
+        errors.push(
+          `skills/builtin/${d.name}/SKILL.md 里找不到「${RULE_MARKER}」这条规则 —— ` +
+            `它是 2026-08-15 L4 抓到的缺陷（预览渲染到 /tmp，文件在但 UI 上永远显示不了）的唯一防线，` +
+            `而模型只读得到 SKILL.md。删掉它等于把那个缺陷放回来。`,
+        )
+    }
+  }
+  if (scanned === 0)
+    errors.push(`§13 一个 SKILL.md 都没扫到（${builtinRoot}）—— 空遍历和通过长得一样`)
+  else console.log(`   §13 产物路径：扫了 ${scanned} 个 SKILL.md`)
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────

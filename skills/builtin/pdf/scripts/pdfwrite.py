@@ -33,7 +33,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfcommon import fail  # noqa: E402
 from pdffont import (rejected_candidates, STANDARD, available_candidates, has_cjk,  # noqa: E402,F401
-                     missing_glyphs, register_cjk, wrap as _wrap)
+                     chosen_is_heavy, face_name, missing_glyphs, register_bold,
+                     register_cjk, wrap as _wrap)
+
+# ASCII stand-ins for the characters the LAYOUT draws (list markers). The caller's
+# text is refused when a glyph is missing, because dropping a character out of the
+# user's sentence is a lie; a marker is decoration, so it degrades instead — and
+# says which substitution it made. Every fallback here is ASCII, which no usable
+# face can be missing.
+MARKER_FALLBACK = {"•": "*", "–": "-", "·": "-", "◦": "o", "▪": "-", "—": "-"}
 
 # The abbreviations an AcroForm /DA uses, plus reportlab's own spellings. Accepting
 # a name from here means a Latin-only document does not have to hunt for a CJK face
@@ -48,6 +56,14 @@ class Typeface:
     def __init__(self, spec: Path | str | None = None):
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
+
+        # No companion and nothing to apologise for, unless the auto path below
+        # finds otherwise. Set here so every branch leaves the object complete —
+        # an attribute defined in only one of three constructors is an
+        # AttributeError waiting for the least-tested path.
+        self.bold_name: str | None = None
+        self.heavy_only = False
+        self.substitutions: dict[str, str] = {}
 
         if spec is None:
             name, source = register_cjk()
@@ -66,6 +82,10 @@ class Typeface:
                      f"Pass --font with a TrueType path, or one of the standard names "
                      f"({', '.join(BUILTIN_FONTS)}) for a Latin-only document.")
             self.name, self.source, self.embedded = name, source, True
+            # A heavier sibling from the same file, when the family ships one, so
+            # headings differ from body text by WEIGHT and not only by size.
+            self.bold_name = register_bold()
+            self.heavy_only = chosen_is_heavy()
             return
 
         if Path(spec).is_file():
@@ -106,10 +126,39 @@ class Typeface:
         """Characters this font cannot draw, in first-seen order, deduplicated."""
         return missing_glyphs(self.name, text)
 
+    def marker(self, wanted: str) -> str:
+        """A list marker this face can actually DRAW, substituting when it cannot.
 
-def wrap(text: str, face: Typeface, size: float, width: float) -> list[str]:
-    """Break `text` to fit `width`, honouring CJK and Latin word rules."""
-    return _wrap(text, face.name, size, width)
+        The bug this exists for: `• ` was drawn with a face that has no U+2022, so
+        every bullet was a .notdef — invisible on the page, `\\x00` in the text
+        layer, and no error anywhere, because the coverage check only ever saw the
+        caller's text and never the characters the layout adds on its own.
+
+        Substituting rather than refusing is deliberate: the marker is decoration,
+        so losing its shape costs a little; the alternative is failing a whole
+        document over a bullet. What must NOT happen is drawing it blank, and the
+        substitution is recorded (`substitutions`) so the report can say so.
+        """
+        if not self.missing_glyphs(wanted):
+            return wanted
+        fallback = MARKER_FALLBACK.get(wanted, "-")
+        if self.missing_glyphs(fallback):
+            # ASCII is missing too: this face cannot draw anything at all, which is
+            # a different failure and belongs to the caller's coverage check.
+            return wanted
+        self.substitutions[wanted] = fallback
+        return fallback
+
+
+def wrap(text: str, face: Typeface, size: float, width: float,
+         font: str | None = None) -> list[str]:
+    """Break `text` to fit `width`, honouring CJK and Latin word rules.
+
+    `font` overrides which registered face does the MEASURING — a heading set in the
+    bold companion is wider than the same string in the regular one, and measuring
+    with the wrong one is how the last word of a heading ends up past the margin.
+    """
+    return _wrap(text, font or face.name, size, width)
 
 
 def font_report(out: Path, face: Typeface, text: str) -> dict:
@@ -144,6 +193,18 @@ def font_report(out: Path, face: Typeface, text: str) -> dict:
                           "standard_14": basefont.split("+")[-1] in set(STANDARD.values()),
                           "file_ext": files[0].lstrip("/") if files else "n/a"})
     return {"typeface": face.name, "source": face.source,
+            "typeface_name": face_name(face.name) or face.name,
+            # The heading face, and an honest None when the family ships no
+            # companion — headings then differ by size alone, which is a property
+            # of the OUTPUT and so belongs in the report, not in a comment.
+            "typeface_bold": face_name(face.bold_name) if face.bold_name else None,
+            # True when every face that registered was a display weight, so BODY
+            # text had to be set in one. The document is readable; it is also
+            # heavier than it should be, and nobody would otherwise be told.
+            "heavy_weight_only": face.heavy_only,
+            # Layout markers this face could not draw, and what was drawn instead.
+            # Empty is the normal case; non-empty is a downgrade the reader can see.
+            "marker_substitutions": dict(face.substitutions),
             "all_embedded": all(f["embedded"] for f in fonts) if fonts else False,
             "portable": all(f["embedded"] or f["standard_14"] for f in fonts)
             if fonts else False,

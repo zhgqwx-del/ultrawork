@@ -58,6 +58,19 @@ PY = sys.executable
 RENDER_DPI = 100
 RENDER_PAGES = [1, 3]
 
+TABLE_RULES = FIXTURES / "table-rules.pdf"
+# Spelled out rather than read back from the fixture: an expectation derived from
+# the artefact it checks agrees with it whatever the artefact says. The header is
+# ABOVE the topmost rule and the total is below the last one — the two rows a region
+# taken from the rules alone loses at either end.
+RULES_CELLS = [
+    ["业务分部", "本季度收入", "上年同期", "同比", "收入占比"],
+    ["软件授权", "593.5", "548.2", "+8.3%", "46.2%"],
+    ["订阅服务", "283.9", "204.7", "+38.7%", "22.1%"],
+    ["技术服务", "246.8", "219.4", "+12.5%", "19.2%"],
+    ["合计", "1,124.2", "972.3", "+15.6%", "100.0%"],
+]
+
 FORM = FIXTURES / "form-acroform.pdf"
 FORM_FLAT = FIXTURES / "form-flat.pdf"
 FORM_FILLED = FIXTURES / "form-filled.pdf"
@@ -74,6 +87,7 @@ TABLE_CELLS = [["科目", "本季度", "上年同期"], ["营业收入", "1,240"
                ["营业成本", "769", "702"], ["毛利", "471", "401"]]
 ENC_USER_PW, ENC_OWNER_PW = "s3cret", "admin"
 
+
 # A Latin-only face, used to prove the glyph-coverage refusal guards a real failure.
 # `helv` is PyMuPDF's own Helvetica: present wherever PyMuPDF is, carries real
 # embeddable bytes, and has no CJK glyphs. The first version of this pointed at
@@ -85,6 +99,86 @@ LATIN_ONLY_FONT = "helv"
 # unsubset is the failure G2 exists to catch.
 FULL_FONT_BYTES = 3_000_000
 DOC_MARGIN = 56
+
+# ── the list/weight family (G6-G9) ────────────────────────────────────────────
+# A spec written HERE rather than added to fixtures/document.json, because these
+# checks need one item long enough to wrap and one nested two deep, and a fixture
+# shaped for a check is easier to read next to it.
+#
+# What this family exists for, stated once: a generated report came back with every
+# bullet INVISIBLE (the chosen face had no U+2022, it drew as .notdef, and the
+# coverage check never looked at characters the layout supplies itself), every
+# ordered list flattened to bullets (there was no ordered block type at all), and
+# every line of body text set in a display weight (the first .ttc face that
+# registered won, and on macOS that is Songti BLACK). Three defects, one artifact,
+# and L1/L2/G1-G5 all green through every one of them.
+LIST_LONG = ("应收账款：期末余额 412.7 万元，账龄 90 天以上占比 11.3%，较上季度上升 "
+             "2.1 个百分点，这一条刻意写得足够长以便量出换行之后的续行究竟对齐在文字"
+             "下方还是标记下方。")
+# 行首/行尾禁则, for G10. Deliberately a LOCAL copy of the two sets rather than an
+# import of pdffont's, for the same reason as `_heavy_name` below: a check that asks
+# the implementation which breaks are illegal agrees with it by construction,
+# including when the implementation is wrong.
+NO_LINE_START = "，。、；：？！．,.;:?!）］｝〉》」』〕】〗)]}”’%‰℃°"
+NO_LINE_END = "（［｛〈《「『〔【〖([{“‘"
+# Engineered, not written: every character is fullwidth and there is not one space,
+# so the paragraph can be reassembled from the page exactly and one character is one
+# advance. At this page's 43 characters to a line, a wrapper that breaks wherever the
+# width runs out puts `；` at the head of line 2 and `，` at the head of line 3 —
+# measured on the shipped implementation before the rule existed. Both existing
+# fixtures happen to break elsewhere, which is exactly how this defect reached every
+# generated document while every test stayed green.
+KINSOKU_PARA = ("公司治理方面，本季度已完成董事会换届工作，独立董事在董事会中的席位占比已提升"
+                "至三分之一；审计委员会新增一名会计专业人士，内控评价按季度开展，全年未发生重"
+                "大行政处罚或监管措施，董事会认为内部控制运行有效。")
+# G11's corpus. Chosen so that NO case needs the escape hatch (verified: every
+# welded run fits its column), which is what makes the invariants below
+# unconditional — "no illegal break" with no "unless" attached.
+# Case 3 carries 「（ 空格 」, the shape that a page fixture cannot pin down: an
+# opening bracket only lands at a line END at particular column widths, so pinning
+# it to a layout would make the check fire or not fire per platform's font metrics.
+WRAP_CORPUS = [
+    "本季度营业收入 1,350 万元，同比增长 12.4%，其中订阅制收入占比首次超过四成。"
+    "毛利率保持稳定，销售费用率因新市场投入小幅上升。",
+    "公司（以下简称「本公司」）于本季度完成产品线整合，具体情况如下所述，敬请查阅相关附件。",
+    "合同编号（ HD-2026-Q3-0087-EAST ）已归档，请核对；如有疑问，请联系财务部（ 内线 8021 ）。",
+    "订阅制转型进入收获期，续约率达到 91%。华东区域新签客户 37 家，创单季新高；"
+    "华南区域受渠道调整影响，环比略有下滑。",
+    "风险提示：汇率波动、供应链交期延长、客户集中度上升（前五大客户占 41.8%），"
+    "均可能影响下季度表现。",
+]
+WRAP_WIDTHS = [483, 360, 300, 240, 180]
+WRAP_SIZE = 11
+LIST_SPEC = {
+    "page": {"size": "A4", "margin": DOC_MARGIN}, "font_size": 11,
+    "blocks": [
+        {"type": "heading", "level": 1, "text": "重点事项"},
+        {"type": "ordered", "items": [
+            {"text": "订阅制转型：新签合同中订阅制占比首次超过 50%。",
+             "items": ["续费率（按金额）94.2%。", "净收入留存率 NDR 为 111%。"]},
+            LIST_LONG,
+            "供应链：两家主力供应商交期由 21 天延长至 34 天。"]},
+        {"type": "heading", "level": 3, "text": "风险提示"},
+        {"type": "bullets", "items": [
+            {"text": "客户集中度：前五大客户收入占比 41.8%。",
+             "items": ["其中第一大客户占 15.2%。"]},
+            "汇率：海外收入占比 8.4%，以美元结算。"]},
+        # Last on purpose: G6/G7 count markers and G9 finds its subject by content,
+        # so a block appended here adds lines without moving anything they look at.
+        {"type": "paragraph", "text": KINSOKU_PARA},
+    ],
+}
+# Markers in the order they must appear. The nested pair is what tells a flattened
+# list from a nested one: "1.1" cannot be produced by any renderer that lost the
+# level, and "1." "2." "3." cannot be produced by one that renders ordered as
+# bullets.
+ORDERED_MARKERS = ["1.", "1.1", "1.2", "2.", "3."]
+LIST_BULLET_ITEMS = 2        # top-level bullets in the spec above
+LIST_NESTED_BULLETS = 1      # second-level ones
+# Anything that draws as .notdef extracts as U+0000: measured on the report that
+# started this, where every bullet came back as '\x00 订阅制转型…'.
+NOTDEF = "\x00"
+
 
 # What fixtures/form-acroform.pdf is known to contain. Spelled out here rather than
 # read back from the file: an expectation derived from the artifact it checks agrees
@@ -135,26 +229,32 @@ def run_script_from(scripts: Path, name: str, *args: str) -> subprocess.Complete
                           errors="replace", timeout=180)
 
 
-def patched_scripts(work: Path, old: str, new: str, name: str) -> Path:
-    """A copy of the skill's scripts with one edit applied.
+def patched_scripts(work: Path, old: str, new: str, name: str,
+                    extra: tuple[tuple[str, str], ...] = ()) -> Path:
+    """A copy of the skill's scripts with one edit applied — or several.
 
-    Raises if the anchor is not found exactly once: a control arm that silently
+    Raises if an anchor is not found exactly once: a control arm that silently
     failed to apply is indistinguishable from one that applied and changed nothing.
+
+    `extra` is for the case where ONE wrong implementation spans more than one line.
+    Every pair is still asserted to match exactly once, so "several edits" never
+    becomes "several anchors, some of which quietly missed".
     """
     dest = work / f"patched-{name}"
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(SKILL / "scripts", dest,
                     ignore=shutil.ignore_patterns("__pycache__"))
-    hits = 0
-    for py in dest.glob("*.py"):
-        text = py.read_text(encoding="utf-8")
-        if old in text:
-            hits += text.count(old)
-            py.write_text(text.replace(old, new), encoding="utf-8")
-    if hits != 1:
-        raise SystemExit(f"control {name!r}: anchor matched {hits} times, expected 1 "
-                         f"— the control did not replicate the defect")
+    for i, (anchor, replacement) in enumerate(((old, new),) + tuple(extra)):
+        hits = 0
+        for py in dest.glob("*.py"):
+            text = py.read_text(encoding="utf-8")
+            if anchor in text:
+                hits += text.count(anchor)
+                py.write_text(text.replace(anchor, replacement), encoding="utf-8")
+        if hits != 1:
+            raise SystemExit(f"control {name!r}: anchor #{i} matched {hits} times, "
+                             f"expected 1 — the control did not replicate the defect")
     return dest
 
 
@@ -256,6 +356,156 @@ def acroform_of(pdf: Path) -> dict:
     obj = acro.get_object()
     return {"present": True, "fields": len(obj.get("/Fields", [])),
             "keys": sorted(k for k in obj.keys() if k != "/Fields")}
+
+
+def collect_flatten(scripts: Path, work: Path, tag: str) -> dict:
+    """Flatten a FILLED form and measure whether the paper survived the operation.
+
+    The subject is a form filled by `pdf_form_fill.py` rather than the committed
+    fixture, for `collect_pageops_form`'s reason: only a filled document has the
+    appearance streams flattening is supposed to move.
+
+    Two facts are collected that a report cannot fake — where each value ENDED UP on
+    the page, and whether flattening a document whose appearance is empty is refused.
+    The first exists because an implementation that registers the appearance but
+    never positions it draws the same glyphs in the corner of the page: ink totals
+    and extracted strings both survive that, and only coordinates do not.
+    """
+    import fitz
+
+    filled = work / f"n6-{tag}-filled.pdf"
+    r = run_script_from(scripts, "pdf_form_fill.py", "--in", FORM, "--out", filled,
+                        "--values", FORM_VALUES)
+    if r.returncode != 0:
+        raise SystemExit(f"[setup] pdf_form_fill.py failed: {r.stdout}{r.stderr}")
+
+    # Where the widgets are in the SOURCE — the boxes each value must land inside.
+    boxes = {}
+    doc = fitz.open(filled)
+    with doc:
+        for page in doc:
+            for w in page.widgets():
+                boxes[w.field_name] = [round(v, 1) for v in w.rect]
+    # ⚠️ NOT fitz for this one. fitz paints and extracts widget appearance streams
+    # whether or not a form env exists (the same reason `png_ink` refuses it), so
+    # asking it what is in the page text answers "annotations included" and the
+    # before/after distinction this check rests on disappears. pdfplumber reads the
+    # page content stream and nothing else, which is exactly the question.
+    before_text = _page_text(filled)
+
+    flat, rep = work / f"n6-{tag}-flat.pdf", work / f"n6-{tag}-flat.json"
+    rr = run_script_from(scripts, "pdf_pages.py", "--op", "flatten", "--in", filled,
+                         "--out", flat, "--report", rep)
+    if rr.returncode != 0:
+        raise SystemExit(f"[setup] pdf_pages.py flatten: {rr.stdout}{rr.stderr}")
+
+    spans, widgets_left = [], 0
+    after_text = _page_text(flat)
+    doc = fitz.open(flat)
+    with doc:
+        for page in doc:
+            widgets_left += sum(1 for _ in page.widgets())
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    for sp in line["spans"]:
+                        if sp["text"].strip():
+                            spans.append({"text": sp["text"],
+                                          "bbox": [round(v, 1) for v in sp["bbox"]]})
+
+    def ink_of(pdf: Path) -> int:
+        d = work / f"n6-{tag}-{pdf.stem}-png"
+        rp = run_script_from(scripts, "pdf_render.py", "--in", pdf, "--out", d,
+                             "--pages", "1", "--dpi", RENDER_DPI)
+        if rp.returncode != 0:
+            raise SystemExit(f"[setup] pdf_render.py on {pdf.name}: {rp.stdout}{rp.stderr}")
+        return png_ink(d / "page-001.png")
+
+    # Running it AGAIN. Flattening a flattened document has nothing to do and must
+    # say so quietly: the second pass restarts its own numbering, and a name that
+    # collides with the first pass's would overwrite an appearance already painted.
+    twice = work / f"n6-{tag}-twice.pdf"
+    r2 = run_script_from(scripts, "pdf_pages.py", "--op", "flatten", "--in", flat,
+                         "--out", twice)
+    second = {"returncode": r2.returncode, "ink": None,
+              "message": (r2.stdout + r2.stderr).strip()[:200]}
+
+    # The guard arm: a field that HOLDS a value whose appearance cannot be drawn.
+    # Built here rather than by the skill — a fixture produced by the code under test
+    # agrees with it. This is the exact shape a hand-rolled flatten produces.
+    blanked = work / f"n6-{tag}-blanked.pdf"
+    _blank_one_appearance(filled, blanked, "applicant")
+    refused = work / f"n6-{tag}-refused.pdf"
+    rg = run_script_from(scripts, "pdf_pages.py", "--op", "flatten", "--in", blanked,
+                         "--out", refused)
+
+    if r2.returncode == 0:
+        second["ink"] = ink_of(twice)
+    return {"report": _json(rep), "boxes": boxes, "spans": spans, "second": second,
+            "widgets_left": widgets_left, "acroform": acroform_of(flat),
+            "before_text": before_text, "after_text": after_text,
+            "ink_before": ink_of(filled), "ink_after": ink_of(flat),
+            "guard": {"returncode": rg.returncode, "wrote": refused.exists(),
+                      "message": (rg.stdout + rg.stderr).strip()[:300]}}
+
+
+def collect_rules_tables(scripts: Path, work: Path, tag: str) -> dict:
+    """Run the real script at the horizontally-ruled fixture, twice.
+
+    The second run forces `--strategy text` — not to check the answer but to keep
+    the fixture honest: this whole check exists because a text pass over a page of
+    prose collapses to one column, and a fixture that stopped doing that would make
+    T5 pass without asking anything.
+    """
+    rep = work / f"rules-{tag}.json"
+    r = run_script_from(scripts, "pdf_tables.py", "--in", TABLE_RULES, "--out", rep,
+                        "--csv-dir", work / f"rules-{tag}-csv")
+    if r.returncode != 0:
+        raise SystemExit(f"[setup] pdf_tables.py on the rules fixture: {r.stdout}{r.stderr}")
+    forced_path = work / f"rules-{tag}-text.json"
+    rt = run_script_from(scripts, "pdf_tables.py", "--in", TABLE_RULES, "--out",
+                         forced_path, "--strategy", "text")
+    forced = {"returncode": rt.returncode, "max_cols": 0, "rejected": 0}
+    if rt.returncode == 0:
+        doc = _json(forced_path)
+        forced["max_cols"] = max((t["cols"] for p in doc["pages"]
+                                  for t in p["tables"]), default=0)
+        forced["rejected"] = doc.get("rejected_single_column", 0)
+    return {"report": _json(rep), "forced_text": forced}
+
+
+def _page_text(pdf: Path) -> str:
+    """Text in the PAGE CONTENT only — annotations deliberately excluded."""
+    import pdfplumber
+
+    with pdfplumber.open(str(pdf)) as doc:
+        return "\n".join(p.extract_text() or "" for p in doc.pages)
+
+
+def _blank_one_appearance(src: Path, dest: Path, field: str) -> None:
+    """Copy `src`, emptying one widget's appearance stream while keeping its /V."""
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import NameObject
+
+    reader = PdfReader(str(src))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    acro = reader.trailer["/Root"].get("/AcroForm")
+    if acro is not None:
+        writer._root_object[NameObject("/AcroForm")] = \
+            reader.trailer["/Root"].raw_get("/AcroForm")
+    hits = 0
+    for page in writer.pages:
+        for ref in page.get("/Annots") or []:
+            annot = ref.get_object()
+            if str(annot.get("/T")) != field:
+                continue
+            annot["/AP"].get_object()["/N"].get_object().set_data(b"")
+            hits += 1
+    if hits != 1:
+        raise SystemExit(f"[setup] blanking {field!r} matched {hits} widgets, expected 1")
+    with dest.open("wb") as fh:
+        writer.write(fh)
 
 
 def collect_forms_render(scripts: Path, work: Path, tag: str) -> dict:
@@ -366,6 +616,12 @@ def v0_not_vacuous(ctx: dict) -> list[str]:
             # R6 compares three rasters; with fewer than three it would be comparing
             # a document against itself and could not fail.
             ("form rasters (R6's only subjects)", len(ctx["forms_render"]), 3),
+            # G6-G9's subjects. Eight markers plus two headings plus at least one
+            # continuation line: fewer than that and one of the four is checking a
+            # document that no longer contains what it hunts.
+            ("lines in the list document", len(ctx["lists"]["lines"]), 11),
+            ("distinct text sizes in it (heading ramp)",
+             len({sp["size"] for ln in ctx["lists"]["lines"] for sp in ln["spans"]}), 3),
             # And the empty form must actually carry ink, or the ratio R6 measures
             # is a division into a number that means nothing.
             ("ink on the empty form (R6's denominator)",
@@ -847,6 +1103,403 @@ def g5_coverage(ctx: dict) -> list[str]:
     return out
 
 
+@check("G6", "every list marker the layout draws has a glyph, and is on the page")
+def g6_markers(ctx: dict) -> list[str]:
+    """The bullet that was there in the code and absent from the paper.
+
+    A face missing U+2022 draws it as .notdef: nothing visible, `\\x00` in the text
+    layer, no exception, and `missing_glyphs: []` in the report — because the
+    coverage check was fed the caller's text and not the characters the writer adds
+    itself. So this counts MARKERS IN THE OUTPUT, and refuses to accept a report
+    that says everything is fine.
+    """
+    out = []
+    lines = ctx["lists"]["lines"]
+    notdef = [ln["text"] for ln in lines if NOTDEF in ln["text"]]
+    if notdef:
+        out.append(f"G6 {len(notdef)} line(s) carry a .notdef glyph — the layout drew "
+                   f"a character the face cannot render, which is a blank on the page "
+                   f"and an error nowhere: {notdef[0][:40]!r}")
+    # The markers themselves, counted off the page. Substitution is allowed (the
+    # report says which), so the character looked for is whatever the run recorded.
+    subs = ctx["lists"]["report"].get("marker_substitutions") or {}
+    bullet = subs.get("•", "•")
+    nested = subs.get("–", "–")
+    starts = [ln["text"].lstrip() for ln in lines]
+    top = sum(1 for t in starts if t.startswith(bullet))
+    sub = sum(1 for t in starts if t.startswith(nested))
+    if top != LIST_BULLET_ITEMS:
+        out.append(f"G6 {top} line(s) start with the level-1 marker {bullet!r}, "
+                   f"the spec has {LIST_BULLET_ITEMS} top-level bullets")
+    if sub != LIST_NESTED_BULLETS:
+        out.append(f"G6 {sub} line(s) start with the level-2 marker {nested!r}, "
+                   f"the spec has {LIST_NESTED_BULLETS}")
+    return out
+
+
+@check("G7", "an ordered list keeps its numbers AND its levels")
+def g7_ordered(ctx: dict) -> list[str]:
+    out = []
+    starts = [ln["text"].lstrip() for ln in ctx["lists"]["lines"]]
+    seen = []
+    for marker in ORDERED_MARKERS:
+        # "1." must not be satisfied by "1.1 …", so the marker is matched with the
+        # separator that follows it in the output.
+        hit = next((t for t in starts if t.startswith(marker + " ")), None)
+        if hit is None:
+            out.append(f"G7 no line begins with the ordered marker {marker!r} — a list "
+                       f"rendered as bullets loses the number, a flattened one loses "
+                       f"the level, and neither is recoverable from the PDF")
+        else:
+            seen.append(starts.index(hit))
+    if seen and seen != sorted(seen):
+        out.append(f"G7 the ordered markers appear out of order (line indexes {seen}) "
+                   f"— numbering that does not follow the document is worse than none")
+    return out
+
+
+@check("G8", "body text is not set in a display weight, and headings differ by weight")
+def g8_weight(ctx: dict) -> list[str]:
+    out = []
+    report = ctx["lists"]["report"]
+    lines = ctx["lists"]["lines"]
+    body = ctx["lists"]["body_size"]
+    spans = [sp for ln in lines for sp in ln["spans"] if sp["text"].strip()]
+    if not spans:
+        return ["G8 the generated document has no text spans to weigh"]
+
+    body_fonts = {sp["font"] for sp in spans if abs(sp["size"] - body) < 0.6}
+    heavy_body = sorted(f for f in body_fonts if _heavy_name(f))
+    if heavy_body and not report.get("heavy_weight_only"):
+        out.append(f"G8 body text is drawn in {heavy_body} — a display weight, while "
+                   f"the report does not claim this machine had nothing lighter; one "
+                   f"face for the whole document means BODY gets whatever weight won")
+    # The companion actually reaching the page. Reported-but-unused is the same
+    # failure in a different place.
+    bold = report.get("typeface_bold")
+    if bold:
+        big = [sp for sp in spans if sp["size"] > body + 0.6]
+        if not big:
+            out.append("G8 no text is larger than body size — the heading check has "
+                       "nothing to look at")
+        elif not any(_heavy_name(sp["font"]) for sp in big):
+            out.append(f"G8 the report names a bold companion ({bold}) but every "
+                       f"heading is drawn in {sorted({sp['font'] for sp in big})} — "
+                       f"headings then differ by size alone, which is what reads flat")
+    return out
+
+
+@check("G9", "a wrapped list item hangs under its text, not under its marker")
+def g9_hanging(ctx: dict) -> list[str]:
+    lines = ctx["lists"]["lines"]
+    # Located by CONTENT, not by its marker: the marker is exactly what the other
+    # controls in this family break, and a check that loses its subject whenever a
+    # neighbouring check fires is a cascade generator, not a check.
+    idx = next((i for i, ln in enumerate(lines) if LIST_LONG[:10] in ln["text"]), None)
+    if idx is None or idx + 1 >= len(lines):
+        return ["G9 the long ordered item is not in the output, so nothing wrapped "
+                "and the hanging indent cannot be measured"]
+    first, cont = lines[idx], lines[idx + 1]
+    if not cont["text"].strip() or LIST_LONG[-8:] in first["text"]:
+        return [f"G9 the long item did not wrap (it ends on its first line) — "
+                f"the fixture no longer exercises this check"]
+    if cont["x0"] <= first["x0"] + 2:
+        return [f"G9 the continuation line starts at x={cont['x0']} and the marker at "
+                f"x={first['x0']}: wrapped text runs back under the marker, and a "
+                f"three-line item then reads as three separate items"]
+    return []
+
+
+@check("G10", "no line opens with closing punctuation, and none closes with opening")
+def g10_kinsoku(ctx: dict) -> list[str]:
+    """行首/行尾禁则, read off the page.
+
+    "CJK breaks between any two characters" is what the wrapper encoded and it is
+    nearly right: closing punctuation may not open a line, opening punctuation may
+    not close one. The generated report that started this had 「，销售费用率因新市场
+    投入小幅上升。」 as the head of a line, which any Chinese reader reads as a
+    typesetting fault. Measured across a four-paragraph document: 6.9% of lines, and
+    at least one violation at half of all column widths tried.
+
+    The rule half of this check is cheap to satisfy — a document that never wraps
+    passes it — so the second half measures whether the fixture still POSES the
+    question on this machine, simulating a greedy wrap from advances read off the
+    page. Written here rather than imported: a guard that asks the wrapper whether
+    it had work to do agrees with the wrapper, including when the wrapper is wrong.
+    """
+    out = []
+    lines = ctx["lists"]["lines"]
+    for ln in lines:
+        text = ln["text"].strip()
+        if not text:
+            continue
+        if text[0] in NO_LINE_START:
+            out.append(f"G10 a line begins with {text[0]!r}: {text[:24]!r} — closing "
+                       f"punctuation carried to the head of a line is the one CJK "
+                       f"line-break fault a reader notices without looking for it")
+        if text[-1] in NO_LINE_END:
+            out.append(f"G10 a line ends with {text[-1]!r}: {text[-24:]!r} — an "
+                       f"opening bracket left dangling at the foot of a line")
+
+    start = next((i for i, ln in enumerate(lines)
+                  if ln["text"].startswith(KINSOKU_PARA[:8])), None)
+    if start is None:
+        return out + ["G10 the kinsoku paragraph is not on the page at all, so the "
+                      "rule above was checked against a document that never asked it"]
+    joined, used = "", []
+    for ln in lines[start:]:
+        joined += ln["text"]
+        used.append(ln)
+        if joined == KINSOKU_PARA:
+            break
+    if joined != KINSOKU_PARA:
+        return out + [f"G10 the kinsoku paragraph could not be reassembled from the "
+                      f"page ({len(joined)} of {len(KINSOKU_PARA)} characters) — the "
+                      f"vacuity guard cannot run, so the rule above proves nothing"]
+    if len(used) < 2:
+        return out + ["G10 the kinsoku paragraph fits on one line, so there is no "
+                      "break for the rule to apply to — this fixture no longer "
+                      "exercises the check and it passes for free"]
+
+    # Welding punctuation to its neighbour makes a token LONGER, and a token that no
+    # longer fits is how a rule about typography turns into text past the margin —
+    # the one outcome worse than the fault it fixes. Measured on the page, not
+    # trusted to the escape hatch that is supposed to prevent it.
+    body = ctx["lists"]["body_size"]
+    right = ctx["lists"]["page_width"] - ctx["lists"]["margin"]
+    past = [ln for ln in used if ln["x1"] > right + 0.5]
+    if past:
+        out.append(f"G10 {len(past)} line(s) of the kinsoku paragraph end at "
+                   f"x={max(ln['x1'] for ln in past)}, past the {right} margin — "
+                   f"keeping punctuation off the line head must never be paid for "
+                   f"with text off the page")
+    advances = sorted({round((ln["x1"] - ln["x0"]) / len(ln["text"]), 2)
+                       for ln in used if ln["text"]})
+    if any(abs(a - body) > 0.6 for a in advances):
+        return out + [f"G10 the fixture paragraph does not set at one character per "
+                      f"{body}pt (measured {advances}) — a character count cannot "
+                      f"stand in for a greedy wrap here, so it is the GUARD that "
+                      f"failed, not the rule"]
+    per_line = int((ctx["lists"]["page_width"] - 2 * ctx["lists"]["margin"]) // body)
+    naive = [KINSOKU_PARA[i:i + per_line]
+             for i in range(0, len(KINSOKU_PARA), per_line)]
+    would = [ln[0] for ln in naive[1:] if ln and ln[0] in NO_LINE_START]
+    if not would:
+        out.append(f"G10 at {per_line} characters to a line, breaking wherever the "
+                   f"width ran out would not have put punctuation at the head of any "
+                   f"line — this fixture stopped posing the question, and the rule "
+                   f"above is now passing for free")
+    return out
+
+
+@check("G11", "wrapping loses no text, overflows nothing, and takes no illegal break")
+def g11_wrap_invariants(ctx: dict) -> list[str]:
+    """The three properties every break must keep, over a corpus that needs no
+    escape hatch — so there is no "unless" for a defect to hide behind.
+
+    Text preservation is here because welding tokens together is exactly the kind of
+    edit that drops or duplicates one, and a document missing a character reads as
+    the model's mistake rather than the wrapper's. It found nothing; that is the
+    point of asserting it.
+    """
+    data = ctx["wrapprops"]
+    if not data.get("available"):
+        return ["G11 no CJK face registered, so the wrapper was never exercised — "
+                "every property below passed by not being asked"]
+    out, lost, over, lead, trail = [], [], [], [], []
+    for case in data["cases"]:
+        # Spaces are normalised away: `wrap` rstrips each line, so a break at a
+        # space legitimately consumes it. Every other character must survive.
+        if "".join(case["lines"]).replace(" ", "") != case["text"].replace(" ", ""):
+            lost.append(case)
+        if case["widest"] > case["width"] + 0.01:
+            over.append(case)
+        lines = case["lines"]
+        lead += [(case, ln) for ln in lines[1:] if ln and ln[0] in NO_LINE_START]
+        trail += [(case, ln) for ln in lines[:-1] if ln and ln[-1] in NO_LINE_END]
+    if lost:
+        out.append(f"G11 {len(lost)} case(s) came back with different text than went "
+                   f"in — e.g. at width {lost[0]['width']}: {''.join(lost[0]['lines'])[:40]!r}")
+    if over:
+        out.append(f"G11 {len(over)} case(s) drew past their column — e.g. "
+                   f"{over[0]['widest']:.1f}pt of {over[0]['width']}pt; keeping "
+                   f"punctuation off a line head must never cost text off the page")
+    if lead:
+        out.append(f"G11 {len(lead)} line(s) begin with closing punctuation — e.g. at "
+                   f"width {lead[0][0]['width']}: {lead[0][1][:24]!r}")
+    if trail:
+        out.append(f"G11 {len(trail)} line(s) end with an opening bracket — e.g. at "
+                   f"width {trail[0][0]['width']}: {trail[0][1][-24:]!r}")
+    # Vacuity: a corpus that never wraps satisfies all four properties for free. The
+    # shapes themselves are guarded by the control arms — each is required to light
+    # this check, so a corpus that stopped carrying them turns the CONTROL red.
+    if not any(len(c["lines"]) > 1 for c in data["cases"]):
+        out.append("G11 no case in the corpus wrapped at all, so none of the "
+                   "properties above was actually put to the question")
+    return out
+
+
+@check("N6", "flattening paints the values where the widgets were, and drops the form")
+def n6_flatten(ctx: dict) -> list[str]:
+    """What a flatten has to be true of, measured on the page rather than reported.
+
+    Written after a model, told by `carry_acroform` to "flatten the forms first",
+    hand-rolled one whose XObjects were bare dictionaries: every draw call a no-op,
+    both pages of the result rendering identically, and its own summary saying it had
+    verified by rendering. Three different things had to be checked to catch that
+    class of failure, and each catches something the others do not.
+    """
+    out = []
+    data = ctx["flatten"]
+    if data["acroform"]["present"] or data["widgets_left"]:
+        out.append(f"N6 the output still carries a form "
+                   f"(/AcroForm={data['acroform']['present']}, "
+                   f"widgets={data['widgets_left']}) — flattening that leaves the "
+                   f"fields behind has changed nothing except the caller's belief")
+
+    # ① The values reach the PAGE. Before flattening they live in annotations and
+    # extract as nothing, which is also the vacuity guard: if they were already in
+    # the page text, this assertion would pass without the operation doing anything.
+    values = _json(FORM_VALUES)
+    text_values = [str(v) for k, v in values.items() if not isinstance(v, bool)]
+    leaked = [v for v in text_values if v in data["before_text"]]
+    if leaked:
+        out.append(f"N6 {leaked} is already in the page text BEFORE flattening — the "
+                   f"fixture cannot show that flattening moved anything")
+    missing = [v for v in text_values if v not in data["after_text"]]
+    if missing:
+        out.append(f"N6 {missing} is not in the flattened page text — the value was "
+                   f"in the file before the operation and is gone after it")
+
+    # ② The values land WHERE THE WIDGET WAS. An implementation that registers the
+    # appearance and never positions it draws the same glyphs in the page corner:
+    # ink totals and extracted strings both survive that, coordinates do not.
+    for field, value in values.items():
+        if isinstance(value, bool) or field not in data["boxes"]:
+            continue
+        box = data["boxes"][field]
+        hit = next((s for s in data["spans"] if str(value)[:6] in s["text"]), None)
+        if hit is None:
+            continue                      # already reported by ① if it is missing
+        x0, y0, x1, y1 = hit["bbox"]
+        if not (box[0] - 4 <= x0 and x1 <= box[2] + 4
+                and box[1] - 4 <= y0 and y1 <= box[3] + 4):
+            out.append(f"N6 {field}={str(value)[:12]!r} was drawn at {hit['bbox']} "
+                       f"but its widget was at {box} — the appearance was painted "
+                       f"without being mapped onto the field's rectangle")
+
+    # ③ Running it twice changes nothing. An operation whose second run errors, or
+    # quietly repaints, is one a caller cannot put in a script.
+    second = data["second"]
+    if second["returncode"] != 0:
+        out.append(f"N6 flattening an already-flattened document failed: "
+                   f"{second['message'][:120]!r} — it has nothing to do and should "
+                   f"say so quietly")
+    elif second["ink"] is not None and second["ink"] != data["ink_after"]:
+        out.append(f"N6 flattening twice changed the page ({data['ink_after']} dark "
+                   f"pixels then {second['ink']}) — the second pass reused a name the "
+                   f"first had already painted into")
+
+    # ④ Ink. The blunt one, and the only one that notices a value drawn in a colour
+    # or a face that extracts fine and shows nothing.
+    before, after = data["ink_before"], data["ink_after"]
+    if before <= 0:
+        out.append("N6 the filled form rendered no ink at all, so there is no "
+                   "before/after to compare")
+    elif abs(after - before) > max(40, before * 0.02):
+        out.append(f"N6 the flattened page carries {after} dark pixels against the "
+                   f"form's {before} — flattening must not change what is on the "
+                   f"paper, only where it lives in the file")
+    return out
+
+
+@check("N7", "flattening a value whose appearance is empty is refused, not silently done")
+def n7_flatten_guard(ctx: dict) -> list[str]:
+    """The one case where writing the file is the defect.
+
+    A widget holding a value with nothing drawable in its `/AP /N` is the shape a
+    hand-rolled flatten produces. Painting it loses the value with no error anywhere,
+    so the only correct answer is to refuse — and to leave no file behind, because a
+    half-written output is the thing a caller picks up next.
+    """
+    guard = ctx["flatten"]["guard"]
+    out = []
+    if guard["returncode"] == 0:
+        out.append("N7 flattening a field whose appearance is empty succeeded — the "
+                   "value it held is now nowhere in the document and nothing said so")
+    if guard["wrote"]:
+        out.append("N7 the refused flatten still wrote its output file — a refusal "
+                   "that leaves a file behind is one the caller will not notice")
+    if guard["returncode"] != 0 and "applicant" not in guard["message"]:
+        out.append(f"N7 the refusal does not name the field it is about: "
+                   f"{guard['message'][:120]!r}")
+    return out
+
+
+@check("T4", "a table ruled only horizontally is read, not swept up with the prose")
+def t4_rules(ctx: dict) -> list[str]:
+    """The commonest Chinese business table, and the case that used to fall through.
+
+    Found on a real quarterly report: rules under every row, no verticals. `lines`
+    needs both and found nothing, so `text` ran over the whole page — where prose
+    has no vertical gutters — and returned a 65x1 "table" whose first cell was the
+    document title. The one real 5-column table was nowhere in the output, and the
+    report said `table_count: 2`.
+    """
+    out = []
+    pages = ctx["rules_tables"]["report"]["pages"]
+    tables = [t for p in pages for t in p["tables"]]
+    if len(tables) != 1:
+        shapes = ["{}x{}".format(t["rows"], t["cols"]) for t in tables]
+        return [f"T4 the rules fixture yielded {len(tables)} tables, expected exactly "
+                f"one — {shapes}"]
+    t = tables[0]
+    if t["strategy"] != "rules":
+        out.append(f"T4 the horizontally-ruled table was found by {t['strategy']!r}: "
+                   f"`lines` cannot see it and `text` sweeps the page into it, so "
+                   f"anything but `rules` means the row evidence was thrown away")
+    if t["evidence"] != {"rows": "drawn", "columns": "inferred"}:
+        out.append(f"T4 evidence says {t['evidence']} — the rules ARE the rows and "
+                   f"the columns are a guess; reporting either half wrongly is what "
+                   f"lets a caller trust the wrong one")
+    if t["reliable"]:
+        out.append("T4 a table whose columns were inferred reports reliable=true")
+    if t["cells"] != RULES_CELLS:
+        out.append(f"T4 the table reads {t['cells']}, expected {RULES_CELLS} — "
+                   f"the header sits ABOVE the top rule and the total below the "
+                   f"last one, so both ends are where a region taken from the "
+                   f"rules alone loses a row")
+    return out
+
+
+@check("T5", "a page of prose is not exported as a one-column table")
+def t5_not_a_table(ctx: dict) -> list[str]:
+    """What the caller actually got handed before: two CSVs of paragraphs.
+
+    The vacuity guard is the second half — a fixture whose prose does NOT collapse
+    into a single column under the old behaviour would satisfy this for free, so the
+    text strategy is run at it explicitly and required to produce exactly that.
+    """
+    out = []
+    for page in ctx["rules_tables"]["report"]["pages"]:
+        for t in page["tables"]:
+            if t["cols"] < 2:
+                out.append(f"T5 page {page['number']} exports a {t['rows']}x{t['cols']} "
+                           f"table — one column is a paragraph with a box round it, "
+                           f"and the first cell here is {t['cells'][0][:1]}")
+    forced = ctx["rules_tables"]["forced_text"]
+    if forced["rejected"] < 1:
+        out.append(f"T5 forcing --strategy text at this fixture rejected "
+                   f"{forced['rejected']} single-column results — the collapse this "
+                   f"check exists for no longer happens here, so the rule above is "
+                   f"passing for free")
+    if ctx["rules_tables"]["report"].get("rejected_single_column") is None:
+        out.append("T5 the report does not count what it threw away: '0 tables here' "
+                   "and 'everything here was a paragraph' are different answers and a "
+                   "caller deciding whether to look by hand needs to know which")
+    return out
+
+
 @check("T1", "a ruled table is read exactly, and reported as reliable")
 def t1_ruled(ctx: dict) -> list[str]:
     out = []
@@ -867,11 +1520,13 @@ def t1_ruled(ctx: dict) -> list[str]:
 
 @check("T2", "a guessed table is never presented as if it were read")
 def t2_guessed(ctx: dict) -> list[str]:
-    """The unruled page holds the identical data and is detected differently.
+    """The unruled page holds the identical data and must still say it was guessed.
 
-    Measured: it comes back 7x3 with blank rows interleaved, against a real 4x3.
-    The point is not that the guess is bad — it is that the report must SAY it is a
-    guess, because a caller cannot tell from the cells alone.
+    Measured (2026-08-15, after the empty-row artefacts of the text pass stopped
+    being reported as rows): both pages now come back 4x3 with BYTE-IDENTICAL cells.
+    That makes this check's point sharper rather than weaker — there is nothing in
+    the data to distinguish the read from the guess, so the flag is the only thing
+    that can, and it is the only thing asserted here.
     """
     out = []
     page = next((p for p in ctx["ops"]["tables"]["pages"] if p["number"] == 2), None)
@@ -1206,6 +1861,10 @@ def collect(work: Path) -> dict:
         "scale": scale,
         "form": form,
         "create": create,
+        "lists": collect_lists(SKILL / "scripts", work, "real"),
+        "wrapprops": collect_wrapprops(SKILL / "scripts", work, "real"),
+        "flatten": collect_flatten(SKILL / "scripts", work, "real"),
+        "rules_tables": collect_rules_tables(SKILL / "scripts", work, "real"),
         "ops": ops,
         "forms_render": collect_forms_render(SKILL / "scripts", work, "real"),
         "pageops_form": collect_pageops_form(SKILL / "scripts", work, "real"),
@@ -1325,7 +1984,24 @@ def collect_create(work: Path) -> dict:
 
     spec = _json(DOC_SPEC)
     needles = [b["text"] for b in spec["blocks"] if b.get("text")]
-    needles += [i for b in spec["blocks"] for i in b.get("items", [])]
+
+    def leaves(items):
+        """Every string a (possibly nested) list will draw.
+
+        Written here rather than imported from the skill: an expectation computed by
+        the implementation agrees with the implementation, including when the
+        implementation drops a level. The first version of this simply iterated
+        `items`, which yields the nested item's DICT and made G3 compare a dict to
+        laid-out text.
+        """
+        for item in items or []:
+            if isinstance(item, dict):
+                yield str(item.get("text", ""))
+                yield from leaves(item.get("items", []))
+            else:
+                yield str(item)
+
+    needles += [i for b in spec["blocks"] for i in leaves(b.get("items", []))]
 
     pages, boxes = [], []
     doc = fitz.open(out_pdf)
@@ -1379,6 +2055,112 @@ def collect_create(work: Path) -> dict:
             "text_by_page": pages, "page_boxes": boxes,
             "long_pages": long_report["pages"], "long_blocks": n,
             "coverage": coverage}
+
+
+def collect_lists(scripts: Path, work: Path, tag: str) -> dict:
+    """Build the list/weight document and measure the PAGE, not the report.
+
+    Everything here is read back out of the written PDF: line text (does the marker
+    have a glyph, or did it draw as .notdef), line x (does a wrapped line hang under
+    the text), span font (is body text in a display weight, are headings in the bold
+    companion). The report is recorded too, but only its two self-declared flags are
+    ever trusted — the failure being guarded against is a writer that believes it did
+    the right thing, and asking the writer would agree with it.
+    """
+    import fitz
+
+    spec_path, out_pdf = work / f"lists-{tag}.json", work / f"lists-{tag}.pdf"
+    report_path = work / f"lists-{tag}.json.report"
+    spec_path.write_text(json.dumps(LIST_SPEC, ensure_ascii=False), encoding="utf-8")
+    proc = run_script_from(scripts, "pdf_create.py", "--in", spec_path,
+                           "--out", out_pdf, "--font-report", report_path)
+    if proc.returncode != 0:
+        raise SystemExit(f"[setup] pdf_create.py ({tag}) failed: "
+                         f"{proc.stdout}{proc.stderr}")
+
+    lines: list[dict] = []
+    page_width = 0.0
+    doc = fitz.open(out_pdf)
+    with doc:
+        for page in doc:
+            page_width = page.rect.width
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    text = "".join(sp["text"] for sp in line["spans"])
+                    if not text.strip() and NOTDEF not in text:
+                        continue
+                    lines.append({
+                        "text": text,
+                        "x0": round(line["bbox"][0], 2),
+                        # x1 is what lets G10 measure the advance per character off
+                        # the page instead of assuming it.
+                        "x1": round(line["bbox"][2], 2),
+                        "spans": [{"font": sp["font"].split("+")[-1],
+                                   "size": round(sp["size"], 1),
+                                   "text": sp["text"]} for sp in line["spans"]],
+                    })
+    return {"report": _json(report_path), "lines": lines,
+            "margin": LIST_SPEC["page"]["margin"],
+            "page_width": page_width,
+            "body_size": LIST_SPEC["font_size"]}
+
+
+WRAP_DRIVER = '''
+import json, sys
+sys.path.insert(0, {scripts!r})
+from pdffont import register_cjk, wrap
+name, _ = register_cjk()
+if name is None:
+    print(json.dumps({{"available": False}}))
+    raise SystemExit(0)
+from reportlab.pdfbase import pdfmetrics
+cases = []
+for text in {corpus!r}:
+    for width in {widths!r}:
+        lines = wrap(text, name, {size!r}, width)
+        cases.append({{"text": text, "width": width, "lines": lines,
+                       "widest": max([pdfmetrics.stringWidth(l, name, {size!r})
+                                      for l in lines] or [0])}})
+# ensure_ascii stays ON. This prints to a PIPE, and a captured stdout on Windows is
+# encoded in the ANSI code page, so a Chinese character here is a UnicodeEncodeError
+# and a dead driver — the same trap that made `pptx_read` unusable on Windows from
+# the day it shipped. \\uXXXX escapes cost nothing and cannot hit it.
+print(json.dumps({{"available": True, "cases": cases}}))
+'''
+
+
+def collect_wrapprops(scripts: Path, work: Path, tag: str) -> dict:
+    """Break a fixed corpus at fixed widths and hand the lines back for G11.
+
+    ⚠️ Alone among the G checks this measures the WRAPPER and not a page, and the
+    reason is worth stating: an opening bracket only lands at a line END at
+    particular column widths, so a page fixture would exercise the trailing rule on
+    the machine it was tuned on and quietly stop exercising it everywhere else. The
+    lead rule keeps its end-to-end check (G10, read off the PDF); this one buys
+    determinism for the half a layout cannot pin down.
+    """
+    driver = work / f"wrapprops-{tag}.py"
+    driver.write_text(WRAP_DRIVER.format(scripts=str(scripts), corpus=WRAP_CORPUS,
+                                         widths=WRAP_WIDTHS, size=WRAP_SIZE),
+                      encoding="utf-8")
+    proc = subprocess.run([PY, str(driver)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=180)
+    if proc.returncode != 0:
+        raise SystemExit(f"[setup] wrap driver ({tag}) failed: "
+                         f"{proc.stdout}{proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def _heavy_name(name: str) -> bool:
+    """Does a basefont read off the PDF declare a display weight?
+
+    Deliberately a local copy of the rule rather than an import of pdffont's: a
+    check that asks the implementation what counts as heavy agrees with it by
+    construction, including when the implementation is wrong.
+    """
+    squashed = name.lower().replace("-", "").replace("_", "").replace(" ", "")
+    return any(w in squashed for w in
+               ("black", "heavy", "ultra", "extrabold", "semibold", "demibold", "bold"))
 
 
 def page_texts(path: Path, password: str | None = None) -> list[str]:
@@ -1994,6 +2776,235 @@ def flaw_live_fuses_two_forms(ctx, work):
     return ctx
 
 
+class ControlUnavailable(Exception):
+    """This machine cannot express the defect, so running the control proves nothing.
+
+    Reported as a SKIP with its reason, never as a pass: a control that could not run
+    and a control that ran and fired look identical in a green summary, and that is
+    the whole failure mode this file exists to avoid.
+    """
+
+
+# --- list/weight family: each flaw is the code that actually shipped ---
+MARKER_SUBSTITUTES = """        if not self.missing_glyphs(wanted):
+            return wanted"""
+COVERAGE_SEES_MARKERS = \
+    'text = collect_text(blocks) + "\\n" + marker_charset(blocks, face)'
+
+
+def flaw_create_marker_drawn_blank(ctx, work):
+    """The shipped bullet: a constant the writer draws and nobody checks.
+
+    Three edits because one wrong implementation spanned three lines — the marker
+    was used raw (there was no substitution step), the coverage check was fed only
+    the caller's text, and the face had no glyph for it. The first two are restored
+    verbatim; the third is re-created with U+FFFF, a noncharacter no font maps, in
+    place of the bullet — on the machine where this was found it was simply true of
+    Songti Black, and the check must not depend on the tester happening to have a
+    face with a hole in it.
+    """
+    scripts = patched_scripts(
+        work, MARKER_SUBSTITUTES, "        if True:\n            return wanted",
+        "blankmarker",
+        extra=((COVERAGE_SEES_MARKERS, "text = collect_text(blocks)"),
+               ('BULLETS = ("•", "–", "·")', 'BULLETS = ("\\uffff", "–", "·")')))
+    ctx["lists"] = collect_lists(scripts, work, "blankmarker")
+    return ctx
+
+
+def flaw_create_ordered_as_bullets(ctx, work):
+    """What the skill did before there was an ordered type: everything is a bullet.
+
+    A caller with a numbered list had exactly one block to put it in, and the numbers
+    went in the bin — which is how a report's 「重点事项 1./2./3.」 came back as three
+    anonymous bullets.
+    """
+    scripts = patched_scripts(work, '+ " ") if kind == "ordered" \\',
+                              '+ " ") if False \\', "asbullets")
+    ctx["lists"] = collect_lists(scripts, work, "asbullets")
+    return ctx
+
+
+def flaw_create_flattens_nesting(ctx, work):
+    """Children rendered at their parent's level — the number survives, the depth
+    does not, and 1.1 comes out as another 1."""
+    scripts = patched_scripts(
+        work,
+        "                self.list_block(children, child_kind, size, level + 1, here)",
+        "                self.list_block(children, child_kind, size, level, path)",
+        "flatnest")
+    ctx["lists"] = collect_lists(scripts, work, "flatnest")
+    return ctx
+
+
+def flaw_create_wraps_under_the_marker(ctx, work):
+    """The old `writer.paragraph(BULLET + item, size, indent=0)`: continuation lines
+    start at the margin, so a wrapped item reads as several items."""
+    scripts = patched_scripts(
+        work, "            self.c.drawString(self.margin + indent + width, baseline, ln)",
+        "            self.c.drawString(self.margin + indent, baseline, ln)", "nohang")
+    ctx["lists"] = collect_lists(scripts, work, "nohang")
+    return ctx
+
+
+def flaw_create_breaks_before_punctuation(ctx, work):
+    """The shipped wrapper, restored: every inter-character break taken as legal.
+
+    Not an invented breakage — this is the line the skill actually had, and what it
+    produced is the report a user sent back with 「，销售费用率因新市场投入小幅上升。」
+    opening a line. Backing out the call rather than emptying the sets keeps the
+    control on the DECISION (are these breaks legal?) instead of on the data.
+    """
+    scripts = patched_scripts(
+        work, "        for token in _kinsoku(tokenize(para), font, size, width):",
+        "        for token in tokenize(para):", "kinsoku")
+    ctx["lists"] = collect_lists(scripts, work, "kinsoku")
+    ctx["wrapprops"] = collect_wrapprops(scripts, work, "kinsoku")
+    return ctx
+
+
+def flaw_create_welds_punctuation_to_a_space(ctx, work):
+    """`prev` read off the last TOKEN instead of the whole group — a real bug of
+    mine, caught by fuzzing after G10 was already green.
+
+    tokenize() emits a bare " " for the space after a CJK character, so an opening
+    bracket welds to that space, the space rstrips away to nothing, the chain stops,
+    and 「合同编号（」 still closes the line having achieved exactly nothing. G10's
+    page fixture carries no bracket-then-space, so it never saw this.
+    """
+    scripts = patched_scripts(
+        work, '        prev = "".join(groups[-1]).rstrip() if groups else ""',
+        '        prev = groups[-1][-1].rstrip() if groups else ""', "weldspace")
+    ctx["wrapprops"] = collect_wrapprops(scripts, work, "weldspace")
+    return ctx
+
+
+def flaw_create_first_face_that_registers(ctx, work):
+    """The shipped selection rule, restored: whichever candidate registers first wins.
+
+    On the machine this was found on that is Songti's BLACK face and the whole
+    document came out heavy. Inverted rather than removed, because "first that
+    registers" only misbehaves where the first happens to be a display weight —
+    preferring heavy makes the control say the same thing on any machine that HAS
+    one, and `lists_control_available` skips it, loudly, on machines that do not.
+    """
+    scripts = patched_scripts(work, "        if _is_heavy(face_name(name)):",
+                              "        if not _is_heavy(face_name(name)):", "heavybody")
+    try:
+        ctx["lists"] = collect_lists(scripts, work, "heavybody")
+    except SystemExit as exc:
+        if "no usable CJK font" not in str(exc):
+            raise           # a real failure, not the absence of a heavy face
+        raise ControlUnavailable(
+            "this machine has no display-weight CJK face, so 'the first face that "
+            "registers wins' cannot be made to pick one here") from exc
+    return ctx
+
+
+def flaw_flatten_registers_a_dictionary(ctx, work):
+    """The hand-rolled flatten this op was written after, reproduced exactly.
+
+    Its XObjects were `/Subtype /Form` dictionaries with a /BBox and NO stream body:
+    legal, silent, and painting nothing. Two cuts, because the shipped script would
+    catch it on its own — the implementation being replicated had no such check, and
+    a control that stops at the first guard proves the guard, not the assertion.
+    """
+    scripts = patched_scripts(
+        work, "    if hasattr(target, \"get_data\"):\n        return normal",
+        "    if hasattr(target, \"get_data\"):\n        from pypdf.generic import "
+        "DictionaryObject\n        stripped = DictionaryObject()\n"
+        "        stripped.update({k: v for k, v in target.items()})\n"
+        "        return stripped", "flatdict",
+        extra=(("    if empty:\n", "    if False:\n"),))
+    ctx["flatten"] = collect_flatten(scripts, work, "flatdict")
+    return ctx
+
+
+def flaw_flatten_reuses_a_name(ctx, work):
+    """Number the XObjects from zero each run, as the first version did.
+
+    Harmless on a fresh form and wrong the moment the same document is flattened
+    twice: `/uwflat0` is already there, the assignment overwrites it, and the check
+    that used to count every `/uwflat_ Do` on the page saw the first pass's calls
+    and refused. Two cuts, because both halves shipped together.
+    """
+    scripts = patched_scripts(
+        work, "            name = NameObject(_free_name(xobjects))",
+        '            name = NameObject(f"/uwflat{drawn}")', "flatname",
+        extra=(("        for name in xo:\n            if str(name) not in wanted:",
+                "        for name in xo:\n            if not str(name).startswith('/uwflat'):"),
+               ("        calls += sum(len(re.findall(name.encode() + rb\"\\s+Do\", blob))\n"
+                "                     for name in wanted)",
+                '        calls += len(re.findall(rb"/uwflat\\d+\\s+Do", blob))')))
+    ctx["flatten"] = collect_flatten(scripts, work, "flatname")
+    return ctx
+
+
+def flaw_flatten_forgets_the_matrix(ctx, work):
+    """Draw the appearance without mapping it onto the field's rectangle.
+
+    Every glyph still reaches the page and still extracts, so the text assertion and
+    the ink total both pass — this is the defect that only a coordinate catches, and
+    the hand-rolled version had exactly this too (`q /__flat4 Do Q`, no `cm`).
+    """
+    scripts = patched_scripts(
+        work,
+        '            ops.append("q {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} cm {} Do Q"\n'
+        '                       .format(*mtx, name))',
+        '            ops.append("q {} Do Q".format(name))', "flatnomtx")
+    ctx["flatten"] = collect_flatten(scripts, work, "flatnomtx")
+    return ctx
+
+
+def flaw_flatten_paints_over_a_lost_value(ctx, work):
+    """Flatten a field that holds a value with nothing drawable, instead of refusing.
+
+    The output looks finished and is missing a value nobody will look for.
+    """
+    scripts = patched_scripts(
+        work, "                if value is not None and str(value) not in (\"/Off\", \"\"):",
+        "                if False:", "flatnoguard")
+    ctx["flatten"] = collect_flatten(scripts, work, "flatnoguard")
+    return ctx
+
+
+def flaw_tables_no_rules_strategy(ctx, work):
+    """The order this shipped with: lines then text, nothing in between.
+
+    Backing the strategy out of `auto` rather than deleting its code is what
+    reproduces the defect as it was — the horizontally-ruled table falls through to
+    a page-wide text pass, collapses to one column, and is then rejected outright,
+    so the caller gets no table at all where there plainly is one.
+    """
+    scripts = patched_scripts(
+        work, '    order = ["lines", "rules", "text"] if strategy == "auto" else [strategy]',
+        '    order = ["lines", "text"] if strategy == "auto" else [strategy]',
+        "norules")
+    ctx["rules_tables"] = collect_rules_tables(scripts, work, "norules")
+    return ctx
+
+
+def flaw_tables_keep_single_column(ctx, work):
+    """Export a one-column result as a table, which is what put a page of prose
+    into a CSV and reported `table_count: 2` for a document with one table."""
+    scripts = patched_scripts(
+        work, "        usable = [t for t in found if len(t.columns or []) >= MIN_COLS]",
+        "        usable = list(found)", "onecol")
+    ctx["rules_tables"] = collect_rules_tables(scripts, work, "onecol")
+    return ctx
+
+
+def flaw_tables_lose_the_header(ctx, work):
+    """Take the region from the rules alone. The rules sit UNDER each row, so the
+    header above the topmost one is simply not in the region — the table comes back
+    one row short and nothing says a row is missing."""
+    scripts = patched_scripts(
+        work, "        header_top = _header_line(page, x0, x1, rules, xs)",
+        "        header_top = None", "noheader")
+    ctx["rules_tables"] = collect_rules_tables(scripts, work, "noheader")
+    return ctx
+
+
 FLAWS = [
     ("writer-overwrites-its-own-input", flaw_in_place_allowed, {"O2"}, ""),
     ("writer-fails-with-a-raw-traceback", flaw_in_place_raw_traceback, {"O2"}, ""),
@@ -2027,6 +3038,40 @@ FLAWS = [
     ("create-never-breaks-a-page", flaw_create_never_paginates, {"G3"}, ""),
     ("create-draws-past-the-margin", flaw_create_runs_off_the_page, {"G4"}, ""),
     ("create-writes-glyphs-the-font-lacks", flaw_create_ignores_coverage, {"G5"}, ""),
+    ("create-draws-a-marker-the-face-cannot-render", flaw_create_marker_drawn_blank,
+     {"G6"}, ""),
+    # G6 is in the expected set, not in a cascade note: both flaws change WHICH
+    # marker a line gets, and G6 counts markers per level, so its firing is a true
+    # reading of a defective document rather than a side effect to be waved through.
+    # (A non-empty cascade note would have suppressed every other unexpected check
+    # at the same time — that is how a real one got through once already.)
+    ("create-renders-an-ordered-list-as-bullets", flaw_create_ordered_as_bullets,
+     {"G6", "G7"}, ""),
+    ("create-flattens-a-nested-list", flaw_create_flattens_nesting, {"G6", "G7"}, ""),
+    ("create-wraps-list-text-under-its-marker", flaw_create_wraps_under_the_marker,
+     {"G9"}, ""),
+    ("create-takes-the-first-face-that-registers",
+     flaw_create_first_face_that_registers, {"G8"}, ""),
+    # G11 is in the expected set, not a cascade note: backing the rule out is a
+    # defect the corpus reads truly, and a non-empty note would suppress every other
+    # unexpected check at the same time.
+    ("create-breaks-a-line-before-its-punctuation",
+     flaw_create_breaks_before_punctuation, {"G10", "G11"}, ""),
+    ("create-welds-punctuation-to-a-space", flaw_create_welds_punctuation_to_a_space,
+     {"G11"}, ""),
+    ("flatten-registers-a-dictionary-instead-of-the-stream",
+     flaw_flatten_registers_a_dictionary, {"N6"}, ""),
+    ("flatten-draws-without-mapping-onto-the-field",
+     flaw_flatten_forgets_the_matrix, {"N6"}, ""),
+    ("flatten-paints-over-a-value-it-cannot-draw",
+     flaw_flatten_paints_over_a_lost_value, {"N7"}, ""),
+    ("flatten-renumbers-its-xobjects-every-run", flaw_flatten_reuses_a_name,
+     {"N6"}, ""),
+    ("tables-have-no-rules-only-strategy", flaw_tables_no_rules_strategy, {"T4"}, ""),
+    ("tables-export-a-paragraph-as-a-table", flaw_tables_keep_single_column,
+     {"T4", "T5"}, ""),
+    ("tables-take-the-region-from-the-rules-alone", flaw_tables_lose_the_header,
+     {"T4"}, ""),
 
     ("form-reports-every-pdf-as-fillable", flaw_form_always_fillable, {"M1"}, ""),
     ("form-omits-the-combobox-choices", flaw_form_forgets_choices, {"M2"}, ""),
@@ -2107,7 +3152,18 @@ def main() -> int:
 
         matrix = []
         for name, mutate, expected, cascade in FLAWS:
-            ctx = mutate(copy.deepcopy(base), work)
+            try:
+                ctx = mutate(copy.deepcopy(base), work)
+            except ControlUnavailable as exc:
+                # Listed in `skips` AND in the matrix. Dropping it from the matrix
+                # would leave a run that says "every control fired" while one of them
+                # never started.
+                skips.append(f"{name}: {exc}")
+                matrix.append({"flaw": name, "expected": sorted(expected),
+                               "fired": [], "cascade_note": f"SKIPPED — {exc}"})
+                results.append({"case": f"control: {name}", "expect": "SKIPPED",
+                                "ok": True, "detail": [str(exc)]})
+                continue
             got = fired(ctx)
             unexpected = set(got) - expected
             missing = expected - set(got)

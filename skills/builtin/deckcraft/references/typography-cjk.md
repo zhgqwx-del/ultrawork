@@ -44,6 +44,33 @@
 
 - 中文方块字视觉面积大，不能套英文 hero 字号——display 64px 对中文约 16 字上限，超了就改写文案（见 outline-schema.md 字符预算），**绝不为塞下而缩字号**。
 - 数字用半角阿拉伯数字 + `font-variant-numeric:tabular-nums`（表格/对齐数字场景），统计数值不用「一二三」。
+  **但见下一节：这一行在 Georgia 打头的两个配对上是空操作。**
+
+## 数字字形（选配对之前必须知道）
+
+**Georgia 只有老式数字（old-style figures），没有等高数字，CSS 换不出来。**
+0/1/2 是 x 高、3/4/5/7/9 下伸、6/8 上伸 —— 一串 `53.4% / 94.2% / 283.9万` 排在一起
+高低参差，在满屏数字的经营/财务 deck 上非常显眼。
+
+实测（headless Chrome 渲染 `0123456789`，五种写法逐像素比）：
+
+| 写法 | 结果 |
+|---|---|
+| `font-family:Georgia` | 老式数字 |
+| `+ font-variant-numeric:tabular-nums` | **与上一行像素完全相同** |
+| `+ font-variant-numeric:lining-nums tabular-nums` | **同上，无变化** |
+| `+ font-feature-settings:"lnum" 1,"tnum" 1` | **同上，无变化** |
+| `font-family:"Helvetica Neue"` | 等高数字 |
+
+`tnum` 管的是**字宽**不是**字形**，而 Georgia 根本没有 `lnum` 可切换。所以：
+
+- **数字密集的 deck（财报/经营分析/指标墙）不要选 `serif-display` / `serif-full`** ——
+  这两个配对的 `--font-display` 都是 Georgia 打头，大数字全落在它身上。
+- 一定要衬线气质又要整齐数字：把**数字单独交给另一族**，
+  例如 `--font-num:"Helvetica Neue","Segoe UI",sans-serif` 只用在 `.num` / 表格数值上，
+  正文标题仍走衬线栈。**这是有意的混排，要写进 spec_lock 的 Typography 段**，
+  否则下一轮走查会当成不一致。
+- 老式数字本身不是缺陷 —— 长文正文里它更好看。**它只是和"大数字当主角"这件事冲突。**
 
 ## 标点与断行
 

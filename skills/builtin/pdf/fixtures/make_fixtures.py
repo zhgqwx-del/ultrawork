@@ -424,10 +424,11 @@ def build_table_grid(path: Path) -> None:
 
     The pair is the point. A line-based table reader takes a drawn grid as fact and
     finds nothing without one; the text strategy infers columns from where words
-    line up and is a guess. Measured on report-cjk.pdf (horizontal rules only) the
-    text strategy returns a 7x3 table for a table that is really 4x3 — it swallows
-    the heading above it. A fixture with only one of the two cases would let that
+    line up and is a guess. A fixture with only one of the two cases would let that
     difference stay invisible.
+    ⚠️ The horizontal-rules-only case is table-rules.pdf, not this file: report-cjk.pdf
+    has such a table but no prose beside it, and the prose is what makes the case
+    hard (2026-08-15).
     """
     w, h = 560, 320
     cols_x = [60, 220, 360, 500]
@@ -456,6 +457,66 @@ def build_table_grid(path: Path) -> None:
     c.showPage()
     c.save()
     finish(buf, path, title="表格检测样例")
+
+
+RULES_TABLE = [("业务分部", "本季度收入", "上年同期", "同比", "收入占比"),
+               ("软件授权", "593.5", "548.2", "+8.3%", "46.2%"),
+               ("订阅服务", "283.9", "204.7", "+38.7%", "22.1%"),
+               ("技术服务", "246.8", "219.4", "+12.5%", "19.2%"),
+               ("合计", "1,124.2", "972.3", "+15.6%", "100.0%")]
+RULES_PROSE = [
+    "软件授权收入仍是第一大来源，订阅制收入同比增长明显，是本季度增长的主要来源，",
+    "硬件配套收入受供应链影响同比下降，公司已在四季度启动供应商多元化的替代方案。",
+]
+
+
+def build_table_rules(path: Path) -> None:
+    """A table ruled HORIZONTALLY ONLY, wrapped in prose that is wider than it is.
+
+    The commonest Chinese business table, and the case that broke: a line reader
+    needs verticals and finds nothing, so a text reader runs over the whole page —
+    where the prose has no vertical gutters — and sweeps the lot into one column.
+    Measured on the real report this came from: a 65x1 "table" whose first cell was
+    the document title, exported as a CSV.
+
+    Two properties of this fixture are load-bearing and neither is decoration:
+      * the rules must be WIDER than the table's own text (x 52~400 against text
+        ending at 390) — a real rule spans the table, and pdfplumber cannot bound a
+        region whose text pokes out past the line ends;
+      * the prose must be wider still (x to 436), because that is what stops the
+        columns from being findable page-wide, and also what lets the header be
+        told apart from the paragraph above it;
+      * the header sits ABOVE the topmost rule, because that is where a banded table
+        puts it — a region derived from the rules alone starts at the first DATA row.
+    """
+    w, h = 560, 460
+    cols_x = [56, 150, 240, 300, 350]
+    top, row_h = 150, 26
+    buf = io.BytesIO()
+    c = new_canvas(buf, w, h)
+    text(c, h, 56, 60, "示例科技 2026 年第三季度收入结构", size=15)
+    for i, para in enumerate(RULES_PROSE):
+        text(c, h, 56, 92 + i * 18, para, size=10)
+    for r, row in enumerate(RULES_TABLE):
+        y = top + r * row_h
+        for col, cell in enumerate(row):
+            text(c, h, cols_x[col], y, cell, size=10)
+        # The rule goes UNDER the row, so the header has none above it.
+        line(c, h, 52, y + 7, 400, y + 7, (0.4, 0.4, 0.4), 0.7)
+    text(c, h, 56, top + len(RULES_TABLE) * row_h + 34,
+         "上表数据经财务部复核，口径与去年同期一致，未包含尚未确认的递延收入部分。", size=10)
+    c.showPage()
+    # Page two: prose and no table at all. It is not padding — it is the other half
+    # of the defect. A text pass over a page like this returns ONE column holding the
+    # whole page, and that came out of the door as a CSV whose first cell was the
+    # document title. Without this page nothing here would exercise the rule that a
+    # one-column result is not a table.
+    text(c, h, 56, 60, "四季度展望", size=15)
+    for i, para in enumerate(RULES_PROSE + RULES_PROSE):
+        text(c, h, 56, 92 + i * 18, para, size=10)
+    c.showPage()
+    c.save()
+    finish(buf, path, title="横线表检测样例")
 
 
 # The generation spec. Deliberately exercises every block type plus an explicit
@@ -522,10 +583,12 @@ def main() -> int:
     build_form(out / "form-flat.pdf", with_widgets=False,
                title="员工信息登记表（无表单域）")
     build_table_grid(out / "table-grid.pdf")
+    build_table_rules(out / "table-rules.pdf")
     write_inputs(out)
     print(f"CJK face: {source}")
     for name in ("report-cjk.pdf", "locked.pdf", "form-acroform.pdf",
-                 "form-filled.pdf", "form-flat.pdf", "table-grid.pdf"):
+                 "form-filled.pdf", "form-flat.pdf", "table-grid.pdf",
+                 "table-rules.pdf"):
         print(f"{name}: {(out / name).stat().st_size} bytes")
     return 0
 

@@ -224,7 +224,7 @@ def main() -> int:
     args = ap.parse_args()
 
     def entry():
-        ensure_distinct(args.src, args.out)
+        replaced = ensure_distinct(args.src, args.out)
         cell_opts = (args.number_format or args.font_color or args.bold or args.italic
                      or args.font_size or args.font_name or args.fill or args.border
                      or args.wrap)
@@ -244,7 +244,8 @@ def main() -> int:
             report = rebuild(args.src, args.out, mutate)
         except RebuildError as e:
             fail(str(e))
-        emit({"in": args.src.name, "out": args.out.name, **report},
+        emit({"in": args.src.name, "out": args.out.name,
+              "replaced_existing": replaced, **report},
              args.report, "changes", "grafted")
 
     return run(entry)

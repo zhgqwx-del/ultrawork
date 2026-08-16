@@ -2,14 +2,16 @@
 name: pdf
 description: >
   Use when the deliverable is a PDF itself — 读PDF / 提取PDF文字 / PDF转图片 /
-  查看PDF页数与加密状态 / 填PDF表单 / 生成PDF / 合并拆分PDF / PDF加密解密 /
+  查看PDF页数与加密状态 / 填PDF表单 / 生成PDF / 合并拆分PDF /
+  PDF加密解密 / 给PDF设置或去掉打开口令密码 / 改PDF权限（只允许打印、禁止复制修改）/
   提取PDF表格, or extract text with coordinates,
   render pages to images, report page geometry and encryption state, fill forms
   (AcroForm fields when the file has them, anchored text overlay when it does not)
   with an overflow check and a colour-coded proof sheet, BUILD a PDF from a
   document spec with the font genuinely embedded so Chinese survives on machines
   that have no CJK font installed, and
-  merge/split/extract/rotate pages, encrypt or decrypt, and pull tables out to CSV.
+  merge/split/extract/rotate pages, set/change/remove the open password and set the
+  permission bits (print-only, no-copy, no-modify), and pull tables out to CSV.
   Not for making slide decks from a PDF — that is `deckcraft`; not for .docx — that
   is `docx`; not for .xlsx — that is `xlsx`; not for .pptx — that is `pptx-edit`.
 x-requires: [python3, pypdfium2, pypdf, pdfplumber, reportlab]
@@ -49,10 +51,28 @@ AGPL。本技能已**整体**移出，没有任何一个文件 `import fitz`（0
 | 越界校验与校验图 | `scripts/pdf_form_check.py` | 值有没有超出字段框；产出逐字段标色的 PDF |
 | 从零生成 PDF | `scripts/pdf_create.py` | 标题/正文/项目符号/表格/分页；**字体真嵌入并子集化** |
 | 表格抽取 | `scripts/pdf_tables.py` | JSON + CSV；**逐表标注是「读出来的」还是「猜出来的」** |
-| 页面操作 | `scripts/pdf_pages.py` | 合并 / 拆分 / 抽页 / 删页 / 旋转 |
+| 页面操作 | `scripts/pdf_pages.py` | 合并 / 拆分 / 抽页 / 删页 / 旋转 / **压平表单** |
 | 加密解密 | `scripts/pdf_encrypt.py` | AES-256 设/改/去口令，权限位 |
 
-`capabilities.json` 里 **14 项能力全部已实现，无 pending**。
+`capabilities.json` 里 **15 项能力全部已实现，无 pending**。
+
+## 产物写在哪：工作区内，相对路径
+
+**要交给用户的产物（PDF / PNG / CSV / 报告 JSON）一律写进当前工作目录或它的子目录**
+（`--out 输出/page-001.png`），回复里也用同一条相对路径引用（`![预览](输出/page-001.png)`）。
+
+**纯中间文件**（下一条命令马上吃掉的临时 JSON）不受这条约束 —— 别拿它堆满用户的工作区。
+但**也别写死 `/tmp`**：Windows 上它落到系统盘根目录 `C:\tmp`，而 `--out` **会替你把父目录
+建出来** —— 所以它不会报错，只是在别人的 C 盘根上留垃圾，同名文件还会被并发会话互相覆盖。
+用 `tempfile`。（2026-08-16 实测更正：此前这里写「目录不存在就直接失败」是错的。）
+
+⚠️ **写到 `/tmp`、`~/…` 或任何工作区外的绝对路径 = 用户永远看不到它。** 产物面板只扫工作区，
+回复里的内联图只走一个「读工作区内文件」的端点 —— 工作区外的图会退化成一张灰色兜底卡片。
+**文件真的在、内容也对，UI 上就是显示不出来**（2026-08-15 实测：一次表单预览渲染到
+`/tmp/filled_preview/`，三张图一张都没显示出来）。
+
+渲染出来只为了「给人看一眼」的图最容易犯这个错，因为它感觉像个中间产物 ——
+**而它恰恰是用户唯一会看的那个。**
 
 ## 用法
 
@@ -117,9 +137,27 @@ python3 scripts/pdf_create.py --in doc.json --out report.pdf \
         --font-report fonts.json
 ```
 
-`doc.json` 的 `blocks` 支持 `heading`(1-3 级) / `paragraph` / `bullets` / `table` /
-`spacer` / `pagebreak`，**超出下边距自动分页**。换行同时处理两套规则：中文任意字之间可断，
+`doc.json` 的 `blocks` 支持 `heading`(1-3 级) / `paragraph` / `bullets` / `ordered` /
+`table` / `spacer` / `pagebreak`，**超出下边距自动分页**。换行同时处理两套规则：中文任意字之间可断，
 西文只在空格处断 —— 只按空格断的话，一整段中文会变成一行不可断的长文本，直接溢出页面。
+
+**并且遵守行首/行尾禁则**：`，。、；：？！` 和右括号右引号不会被顶到行首，左括号左引号不会留在行尾
+（做法是「押出」——标点跟着它所属的那个字一起挪到下一行，不是悬挂到版心外）。
+⚠️ **唯一的例外是宽度**：如果焊在一起的那一串本身就比栏宽还宽（窄表格单元格里成串的标点），
+**宁可断开也不捅出版心** —— 那种情况下标点会重新出现在行首，这是明写的让步，不是漏掉了。
+
+**列表可嵌套**：`items` 的元素可以是字符串，也可以是 `{"text": …, "items": […]}`；
+子列表默认继承父列表的类型，写 `"type"` 可以改。有序项**按路径编号**（`1.` / `1.1` / `1.1.1`），
+换行后的续行**悬挂对齐在文字下方**而不是标记下方。
+
+```json
+{"type": "ordered", "items": [
+  {"text": "订阅制转型", "items": ["续费率 94.2%", "NDR 111%"]},
+  "应收账款：账龄 90 天以上占比 11.3%"]}
+```
+
+> ⚠️ 把嵌套的有序列表压平成一层，**编号和层级会同时丢掉，而且从 PDF 里找不回来** ——
+> 这正是这个技能出厂时的行为（那时只有 `bullets`，`1./2./3.` 全变成匿名圆点）。
 
 **字体是真嵌进去的，并做子集化。** 这是这条能力最要紧的一点：
 
@@ -136,6 +174,21 @@ python3 scripts/pdf_create.py --in doc.json --out report.pdf \
 > 轮廓，reportlab 直接拒绝。所以字体是**逐个试注册**而不是「找到路径就用」。
 > 标准 14 号字（`--font helv` 等）是唯一不嵌入也可移植的例外——任何阅读器都必须自带。
 
+> ⚠️ **能注册 ≠ 适合拿来排整份文档。** 这里出过一次真事故：macOS 上第一个能注册的是
+> `Songti.ttc` 的第 0 面 = **STSongti-SC-Black**（该文件最重的字重），而一个 face 要画完整份
+> 文档 ⇒ **正文也变成了展示字重**，报告里全是黑粗字。更糟的是那一面是该文件八个面里
+> **唯一没有 U+2022 的**，于是每个圆点都画成 .notdef —— 纸上空白、文本层 `\x00`、
+> 没有任何报错。现在按**字体自述的字重**排序（`.ttc` 里的面序跨系统版本会变，不能按位置认），
+> 并在同一个文件里找**配套的 Bold** 给标题用；报告里 `typeface_name` / `typeface_bold` /
+> `heavy_weight_only` 三个字段把结果说出来，只剩展示字重时会明说而不是闷着。
+
+**覆盖检查要连「代码自己加的字符」一起查。** 这条检查出厂时只喂了调用方写的文字，
+而列表标记（`•`）是**排版自己补上去的**，谁都不会在 spec 里声明它 ⇒ 它从来没被查过，
+画成空白而报告写着 `missing_glyphs: []`。现在两头都堵：标记先过一遍能不能画，
+画不了就**降级成 ASCII 替身**并在 `marker_substitutions` 里说出换了什么（标记是装饰，
+为一个圆点让整份文档失败不划算）；换完的标记再并进覆盖检查，
+让「凡是要画的字符都被查过」这句话字面成立。
+
 **写之前先查字形覆盖**：字体没有的字会画成空白且**不报任何错**，所以缺字直接拒绝生成并列出
 缺哪些（`--allow-missing-glyphs` 可强行写并在报告里点名）。实测 `--font helv
 --allow-missing-glyphs` 强行拿 Helvetica 写中文：reportlab **不报错**，静默掉进
@@ -148,14 +201,29 @@ python3 scripts/pdf_tables.py --in report.pdf --out tables.json \
         --csv-dir ./csv --overlay boxes.pdf
 ```
 
-每张表都带 `strategy` 和 `reliable`：
+每张表都带 `strategy`、`reliable` 和 `evidence`（哪一半是读的、哪一半是推的）：
 
-- **`lines`（reliable=true）** —— 表格线画在页面里，单元格边界是文件里的事实。
-- **`text`（reliable=false）** —— 没有可用的表格线，列位置靠文字对齐**猜**。
+| strategy | reliable | evidence | 什么情况 |
+|---|---|---|---|
+| `lines` | true | 行/列都 `drawn` | 格线画在页面里，单元格边界是文件里的事实 |
+| **`rules`** | false | 行 `drawn` / 列 `inferred` | **只有横线没有竖线 —— 中文商务文档最常见的样式** |
+| `text` | false | 行/列都 `inferred` | 完全没有可用的线，行列都靠文字对齐猜 |
 
-实测同一张表在 `fixtures/table-grid.pdf` 的两页里：**画了格线的一页读出 4×3、完全正确；
-去掉格线的一页猜成 7×3**（中间插了三行空行）。数据一模一样，结果不一样 ——
-**光看单元格内容分不出哪个是猜的，所以报告必须说**。
+`auto` 按 **lines → rules → text** 依次试：画出来的胜过画一半的，画一半的胜过猜的。
+
+> ⚠️ **`rules` 这条是补出来的，因为缺了它整条路是断的。** 实测一份真实季度报告：每行下面一条横线、
+> 没有竖线 ⇒ `lines` 需要两者、什么也找不到；退回 `text` 就在**整页**上找列，
+> 而一页散文没有竖直间隙 ⇒ **整页被塞进 65×1 的「表」，第一格是文档标题，还导出成了 CSV**。
+> 现在改成：**横线负责说表在哪、行怎么分，列只在表格区域内部推断**（散文被排除在外）。
+> 表头单独认 —— 横线在每行**下面**，所以最上面那行表头没有线兜着，光按线取区域必然丢表头。
+
+> ⚠️ **一列的「表」不是表，直接不算**（那正是把整页散文导成 CSV 的原因），
+> 但**扔掉多少会记在 `rejected_single_column` 里** —— 「这页没有表」和「这页找到的全是段落」
+> 是两个不同的答案，要不要人工去看取决于是哪一个。
+
+**猜不一定看得出来，这才是必须报的理由**：实测 `fixtures/table-grid.pdf` 同一张表
+（第 1 页有格线、第 2 页没有），两页现在都读出 4×3 且**单元格逐字相同** ——
+数据里没有任何东西说明其中一页是推出来的，**只有那个标志能说**。
 
 CSV 用 `utf-8-sig` 写（带 BOM）：不带 BOM 的中文 CSV 在 Excel 里就是乱码，而 CSV 导出的
 去处基本都是 Excel。
@@ -168,6 +236,7 @@ python3 scripts/pdf_pages.py --op extract --in a.pdf --pages 1,3-4 --out sub.pdf
 python3 scripts/pdf_pages.py --op delete  --in a.pdf --pages 2 --out fewer.pdf
 python3 scripts/pdf_pages.py --op rotate  --in a.pdf --pages 1 --degrees 90 --out r.pdf
 python3 scripts/pdf_pages.py --op split   --in a.pdf --out ./parts --every 2
+python3 scripts/pdf_pages.py --op flatten --in filled.pdf --out flat.pdf --report f.json
 ```
 
 - **旋转是相对的**（`--degrees 90` 加在现有 `/Rotate` 上），存的是 `/Rotate` 元数据，
@@ -183,7 +252,16 @@ python3 scripts/pdf_pages.py --op split   --in a.pdf --out ./parts --every 2
 - **两份都带表单的文件不给合并，直接拒绝**（退出码 2 并点名冲突的域）。同名的两个域在阅读器
   眼里**就是同一个域**（在一个里打字另一个跟着变），两份 `/DR` 里同名的字体也可能不是一回事 ——
   这种对账本技能不做，宁可拒绝，也不产出一份「两个不相干的域悄悄共用一个值」的文件。
-  先把表单压平，或者一次合一份。
+  **出路就在下面的 `--op flatten`**：把两份各自压平再合并。
+- **`--op flatten` 把域的外观画进页面，然后这份文件不再是表单**（`/AcroForm` 与 widget 一起摘掉，
+  链接、批注这类**不是** widget 的注释原样保留）。压平之后值会**进入文本层**，可搜索、可复制 ——
+  在此之前它们活在注释里，`pdfplumber`/`pdfminer` 一个字都抽不到。
+  ⚠️ **一个域有值、而它的外观流是空的，直接拒绝**（退出码 2 并点名是哪个域、值是什么），
+  因为把它画下去等于**无声地删掉这个值**。这不是假想：2026-08-15 一次真机验收里，
+  模型被上面那句「先把表单压平」推着自己手搓了一个压平，产出的五个 XObject 全是
+  **没有流体的裸字典** —— 每个 `Do` 都是空操作、两页渲染得一模一样，而它的总结说「已渲染验证」。
+  所以本实现在报告成功之前会**重新打开产物**核三件事：没有 widget 残留 · 每个登记的外观都真的有字节 ·
+  画的次数等于压平的域数。
 - 合并会把每个输入贡献了几页写进报告：**丢掉第二个输入产出的仍是一个完全合法的 PDF**，
   光看页数看不出来，所以把输入清单交给 `office-skills-selftest.py --check` 的 `baseline`
   才验得住。

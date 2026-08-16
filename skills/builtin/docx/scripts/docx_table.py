@@ -459,6 +459,20 @@ def main() -> int:
                  f"table preset to do")
 
         if args.measure:
+            # --measure reads; --out/--preset write. Accepting both used to run the
+            # read and DROP the write: exit 0, no file, nothing on stderr, and a
+            # report whose keys ({in, tables}) look like a normal answer. The caller
+            # only finds out at the next step, when the file it asked for is not
+            # there (2026-08-16 L4 B4 — the agent hit exactly that and had to guess).
+            # This file already says why: "a call that changed nothing and said
+            # 'done' is indistinguishable from one that worked".
+            extra = [flag for flag, given in (("--out", args.out),
+                                              ("--preset", args.preset)) if given]
+            if extra:
+                fail(f"--measure reports on the document as it is and writes nothing, "
+                     f"but you also passed {' and '.join(extra)}. Doing both silently "
+                     f"drops the write; run it twice if you want the preset applied "
+                     f"AND the numbers (apply first, then --measure the result)")
             emit({"in": args.src.name,
                   "tables": [fingerprint(t) for t in tables]}, args.report, "tables")
             return

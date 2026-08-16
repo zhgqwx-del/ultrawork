@@ -33,6 +33,7 @@ import copy
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -111,7 +112,7 @@ FILL_TYPO = "客户名"        # a key that matches no placeholder
 # Q3 and Q5 are here because W19's two most load-bearing claims are only true if a
 # layout engine agrees: a header row either does or does not reappear on page 2, and
 # a cell's text either does or does not survive on one line.
-SOFFICE_CHECKS = {"Y1", "Y2", "Y3", "Q3", "Q5"}
+SOFFICE_CHECKS = {"Y1", "Y2", "Y3", "Y4", "Y5", "Q3", "Q5", "D7"}
 
 STDOUT_BUDGET = 6000        # bytes one call may print for a long document
 SCALE_PARAGRAPHS = 2000     # comfortably past docxcommon.STDOUT_ITEM_LIMIT
@@ -1125,6 +1126,14 @@ def collect_toc(work: Path) -> dict:
                        "--toc")
     out["twice"] = {"exit": again.returncode, "stderr": again.stderr.strip(),
                     "wrote": (work / "twice.docx").exists()}
+    # The same question asked of the OTHER half. `contents.docx` already has its
+    # heading styles bound, so numbering it again can only write a second definition
+    # and orphan the first — with the rendered page unchanged, which is why nothing
+    # else can see it. (2026-08-16 L4 B3: this half had no guard at all.)
+    renum = run_script("docx_toc.py", "--in", contents,
+                       "--out", work / "renumber.docx", "--outline-numbering")
+    out["twice_numbering"] = {"exit": renum.returncode, "stderr": renum.stderr.strip(),
+                              "wrote": (work / "renumber.docx").exists()}
     return out
 
 
@@ -1209,6 +1218,29 @@ def collect_fonts(work: Path) -> dict:
         "wrote_anything": sorted(p.name for p in work.glob("*.docx")
                                  if p.name.startswith("check")),
     }
+    # How many CJK runs a style-level change could NOT move, counted by the gate
+    # itself straight from the XML — the report's number is what is under test.
+    def direct_cjk_runs(path: Path) -> int:
+        # EVERY part holding runs, not just word/document.xml. The skill examines
+        # headers and footers too (a letterhead is exactly where pasted-in fonts
+        # live), and counting one part made this gate judge a correct report wrong
+        # by exactly the one CJK run in report.docx's header.
+        n = 0
+        for part in parts_of(path):
+            if part != "word/document.xml" and not part.startswith(
+                    ("word/header", "word/footer")):
+                continue
+            root = tree_of(path, part)
+            for run in root.iter(W + "r"):
+                text = "".join(t.text or "" for t in run.iter(W + "t"))
+                if not any("\u4e00" <= ch <= "\u9fff" for ch in text):
+                    continue
+                rfonts = run.find(f"{W}rPr/{W}rFonts")
+                if rfonts is not None and rfonts.get(W + "eastAsia"):
+                    n += 1
+        return n
+    out["direct_cjk_runs_measured"] = direct_cjk_runs(REPORT)
+
     sr = run_script("docx_fonts.py", "--in", FONTLESS, "--out", work / "strict.docx",
                     "--fix", "--strict")
     out["strict"] = {"exit": sr.returncode, "stderr": sr.stderr.strip(),
@@ -1704,6 +1736,14 @@ def collect_tables(work: Path) -> dict:
     naive = work / "naive-fit.docx"
     out["naive_widths"] = naive_fit(work / "preset-finance.docx", naive)
 
+    # Asking to measure AND to apply. It used to run the read and drop the write:
+    # exit 0, no file, empty stderr, a report whose keys look like a normal answer.
+    both = work / "measure-and-write.docx"
+    mw = run_script("docx_table.py", "--in", REPORT, "--out", both,
+                    "--preset", "finance", "--measure")
+    out["measure_and_write"] = {"exit": mw.returncode, "stderr": mw.stderr.strip(),
+                                "wrote": both.exists()}
+
     sys.path.insert(0, str(SKILL / "scripts"))
     from office.soffice import find_soffice
     if not find_soffice():
@@ -1770,6 +1810,107 @@ def list_levels_used(path: Path) -> set:
     return out
 
 
+SPACING_MD_PARA = (
+    "本季度经营情况总体平稳，营业收入与毛利率均较上年同期改善，"
+    "现金流保持健康，应收账款账龄结构需要在下一季度重点跟踪，"
+    "供应链交期延长的影响将在四季度逐步体现，管理层已就上述事项形成专项计划。"
+) * 2
+
+
+def line_tops(pdf: Path, page: int = 0) -> list[float]:
+    """Baseline-ish tops of the text rows on one rendered page."""
+    import pdfplumber
+    with pdfplumber.open(str(pdf)) as doc:
+        if page >= len(doc.pages):
+            return []
+        return sorted({round(w["top"], 1) for w in doc.pages[page].extract_words()})
+
+
+def median_line_gap(pdf: Path) -> float:
+    """Median distance between consecutive text rows, in points. 0 = unmeasurable.
+
+    Only gaps inside the plausible line-height band count: a paragraph break or a
+    heading would otherwise drag the median somewhere that says nothing about line
+    spacing. The fixture below is ONE long paragraph precisely so that almost every
+    gap here is a within-paragraph one.
+    """
+    tops = line_tops(pdf)
+    gaps = [b - a for a, b in zip(tops, tops[1:]) if 5 < (b - a) < 60]
+    return round(statistics.median(gaps), 2) if gaps else 0.0
+
+
+def _respace(src: Path, dst: Path, line: str) -> None:
+    """Same document, different declared line spacing — the metrics control."""
+    def mutate(name: str, data: bytes) -> bytes:
+        if name != "word/styles.xml":
+            return data
+        return data.replace(b'w:line="312" w:lineRule="auto"',
+                            f'w:line="{line}" w:lineRule="auto"'.encode())
+    rewrite_zip(src, dst, mutate)
+
+
+def with_line_grid(src: Path, dst: Path) -> None:
+    """CONTROL: put back the `<w:docGrid w:type="lines" w:linePitch="312"/>` the
+    generator shipped with — the real defective output, not an invented one."""
+    def mutate(name: str, data: bytes) -> bytes:
+        if name != "word/document.xml":
+            return data
+        return data.replace(b"</w:sectPr>",
+                            b'<w:docGrid w:type="lines" w:linePitch="312"/></w:sectPr>')
+    rewrite_zip(src, dst, mutate)
+
+
+def strip_line_grid(src: Path, dst: Path) -> None:
+    """Same document with any `<w:docGrid/>` removed — the pure font-metric arm."""
+    def mutate(name: str, data: bytes) -> bytes:
+        if name != "word/document.xml":
+            return data
+        return re.sub(rb"<w:docGrid[^/]*/>", b"", data)
+    rewrite_zip(src, dst, mutate)
+
+
+def measure_spacing(work: Path, tag: str, grid: bool = False) -> dict:
+    """Does the line spacing the file DECLARES actually reach the page?
+
+    Two arms, both rendered on THIS host so no font metric is assumed:
+
+    * `single` — the same document at single spacing **with any line grid stripped**.
+      That is the reference: one line of this font, nothing else acting on it.
+    * `spaced` — the document exactly as the generator wrote it (the control arm
+      injects the grid here, and only here).
+
+    `ratio` is then "how many single lines does one rendered line occupy", which
+    must be the 1.3 the styles declare.
+
+    ⚠️ The reference MUST strip the grid. A line grid scales BOTH arms by the same
+    factor (measured: 17.8→31.2 single, 23.1→40.6 spaced), so a ratio taken against
+    a gridded reference is 1.30 either way — blind to exactly the defect this check
+    exists for. The first version of this check made that mistake and its negative
+    control could not fire.
+    """
+    md = work / f"{tag}.md"
+    md.write_text(f"# 行距\n\n{SPACING_MD_PARA}\n", encoding="utf-8")
+    out: dict = {}
+    for name in ("spaced", "single"):
+        doc = work / f"{tag}-{name}.docx"
+        run_script("docx_from_md.py", "--in", md, "--out", doc)
+        if name == "single":
+            ref = work / f"{tag}-single-ref.docx"
+            _respace(doc, ref, "240")
+            plain = work / f"{tag}-single-plain.docx"
+            strip_line_grid(ref, plain)
+            doc = plain
+        elif grid:
+            gridded = work / f"{tag}-spaced-g.docx"
+            with_line_grid(doc, gridded)
+            doc = gridded
+        pdf = work / f"{tag}-{name}.pdf"
+        run_script("docx_pdf.py", "--in", doc, "--out", pdf)
+        out[name] = median_line_gap(pdf) if pdf.is_file() else 0.0
+    out["ratio"] = round(out["spaced"] / out["single"], 3) if out["single"] else 0.0
+    return out
+
+
 def collect_markdown(work: Path) -> dict:
     generated = work / "generated.docx"
     r = run_script("docx_from_md.py", "--in", SAMPLE_MD, "--out", generated,
@@ -1802,6 +1943,16 @@ def collect_markdown(work: Path) -> dict:
         "lost": sorted(set(parts_of(REPORT)) - set(parts_of(tpl))),
         "texts": paragraph_texts(tpl),
     }
+    sys.path.insert(0, str(SKILL / "scripts"))
+    from office.soffice import find_soffice
+    if find_soffice():
+        out["spacing"] = measure_spacing(work, "spacing")
+    else:
+        SKIPS.append("D7 line spacing: LibreOffice is not installed on this host, so "
+                     "'the declared line spacing reaches the page' could not be "
+                     "measured, and nor could its negative control. CI runs it on "
+                     "Linux, where libreoffice-writer is installed")
+        out["spacing"] = {"skipped": "no LibreOffice"}
     return out
 
 
@@ -1898,8 +2049,35 @@ def collect_pdf(work: Path) -> dict:
     blank = work / "blank.docx"
     blank_document(REPORT, blank)
     b = run_script("docx_pdf.py", "--in", blank, "--out", work / "blank.pdf")
+    # A document WITH tracked changes. Which of the two very different PDFs this
+    # produces (the marks, or one resolved version) is measured by the gate itself
+    # below — the report's own flag is the thing under test, so it cannot also be
+    # the evidence.
+    rev_pdf = work / "revised.pdf"
+    rv = run_script("docx_pdf.py", "--in", REVISED, "--out", rev_pdf,
+                    "--report", work / "revised-pdf.json")
+    rev_report = json.loads((work / "revised-pdf.json").read_text(encoding="utf-8")) \
+        if (work / "revised-pdf.json").exists() else {}
+    deleted = [(el.text or "").strip()
+               for el in tree_of(REVISED).iter(W + "delText") if (el.text or "").strip()]
+    gate_sees_marks = None
+    if rev_pdf.is_file() and deleted:
+        import pdfplumber
+        with pdfplumber.open(str(rev_pdf)) as doc:
+            body = "\n".join((page.extract_text() or "") for page in doc.pages)
+        gate_sees_marks = any(d in body for d in deleted)
+
+    # Rendering onto a path that already holds a file. `ensure_distinct` cannot see
+    # this one: different path, different extension, someone else's bytes.
+    again = run_script("docx_pdf.py", "--in", REPORT, "--out", out,
+                       "--report", work / "pdf-again.json")
+    again_report = json.loads((work / "pdf-again.json").read_text(encoding="utf-8")) \
+        if (work / "pdf-again.json").exists() else {}
     return {
         "exit": r.returncode, "report": report,
+        "revised": {"exit": rv.returncode, "report": rev_report,
+                    "deleted_texts": deleted, "gate_sees_marks": gate_sees_marks},
+        "again": {"exit": again.returncode, "report": again_report},
         "produced": out.is_file() and out.stat().st_size > 0,
         "images": len(list((work / "pages").glob("*.png"))) if (work / "pages").is_dir()
                   else 0,
@@ -2829,6 +3007,72 @@ def y1_render(ctx: dict) -> list[str]:
     return out
 
 
+@check("Y5", "what the PDF does with tracked changes is measured, not assumed")
+def y5_revision_marks(ctx: dict) -> list[str]:
+    """A PDF of a document with tracked changes is one of two completely different
+    artifacts: the MARKS (struck-through deletions, underlined insertions, a change
+    bar) or one resolved version. The report used to state the second unconditionally
+    — "the PDF shows one resolution of them" — and on 2026-08-16 (L4 B5-b) it said
+    that about a page full of strikethrough, and the agent relayed it verbatim. A
+    false sentence that travels is worse than no sentence.
+
+    The gate reads the produced PDF itself: the report's flag is under test, so it
+    cannot also be the evidence.
+    """
+    p = ctx["pdf"]
+    if p.get("skipped"):
+        return []
+    arm = p.get("revised") or {}
+    out = []
+    if not arm.get("deleted_texts"):
+        return ["Y5 the revised fixture carries no <w:delText>, so this check has "
+                "nothing to look for — an empty probe passes for the wrong reason"]
+    if arm.get("gate_sees_marks") is None:
+        return ["Y5 the gate could not read the rendered PDF, so nothing was measured"]
+    claimed = arm.get("report", {}).get("revision_marks_visible")
+    if claimed is None:
+        out.append("Y5 the report says nothing about whether the marks are visible, "
+                   "so its warning is an assumption")
+    elif bool(claimed) != bool(arm["gate_sees_marks"]):
+        out.append(f"Y5 the report says revision_marks_visible={claimed!r}, but the "
+                   f"deleted text IS{'' if arm['gate_sees_marks'] else ' NOT'} in the "
+                   f"rendered PDF — the report describes a different file")
+    warning = arm.get("report", {}).get("warning", "")
+    if arm["gate_sees_marks"] and "one resolution" in warning:
+        out.append("Y5 the warning tells the reader the PDF shows one resolution of "
+                   "the revisions, while the deleted text is right there on the page "
+                   "with a line through it. An agent relays this sentence verbatim")
+    return out
+
+
+@check("Y4", "overwriting a file that was already there is stated, not silent")
+def y4_replaced(ctx: dict) -> list[str]:
+    """`ensure_distinct` refuses out == in. It cannot see the other shape: a
+    DIFFERENT path, holding someone else's bytes. 2026-08-16 (L4 B3) — asked to add
+    numbering to a .docx, the agent also rendered a preview to `<same stem>.pdf`
+    beside it and destroyed an unrelated fixture. Nothing in any report said a file
+    had been replaced, so nothing could be relayed to the user.
+
+    Not a refusal: re-rendering over a previous output is the normal case. The
+    check is that the fact is REPORTED, both ways round.
+    """
+    p = ctx["pdf"]
+    if p.get("skipped"):
+        return []
+    out = []
+    first = p["report"].get("replaced_existing")
+    again = (p.get("again") or {}).get("report", {}).get("replaced_existing")
+    if first is not False:
+        out.append(f"Y4 the first render reported replaced_existing={first!r}; the "
+                   f"target did not exist, so the only honest answer is False — a "
+                   f"field that is always True says nothing")
+    if again is not True:
+        out.append(f"Y4 rendering onto a path that already held a file reported "
+                   f"replaced_existing={again!r}. Silently taking over an existing "
+                   f"name is how an unrelated file gets destroyed with no trace")
+    return out
+
+
 @check("Y2", "a document that renders blank is refused, not handed back as a preview")
 def y2_blank(ctx: dict) -> list[str]:
     p = ctx["pdf"]
@@ -3333,6 +3577,40 @@ def g5_numbering(ctx: dict) -> list[str]:
     return out
 
 
+@check("G7", "adding what the document already has is refused, in BOTH halves")
+def g7_already_there(ctx: dict) -> list[str]:
+    """Two contents pages, or two numbering definitions, are not smaller mistakes
+    than none — they are the mistakes nobody notices, because the page renders the
+    same either way.
+
+    The TOC half has refused since it was written, but **nothing asserted it**: the
+    collector captured `twice` and no check read it, so removing that guard would
+    have gone unnoticed. The numbering half had no guard at all until 2026-08-16 —
+    it wrote a second definition, repointed the styles at it, orphaned the first,
+    and reported success while the rendered PDF was byte-for-byte what it was.
+    Found by reading an L4 product, with 207 assertions green.
+    """
+    out = []
+    for key, what in (("twice", "a second TOC field"),
+                      ("twice_numbering", "a second numbering definition")):
+        arm = ctx["toc"].get(key)
+        if arm is None:
+            out.append(f"G7 {key} was never collected — an unmeasured guard and a "
+                       f"missing guard look exactly alike")
+            continue
+        if arm["exit"] == 0:
+            out.append(f"G7 the script accepted {what} on a document that already "
+                       f"has one (exit 0). The reader sees no difference until "
+                       f"something is updated, so this defect ships silently")
+        if arm["wrote"]:
+            out.append(f"G7 it refused {what} but left {key}'s output file behind — "
+                       f"a refusal that writes a file is not a refusal")
+        if arm["exit"] != 0 and "already" not in arm["stderr"]:
+            out.append(f"G7 the refusal of {what} does not say WHAT is already "
+                       f"there ({arm['stderr'][:60]!r}); a caller cannot act on it")
+    return out
+
+
 @check("G6", "the contents heading does not take chapter number 1 for itself")
 def g6_contents_not_numbered(ctx: dict) -> list[str]:
     t = ctx["toc"]
@@ -3584,6 +3862,44 @@ def n4_check_only(ctx: dict) -> list[str]:
     return out
 
 
+@check("N6", "the check says how many runs a style change could NOT move")
+def n6_binding_sources(ctx: dict) -> list[str]:
+    """`--check` answered "is anything unbound". The question a caller asks NEXT is
+    "if I change the style, will anything move?" — and a run whose face is direct
+    formatting ignores every style there is.
+
+    2026-08-16 (L4 C1): asked to make the body 微软雅黑, an agent hard-wrote
+    `w:rFonts` onto all 83 runs of a document where 72 already carried a direct face.
+    That count is exactly what turns "just change the font" into a decision with a
+    stated cost, and nothing printed it.
+
+    The gate counts the runs itself; the report's number is the thing under test.
+    """
+    f = ctx["fonts"]
+    report = f["check_clean"]["report"]
+    measured = f["direct_cjk_runs_measured"]
+    out = []
+    sources = report.get("binding_sources")
+    if not isinstance(sources, dict):
+        return ["N6 --check reports no binding_sources at all, so 'will a style "
+                "change do anything' cannot be answered without editing the file"]
+    if measured == 0:
+        return ["N6 the fixture has no CJK run with a direct face, so this check "
+                "cannot tell a right answer from a zero — pick a fixture that does"]
+    if sources.get("run") != measured:
+        out.append(f"N6 the report says {sources.get('run')!r} CJK run(s) carry a "
+                   f"direct face; reading the XML gives {measured}. A caller sizing "
+                   f"the edit by this number would size it wrong")
+    if sum(sources.values()) != report.get("runs_with_cjk"):
+        out.append(f"N6 the sources add up to {sum(sources.values())} but "
+                   f"runs_with_cjk is {report.get('runs_with_cjk')} — a breakdown "
+                   f"that does not account for every run hides the remainder")
+    if sources.get("run") and "restyle_note" not in report:
+        out.append("N6 runs carry a direct face and the report says nothing about "
+                   "what that means for a style-level edit")
+    return out
+
+
 @check("N5", "--strict refuses when the face came from this tool and not the document")
 def n5_strict(ctx: dict) -> list[str]:
     f = ctx["fonts"]
@@ -3814,6 +4130,37 @@ def d5_lists(ctx: dict) -> list[str]:
     if str(MD_LIST_DEPTH) not in m["levels_used"]:
         out.append(f"D5 no paragraph uses ilvl={MD_LIST_DEPTH}, so the nested bullet "
                    f"in sample.md came out at the top level")
+    return out
+
+
+@check("D7", "the line spacing the file declares actually reaches the page")
+def d7_line_spacing(ctx: dict) -> list[str]:
+    """A document can declare 1.3 line spacing and render at 1.6 — and every
+    XML-level assertion still passes, because the XML says 1.3.
+
+    The generator used to emit `<w:docGrid w:type="lines" w:linePitch="312"/>`
+    alongside it, and a line grid inflates the rendered line height: measured on one
+    long CJK paragraph, the SAME document renders 23.1pt per line without the grid
+    and 40.6pt with it — 2.28x the single-spaced reference where the styles declare
+    1.3. An L4 product rendered at 40.3pt/line and grew a third page holding three
+    lines. Found by reading that product; 206 assertions were green.
+
+    Measured as a RATIO against the same document at single spacing: the absolute
+    gap depends on the font's metrics, the ratio does not.
+    """
+    sp = ctx["markdown"].get("spacing") or {}
+    if sp.get("skipped"):
+        return []
+    out = []
+    if not sp.get("single") or not sp.get("spaced"):
+        return [f"D7 could not measure line spacing at all (got {sp!r}) — an "
+                f"unmeasurable render is not a passing one"]
+    ratio = sp["ratio"]
+    if not 1.15 <= ratio <= 1.45:
+        out.append(f"D7 the styles declare 1.3 line spacing, but the rendered page "
+                   f"shows {ratio}x single ({sp['spaced']}pt vs {sp['single']}pt). "
+                   f"~1.0 means something is quantising it (a <w:docGrid> line grid "
+                   f"does exactly that) and the declared spacing never reaches paper")
     return out
 
 
@@ -4309,6 +4656,35 @@ def q6_scope(ctx: dict) -> list[str]:
     if "1" not in t["bad_index"]["stderr"]:
         out.append(f"Q6 the out-of-range refusal does not say how many tables there "
                    f"are: {t['bad_index']['stderr'][:80]!r}")
+    return out
+
+
+@check("Q8", "asking to measure AND to write is refused, not half-done in silence")
+def q8_measure_and_write(ctx: dict) -> list[str]:
+    """`--measure` reads, `--out/--preset` write. Given both, the script used to do
+    the read and drop the write — exit 0, no file, nothing on stderr, and a report
+    ({in, tables}) that reads like a successful answer. The caller learns about it
+    one step later, when the file it asked for is not there; 2026-08-16 (L4 B4) an
+    agent hit exactly that and had to guess what had happened.
+
+    This is the shape this file's own comment warns about: "a call that changed
+    nothing and said 'done' is indistinguishable from one that worked".
+    """
+    arm = ctx["tables"].get("measure_and_write")
+    if arm is None:
+        return ["Q8 the measure+write combination was never exercised — an untested "
+                "guard and a missing guard look alike"]
+    out = []
+    if arm["exit"] == 0:
+        out.append("Q8 --measure together with --out/--preset exited 0. Either it "
+                   "wrote and measured, or it silently did half of what was asked; "
+                   "the exit code cannot tell the caller which")
+    if arm["wrote"]:
+        out.append("Q8 it refused but left the file behind — a refusal that writes "
+                   "a file is not a refusal")
+    if arm["exit"] != 0 and "--measure" not in arm["stderr"]:
+        out.append(f"Q8 the refusal does not name the flags in conflict "
+                   f"({arm['stderr'][:60]!r}), so a caller cannot act on it")
     return out
 
 
@@ -5493,6 +5869,104 @@ def flaw_not_checked_never_reported(ctx, work):
     return ctx
 
 
+def flaw_from_md_restores_the_line_grid(ctx, work):
+    """CONTROL: generate exactly what the generator shipped until 2026-08-16 —
+    the same document WITH `<w:docGrid w:type="lines" w:linePitch="312"/>` — and
+    re-measure. Not a simulated number: the docs are rebuilt and re-rendered, so
+    this arm is the real defective artifact."""
+    m = copy.deepcopy(ctx["markdown"])
+    if (m.get("spacing") or {}).get("skipped"):
+        return ctx
+    m["spacing"] = measure_spacing(work, "spacing-grid", grid=True)
+    ctx["markdown"] = m
+    return ctx
+
+
+def flaw_second_toc_accepted(ctx, work):
+    """CONTROL: the TOC guard is gone — the shipped shape of that defect is exit 0
+    plus a written file, which is exactly what the script did before it had one."""
+    t = copy.deepcopy(ctx["toc"])
+    t["twice"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_second_numbering_accepted(ctx, work):
+    """CONTROL: replicate what docx_toc.py DID ship until 2026-08-16 — number an
+    already-numbered document, exit 0, write the file."""
+    t = copy.deepcopy(ctx["toc"])
+    t["twice_numbering"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["toc"] = t
+    return ctx
+
+
+def flaw_overwrite_is_silent(ctx, work):
+    """CONTROL: replicate what docx_pdf.py shipped until 2026-08-16 — no such field
+    in the report at all, so the caller cannot know a file was replaced."""
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    p["report"].pop("replaced_existing", None)
+    p.setdefault("again", {}).setdefault("report", {}).pop("replaced_existing", None)
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_measure_silently_drops_the_write(ctx, work):
+    """CONTROL: replicate what docx_table.py shipped until 2026-08-16 — measure,
+    return, and never mention that --out was ignored."""
+    t = copy.deepcopy(ctx["tables"])
+    t["measure_and_write"] = {"exit": 0, "stderr": "", "wrote": False}
+    ctx["tables"] = t
+    return ctx
+
+
+def flaw_revision_warning_assumes_resolution(ctx, work):
+    """CONTROL: the exact sentence docx_pdf.py shipped until 2026-08-16 — 'the PDF
+    shows one resolution of them' with no measurement behind it."""
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    rep = p.setdefault("revised", {}).setdefault("report", {})
+    rep.pop("revision_marks_visible", None)
+    rep["warning"] = ("this document has 3 tracked insertion(s) and 3 deletion(s); "
+                      "the PDF shows one resolution of them, not the document anyone "
+                      "has approved")
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_revision_flag_contradicts_the_page(ctx, work):
+    """CONTROL: the flag is present but says the opposite of what the page shows."""
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    arm = p.setdefault("revised", {})
+    arm.setdefault("report", {})["revision_marks_visible"] = False
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_binding_sources_undercounts(ctx, work):
+    """CONTROL: the breakdown exists but is wrong — the shape that makes a caller
+    size the edit wrong while everything still looks answered."""
+    f = copy.deepcopy(ctx["fonts"])
+    src = f["check_clean"]["report"].get("binding_sources")
+    if not isinstance(src, dict):
+        return ctx
+    src["run"] = max(0, src["run"] - 1)
+    ctx["fonts"] = f
+    return ctx
+
+
+def flaw_no_binding_sources(ctx, work):
+    """CONTROL: what --check shipped until 2026-08-16 — no breakdown at all."""
+    f = copy.deepcopy(ctx["fonts"])
+    f["check_clean"]["report"].pop("binding_sources", None)
+    ctx["fonts"] = f
+    return ctx
+
+
 def flaw_a_block_kind_is_dropped(ctx, work):
     """The defect the whole contract is about: content that never arrives."""
     m = copy.deepcopy(ctx["markdown"])
@@ -6152,6 +6626,24 @@ FLAWS = [
     ("cached-field-rendered-in-silence", flaw_cached_field_rendered_in_silence,
      {"Y3"}, ""),
 
+    ("LIVE: from_md restores the <w:docGrid> line grid it shipped with",
+     flaw_from_md_restores_the_line_grid, {"D7"}, ""),
+    ("LIVE: a second TOC is accepted on a document that already has one",
+     flaw_second_toc_accepted, {"G7"}, ""),
+    ("LIVE: docx_toc numbers a document whose headings are already numbered",
+     flaw_second_numbering_accepted, {"G7"}, ""),
+    ("LIVE: docx_pdf overwrites an existing file and says nothing",
+     flaw_overwrite_is_silent, {"Y4"}, ""),
+    ("LIVE: --measure with --out drops the write and says nothing",
+     flaw_measure_silently_drops_the_write, {"Q8"}, ""),
+    ("LIVE: the revision warning assumes a resolution it never measured",
+     flaw_revision_warning_assumes_resolution, {"Y5"}, ""),
+    ("LIVE: revision_marks_visible contradicts the rendered page",
+     flaw_revision_flag_contradicts_the_page, {"Y5"}, ""),
+    ("LIVE: --check omits the direct-formatting breakdown entirely",
+     flaw_no_binding_sources, {"N6"}, ""),
+    ("LIVE: the direct-formatting count is off by one",
+     flaw_binding_sources_undercounts, {"N6"}, ""),
     ("CONTROL: fixture stops splitting the phrase across runs",
      flaw_fixture_stops_splitting_runs, {"V0", "E1"},
      "E1 also fires, and that is the point: once the per-run search finds as much as "
