@@ -300,6 +300,12 @@ VALIDATED_PARTS = 8
 SKIPS: list[str] = []
 
 
+# D7 认可的行距带（相对单倍行距的倍数）。控制臂与断言**共用同一组数**：
+# 控制臂的职责就是把这个比值顶出带外，两处各写一份的话，改了一处就会让控制臂
+# 沉默地失去意义。
+D7_BAND = (1.15, 1.45)
+
+
 class ControlUnavailable(Exception):
     """这台机器上复刻不出这个缺陷 —— 跳过并**说明原因**。
 
@@ -4165,7 +4171,7 @@ def d7_line_spacing(ctx: dict) -> list[str]:
         return [f"D7 could not measure line spacing at all (got {sp!r}) — an "
                 f"unmeasurable render is not a passing one"]
     ratio = sp["ratio"]
-    if not 1.15 <= ratio <= 1.45:
+    if not D7_BAND[0] <= ratio <= D7_BAND[1]:
         out.append(f"D7 the styles declare 1.3 line spacing, but the rendered page "
                    f"shows {ratio}x single ({sp['spaced']}pt vs {sp['single']}pt). "
                    f"~1.0 means something is quantising it (a <w:docGrid> line grid "
@@ -5888,18 +5894,22 @@ def flaw_from_md_restores_the_line_grid(ctx, work):
     if sp.get("skipped"):
         return ctx
     gridded = measure_spacing(work, "spacing-grid", grid=True)
-    # ⚠️ 控制臂得先证明它真的把纸改了。Windows CI 2026-08-16 实测：注入 docGrid
-    # 之后渲染出来的行距**没变**（该平台的字体度量下这条线格不产生量化），于是 D7
-    # 不响 —— 而「缺陷在这台机器上不成立」与「D7 坏了」从外面看一模一样。
-    # 判据取渲染出来的绝对行高：ratio 是两条臂相除的结果，两边一起被缩放时它看不见。
-    if sp.get("spaced") and gridded.get("spaced") and \
-            abs(gridded["spaced"] - sp["spaced"]) < 0.5:
+    # ⚠️ 控制臂得先证明它**在这台机器上真的能把 D7 顶出带外**。
+    # 实测 2026-08-16 CI：macOS 上注入 docGrid ⇒ 23.1 → 40.6pt/行、比值 2.28（D7 照响）；
+    # **ubuntu 与 Windows 上顶不出去** —— 那两台的 LibreOffice 在这份 CJK 段落上不做
+    # 同样的量化（第一版判据写成「绝对行高变了没有」，而它们确实变了一点，只是不够，
+    # 所以那道闸没拦住 —— 判据必须就是 D7 自己的判据，不能是它的近亲）。
+    # 「缺陷在这台机器上不成立」≠「D7 坏了」，但从外面看一模一样，所以跳过要**带数字**。
+    gr = gridded.get("ratio") or 0.0
+    if D7_BAND[0] <= gr <= D7_BAND[1]:
         raise ControlUnavailable(
-            f"injecting <w:docGrid> changed nothing on this host "
-            f"({sp['spaced']}pt/line without it, {gridded['spaced']}pt with it; "
-            f"ratio {sp.get('ratio')} → {gridded.get('ratio')}) — the line grid does "
-            f"not quantise the rendered spacing here, so the defect it guards "
-            f"against cannot be reproduced on this machine")
+            f"injecting <w:docGrid> does not push the rendered spacing out of D7's "
+            f"band on this host: without it {sp.get('spaced')}pt/line over "
+            f"{sp.get('single')}pt single (ratio {sp.get('ratio')}), with it "
+            f"{gridded.get('spaced')}pt over {gridded.get('single')}pt "
+            f"(ratio {gr}), band {D7_BAND} — this LibreOffice does not quantise "
+            f"the same way, so the defect cannot be reproduced here "
+            f"(macOS measured 2.28x on the same document)")
     m["spacing"] = gridded
     ctx["markdown"] = m
     return ctx
