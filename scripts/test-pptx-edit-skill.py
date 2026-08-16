@@ -924,14 +924,19 @@ FLAWS = [
      "L4 does NOT fire: reading tables changes nothing about what --replace does"),
     ("LIVE: pptx_read without the UTF-8 reconfigure (as it shipped until 2026-08-04)",
      live_no_utf8_guard,
-     {"C1"} if HOST_CAPTURES_UTF8 else {"C1", "V0", "X1"},
+     {"C1"} if HOST_CAPTURES_UTF8 else {"C1", "V0", "X1", "N1"},
      f"this host hands a captured child stdout `{CAPTURED_ENC}`. "
-     + ("On a UTF-8 host V0/X1 do NOT fire — the guarded and unguarded scripts behave "
-        "identically and only the forced ANSI code page in C1 can tell them apart."
+     + ("On a UTF-8 host V0/X1/N1 do NOT fire — the guarded and unguarded scripts "
+        "behave identically and only the forced ANSI code page in C1 can tell them "
+        "apart."
         if HOST_CAPTURES_UTF8 else
         "On a host whose default captured encoding is ALREADY the hostile code page, "
-        "removing the guard breaks EVERY run of the script, so V0/X1 fire too — that "
-        "is the real Windows defect, not a cascade to be explained away.")),
+        "removing the guard breaks EVERY run of the script, so V0/X1/N1 fire too — "
+        "that is the real Windows defect, not a cascade to be explained away. N1 is "
+        "in that list because it reads the SAME dead output: a script that dies on "
+        "its first Chinese character prints no [unread] marker either. It was added "
+        "on 2026-08-16 and this list was written before it existed — the first "
+        "Windows run of this gate since then is what noticed.")),
     ("LIVE: pptx_read as it shipped until 2026-08-16 (silent about unread containers)",
      live_read_silent_on_unread, {"N1"},
      "L1 does NOT fire: staying silent about tables is not the same as printing "

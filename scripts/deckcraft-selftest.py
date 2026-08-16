@@ -20,6 +20,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+# stdout must be UTF-8 on every platform, and on Windows a CAPTURED stdout is not:
+# it is encoded in the machine's ANSI code page, and Python only defaults to UTF-8
+# from 3.15 (PEP 686). This gate prints Chinese (the strings it asserts on are the
+# skill's own Chinese output), so without these lines it exits 1 with
+# UnicodeEncodeError on a Windows dev machine — reproducible anywhere with
+# PYTHONIOENCODING=cp1252, which is how it was found. The other gates in this
+# directory each carry the same block; these three deckcraft ones never did,
+# and deckcraft's gates are NOT in CI, so only a real Windows machine would have
+# hit it.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (ValueError, OSError):
+            pass
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "builtin" / "deckcraft" / "scripts"
 PY = sys.executable  # never hardcode python3 vs python (Windows)
