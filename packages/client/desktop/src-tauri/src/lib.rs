@@ -1762,6 +1762,41 @@ async fn request_screen_capture_access() -> bool {
     screen_access::request()
 }
 
+/// macOS deep link to System Settings › Privacy & Security › Screen Recording.
+/// Verified against this pane on macOS 15 — Apple reorganised System Settings in
+/// Ventura, so this is the form that actually lands on the right row rather than the
+/// Settings root.
+const MACOS_SCREEN_RECORDING_PANE: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
+/// Open the Screen Recording settings pane, so a user stuck behind the TCC gate can
+/// reach the switch (and the `−` button that clears a stale approval) in one click.
+///
+/// Deliberately a Rust command instead of the frontend's `openUrl`: the opener
+/// plugin's *frontend* scope is `opener:default` → `allow-default-urls`, which allows
+/// only `mailto:` / `tel:` / `http://` / `https://`. A webview-side `openUrl` of this
+/// scheme is rejected outright (`Error::ForbiddenUrl`, commands.rs), and the failure
+/// is invisible in any harness that shims the Tauri bridge — the capability layer is
+/// exactly what a shim replaces. Widening the scope instead would hand the renderer
+/// the ability to open arbitrary system panes; here the URL is a constant and the
+/// command takes no arguments.
+///
+/// Runtime `if cfg!` rather than `#[cfg]` (ADR-037): the opener API exists on every
+/// platform, so this way a local `cargo check` still type-checks the real body.
+#[tauri::command]
+async fn open_screen_recording_settings(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !cfg!(target_os = "macos") {
+        // Never reached from the UI — the caller only exists in the macOS-only
+        // `needs_permission` branch — but an explicit error beats opening a macOS URL
+        // scheme on a platform where it means nothing.
+        return Err("the Screen Recording pane is macOS-only".to_string());
+    }
+    app.opener()
+        .open_url(MACOS_SCREEN_RECORDING_PANE, None::<&str>)
+        .map_err(|e| format!("open settings: {}", e))
+}
+
 /// Take an interactive screenshot and return the outcome.
 ///
 /// `hide_window` (user-toggled, default on): hide our own window before capturing so
@@ -6953,6 +6988,7 @@ pub fn run() {
             capture_screenshot,
             screenshot_capability,
             request_screen_capture_access,
+            open_screen_recording_settings,
             discard_temp_file,
             test_provider_connection,
             test_search_provider,

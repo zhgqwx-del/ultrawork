@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS 截图按钮在正式版上永远提示「需要屏幕录制权限」，授权+重启也无解（2026-08-19 真机 + tccd 日志坐实根因）** —— TCC 的授权记录锁定的是 **bundle id + 授权当时那个二进制的代码签名要求（csreq）**。用户在未签名/ad-hoc 时期（v0.3.2 及更早，截图功能 07-15 上线、CI 签名 07-26 才通）授过权，之后 v0.3.3+ 改成 Developer ID 签名 ⇒ tccd 一路 `Failed to match existing code requirement`，而**系统设置里开关显示为「开」**（UI 只读 auth_value 不校验 csreq），**重新拨动开关只改授权值、不重写签名要求** ⇒ 死循环。产品侧的缺陷是**没有出口**：唯一的引导（去授权 → 重启）对这个状态必然无效。
+  - 授权引导文案改写：`restartAfterGrant` 说清"要去系统设置里**打开开关**再重启"（实测原生弹窗本身不授权，tccd 先写 `Denied`、拨开关后才 `Allowed`），并新增 `staleGrant` 说明陈旧授权记录要用 **`−` 移除后重授**，跟一个直达「屏幕录制」设置面板的按钮。这条文案是用户唯一能得知出路的地方，已用单测钉住（TCC 行为本身没有任何门禁能验）。
+  - `bun run release --unsigned` 的本地产物改用独立身份 **`Ultrawork Dev` + `com.ultrawork.desktop.dev`**（`tauri build --config` 同时覆盖 `productName` 与 `identifier`，仅 macOS 分支；`verify-dmg-layout.ts` 新增可选的 bundle 名入参，否则它会去 DMG 里找一个本次构建没产出的 `.app` 而把好镜像判红），掐断污染源 —— ad-hoc 签名没有稳定身份、每次重编 cdhash 都变，给它授一次权就会给正式版留一条永远满足不了的记录。⚠️ 本地包从此对 macOS 是**另一个 app**（权限单独授、WebView 存储分开）⇒ **权限形状的真机验收必须在正式签名包上做**。
+  - 发布流水线不再静默降级：`APPLE_SIGNING_IDENTITY` 缺失时**发布失败**而不是回退 `--unsigned`（要发未签名包须显式设仓库变量 `ALLOW_UNSIGNED_RELEASE=true`）；新增一步在上传前断言产物 **Developer ID 签名 + 公证票据已 staple**（`stapler validate` 而非 `spctl` —— 联网 runner 上 spctl 会靠在线查验放行，缺 staple 只会在用户离线首启时才发作）。这一步覆盖的是第二条静默降级路径：`build-release.ts` 在公证凭据缺失时只打一行警告就跳过公证。断言已用正负控制臂验过（已发布 v0.3.7 判绿；本地 ad-hoc 包判红）。
+  - 新增 e2e `screenshot-permission-guidance`（`bun run e2e:shot-perm`）：真实 Chrome + 真实 opencode 跑通「截图 → 权限 toast → 去授权 → 出路文案 + 打开设置面板」全链路，9/9 绿，并做了**负控制臂**（删掉那句出路，用例精确判红）。⚠️ 它用 `dispatchEvent` 而非 Playwright 可信输入 —— 本机 playwright-core 1.61.1 + Chrome 151 下**可信鼠标/键盘事件根本到不了 app 页面**（同一浏览器同一 context 里 data: 页面点击正常；既有的 `general-i18n-toggle` 同样在第一次点击就超时）。这是**先于本次改动存在的环境缺陷**，已单列记录；因此该 e2e 证明渲染/接线/桥调用，**不证明命中测试与遮挡**。
+  - **自查中发现并修掉一个只会在真机出现的缺陷**：「打开设置」原本从前端调 `openUrl()`，而 `opener:default` 的 webview scope 只允许 `mailto:/tel:/http/https`（`allow-default-urls`），自定义 scheme 会被 `commands.rs` 直接 `Err(ForbiddenUrl)` —— 加上原先 `.catch(() => {})` 的静默吞错，真机上点了会**什么都不发生**。改为走 Rust 命令 `open_screen_recording_settings`（URL 是常量、命令零参数，比放宽 scope 的攻击面小），失败时明确提示手动路径。**这类缺陷任何 shim 掉 Tauri 桥的 harness 都抓不到**（capability 层正是被 shim 替换的那层）→ 坑点入 `gotchas.md §6`。深链本身已在 macOS 15 真机验证会落到「屏幕录制」那一格。
+  - 坑点固化 → `docs/gotchas.md §6`（含排查命令 `/usr/bin/log show --predicate 'process == "tccd"'`）· 构建行为 → `docs/build-and-deploy.md §五`。
+
 ## [0.3.7] - 2026-08-17
 
 ### Added

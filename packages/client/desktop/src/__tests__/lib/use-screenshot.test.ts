@@ -89,6 +89,50 @@ describe("useScreenshot", () => {
     expect(opts?.action).toBeTruthy()
   })
 
+  // The follow-up after "grant" is the ONLY place the user can learn how to escape a
+  // stale TCC row (a grant recorded under an older build's signature: the System
+  // Settings switch reads ON, tccd keeps refusing, and re-toggling never rewrites the
+  // stored code requirement). Nothing else in the product says "remove it with −", and
+  // no gate can test the TCC behaviour itself — so pin the copy and the escape hatch
+  // here, or a refactor can silently delete the only exit.
+  it("the grant follow-up carries the stale-approval hint and a settings shortcut", async () => {
+    routeInvoke({
+      screenshot_capability: () => ({ available: true }),
+      capture_screenshot: () => ({ outcome: "needs_permission" }),
+      request_screen_capture_access: () => false,
+      open_screen_recording_settings: () => null,
+    })
+    const { result } = renderHook(() => useScreenshot(vi.fn()))
+    await waitFor(() => expect(result.current.available).toBe(true))
+
+    await act(async () => {
+      result.current.capture(true)
+    })
+    await waitFor(() => expect(toast).toHaveBeenCalled())
+
+    const opts = toast.mock.calls[0]?.[1] as { action: { onClick: () => void } }
+    await act(async () => {
+      opts.action.onClick()
+    })
+    await waitFor(() => expect(toast.info).toHaveBeenCalled())
+
+    const followUp = toast.info.mock.calls[0]?.[1] as {
+      description?: string
+      action?: { onClick: () => void }
+    }
+    expect(followUp?.description).toBe("screenshot.staleGrant")
+    expect(followUp?.action).toBeTruthy()
+
+    // Through the Rust command, NOT the frontend opener: the opener plugin's webview
+    // scope allows only mailto/tel/http/https, so an openUrl of the settings scheme is
+    // rejected at the capability layer — a regression back to openUrl would look fine
+    // in every shimmed harness and fail only on a real build.
+    followUp!.action!.onClick()
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("open_screen_recording_settings"),
+    )
+  })
+
   it("disables the button (available=false) when the platform has no tool", async () => {
     routeInvoke({ screenshot_capability: () => ({ available: false }) })
     const { result } = renderHook(() => useScreenshot(vi.fn()))

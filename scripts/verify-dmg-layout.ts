@@ -35,16 +35,20 @@ if (process.platform !== "darwin") {
 
 const dmgPath = process.argv[2]
 if (!dmgPath) {
-  console.error("❌ usage: verify-dmg-layout.ts <path-to.dmg>")
+  console.error("❌ usage: verify-dmg-layout.ts <path-to.dmg> [app-bundle-name]")
   process.exit(1)
 }
 
 // Track the icon by whatever the bundle is actually called, so a productName
 // change surfaces as a rename here rather than a silently-skipped assertion.
+// The caller may override the name: `--unsigned` builds ship as "<product> Dev"
+// via `tauri build --config`, which never touches tauri.conf.json — reading the
+// file alone would look for a bundle that is not in that DMG and report the icon
+// as missing, i.e. fail the layout of a perfectly good disk image.
 const tauriConf = await Bun.file(
   path.join(rootDir, "packages/client/desktop/src-tauri/tauri.conf.json"),
 ).json()
-const APP_ICON = `${tauriConf.productName}.app`
+const APP_ICON = process.argv[3] ? `${process.argv[3]}.app` : `${tauriConf.productName}.app`
 
 /**
  * Pull an icon's (x, y) out of a `.DS_Store`.

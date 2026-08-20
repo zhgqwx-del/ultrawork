@@ -4,8 +4,9 @@ name: Release
 # installers (macOS .dmg, Windows .msi/.exe, Linux .deb/.rpm/.AppImage) and
 # uploads them as artifacts; on a version tag (v*) the publish job additionally
 # creates a GitHub Release page with all installers attached. macOS
-# signing/notarization activates when the APPLE_* secrets are present;
-# otherwise it falls back to an unsigned build.
+# signing/notarization activates when the APPLE_* secrets are present; without
+# them the macOS build FAILS rather than silently shipping an unsigned app (set
+# the repo variable ALLOW_UNSIGNED_RELEASE=true to override, deliberately).
 
 on:
   push:
@@ -86,8 +87,9 @@ jobs:
       # Import the Developer ID Application cert into a throwaway keychain so
       # `codesign` (invoked by `bun run release` → tauri) can find the signing
       # identity. Without this, APPLE_SIGNING_IDENTITY names an identity that
-      # isn't in any keychain on the fresh runner and signing fails. No-op (and
-      # the next step falls back to --unsigned) when the secret is absent.
+      # isn't in any keychain on the fresh runner and signing fails. No-op when the
+      # secret is absent — and then the build step below FAILS the release rather
+      # than falling back to unsigned (see the reasoning there).
       - name: Import Apple Developer ID certificate
         if: runner.os == 'macOS'
         env:
@@ -118,21 +120,95 @@ jobs:
           echo "Imported signing identities:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      # macOS: signed+notarized when secrets exist, unsigned otherwise.
+      # macOS: signed+notarized. An unsigned macOS release is NOT a degraded build,
+      # it is a build that damages the people who install it: macOS keys privacy
+      # approvals by bundle id PLUS the code requirement of whatever held them at
+      # grant time, and an ad-hoc signature has no stable identity. Anyone who grants
+      # Screen Recording (or notifications, …) to an ad-hoc build is left with a TCC
+      # row the next properly signed release can never satisfy — tccd refuses with
+      # "Failed to match existing code requirement" while the System Settings switch
+      # still reads ON, and re-toggling never rewrites the requirement. That happened
+      # for real (2026-08-19): the screenshot button was unusable until the row was
+      # deleted by hand, and nothing in the product could tell the user why.
+      #
+      # So a missing signing identity FAILS the release instead of silently shipping
+      # ad-hoc, which is what this step used to do. Set the repo variable
+      # ALLOW_UNSIGNED_RELEASE=true to ship one anyway — deliberately, on the record,
+      # and visible in repo settings rather than inferred from an absent secret.
       - name: Release build (macOS)
+        id: macos_build
         if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ALLOW_UNSIGNED_RELEASE: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
         shell: bash
         run: |
-          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+          set -euo pipefail
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            # Report which road this build actually took, so the verification step
+            # keys off what happened rather than off ALLOW_UNSIGNED_RELEASE — that
+            # variable being set is not a reason to stop checking a build that WAS
+            # signed.
+            echo "unsigned=false" >> "$GITHUB_OUTPUT"
             bun run release
-          else
+          elif [ "${ALLOW_UNSIGNED_RELEASE:-}" = "true" ]; then
+            echo "::warning::ALLOW_UNSIGNED_RELEASE=true — publishing an AD-HOC signed macOS build."
+            echo "::warning::Anyone who grants it a privacy permission will need to remove the approval by hand before a signed build works again."
+            echo "::warning::The artifact will also carry the '<identifier>.dev' bundle id (build-release.ts), deliberately: an ad-hoc build must never be able to poison the signed app's TCC rows. It is a separate app to macOS."
+            echo "unsigned=true" >> "$GITHUB_OUTPUT"
             bun run release --unsigned
+          else
+            echo "::error::APPLE_SIGNING_IDENTITY is empty — refusing to publish an unsigned macOS build."
+            echo "::error::Fix the APPLE_* secrets, or set repo variable ALLOW_UNSIGNED_RELEASE=true to ship unsigned on purpose."
+            exit 1
           fi
+
+      # The build above can still degrade quietly in a second way: build-release.ts
+      # skips notarization with only a console warning when APPLE_ID / APPLE_PASSWORD
+      # / APPLE_TEAM_ID are missing, so "signed" does not imply "notarized+stapled".
+      # Assert the properties users actually depend on, against the artifact that is
+      # about to be uploaded. `stapler validate` (not spctl) is the check that matters:
+      # spctl can pass via an online lookup on a networked runner, while a missing
+      # staple only bites the user later, offline, on first launch.
+      - name: Verify macOS artifacts are signed and notarized
+        if: runner.os == 'macOS' && steps.macos_build.outputs.unsigned != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT=packages/client/desktop/src-tauri/target
+          APPS=$(find "$BUNDLE_ROOT" -type d -path '*/release/bundle/macos/*.app' -prune)
+          APP=$(echo "$APPS" | head -1)
+          DMG=$(find "$BUNDLE_ROOT" -type f -path '*/release/bundle/dmg/*.dmg' | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app found under $BUNDLE_ROOT — nothing to verify."
+            exit 1
+          fi
+          # A runner builds exactly one. More than one means the target dir was reused
+          # and "which artifact did I just verify" has no answer — the same trap
+          # build-release.ts guards for DMGs.
+          if [ "$(echo "$APPS" | wc -l)" -gt 1 ]; then
+            echo "::error::Multiple .app bundles found; cannot tell which one this build produced:"
+            echo "$APPS"
+            exit 1
+          fi
+          echo "Verifying: $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if ! codesign -dvvv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:'; then
+            echo "::error::$APP is not signed by a Developer ID Application certificate."
+            codesign -dvvv "$APP" 2>&1 | sed -n '1,20p'
+            exit 1
+          fi
+          xcrun stapler validate "$APP"
+          if [ -n "$DMG" ]; then
+            echo "Verifying: $DMG"
+            xcrun stapler validate "$DMG"
+          else
+            echo "::warning::No DMG found to validate."
+          fi
+          echo "Signed by Developer ID and stapled ✓"
 
       # tauri-bundler fetches the NSIS toolchain and — for the offline installer —
       # the ~176MB WebView2 runtime into this directory, keyed only on the file
