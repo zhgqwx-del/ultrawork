@@ -878,7 +878,13 @@ export const en: Record<string, string> = {
     "screenshot.unavailable": "No screenshot tool found — use your system shortcut, then paste (Ctrl+V)",
     "screenshot.needsPermission": "Screenshots need Screen Recording permission",
     "screenshot.grant": "Grant",
-    "screenshot.restartAfterGrant": "Permission requested — restart Ultrawork to apply",
+    "screenshot.restartAfterGrant":
+      "Permission requested — turn Ultrawork ON in System Settings, then restart Ultrawork",
+    "screenshot.staleGrant":
+      "Switch already ON but still asking? Remove Ultrawork with the “−” button, then grant again — an approval left by an older build no longer matches this one's signature.",
+    "screenshot.openSettings": "Open Settings",
+    "screenshot.openSettingsFailed":
+      "Could not open System Settings — go to Privacy & Security › Screen Recording by hand.",
     "screenshot.failed": "Screenshot failed",
     "aria.sendMessage": "Send message",
     // Hover tooltip on the reply composer's send button. Only reachable while the
@@ -1767,7 +1773,11 @@ export const zhHans: Record<string, string> = {
     "screenshot.unavailable": "没找到系统截图工具——请用系统快捷键截图后粘贴（Ctrl+V）",
     "screenshot.needsPermission": "截图需要「屏幕录制」权限",
     "screenshot.grant": "去授权",
-    "screenshot.restartAfterGrant": "已发起授权——授权后请重启 Ultrawork 生效",
+    "screenshot.restartAfterGrant": "已发起授权——请在系统设置里打开 Ultrawork 的开关，然后重启 Ultrawork 生效",
+    "screenshot.staleGrant":
+      "开关已经是打开的却仍提示无权限？请用「−」把 Ultrawork 移除后重新授权——旧版本留下的授权记录与当前版本的签名不匹配。",
+    "screenshot.openSettings": "打开设置",
+    "screenshot.openSettingsFailed": "打不开系统设置——请手动前往「系统设置 → 隐私与安全性 → 屏幕录制」。",
     "screenshot.failed": "截图失败",
     "aria.sendMessage": "发送消息",
     "aria.sendMessageHint": "发送（Enter）· Shift+Enter 换行",

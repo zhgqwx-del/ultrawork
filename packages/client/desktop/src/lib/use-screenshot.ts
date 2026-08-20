@@ -95,7 +95,43 @@ export function useScreenshot(add: (files: File[]) => void | Promise<void>): Scr
                   label: t("screenshot.grant"),
                   onClick: () => {
                     void invoke("request_screen_capture_access").finally(() => {
-                      toast.info(t("screenshot.restartAfterGrant"))
+                      // Two things the follow-up has to say, both learned the hard way
+                      // (2026-08-19, tccd logs):
+                      //
+                      // 1. The native dialog grants NOTHING by itself — tccd writes
+                      //    `Denied` when it appears and only flips to `Allowed` once
+                      //    the switch is turned on in System Settings. "Restart to
+                      //    apply" alone sends people back to a still-denied app.
+                      // 2. A grant recorded by a build with a DIFFERENT code signature
+                      //    (the pre-v0.3.3 unsigned releases, any local `--unsigned`
+                      //    bundle) leaves a row whose stored code requirement this
+                      //    binary can never satisfy: tccd refuses with "Failed to match
+                      //    existing code requirement" while the switch still reads ON,
+                      //    and re-toggling only rewrites the auth value, never the
+                      //    requirement. Removing the row (the `−` button, or
+                      //    `tccutil reset ScreenCapture`) is the ONLY way out — without
+                      //    this line the user has no reachable exit from that state.
+                      toast.info(t("screenshot.restartAfterGrant"), {
+                        description: t("screenshot.staleGrant"),
+                        duration: 15000,
+                        action: {
+                          label: t("screenshot.openSettings"),
+                          // Through a Rust command, NOT the frontend opener: the opener
+                          // plugin's webview scope allows only mailto/tel/http/https, so
+                          // an `openUrl` of the settings scheme is rejected outright —
+                          // and invisibly, since any harness that shims the Tauri bridge
+                          // replaces the very layer that rejects it.
+                          //
+                          // Failure is surfaced, not swallowed: a button that silently
+                          // does nothing is worse than no button, and the fallback text
+                          // names the pane so the user can still get there by hand.
+                          onClick: () => {
+                            void invoke("open_screen_recording_settings").catch(() => {
+                              toast.error(t("screenshot.openSettingsFailed"))
+                            })
+                          },
+                        },
+                      })
                     })
                   },
                 },

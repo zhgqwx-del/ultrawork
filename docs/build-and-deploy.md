@@ -311,6 +311,16 @@ xattr -dr com.apple.quarantine /Applications/Ultrawork.app
 
 > **注意**：未签名 DMG 适合内部分发 / 朋友圈测试。**公开分发应使用 Apple Developer ID 签名 + 公证**，否则对方每次升级都要手动绕过 Gatekeeper，体验差。
 
+### `--unsigned` 产物是独立身份：`Ultrawork Dev` + `com.ultrawork.desktop.dev`（2026-08-19 起）
+
+`bun run release --unsigned` 打出来的产物是 **`Ultrawork Dev.app`** / **`Ultrawork Dev_<版本>_<arch>.dmg`**，identifier 是 **`com.ultrawork.desktop.dev`**（`build-release.ts` 通过 `tauri build --config` 同时覆盖 `identifier` 与 `productName`，仅 macOS 分支）。
+
+> 改名不只是好看：系统设置的隐私列表里两条都叫「Ultrawork」时，**你分不清哪条属于哪个构建**——而这正是陈旧授权长期不被诊断出来的原因。⚠️ 下游一切按覆盖值推导，不能读 `tauri.conf.json`（覆盖不写回文件）：`appPath` / `dmgPrefix` / 传给 `verify-dmg-layout.ts` 的第二个参数都是如此，否则会去找一个本次构建根本没产出的 bundle。
+
+**为什么**：macOS 的隐私授权（屏幕录制、通知……）按 **bundle id + 授权当时那个二进制的代码签名要求（csreq）** 记录，而 ad-hoc 签名没有稳定身份、每次重编 cdhash 都变。只要给本地 ad-hoc 包授过一次权，就会在系统里留下一条**正式签名版永远满足不了**的记录：tccd 报 `Failed to match existing code requirement`，而系统设置里那个开关**看上去still是开的**，重新拨动也只改授权值、不重写签名要求。真实发生过（2026-08-19，v0.3.7 用户的截图按钮完全不可用，只能手工删记录才恢复）。详见 `gotchas.md §6`。
+
+**要预期的行为差异（不是 bug）**：本地 `--unsigned` 包对 macOS 而言是**另一个 app** —— 权限要单独授、WebView 存储（localStorage/cookie）与正式版分开。⚠️ **因此任何"权限形状"的真机验收（屏幕录制、通知、麦克风…）必须在正式签名的包上做**，在 `--unsigned` 包上验到的绿不代表正式版。
+
 ---
 
 ## 六、验证签名和公证

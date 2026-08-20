@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-08-03 -->
+<!-- last-synced: 2026-08-19 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -198,6 +198,17 @@
 - **headless 浏览器里做不出「窗口失焦」**：Chrome/WebKit 的 `document.hasFocus()` 在另一个 tab `bringToFront()` 之后**仍然是 true**，所以「用户离开」这种前提在 e2e 里**只能由测试显式驱动**（把焦点读做成假桥里的一个可写标志），焦点读本身靠真机探针保证。
 - **e2e 里 `page.goto` 会清空模块级单例**（新 document ⇒ 新 JS 上下文）：要模拟"用户在 app 内切到别的页面"必须走客户端导航（`history.pushState` + `popstate`，react-router 会响应），否则测的是"重启 app"而不是"换个页面"。同理，`addInitScript` 注入的计数器在每次导航后归零 ⇒ baseline 必须在导航**之后**取。
 - **跑 e2e 前先确认端口 1420 上没有别人**：残留的 `tauri dev`（尤其带调试 flag 的）会让 `poll("vite")` 直接看到"健康"，于是整轮 e2e 跑在**别人的代码**上。e2e 应当在启动前 fail-closed 断言端口空闲。
+
+- **前端 `openUrl()` 只能开 `mailto:` / `tel:` / `http://` / `https://`，自定义 scheme 会被 capability 直接拒（2026-08-19，读 `tauri-plugin-opener-2.5.3` 源码坐实）**：`capabilities/default.json` 里的 `opener:default` 展开是 `allow-open-url` + `allow-reveal-item-in-dir` + **`allow-default-urls`**，而 `allow-default-urls.toml` 的 scope 只列了那四种；`commands.rs:36` 是硬拒绝 `Err(Error::ForbiddenUrl)`，不是警告。⇒ 想从 renderer 打开 `x-apple.systempreferences:` / 其它系统 scheme，要么显式加 scope（**等于给 renderer 开一个能打开任意系统面板的口子**），要么**走一个 Rust command**（Rust 侧 `app.opener().open_url()` 不过 capability，代码里 `ms-screenclip:` 早就是这么干的）。本项目选后者：URL 是常量、命令零参数。
+- **⚠️ 这类缺陷任何「shim 掉 Tauri 桥」的 harness 都抓不到** —— capability 层正是 shim 替换掉的那一层。Chrome+Vite 走查里 `invoke` 被换成假实现，`ForbiddenUrl` 永远不会发生 ⇒ **测试全绿、真机静默失灵**。凡是新引入的 IPC/插件调用，要么在真机包上点一次，要么读一遍插件的 `permissions/*.toml`。
+
+### macOS 隐私授权（TCC）：授权行是按「代码签名要求」锁定的（2026-08-19 真机 + tccd 日志坐实）
+
+- **换了签名身份 ⇒ 旧授权行永久失效，但 UI 上看不出来**：TCC 的每条授权记录存的是 **bundle id + 授权当时那个二进制的 csreq**。未签名/ad-hoc 时期授过权，之后换成 Developer ID 签名，tccd 就一路 `Failed to match existing code requirement for subject com.ultrawork.desktop and service kTCCServiceScreenCapture` —— 而**系统设置里那个开关显示为「开」**（UI 只读 auth_value，不校验 csreq）。**在设置里重新拨动开关无效**：只改授权值，不重写签名要求（日志实证：`type=Modify` 之后下一次检查照样 `Failed to match`）⇒ 「授权 → 重启 → 还是提示没权限」死循环。**唯一出路是删掉那条记录**：`tccutil reset ScreenCapture <bundle id>`，或在设置里用 **`−`** 移除后重新授权（`tccutil` 重置自己的 bundle id **不需要 root、也不需要 FDA**）。v0.3.7 上真实发生过（截图按钮完全不可用）。预防见 `build-and-deploy.md §五`（本地 `--unsigned` 包已改用独立 bundle id）。
+- **排查手段：直接问 tccd，别猜**。`/usr/bin/log show --last 1h --info --predicate 'process == "tccd"' | grep -i screencapture` —— 拒绝原因、归因链（`responsiblePath`）、授权写入（`Update Access Record → Allowed`）全都打在里面。⚠️ zsh 下必须写**全路径** `/usr/bin/log`，裸 `log` 会被 shell 吃掉报 "too many arguments"。TCC.db 本身读不了（需要 FDA），日志是唯一免权限的事实源。
+- **原生权限弹窗本身不授权**：`CGRequestScreenCaptureAccess()` 弹出的框只是入口，实测 tccd 在弹窗出现时先写 `Denied`，只有用户在系统设置里**打开开关**之后才变 `Allowed`（21:38 弹窗 → 22:03:25 Denied → 22:03:31 Allowed）。所以引导文案必须说到"去设置里打开开关"，只说"重启生效"会把人送回一个仍然被拒的 app。
+- **`tauri dev` 借的是终端的 TCC 身份**（与上面的通知那条同源）：dev 跑的是裸二进制（`adhoc, linker-signed`，无 bundle），权限归到父进程 ⇒ 日志里看到的是 `Sub:{com.mitchellh.ghostty}`。**终端有屏幕录制权限，dev 版就永远是绿的** —— TCC 类功能只有打包 `.app` 从 Finder/Dock 启动才测得准。
+- **硬化运行时不拦子进程**：公证 + hardened runtime 的 `.app` 正常 spawn `/usr/sbin/screencapture`（日志里 `accessing=com.apple.screencapture, responsible=Ultrawork`）。hardened runtime 限制的是库加载 / DYLD 环境变量 / 调试 / JIT，不是 `Command::new`。
 
 - **WKWebView 的 DOM `paste` 事件能拿到完整图片（ADR-056 / discussions/039 §5，2026-07-14 实测）**：截图/复制图片后按 `Cmd+V`，`clipboardData.files[0]` 是正经 `image/png` File，`FileReader` 读出的字节与源文件**完全一致**，零依赖零权限——这让「系统快捷键截图 → 粘贴」白送截图能力（不需要屏幕录制权限，走的是系统截图工具自己的权限）。⚠️ WebKitGTK 历史上会「剪贴板说有图但给不出 File」（`types` 含 `image/*` 但 `files` 为空）⇒ 粘贴处理要对这种情况显式报错，别静默无反应。Windows/Linux WebView 待真机复验。
 

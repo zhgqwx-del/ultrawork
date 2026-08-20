@@ -56,6 +56,7 @@
     "e2e:settings-tabs": "bun run --bun e2e/settings-tabs-ui-walkthrough.e2e.ts",
     "e2e:settings-tabs:webkit": "E2E_ENGINE=webkit bun run --bun e2e/settings-tabs-ui-walkthrough.e2e.ts",
     "e2e:attachments": "bun run --bun e2e/attachments-composer.e2e.ts",
+    "e2e:shot-perm": "bun run --bun e2e/screenshot-permission-guidance.e2e.ts",
     "e2e:free-trial": "bun run --bun e2e/free-trial-consent.e2e.ts",
     "e2e:i18n-toggle": "bun run --bun e2e/general-i18n-toggle.e2e.ts",
     "e2e:html-preview": "bun run --bun e2e/html-preview-iframe.e2e.ts",

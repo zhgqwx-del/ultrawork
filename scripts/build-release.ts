@@ -244,6 +244,7 @@ console.log(`\n🚀 Ultrawork Release Build`)
 console.log(`   Tauri target:    ${tauriTarget}`)
 console.log(`   Sidecar targets: ${sidecarTargets.join(", ")}`)
 console.log(`   Identity:        ${unsigned ? "(ad-hoc / unsigned)" : signingIdentity}`)
+if (unsigned) console.log(`   Bundle:          "<product> Dev" + "<id>.dev" (overridden below — a separate app to macOS)`)
 console.log(`   Notarize:        ${canNotarize ? "yes" : "no"}`)
 console.log()
 
@@ -302,7 +303,46 @@ const tauriEnv = {
     : { ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity! }),
   TAURI_BUNDLER_DMG_IGNORE_CI: process.env.TAURI_BUNDLER_DMG_IGNORE_CI ?? "true",
 }
-await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget}`
+
+// An ad-hoc build must NOT carry the released app's bundle identifier. macOS keys
+// its privacy approvals (Screen Recording, notifications, …) by identifier PLUS the
+// code requirement of whatever held it at grant time — and an ad-hoc signature has
+// no stable identity, so its cdhash changes on every rebuild. Grant Screen Recording
+// to a local bundle once and the row it leaves behind is one the signed release can
+// never satisfy: tccd refuses with "Failed to match existing code requirement" while
+// the System Settings switch still reads ON, and re-toggling rewrites only the auth
+// value, never the requirement. The user's only escape is removing the row by hand.
+// That is not hypothetical — it cost a v0.3.7 user the screenshot button outright
+// (2026-08-19, confirmed against tccd logs). Local builds get their own identifier so
+// they can never touch the released app's row.
+//
+// Consequence to expect, not a bug: a `--unsigned` bundle is a DIFFERENT app to
+// macOS. It asks for its own permissions and keeps its own WebView storage. Real
+// -machine acceptance of anything permission-shaped must therefore run against a
+// properly signed build — see docs/build-and-deploy.md §五.
+//
+// Derived from the real identifier, never a second copy of the literal: a hardcoded
+// "com.ultrawork.desktop.dev" would silently stop matching the day the bundle id is
+// renamed (it already was renamed once, com.ultrawork.app → .desktop in 89b088b8) and
+// the isolation would quietly stop isolating anything.
+const tauriConf = await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()
+const unsignedIdentifier = `${tauriConf.identifier}.dev`
+// Rename the bundle too, not just its identifier. Two apps both called "Ultrawork"
+// in System Settings › Screen Recording is precisely the confusion this whole change
+// exists to end — the user cannot tell which row belongs to which build, which is how
+// a stale approval goes undiagnosed in the first place.
+const unsignedProductName = `${tauriConf.productName} Dev`
+// Everything downstream must follow the OVERRIDE, not the file: the override never
+// touches tauri.conf.json, so reading the file would point at a bundle this build did
+// not produce (and the DMG layout check would fail a perfectly good image).
+const productName = unsigned ? unsignedProductName : tauriConf.productName
+const identifierOverride = unsigned
+  ? [
+      "--config",
+      JSON.stringify({ identifier: unsignedIdentifier, productName: unsignedProductName }),
+    ]
+  : []
+await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget} ${identifierOverride}`
   .env(tauriEnv)
   .quiet(!verbose)
 
@@ -311,10 +351,9 @@ await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tau
 // and never prunes older ones, so a bumped version in a dirty tree leaves
 // several here — and `dmgPath` feeds verification, notarization *and* staple.
 // Taking the first glob hit would happily verify and ship a stale DMG.
-const tauriConf = await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()
 const bundleDir = path.join(tauriDir, "target", tauriTarget, "release/bundle")
-const appPath = path.join(bundleDir, "macos", `${tauriConf.productName}.app`)
-const dmgPrefix = `${tauriConf.productName}_${tauriConf.version}_`
+const appPath = path.join(bundleDir, "macos", `${productName}.app`)
+const dmgPrefix = `${productName}_${tauriConf.version}_`
 const dmgGlob = new Bun.Glob("*.dmg")
 const dmgFiles = Array.from(dmgGlob.scanSync(path.join(bundleDir, "dmg"))).filter((f) =>
   path.basename(f).startsWith(dmgPrefix),
@@ -333,7 +372,7 @@ if (dmgPath) console.log(`   .dmg: ${dmgPath}`)
 // Guard the install-window layout before spending minutes on notarization.
 if (dmgPath) {
   console.log("\n🔍 Verifying DMG icon layout...")
-  const check = await $`bun run --bun ${path.join(rootDir, "scripts/verify-dmg-layout.ts")} ${dmgPath}`.nothrow()
+  const check = await $`bun run --bun ${path.join(rootDir, "scripts/verify-dmg-layout.ts")} ${dmgPath} ${productName}`.nothrow()
   if (check.exitCode !== 0) {
     if (!allowBadDmgLayout) process.exit(check.exitCode)
     console.warn("⚠️  --allow-bad-dmg-layout: shipping a DMG whose install window is mislaid.")
