@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-08-19 -->
+<!-- last-synced: 2026-08-22 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -1098,3 +1098,28 @@ stderr 里有没有裸 traceback（外加信号/超时）；退出码另记一�
 `replacements: 0` 而 sha 变了：**46 个 part 内容逐字节全同，条目顺序与全部时间戳全变**。
 这一份没丢东西不代表它不会丢（同 ②/㉕ 的道理，python-pptx 对它没有模型的 part 一样没有承诺）。
 ⇒ **没有任何改动时不要写**；`--out` 这类「调用方明确要一份产物」的路径除外。
+
+---
+
+## 22. `Intl` / 时间格式化（2026-08-22，全部本机实测）
+
+① **`toLocaleString()` 不传 locale = 系统 locale，不是应用语言。** 本机 `Intl.DateTimeFormat().resolvedOptions().locale`
+解析为 `en-US`，于是中文界面下时间显示成 `8/22/2026, 11:16:07 AM`。正向写法 → `conventions.md §28`。
+
+② **不缓存的 `toLocaleString()` 约 32µs/次，缓存的 `Intl.DateTimeFormat` 约 0.84µs —— 38×**（bun/JSC 实测，
+JSC 正是 macOS WKWebView 的引擎）。转录区每个 token 重渲染一次，裸调用会落在热路径上。
+用 `{year,month,day,hour,minute,second: "numeric"}` 六项可以**逐字节复现** `toLocaleString()` 的默认输出
+（zh-Hans / zh-Hant / en-US 已验），所以缓存不损失保真度。
+
+③ **ICU 版本会改可见字节：ICU 72 起 en-US 在 AM/PM 前用 U+202F（窄不换行空格）**，旧版是普通空格。
+⇒ **测试里不要硬编码 en-US 时间字面量**——三个 CI runner 不保证同一 ICU 版本，会出现"本机全绿、CI 红"。
+判据要么落在 `<time dateTime>` 的 ISO（与 locale 无关），要么先归一化 `[\u202f\u00a0]` 再比。
+
+④ **`new Intl.DateTimeFormat(tag)` 对结构非法的 tag 抛 `RangeError`**（对合法但无数据的 tag 只是静默回退）。
+这些 formatter 跑在转录区里，一次异常就是整个视图 ⇒ `format-time.ts` 有 try/catch 兜到系统 locale。
+当前 `config.migrateLanguage` 已把 language 白名单到 `en|zh-Hans|zh-Hant`，所以是纵深防御而非活缺口。
+
+⑤ **`message.parts.filter(...)` 每次渲染都产出新数组**，`React.memo` 的默认浅比较对它必然失败 ——
+`UserMessage` 在加自定义比较器之前，**每个 token 都在重渲染每一条用户消息**。同一形状适用于任何
+"父组件现算数组再传下去"的地方。
+

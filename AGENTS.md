@@ -121,6 +121,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 
 **Desktop — hooks / lib**
 - `src/lib/sse-context.tsx` — ConnectorProvider（导出名仍 SSEProvider）：持有 Connector + useConnector/useSSESubscribe/useSessionSubscribe/useSSEConnected
+- `src/lib/format-time.ts` — 绝对时间格式化 SSOT（`formatDateTime`/`formatDateOnly`/`toIsoTimestamp`）：**formatter 按 `kind:locale` 缓存**（裸 `toLocaleString()` 约 32µs/次，缓存后 0.84µs，且单例会在切语言后继续用旧语言）、**locale 取应用语言不取系统**、非法时间戳返回 `null` 由调用方整块不渲染。三处共用：`chat/user-message.tsx`（气泡发送时间）· `chat/assistant-turn.tsx`（回合 footer）· `layout/left-sidebar.tsx`（行 tooltip 的 >7d 日期）。约定 → conventions §28，坑点 → gotchas §22
 - `src/lib/use-api.ts` — backend-specific REST 面：返回 connector 持有的 ApiClient（签名不变）
 - `src/lib/use-session-messages.ts` — 消息状态 + SSE 处理 + 历史窗口 + 发送/停止（全部经 connector 按绑定派发，无 isACP 分流）；`session.error` 兼理**免费试用透明回退**（ADR-057 P4：auth 错换候选、延迟到 idle 重发；quota 明确提示）；**重连后正文补拉**（ADR-072）：`reconnectEpoch` 变化且会话 idle 时重取快照，经 `mergeSnapshotInPlace` **就地合并**（保持位置 / 只升级正文更长的 part / 不前插更老的分页 / 不删除任何消息 / 无变化按引用返回），**不复用初始加载**（那条会 `setMessages([])` 并重置分页窗口）；busy 或 `stopped` 时不补。e2e 守卫 `e2e/stream-gap-resync.e2e.ts` + `e2e/cuttable-proxy.ts`（可切断 TCP 代理，非空转门）
 - `src/lib/model-context.tsx` — ModelProvider：当前模型 + **免费试用同意门**（ADR-057）：`maybeOfferFreeTrial`（发送前拦截，无可用模型且未同意时弹卡片）· `enableFreeTrial`（乐观 seed）· `advanceFreeTrialModel`（回退换候选）· `revokeFreeTrial`（带保护清除）；`useModelOptional()` 供隔离单测

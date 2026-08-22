@@ -42,6 +42,27 @@ describe("SessionItem", () => {
     expect(screen.queryByText("5m ago")).toBeNull()
   })
 
+  it("prints an absolute date past a week — in the UI language, not the system locale", () => {
+    // The third place the shared formatter landed (transcript bubble, turn footer,
+    // this tooltip). Beyond 7d the relative form gives way to a date; before the
+    // change that date came from the OS locale, so a zh UI on an en-US machine
+    // printed "8/22/2026". `language` is what must decide it now.
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60_000
+    const session = { id: "s1", title: "Old", time: { created: eightDaysAgo, updated: eightDaysAgo } }
+    const { container, rerender } = render(
+      <SessionItem session={session} {...baseProps} language="zh-Hans" />,
+    )
+    const titleOf = () => (container.firstChild as HTMLElement).getAttribute("title")
+    expect(titleOf()).toBe(`Old\n${new Date(eightDaysAgo).toLocaleDateString("zh-Hans")}`)
+
+    rerender(<SessionItem session={session} {...baseProps} language="en-US" />)
+    expect(titleOf()).toBe(`Old\n${new Date(eightDaysAgo).toLocaleDateString("en-US")}`)
+    // Guard against a vacuous pass if the two locales ever render the same string.
+    expect(new Date(eightDaysAgo).toLocaleDateString("zh-Hans")).not.toBe(
+      new Date(eightDaysAgo).toLocaleDateString("en-US"),
+    )
+  })
+
   it("exposes the full title + relative time on the row's hover tooltip", () => {
     const { container } = render(<SessionItem session={makeSession("My session")} {...baseProps} />)
     const row = container.firstChild as HTMLElement

@@ -629,3 +629,23 @@ case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上�
 | **无修复** | **300/300 ✅**（自愈是真的） | **19/300 ❌**（缺 281） |
 
 单测侧同一次负向控制：17 例挂 5 例；剩下 12 例里有 3 例是「**不**应该补拉」的断言（busy 中 / 已停止 / 首连），按设计就不该被这次反证影响。
+
+---
+
+## 12. 浏览器 harness 的三个"尺子坏了"（2026-08-22，`e2e/message-timestamp.e2e.ts` 实战）
+
+① **`page.addInitScript` 每次导航都重跑。** 里面无条件写 `localStorage` 会把**被测行为**悄悄覆盖回去 ——
+一次语言切换的走查因此判红，被误读成产品缺陷。要么"只在不存在时 seed"，要么改用应用自己的 UI 去切。
+
+② **用 reload 测"模块级缓存"是空的。** 重新导航后模块重新求值、缓存本来就是空的，
+所以"单例 formatter 把 locale 钉死"这类 bug 在 reload 型用例下**必然通过**。
+要在同一 document 内热切换（走应用自己的设置面板），或直接
+`await page.evaluate(() => import("/src/lib/xxx.ts"))` 打暖缓存。
+
+③ **断言要先要求"量到了东西"。** `before.h === after.h` 在元素不存在时是 `null === null` ⇒ 照样绿；
+这条空转是**负向控制臂**抓出来的，正向那一轮它一直是绿的。凡是比较两次测量的断言，先断言测量非空。
+
+配套事实：本机 `channel:"chrome"`（系统 Chrome 151 + playwright-core 1.61.1）**可信 click / hover 在真实 app 页面上是通的**
+（CSS `:hover` 正常传播），playwright 自带 chromium revision 未下载所以只能走 `channel`；
+`E2E_ENGINE=webkit` 可切到 WebKit —— 那才是 macOS 生产环境（WKWebView）的引擎。
+

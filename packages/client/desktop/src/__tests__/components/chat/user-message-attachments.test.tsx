@@ -4,7 +4,7 @@ import { UserMessage } from "@/components/chat/user-message"
 import type { FilePart } from "@agent/api-client"
 
 vi.mock("@/lib/i18n-context", () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, language: "en" }),
 }))
 
 function filePart(over: Partial<FilePart>): FilePart {

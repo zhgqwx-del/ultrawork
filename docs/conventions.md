@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-08-02 -->
+<!-- last-synced: 2026-08-22 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -778,3 +778,39 @@ const resolvedPlaceholder =
 
 ⇒ 这类键用 `k in expect` 判断存在性，并**必须配控制臂**：同一份输入把它设为 `true` 时必须
 打红。否则「opt-out 让它闭嘴」和「这条检查本来就没牙」在报告上长得一模一样。
+
+---
+
+## 28. 绝对时间一律走 `lib/format-time.ts`，locale 取**应用语言**不取系统（2026-08-22）
+
+界面上所有"某时刻"的展示（用户气泡的发送时间、助手回合 footer 的完成时间、侧栏行 tooltip 的 >7d 日期）共用
+`src/lib/format-time.ts`，不要各自 `new Date(x).toLocaleString()`。
+
+```ts
+// ✅ 三处统一
+import { formatDateTime, formatDateOnly, toIsoTimestamp } from "@/lib/format-time"
+const { t, language } = useI18n()
+const sentAt = useMemo(() => formatDateTime(createdAt, language), [createdAt, language])
+<time dateTime={toIsoTimestamp(createdAt)}>{sentAt}</time>
+
+// ❌ 裸调用：locale 变成系统 locale（≠ 应用语言），且每次约 32µs
+new Date(createdAt).toLocaleString()
+```
+
+三条约束，都是实测定的（数据与反例见 `gotchas.md §22`）：
+
+1. **locale 必须显式传应用语言**。裸 `toLocaleString()` 用的是系统 locale —— 中文界面 + 英文系统会显示
+   `8/22/2026, 11:16:07 AM`。
+2. **formatter 按 `kind:locale` 缓存**，不要单例：单例会在用户切语言后继续用旧语言格式化，**界面语言变了时间格式不变**，且不报错。
+3. **时间戳一律带 `<time dateTime={ISO}>`**。ISO 与 locale 无关 ⇒ 它既是无障碍语义，也是测试唯一能精确断言的判据
+   （可见文本随环境 ICU 变，见 `gotchas.md §22`）。
+
+缺失/损坏的时间戳返回 `null`，调用方**整个元素不渲染**——不要退化成 1970 或 `Invalid Date`。
+
+### 28.1 `React.memo` 的比较器必须覆盖**全部**会影响渲染的 prop
+
+`UserMessage` 的自定义比较器同时比 `content` / `createdAt` / `attachments`（逐元素引用）。
+漏掉一个的表现是**静默显示陈旧内容**，不是异常。写比较器时配一条"改这个 prop → 断言 DOM 真的变了"的测试；
+另配一条"传语义相同的新数组 → 断言**没有**重渲染"，且探针要用**渲染计数**（不带 memo 的 mock 子组件），
+**不要用 DOM 节点身份** —— React 会把重渲染 reconcile 到同一个元素上，那种断言恒真。
+

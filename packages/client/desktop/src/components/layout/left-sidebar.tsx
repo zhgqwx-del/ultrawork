@@ -41,6 +41,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
+import { formatDateOnly } from "@/lib/format-time"
 import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 import { useChannelSessions, type ChannelSessionEntry } from "@/lib/channel-sessions-context"
 import { useUnread } from "@/lib/use-unread"
@@ -75,7 +76,7 @@ export const EXTENSION_ENTRIES: {
   { section: "tools", icon: Wrench, labelKey: "settingsPage.tools" },
 ]
 
-function formatTime(timestamp: number, t: (key: string) => string): string {
+function formatTime(timestamp: number, t: (key: string) => string, language?: string): string {
   const now = Date.now()
   const diff = now - timestamp
   const minutes = Math.floor(diff / 60000)
@@ -85,7 +86,10 @@ function formatTime(timestamp: number, t: (key: string) => string): string {
   if (hours < 24) return t("time.hAgo").replace("{n}", String(hours))
   const days = Math.floor(hours / 24)
   if (days < 7) return t("time.dAgo").replace("{n}", String(days))
-  return new Date(timestamp).toLocaleDateString()
+  // Past a week the relative form stops being useful and we print the date. Same
+  // locale source as the transcript's timestamps: the UI language, not the OS
+  // (lib/format-time.ts). Falls back to "" only for a corrupt timestamp.
+  return formatDateOnly(timestamp, language) ?? ""
 }
 
 interface SessionGroup {
@@ -197,7 +201,7 @@ export function LeftSidebar() {
   const { entryOf: channelEntryOf } = useChannelSessions()
   const { isUnread } = useUnread()
   const { workspacePath } = useWorkspace()
-  const { t } = useI18n()
+  const { t, language } = useI18n()
 
   // "+" goes Home instead of creating a session: the session is born on the
   // first Home send, after the agent is chosen (档1: one session, one agent).
@@ -422,6 +426,7 @@ export function LeftSidebar() {
                               onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
                               onTogglePin={() => toggleFavorite(session.id)}
                               t={t}
+                              language={language}
                             />
                           ))}
                           {unpinnedSessions.map((session) => (
@@ -439,6 +444,7 @@ export function LeftSidebar() {
                               onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
                               onTogglePin={() => toggleFavorite(session.id)}
                               t={t}
+                              language={language}
                             />
                           ))}
                         </div>
@@ -620,6 +626,7 @@ export function SessionItem({
   onRename,
   onTogglePin,
   t,
+  language,
 }: {
   session: { id: string; title: string; time: { created: number; updated: number } }
   /** Present when this session is a Team leader (018 A-1 混排+徽标). */
@@ -635,6 +642,9 @@ export function SessionItem({
   onRename: (newTitle: string) => void
   onTogglePin: () => void
   t: (key: string) => string
+  /** UI language for the row tooltip's date. Optional: omitting it falls back to
+   *  the system locale, which is what a bare render (tests) gets. */
+  language?: string
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
@@ -648,7 +658,7 @@ export function SessionItem({
   // rides on the row's hover tooltip together with the full title. The title is
   // capped so a very long name doesn't produce an unwieldy tooltip.
   const tooltipTitle = title.length > 60 ? `${title.slice(0, 60)}…` : title
-  const rowTooltip = `${tooltipTitle}\n${formatTime(session.time.updated, t)}`
+  const rowTooltip = `${tooltipTitle}\n${formatTime(session.time.updated, t, language)}`
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
