@@ -7,6 +7,7 @@ import { ExecutionFlow } from "./execution-flow"
 import { TurnArtifacts } from "./turn-artifacts"
 import { CopyButton } from "./copy-button"
 import { useI18n } from "@/lib/i18n-context"
+import { formatDateTime } from "@/lib/format-time"
 import { samePath } from "@/lib/turn-artifacts"
 
 /** Stable identity so the `turnArtifacts` memo doesn't churn on every render. */
@@ -222,7 +223,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   artifacts,
   workspaceDir,
 }: AssistantTurnProps) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   // Debounced streaming flag drives the "done" visuals (footer / collapse /
   // typing dots) so a sub-second SSE flicker can't flash a premature completed
   // state. Duration/token math still uses the raw flag (values, not appearance).
@@ -262,7 +263,10 @@ export const AssistantTurn = memo(function AssistantTurn({
   const totalTokens = model.tokens.input + model.tokens.output + model.tokens.reasoning
   const footerItems: string[] = []
   if (!streaming && (totalTokens > 0 || model.completedAt != null)) {
-    if (model.completedAt != null) footerItems.push(new Date(model.completedAt).toLocaleString())
+    // Same formatter as the user bubble's sent-at, so the two timestamps a turn
+    // shows agree on format and both follow the UI language (lib/format-time.ts).
+    const completedAtText = formatDateTime(model.completedAt, language)
+    if (completedAtText) footerItems.push(completedAtText)
     footerItems.push(`${t("message.tokensInput")}: ${fmtTok(model.tokens.input)}`)
     footerItems.push(`${t("message.tokensOutput")}: ${fmtTok(model.tokens.output)}`)
     if (model.tokens.reasoning > 0) footerItems.push(`${t("message.tokensReasoning")}: ${fmtTok(model.tokens.reasoning)}`)

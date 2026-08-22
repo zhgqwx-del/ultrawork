@@ -26,6 +26,7 @@
     "e2e:switchback": "bun run --bun e2e/switchback-gap.e2e.ts",
     "e2e:stream-gap": "bun run --bun e2e/stream-gap-resync.e2e.ts",
     "e2e:meta": "bun run --bun e2e/meta-passthrough.e2e.ts",
+    "e2e:message-timestamp": "bun run --bun e2e/message-timestamp.e2e.ts",
     "e2e:add-source-auth": "bun run --bun e2e/add-source-auth.e2e.ts",
     "e2e:dynamic-ports": "bun run --bun e2e/dynamic-ports.e2e.ts",
     "e2e:mcp-status": "bun run --bun e2e/mcp-status-dynamic.e2e.ts",

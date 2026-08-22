@@ -160,7 +160,11 @@ export function MessageList({
           )
           return (
             <div key={message.info.id || index}>
-              <UserMessage content={content} attachments={attachments} />
+              <UserMessage
+                content={content}
+                attachments={attachments}
+                createdAt={message.info.time.created}
+              />
               {isStopped && <ExecutionStatus state="stopped" />}
             </div>
           )

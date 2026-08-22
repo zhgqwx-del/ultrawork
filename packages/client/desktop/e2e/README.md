@@ -4,6 +4,38 @@ Browser-driven walkthroughs that exercise the **real** desktop app (Vite + syste
 Chrome via `playwright-core`, with a Tauri `invoke` shim) against real sidecars —
 catching integration bugs that vitest can't.
 
+## `message-timestamp.e2e.ts` — 用户消息发送时间 + 三处时间格式统一
+
+Guards the sent-at timestamp under the user bubble and the single shared formatter
+behind it (`src/lib/format-time.ts`, used by the bubble, the assistant turn footer
+and the sidebar tooltip). Real (mock-driven) **opencode** + Vite + a real engine.
+
+The turn is created over **HTTP** (`POST /session` → `prompt_async`) instead of by
+typing, so the run does not hinge on keyboard input reaching the app page; the
+assertions then compare the DOM against the server's own `info.time.created`
+rather than against "some time is displayed".
+
+Covers: `<time datetime>` === the server epoch · the visible text follows the **UI
+language** (not the OS locale) and differs from en-US's · the assistant footer uses
+the same format · a **warm-cache** locale switch doesn't bleed between languages ·
+a **live** language switch through the settings popover (no reload, no remount —
+the only arrangement that can catch a missing `useMemo` dep) re-formats both ·
+hover reveals copy with **zero layout shift** · a 420px window doesn't overflow ·
+dark-mode contrast measured from the RENDERED colors (≥ AA at 10px, no `opacity`).
+
+```bash
+cd packages/client/desktop
+bun run --bun e2e:message-timestamp                    # exit 0 = PASS
+E2E_ENGINE=webkit bun run --bun e2e:message-timestamp  # WKWebView = the macOS runtime
+```
+
+**Negative control** (built in, run it after touching any of this):
+`E2E_BREAK=wiring bun run --bun e2e:message-timestamp` drops MessageList's
+`createdAt` hand-off, runs, and restores the file — 11 of the 15 checks must go
+red. If they don't, the harness has stopped measuring. (One earlier version had a
+check that compared `null === null` when the element was absent, so it passed
+inside the control arm — the arm is what caught it.)
+
 ## `switchback-gap.e2e.ts` — switch-back streamed-text gap (ADR/discussions 022, Issue 1)
 
 Verifies that switching away from a streaming opencode turn and back loses **no**

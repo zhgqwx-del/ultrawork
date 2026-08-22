@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **用户消息现在显示发送时间，并把界面上所有绝对时间统一到一个 formatter（2026-08-22）** —— 气泡下方常显发送时间、
+  复制按钮仍是 hover 才出现，两者同一行。新增 `src/lib/format-time.ts` 作为 SSOT，三处共用：用户气泡、助手回合
+  footer、侧栏行 tooltip 的 >7d 日期。
+  - **locale 取应用语言，不再取系统 locale。** 裸 `toLocaleString()` 用的是系统 locale ⇒ 中文界面 + 英文系统会显示
+    `8/22/2026, 11:16:07 AM`。这是既有行为（助手 footer / 侧栏一直如此），本次一并纠正，否则新加的用户时间会和
+    助手时间在同一屏出现两种日期格式。
+  - **formatter 按 `kind:locale` 缓存**：裸调用实测 32µs/次、缓存后 0.84µs（bun/JSC，即 macOS WKWebView 的引擎），
+    而转录区每个 token 重渲染一次。⚠️ 缓存**必须按 locale 分键** —— 单例会在用户切语言后继续用旧语言格式化，
+    不报错、只是界面语言变了时间格式不变。
+  - **`UserMessage` 补了自定义 memo 比较器**：`message.parts.filter(...)` 每次渲染都产出新数组，默认浅比较必然失败 ⇒
+    改动之前**每个 token 都在重渲染每一条用户消息**。比较器覆盖 `content`/`createdAt`/`attachments`，
+    漏 `createdAt` 的表现是"时间静默停在旧值"，已由测试正向钉住。
+  - 时间戳带 `<time dateTime={ISO}>`（无障碍语义 + 测试唯一与 locale 无关的判据）；时间缺失/损坏时整块不渲染，
+    不退化成 1970。损坏 locale tag 会让 `Intl` 抛 `RangeError`（转录区里一次异常就是整个视图），已加 try/catch 兜底 ——
+    当前 `config.migrateLanguage` 的白名单已使其不可达，属纵深防御。
+  - 新增 e2e `message-timestamp`（`bun run e2e:message-timestamp`）：真实 opencode + Vite + 真实引擎，
+    **回合用 HTTP 造**（不依赖键盘输入），判据对着**服务端自己的 `info.time.created`**而不是"显示了某个时间"。
+    15 条断言在 **chrome 与 webkit 双引擎全绿**（webkit = macOS 生产的 WKWebView），含：暖缓存下的 locale 串扰、
+    **不 reload 的应用内语言热切换**（唯一能抓到 `useMemo` 漏依赖的排布）、hover 零位移（26→26px）、
+    420px 窄窗零横向溢出、深色模式**取渲染像素**实测 6.11:1 @10px。
+    自带负向控制臂 `E2E_BREAK=wiring`（15 条里 11 条必须变红）。
+  - ⚠️ **测试里不要硬编码 en-US 时间字面量**：ICU 72 起 en-US 在 AM/PM 前用 U+202F，本机 bun 仍是普通空格 ⇒
+    三平台 CI 会红。判据已改为归一化后再比。
+  - 约定 → `docs/conventions.md §28`（含 §28.1 memo 比较器）· 坑点 → `docs/gotchas.md §22` ·
+    harness 方法论 → `docs/testing.md §12`。
+
 ### Fixed
 
 - **macOS 截图按钮在正式版上永远提示「需要屏幕录制权限」，授权+重启也无解（2026-08-19 真机 + tccd 日志坐实根因）** —— TCC 的授权记录锁定的是 **bundle id + 授权当时那个二进制的代码签名要求（csreq）**。用户在未签名/ad-hoc 时期（v0.3.2 及更早，截图功能 07-15 上线、CI 签名 07-26 才通）授过权，之后 v0.3.3+ 改成 Developer ID 签名 ⇒ tccd 一路 `Failed to match existing code requirement`，而**系统设置里开关显示为「开」**（UI 只读 auth_value 不校验 csreq），**重新拨动开关只改授权值、不重写签名要求** ⇒ 死循环。产品侧的缺陷是**没有出口**：唯一的引导（去授权 → 重启）对这个状态必然无效。
