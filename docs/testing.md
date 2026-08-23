@@ -649,3 +649,32 @@ case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上�
 （CSS `:hover` 正常传播），playwright 自带 chromium revision 未下载所以只能走 `channel`；
 `E2E_ENGINE=webkit` 可切到 WebKit —— 那才是 macOS 生产环境（WKWebView）的引擎。
 
+
+---
+
+## 13. mutant（控制臂）的两条纪律（discussions/060，2026-08-23）
+
+### ① 全绿之后要逐个注入缺陷，确认每条断言都会红
+
+草稿保留那批做了 12 个 mutant，每个只打红它对应的断言（M1 全局 12 条 / M7 成员相关 3 条 / 其余各 1 条）。
+没有这一步，「断言在空转」和「实现是对的」在报告里长得一模一样。
+
+### ② **mutant 不变红 ≠ 测试空转**，也可能是你对「什么算缺陷」判断错了
+
+实例：把 `DraftProvider` 从 `RouterProvider` 外挪进 `RootLayout` 内，本以为端到端探针会红，**结果照样 PASS** ——
+因为父路由在子路由切换时不卸载，两个位置对 `/` ↔ `/settings` 本来就等价（gotchas §23②）。
+真正能区分的是 `/workspace` 往返，补上那一步 mutant 才变红。
+⇒ 先证伪自己的缺陷模型，再去改测试。
+
+### ③ harness 的时序必须复刻真实时序
+
+验「交接指令顶掉草稿」时，第一版让 seeder 与被测页面**同批次挂载**，effect 读到的还是空草稿，
+于是输出「零 toast」—— 看着像另一个 bug，其实是尺子错了。
+改成真实时序（打字 → 离开 → 带 state 回来）才暴露出 StrictMode 双 toast 这个真缺陷。
+
+### ④ 真机自动化（macOS）能做到哪一步
+
+`tauri dev` + AppleScript `click at` + `screencapture` 可以逐步取证；
+但 **WKWebView 不外露 web 内容的 accessibility 树**（`entire contents of window 1` 只有 4 个元素），
+所以只能靠坐标 + 截图判读，**不能按角色/文本定位**。
+另：**单次点击没反应不等于按钮被禁用**（焦点时序），重试一次再下结论。

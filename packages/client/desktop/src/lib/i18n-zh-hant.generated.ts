@@ -763,6 +763,8 @@ export const zhHant: Record<string, string> = {
   "attachment.imageUndecodable": "{name} 無法作為圖片解碼",
   "attachment.pasteUnsupported": "無法從剪貼簿讀取圖片——請先存成檔案再拖進來",
   "attachment.clearedForTeam": "附件已移除——Team 模式只支援純文本",
+  "draft.replacedByHandoff": "你的草稿已被本次操作的指令替換",
+  "draft.restore": "恢復草稿",
   "attachment.dropHere": "鬆手即可新增附件",
   "attachment.tooMany": "附件太多了（最多 {max} 個）",
   "attachment.tooLarge": "{name} 太大了（最多 {max} MB）",

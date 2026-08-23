@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-08-22 -->
+<!-- last-synced: 2026-08-23 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -814,3 +814,31 @@ new Date(createdAt).toLocaleString()
 另配一条"传语义相同的新数组 → 断言**没有**重渲染"，且探针要用**渲染计数**（不带 memo 的 mock 子组件），
 **不要用 DOM 节点身份** —— React 会把重渲染 reconcile 到同一个元素上，那种断言恒真。
 
+
+---
+
+## 29. 要跨路由存活的编辑态，放 `DraftProvider`，不要放页面本地 state（discussions/060，2026-08-23）
+
+首页 / 会话页的输入框内容、已选附件、任务出生配置（模式 / agent / Team 成员）都必须活过路由切换。
+统一放 `lib/draft-context.tsx` 的分桶容器，**挂在 `RouterProvider` 外层**（理由与边界见 gotchas §23②）。
+
+```tsx
+// 页面侧：一个桶 = 一个 composer
+const draft = useDraftBucket(HOME_DRAFT_KEY)          // 或 sessionDraftKey(id)
+const { patchDraft, clearDraft } = useDraftDispatch()
+const input = draft.text
+const setInput = useCallback((t: string) => patchDraft(HOME_DRAFT_KEY, { text: t }), [patchDraft])
+```
+
+四条约束：
+
+1. **拆双 context**（`DraftStateContext` 读 / `DraftDispatchContext` 写）。常驻组件（`LeftSidebar` 要在删会话时清桶）
+   只订阅 dispatch —— 合成一个的话，**每敲一个键整个侧栏都会重渲染**。dispatch 值必须引用恒定。
+2. **恢复时按当前世界「净化」，而且要派生不要写回。** 存进桶的是**引用**（agent id / 成员 id / 依赖 ACP 的模式），
+   被引用的东西会在用户离开期间消失。派生（`agents.some(...) ? stored : DEFAULT`）能在 `agents` 还空的头几帧
+   自动让路；写回则会把那一瞬间的空值**永久固化**成用户的选择。
+   > `AgentSelector` 的 `agents.find(...) ?? agents[0]` **只兜底显示** —— 页面 state 里的失效 id 会照常派发出去，
+   > 于是「界面显示 A、实际提示词发给 B」。
+3. **清桶只挂在「真的发出去了」之后。** 早退分支（附件全部 materialise 失败 → toast → return）**不能清**，
+   那正是用户最需要内容还在的时候。
+4. **清空要走 hook 自己的 `clear()`**，别只把桶置空 —— 否则 hook 内部的同步 ref 会失配（gotchas §23③）。

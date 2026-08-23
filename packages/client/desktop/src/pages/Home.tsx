@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { FolderOpen, Pen, FileText, Bot, Users, Cpu } from "lucide-react"
@@ -7,6 +7,13 @@ import { commandsAvailableFor } from "@/lib/command-menu"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
 import { useAttachments } from "@/lib/use-attachments"
+import type { Attachment } from "@/lib/attachments"
+import {
+  HOME_DRAFT_KEY,
+  useDraftBucket,
+  useDraftDispatch,
+  type TaskMode,
+} from "@/lib/draft-context"
 import { useScreenshot } from "@/lib/use-screenshot"
 import { useAgents } from "@/lib/agent-context"
 import { useApi } from "@/lib/use-api"
@@ -44,19 +51,13 @@ const ABILITY_CARDS = [
   },
 ]
 
-/** 018 A-2: collaboration mode is a birth property of the task. */
-type TaskMode = "single" | "team"
-
 export function HomePage() {
-  const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
-  // The agent for the conversation about to start (档1: chosen before the
-  // session is born; the binding freezes once the first message is sent).
-  // In team mode the same control picks the LEADER.
-  const [agentId, setAgentId] = useState(OPENCODE_DEFAULT_AGENT_ID)
-  const [mode, setMode] = useState<TaskMode>("single")
-  const [memberIds, setMemberIds] = useState<Set<string>>(new Set())
-  const membersTouched = useRef(false)
+  // Everything the user has typed or picked lives in the draft bucket, not in local
+  // state: this page is a child of <Outlet>, so any navigation unmounts it and local
+  // state would be gone on return (discussions/060).
+  const draft = useDraftBucket(HOME_DRAFT_KEY)
+  const { patchDraft, clearDraft } = useDraftDispatch()
   const navigate = useNavigate()
   const location = useLocation()
   const api = useApi()
@@ -68,8 +69,60 @@ export function HomePage() {
   const { t } = useI18n()
   const { currentModel, setModel, maybeOfferFreeTrial } = useModel()
 
+  // --- Draft-backed composer state ---------------------------------------------------
+  // Every setter below is stable (`patchDraft` is frozen for the app's lifetime), so
+  // moving this state out of the component doesn't churn ChatInput's props.
+  const input = draft.text
+  const setInput = useCallback((text: string) => patchDraft(HOME_DRAFT_KEY, { text }), [patchDraft])
+
+  // A restored draft holds REFERENCES — an agent id, a member list, a mode that needs ACP —
+  // and what they point at can vanish while the user is on another page (a sidecar goes
+  // down, an agent is unregistered). Reconcile on READ rather than writing a cleaned value
+  // back: `agents` is empty for the first frames after mount, and a write would turn that
+  // transient into a permanent reset of the user's choice. A stale id must never survive
+  // to dispatch — AgentSelector falls back to agents[0] for DISPLAY only, so a bad id here
+  // would show one agent and prompt another.
+  const storedAgentId = draft.agentId ?? OPENCODE_DEFAULT_AGENT_ID
+  const agentId =
+    agents.length === 0 || agents.some((a) => a.id === storedAgentId)
+      ? storedAgentId
+      : OPENCODE_DEFAULT_AGENT_ID
+  const setAgentId = useCallback(
+    (id: string) => patchDraft(HOME_DRAFT_KEY, { agentId: id }),
+    [patchDraft],
+  )
+
+  // Team runs on ACP. If ACP went away while the user was elsewhere, fall back to single
+  // rather than leaving them in a mode whose send path is guaranteed to fail.
+  const mode: TaskMode = draft.mode === "team" && acpAvailable ? "team" : "single"
+  const setMode = useCallback(
+    (next: TaskMode) => patchDraft(HOME_DRAFT_KEY, { mode: next }),
+    [patchDraft],
+  )
+
+  // Default member selection: everyone, until the user edits the picker — and then exactly
+  // what they picked, minus anyone who is no longer around (a stored id with no agent would
+  // otherwise reach the leader's system prompt as a member named after its own id).
+  const memberIds = useMemo(() => {
+    const stored = draft.memberIds
+    if (!stored || !draft.membersTouched) return new Set(agents.map((a) => a.id))
+    if (agents.length === 0) return new Set(stored)
+    return new Set(stored.filter((id) => agents.some((a) => a.id === id)))
+  }, [draft.memberIds, draft.membersTouched, agents])
+
+  // Attachments live in the bucket too — they are the part of a composer that is most
+  // expensive to rebuild by hand.
+  const attachStore = useMemo(
+    () => ({
+      key: HOME_DRAFT_KEY,
+      items: draft.attachments,
+      setItems: (next: Attachment[]) => patchDraft(HOME_DRAFT_KEY, { attachments: next }),
+    }),
+    [draft.attachments, patchDraft],
+  )
+
   // Team mode runs on ACP (text-only prompts), so the attach entry point is hidden there.
-  const attach = useAttachments(currentModel)
+  const attach = useAttachments(currentModel, attachStore)
   const shot = useScreenshot(attach.add)
   const attachmentSlot = useMemo(
     () => ({
@@ -97,31 +150,52 @@ export function HomePage() {
 
   const isACP = isACPAgentId(agentId)
 
-  // Default member selection: everyone, until the user edits the picker.
-  useEffect(() => {
-    if (membersTouched.current) return
-    setMemberIds(new Set(agents.map((a) => a.id)))
-  }, [agents])
+  // Read the live draft text without making it an effect dependency (the hand-off effect
+  // below must run on `location.state`, not on every keystroke).
+  const textRef = useRef(draft.text)
+  textRef.current = draft.text
 
   // Prefill the composer when navigated here with an initial prompt (e.g. the
   // Settings "install skill" action hands off to the built-in skill-installer).
+  // StrictMode mounts effects twice. Without a guard the user sees the toast twice, and
+  // the second run reads the prompt we just wrote as the "displaced" draft — so Undo would
+  // hand back the prompt instead of their typing. Keyed on the state OBJECT: react-router
+  // makes a fresh one per navigation, and the two StrictMode passes share it.
+  const handedOffRef = useRef<unknown>(null)
+
   useEffect(() => {
-    const initial = (location.state as { initialInput?: string } | null)?.initialInput
-    if (initial) {
-      setInput(initial)
-      navigate(".", { replace: true, state: null })
+    const state = location.state as { initialInput?: string } | null
+    const initial = state?.initialInput
+    if (!initial) return
+    if (handedOffRef.current === state) return
+    handedOffRef.current = state
+    // The hand-off prompt is several hundred words of machine instruction; splicing it onto
+    // a half-typed draft would produce something incoherent that the user could well send
+    // as-is — and the composer only shows 200px, so their own words would scroll out of
+    // sight. Replace. But a feature whose entire point is "your typing survives" must not
+    // silently eat it: hand it back the same way the Team-mode attachment drop below does.
+    const displaced = textRef.current
+    patchDraft(HOME_DRAFT_KEY, { text: initial })
+    navigate(".", { replace: true, state: null })
+    if (displaced.trim()) {
+      toast.info(t("draft.replacedByHandoff"), {
+        // Stable id: a second toast for the same hand-off would be noise even if the guard
+        // above ever failed to hold.
+        id: "draft-handoff",
+        action: {
+          label: t("draft.restore"),
+          onClick: () => patchDraft(HOME_DRAFT_KEY, { text: displaced }),
+        },
+      })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state])
 
   const toggleMember = (id: string) => {
-    membersTouched.current = true
-    setMemberIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    const next = new Set(memberIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    patchDraft(HOME_DRAFT_KEY, { memberIds: [...next], membersTouched: true })
   }
 
   const memberRoster = (ids: string[]): TeamMember[] =>
@@ -147,8 +221,13 @@ export function HomePage() {
         toast.error(t("attachment.nothingToSend"))
         return
       }
-      setInput("")
+      // The draft has now been consumed by a real session — wipe the whole bucket (text,
+      // attachments and the task's birth configuration). Note this sits AFTER the early
+      // return above: a turn that failed to materialise anything keeps the user's input.
+      // attach.clear() first so the hook's own cap bookkeeping is emptied too, not just
+      // the bucket it reads from.
       attach.clear()
+      clearDraft(HOME_DRAFT_KEY)
       // Navigate immediately for instant UX; the prompt call is fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
@@ -214,7 +293,7 @@ export function HomePage() {
       // before the navigation below renders it.
       addEntry(entry)
       if (!isOpencodeLeader) bindSessionAgent(entry.id, agentId)
-      setInput("")
+      clearDraft(HOME_DRAFT_KEY)
       navigate(`/session/${entry.id}`, { state: { sending: true, messageText: text } })
       markLocallyPrompted(entry.id)
       connector

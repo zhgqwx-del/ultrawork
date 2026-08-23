@@ -45,6 +45,7 @@ import { formatDateOnly } from "@/lib/format-time"
 import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 import { useChannelSessions, type ChannelSessionEntry } from "@/lib/channel-sessions-context"
 import { useUnread } from "@/lib/use-unread"
+import { sessionDraftKey, useDraftDispatch } from "@/lib/draft-context"
 import { useWorkspace } from "@/lib/workspace-context"
 import { WeChatIcon, WeComIcon, DingTalkIcon, FeishuIcon } from "@/components/brand-icons"
 import type { ComponentType } from "react"
@@ -200,6 +201,7 @@ export function LeftSidebar() {
   const { entryOf } = useTeamSessions()
   const { entryOf: channelEntryOf } = useChannelSessions()
   const { isUnread } = useUnread()
+  const { dropDraft } = useDraftDispatch()
   const { workspacePath } = useWorkspace()
   const { t, language } = useI18n()
 
@@ -211,6 +213,9 @@ export function LeftSidebar() {
     e.stopPropagation()
     try {
       await deleteSession(sessionId)
+      // Its draft can never be reached again; without this the bucket (and any
+      // megabyte-scale data: URLs in it) would sit in memory for the rest of the session.
+      dropDraft(sessionDraftKey(sessionId))
       if (location.pathname === `/session/${sessionId}`) {
         navigate("/")
       }

@@ -78,21 +78,66 @@ interface UseAttachmentsResult {
   ) => Promise<{ attachments: PromptAttachment[]; noteText: string }>
 }
 
-export function useAttachments(model: string | null | undefined): UseAttachmentsResult {
+/**
+ * Where the composer's attachments live. Pass one to keep them across an unmount —
+ * `DraftProvider` owns the storage then, and the list survives a route change
+ * (discussions/060). Omit it and the list is local to the component, as before.
+ */
+export interface AttachmentStore {
+  /**
+   * Identity of the composer this store belongs to. SessionPage is NOT remounted when
+   * the :id changes, so without a key the hook would carry session A's cap bookkeeping
+   * into session B (see `itemsRef` below).
+   */
+  key: string
+  items: Attachment[]
+  setItems: (next: Attachment[]) => void
+}
+
+export function useAttachments(
+  model: string | null | undefined,
+  store?: AttachmentStore,
+): UseAttachmentsResult {
   const api = useApi()
   const { t } = useI18n()
-  const [items, setItems] = useState<Attachment[]>([])
+  const [localItems, setLocalItems] = useState<Attachment[]>([])
   const [blocker, setBlocker] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+
+  const items = store ? store.items : localItems
+
+  // Read through a ref so `setBoth` below keeps ONE identity for the life of the hook. A
+  // caller's store object is rebuilt whenever its items change; depending on it directly
+  // would ripple out through add/addPaths/remove/clear into the caller's `attachmentSlot`
+  // memo and re-render ChatInput on every attachment change.
+  const storeRef = useRef(store)
+  storeRef.current = store
 
   // itemsRef is the AUTHORITY for the caps, and it is updated synchronously on accept — not
   // from render. add()/addPaths() await on every file, so two overlapping calls (dragging a
   // batch, pasting while it runs) would otherwise both read the same stale list, each conclude
   // it was under the limit, and land 20 attachments against a cap of 10 at twice the budget.
-  const itemsRef = useRef<Attachment[]>([])
+  //
+  // SEEDED FROM THE STORE, not from []: with an external store the hook is re-created on every
+  // remount while the list lives on, so a fresh `[]` would tell the caps that a composer
+  // holding 3 files holds none — and 10 more would go in on top of them.
+  const itemsRef = useRef<Attachment[]>(store?.items ?? [])
+
+  // Re-seed when the composer switches to a different bucket without the hook being torn
+  // down. Only the store's key can tell us that happened: `items` changing is the normal
+  // case (we just wrote it), and reading `store.items` on every render would clobber the
+  // ref mid-loop — a serialised add() advances the ref several times before React has
+  // committed any of it, which is the whole reason the ref exists.
+  const storeKeyRef = useRef(store?.key)
+  if (store && store.key !== storeKeyRef.current) {
+    storeKeyRef.current = store.key
+    itemsRef.current = store.items
+  }
+
   const setBoth = useCallback((next: Attachment[]) => {
     itemsRef.current = next
-    setItems(next)
+    if (storeRef.current) storeRef.current.setItems(next)
+    else setLocalItems(next)
   }, [])
 
   // …and a synchronous ref still can't order two interleaved async loops, so the loops
