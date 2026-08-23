@@ -36,6 +36,8 @@ import { UnreadBadge } from "@/components/ui/unread-badge"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
 import { useMarkReadWhileOpen } from "@/lib/use-unread"
+import type { Attachment } from "@/lib/attachments"
+import { sessionDraftKey, useDraftBucket, useDraftDispatch } from "@/lib/draft-context"
 
 export function SessionPage() {
   const { id } = useParams()
@@ -48,7 +50,20 @@ export function SessionPage() {
   const { workspacePath } = useWorkspace()
   const { config } = useConfig()
 
-  const [input, setInput] = useState("")
+  // Composer state is keyed by session id, NOT component-local. react-router reuses this
+  // element across a :id change (no remount), so a local draft would follow the user from
+  // session A into session B; and a route change away DOES unmount, so a local draft would
+  // be lost on return. One keyed bucket fixes both (discussions/060). The sibling reset
+  // effect below already treats per-session UI state this way — it just never covered the
+  // composer.
+  const draftKey = sessionDraftKey(id)
+  const draft = useDraftBucket(draftKey)
+  const { patchDraft, clearDraft } = useDraftDispatch()
+  const input = draft.text
+  const setInput = useCallback(
+    (text: string) => patchDraft(draftKey, { text }),
+    [patchDraft, draftKey],
+  )
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
 
   const session = sessions.find(s => s.id === id)
@@ -166,7 +181,15 @@ export function SessionPage() {
   // Composer attachments. ACP/Team backends declare capabilities.image = false and their
   // prompt() throws on attachments, so the entry point is disabled there rather than
   // letting the user attach a file that would only blow up on send.
-  const attach = useAttachments(currentModel)
+  const attachStore = useMemo(
+    () => ({
+      key: draftKey,
+      items: draft.attachments,
+      setItems: (next: Attachment[]) => patchDraft(draftKey, { attachments: next }),
+    }),
+    [draft.attachments, patchDraft, draftKey],
+  )
+  const attach = useAttachments(currentModel, attachStore)
   const shot = useScreenshot(attach.add)
   // Read the BACKEND's image capability live per render (same pattern as `supportsModel`
   // above), NOT inside the memo keyed on `connector`/`id`. Switching a fresh session's agent
@@ -295,8 +318,12 @@ export function SessionPage() {
         return
       }
       sendMessage(text, currentModel, attachments)
-      setInput("")
+      // Consumed by a real turn — drop the whole bucket. Sits after the early return above,
+      // so a turn that materialised nothing keeps the user's input. attach.clear() first:
+      // this page is NOT unmounted after a send, so the hook's cap bookkeeping would keep
+      // counting the files we just sent.
       attach.clear()
+      clearDraft(draftKey)
       // Force scroll to bottom after sending, even if user was viewing history
       forceScrollToBottom()
     } finally {

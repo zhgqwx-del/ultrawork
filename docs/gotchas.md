@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-08-22 -->
+<!-- last-synced: 2026-08-23 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -1123,3 +1123,41 @@ JSC 正是 macOS WKWebView 的引擎）。转录区每个 token 重渲染一次�
 `UserMessage` 在加自定义比较器之前，**每个 token 都在重渲染每一条用户消息**。同一形状适用于任何
 "父组件现算数组再传下去"的地方。
 
+
+---
+
+## 23. 路由切换与「组件本地状态」（discussions/060，2026-08-23，全部实测）
+
+### ① react-router 会用**两种相反**的方式坑同一份本地 state
+
+| 导航 | 行为 | 后果 |
+|---|---|---|
+| `/` → `/settings`（换路由） | `<Outlet>` 内的元素整体**卸载** | 本地 state 归零 —— 用户打了一半的输入没了 |
+| `/session/A` → `/session/B`（只变 `:param`） | 元素被**复用，不重挂载** | 本地 state **活过头** —— 会话 A 的草稿跟到会话 B |
+
+⚠️ 同一个 `useState` 能同时中这两条。`Session.tsx` 早就有一个「按 `id` 重置 per-session UI state」的 effect，
+但漏掉了 `input` / `attach` —— **写这类 effect 时要把该页所有 per-session 状态列全，漏掉的那个不会报错，只会串台**。
+
+### ② Provider 挂 `RootLayout` 内 vs 挂 `RouterProvider` 外，差别比想象的小
+
+父路由在子路由切换时**不卸载**，所以对 `/` ↔ `/settings` ↔ `/session` 两个位置**完全等价**。
+唯一能区分的是 **`/workspace`**（它在 `RootLayout` 之外）：挂内层时进一次 workspace 选择器回来状态就没了。
+而 `WorkspaceSelector` **没有「取消」**（三个入口全部 `setWorkspace + navigate("/")`），只是去看一眼也必然走一遭。
+⇒ 要跨 `/workspace` 存活就必须挂在 `RouterProvider` 外，别的场景挂哪都行。
+
+### ③ 「同步权威 ref + 外部 store」一旦并存就会失配
+
+`use-attachments.ts` 的 `itemsRef` 既是数量上限的同步权威，**也是 `remove()` 的 filter 基底**。
+把存储外置（`AttachmentStore`）后有两条失配路径：
+
+- **切桶而 hook 不重挂**（`SessionPage` 换 `:id`）⇒ ref 还是 A 的列表 ⇒ 在 B 里 `remove()` 会把 **A 的附件写进 B 的桶**（数据串台，不只是少算几个）
+- **发送后页面不卸载**（会话页）⇒ ref 仍计着刚发走的文件 ⇒ 上限被白白吃掉
+
+对策：store 带 `key`，**key 变才**重新播种 ref；清空一律走 `setBoth`（而不是从外面把桶置空）。
+❌ **不要每次渲染从 `store.items` 同步 ref** —— 一次串行 `add()` 会在 React 提交前多次推进 ref，那正是 ref 存在的理由。
+
+### ④ `React.StrictMode` 下 mount effect 跑两次，有副作用的交接逻辑必须自带守卫
+
+`main.tsx` 用了 `StrictMode`。首页接收 `location.state.initialInput`（设置页「装技能」的交接）的 effect 因此跑两次 ⇒
+**两个 toast**，且第二次把刚写进去的指令当成「被顶掉的草稿」捕获 ⇒ 撤销会还回指令而不是用户的字。
+守卫用 **`location.state` 对象引用**（react-router 每次导航产生新对象，两次 StrictMode 传递共享它），不要用内容比较。

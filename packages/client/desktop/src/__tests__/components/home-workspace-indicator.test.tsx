@@ -47,6 +47,11 @@ vi.mock("@/components/chat", async () => ({
 }))
 
 import { HomePage } from "@/pages/Home"
+import { DraftProvider } from "@/lib/draft-context"
+
+// The composer's state lives in DraftProvider now (discussions/060), so HomePage cannot
+// render without one — same contract as every other context in this app.
+const renderHome = () => render(<DraftProvider><HomePage /></DraftProvider>)
 
 const writeText = vi.fn(() => Promise.resolve())
 
@@ -59,14 +64,14 @@ beforeEach(() => {
 describe("HomePage workspace indicator", () => {
   it("is hidden when no workspace is confirmed", () => {
     workspacePath = null
-    render(<HomePage />)
+    renderHome()
     expect(screen.queryByLabelText("home.workspace.copyHint")).toBeNull()
     expect(screen.queryByText("home.workspace.switch")).toBeNull()
   })
 
   it("shows the shortened path but copies the FULL path on click", async () => {
     workspacePath = "/Users/alice/ai-workspace/claude-workspace/ultrawork01/ultrawork"
-    render(<HomePage />)
+    renderHome()
 
     // Display is folded by shortenPath (home → ~, middle segments elided)…
     const row = screen.getByLabelText("home.workspace.copyHint")
@@ -81,7 +86,7 @@ describe("HomePage workspace indicator", () => {
 
   it("navigates to the workspace selector via the switch entry", () => {
     workspacePath = "/Users/alice/projects/repo"
-    render(<HomePage />)
+    renderHome()
     fireEvent.click(screen.getByText("home.workspace.switch"))
     expect(navigateSpy).toHaveBeenCalledWith("/workspace")
   })

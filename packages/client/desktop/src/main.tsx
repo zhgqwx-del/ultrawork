@@ -9,6 +9,7 @@ import { ModelProvider } from "./lib/model-context"
 import { WorkspaceProvider } from "./lib/workspace-context"
 import { SSEProvider } from "./lib/sse-context"
 import { AgentProvider } from "./lib/agent-context"
+import { DraftProvider } from "./lib/draft-context"
 import { router } from "./router"
 import { loadSidecarPorts } from "./lib/sidecar-ports"
 import { loadSidecarCredentials } from "./lib/sidecar-auth"
@@ -56,7 +57,12 @@ Promise.all([loadSidecarPorts(), loadSidecarCredentials()]).then(() => {
               <SSEProvider>
                 <AgentProvider>
                   <ModelProvider>
-                    <RouterProvider router={router} />
+                    {/* OUTSIDE RouterProvider on purpose: composer drafts have to outlive
+                        the unmount that every route change performs on the page under
+                        <Outlet> (discussions/060). */}
+                    <DraftProvider>
+                      <RouterProvider router={router} />
+                    </DraftProvider>
                   </ModelProvider>
                 </AgentProvider>
               </SSEProvider>

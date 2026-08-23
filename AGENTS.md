@@ -131,6 +131,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-session-plan.ts` — 任务规划会话级状态（ADR-038）：`connector.getPlan` 水合 + 订阅 `plan.updated` 整表替换，按 sessionID；两竞态防护见 conventions §3（`liveArrivedRef` live-wins + binding 纳入依赖）
 - `src/lib/use-session-permission.ts` — 权限/问题处理 + 轮询 fallback（capabilities.questions 门控）
 - `src/lib/agent-context.tsx` — AgentProvider：agent 列表 + 绑定委托 connector.bindings + sidecar hydration
+- `src/lib/draft-context.tsx` — **DraftProvider（ADR-073）：跨路由存活的 composer 草稿**。按 key 分桶（`home` / `session:<id>`），一桶装 text + attachments（+ 首页的 mode/agentId/memberIds）。**必须挂在 `RouterProvider` 外层**（`main.tsx`），否则 `/workspace` 往返会丢；**双 context**（State 读 / Dispatch 写）—— 常驻 LeftSidebar 只订阅 dispatch，否则每次按键全侧栏重渲染。附件桶 LRU 保留最近 5 个（文本永久）。消费方：`pages/Home.tsx` · `pages/Session.tsx` · `left-sidebar.tsx`（删会话丢桶）· `lib/use-attachments.ts`（`AttachmentStore` 注入，store 带 `key` 用于重新播种 `itemsRef`）
 - `src/lib/use-session-scroll.ts` — 贴底滚动（`use-stick-to-bottom`，ADR-047）+ **观察滚动容器的 RO**（ADR-048：库只观察内容层，容器变矮时不补正，gotchas §15）
 - `src/lib/use-session-artifacts.ts` — 产物派生（工具提取 + 空闲 fs 扫描 + 回合窗归属 + deliverable/working 分类），Session 级常驻；`settled` 为**渲染期派生**（conventions §16）；`byTurn` 为**派生表**（流式期间不重算、按 sessionID 分键，ADR-052）
 - `src/lib/turn-artifacts.ts` — **产物→轮次归属表**（last-wins；窗口带 `anchorId` = `groupIntoTurns` 的 `turnKey`，幽灵窗丢弃；**SSOT `extractArtifacts` 一个字不改**，conventions §17，ADR-052）
@@ -219,7 +220,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (72 ADRs, 001–072)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (73 ADRs, 001–072)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

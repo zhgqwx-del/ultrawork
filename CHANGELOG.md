@@ -9,6 +9,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **输入框草稿跨页面保留（Home 单 agent / Team + 会话页，2026-08-23）** —— 在首页或会话里打了一半的内容、
+  选好的模式 / agent / Team 成员、已经挂上的附件，切到设置或别的会话再回来都还在；发送成功后才清空。
+  方案与实测记录见 `docs/discussions/060`。
+  - **根因不是回归，是从未实现**：`input` 是 HomePage 的组件本地 state，而 `<Outlet>` 在每次路由切换时整体卸载
+    页面（探针实测 composer 节点消失），`ChatInput` 又是完全受控、自己不留副本 —— 全仓 14 处 `localStorage`
+    没有一处是草稿。`docs/archive/reviews/review-2.5-chatinput.md` §8 当年就把「草稿保存」标为 Deferred。
+  - **顺带修掉一个反向缺陷**：`/session/A → /session/B` 只变 `:param`，react-router **不重挂载** ⇒ 草稿和附件
+    会从会话 A 跟到会话 B。`Session.tsx` 早有一个「按 id 重置 per-session UI state」的 effect，独独漏了这两项。
+  - **存储层用内存 Provider 而不是 sessionStorage**：附件是 MB 级 `data:` URL，超 Storage 配额；文本走 storage、
+    附件走内存会产出「文字回来了、文件没回来」的半截状态。Provider 挂在 `RouterProvider` 外层。
+  - **恢复时按当前世界净化**：存的是「引用」（agent id / 成员 id / 依赖 ACP 的模式），而被引用的东西会在用户
+    离开期间消失。失效 agentId 回落默认（`AgentSelector` 的 `?? agents[0]` 只兜底显示，界面会显示 A 而实际派发 B）、
+    幽灵成员过滤掉（否则会以「名字就是自己 id」的形式进 leader 系统提示词）、ACP 不可用时 Team 回落 single。
+  - **附件桶按 LRU 保留最近 5 个会话**（文本永久保留）：驻留期从「切走即释放」变成「发送或删会话才释放」，
+    而桶数 = 会话数，不设上界就没有上界。删除会话时连桶一起丢。
+  - **`initialInput` 的交接在 StrictMode 下会跑两次**（第二轮 review 才抓到，第一轮门禁是全绿的）：用户会看到
+    两个 toast，且第二次把刚写入的指令当成「被顶掉的草稿」⇒ 撤销会还回指令而不是用户的字。已用
+    `location.state` 对象引用做守卫 + toast 固定 id。
+  - **装技能的 `initialInput` 会顶掉草稿**（那是几百字的机器指令，拼接只会产出没法发的东西）—— 但会 toast
+    并提供「恢复草稿」，与切 Team 模式清附件的既有做法一致。**切 workspace 不清草稿**。
+
 - **用户消息现在显示发送时间，并把界面上所有绝对时间统一到一个 formatter（2026-08-22）** —— 气泡下方常显发送时间、
   复制按钮仍是 hover 才出现，两者同一行。新增 `src/lib/format-time.ts` 作为 SSOT，三处共用：用户气泡、助手回合
   footer、侧栏行 tooltip 的 >7d 日期。
