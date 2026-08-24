@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-08-24
+
 ### Added
 
 - **输入框草稿跨页面保留（Home 单 agent / Team + 会话页，2026-08-23）** —— 在首页或会话里打了一半的内容、
