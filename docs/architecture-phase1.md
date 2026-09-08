@@ -82,46 +82,123 @@ Core strategy: use OpenCode as a **headless server** (compiled binary, spawned a
 
 ## System Architecture
 
-![Phase 1 Architecture Overview](images/architecture-phase1.png)
+> **图示更新于 2026-09-08**：下方两张 ASCII 图反映**当前实现**（含 `@agent/connector` / `@agent/orchestrator` / ACP Sidecar / Team 模式）。
+> `images/architecture-phase1.png` 与 `architecture-phase1-dataflow.png` 生成于 connector 落地（2026-06-11）**之前**，画的是规划期形态（含至今未实现的 `@agent/workspace` / Proactive Services），**仅作历史参考**——以本节 ASCII 图为准。
+> 分层的决策依据见 [ADR-030](./decisions/030-agent-connector-control-layer.md)（控制统一）+ [ADR-031](./decisions/031-multi-agent-orchestration.md)（编排）+ [agent-os-target-architecture.md](./agent-os-target-architecture.md) §2-§3。
 
-Phase 1 implements a Data Plane instance with Desktop client and IM Channel integrations:
+### 分层总览（四层）
+
+> 图中的 **①②③ 是「三个统一点」的编号**（沿用 [agent-os-target-architecture.md](./agent-os-target-architecture.md) §2：①渲染统一 / ②控制统一 / ③编排），**不是层号** —— ① 落在协议/进程层内部（ACP Sidecar 的 turn-shaper）。
 
 ```
-+=========================================================================+
-|                         DATA PLANE (Phase 1)                            |
-|                                                                         |
-|  +-------------------------------------------------------------------+ |
-|  |                   @agent/server-manager                           | |
-|  |  - Spawns OpenCode binary as sidecar (Desktop)                    | |
-|  |  - Health monitoring and crash recovery                           | |
-|  +----------------------------+--------------------------------------+ |
-|                               |                                        |
-|  +----------------------------+--------------------------------------+ |
-|  |                   OpenCode Server                                  | |
-|  |                REST API + SSE Events                               | |
-|  +---------+----------------+----------------+-----------------------+ |
-|            |                |                |                         |
-|  +---------+---------+  +---+------------+  +----------+----------+   |
-|  |  Desktop App      |  |  Channel       |  |  Proactive          |   |
-|  |  (Tauri + React)  |  |  Gateway       |  |  Services           |   |
-|  |                   |  |  (Hono)        |  |  - Heartbeat        |   |
-|  |  - Chat UI        |  |                |  |  - Cron             |   |
-|  |  - Settings       |  |  - DingTalk    |  +---------------------+   |
-|  |  - Workspace Mgr  |  |  - Feishu      |           |                |
-|  +-------------------+  |  - Slack       |           |                |
-|            |            +----------------+           |                |
-|            |                   |                     |                |
-|  +---------+-------------------+---------------------+---------+      |
-|  |                     @agent/workspace                        |      |
-|  |  - ~/.ultrawork/ directory management                       |      |
-|  |  - IDENTITY.md, SOUL.md, MEMORY.md                          |      |
-|  |  - Session context injection                                |      |
-|  +-------------------------------------------------------------+      |
-+=========================================================================+
-            ^                    ^
-            |                    |
-     Desktop (local)      IM webhooks (remote)
+┌──────────────────────────────────────────────────────────────────────────┐
+│  产品 / UI 层                                                            │
+│    Desktop (Tauri 2 + React 19)                                          │
+│      Home「单 Agent | Team」出生锁定 · /session/:id · /orchestration     │
+│    Channel Gateway :4097   钉钉 / 微信 / 企微 / 飞书                     │
+└──────┬──────────────────────────────────────────────┬────────────────────┘
+       │ ① 每一轮对话：call(REST 语义) + subscribe(事件流)，按会话绑定派发
+       │                                              │ ② 编排入口：
+       │                                              │   /orchestration 页
+       │                                              │   Team 会话创建
+       │                                              │   delegate 回连
+       │                                              │   （HTTP+SSE :4099）
+       │                                              ▼
+       │        ┌─────────────────────────────────────────────────────────┐
+       │        │  ③ 编排层：@agent/orchestrator（core/orchestrator）     │
+       │        │    原语 spawn / await / steer / cancel + 治理护栏       │
+       │        │    pipeline DAG（Pipeline = Fan-out 同一执行器）        │
+       │        │    delegate（D-2 契约回卷）· worktree 隔离 · QueueOwner │
+       │        │    宿主进程 = ACP Sidecar :4099，故编排能扛 WebView 重载│
+       │        └───────────────────────────┬─────────────────────────────┘
+       │                                    │ 只消费 ② 层原语
+       │                                    │ （自持 per-workspace Connector）
+       ▼                                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ② 控制统一层：@agent/connector（core/connector）           ADR-030      │
+│    AgentBackend 契约 = createSession / prompt / cancel / fetchHistory /  │
+│      getPlan / replyPermission / subscribeSession / subscribeGlobal      │
+│    BackendCapabilities 逐项声明门控（刻意非最小公约数，D-5）             │
+│    BindingStore 会话 ↔ agentId（"opencode:default" / "acp:claude"）      │
+│    sse-transport 一份 —— 三套 SSE 收敛于此                               │
+│                                                                          │
+│      ├─ OpenCodeBackend = ApiClient + 全局 /event 流                     │
+│      │                    （todo.updated → 统一 plan.updated）           │
+│      └─ ACPBackend      = :4099 REST + per-session SSE 引用计数池        │
+└──────┬───────────────────────────────────────────┬───────────────────────┘
+       │ REST/SSE :4096                            │ HTTP/SSE :4099
+       ▼                                           ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  协议 / 进程层                                                           │
+│    opencode sidecar :4096      vendor/opencode 编译的二进制              │
+│                                                                          │
+│    ACP Client Sidecar :4099    ① 渲染统一 turn-shaper：                  │
+│                                  ACP session/update → opencode 事件形状  │
+│                                + 进程生命周期 + per-agent 怪癖修复       │
+│                                + 编排层宿主（见 ③）                      │
+│        └─ ACP stdio JSON-RPC 子进程： claude · gemini · codex · …        │
+│                                                                          │
+│    Knowledge Sidecar :4098     本地 RAG + IMA，经 MCP 暴露给 agent       │
+│                                （不在控制链路上）                        │
+└──────────────────────────────────────────────────────────────────────────┘
+
+        ⚠ Gateway 是这条链路的例外：bridge.ts 直接 new OpenCodeBackend(...)，
+          没有 Connector、没有绑定派发 ⇒ IM 渠道会话只能跑 opencode。
 ```
+
+> **③ 编排层不直接说协议**：`orchestrator` 只 import `@agent/connector`，自己按 workspace 持有 Connector 实例（组合根 `acp-client/src/orchestration.ts`），调用箭头是**回指 ② 层**的——把它画在 :4099 里只表示「宿主进程是 ACP Sidecar」（这样编排能扛住 WebView reload），不表示它绕过统一层。
+
+### 单 Agent vs Team：两条路径
+
+Team **不是并列的第二套 runtime**，而是「普通会话 + Leader 身份 + delegate 工具」的叠加——Leader 就是一个进侧栏的普通 ROOT 会话，Team 身份只存在于注册表里：
+
+```
+  单 Agent 模式                        Team 模式（ADR-031 + discussions 017/018）
+  ─────────────                        ─────────────────────────────────────────
+  Home「单 Agent」+ 选 agent           Home「Team」+ 选 Leader + 成员多选
+        │                                    │ POST :4099 /orchestration/team/sessions
+        │ connector.createSession            ▼
+        ▼                              Leader = ROOT opencode 会话（进侧栏 + 自动标题）
+  一会话绑一 agent（BindingStore）     成员/leader 记在 team-sessions.json 注册表
+        │                                    │
+        │ connector.prompt                   │ connector.prompt（Leader 的每一轮）
+        ▼                                    │   opencode leader：每轮带 system
+   opencode  或  ACP agent                   │                   + tools{task:false}
+                                             │   ACP leader     ：创建时把 orchestrate
+                                             │                   + systemPrompt 烘进去
+                                             ▼
+                                       Leader 调 delegate 工具
+                                             │ stdio MCP（acp-client delegate-mcp shim）
+                                             ▼
+                                       POST :4099 /orchestration/delegate
+                                             │ 阻塞 + progress keepalive 防 MCP 超时
+                                             │ DelegateManager → Orchestrator.spawn()
+                                             ▼
+                                       Connector.createSession() 起子会话（侧栏隐藏）
+                                             │ runTurn()：opencode 等 idle+finish 双信号
+                                             │            ACP 阻塞 prompt 返回即终态
+                                             ▼
+                                       D-2 契约回卷
+                                       { deliverable, sessionId, tokens, cost, artifacts }
+```
+
+`/orchestration` 纯流水线页（Pipeline / Fan-out）走的是**同一个** `Orchestrator`，只是把入口从 delegate 工具换成 recipe 层（`pipeline.ts` 的 DAG 执行器）。
+
+### 分层边界的代码事实
+
+> 「统一」是**能力声明式**的，不是最小公约数式的。下表是当前真实边界，改动前先对照。
+
+| 边界 | 代码事实 | 位置 |
+|------|---------|------|
+| 后端选择 = 会话级绑定 | `backendFor(sessionId)` 查 `BindingStore`，未绑定回落 default(opencode) | `core/connector/src/connector.ts` |
+| 后端类开放注册 | `BackendKind = string`，`registerBackend()` 加后端零改上层 | `core/connector/src/types.ts` |
+| 能力非对称 | `BackendCapabilities` 逐项声明，调用方门控（ADR-030 D-5） | `core/connector/src/types.ts` |
+| 回合终态**两种语义** | opencode = fire-and-forget，等 `session.status` idle **+** 终态 finish 双信号；ACP = 阻塞 prompt，返回即终态 | `core/orchestrator/src/turn.ts` |
+| 递归护栏**两套** | opencode 子会话 `tools:{"orchestrator_*":false}`；ACP 子会话不注入 `mcpServers` | `orchestrator.ts` / `acp-client/src/inproc-acp-backend.ts` |
+| prompt 选项含后端专有字段 | `tools` / `system` = opencode-only；`attachments` 需 `capabilities.image` | `types.ts` 的 `PromptOptions` |
+| backend-specific 面直接漏出 | `OpenCodeBackend.api` 暴露 ApiClient（provider/model/mcp/file 未进统一接口） | `backends/opencode.ts` → `desktop/src/lib/use-api.ts` |
+| **Gateway 未接入 Connector** | 只 `new OpenCodeBackend(...)`，无 Connector / 无绑定派发 ⇒ IM 渠道会话不能用 ACP agent、不能开 Team | `channel/gateway/src/bridge.ts` |
+| delegate 只中继 permission | `DelegateEvent` 无 question 类型 ⇒ 委派跑会提问的技能会阻塞到超时 | `core/orchestrator/src/delegate.ts`（gotchas §10） |
 
 ## Integration Strategy
 
@@ -143,14 +220,15 @@ The monorepo uses a **two-level directory structure** focused on Phase 1 require
 |-------|---------|----------------------|
 | **Core** | `@agent/api-client` | OpenCode Server SDK - Type-safe REST API calls and SSE event streaming. Foundation for all OpenCode communication. |
 | | `@agent/server-manager` | Process Lifecycle Manager - Spawns OpenCode sidecar, monitors health, handles crash recovery with auto-restart. |
-| | `@agent/connector` | Control + event unification layer. ✅ **已按 [ADR-030](./decisions/030-agent-connector-control-layer.md) 落地（阶段2，2026-06-11）**——本 Part II 草案被其取代/细化（补 SSE、纳入 ACP backend、D-8 开放可插拔 backend 类「acp-stdio / product-native / acp-remote」）；实现状态见 Part I 状态表 |
+| | `@agent/connector` | ✅ **② 控制 + 事件统一层**（[ADR-030](./decisions/030-agent-connector-control-layer.md)，阶段2 / 2026-06-11）—— `AgentBackend` 可插拔后端（`BackendKind` 开放注册，首发 OpenCodeBackend / ACPBackend）+ `BackendCapabilities` 声明门控（刻意非最小公约数）+ `BindingStore` 会话↔agent 绑定 + `sse-transport` 三流收敛 + 统一 `ConnectorEvent` 事件模型。分层图见 [§System Architecture](#system-architecture) |
+| | `@agent/orchestrator` | ✅ **③ 编排层**（[ADR-031](./decisions/031-multi-agent-orchestration.md)，阶段3 全量 / 2026-06-12，含 017-018 Team 页）—— 原语 spawn/await/steer/cancel + 治理护栏（maxConcurrent / maxDepth=1 / 超时 / 子会话 tools deny）+ pipeline DAG（Pipeline = Fan-out 同一执行器）+ worktree 隔离 + agent 驱动 delegate（D-2 契约回卷）+ QueueOwner。**只消费 connector 原语，不碰协议细节**；宿主进程 = `@agent/acp-client` :4099 |
 | | `@agent/ui` | UI Component Library - Shared React components (chat, diff, markdown, dialogs) ensuring consistent UX. 🔲 规划中，当前组件在 desktop/src/components 内 |
 | | `@agent/workspace` | Runtime Workspace Manager - Manages ~/.ultrawork/ directory in user's home. Handles IDENTITY.md, SOUL.md, MEMORY.md, HISTORY.md read/write and session context injection. Unified user-level storage for agent identity and memory. 🔲 规划中，工作区切换已用 x-opencode-directory header 实现 |
 | | `@agent/notifier` | Notification Dispatcher - Outbound notification to multiple targets: desktop (Tauri), IM channels (DingTalk/Feishu/Slack webhooks), and file output. 🔲 规划中 |
 | **Client** | `@agent/client-desktop` | ✅ Desktop Application - Full-featured Tauri app with local sidecar, React 19 + Vite 7 + Tailwind 4. |
-| **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket) + WeChat ilink (HTTP 长轮询), Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json`. Feishu/Slack 待实现. |
+| **Channel** | `@agent/channel-gateway` | ✅ 已实现 — IM Gateway Service. 独立 sidecar :4097 (Tauri 托管), DingTalk Stream Mode (WebSocket) + WeChat ilink (HTTP 长轮询), Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json`. **四个 adapter 均已实现：钉钉 / 微信 / 企微 / 飞书**（`src/adapters/{dingtalk,wechat,wecom,feishu}`）；Slack 待实现. ⚠️ 只 import `OpenCodeBackend`，未用 `Connector` 派发 ⇒ 渠道会话绑不了 ACP agent. |
 | **Knowledge** | `@agent/knowledge-sidecar` | ✅ 已实现 — Knowledge Base Service. 独立 sidecar :4098 (Tauri 托管), 本地文件夹 RAG (Parent-Child 分块 + TF-IDF + FTS5 BM25 + RRF) + 第三方平台 IMA adapter (Wiki/Notes) + MCP stdio bridge, DB `~/.ultrawork/knowledge/kb.db` (SQLite WAL). 详见 ADR-026. |
-| **Agent** | `@agent/acp-client` | 🚧 阶段1（claude 达标） — ACP Client Sidecar. 独立 sidecar :4099 (Tauri 托管), spawn 外部 agent 子进程（ACP stdio JSON-RPC, SDK 0.25）, `TurnShaper` 整形成 opencode SSE 形状复用 ADR-029 渲染器, 权限挂起回环→permission-dock, 知识库 MCP opt-in, 三阶段优雅关闭. 配置 `~/.config/ultrawork/agents.json`. 详见 ADR-027 + agent-os-target-architecture.md. |
+| **Agent** | `@agent/acp-client` | ✅ 阶段1（claude / gemini / qoder / hermes / codex 达标） — ACP Client Sidecar. 独立 sidecar :4099 (Tauri 托管), spawn 外部 agent 子进程（ACP stdio JSON-RPC）, `TurnShaper` 整形成 opencode SSE 形状复用 ADR-029 渲染器, 权限挂起回环→permission-dock, 会话历史持久化, 三阶段优雅关闭. 配置 `~/.config/ultrawork/agents.json`. **同时是编排层宿主进程**（`/orchestration/*` · `/team/*` · `delegate-mcp` stdio shim）. 详见 ADR-027 / ADR-031 + agent-os-target-architecture.md. |
 | **Proactive** | `@agent/proactive-heartbeat` | 🔲 Heartbeat Service - Independent background service. Periodically reads task/session state, uses LLM to summarize progress, updates HEARTBEAT.md, notifies users. |
 | | `@agent/proactive-cron` | 🔲 Cron Service - Independent background service with HTTP API. Receives job definitions from Desktop UI or via IM channels, executes scheduled LLM tasks, delivers results via notifier. |
 
@@ -438,58 +516,33 @@ your-agent/
 
 ## Package Dependency Graph
 
+> **更新于 2026-09-08**：下图由各包 `package.json` 的 workspace 依赖**逐个核对**重画。旧版是规划期的图（把 connector 画在 `@agent/workspace` 之下、喂 proactive 服务），与实现不符 —— `@agent/workspace` / `@agent/notifier` / proactive 两包至今 🔲 未实现。
+
 ```
-                           DATA PLANE (Phase 1)
+  核心层（被依赖者在上；边 = 真实 package.json 依赖）
 
-                +-------------------+
-                | @agent/api-client |
-                +---------+---------+
-                          |
-          +---------------+---------------+
-          |                               |
-+---------+---------+           +---------+---------+
-|@agent/server-     |           |    @agent/ui      |
-|manager            |           |                   |
-+---------+---------+           +---------+---------+
-          |                               |
-          +------+                        |
-                 |                        |
-   +-------------+--------+              |
-   |                       |              |
-   |  +-------------------+|              |
-   |  |@agent/workspace   ||              |
-   |  +---------+---------+|              |
-   |            |          |              |
-   +------+-----+----+    |              |
-          |           |    |              |
-+---------+---------+ |    |              |
-|@agent/connector   | |    |              |
-|(+ context.ts,     | |    |              |
-| hooks.ts)         | |    |              |
-+--------+----------+ |    |              |
-         |             |    |              |
-  +------+------+------+---+---+----------+
-  |             |              |
-+-+--------+ +--+----------+ ++----------+------+
-|@agent/   | |@agent/      | |@agent/client-    |
-|channel-  | |notifier     | |desktop           |
-|gateway   | +--+----------+ +------------------+
-+----------+    |
-                |
-       +--------+-------+
-       |                 |
-+------+----------+ +---+---------------+
-|@agent/proactive- | |@agent/proactive-  |
-|heartbeat         | |cron               |
-|(+ watchdog)      | |(+ HTTP API)       |
-+------------------+ +------------------+
+  @agent/api-client             叶子：无 workspace 依赖。OpenCode REST/SSE SDK + 类型
+  ├── @agent/server-manager     sidecar spawn / health / stop
+  └── @agent/connector          ② 控制+事件统一层（ADR-030）
+      └── @agent/orchestrator   ③ 编排层（ADR-031）—— 只消费 connector 原语（api-client 仅 import type）
 
-Note: Heartbeat and Cron use @agent/connector for all OpenCode
-interactions, gaining automatic workspace context injection.
-Heartbeat also directly imports @agent/workspace for HEARTBEAT.md writes.
+  应用 / 可执行层（依赖 → 右侧）
 
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  @agent/client-desktop           →  api-client · connector · server-manager · orchestrator(仅 import type)
+  @agent/acp-client        :4099  →  api-client · connector · orchestrator   ← 编排层宿主进程
+  @agent/channel-gateway   :4097  →  api-client · connector                  ⚠ 见下方注
+  @agent/knowledge-sidecar :4098  →  （无 workspace 依赖 —— 经 MCP 与 agent 交互，不在控制链路上）
 
+  ⚠ Gateway 依赖 connector 包，但只 import { OpenCodeBackend, UNLIMITED_SSE_RETRY } —— 没有
+    Connector 实例、没有绑定派发，所以 IM 渠道会话只能跑 opencode（详见 §System Architecture）。
+```
+
+<details>
+<summary>🔲 规划中：Proactive Services 数据流（Heartbeat / Cron，尚未实现，仅存档设计意图）</summary>
+
+> 原图附带的设计意图（一并存档）：Heartbeat 与 Cron 的所有 OpenCode 交互都经 `@agent/connector`，以获得自动的 workspace 上下文注入；Heartbeat 另直接 import `@agent/workspace` 写 `HEARTBEAT.md`。三个包（`proactive-heartbeat` / `proactive-cron` / `workspace`）至今均未实现。
+
+```
                   PROACTIVE SERVICES
 
                              INBOUND                    OUTBOUND
@@ -518,20 +571,27 @@ Channels ──> Channel ──>│ OpenCode           ├───> Channels (I
                   +---------------------+
 ```
 
+</details>
+
 ### Package Dependencies Table
+
+> ✅ = 已实现并在产物里；🔲 = 规划中（包尚不存在）。依赖列 = `package.json` 里的 `@agent/*`。
 
 | Package | Path | Functional Summary | Internal Dependencies |
 |---------|------|-------------------|----------------------|
 | `@agent/api-client` | `core/api-client` | ✅ OpenCode REST/SSE SDK, type-safe API calls | none |
 | `@agent/server-manager` | `core/server-manager` | ✅ Sidecar lifecycle: spawn, health check, auto-restart (local only) | `@agent/api-client` |
-| `@agent/connector` | `core/connector` | ✅ 控制+事件统一层（ADR-030）：OpenCodeBackend/ACPBackend 可插拔 adapter + 统一 SSE transport + BindingStore（sidecar 持久化 hydration）+ capabilities 门控 + `onSessionCreate` hook 挂载点（记忆注入留位） | `@agent/api-client` |
-| `@agent/ui` | `core/ui` | 🔲 React component library: chat, diff, markdown, dialogs (当前在 desktop/src/components) | `@agent/api-client` |
-| `@agent/workspace` | `core/workspace` | 🔲 Runtime ~/.ultrawork/ manager: identity, soul, memory, history, context assembly | none |
-| `@agent/notifier` | `core/notifier` | 🔲 Outbound notification dispatcher: desktop, IM webhooks, file | none (standalone) |
-| `@agent/client-desktop` | `client/desktop` | ✅ Tauri + React 19 app: full-featured, local sidecar | `@agent/api-client`, `@agent/server-manager` |
-| `@agent/channel-gateway` | `channel/gateway` | ✅ DingTalk Stream Mode + Bridge + Hono API + config 持久化。Feishu/Slack 待实现 | `@agent/connector`（OpenCodeBackend，阶段2 起；REST 面仍是同一 ApiClient） |
-| `@agent/proactive-heartbeat` | `proactive/heartbeat` | 🔲 Background service: periodic LLM-powered progress summary + server watchdog | `@agent/connector`, `@agent/notifier`, `@agent/workspace` |
-| `@agent/proactive-cron` | `proactive/cron` | 🔲 Background service with HTTP API: scheduled LLM tasks, MCP tools | `@agent/connector`, `@agent/notifier` |
+| `@agent/connector` | `core/connector` | ✅ **② 控制+事件统一层（ADR-030）**：`AgentBackend` 可插拔后端（OpenCodeBackend/ACPBackend）+ capabilities 声明门控 + `BindingStore` 会话↔agent 绑定（sidecar 持久化 hydration）+ `sse-transport` 三流收敛 + `onSessionCreate` hook 挂载点 | `@agent/api-client` |
+| `@agent/orchestrator` | `core/orchestrator` | ✅ **③ 编排层（ADR-031）**：spawn/await/steer/cancel 原语 + 治理护栏 + pipeline DAG（Pipeline=Fan-out 同一执行器）+ delegate（D-2 契约）+ worktree 隔离 + QueueOwner。**只消费 connector 原语，不碰协议细节**；宿主进程 = `@agent/acp-client` | `@agent/api-client`（**仅 `import type`**）, `@agent/connector` |
+| `@agent/acp-client` | `agent/acp-client` | ✅ ACP Client Sidecar :4099：spawn 外部 agent（stdio JSON-RPC）+ `turn-shaper` 整形成 opencode SSE 形状 + 权限回环 + 历史持久化；**同时是编排层宿主**（`/orchestration/*` · `/team/*` · `delegate-mcp` shim） | `@agent/api-client`, `@agent/connector`, `@agent/orchestrator` |
+| `@agent/client-desktop` | `client/desktop` | ✅ Tauri + React 19 app：全部后端调用经 connector；编排/Team 面经 :4099 HTTP+SSE | `@agent/api-client`, `@agent/connector`, `@agent/server-manager`, `@agent/orchestrator`（**仅 `import type`**，运行时实体在 acp-client） |
+| `@agent/channel-gateway` | `channel/gateway` | ✅ IM 渠道网关 :4097（钉钉 Stream / 微信 ilink / 企微 / 飞书）+ Bridge + SessionStore + Hono。⚠️ **只 import `OpenCodeBackend`，未用 `Connector` 派发** ⇒ 渠道会话绑不了 ACP agent、开不了 Team | `@agent/api-client`, `@agent/connector` |
+| `@agent/knowledge-sidecar` | `knowledge/sidecar` | ✅ 知识库 sidecar :4098：本地 RAG（FTS5 + BM25/TF-IDF + RRF）+ IMA adapter + MCP bridge。经 MCP 暴露给 agent，**不在 connector 控制链路上** | none |
+| `@agent/ui` | `core/ui` | 🔲 React component library（当前组件仍在 `desktop/src/components`） | — |
+| `@agent/workspace` | `core/workspace` | 🔲 `~/.ultrawork/` identity/soul/memory/history 管理（工作区切换现由 `x-opencode-directory` header 实现） | — |
+| `@agent/notifier` | `core/notifier` | 🔲 出站通知分发（desktop / IM / file） | — |
+| `@agent/proactive-heartbeat` | `proactive/heartbeat` | 🔲 周期性进度摘要 + server watchdog | — |
+| `@agent/proactive-cron` | `proactive/cron` | 🔲 定时 LLM 任务 + HTTP API | — |
 
 ### Workspace Configuration
 

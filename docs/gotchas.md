@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-08-23 -->
+<!-- last-synced: 2026-09-08 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -84,6 +84,7 @@
 
 ## 4. Gateway / Channel（:4097）
 
+- **Gateway 不走 `Connector`，只 import `OpenCodeBackend`（2026-09-08 核对代码）**：`bridge.ts` 持有的是 `Map<workspace, OpenCodeBackend>`——**没有 `Connector` 实例、没有 `BindingStore` 绑定派发**，从 `@agent/connector` 包里取的只有 `OpenCodeBackend` + `UNLIMITED_SSE_RETRY`（复用到的是统一 SSE transport，不是控制统一层）。后果：**IM 渠道会话恒定跑 opencode**——绑不了 ACP agent（claude/gemini/codex…）、开不了 Team、`capabilities` 门控与「按会话绑定派发」整条链路对渠道不生效。⚠️ **别被文档误导**：`agent-os-target-architecture.md` §3.5 曾写成「Gateway 与 Desktop 共用同一条控制链路（经 connector）」并引用 `connector.bindSession`——**那个 API 全仓从未存在**（实际是 `connector.bindings.bind()` + `connector.backendFor()`）；该节已标 🔲 未落地。给渠道加多 agent 能力 = 把 `bridge.ts` 的 `OpenCodeBackend` 换成 `Connector` 再注册 `ACPBackend`，**不是加 adapter**。分层全貌见 [`architecture-phase1.md` §System Architecture](./architecture-phase1.md#system-architecture)；另见 §9「OpenCodeBackend.prompt 的 tools 缺省」条——正因为不走 connector，bridge 才要**单独恒传** `orchestrator_*` deny。
 - **重编译必须用 `bun run build:gateway`**（或 `scripts/build-gateway.ts`）：`turbo run build` 只输出到 `dist/`，**不会**更新 sidecar binaries 目录。改完不重编译 = 不生效，且 Tauri 会复用旧进程，需重启。
 - **测试 Mock**：`DWClient` / `TokenManager` 必须用 `class` mock，不能用 `vi.fn()`。
 - **CORS 白名单**：仅允许 `tauri://localhost` / `https://tauri.localhost` / `http://localhost:1420`，不要用 `origin: "*"`。

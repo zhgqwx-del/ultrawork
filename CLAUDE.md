@@ -16,7 +16,8 @@
 |------|---------|
 | `docs/conventions.md` | 写新组件/修改状态管理/处理 SSE 时（正向模式） |
 | `docs/gotchas.md` | 调 OpenCode/MCP/Gateway/IMA/Tauri API 或排查诡异行为时（反向坑点，**强烈建议任务前必读对应章节**） |
-| `docs/architecture-phase1.md` | 理解系统架构、模块职责时 |
+| `docs/architecture-phase1.md` | 理解系统架构、模块职责时（**§System Architecture = 当前分层图 + 单 Agent/Team 两条路径 + 分层边界表**） |
+| `docs/agent-os-target-architecture.md` | 理解「多 agent 统一」为什么这样分层时（协议层→①渲染统一→②connector 控制统一→③orchestrator 编排，§2-§3） |
 | `docs/api-reference.md` | 调用 OpenCode API、排查请求格式时（端点 SSOT） |
 | `docs/quality-gates.md` | 改动合入/收尾前对照完成定义时 |
 | `docs/decisions/README.md` | 需要了解某个技术选型的背景时 |
