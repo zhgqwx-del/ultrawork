@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **架构文档与代码对齐：补上分层图、修掉两处文档-代码分叉（2026-09-08，仅文档）** —— 起因是「单 agent / Team
+  在架构上如何分层、对 opencode 与其它 agent 的调用有没有统一」这个问题在仓库里找不到一张画对的图。
+  - **`docs/architecture-phase1.md` §System Architecture 整节重写**：原图是**前 connector 时代**的（只有
+    server-manager / OpenCode Server / Desktop / Gateway / Proactive / `@agent/workspace`，后两个至今未实现，
+    而 connector / orchestrator / ACP sidecar / knowledge sidecar 一个都没画）。新增①**四层分层图**
+    （产品UI → ③ orchestrator → ② connector → 协议/进程）②**「单 Agent vs Team 两条路径」图**——仓库里第一次
+    画出 delegate 全链路（Leader 创建 → 两种不同构装配 → delegate 工具 → stdio MCP shim → `POST :4099
+    /orchestration/delegate` → `Orchestrator.spawn()` → `Connector.createSession()` → D-2 契约回卷）
+    ③**分层边界的代码事实表**（9 行，每行带文件位置）。
+  - **`docs/images/*.png` 四张图降级为历史参考**：mtime 停在 2026-03-10，早于 connector 落地（06-11），
+    画的是规划期形态。无法重生成，故在正文显式声明「以 ASCII 图为准」——错的图和没有图对读者伤害相同。
+  - **`docs/agent-os-target-architecture.md` §3.5 修两处文档-代码分叉**：① 文档称 Gateway「与 Desktop 共用
+    同一条控制链路（经 connector）」，实际 `bridge.ts` 直接 `new OpenCodeBackend(...)`，没有 Connector 实例、
+    没有绑定派发 ⇒ **IM 渠道会话只能跑 opencode，绑不了 ACP agent 也开不了 Team**；② 文档引用的
+    **`connector.bindSession` 这个 API 全仓从未存在**（实际是 `connector.bindings.bind()` + `backendFor()`）。
+    两处都标为 🔲 未落地并写明落地动作。顺带把 §7 路线图阶段 3 从 `🟡 第一批` 更正为 `✅ 全量`。
+  - **`docs/architecture-phase1.md` §Package Dependency Graph + 依赖表重画**：旧图是规划期的（把 connector
+    画在 `@agent/workspace` 之下、喂 proactive 服务），依赖表**缺 `@agent/orchestrator` 与 `@agent/acp-client`
+    两行**，desktop 的依赖也没写 connector。新图由**各包 `package.json` 逐个核对**得到；Proactive Services
+    子图收进 `<details>` 并标 🔲 未实现。
+  - **§Module Overview 三处客观过时**：补 `@agent/orchestrator` 行（原表完全没有）；`@agent/acp-client`
+    `🚧 阶段1（claude 达标）` → `✅（claude/gemini/qoder/hermes/codex）` 并注明它同时是编排层宿主；
+    Gateway 的「Feishu/Slack 待实现」更正为**四个 adapter（钉钉/微信/企微/飞书）均已实现**、只剩 Slack。
+  - **`docs/gotchas.md` §4 固化「Gateway 不走 Connector」**（SSOT，并把 `last-synced` 推到 2026-09-08）——
+    这条此前只以「gateway IM 链路不走 connector」的半句话形式藏在 §9 的某个 bullet 里，改渠道的人不会读到；
+    现在明确写出后果（渠道恒跑 opencode、绑不了 ACP agent、开不了 Team）、正确的落地动作（换 `Connector` 而非加 adapter），
+    并点名那个不存在的 `connector.bindSession`，避免下一个人照着旧文档去找。
+  - **`CLAUDE.md` 按需 Read 表补 `docs/agent-os-target-architecture.md`** —— 唯一讲清「为什么这样分层」的
+    文档此前只在 `document-map.md` 里出现过，任务开始时不会被加载到。
+
 ## [0.3.8] - 2026-08-24
 
 ### Added

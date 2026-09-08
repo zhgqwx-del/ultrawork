@@ -107,6 +107,8 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+> 📌 **本图不含 Team 模式**（Team 是 discussions/017+018 的产物，晚于本文 2026-06-08 的成文时间）。反映当前实现的分层图 + 「单 Agent vs Team 两条路径」图见 [architecture-phase1.md §System Architecture](./architecture-phase1.md#system-architecture)。
+
 > 图示首发两个 backend；**backend 类是开放的**（ADR-030 D-8 / §0 C4）——再接 agent = 注册新 adapter（原生 ACP 走 `acp-stdio` 复用整族；openclaw 等 `product-native` 走 WebSocket/HTTP bespoke），ACP Sidecar 框内的 claude/gemini/qoder 只是 acp-stdio 族示例。主架构不变。
 
 **三个统一点，分阶段建，互不返工：**
@@ -200,9 +202,11 @@ interface Connector {
 - **首发模式（D2）**：**Pipeline**（A→B→C，上一步输出文件作下一步输入）先做；**Fan-out**（1 planner→N worker 并行，独立 cwd/worktree）紧随。Supervisor/Debate 作组合留后续；**Swarm 走 A2A，不在范围**。
 
 ### 3.5 Gateway × 多 agent（IM 流式适配）
-Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connector），但 IM 渠道的**流式形态不同**——不能像桌面那样逐 chunk 刷新，须把 ACP/opencode 的细粒度流合并成「块」再下发，否则 IM 消息会被刷屏。
+> ⚠️ **实现现状（2026-09-08 核对代码）**：本节描述的是**目标形态，尚未落地**。`channel/gateway/src/bridge.ts` 至今直接 `new OpenCodeBackend(...)`（per-workspace map），**没有** `Connector` 实例、没有绑定派发 ⇒ **IM 渠道会话只能跑 opencode，绑不了 ACP agent，也开不了 Team**。Gateway 从 connector 包里只取了 `OpenCodeBackend` + `UNLIMITED_SSE_RETRY`（统一 SSE transport 是复用到了的）。
 
-- **会话↔agent 绑定**：IM 一轮消息要派给某 agent 时，Gateway 走与 Desktop **同一套** `connector.bindSession` 路由抽象，不另写一套。
+Gateway（钉钉/微信）**目标**是与 Desktop 共用同一条控制链路（经 connector），但 IM 渠道的**流式形态不同**——不能像桌面那样逐 chunk 刷新，须把 ACP/opencode 的细粒度流合并成「块」再下发，否则 IM 消息会被刷屏。
+
+- **会话↔agent 绑定（🔲 未落地）**：IM 一轮消息要派给某 agent 时，Gateway 应走与 Desktop **同一套** `Connector` + `BindingStore` 路由抽象（实际 API 是 `connector.bindings.bind(sessionId, agentId)` + `connector.backendFor(sessionId)` 派发——**本文早期写的 `connector.bindSession` 从未存在**），不另写一套。落地动作 = 把 `bridge.ts` 里的 `OpenCodeBackend` 换成 `Connector`（再注册 `ACPBackend`）。
 - **流式合并（接 P1-1）**：把 `agent_message_chunk` 经 block 合并再下发——参数量级对齐 openclaw 实证：`coalesceIdleMs ≈ 300` + `maxChunkChars ≈ 1200`（013 §7）。这层在 connector 之上、Gateway 侧实现，对 backend 透明。
 - **权限/question**：保留 Gateway 现有轮询兜底语义（ADR-008），由 connector 完整透传，避免 IM 侧权限自动应答回退（ADR-030 风险项）。
 
@@ -278,7 +282,7 @@ Gateway（钉钉/微信）与 Desktop 共用同一条控制链路（经 connecto
 | **0 · 重写基线** ✅ (2026-06-10) | **参考 feat/acp-support 设计，在当前 main 上重建**（B2）：ACP Sidecar :4099 / UnifiedAgent / agent-selector / agents.json / auto-connect。**保留 ADR-029 渲染器**，不回退 chat 重构。 | — | ✅ 协议管道在 main 上跑通（opencode + claude，`feat/agent-os-phase0` 分支） |
 | **1 · 档1 异构归一化** ✅ (2026-06-11) | 渲染归一化（sidecar 事件桥，§3.2）+ 交互归一化（权限/能力协商）+ 进程稳定性。claude/gemini/qoder 三 agent 真机达标（含历史持久化 W4b、token 页脚、thoughtLevel）。坑点固化 [gotchas §8](./gotchas.md) | 阶段0 | ✅ 全清单真机通过 |
 | **2 · @agent/connector** ✅ (2026-06-11) | 建包 + OpenCodeBackend 等价层 → Desktop 收敛 → Gateway 收敛 → ACPBackend 收编（C1）。三套 SSE→一处；会话绑定 sidecar 持久化 + hydration；capabilities 门控；QueueOwner/onSessionCreate 边界预留（C2/D-7）。 | 阶段1 | ✅ 全部后端调用经 connector；切 backend 对上层透明（isACP 分流全删）；Gateway 复用 connector（bridge.test 35 用例语义零删除）；原语就绪 |
-| **3 · 档2 编排** 🟡 第一批 ✅ (2026-06-12) | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。**第一批已落地**：原语层 + Pipeline recipe + 编排独立路由 UI（宿主 = ACP sidecar :4099，`/orchestration/*`，ADR-031 落地备注）；**下一批**：delegate 宿主 MCP 工具 + Fan-out。 | 阶段2 | ✅ Pipeline recipe 端到端（真机：opencode 分析 → claude 报告，产物串接 + 权限 relay 应答 + cancel/超时/重启 interrupted）；🔲 delegate 回卷 + Fan-out worktree 隔离（下一批） |
+| **3 · 档2 编排** ✅ 全量 (2026-06-12，含 017/018 Team 页) | 独立包 orchestrator（D1）；原语层（spawn/await/steer/cancel + 治理护栏）→ agent 驱动 delegate（opt-in，D3）→ UI 嵌套懒加载（D4）→ **Pipeline 先**（D2）→ Fan-out。**第一批已落地**：原语层 + Pipeline recipe + 编排独立路由 UI（宿主 = ACP sidecar :4099，`/orchestration/*`，ADR-031 落地备注）；**后续批次亦已完成**：delegate 宿主 MCP 工具（`delegate-mcp` stdio shim）+ Fan-out worktree 隔离 + Team 页（017/018：Home segmented 出生锁定 → Leader=ROOT 会话 → 侧栏混排徽标 → Session 页合流）。 | 阶段2 | ✅ Pipeline recipe 端到端（真机：opencode 分析 → claude 报告，产物串接 + 权限 relay 应答 + cancel/超时/重启 interrupted）；✅ delegate 回卷（D-2 契约）+ Fan-out worktree 隔离 |
 | **4 · 档3 自动调度** | router（规则/LLM）自动派单，用户可覆盖。 | 阶段3 | 远期研究 |
 
 ---
