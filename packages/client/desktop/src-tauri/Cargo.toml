@@ -17,7 +17,9 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# tray-icon: close-to-background (discussions/061) needs a tray on Windows/Linux
+# and a menu-bar icon on macOS. image-png: decode the bundled tray template PNG.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 # A second launch must focus the running window, not boot a rival set of sidecars
 # (dynamic ports removed the accidental lock the fixed ports used to provide).

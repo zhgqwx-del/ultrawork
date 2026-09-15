@@ -1,6 +1,6 @@
 # 061 — 关窗口不退出：隐藏到后台 + 托盘 / 菜单栏常驻
 
-> 状态：**方案已定稿（2026-09-15），未实现**
+> 状态：**已实现（2026-09-15，ADR-074），mac 真机 9 步全过；Windows/Linux 真机待验** —— 验证记录见 §八
 > 日期：2026-09-15
 > 触发：用户对照 QoderWork / WorkBuddy（均为 Electron）——它们在 macOS 点 X 只关窗口、进程与服务仍在；Ultrawork 点 X 是整个 app 退出、4 个 sidecar 全杀。Windows 同样。
 > 用户拍板（2026-09-15）：① Linux 一起做，三平台一致 ② macOS 加菜单栏图标 ③ **不做**「关闭时隐藏/退出」设置项（对照产品没有，不给用户多一步）④ 首次隐藏弹一次托盘气泡（Win/Linux）⑤ 启动失败态关窗直接退出 ⑥ 菜单栏模板图先用现有 icon 转灰度占位
@@ -46,11 +46,11 @@
 
 ### 决策细则
 
-- **D1 关窗决策抽成纯函数**：`close_action(platform, tray_ready, boot_stage) -> Hide | Quit`，配单测。规则：`boot_stage == failed` ⇒ Quit（引擎起不来没有值得常驻的东西，隐藏一个坏实例只会让「重开」拿到同一个坏实例）；Linux 且 `!tray_ready` ⇒ Quit（用户不能失去唯一可见入口）；其余 Hide。
+- **D1 关窗决策抽成纯函数**：`close_action(platform, tray_ready, boot_stage) -> Hide | Quit`，配单测。规则：`boot_stage == failed` ⇒ Quit（引擎起不来没有值得常驻的东西，隐藏一个坏实例只会让「重开」拿到同一个坏实例）；**非 mac** 且 `!tray_ready` ⇒ Quit（Windows/Linux 没有 Dock，用户不能失去唯一可见入口；实现时从「仅 Linux」放宽到「非 mac」）；其余 Hide。
 - **D2 托盘只创建一次**，结果存 `TRAY_READY: AtomicBool`；Linux 用 `catch_unwind(AssertUnwindSafe)` 包住（panic 不能带崩启动）。在 `setup()` 里建（瞬时操作，符合 ADR-055 约束；tray 与 GTK 都要求主线程）。
 - **D3 `restore_main_window(app)` 一个 helper**：`unminimize → show → [windows: webview.show] → set_focus`，single-instance / `Reopen` / 托盘左键 / 托盘菜单四处共用。
 - **D4 macOS 原生全屏下的 X**：先 `set_fullscreen(false)` 再隐藏（全屏窗口占独立 Space，直接 hide 留空 Space）。Tauri 无 `leave-fullscreen` 事件 ⇒ 退全屏后延迟隐藏或等下一个 `Resized`，**时序真机定**。
-- **D5 托盘文案跟随应用语言**：Rust 不知道 renderer locale ⇒ 首帧按系统语言判 zh/en，renderer 在 locale 就绪后 `invoke("set_tray_labels", { open, quit, hint })` 覆盖；切语言时再调一次。
+- **D5 托盘文案跟随应用语言**：Rust 不知道 renderer locale ⇒ 托盘先用英文默认值（实现时放弃了「首帧按系统语言判」：renderer 两秒内必然覆盖，不值得为此在 Rust 侧加 locale 探测），`I18nProvider` 在 `t` 变化时 `invoke("set_tray_labels", { open, quit, tooltip, hintTitle, hintBody })` 覆盖，切语言自动再调。
 - **D6 图标**：Windows/Linux 用现有 icon；macOS 菜单栏用 `icon_as_template(true)`，需纯 alpha 单色图（22×22 @1x/@2x）——**先由现有 icon 转灰度占位**（构建期或资源目录加 `icons/tray-template.png`），用户后续出正式图替换。
 - **D7 Linux 打包**：`tauri.conf.json` deb `depends` 加 `libayatana-appindicator3-1`、rpm 加 `libayatana-appindicator-gtk3`（与现有 `curl`/`lsof` 并列）。AppImage 是否内置该 `.so` 未知（`@tauri-apps/cli` 是编译二进制查不到）⇒ 靠 release CI 产物检查（见验收清单）。
 - **D8 Windows webview 隐藏**：`CloseRequested` 里 `if cfg!(windows) { webview.hide() }`，唤回时 `show()`；mac/Linux 不需要（WKWebView / WebKitGTK 随窗口自动挂起）。
@@ -119,3 +119,27 @@
 - 无自动更新插件、无 `app.restart()` 使用。
 - `titleBarStyle: Overlay` + 隐藏/唤回：窗口未销毁，位置尺寸原样。
 - renderer 的通知决策显式不依赖 `document.visibilityState`（`notify-decide.ts`），隐藏态 `isFocused()=false` ⇒ 响铃与横幅按既有逻辑触发。
+
+## 八、验证记录（2026-09-15，实现当天）
+
+门禁：`cargo test` 155→**160**（`close_action` 平台矩阵 3 条 + `TrayLabels` 反序列化/默认 2 条）· desktop vitest 910→**917**（`tray-labels.test.ts`：三语言键完整性 + camelCase 载荷 + 无桥 no-op + 有桥 invoke + 拒绝吞掉）· typecheck 8/8 · `check-docs` 绿。
+
+**mac 真机（`tauri dev`）**：全部用 AX 脚本驱动**原生**窗口（`System Events` 点 AXCloseButton / Dock 图标 / 菜单栏 status item / 键入 Cmd+W·Cmd+Q），断言取自 `pgrep`、`lsof -sTCP:LISTEN`、AX 窗口数、`com.apple.spaces` —— 不是看截图。
+
+| # | 步骤 | 结果 |
+|---|---|---|
+| 1 | 点 X | app pid 不变、4 个 sidecar pid/端口不变、AX 窗口 1→0、日志零 `[shutdown]` ✅ |
+| 2 | 点 Dock（`Reopen`） | 窗口回来、`frontmost` ✅ |
+| 3 | Cmd+W → 菜单栏菜单 | 读到「打开 Ultrawork / 退出 Ultrawork」（中文 ⇒ renderer 已推文案）；「打开」唤回 ✅ |
+| 4 | 最小化 → 点 Dock | `AXMinimized` true→false ✅ |
+| 5 | 原生全屏 → Cmd+W | t+0.5s 已退全屏仍可见，t+1.5s 已隐藏；`com.apple.spaces` 的 3 个全屏 Space 全属其他 pid，**无残留**；唤回后非全屏 ✅ |
+| 6 | Cmd+Q | `[shutdown] Killing` ×4、0 监听、`ports.json` 已删、1420 无 vite 孤儿 ✅ |
+| 7 | 隐藏后再启动一次 | single-instance 唤回，`pgrep` 实例数 1 ✅ |
+| 8 | 托盘「退出」 | 与 #6 相同的干净退出 ✅ |
+| 9 | `python3 -m http.server 4096` 占端口制造 `BOOT_STAGE_FAILED` → 点 X | 2s 内退出、其余 sidecar 清理 ✅ |
+| 10 | 隐藏 10 分钟 soak（无 IM 渠道） | 4 个 sidecar pid 不变；app RSS 95→77MB、CPU 0.1%；Dock 唤回后**无断线 banner**、会话列表/模型选择原样 ✅。⚠️ 两个尺子坑：① soak 期间改了一行 Rust ⇒ `tauri dev` 热重建静默换了实例（第一轮作废）；② 显示器睡眠后 AX 读到 `windows=0`、截图全黑，`caffeinate -u` 唤醒即正常 —— 别把它读成「唤回失败」 |
+
+菜单栏图标实拍：立方体剪影按系统模板色渲染（深色菜单栏下为白）。
+
+**未验（欠账，并入 MEMORY 的 Windows 批次）**：§六 #13–#14 全部 · 30 分钟带 IM 渠道 soak · 24h 内存曲线 · AppImage 内置库检查（release CI 产物）。
+

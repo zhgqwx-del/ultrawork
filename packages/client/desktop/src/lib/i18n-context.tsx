@@ -1,7 +1,8 @@
-import { createContext, useContext, useCallback, useMemo } from "react"
+import { createContext, useContext, useCallback, useEffect, useMemo } from "react"
 import { useConfig } from "./config-context"
 import { en, zhHans, type Language } from "./i18n-translations"
 import { zhHant } from "./i18n-zh-hant.generated"
+import { syncTrayLabels } from "./tray-labels"
 
 export type { Language }
 
@@ -42,6 +43,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     }
     return value
   }, [language])
+
+  // The tray menu lives in Rust and knows no language; keep it in step with the UI.
+  useEffect(() => {
+    syncTrayLabels(t)
+  }, [t])
 
   const value = useMemo(() => ({ language, setLanguage, t }), [language, setLanguage, t])
 

@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **关窗口不退出：隐藏到后台 + 托盘 / 菜单栏常驻（2026-09-15，ADR-074 · discussions/061 · gotchas §6）** —— 对齐 QoderWork /
+  WorkBuddy：X / Cmd+W / Alt+F4 只隐藏窗口，进程与 4 个 sidecar 常驻（IM bot 不下线、跑中会话不断）；退出走 Cmd+Q / Dock 右键 /
+  托盘·菜单栏「退出」/ 系统关机 / SIGTERM。**不加设置项。**
+  - 新增 `src-tauri/src/background.rs`：`close_action(os, tray_ready, boot_failed)` 纯函数（启动失败态关 = 退；非 mac 无托盘关 = 退）·
+    `install_tray()`（`setup()` 里试建一次，`catch_unwind` 兜 Linux 缺 `libayatana-appindicator3` 的 **panic**）· `restore_main_window()`
+    （single-instance / macOS `Reopen` / 托盘左键 / 托盘菜单四处共用；含 `unminimize`，因为 tao 对 Dock 点击向 AppKit 返回
+    `has_visible_windows`，隐藏/最小化时 AppKit 什么都不做）· mac 原生全屏先退全屏 900ms 后再 hide · **Windows 隐藏时连 webview 一起 hide**
+    （`window.hide()` 不碰 WebView2 `IsVisible`，否则隐藏后 Chromium 照常离屏合成）· Win/Linux 首次隐藏弹一次「仍在后台运行」气泡。
+  - 托盘文案跟随应用语言：`src/lib/tray-labels.ts` 在 `I18nProvider` 的 `t` 变化时 `invoke("set_tray_labels")`；新增 `tray.*` 5 个 i18n 键
+    （zh-Hant 重生成）。mac 菜单栏模板图 `icons/tray-template@2x.png` = app icon 按亮度切出的立方体剪影（占位）。
+  - `Cargo.toml` 开 `tray-icon` + `image-png`；deb/rpm `depends` 加 `libayatana-appindicator3-1` / `libayatana-appindicator-gtk3`。
+  - **确定的限制**：通知点击不唤回窗口（tao 无 `applicationDidBecomeActive`、`tauri-plugin-notification` 桌面端发完即忘）。
+  - 验证：`cargo test` 155→160 · desktop 910→917 · typecheck 8/8 · **mac 真机 9 步全部用 AX 脚本驱动原生窗口**（X / Dock / 菜单栏 /
+    最小化 / 全屏无 Space 残留 / Cmd+Q 零残留 / 二次启动 single-instance / 托盘退出 / 失败态关 = 退）· 隐藏 10 分钟 soak。
+    **Windows / Linux 真机待验**（托盘、任务栏消失、WebView2 隐藏后 CPU、GNOME 无扩展、AppImage 是否内置 appindicator）。
+  - `tauri dev` 关窗不再结束进程，Ctrl+C / Cmd+Q 退（getting-started 已注）。
+
 ### Changed
 
 - **架构文档与代码对齐：补上分层图、修掉两处文档-代码分叉（2026-09-08，仅文档）** —— 起因是「单 agent / Team

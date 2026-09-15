@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+mod background;
 mod webview_runtime;
 pub use webview_runtime::ensure_webview_runtime;
 
@@ -6934,12 +6935,8 @@ pub fn run() {
         // sidecar (two writers on a single-writer SQLite file). Make it explicit
         // rather than emergent — discussions/029 §6.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            use tauri::Manager;
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // Also the zero-tray way back once the window is hidden (discussions/061).
+            background::restore_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -6948,7 +6945,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(navigation_guard())
+        // Close-to-background (discussions/061): the close button hides; quitting is
+        // Cmd+Q / tray "Quit" / OS shutdown, none of which pass through here.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if background::on_close_requested(window) == background::CloseAction::Hide {
+                    api.prevent_close();
+                }
+            }
+        })
+        .on_menu_event(|app, event| background::on_menu_event(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
+            background::set_tray_labels,
             ensure_default_workspace,
             open_file_with_system,
             reveal_file_in_finder,
@@ -6998,6 +7006,9 @@ pub fn run() {
             // Stage 0 stays on the main thread: it is instantaneous, and the earlier
             // the handlers exist the smaller the window in which a Ctrl+C leaks sidecars.
             install_signal_handlers();
+            // Tray / menu-bar icon: also instantaneous, and GTK/AppKit want it on the
+            // main thread. Its outcome gates the close button (background.rs).
+            background::install_tray(app.handle());
 
             // Everything else runs on the boot coordinator. `setup()` is called
             // *before* Tauri's event loop starts, and Tauri has already put the
@@ -7024,10 +7035,19 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                shutdown_sidecars();
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::Exit => shutdown_sidecars(),
+            // Dock click with no visible window (hidden or minimized): AppKit does
+            // nothing by itself here — tao answered NO to applicationShouldHandleReopen.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows, ..
+            } => {
+                if !has_visible_windows {
+                    background::restore_main_window(app_handle);
+                }
             }
+            _ => {}
         });
 }
 
