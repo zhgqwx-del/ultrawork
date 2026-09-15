@@ -29,7 +29,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tauri::image::Image;
@@ -43,10 +43,6 @@ const MENU_OPEN: &str = "tray-open";
 const MENU_QUIT: &str = "tray-quit";
 const MAIN_WINDOW: &str = "main";
 
-/// Leaving native fullscreen on macOS is animated; hiding the window mid-transition
-/// leaves an empty Space behind. Tauri has no "left fullscreen" event, so the hide is
-/// deferred past the animation instead.
-const FULLSCREEN_EXIT_GRACE: Duration = Duration::from_millis(900);
 
 /// What the close button should do. Decided by [`close_action`], a pure function so
 /// the platform matrix is unit-testable without a window.
@@ -106,6 +102,13 @@ struct TrayHandles {
 }
 
 static TRAY_READY: AtomicBool = AtomicBool::new(false);
+/// When we last asked AppKit to leave native fullscreen (macOS). A close that lands
+/// while that exit animation may still be running is ignored — see
+/// `hide_to_background`.
+static FULLSCREEN_EXIT_REQUESTED_AT: Mutex<Option<Instant>> = Mutex::new(None);
+/// Longer than the exit animation (~1s measured), shorter than a deliberate second
+/// press. Only ever used to REFUSE an action, never to schedule one.
+const FULLSCREEN_EXIT_QUIET: Duration = Duration::from_millis(1500);
 /// The "still running" balloon is shown once per process, on the first hide.
 static HINT_SHOWN: AtomicBool = AtomicBool::new(false);
 static LABELS: Mutex<Option<TrayLabels>> = Mutex::new(None);
@@ -230,18 +233,76 @@ pub fn on_close_requested(window: &tauri::Window<Wry>) -> CloseAction {
 }
 
 fn hide_to_background(window: &tauri::Window<Wry>) {
-    let fullscreen = cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false);
-    if fullscreen {
-        let _ = window.set_fullscreen(false);
-        let w = window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(FULLSCREEN_EXIT_GRACE);
-            hide_now(&w);
-        });
-    } else {
-        hide_now(window);
+    // macOS native fullscreen: leave fullscreen, keep the window; the next close
+    // (after the animation) hides. Every decision here is taken from AppKit, not
+    // from tao — measured on-device (discussions/061 §八):
+    // - tao's `is_fullscreen()` flips to false at REQUEST time (`set_fullscreen`
+    //   stores the target before toggling), and its `set_fullscreen(None)` is a
+    //   no-op once it believes it is out — so one `toggleFullScreen:` that AppKit
+    //   swallowed (it happens) leaves tao wrong until the user toggles again.
+    // - `orderOut:` during the ~1s exit animation is either dropped or, near the
+    //   end, accepted with the window still flagged fullscreen — which then
+    //   restores fullscreen. So no hide within the quiet period after an exit
+    //   request. That timer only ever refuses an action; it never schedules one.
+    if cfg!(target_os = "macos") {
+        if appkit_fullscreen(window) {
+            if let Ok(mut at) = FULLSCREEN_EXIT_REQUESTED_AT.lock() {
+                *at = Some(Instant::now());
+            }
+            eprintln!("[background] close in native fullscreen → toggleFullScreen:");
+            appkit_toggle_fullscreen(window);
+            return;
+        }
+        let recently_requested = FULLSCREEN_EXIT_REQUESTED_AT
+            .lock()
+            .ok()
+            .and_then(|at| *at)
+            .map(|t| t.elapsed() < FULLSCREEN_EXIT_QUIET)
+            .unwrap_or(false);
+        if recently_requested {
+            return;
+        }
     }
+    hide_now(window);
     maybe_show_hint(window.app_handle());
+}
+
+/// AppKit's own answer: is `NSWindowStyleMaskFullScreen` (1 << 14) set. Main thread
+/// only (NSWindow is not thread-safe) — `on_window_event` runs there. `false` off macOS.
+#[allow(unused_variables)]
+fn appkit_fullscreen(window: &tauri::Window<Wry>) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        const NS_WINDOW_STYLE_MASK_FULL_SCREEN: usize = 1 << 14;
+        if let Ok(ptr) = window.ns_window() {
+            if !ptr.is_null() {
+                let ns_window = ptr as *const objc2::runtime::AnyObject;
+                // SAFETY: `ns_window()` hands back the live NSWindow tao owns for as
+                // long as this tauri Window exists, and we are on the main thread.
+                let mask: usize = unsafe { objc2::msg_send![&*ns_window, styleMask] };
+                return mask & NS_WINDOW_STYLE_MASK_FULL_SCREEN != 0;
+            }
+        }
+    }
+    false
+}
+
+/// `[NSWindow toggleFullScreen:nil]`, bypassing tao's cached state (see above).
+/// tao's delegate still observes the transition and re-syncs its own bookkeeping.
+#[allow(unused_variables)]
+fn appkit_toggle_fullscreen(window: &tauri::Window<Wry>) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(ptr) = window.ns_window() {
+            if !ptr.is_null() {
+                let ns_window = ptr as *const objc2::runtime::AnyObject;
+                // SAFETY: as in `appkit_fullscreen`; the selector takes an ignored sender.
+                let _: () = unsafe {
+                    objc2::msg_send![&*ns_window, toggleFullScreen: std::ptr::null::<objc2::runtime::AnyObject>()]
+                };
+            }
+        }
+    }
 }
 
 fn hide_now(window: &tauri::Window<Wry>) {

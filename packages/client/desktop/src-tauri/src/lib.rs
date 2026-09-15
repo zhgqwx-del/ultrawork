@@ -7036,7 +7036,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            tauri::RunEvent::Exit => shutdown_sidecars(),
+            tauri::RunEvent::Exit => {
+                // Only the macOS arm reads `app_handle`; keep other targets warning-free.
+                let _ = &app_handle;
+                shutdown_sidecars()
+            }
             // Dock click with no visible window (hidden or minimized): AppKit does
             // nothing by itself here — tao answered NO to applicationShouldHandleReopen.
             #[cfg(target_os = "macos")]

@@ -78,7 +78,13 @@ bun run setup --build               # 一条命令：编 sidecar + 打包
 ```bash
 rustup target add x86_64-pc-windows-msvc
 cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-msvc
-# 一路过到 winres 因缺宿主 llvm-rc 停 = 正常；前面依赖/代码/codegen 全过即说明 Rust 侧 OK
+# ⚠️ 只做到这一步会停在 build.rs（缺 Windows sidecar 二进制 → 缺宿主 llvm-rc），此时
+#    只有【依赖】被检查过，我们自己的 crate 还没开始编译 ⇒ 不能据此说「Rust 侧 OK」。
+#    要真检查到 lib.rs / background.rs 的 Windows 分支，补两样（2026-09-15 实测 Finished）：
+#    ① 4 个空文件 binaries/{opencode-server,channel-gateway,knowledge-sidecar,acp-client}-x86_64-pc-windows-msvc.exe
+#       （binaries/ 已 gitignore，查完删）
+#    ② PATH 里放一个 llvm-rc 假脚本：`/?` 时打印 no-preprocess，其余情况 touch `/fo` 后面的路径并 exit 0
+#       （winres 只在链接期需要真 .res；cargo check 不链接）
 ```
 
 **最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg / nsis〔含 offline〕/ msi / deb / rpm + 自动创建 GitHub Release 发布页；workflow_dispatch 仅出 artifact）。
