@@ -681,18 +681,20 @@ case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上�
 
 ## 14. 原生窗口生命周期的 macOS 真机门禁（ADR-074 / discussions/061，2026-09-15）
 
-`scripts/verify-close-to-background-macos.sh`（约 4 分钟，35 条断言，exit code = 失败数；需要 `swiftc` 编译 `scripts/macos-hid.swift` 发真实输入，没有则退回 AX 且全屏步骤可能假红）。**Playwright 结构上碰不到关闭按钮、Dock、菜单栏 status item**，
+`scripts/verify-close-to-background-macos.sh`（约 4 分钟，35 条断言，exit code = 失败数，**空闲桌面上连续四轮全绿**；需要 `swiftc` 编译 `scripts/macos-hid.swift` 发真实输入，没有则退回 AX 且全屏步骤可能假红）。**Playwright 结构上碰不到关闭按钮、Dock、菜单栏 status item**，
 这个门禁用 `System Events`（Accessibility）驱动**原生**窗口，断言只取 `pgrep` / `lsof -sTCP:LISTEN` / AX 窗口数 / `com.apple.spaces`，不看截图。
 覆盖：X 隐藏 · Dock `Reopen` · Cmd+W + 菜单栏菜单 · 最小化→Dock · 全屏下 Cmd+W 只退全屏 · 二次启动 single-instance · Cmd+Q 零残留 ·
 **反向臂**：用外来进程占住 4096 制造启动失败 ⇒ X 必须真退出。前置：终端有辅助功能权限；1420/4096-4099 空闲（**正式版 Ultrawork.app 现在关窗不退，先 Cmd+Q 它**）。
 
-写这个门禁时踩的五个尺子坑（全部会把好产品判成坏的）：
+写这个门禁时踩的七个尺子坑（全部会把好产品判成坏的）：
 1. **显示器睡眠后 AX 读到 0 窗口 / 0 菜单栏、`keystroke` 不投递、截图全黑** ⇒ 脚本自己 `caffeinate -d -u`。
 2. **`grep -c` 零匹配时既打印 `0` 又返回 1** ⇒ `|| echo 0` 会输出两行 `0`；只有零匹配的断言红、四匹配的绿，看起来像产品在「X 后就 shutdown」。
 3. **退全屏后 Dock 还在滑入，AX 点 Dock 会落空** ⇒ `click_dock` 重试一次并**打印出来**（重试是尺子抖，第二次失败才是产品）。
 4. **`tauri dev` 期间改任何 `src-tauri/*.rs` 会热重建并静默换实例** ⇒ 一轮 soak 作废；门禁运行期间别碰 `packages/client/desktop`。
 5. **AX 的 `AXPress`（模拟按绿色按钮）和 `keystroke` 不是真实输入**：连续几轮后 AppKit 的全屏状态机进入半状态——`toggleFullScreen:` 从任何来源都被吞、AX 点绿色按钮也退不出、只有键盘 ⌃⌘F 能救；换 CGEvent 真实鼠标/键盘（`scripts/macos-hid.swift`）后 16/16。
    **判据**：AX 只用来**读**（位置、属性、窗口数），凡是要**触发** AppKit 状态机的动作（全屏、关窗快捷键）用真实事件。差一点把「产品 50% 概率退不出全屏」写进 ADR。
+6. **真实点击之后光标停在红绿灯上**：退全屏后 macOS 的「移动与调整大小」悬停弹出层会冒出来吃掉之后所有 Cmd+W / Cmd+Q；下一轮窗口开在同一位置，光标还在那儿，从第一步就中毒——两批三连跑全红，症状看起来像「产品退全屏后快捷键失灵」。每次真实点击后 `macos-hid move` 把光标停到窗口正文。
+7. **门禁需要空闲桌面**：AX 点击和 CGEvent 都发给最前面的东西，用户开个别的 app 就整轮级联失败——跑前先问用户要一段窗口。
 
 以及一条被门禁抓出来、手工探针 3/3 漏掉的产品缺陷：全屏 → Cmd+W 用 900ms 定时隐藏，窗口会以**全屏态**被藏起来、唤回后又是全屏。
 手工探针与脚本只差几百毫秒的时序。修法不是调时间（styleMask 轮询同样 3/3 失败——AppKit 在退出**开始**时就清那一位），

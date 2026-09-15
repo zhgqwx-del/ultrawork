@@ -22,7 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - `Cargo.toml` 开 `tray-icon` + `image-png`，macOS 加 `objc2`（已在依赖树，零新增传递依赖）；deb/rpm `depends` 加 `libayatana-appindicator3-1` / `libayatana-appindicator-gtk3`。
   - **确定的限制**：通知点击不唤回窗口（tao 无 `applicationDidBecomeActive`、`tauri-plugin-notification` 桌面端发完即忘）。
   - 验证：`cargo test` 155→160 · desktop 910→917 · typecheck 8/8 · **新增 `scripts/verify-close-to-background-macos.sh` + `scripts/macos-hid.swift`**
-    （AX 读状态 + CGEvent 真实输入驱动原生窗口，35 条断言含「启动失败 ⇒ X 真退出」反向臂，三轮全绿；尺子坑五条见 testing §14）· 隐藏 10 分钟 soak · 独立 code review 三条已处置（Windows
+    （AX 读状态 + CGEvent 真实输入驱动原生窗口，35 条断言含「启动失败 ⇒ X 真退出」反向臂，空闲桌面连续四轮全绿；尺子坑七条见 testing §14）· 隐藏 10 分钟 soak · 独立 code review 三条已处置（Windows
     `WM_CLOSE` 语义记档 / 定时隐藏随契约消灭 / 警告修掉）。
     **Windows / Linux 真机待验**（托盘、任务栏消失、WebView2 隐藏后 CPU、GNOME 无扩展、AppImage 是否内置 appindicator）。
   - `tauri dev` 关窗不再结束进程，Ctrl+C / Cmd+Q 退（getting-started 已注）。

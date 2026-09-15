@@ -132,7 +132,7 @@
 | 2 | 点 Dock（`Reopen`） | 窗口回来、`frontmost` ✅ |
 | 3 | Cmd+W → 菜单栏菜单 | 读到「打开 Ultrawork / 退出 Ultrawork」（中文 ⇒ renderer 已推文案）；「打开」唤回 ✅ |
 | 4 | 最小化 → 点 Dock | `AXMinimized` true→false ✅ |
-| 5 | 原生全屏 → Cmd+W | **初版（900ms 定时隐藏）手工过、门禁 3/3 红**：窗口以全屏态被藏起来，唤回后 `AXFullScreen=true`。改 styleMask 轮询又 3/3 红（位在退出开始就清）。改「只退全屏不隐藏 + 以 AppKit styleMask 为准 + 直接 `toggleFullScreen:` + 1.5s 静默期只拒绝不动作」后，门禁仍 ~50% 红：toggle 被吞、**连 AX 点绿色按钮都退不出，而键盘 ⌃⌘F 每次都行** ⇒ 怀疑尺子 ⇒ 换 CGEvent 真实鼠标点绿色按钮 + 真实 Cmd+W：**同步 toggle 8/8、推迟一 run loop 的版本 8/8** ⇒ 保留同步版。门禁改用真实输入后三轮 35/35 ✅ |
+| 5 | 原生全屏 → Cmd+W | **初版（900ms 定时隐藏）手工过、门禁 3/3 红**：窗口以全屏态被藏起来，唤回后 `AXFullScreen=true`。改 styleMask 轮询又 3/3 红（位在退出开始就清）。改「只退全屏不隐藏 + 以 AppKit styleMask 为准 + 直接 `toggleFullScreen:` + 1.5s 静默期只拒绝不动作」后，门禁仍 ~50% 红：toggle 被吞、**连 AX 点绿色按钮都退不出，而键盘 ⌃⌘F 每次都行** ⇒ 怀疑尺子 ⇒ 换 CGEvent 真实鼠标点绿色按钮 + 真实 Cmd+W：**同步 toggle 8/8、推迟一 run loop 的版本 8/8** ⇒ 保留同步版。门禁改用真实输入 + 点击后停靠光标后，空闲桌面连续四轮 35/35 ✅ |
 | 6 | Cmd+Q | `[shutdown] Killing` ×4、0 监听、`ports.json` 已删、1420 无 vite 孤儿 ✅ |
 | 7 | 隐藏后再启动一次 | single-instance 唤回，`pgrep` 实例数 1 ✅ |
 | 8 | 托盘「退出」 | 与 #6 相同的干净退出 ✅ |
@@ -141,7 +141,7 @@
 
 菜单栏图标实拍：立方体剪影按系统模板色渲染（深色菜单栏下为白）。
 
-**门禁固化**：`scripts/verify-close-to-background-macos.sh`（35 条断言，含反向臂与全屏快速连按，三轮全绿）+ `scripts/macos-hid.swift`（CGEvent 真实输入）—— 尺子坑五条见 `docs/testing.md §14`。
+**门禁固化**：`scripts/verify-close-to-background-macos.sh`（35 条断言，含反向臂与全屏快速连按，空闲桌面连续四轮全绿）+ `scripts/macos-hid.swift`（CGEvent 真实输入）—— 尺子坑七条见 `docs/testing.md §14`。
 
 **独立 code review（`/code-review high`）三条**：① Windows 合作式 `WM_CLOSE`（taskkill / 任务管理器 / 安装器）会被当成 X ⇒ 隐藏，随后强杀走既有孤儿自愈路径 —— Electron 同款语义，记入 ADR 后果；② 定时隐藏可被 0.9s 内的唤回打断后再次消失 —— 随 D4 改契约一并消灭；③ 非 mac 目标 `app_handle` 未用警告 —— 已修。
 

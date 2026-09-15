@@ -2,6 +2,9 @@
 // (scripts/verify-close-to-background-macos.sh). Compiled on demand by that script.
 //
 //   macos-hid click X Y              real left click at screen point (AX coordinates)
+//   macos-hid move X Y               move the cursor (park it away from the traffic lights:
+//                                    a cursor left over the zoom button opens the "Move &
+//                                    Resize" hover popover, which then eats Cmd+W / Cmd+Q)
 //   macos-hid key <keycode> [cmd] [ctrl]   real key press (13 = w, 12 = q, 3 = f)
 //
 // Why not System Events: `AXPress` on the green zoom button and AX `keystroke`
@@ -17,6 +20,9 @@ if a.count >= 4 && a[1] == "click" {
     usleep(150_000)
     post(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left))
     post(CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left))
+} else if a.count >= 4 && a[1] == "move" {
+    let p = CGPoint(x: Double(a[2])!, y: Double(a[3])!)
+    post(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
 } else if a.count >= 3 && a[1] == "key" {
     let code = CGKeyCode(UInt16(a[2])!)
     var flags: CGEventFlags = []

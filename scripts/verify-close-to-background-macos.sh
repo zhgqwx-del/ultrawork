@@ -67,12 +67,18 @@ fi
 keystroke()    { ax "set frontmost to true" >/dev/null; sleep 0.3; ax "keystroke \"$1\" using command down" >/dev/null }
 fs_cmd_w()     { ax "set frontmost to true" >/dev/null; sleep 0.5
                  if [ -n "$HID" ]; then "$HID" key 13 cmd; else ax 'keystroke "w" using command down' >/dev/null; fi }
+# A cursor parked over the traffic lights opens macOS's "Move & Resize" hover popover
+# once the window is back from fullscreen, and that popover swallows Cmd+W / Cmd+Q —
+# one whole run (and the next, since the window reopens under the same cursor) went
+# red from exactly this. Park the cursor in the window body after every real click.
+park_mouse()   { [ -n "$HID" ] && "$HID" move 700 500 >/dev/null 2>&1 || true }
 # Real click on the green zoom button (AX only to find it, never to press it).
 click_zoom()   { local P S X Y
                  P=$(ax 'get position of (first button of window 1 whose subrole is "AXFullScreenButton")')
                  S=$(ax 'get size of (first button of window 1 whose subrole is "AXFullScreenButton")')
                  if [ -n "$HID" ] && [ -n "$P" ]; then
                    X=$(( ${P%%,*} + ${S%%,*} / 2 )); Y=$(( ${P##*, } + ${S##*, } / 2 )); "$HID" click "$X" "$Y"
+                   park_mouse
                  else ax 'click (first button of window 1 whose subrole is "AXFullScreenButton")' >/dev/null; fi }
 wait_gone()    { local i; for i in $(seq 1 "${1:-15}"); do [ -z "$(app_pid)" ] && return 0; sleep 1; done; return 1 }
 wait_boot()    { local i; for i in $(seq 1 100); do [ "$(n_listeners)" = "4" ] && { sleep 6; return 0; }; sleep 3; done; return 1 }
@@ -109,6 +115,7 @@ fi
 if [ -n "$(app_pid)" ]; then say "  ABORT: a target/debug/ultrawork is already running"; exit 99; fi
 caffeinate -d -u -t 900 >/dev/null 2>&1 &
 CAFF=$!
+park_mouse
 trap 'kill $CAFF 2>/dev/null; stop_dev; rm -f "$HID"' EXIT
 
 # ---------------------------------------------------------------- boot

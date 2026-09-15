@@ -49,7 +49,7 @@
 ## 验证
 
 - `cargo test` 155 → **160**；desktop vitest 910 → **917**；typecheck 8/8；`check-docs` 绿；独立 `/code-review high` 三条发现（Windows `WM_CLOSE` 语义 → 记档；定时隐藏可被唤回打断 → 随 D4 一并消灭；非 mac 未用变量警告 → 已修）。
-- **mac 真机 = `scripts/verify-close-to-background-macos.sh`（35 条断言，连跑三轮全绿；AX 读状态 + CGEvent 真实输入〔`scripts/macos-hid.swift`〕驱动原生窗口，断言取自 `pgrep` / `lsof` / AX 窗口数 / `com.apple.spaces`，含「启动失败 ⇒ X 真退出」反向臂 + 全屏下快速连按 Cmd+W）**：
+- **mac 真机 = `scripts/verify-close-to-background-macos.sh`（35 条断言，空闲桌面上连续四轮全绿；AX 读状态 + CGEvent 真实输入〔`scripts/macos-hid.swift`〕驱动原生窗口，断言取自 `pgrep` / `lsof` / AX 窗口数 / `com.apple.spaces`，含「启动失败 ⇒ X 真退出」反向臂 + 全屏下快速连按 Cmd+W）**：
   1. 点 X → app pid 与 4 个 sidecar pid/端口一个没变，AX 窗口数 1→0，日志零 `[shutdown]` ✅
   2. 点 Dock（`Reopen`）→ 窗口回来且前台 ✅
   3. Cmd+W 隐藏 → 菜单栏菜单读到「打开 Ultrawork / 退出 Ultrawork」（中文 = renderer 已推文案）→ 「打开」唤回 ✅
