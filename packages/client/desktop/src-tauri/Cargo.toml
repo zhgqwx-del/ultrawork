@@ -17,7 +17,9 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# tray-icon: close-to-background (discussions/061) needs a tray on Windows/Linux
+# and a menu-bar icon on macOS. image-png: decode the bundled tray template PNG.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 # A second launch must focus the running window, not boot a rival set of sidecars
 # (dynamic ports removed the accidental lock the fixed ports used to provide).
@@ -64,3 +66,13 @@ png = "0.17"
 # install_signal_handlers() is a no-op there (see lib.rs).
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+
+# macOS-only: close-to-background (ADR-074 D4) decides "is this window in native
+# fullscreen" from NSWindow.styleMask and leaves fullscreen via `toggleFullScreen:`
+# directly. tao's own bookkeeping is optimistic (flips at request time) and its
+# `set_fullscreen(None)` is a no-op once it believes it is already out, so a toggle
+# AppKit swallowed leaves tao wrong forever. objc2 is already in the tree via tao —
+# same version, no new transitive deps.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+

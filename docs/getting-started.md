@@ -98,6 +98,7 @@ export OPENCODE_API_KEY="sk-xxx..."
 
 ```bash
 bun run tauri:dev          # 启动开发服务器（前端 HMR + Rust 热重载）
+                           # 关窗口只是隐藏（托盘/Dock 常驻，ADR-074）；结束 dev 用 Ctrl+C 或 Cmd+Q
 bun run typecheck          # 全量 TypeScript 类型检查 (5 个包)
 bun run build:opencode     # 重新编译 OpenCode sidecar
 bun run build:gateway      # 重新编译 Channel Gateway sidecar

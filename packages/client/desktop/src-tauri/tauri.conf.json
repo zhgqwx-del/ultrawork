@@ -46,10 +46,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["curl", "lsof"]
+        "depends": ["curl", "lsof", "libayatana-appindicator3-1"]
       },
       "rpm": {
-        "depends": ["curl", "tar", "lsof"]
+        "depends": ["curl", "tar", "lsof", "libayatana-appindicator-gtk3"]
       }
     },
     "windows": {

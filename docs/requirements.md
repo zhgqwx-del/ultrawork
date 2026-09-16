@@ -211,6 +211,7 @@ Monorepo 结构：
 - [x] 办公 CLI 连接器 Phase 1：飞书 lark-cli — 「连接器」分区（MCP/办公 CLI 两组）+ 安装/托管页配置/`--recommend` 设备流授权 + feishu-assistant 薄路由技能（ADR-043）✅ 2026-07-06（真机全流程验收）
 - [x] 办公 CLI 连接器 Phase 2：钉钉 dws — 双源 pin 安装 + 官方技能 materialize + `authenticated` 探针 + 第六态「白名单未开通」引导（管理员姓名+后台深链）+ dingtalk-assistant 薄路由技能；泛化债还清（child 槽 HashMap 化/hook generation 按 id 拆）（ADR-043）✅ 2026-07-07（真机全流程验收）
 - [x] 办公 CLI 连接器 Phase 3：企业微信 wecom-cli — npm 平台分包单 hash 双源安装（第三种形态）+ `auth show` 纯文本探针（第三种契约）+ QR 扫码 init 托管授权（凭证零接触）+ wecom-assistant 薄路由技能（vendored 官方 9 技能快照 + `--schema` 自省）；三项泛化（`CLI_CONNECTORS` 注册表 / 探针与阻塞流骨架去重 / e2e mock 工厂）（ADR-043）✅ 2026-07-07（真机全流程验收；三家范式收官）
+- [x] 关窗口不退出：隐藏到后台 + 托盘 / 菜单栏常驻（X / Cmd+W → hide，退出走 Cmd+Q / 托盘「退出」；启动失败态与无托盘的非 mac 平台仍关 = 退）（ADR-074，discussions/061）✅ 2026-09-15（mac 真机 9 步全过；Windows/Linux 真机待验）
 
 **后续规划**
 - [ ] ONNX 神经 Embedding 升级（bun compile 兼容性待解决，当前 TF-IDF 质量可接受）
@@ -239,7 +240,6 @@ Monorepo 结构：
 - [ ] Proactive Services（Heartbeat/Cron；曾规划 `@agent/proactive-*` 包）
 - [ ] 共享组件库 `@agent/ui`（当前组件在 desktop 内）
 - [ ] 通知分发 `@agent/notifier`
-- [ ] System Tray / 后台常驻
 - [ ] OS Keychain 凭证存储
 
 ## 钉钉 Channel 实现记录 (Issue#13) ✅ 已完成
