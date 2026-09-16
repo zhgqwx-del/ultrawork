@@ -141,7 +141,7 @@
 
 菜单栏图标实拍：立方体剪影按系统模板色渲染（深色菜单栏下为白）。
 
-**用户手动验收（2026-09-16，`tauri dev`）**：#2 菜单栏菜单 ✅ · #5 全屏只退不隐藏 ✅ · #6 退出零残留 ✅ · #7 切语言托盘文案跟随 ✅ · **#4 完成时无横幅无 Dock 跳动 ❌ → 两个原因**：① 隐藏后 app 仍是活动应用 ⇒ `requestUserAttention` 空操作（本分支缺陷，D8 修：`app.hide()` 让出激活）；② 横幅在 dev 下永远不显示（既有限制，gotchas §6）。修后隐藏态探针（`VITE_NOTIFY_TRACE=1`，AX 打字发 prompt → X → 等完成）：`notify completed … local=true → {sound:true,system:true,flash:true}`、banner dispatched、前台已切走。#1「Dock 图标偏小」与本分支无关（`icons/` 与 main 一致，icns 16→1024 齐全），另开。#3 带 IM 渠道 30min soak 未测。
+**用户手动验收（2026-09-16，`tauri dev`）**：#2 菜单栏菜单 ✅ · #5 全屏只退不隐藏 ✅ · #6 退出零残留 ✅ · #7 切语言托盘文案跟随 ✅ · **#4 完成时无横幅无 Dock 跳动 ❌ → 两个原因**：① 隐藏后 app 仍是活动应用 ⇒ `requestUserAttention` 空操作（本分支缺陷，D8 修：`app.hide()` 让出激活）；② 横幅在 dev 下永远不显示（既有限制，gotchas §6）。修后隐藏态探针（`VITE_NOTIFY_TRACE=1`，AX 打字发 prompt → X → 等完成）：`notify completed … local=true → {sound:true,system:true,flash:true}`、banner dispatched、前台已切走。#1「图标偏小」——用户截图一看是**菜单栏状态项**不是 Dock ⇒ 就是本分支的模板图：第一版按 `getbbox()` 裁切被角落淡像素撑大、又补成正方形，实心立方体只占画布 72% 高；改为按 alpha>96 裁到实心图形、不补边（29×36 @2x），tray-icon 按 18pt 高等比缩放后与邻居同高。#3 带 IM 渠道 30min soak 未测。
 探针里的尺子坑：中文拼音输入法把 AX `keystroke` 的英文尾巴当拼音候选，回车提交候选不发消息——AX 打字前 Esc 掉候选或切 ABC。
 
 **门禁固化**：`scripts/verify-close-to-background-macos.sh`（36 条断言，含反向臂、全屏快速连按、X 后让出前台，空闲桌面 4+3 轮全绿）+ `scripts/macos-hid.swift`（CGEvent 真实输入）—— 尺子坑七条见 `docs/testing.md §14`。

@@ -27,7 +27,7 @@
 - **D3 `restore_main_window()` 一个 helper**（`unminimize → show → [Windows: webview.show] → set_focus`），single-instance / `Reopen` / 托盘左键 / 托盘菜单四处共用。
 - **D4 macOS 原生全屏下的 X / Cmd+W = 只退出全屏，不隐藏**；动画结束后再按一次才隐藏。**全部以 AppKit 为准，不用 tao 的状态**：`NSWindow.styleMask` 全屏位（objc2 `msg_send!`，主线程）说是全屏 ⇒ 直接 `toggleFullScreen:`（绕开 tao——它的 `set_fullscreen` 在**请求时**就把 `is_fullscreen()` 翻成 false，且状态已是 None 时 `set_fullscreen(None)` 是空操作，一次被 AppKit 吞掉的 toggle 会让它永远错下去）；请求退出后 1.5s 内的关窗**一律忽略**（定时器只用来拒绝动作，不用来做动作——`orderOut:` 在动画尾声会被接受但窗口仍标全屏，唤回后又是全屏）。**三版演进全靠门禁**：900ms 定时隐藏（手工 3/3 过、门禁 3/3 红：以全屏态藏起来）→ styleMask 轮询（3/3 红：那一位在退出**开始** ~15ms 就清）→ 本版。最后一轮「toggle 被吞、连绿色按钮都失效」的 50% 失败率是**尺子**：AX `AXPress`/`keystroke` 驱动会把 AppKit 全屏状态机搞进半状态，改用 CGEvent 真实鼠标/键盘后 **16/16**。
 - **D5 托盘文案跟随应用语言**：Rust 不读 renderer 配置 ⇒ 默认英文，`I18nProvider` 在 `t` 变化时 `invoke("set_tray_labels")` 覆盖（`lib/tray-labels.ts`，7 个单测钉住 camelCase 契约）。
-- **D6 mac 菜单栏图标 = 从 app icon 按亮度切出的立方体剪影**（`icons/tray-template@2x.png`，`icon_as_template(true)`），占位直到有正式设计。
+- **D6 mac 菜单栏图标 = 从 app icon 按亮度切出的立方体剪影**（`icons/tray-template@2x.png` 29×36，`icon_as_template(true)`；tray-icon 把图按 18pt 高等比缩放，所以**裁到实心图形、不补边**——第一版补成正方形后比邻居小一圈，用户手测抓出），占位直到有正式设计。
 - **D8 macOS 隐藏最后一个窗口后让出激活状态**（`app.hide()`，Cmd+H 语义；唤回时先 `app.show()`）：只 `orderOut` 窗口的话 app **仍是活动应用**——菜单栏挂着 Ultrawork 却没有窗口，而 `requestUserAttention`（回合完成时的 Dock 跳动）对活动应用是空操作。用户手动验收 #4「完成时 Dock 不跳」抓出来的；修后隐藏态探针 `notify completed … → {sound,system,flash: true}` 且前台已切走。横幅在 `tauri dev` 下永远不显示是既有限制（gotchas §6），打包版才有。
 - **D7 Windows 隐藏时连 webview 一起 hide**：`window.hide()` 不碰 WebView2 的 `IsVisible`，否则隐藏后 Chromium 照常离屏合成。运行时 `cfg!(windows)` 分支，三平台同编译。
 
