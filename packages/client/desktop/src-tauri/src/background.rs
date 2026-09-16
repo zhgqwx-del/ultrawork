@@ -204,6 +204,10 @@ pub fn restore_main_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         return;
     };
+    // Mirror of `hide_now`'s `app.hide()`: an app hidden with NSApp.hide keeps its
+    // windows ordered out until it is unhidden, so unhide before showing.
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
     let _ = window.unminimize();
     let _ = window.show();
     if cfg!(target_os = "windows") {
@@ -312,6 +316,14 @@ fn hide_now(window: &tauri::Window<Wry>) {
         }
     }
     let _ = window.hide();
+    // macOS: an app whose last window was ordered out is STILL the active app — the
+    // menu bar keeps saying "Ultrawork" with nothing on screen, and
+    // `requestUserAttention` (the Dock bounce a finished turn asks for) is a no-op
+    // for the active app. Cede activation like Cmd+H does; the next app comes to
+    // the front, and a Dock click / tray "open" / second launch unhides us again
+    // (`restore_main_window`). Found by the user's manual acceptance (#4).
+    #[cfg(target_os = "macos")]
+    let _ = window.app_handle().hide();
 }
 
 /// One-time "we're still here" balloon. Windows and Linux users read the close

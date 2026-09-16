@@ -134,6 +134,10 @@ check "X: process alive, same pid"            '[ "$(app_pid)" = "$APP" ]'
 check "X: 4 sidecars unchanged"               '[ "$(listeners)" = "$SIDECARS" ]'
 check "X: AX window count 1 -> 0"             '[ "$(win_count)" = "0" ]'
 check "X: no [shutdown] in log"               '[ "$(shutdown_lines)" = "0" ]'
+# With no window left the app must NOT stay the active app: the menu bar would keep
+# saying "Ultrawork" over nothing, and the Dock bounce a finished turn asks for is
+# a no-op for the active app (user acceptance #4).
+check "X: app ceded activation (not frontmost)" '[ "$(frontmost)" != "ultrawork" ]'
 
 # ---------------------------------------------------------------- 2. Dock
 say "== 2. Dock click (Reopen)"

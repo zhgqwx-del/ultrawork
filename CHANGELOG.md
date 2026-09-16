@@ -16,13 +16,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     `install_tray()`（`setup()` 里试建一次，`catch_unwind` 兜 Linux 缺 `libayatana-appindicator3` 的 **panic**）· `restore_main_window()`
     （single-instance / macOS `Reopen` / 托盘左键 / 托盘菜单四处共用；含 `unminimize`，因为 tao 对 Dock 点击向 AppKit 返回
     `has_visible_windows`，隐藏/最小化时 AppKit 什么都不做）· **mac 原生全屏下关窗 = 只退全屏不隐藏**（判据 `NSWindow.styleMask`、动作直接 `toggleFullScreen:`、1.5s 静默期只拒绝不动作；定时隐藏被门禁抓出「以全屏态藏起来」，tao 状态是乐观的，AppKit 无退出完成信号，见 gotchas §6⑤）· **Windows 隐藏时连 webview 一起 hide**
-    （`window.hide()` 不碰 WebView2 `IsVisible`，否则隐藏后 Chromium 照常离屏合成）· Win/Linux 首次隐藏弹一次「仍在后台运行」气泡。
+    （`window.hide()` 不碰 WebView2 `IsVisible`，否则隐藏后 Chromium 照常离屏合成）· Win/Linux 首次隐藏弹一次「仍在后台运行」气泡 · **macOS 隐藏后 `app.hide()` 让出激活**（否则 app 仍活动、回合完成的 Dock 跳动是空操作——用户手测抓出）。
   - 托盘文案跟随应用语言：`src/lib/tray-labels.ts` 在 `I18nProvider` 的 `t` 变化时 `invoke("set_tray_labels")`；新增 `tray.*` 5 个 i18n 键
     （zh-Hant 重生成）。mac 菜单栏模板图 `icons/tray-template@2x.png` = app icon 按亮度切出的立方体剪影（占位）。
   - `Cargo.toml` 开 `tray-icon` + `image-png`，macOS 加 `objc2`（已在依赖树，零新增传递依赖）；deb/rpm `depends` 加 `libayatana-appindicator3-1` / `libayatana-appindicator-gtk3`。
   - **确定的限制**：通知点击不唤回窗口（tao 无 `applicationDidBecomeActive`、`tauri-plugin-notification` 桌面端发完即忘）。
   - 验证：`cargo test` 155→160 · desktop 910→917 · typecheck 8/8 · **新增 `scripts/verify-close-to-background-macos.sh` + `scripts/macos-hid.swift`**
-    （AX 读状态 + CGEvent 真实输入驱动原生窗口，35 条断言含「启动失败 ⇒ X 真退出」反向臂，空闲桌面连续四轮全绿；尺子坑七条见 testing §14）· 隐藏 10 分钟 soak · 独立 code review 三条已处置（Windows
+    （AX 读状态 + CGEvent 真实输入驱动原生窗口，36 条断言含「启动失败 ⇒ X 真退出」反向臂与「X 后让出前台」，空闲桌面 4+3 轮全绿；尺子坑七条见 testing §14）· 隐藏 10 分钟 soak · 独立 code review 三条已处置（Windows
     `WM_CLOSE` 语义记档 / 定时隐藏随契约消灭 / 警告修掉）。
     **Windows / Linux 真机待验**（托盘、任务栏消失、WebView2 隐藏后 CPU、GNOME 无扩展、AppImage 是否内置 appindicator）。
   - `tauri dev` 关窗不再结束进程，Ctrl+C / Cmd+Q 退（getting-started 已注）。
