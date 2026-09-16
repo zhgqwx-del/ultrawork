@@ -695,8 +695,12 @@ conventions §26；其中**横跨多列的合并标题不算它第一列的宽�
 但 PDFium 对 `.notdef` 有**两种**表现，取决于回退字体的类型：**Type1 回退**（标题的 FrankRuhlHofshi-Bold）字符还在文本页里、码点正确、
 渲染是空心框 ⇒ 中心墨量抓得到；**TrueType 回退**（正文的 Linux Libertine G）LibreOffice 的子集器给所有 notdef 同一个 code 0、
 没有 ToUnicode 条目 ⇒ **PDFium 直接把它们从 textpage 里丢掉**（`count_chars` 324 → 72；豆腐块 xlsx 的文本层 **CJK = 0**），
-只在页面对象里留下**一个 `FPDFTextObj_GetText` 抽不出任何文字、bbox 退化为 0、但字号 > 0 的 text object**（每个字一个）。
-⇒ 判据分母必须 = 文本页里的 CJK 字符 **+** 这种空 text object，否则「全是方块」和「没有中文」在 textpage 视角是同一个东西。
+只在页面对象里留下**一个 `FPDFTextObj_GetText` 抽不出任何文字、bbox 退化为 0、但字号 > 0 的 text object**（每个字一个），
+而且 **PDFium 光栅化对这一种画的是空白不是方框**（利润表的中文标签整列消失、数字还在；别的阅读器可能画方框）——
+所以「有没有墨」也量不到它。⇒ 判据分母必须 = 文本页里的 CJK 字符 **+** 这种空 text object，否则「全是方块」和「没有中文」在 textpage 视角是同一个东西。
+⚠️ **同一签名有一种噪声**：CJK 字体里的**行尾空格**也是「抽不出文字的 text object」（pdfminer 读到 `' '`，PDFium 什么都读不到），正常页每个行尾约一个；
+一份只有 1 个汉字 + 8 个这种空格的英文文档，直接算会得 1/9 ⇒ 误拒。PDFium 侧分不开它们，只能拿**源文档的 CJK 数**做上界：
+只相信 `源 CJK 数 − 文本层抽到的 CJK 数` 那么多个空对象（正常页差值为 0 ⇒ 空格全被忽略；豆腐块页文本层为 0 ⇒ 全算）。
 同一份 PDF 用 pdfminer 读则是「二二二二……」（所有 notdef 映成同一个字）——**跨库比对就是这个坑的独立尺子**，门禁用它做反向臂的前提检查。
 ⚠️ 两个附带坑：① `FPDFTextObj_GetText` 返回的长度是**字节数**（UTF-16LE，含结尾 NUL）——按字符数开缓冲会把结尾的 0 解码成 `\x00`，
 误以为「文本层里有 U+0000」（第一版就这么错的）；② `get_charbox` 是页面坐标、渲染是显示坐标，**带 /Rotate 的页两者不同系**，

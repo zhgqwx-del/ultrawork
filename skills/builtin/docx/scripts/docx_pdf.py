@@ -190,9 +190,16 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int, cjk_expected: int = 0
         out["blank_pages"] = [i + 1 for i in range(len(doc))
                               if page_ink(doc[i]) < BLANK_INK]
         if cjk_expected:
-            measure = check_tofu(doc)
+            measure = check_tofu(doc, cjk_expected)
             out["tofu"] = measure.pop("tofu")
             out["tofu_measure"] = measure
+            if out["tofu"] is None:
+                # Not "unchecked": measured, and nothing to measure. The caller must
+                # be able to tell that from the pypdfium2-missing case above.
+                out["tofu_note"] = (
+                    f"the source holds {cjk_expected} CJK character(s) but PDFium found "
+                    f"no CJK glyph and no missing-glyph object on any page, so there "
+                    f"was nothing to measure — the Chinese may sit in hidden text or a part LibreOffice did not lay out")
         else:
             out["tofu"] = False           # nothing Chinese to render, nothing to box
         if png_dir is not None:

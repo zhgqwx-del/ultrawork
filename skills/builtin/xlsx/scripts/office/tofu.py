@@ -24,16 +24,26 @@ LibreOffice 26.8 / svp backend):
     glyph is crossed by strokes; the middle of a box is paper.
   * **vanished** — the character is NOT in the text page at all (the TrueType
     fallback: LibreOffice's subsetter gives every notdef glyph code 0, which has no
-    ToUnicode entry, and PDFium drops it from the text page). What is left is a
-    TEXT OBJECT that draws a glyph — a real bounding box on the page — and yields
-    no text at all (`FPDFTextObj_GetText` returns just the terminator). LibreOffice
-    writes one such object per glyph. A tofu workbook measured 0 CJK characters in
-    its text page and 82 of these; counting only text-page characters would have
+    ToUnicode entry, and PDFium drops it from the text page), and PDFium's raster
+    draws NOTHING for it — the labels are simply blank (a viewer with a different
+    glyph fallback may show boxes instead). What is left is a text object with a
+    font size and no extractable text (`FPDFTextObj_GetText` returns just the
+    terminator), one per glyph. A tofu workbook measured 0 CJK characters in its
+    text page and 117 of these; counting only text-page characters would have
     passed it with "no CJK to check".
 
 So the question is asked per glyph and both kinds are in the denominator: of the
 CJK glyphs on the page (the ones with a code point plus the ones that lost it), how
 many have strokes in the middle?
+
+One kind of noise wears the second signature: a trailing SPACE drawn in a CJK font
+also comes out as an empty text object (pdfminer reads it as ' '; PDFium reads
+nothing), about one per line end on a correct page. It cannot be told from a notdef
+through PDFium alone, so the caller passes how many CJK characters the SOURCE holds
+and only as many empty objects are believed as the text page failed to account for
+(`expected - seen`). On a correct page that is zero and the spaces are ignored; on a
+tofu page the text page saw nothing and every empty object counts. A document
+with one Chinese character and five such spaces is therefore not refused.
 
 Thresholds are the ones scripts/office-skills-selftest.py calibrated on
 2026-08-01 (gotchas §10⑭): real pages score 0.96-1.00, adversarial hollow-centre
@@ -51,6 +61,7 @@ so a later --png render of the same page still comes out the way a viewer shows 
 from __future__ import annotations
 
 import ctypes
+import re
 
 TOFU_CENTER_INK = 0.05      # per-glyph: share of the centre box that counts as strokes
 TOFU_MIN_FRACTION = 0.50    # per-document: share of CJK glyphs that must have them
@@ -64,6 +75,7 @@ GLYPH_INK = bytes(1 if v < 200 else 0 for v in range(256))
 
 CJK_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF),
               (0x20000, 0x2A6DF))
+_CJK_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in CJK_RANGES) + "]")
 
 
 def is_cjk(cp: int) -> bool:
@@ -78,8 +90,8 @@ def count_cjk(s: str) -> int:
     return sum(1 for c in s if is_cjk(ord(c)))
 
 
-def _notdef_glyphs(page, textpage) -> int:
-    """Text objects that extract as nothing — the `.notdef`s.
+def _empty_text_objects(page, textpage) -> int:
+    """Text objects that extract as nothing — the `.notdef`s (and CJK-font spaces).
 
     `FPDFTextObj_GetText` reports a length in BYTES (UTF-16LE, terminator included),
     so 2 is the empty string. Their bounding box is degenerate too (PDFium derives it
@@ -103,8 +115,8 @@ def page_glyphs(page) -> dict:
     """Measure one page. Returns cjk / notdef / inked counts.
 
     `cjk` are text-page characters in the CJK ranges, `inked` how many of them have
-    strokes in their centre, `notdef` the glyphs the text page does not list.
-    The caller decides what to do with a page that has neither.
+    strokes in their centre, `notdef` the empty text objects (glyphs the text page
+    does not list). The caller decides what to do with a page that has neither.
     """
     import pypdfium2.raw as raw
     rotation = page.get_rotation()
@@ -120,7 +132,7 @@ def _measure_unrotated(page, raw) -> dict:
     try:
         boxes = [textpage.get_charbox(i) for i in range(textpage.count_chars())
                  if is_cjk(raw.FPDFText_GetUnicode(textpage, i))]
-        notdef = _notdef_glyphs(page, textpage)
+        notdef = _empty_text_objects(page, textpage)
     finally:
         textpage.close()
     out = {"cjk": len(boxes), "notdef": notdef, "inked": 0}
@@ -151,34 +163,55 @@ def _measure_unrotated(page, raw) -> dict:
     return out
 
 
-def check_tofu(doc, max_pages: int = TOFU_PAGES) -> dict:
+def _cjk_in_text_layer(page) -> int:
+    """CJK characters PDFium extracts from one page — C-speed, no rendering."""
+    textpage = page.get_textpage()
+    try:
+        return len(_CJK_RE.findall(textpage.get_text_bounded()))
+    finally:
+        textpage.close()
+
+
+def check_tofu(doc, expected_cjk: int | None = None, max_pages: int = TOFU_PAGES) -> dict:
     """Tofu verdict for an open pypdfium2 document.
 
-    Measures the first `max_pages` pages that carry any CJK glyph at all (a Latin
-    cover page is skipped, not counted as evidence). Returns:
+    Renders and measures the first `max_pages` pages that carry any CJK glyph at
+    all (a Latin cover page is skipped, not counted as evidence); the text layer of
+    EVERY page is read (cheap) so the source's CJK count can be reconciled against
+    what PDFium sees. `expected_cjk` is that source count; None believes every
+    empty text object (only for callers that have no source to compare with).
 
-        cjk_glyphs           CJK glyphs seen, both kinds
+        cjk_glyphs           CJK glyphs measured: text-page ones + believed empties
         cjk_inked            how many have strokes in the middle
         cjk_inked_fraction   cjk_inked / cjk_glyphs, or None when nothing was seen
-        notdef_glyphs        the vanished kind, for the record
+        notdef_glyphs        empty text objects believed to be missing glyphs
+        empty_text_objects   empty text objects seen on the measured pages
+        cjk_in_text_layer    CJK characters PDFium extracts, whole document
         pages_checked        1-based page numbers that were measured
         tofu                 True / False, or None when no page held a CJK glyph
     """
-    cjk = inked = notdef = 0
+    cjk = inked = empties = in_text = 0
     checked: list[int] = []
     for i in range(len(doc)):
+        page = doc[i]
         if len(checked) >= max_pages:
-            break
-        m = page_glyphs(doc[i])
+            in_text += _cjk_in_text_layer(page)
+            continue
+        m = page_glyphs(page)
+        in_text += m["cjk"]
         if not (m["cjk"] or m["notdef"]):
             continue
         checked.append(i + 1)
-        cjk += m["cjk"] + m["notdef"]
-        notdef += m["notdef"]
+        cjk += m["cjk"]
+        empties += m["notdef"]
         inked += m["inked"]
-    frac = inked / cjk if cjk else None
-    return {"cjk_glyphs": cjk, "cjk_inked": inked, "cjk_inked_fraction": frac,
-            "notdef_glyphs": notdef, "pages_checked": checked,
+    unaccounted = empties if expected_cjk is None else max(0, expected_cjk - in_text)
+    notdef = min(empties, unaccounted)
+    total = cjk + notdef
+    frac = inked / total if total else None
+    return {"cjk_glyphs": total, "cjk_inked": inked, "cjk_inked_fraction": frac,
+            "notdef_glyphs": notdef, "empty_text_objects": empties,
+            "cjk_in_text_layer": in_text, "pages_checked": checked,
             "tofu": None if frac is None else frac < TOFU_MIN_FRACTION}
 
 
@@ -187,8 +220,9 @@ def describe(t: dict) -> str:
     soften it into "the preview may have font issues"."""
     pct = f"{t['cjk_inked_fraction']:.0%}" if t["cjk_inked_fraction"] is not None else "0%"
     pages = ", ".join(map(str, t["pages_checked"])) or "-"
-    return (f"the Chinese text in this PDF renders as boxes (tofu): only {t['cjk_inked']} "
-            f"of {t['cjk_glyphs']} CJK glyph(s) on page(s) {pages} have strokes ({pct}, "
+    return (f"the Chinese text in this PDF did not render (tofu — hollow boxes or blank "
+            f"where the characters should be): only {t['cjk_inked']} of "
+            f"{t['cjk_glyphs']} CJK glyph(s) on page(s) {pages} have strokes ({pct}, "
             f"need {TOFU_MIN_FRACTION:.0%}). The machine running LibreOffice has no font "
             f"that covers these characters — Linux: install fonts-noto-cjk; Windows: a "
             f"CJK font such as SimSun or Microsoft YaHei; macOS with LibreOffice >= 26.8: "
