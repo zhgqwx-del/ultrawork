@@ -15,11 +15,18 @@ pure-Python fallback and pretending otherwise would mean inventing a layout engi
 column widths, page breaks, print areas and number formats all have to be resolved
 the way a spreadsheet application resolves them.
 
-Two things it refuses rather than papers over:
+Three things it refuses rather than papers over:
 
   * **a PDF with no ink on the first page.** LibreOffice exits 0 for an empty
     sheet and produces a blank page; handing that back as "your preview" is worse
     than an error, because it looks like the data is gone.
+  * **Chinese rendered as boxes.** LibreOffice exits 0 and writes a valid PDF when
+    the machine has no font covering the workbook's CJK characters — every label
+    becomes a hollow `.notdef` rectangle and the numbers beside them lose their
+    meaning. A page of boxes has plenty of ink, so the blank check passes it
+    (gotchas §21⑧-bis); a Linux host without fonts-noto-cjk produces the same file
+    today. Measured per glyph by office/tofu.py; --allow-tofu is the escape hatch,
+    symmetric with --allow-blank.
   * **a workbook whose formulas have never been calculated.** Those cells render
     EMPTY. The file looks wrong and the cause is invisible in the picture.
 """
@@ -33,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from office.soffice import convert, find_soffice  # noqa: E402
+from office.tofu import check_tofu, count_cjk, describe  # noqa: E402
 from xlsxcommon import (  # noqa: E402
     XlsxError, display_width, displayed_text, emit, ensure_distinct, fail, run,
 )
@@ -66,6 +74,28 @@ def uncalculated(path: Path) -> int:
                     if isinstance(a, str) and a.startswith("=") and b is None:
                         n += 1
     return n
+
+
+def source_cjk(path: Path, sheet: str | None) -> int:
+    """CJK characters the PDF is expected to show: every text value on the sheets
+    being rendered, plus their names (LibreOffice prints the sheet name in the page
+    header by default). Zero means the tofu guard has nothing to look for and stays
+    out of the way of a workbook that has no Chinese in it.
+    """
+    import openpyxl
+    from contextlib import closing
+    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    total = 0
+    with closing(book):
+        for ws in book.worksheets:
+            if sheet and ws.title != sheet:
+                continue
+            if not sheet and ws.sheet_state != "visible":
+                continue
+            total += count_cjk(ws.title)
+            total += sum(count_cjk(v) for row in ws.iter_rows(values_only=True)
+                         for v in row if isinstance(v, str))
+    return total
 
 
 def only_sheet(src: Path, name: str, workdir: Path) -> Path:
@@ -215,7 +245,8 @@ def hash_marks(doc, src: Path, sheet: str | None) -> dict:
 
 
 def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int,
-                src: Path | None = None, sheet: str | None = None) -> dict:
+                src: Path | None = None, sheet: str | None = None,
+                cjk_expected: int = 0) -> dict:
     try:
         import pypdfium2 as pdfium
     except ImportError:
@@ -227,9 +258,10 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int,
         if png_dir is not None:
             fail("--png needs pypdfium2 to rasterize the pages, and it is not "
                  "installed (pip install pypdfium2). The PDF itself does not need it")
-        return {"pages": None, "blank_pages": None, "images": [],
-                "note": "pypdfium2 is not installed, so the blank-page check did NOT "
-                        "run — this PDF has not been checked for empty pages "
+        return {"pages": None, "blank_pages": None, "tofu": None, "images": [],
+                "note": "pypdfium2 is not installed, so the blank-page and tofu "
+                        "checks did NOT run — this PDF has not been checked for "
+                        "empty pages or for Chinese rendered as boxes "
                         "(pip install pypdfium2)"}
     out: dict = {"images": []}
     doc = pdfium.PdfDocument(str(pdf))
@@ -237,6 +269,12 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int,
         out["pages"] = len(doc)
         out["blank_pages"] = [i + 1 for i in range(len(doc))
                               if page_ink(doc[i]) < BLANK_INK]
+        if cjk_expected:
+            measure = check_tofu(doc)
+            out["tofu"] = measure.pop("tofu")
+            out["tofu_measure"] = measure
+        else:
+            out["tofu"] = False           # nothing Chinese to render, nothing to box
         if src is not None:
             out["columns_off_first_page"] = split_columns(doc, src, sheet)
         if src is not None:
@@ -274,6 +312,8 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--allow-blank", action="store_true",
                     help="accept a PDF whose pages carry no ink")
+    ap.add_argument("--allow-tofu", action="store_true",
+                    help="accept a PDF whose Chinese renders as boxes (.notdef)")
     ap.add_argument("--report", type=Path)
     args = ap.parse_args()
 
@@ -290,6 +330,7 @@ def main() -> int:
             fail(f"--dpi {args.dpi} is outside 36-600")
 
         blank_formulas = uncalculated(args.src)
+        cjk_expected = source_cjk(args.src, args.sheet)
         with tempfile.TemporaryDirectory(prefix="xlsx-pdf-") as td:
             work = Path(td)
             source = only_sheet(args.src, args.sheet, work) if args.sheet else args.src
@@ -299,7 +340,8 @@ def main() -> int:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_bytes(produced.read_bytes())
 
-        info = inspect_pdf(args.out, args.png, args.dpi, args.src, args.sheet)
+        info = inspect_pdf(args.out, args.png, args.dpi, args.src, args.sheet,
+                           cjk_expected)
         if info.get("blank_pages") and not args.allow_blank:
             args.out.unlink(missing_ok=True)
             fail(f"page(s) {info['blank_pages']} render with no ink at all, so nothing "
@@ -307,6 +349,11 @@ def main() -> int:
                  f"--allow-blank if a blank page is genuinely expected"
                  + (f". Note {blank_formulas} formula cell(s) have no cached value — "
                     f"run xlsx_recalc.py first" if blank_formulas else ""))
+        if info.get("tofu") and not args.allow_tofu:
+            args.out.unlink(missing_ok=True)
+            fail(describe(info["tofu_measure"]) + ". Nothing was written; pass "
+                 "--allow-tofu only if boxes in place of the Chinese are genuinely "
+                 "acceptable")
 
         report = {"in": args.src.name, "out": args.out.name,
                   "replaced_existing": replaced,
@@ -332,6 +379,10 @@ def main() -> int:
                 f"appear on the page depends on the renderer computing them, which "
                 f"this script does not check. Run xlsx_recalc.py to put the numbers "
                 f"into the file")
+        if info.get("tofu"):
+            report["tofu_warning"] = (
+                describe(info["tofu_measure"]) + ". Written because --allow-tofu was "
+                "given — say so to whoever asked: the preview does not show the labels")
         if info.get("hash_marked_cells"):
             where = info.get("hash_marked_columns") or []
             report["hash_warning"] = (

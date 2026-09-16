@@ -19,11 +19,18 @@ installed has a working `soffice` binary that exits 0 on a .docx and writes no P
 which is why "did it produce a file" is the success test here and the exit code is
 not.
 
-Two things it refuses rather than papers over:
+Three things it refuses rather than papers over:
 
   * **a PDF with no ink on the first page.** LibreOffice exits 0 for an empty
     document and produces a blank page; handing that back as "your preview" is
     worse than an error, because it looks like the content is gone.
+  * **Chinese rendered as boxes.** LibreOffice exits 0 and writes a valid PDF when
+    the machine has no font covering the document's CJK characters — every one of
+    them becomes a hollow `.notdef` rectangle. A page of boxes has plenty of ink, so
+    the blank check passes it; this skill handed exactly that back as a success for
+    two weeks in 2026-09 (gotchas §21⑧-bis), and a Linux host without fonts-noto-cjk
+    produces the same file today. Measured per glyph by office/tofu.py; --allow-tofu
+    is the escape hatch, symmetric with --allow-blank.
   * **tracked changes rendered as if they were the final text.** A document with
     pending revisions renders with the insertions in place and the deletions
     struck through or hidden, depending on settings that live in the FILE. The
@@ -42,6 +49,7 @@ import docxcommon as dc  # noqa: E402
 from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run)
 from office.soffice import convert, find_soffice  # noqa: E402
+from office.tofu import check_tofu, count_cjk, describe  # noqa: E402
 from office.xmlorder import q  # noqa: E402
 
 # Share of dark pixels below which a page counts as blank. The same number the xlsx
@@ -121,6 +129,23 @@ def field_count(pkg) -> int:
     return total
 
 
+def source_cjk(pkg) -> int:
+    """CJK characters the PDF is expected to show: every <w:t> in the body and in
+    the headers and footers. Deleted text (<w:delText>) is left out — whether the
+    marks render is a setting in the file, and the tofu check must not fire because
+    a resolved revision is absent. Zero means the tofu guard has nothing to look
+    for and stays out of the way of a document that has no Chinese in it.
+    """
+    total = 0
+    for name in pkg.names():
+        if not (name == DOCUMENT or name.startswith(("word/header", "word/footer"))):
+            continue
+        if not name.endswith(".xml"):
+            continue
+        total += sum(count_cjk(t.text or "") for t in pkg.tree(name).iter(q("t")))
+    return total
+
+
 def page_ink(page) -> float:
     """Share of dark pixels on one page, rendered grey at BLANK_DPI.
 
@@ -141,7 +166,7 @@ def page_ink(page) -> float:
     return hits / (width * height)
 
 
-def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
+def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int, cjk_expected: int = 0) -> dict:
     try:
         import pypdfium2 as pdfium
     except ImportError:
@@ -153,9 +178,10 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
         if png_dir is not None:
             fail("--png needs pypdfium2 to rasterize the pages, and it is not "
                  "installed (pip install pypdfium2). The PDF itself does not need it")
-        return {"pages": None, "blank_pages": None, "images": [],
-                "note": "pypdfium2 is not installed, so the blank-page check did NOT "
-                        "run — this PDF has not been checked for empty pages "
+        return {"pages": None, "blank_pages": None, "tofu": None, "images": [],
+                "note": "pypdfium2 is not installed, so the blank-page and tofu "
+                        "checks did NOT run — this PDF has not been checked for "
+                        "empty pages or for Chinese rendered as boxes "
                         "(pip install pypdfium2)"}
     out: dict = {"images": []}
     doc = pdfium.PdfDocument(str(pdf))
@@ -163,6 +189,12 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
         out["pages"] = len(doc)
         out["blank_pages"] = [i + 1 for i in range(len(doc))
                               if page_ink(doc[i]) < BLANK_INK]
+        if cjk_expected:
+            measure = check_tofu(doc)
+            out["tofu"] = measure.pop("tofu")
+            out["tofu_measure"] = measure
+        else:
+            out["tofu"] = False           # nothing Chinese to render, nothing to box
         if png_dir is not None:
             png_dir.mkdir(parents=True, exist_ok=True)
             for i in range(len(doc)):
@@ -184,6 +216,8 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--allow-blank", action="store_true",
                     help="accept a PDF whose pages carry no ink")
+    ap.add_argument("--allow-tofu", action="store_true",
+                    help="accept a PDF whose Chinese renders as boxes (.notdef)")
     ap.add_argument("--report", type=Path)
     args = ap.parse_args()
 
@@ -203,6 +237,7 @@ def main() -> int:
         revisions = revision_counts(pkg)
         removed = deleted_texts(pkg)
         fields = field_count(pkg)
+        cjk_expected = source_cjk(pkg)
         # Ask BEFORE writing: afterwards the answer is always "yes".
         replaced = dc.replaces_existing(args.out)
 
@@ -216,12 +251,17 @@ def main() -> int:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_bytes(produced.read_bytes())
 
-        info = inspect_pdf(args.out, args.png, args.dpi)
+        info = inspect_pdf(args.out, args.png, args.dpi, cjk_expected)
         if info.get("blank_pages") and not args.allow_blank:
             args.out.unlink(missing_ok=True)
             fail(f"page(s) {info['blank_pages']} render with no ink at all, so nothing "
                  f"was written. An empty preview looks like lost content; pass "
                  f"--allow-blank if a blank page is genuinely expected")
+        if info.get("tofu") and not args.allow_tofu:
+            args.out.unlink(missing_ok=True)
+            fail(describe(info["tofu_measure"]) + ". Nothing was written; pass "
+                 "--allow-tofu only if boxes in place of the Chinese are genuinely "
+                 "acceptable")
 
         report = {"in": args.src.name, "out": str(args.out), "engine": "LibreOffice",
                   "revisions": revisions, "fields": fields,
@@ -253,6 +293,10 @@ def main() -> int:
                 f"{revisions['deletions']} deletion(s); the PDF {shows}, and is not "
                 f"the document anyone has approved. Accept or reject the revisions "
                 f"first if the PDF is the deliverable")
+        if info.get("tofu"):
+            report["tofu_warning"] = (
+                describe(info["tofu_measure"]) + ". Written because --allow-tofu was "
+                "given — say so to whoever asked: the preview does not show the text")
         if fields:
             report["fields_note"] = (
                 f"{fields} field(s) (page numbers, a table of contents, cross "
