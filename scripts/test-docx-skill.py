@@ -4733,6 +4733,56 @@ def q7_banding(ctx: dict) -> list[str]:
     return out
 
 
+@check("Y0", "soffice_env: macOS forces the native VCL plugin, honours an explicit "
+             "override, touches nothing elsewhere — in BOTH office/ copies")
+def y0_soffice_env(ctx: dict) -> list[str]:
+    """Pure check, no LibreOffice needed (so it is not in SOFFICE_CHECKS).
+
+    LibreOffice >= 26.8 `--headless` on macOS sees no system font unless
+    SAL_USE_VCLPLUGIN=osx (gotchas §21⑧-bis). The helper lives in two skills'
+    office/ trees, which are copies, not a shared module — so both are loaded by
+    path and held to the same contract, or the next edit fixes one and not the other.
+    """
+    import importlib.util
+    out = []
+    copies = {
+        "docx": SKILL / "scripts" / "office" / "soffice.py",
+        "xlsx": SKILL.parent / "xlsx" / "scripts" / "office" / "soffice.py",
+    }
+    for name, path in copies.items():
+        spec = importlib.util.spec_from_file_location(f"soffice_{name}", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        fn = getattr(mod, "soffice_env", None)
+        if fn is None:
+            out.append(f"Y0 {name}/office/soffice.py has no soffice_env()")
+            continue
+        real_platform = sys.platform
+        saved = os.environ.pop("SAL_USE_VCLPLUGIN", None)
+        try:
+            sys.platform = "darwin"
+            if fn().get("SAL_USE_VCLPLUGIN") != "osx":
+                out.append(f"Y0 {name}: on darwin soffice_env() must set SAL_USE_VCLPLUGIN=osx")
+            os.environ["SAL_USE_VCLPLUGIN"] = "svp"
+            if fn().get("SAL_USE_VCLPLUGIN") != "svp":
+                out.append(f"Y0 {name}: a user's own SAL_USE_VCLPLUGIN must win over the default")
+            del os.environ["SAL_USE_VCLPLUGIN"]
+            for plat in ("linux", "win32"):
+                sys.platform = plat
+                if "SAL_USE_VCLPLUGIN" in fn():
+                    out.append(f"Y0 {name}: {plat} must not get SAL_USE_VCLPLUGIN (macOS-only fix)")
+            sys.platform = "darwin"
+            os.environ["ULTRAWORK_Y0_CANARY"] = "1"
+            if fn().get("ULTRAWORK_Y0_CANARY") != "1":
+                out.append(f"Y0 {name}: soffice_env() must pass the rest of the environment through")
+        finally:
+            sys.platform = real_platform
+            os.environ.pop("ULTRAWORK_Y0_CANARY", None)
+            if saved is not None:
+                os.environ["SAL_USE_VCLPLUGIN"] = saved
+    return out
+
+
 def flaw_replace_run_by_run(ctx, work):
     """THE defect: iterate paragraph.runs and call str.replace on each.
 

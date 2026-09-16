@@ -680,6 +680,15 @@ conventions §26；其中**横跨多列的合并标题不算它第一列的宽�
 其中一个以一个与文档毫无关系的错误失败。另：**soffice 对它悄悄拒绝的输入也退出 0** ⇒
 判成功必须看输出文件在不在，不能看退出码。
 
+**⑧-bis macOS 上 LibreOffice ≥ 26.8 的 `--headless` 看不到任何系统字体（2026-09-16 本机双版本对照坐实）。**
+`--headless` 改走 svp 后端 + fontconfig，而其默认 fontconfig 不认识 macOS 字体目录 ⇒ 渲染只剩自带字体：
+「宋体」、Songti SC、**连 Helvetica Neue** 都被换成 Linux Libertine G，中文全是豆腐块、抽出的文本是「年年年年」。
+26.2.5 同机同文档正常（回退到 Arial Unicode MS）。**症状与 Linux 缺 `fonts-noto-cjk` 一字不差**（`only 10% of 72 CJK glyphs`），
+别按字体包方向查——CI `office skills (macos-latest)` 从 09-08 cask 浮到 26.8 起红了两周，第一反应是 runner 镜像。
+修 = 给子进程 `SAL_USE_VCLPLUGIN=osx`（强制 CoreText 后端；`FONTCONFIG_FILE` 指向系统字体目录也行但要建缓存），
+落在 `office/soffice.py::soffice_env()`（docx/xlsx 两份）+ 自测脚本，运行时 `sys.platform == "darwin"` 分支。
+**用户侧同样中招**：`docx_pdf.py`（W17，app 内 docx 预览唯一通道）只查空白页不查豆腐块，26.8 用户会拿到全是方块的 PDF 而技能报告成功。
+
 ---
 
 ### 21.1 宽松许可 PDF 工具链（pypdfium2 / pypdf / pdfplumber / reportlab，2026-08-02）
