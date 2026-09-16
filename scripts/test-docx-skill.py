@@ -2067,10 +2067,12 @@ def tofu_env(work: Path) -> tuple[dict | None, str]:
     """An environment under which THIS host's LibreOffice cannot find a CJK font.
 
     macOS: the svp backend's fontconfig knows no macOS font directory (gotchas
-    §21⑧-bis) — the exact production failure, forced. Linux: a fontconfig that
-    rejects the CJK font FILES by path, so Noto CJK / WenQuanYi / Droid Fallback
-    vanish and everything else stays. Windows: LibreOffice reads fonts through the
-    platform API and no variable hides them — the arm is skipped and named.
+    §21⑧-bis) — the exact production failure, forced. Linux: a fontconfig whose
+    only directories are DejaVu / Liberation — an allow-list, because a reject-list
+    of known CJK font paths missed one on the first CI run (the runner rendered the
+    Chinese anyway) and an unknown font cannot be rejected by name. Windows:
+    LibreOffice reads fonts through the platform API and no variable hides them —
+    the arm is skipped and named.
 
     Whether it WORKED is not assumed from the platform: collect_tofu measures the
     output with a ruler that is not office/tofu.py, and skips if the host still
@@ -2086,22 +2088,14 @@ def tofu_env(work: Path) -> tuple[dict | None, str]:
         conf.write_text(f"""<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-  <dir>/usr/share/fonts</dir>
-  <dir>/usr/local/share/fonts</dir>
-  <dir prefix="xdg">fonts</dir>
+  <dir>/usr/share/fonts/truetype/dejavu</dir>
+  <dir>/usr/share/fonts/truetype/liberation</dir>
+  <dir>/usr/share/fonts/truetype/liberation2</dir>
   <cachedir>{cache.as_posix()}</cachedir>
-  <selectfont><rejectfont>
-    <glob>*CJK*</glob>
-    <glob>*/wqy/*</glob>
-    <glob>*/droid/*</glob>
-    <glob>*/arphic/*</glob>
-    <glob>*/unifont/*</glob>
-    <glob>*/noto/NotoSerifCJK*</glob>
-  </rejectfont></selectfont>
 </fontconfig>
 """, encoding="utf-8")
         env["FONTCONFIG_FILE"] = str(conf)
-        return env, "FONTCONFIG_FILE rejecting the CJK font files"
+        return env, "FONTCONFIG_FILE limited to DejaVu/Liberation"
     return None, "no environment variable hides fonts from LibreOffice on this platform"
 
 
@@ -2117,6 +2111,19 @@ def text_layer_lacks(pdf: Path, needle: str) -> bool:
     with pdfplumber.open(str(pdf)) as doc:
         text = "".join((page.extract_text() or "") for page in doc.pages)
     return needle not in re.sub(r"\s+", "", text)
+
+
+def cjk_fontnames(pdf: Path) -> list[str]:
+    """Which fonts the CJK characters were drawn with — for the skip message, so
+    "this host still renders the Chinese" also says what beat the arm."""
+    import pdfplumber
+    names: set[str] = set()
+    with pdfplumber.open(str(pdf)) as doc:
+        for page in doc.pages:
+            for c in page.chars:
+                if any(0x4E00 <= ord(ch) <= 0x9FFF for ch in c.get("text", "")):
+                    names.add(c.get("fontname", "?"))
+    return sorted(names)[:6]
 
 
 def run_pdf_env(env: dict, *args: str) -> subprocess.CompletedProcess:
@@ -2150,7 +2157,8 @@ def collect_tofu(work: Path, good_pdf: Path) -> dict:
     really = text_layer_lacks(allow_pdf, TITLE) if wrote else None
     if really is False:
         return {"skipped": f"LibreOffice on this host still renders the Chinese under "
-                           f"{how}, so the tofu arms have nothing to refuse"}
+                           f"{how} (drawn with {cjk_fontnames(allow_pdf)}), so the "
+                           f"tofu arms have nothing to refuse"}
     return {"how": how, "env": env, "independent_tofu": really,
             "refuse": {"exit": r.returncode, "stderr": r.stderr.strip(),
                        "wrote": refuse_pdf.exists()},
@@ -3251,7 +3259,9 @@ def y6_tofu(ctx: dict) -> list[str]:
         return []
     t = p.get("tofu") or {}
     if t.get("skipped"):
-        SKIPS.append(f"Y6 tofu guard: {t['skipped']}")
+        note = f"Y6 tofu guard: {t['skipped']}"
+        if note not in SKIPS:          # fired() runs this once per control arm
+            SKIPS.append(note)
         return []
     out = []
     r = t["refuse"]
@@ -3345,7 +3355,9 @@ def y9_rotated(ctx: dict) -> list[str]:
         return []
     r = p.get("rotated") or {}
     if r.get("skipped"):
-        SKIPS.append(f"Y9 rotated page: {r['skipped']}")
+        note = f"Y9 rotated page: {r['skipped']}"
+        if note not in SKIPS:
+            SKIPS.append(note)
         return []
     out = []
     if r.get("rotation") != 90:
@@ -5548,8 +5560,10 @@ def flaw_tofu_handed_back(ctx, work):
     """CONTROL: the shape the defect shipped in until 2026-09-16 — exit 0, file
     written, no word about the boxes."""
     p = copy.deepcopy(ctx["pdf"])
-    if p.get("skipped") or (p.get("tofu") or {}).get("skipped"):
+    if p.get("skipped"):
         return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
     p["tofu"]["refuse"] = {"exit": 0, "stderr": "", "wrote": True}
     ctx["pdf"] = p
     return ctx
@@ -5557,8 +5571,10 @@ def flaw_tofu_handed_back(ctx, work):
 
 def flaw_tofu_refusal_says_nothing(ctx, work):
     p = copy.deepcopy(ctx["pdf"])
-    if p.get("skipped") or (p.get("tofu") or {}).get("skipped"):
+    if p.get("skipped"):
         return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
     p["tofu"]["refuse"]["stderr"] = "error: the preview may have font issues"
     ctx["pdf"] = p
     return ctx
@@ -5566,8 +5582,10 @@ def flaw_tofu_refusal_says_nothing(ctx, work):
 
 def flaw_tofu_allowed_in_silence(ctx, work):
     p = copy.deepcopy(ctx["pdf"])
-    if p.get("skipped") or (p.get("tofu") or {}).get("skipped"):
+    if p.get("skipped"):
         return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
     p["tofu"]["allow"]["report"]["tofu"] = False
     p["tofu"]["allow"]["report"].pop("tofu_warning", None)
     ctx["pdf"] = p
@@ -5631,8 +5649,10 @@ def flaw_tofu_copy_drifts(ctx, work):
 def flaw_rotation_ignored(ctx, work):
     """CONTROL: the measure the no-op arm produced becomes the shipped number."""
     p = copy.deepcopy(ctx["pdf"])
-    if p.get("skipped") or (p.get("rotated") or {}).get("skipped"):
+    if p.get("skipped"):
         return ctx
+    if (p.get("rotated") or {}).get("skipped"):
+        raise ControlUnavailable(p["rotated"]["skipped"])
     p["rotated"]["fraction"] = p["rotated"]["mutant_fraction"]
     p["rotated"]["tofu"] = p["rotated"]["mutant_fraction"] < 0.5
     ctx["pdf"] = p

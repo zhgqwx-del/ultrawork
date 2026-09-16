@@ -133,7 +133,9 @@ TOFU_NEEDLE = "营业收入"
 def tofu_env(work: Path) -> tuple[dict | None, str]:
     """An environment under which THIS host's LibreOffice cannot find a CJK font.
     Same construction as test-docx-skill.py (macOS: svp backend, gotchas §21⑧-bis;
-    Linux: fontconfig rejecting the CJK font files; Windows: no handle, skipped)."""
+    Linux: a fontconfig whose only directories are DejaVu / Liberation — an
+    allow-list, since a reject-list of CJK font paths missed one on CI; Windows: no
+    handle, skipped)."""
     env = dict(os.environ)
     if sys.platform == "darwin":
         env["SAL_USE_VCLPLUGIN"] = "svp"
@@ -144,22 +146,14 @@ def tofu_env(work: Path) -> tuple[dict | None, str]:
         conf.write_text(f"""<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-  <dir>/usr/share/fonts</dir>
-  <dir>/usr/local/share/fonts</dir>
-  <dir prefix="xdg">fonts</dir>
+  <dir>/usr/share/fonts/truetype/dejavu</dir>
+  <dir>/usr/share/fonts/truetype/liberation</dir>
+  <dir>/usr/share/fonts/truetype/liberation2</dir>
   <cachedir>{cache.as_posix()}</cachedir>
-  <selectfont><rejectfont>
-    <glob>*CJK*</glob>
-    <glob>*/wqy/*</glob>
-    <glob>*/droid/*</glob>
-    <glob>*/arphic/*</glob>
-    <glob>*/unifont/*</glob>
-    <glob>*/noto/NotoSerifCJK*</glob>
-  </rejectfont></selectfont>
 </fontconfig>
 """, encoding="utf-8")
         env["FONTCONFIG_FILE"] = str(conf)
-        return env, "FONTCONFIG_FILE rejecting the CJK font files"
+        return env, "FONTCONFIG_FILE limited to DejaVu/Liberation"
     return None, "no environment variable hides fonts from LibreOffice on this platform"
 
 
@@ -169,6 +163,19 @@ def text_layer_lacks(pdf: Path, needle: str) -> bool:
     with pdfplumber.open(str(pdf)) as doc:
         text = "".join((page.extract_text() or "") for page in doc.pages)
     return needle not in re.sub(r"\s+", "", text)
+
+
+def cjk_fontnames(pdf: Path) -> list[str]:
+    """Which fonts the CJK characters were drawn with — for the skip message, so
+    "this host still renders the Chinese" also says what beat the arm."""
+    import pdfplumber
+    names: set[str] = set()
+    with pdfplumber.open(str(pdf)) as doc:
+        for page in doc.pages:
+            for c in page.chars:
+                if any(0x4E00 <= ord(ch) <= 0x9FFF for ch in c.get("text", "")):
+                    names.add(c.get("fontname", "?"))
+    return sorted(names)[:6]
 
 
 def collect_tofu(work: Path, src: Path, good_pdf: Path) -> dict:
@@ -192,7 +199,8 @@ def collect_tofu(work: Path, src: Path, good_pdf: Path) -> dict:
     really = text_layer_lacks(allow_pdf, TOFU_NEEDLE) if wrote else None
     if really is False:
         return {"skipped": f"LibreOffice on this host still renders the Chinese under "
-                           f"{how}, so the tofu arms have nothing to refuse"}
+                           f"{how} (drawn with {cjk_fontnames(allow_pdf)}), so the "
+                           f"tofu arms have nothing to refuse"}
     return {"how": how, "env": env, "independent_tofu": really,
             "refuse": {"exit": r.returncode, "stderr": r.stderr.strip(),
                        "wrote": refuse_pdf.exists()},
@@ -1779,7 +1787,9 @@ def n13_tofu(ctx: dict) -> list[str]:
     """
     t = ctx["render"].get("tofu") or {}
     if t.get("skipped"):
-        SKIPS.append(f"N13 tofu guard: {t['skipped']}")
+        note = f"N13 tofu guard: {t['skipped']}"
+        if note not in SKIPS:          # fired() runs this once per control arm
+            SKIPS.append(note)
         return []
     out = []
     r = t["refuse"]
@@ -3281,7 +3291,7 @@ def flaw_tofu_handed_back(ctx, work):
     written, no word about the boxes."""
     r = copy.deepcopy(ctx["render"])
     if (r.get("tofu") or {}).get("skipped"):
-        return ctx
+        raise ControlUnavailable(r["tofu"]["skipped"])
     r["tofu"]["refuse"] = {"exit": 0, "stderr": "", "wrote": True}
     ctx["render"] = r
     return ctx
@@ -3290,7 +3300,7 @@ def flaw_tofu_handed_back(ctx, work):
 def flaw_tofu_allowed_in_silence(ctx, work):
     r = copy.deepcopy(ctx["render"])
     if (r.get("tofu") or {}).get("skipped"):
-        return ctx
+        raise ControlUnavailable(r["tofu"]["skipped"])
     r["tofu"]["allow"]["report"]["tofu"] = False
     r["tofu"]["allow"]["report"].pop("tofu_warning", None)
     ctx["render"] = r
