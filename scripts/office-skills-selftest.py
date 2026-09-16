@@ -266,8 +266,14 @@ def soffice_convert(src: Path, fmt: str, outdir: Path) -> tuple[Path | None, str
     cmd = [SOFFICE, f"-env:UserInstallation={profile.as_uri()}", "--headless",
            "--norestore", "--convert-to", fmt, "--outdir", str(outdir), str(src)]
     try:
+        # Same env fix as office/soffice.py::soffice_env (macOS + LO >= 26.8 headless
+        # sees no system fonts without the native VCL plugin) — kept inline because
+        # this script deliberately imports nothing from the skills it tests.
+        env = dict(os.environ)
+        if sys.platform == "darwin":
+            env.setdefault("SAL_USE_VCLPLUGIN", "osx")
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=180)
+                           errors="replace", timeout=180, env=env)
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"soffice failed: {e}"
     ext = fmt.split(":")[0]

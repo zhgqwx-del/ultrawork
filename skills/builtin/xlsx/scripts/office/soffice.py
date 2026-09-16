@@ -19,6 +19,7 @@ Two rules learned the hard way:
 from __future__ import annotations
 
 import os
+import sys
 import platform
 import shutil
 import subprocess
@@ -53,6 +54,24 @@ def find_soffice() -> str | None:
     return next((str(p) for p in candidates if p.is_file()), None)
 
 
+def soffice_env() -> dict[str, str]:
+    """Environment for a headless soffice child.
+
+    macOS + LibreOffice >= 26.8: `--headless` switched to the svp backend, whose
+    fontconfig knows none of the macOS font directories, so the render sees ONLY
+    LibreOffice's bundled faces — every system font, CJK or Latin (even "Helvetica
+    Neue"), comes out as Linux Libertine G and Chinese becomes tofu. Measured
+    2026-09-16 with 26.2.5 vs 26.8.0 on the same machine and the same .docx; the
+    CI job on macos-latest went red the day the cask floated to 26.8. Forcing the
+    native CoreText plugin restores 26.2 behaviour and is harmless on 26.2 itself.
+    A user who set SAL_USE_VCLPLUGIN themselves keeps their choice.
+    """
+    env = dict(os.environ)
+    if sys.platform == "darwin":
+        env.setdefault("SAL_USE_VCLPLUGIN", "osx")
+    return env
+
+
 def convert(src: Path, fmt: str, outdir: Path, timeout: int = DEFAULT_TIMEOUT,
             soffice: str | None = None) -> tuple[Path | None, str]:
     """Convert `src` to `fmt` inside `outdir`. Returns (path, error-message).
@@ -70,7 +89,7 @@ def convert(src: Path, fmt: str, outdir: Path, timeout: int = DEFAULT_TIMEOUT,
            "--norestore", "--convert-to", fmt, "--outdir", str(outdir), str(src)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout)
+                           errors="replace", timeout=timeout, env=soffice_env())
     except subprocess.TimeoutExpired:
         return None, f"LibreOffice did not finish converting {src.name} within {timeout}s"
     except OSError as e:

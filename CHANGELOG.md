@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS + LibreOffice ≥ 26.8：docx/xlsx → PDF 中文全是豆腐块（2026-09-16，gotchas §21⑧-bis）** —— 26.8 的 `--headless`
+  改走 svp + fontconfig，默认配置不认识 macOS 字体目录，渲染只剩自带字体（连 Helvetica Neue 都换成 Linux Libertine G）。
+  本机同一文档 26.2.5 vs 26.8.0 对照坐实；CI `office skills (macos-latest)` 自 09-08 cask 浮到 26.8 起 63/4 红。
+  修 = `office/soffice.py::soffice_env()`（docx/xlsx 两份）+ `office-skills-selftest.py` 给子进程 `SAL_USE_VCLPLUGIN=osx`
+  （仅 darwin，用户自设优先）。本机 26.8.0 全量自测 **67/67**、26.2.5 仍 18/18、`docx_pdf.py` 在 26.8 下 CJK 正常。
+  **未做（记档）**：`docx_pdf.py` 只查空白页不查豆腐块，下一次同类回归用户仍会拿到方块 PDF。
+
 ### Added
 
 - **关窗口不退出：隐藏到后台 + 托盘 / 菜单栏常驻（2026-09-15，ADR-074 · discussions/061 · gotchas §6）** —— 对齐 QoderWork /

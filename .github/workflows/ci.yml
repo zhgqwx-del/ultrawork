@@ -177,6 +177,10 @@ jobs:
       #                     pdffont.py already probes.
       #
       # macOS and Windows ship CJK faces of their own, so this is a Linux-only need.
+      # (macOS caveat: LibreOffice >= 26.8 `--headless` cannot SEE those faces — svp
+      # backend + a fontconfig that knows no macOS font dirs. The skills pass
+      # SAL_USE_VCLPLUGIN=osx to soffice for that; gotchas §21⑧-bis. The cask
+      # floats on purpose so this job keeps tracking what a `brew install` user gets.)
       - name: Install LibreOffice (Linux)
         if: runner.os == 'Linux'
         run: |
