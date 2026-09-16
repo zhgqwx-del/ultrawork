@@ -214,9 +214,22 @@ for p in doc.paragraphs:
 ⚠️ **要的是 LibreOffice Writer，不只是 `soffice`。** 只装了 `libreoffice-calc` 的机器上
 `soffice` 存在、对 .docx **退出 0 且不产出任何文件** —— 所以这里判成功看的是产物在不在。
 
-三件它拒绝或点名而不糊弄过去的事：**整页没有墨的 PDF**（空预览看起来就像内容没了）·
+四件它拒绝或点名而不糊弄过去的事：**整页没有墨的 PDF**（空预览看起来就像内容没了）·
+**中文渲染成方块（豆腐块）**（见下）·
 **文档里还有未处理的修订**（PDF 只是修订的一种解法，不是任何人批准过的那份文档）·
 **域是按缓存值渲染的**（LibreOffice 转换时不重算 `{ PAGE }` / 目录，缓存是旧的就渲染旧的）。
+
+**豆腐块守卫**：机器上没有覆盖这些汉字的字体时，LibreOffice **照样退出 0、写出一份合法 PDF**，
+只是每个汉字都画成回退字体的 `.notdef` 空心方框——一页方框墨量充足，空白页检查看不见它
+（2026-09 macOS 上 LibreOffice ≥ 26.8 就这样静默交付了两周；Linux 没装 `fonts-noto-cjk`、
+Windows 缺 SimSun 的机器今天就是这个结果）。所以 `docx_pdf.py` 逐字量：取最前面 3 张有中文的页，
+按字符框看**字的中间 44% 区域有没有笔画**（PDFium 对另一类缺字形画的是**空白**而不是方框，同样按缺字计）（方框只有边线、中间是白纸），有笔画的比例 **< 50%**
+⇒ **删掉输出、退出 2**，报错原文带数字（`only 0 of 229 CJK glyph(s) … have strokes`）——
+**把这句原样转述给用户**，不要软化成「预览可能有字体问题」。报告里 `tofu: false` + `tofu_measure` 是**量过的结论**；
+带 `tofu_note` 的 `false`/`null` 是「没东西可量」，不是量过没事；源文档没有中文时 `tofu: false` 且不量（零影响）。确认方框可接受时加
+`--allow-tofu`，会写出并在报告里给 `tofu: true` + `tofu_warning`。修法在机器不在文档：
+Linux 装 `fonts-noto-cjk`，Windows 装任一 CJK 字体，macOS 由技能自动给 soffice 传
+`SAL_USE_VCLPLUGIN=osx`（自己设了这个变量会覆盖它）。
 
 ## 修订与批注：读得懂，才谈得上不破坏
 

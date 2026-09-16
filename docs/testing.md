@@ -699,3 +699,21 @@ case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上�
 以及一条被门禁抓出来、手工探针 3/3 漏掉的产品缺陷：全屏 → Cmd+W 用 900ms 定时隐藏，窗口会以**全屏态**被藏起来、唤回后又是全屏。
 手工探针与脚本只差几百毫秒的时序。修法不是调时间（styleMask 轮询同样 3/3 失败——AppKit 在退出**开始**时就清那一位），
 而是改契约：全屏下关窗只退全屏、不隐藏。**没有外部可读的「退出完成」信号时，别用定时器假装有。**
+
+## 15. 技能改动的 app 内真机验收：headless 驱动 sidecar API（2026-09-16，豆腐块守卫实战）
+
+技能脚本改完，CLI 级门禁（`test-docx-skill.py` 等）全绿仍验不到三层：**安装副本有没有随 sentinel 刷新**、
+**模型会不会把脚本的报错原样转述**、**会不会擅自走逃生口**。这三层没有门禁，但可以不用手点 app 就跑到：
+
+1. `cd packages/client/desktop && bun run --bun tauri dev`（要造环境故障时把变量挂在这条命令前，如 `SAL_USE_VCLPLUGIN=svp`，
+   它顺着 app → sidecar → python → soffice 传下去；用 `ps eww -p $(lsof -ti:4096)` **实证**变量到了 sidecar，别假定）。
+2. 等 `GET /global/health` 200；核对 `~/.config/ultrawork/skills/builtin/.builtin-version` 等于本次打包的 hash。
+3. 用 sidecar Basic Auth（`~/.config/ultrawork/sidecar-auth.json`）：`POST /session`（header `x-opencode-directory` = 工作区路径）→
+   `POST /session/:id/prompt_async`，body `{"parts":[{"type":"text","text":…}],"model":{"providerID","modelID"}}` →
+   轮询 `GET /session/status` 直到该 id 消失 → `GET /session/:id/message?limit=100` 读全部 tool part（`state.input.command` /
+   `state.output`）和 assistant text。
+   ⚠️ **model 要用工作区 `opencode.json` 里那个**（custom provider 的 baseURL 是 per-workspace 的，用全局 provider 会报
+   `"undefined/chat/completions" cannot be parsed as a URL` 且会话 7 秒就 idle）。
+4. 正向臂 + 故障臂各一轮；读的是**模型看到的原始 stdout/stderr** 和它**写给用户的那段话**，两者之间的失真就是要验的东西。
+
+视觉/措辞判断留给人：产物面板里 PDF 看一眼、agent 回复能不能让不懂技术的用户明白「为什么没交付、修法在哪」。

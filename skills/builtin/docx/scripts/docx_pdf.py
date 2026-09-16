@@ -19,11 +19,18 @@ installed has a working `soffice` binary that exits 0 on a .docx and writes no P
 which is why "did it produce a file" is the success test here and the exit code is
 not.
 
-Two things it refuses rather than papers over:
+Three things it refuses rather than papers over:
 
   * **a PDF with no ink on the first page.** LibreOffice exits 0 for an empty
     document and produces a blank page; handing that back as "your preview" is
     worse than an error, because it looks like the content is gone.
+  * **Chinese rendered as boxes.** LibreOffice exits 0 and writes a valid PDF when
+    the machine has no font covering the document's CJK characters — every one of
+    them becomes a hollow `.notdef` rectangle. A page of boxes has plenty of ink, so
+    the blank check passes it; this skill handed exactly that back as a success for
+    two weeks in 2026-09 (gotchas §21⑧-bis), and a Linux host without fonts-noto-cjk
+    produces the same file today. Measured per glyph by office/tofu.py; --allow-tofu
+    is the escape hatch, symmetric with --allow-blank.
   * **tracked changes rendered as if they were the final text.** A document with
     pending revisions renders with the insertions in place and the deletions
     struck through or hidden, depending on settings that live in the FILE. The
@@ -42,6 +49,7 @@ import docxcommon as dc  # noqa: E402
 from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run)
 from office.soffice import convert, find_soffice  # noqa: E402
+from office.tofu import check_tofu, count_cjk, describe  # noqa: E402
 from office.xmlorder import q  # noqa: E402
 
 # Share of dark pixels below which a page counts as blank. The same number the xlsx
@@ -121,6 +129,73 @@ def field_count(pkg) -> int:
     return total
 
 
+MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+RELS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+SETTINGS = "word/settings.xml"
+
+
+def cjk_in_part(tree) -> int:
+    """CJK characters in a part's <w:t> runs, counting each drawn glyph ONCE.
+
+    A text box or shape is stored twice — <mc:Choice> (drawingML) and <mc:Fallback>
+    (VML) — and only one of them renders, so the Fallback subtree is skipped.
+    Counting both would double the expectation this number bounds, and an
+    overcount is what turns line-end spaces back into "missing glyphs".
+    """
+    total = 0
+    for el in tree.iter(q("t")):
+        anc = el.getparent()
+        while anc is not None and anc.tag != MC_FALLBACK:
+            anc = anc.getparent()
+        if anc is None:
+            total += count_cjk(el.text or "")
+    return total
+
+
+def rendered_header_parts(pkg) -> list[str]:
+    """Header/footer parts LibreOffice will actually lay out.
+
+    Word keeps `first` and `even` parts in the package whether or not they are
+    switched on, and a part that is present but off renders NOTHING (the switches:
+    <w:titlePg/> in the same sectPr, <w:evenAndOddHeaders/> in settings — see
+    docx_header.py). Only referenced, switched-on parts count.
+    """
+    root = pkg.tree(DOCUMENT)
+    even_on = pkg.has(SETTINGS) and \
+        pkg.tree(SETTINGS).find(q("evenAndOddHeaders")) is not None
+    rels = {r["id"]: r["resolved"]
+            for r in pkg.relationships(pkg.rels_part_of(DOCUMENT))}
+    parts: list[str] = []
+    for sect in root.iter(q("sectPr")):
+        first_on = sect.find(q("titlePg")) is not None
+        for ref in sect:
+            if ref.tag not in (q("headerReference"), q("footerReference")):
+                continue
+            kind = ref.get(q("type")) or "default"
+            if (kind == "first" and not first_on) or (kind == "even" and not even_on):
+                continue
+            part = rels.get(ref.get(f"{{{RELS_NS}}}id"))
+            if part and part not in parts and pkg.has(part):
+                parts.append(part)
+    return parts
+
+
+def source_cjk(pkg) -> int:
+    """CJK characters the PDF is expected to show: the body, footnotes and endnotes,
+    and the headers and footers that are switched on. Deleted text (<w:delText>) is
+    left out — whether the marks render is a setting in the file, and the tofu check
+    must not fire because a resolved revision is absent. Zero means the tofu guard
+    has nothing to look for and stays out of the way of a document with no Chinese.
+
+    This number is also the CEILING on how many empty text objects the guard may
+    believe are missing glyphs, so it must not overcount (see cjk_in_part and
+    rendered_header_parts); undercounting only makes the guard less sensitive.
+    """
+    parts = [DOCUMENT] + [n for n in ("word/footnotes.xml", "word/endnotes.xml")
+                          if pkg.has(n)] + rendered_header_parts(pkg)
+    return sum(cjk_in_part(pkg.tree(name)) for name in parts)
+
+
 def page_ink(page) -> float:
     """Share of dark pixels on one page, rendered grey at BLANK_DPI.
 
@@ -141,7 +216,7 @@ def page_ink(page) -> float:
     return hits / (width * height)
 
 
-def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
+def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int, cjk_expected: int = 0) -> dict:
     try:
         import pypdfium2 as pdfium
     except ImportError:
@@ -153,9 +228,10 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
         if png_dir is not None:
             fail("--png needs pypdfium2 to rasterize the pages, and it is not "
                  "installed (pip install pypdfium2). The PDF itself does not need it")
-        return {"pages": None, "blank_pages": None, "images": [],
-                "note": "pypdfium2 is not installed, so the blank-page check did NOT "
-                        "run — this PDF has not been checked for empty pages "
+        return {"pages": None, "blank_pages": None, "tofu": None, "images": [],
+                "note": "pypdfium2 is not installed, so the blank-page and tofu "
+                        "checks did NOT run — this PDF has not been checked for "
+                        "empty pages or for Chinese rendered as boxes "
                         "(pip install pypdfium2)"}
     out: dict = {"images": []}
     doc = pdfium.PdfDocument(str(pdf))
@@ -163,6 +239,22 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int) -> dict:
         out["pages"] = len(doc)
         out["blank_pages"] = [i + 1 for i in range(len(doc))
                               if page_ink(doc[i]) < BLANK_INK]
+        if cjk_expected:
+            measure = check_tofu(doc, cjk_expected)
+            out["tofu"] = measure.pop("tofu")
+            out["tofu_measure"] = measure
+            if out["tofu"] is None:
+                # Not "unchecked": measured, and nothing to measure. The caller must
+                # be able to tell that from the pypdfium2-missing case above.
+                out["tofu_note"] = (
+                    f"the source holds {cjk_expected} CJK character(s) but PDFium found "
+                    f"no CJK glyph and no missing-glyph object on any page, so there "
+                    f"was nothing to measure — the Chinese may sit in hidden text or a part LibreOffice did not lay out")
+        else:
+            out["tofu"] = False           # nothing Chinese to render, nothing to box
+            out["tofu_note"] = ("no CJK text in the source (body, footnotes, active "
+                                "headers and footers), so the tofu check had nothing "
+                                "to measure and did not run")
         if png_dir is not None:
             png_dir.mkdir(parents=True, exist_ok=True)
             for i in range(len(doc)):
@@ -184,6 +276,8 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--allow-blank", action="store_true",
                     help="accept a PDF whose pages carry no ink")
+    ap.add_argument("--allow-tofu", action="store_true",
+                    help="accept a PDF whose Chinese renders as boxes (.notdef)")
     ap.add_argument("--report", type=Path)
     args = ap.parse_args()
 
@@ -203,6 +297,7 @@ def main() -> int:
         revisions = revision_counts(pkg)
         removed = deleted_texts(pkg)
         fields = field_count(pkg)
+        cjk_expected = source_cjk(pkg)
         # Ask BEFORE writing: afterwards the answer is always "yes".
         replaced = dc.replaces_existing(args.out)
 
@@ -216,12 +311,17 @@ def main() -> int:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_bytes(produced.read_bytes())
 
-        info = inspect_pdf(args.out, args.png, args.dpi)
+        info = inspect_pdf(args.out, args.png, args.dpi, cjk_expected)
         if info.get("blank_pages") and not args.allow_blank:
             args.out.unlink(missing_ok=True)
             fail(f"page(s) {info['blank_pages']} render with no ink at all, so nothing "
                  f"was written. An empty preview looks like lost content; pass "
                  f"--allow-blank if a blank page is genuinely expected")
+        if info.get("tofu") and not args.allow_tofu:
+            args.out.unlink(missing_ok=True)
+            fail(describe(info["tofu_measure"]) + ". Nothing was written; pass "
+                 "--allow-tofu only if boxes in place of the Chinese are genuinely "
+                 "acceptable")
 
         report = {"in": args.src.name, "out": str(args.out), "engine": "LibreOffice",
                   "revisions": revisions, "fields": fields,
@@ -253,6 +353,10 @@ def main() -> int:
                 f"{revisions['deletions']} deletion(s); the PDF {shows}, and is not "
                 f"the document anyone has approved. Accept or reject the revisions "
                 f"first if the PDF is the deliverable")
+        if info.get("tofu"):
+            report["tofu_warning"] = (
+                describe(info["tofu_measure"]) + ". Written because --allow-tofu was "
+                "given — say so to whoever asked: the preview does not show the text")
         if fields:
             report["fields_note"] = (
                 f"{fields} field(s) (page numbers, a table of contents, cross "

@@ -112,7 +112,7 @@ FILL_TYPO = "客户名"        # a key that matches no placeholder
 # Q3 and Q5 are here because W19's two most load-bearing claims are only true if a
 # layout engine agrees: a header row either does or does not reappear on page 2, and
 # a cell's text either does or does not survive on one line.
-SOFFICE_CHECKS = {"Y1", "Y2", "Y3", "Y4", "Y5", "Q3", "Q5", "D7"}
+SOFFICE_CHECKS = {"Y1", "Y2", "Y3", "Y4", "Y5", "Y6", "Y7", "Y9", "Q3", "Q5", "D7"}
 
 STDOUT_BUDGET = 6000        # bytes one call may print for a long document
 SCALE_PARAGRAPHS = 2000     # comfortably past docxcommon.STDOUT_ITEM_LIMIT
@@ -934,6 +934,7 @@ def collect(work: Path) -> dict:
 
     # --- W17 render ------------------------------------------------------------
     ctx["pdf"] = collect_pdf(work)
+    ctx["tofu_copies"] = collect_tofu_copies()
 
     # --- W6 / W7 tracked changes ------------------------------------------------
     ctx["revise"] = collect_revisions(work)
@@ -2046,6 +2047,186 @@ def blank_document(src: Path, dst: Path) -> None:
     rewrite_zip(src, dst, mutate)
 
 
+# The office/ trees of the docx and xlsx skills are copies, not a shared module;
+# the checks that hold both to one contract (Y0, Y8) load each by path.
+OFFICE_COPIES = {
+    "docx": SKILL / "scripts" / "office",
+    "xlsx": SKILL.parent / "xlsx" / "scripts" / "office",
+}
+
+
+def load_by_path(name: str, path: Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def tofu_env(work: Path) -> tuple[dict | None, str]:
+    """An environment under which THIS host's LibreOffice cannot find a CJK font.
+
+    macOS: the svp backend's fontconfig knows no macOS font directory (gotchas
+    §21⑧-bis) — the exact production failure, forced. Linux: a fontconfig whose
+    only directories are DejaVu / Liberation — an allow-list, because a reject-list
+    of known CJK font paths missed one on the first CI run (the runner rendered the
+    Chinese anyway) and an unknown font cannot be rejected by name. Windows:
+    LibreOffice reads fonts through the platform API and no variable hides them —
+    the arm is skipped and named.
+
+    Whether it WORKED is not assumed from the platform: collect_tofu measures the
+    output with a ruler that is not office/tofu.py, and skips if the host still
+    rendered the Chinese.
+    """
+    env = dict(os.environ)
+    if sys.platform == "darwin":
+        env["SAL_USE_VCLPLUGIN"] = "svp"
+        return env, "SAL_USE_VCLPLUGIN=svp"
+    if sys.platform.startswith("linux"):
+        conf, cache = work / "no-cjk-fonts.conf", work / "fc-cache"
+        cache.mkdir(exist_ok=True)
+        conf.write_text(f"""<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts/truetype/dejavu</dir>
+  <dir>/usr/share/fonts/truetype/liberation</dir>
+  <dir>/usr/share/fonts/truetype/liberation2</dir>
+  <cachedir>{cache.as_posix()}</cachedir>
+</fontconfig>
+""", encoding="utf-8")
+        env["FONTCONFIG_FILE"] = str(conf)
+        return env, "FONTCONFIG_FILE limited to DejaVu/Liberation"
+    return None, "no environment variable hides fonts from LibreOffice on this platform"
+
+
+def text_layer_lacks(pdf: Path, needle: str) -> bool:
+    """A ruler that is NOT office/tofu.py: pdfminer's reading of the text layer.
+
+    LibreOffice's subsetter gives every `.notdef` glyph the same code, so a page of
+    boxes reads back as one character repeated ("二二二二…", measured 2026-09-16)
+    and a phrase from the source cannot be found. Whitespace is dropped first —
+    pdfminer sometimes spaces CJK characters apart on a correct page.
+    """
+    import pdfplumber
+    with pdfplumber.open(str(pdf)) as doc:
+        text = "".join((page.extract_text() or "") for page in doc.pages)
+    return needle not in re.sub(r"\s+", "", text)
+
+
+def cjk_fontnames(pdf: Path) -> list[str]:
+    """Which fonts the CJK characters were drawn with — for the skip message, so
+    "this host still renders the Chinese" also says what beat the arm."""
+    import pdfplumber
+    names: set[str] = set()
+    with pdfplumber.open(str(pdf)) as doc:
+        for page in doc.pages:
+            for c in page.chars:
+                if any(0x4E00 <= ord(ch) <= 0x9FFF for ch in c.get("text", "")):
+                    names.add(c.get("fontname", "?"))
+    return sorted(names)[:6]
+
+
+def run_pdf_env(env: dict, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([PY, str(SKILL / "scripts" / "docx_pdf.py"), *map(str, args)],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=300, env=env)
+
+
+def collect_tofu(work: Path, good_pdf: Path) -> dict:
+    """The tofu guard's two arms, under an environment that hides CJK fonts.
+
+    `refuse` is the plain call (must exit 2 and write nothing), `allow` the same
+    with --allow-tofu (must write, and say so). Both preconditions are measured
+    with the independent ruler: the GOOD preview must contain the title, and the
+    allowed tofu preview must not — otherwise this host did not produce tofu and
+    the arm is skipped by name, never counted as a pass.
+    """
+    env, how = tofu_env(work)
+    if env is None:
+        return {"skipped": how}
+    if not good_pdf.is_file() or text_layer_lacks(good_pdf, TITLE):
+        return {"skipped": "the independent ruler cannot find the title even in the "
+                           "good preview, so it cannot tell tofu from fine"}
+    refuse_pdf, allow_pdf = work / "tofu-refused.pdf", work / "tofu-allowed.pdf"
+    r = run_pdf_env(env, "--in", REPORT, "--out", refuse_pdf)
+    a = run_pdf_env(env, "--in", REPORT, "--out", allow_pdf, "--allow-tofu",
+                    "--report", work / "tofu-allowed.json")
+    report = json.loads((work / "tofu-allowed.json").read_text(encoding="utf-8")) \
+        if (work / "tofu-allowed.json").exists() else {}
+    wrote = allow_pdf.is_file() and allow_pdf.stat().st_size > 0
+    really = text_layer_lacks(allow_pdf, TITLE) if wrote else None
+    if really is False:
+        return {"skipped": f"LibreOffice on this host still renders the Chinese under "
+                           f"{how} (drawn with {cjk_fontnames(allow_pdf)}), so the "
+                           f"tofu arms have nothing to refuse"}
+    return {"how": how, "env": env, "independent_tofu": really,
+            "refuse": {"exit": r.returncode, "stderr": r.stderr.strip(),
+                       "wrote": refuse_pdf.exists()},
+            "allow": {"exit": a.returncode, "stderr": a.stderr.strip(),
+                      "wrote": wrote, "report": report}}
+
+
+def measure_rotated(work: Path, good_pdf: Path) -> dict:
+    """The tofu measure on a page carrying /Rotate 90 — both arms.
+
+    `get_charbox` is in page space and a render is in display space; on a rotated
+    page they disagree and every box lands on paper (gotchas §21⑨). The trap is
+    invisible on the unrotated pages LibreOffice writes, so the preview is rotated
+    here and measured twice: as shipped, and with `set_rotation` made a no-op. The
+    second arm must score LOW, or the rotation is not being tested at all.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return {"skipped": "pypdfium2 is not installed"}
+    if not good_pdf.is_file():
+        return {"skipped": "no good preview to rotate"}
+    tofu = load_by_path("tofu_docx_rot", OFFICE_COPIES["docx"] / "tofu.py")
+    rotated = work / "rotated.pdf"
+    doc = pdfium.PdfDocument(str(good_pdf))
+    doc[0].set_rotation(90)
+    doc.save(str(rotated))
+    doc.close()
+    doc = pdfium.PdfDocument(str(rotated))
+    rotation = doc[0].get_rotation()
+    real = tofu.check_tofu(doc)
+    doc.close()
+    saved = pdfium.PdfPage.set_rotation
+    pdfium.PdfPage.set_rotation = lambda self, r: None
+    try:
+        doc = pdfium.PdfDocument(str(rotated))
+        mutant = tofu.check_tofu(doc)
+        doc.close()
+    finally:
+        pdfium.PdfPage.set_rotation = saved
+    return {"rotation": rotation, "fraction": real["cjk_inked_fraction"],
+            "tofu": real["tofu"], "glyphs": real["cjk_glyphs"],
+            "mutant_fraction": mutant["cjk_inked_fraction"]}
+
+
+def collect_tofu_copies() -> dict:
+    """What each office/tofu.py copy says, for Y8 to compare. Pure, no LibreOffice."""
+    sample = {"cjk_inked": 3, "cjk_glyphs": 40, "cjk_inked_fraction": 0.075,
+              "notdef_glyphs": 30, "pages_checked": [1, 2]}
+    out = {}
+    for name, path in OFFICE_COPIES.items():
+        f = path / "tofu.py"
+        if not f.is_file():
+            out[name] = {"missing": True}
+            continue
+        mod = load_by_path(f"tofu_{name}", f)
+        out[name] = {
+            "constants": {k: getattr(mod, k, None) for k in
+                          ("TOFU_CENTER_INK", "TOFU_MIN_FRACTION", "TOFU_DPI",
+                           "TOFU_PAGES")},
+            "api": [k for k in ("check_tofu", "page_glyphs", "count_cjk", "describe")
+                    if callable(getattr(mod, k, None))],
+            "count": getattr(mod, "count_cjk", lambda s: None)("中文 mixed 文本 abc。"),
+            "describe": getattr(mod, "describe", lambda t: None)(dict(sample)),
+        }
+    return out
+
+
 def collect_pdf(work: Path) -> dict:
     """Render, and the blank-render refusal. Skipped and NAMED without LibreOffice."""
     sys.path.insert(0, str(SKILL / "scripts"))
@@ -2088,11 +2269,14 @@ def collect_pdf(work: Path) -> dict:
                        "--report", work / "pdf-again.json")
     again_report = json.loads((work / "pdf-again.json").read_text(encoding="utf-8")) \
         if (work / "pdf-again.json").exists() else {}
+    tofu = collect_tofu(work, out)
+    rotated = measure_rotated(work, out)
     return {
         "exit": r.returncode, "report": report,
         "revised": {"exit": rv.returncode, "report": rev_report,
                     "deleted_texts": deleted, "gate_sees_marks": gate_sees_marks},
         "again": {"exit": again.returncode, "report": again_report},
+        "tofu": tofu, "rotated": rotated,
         "produced": out.is_file() and out.stat().st_size > 0,
         "images": len(list((work / "pages").glob("*.png"))) if (work / "pages").is_dir()
                   else 0,
@@ -3057,6 +3241,138 @@ def y5_revision_marks(ctx: dict) -> list[str]:
         out.append("Y5 the warning tells the reader the PDF shows one resolution of "
                    "the revisions, while the deleted text is right there on the page "
                    "with a line through it. An agent relays this sentence verbatim")
+    return out
+
+
+@check("Y6", "Chinese rendered as boxes is refused with the numbers, not handed back "
+             "as a preview; --allow-tofu writes it and says so")
+def y6_tofu(ctx: dict) -> list[str]:
+    """LibreOffice exits 0 and writes a valid PDF when no font on the machine covers
+    the CJK characters — every one becomes a hollow `.notdef` box. The blank check
+    passes a page of boxes (plenty of ink), and for two weeks in 2026-09 this skill
+    reported success on exactly that output (gotchas §21⑧-bis). The arms run the
+    REAL script under an environment that hides the CJK fonts; whether that worked
+    is measured with pdfminer, not with the module under test.
+    """
+    p = ctx["pdf"]
+    if p.get("skipped"):
+        return []
+    t = p.get("tofu") or {}
+    if t.get("skipped"):
+        note = f"Y6 tofu guard: {t['skipped']}"
+        if note not in SKIPS:          # fired() runs this once per control arm
+            SKIPS.append(note)
+        return []
+    out = []
+    r = t["refuse"]
+    if r["exit"] != 2:
+        out.append(f"Y6 rendering Chinese as boxes exited {r['exit']}; a preview of "
+                   f"boxes was handed back as a success")
+    if r["wrote"]:
+        out.append("Y6 it refused and left the PDF on disk anyway")
+    if not re.search(r"only \d+ of \d+ CJK glyph", r["stderr"]):
+        out.append(f"Y6 the refusal does not say what was measured, in numbers — an "
+                   f"agent relays 'the preview may have font issues' from this: "
+                   f"{r['stderr'][:160]!r}")
+    if "--allow-tofu" not in r["stderr"]:
+        out.append("Y6 the refusal does not name the escape hatch")
+    a = t["allow"]
+    if a["exit"] != 0 or not a["wrote"]:
+        out.append(f"Y6 --allow-tofu exited {a['exit']} / wrote={a['wrote']}; the "
+                   f"escape hatch does not open")
+    if a["report"].get("tofu") is not True:
+        out.append(f"Y6 written under --allow-tofu, but the report says "
+                   f"tofu={a['report'].get('tofu')!r} — the caller cannot know")
+    if "tofu" not in (a["report"].get("tofu_warning") or ""):
+        out.append("Y6 no tofu_warning sentence in the report for the agent to relay")
+    if t.get("independent_tofu") is not True and a["wrote"]:
+        out.append("Y6 the independent ruler does not see tofu in the allowed output, "
+                   "so this arm measured nothing")
+    return out
+
+
+@check("Y7", "a preview with Chinese in it is measured for boxes, and the report says so")
+def y7_tofu_measured(ctx: dict) -> list[str]:
+    p = ctx["pdf"]
+    if p.get("skipped"):
+        return []
+    r = p["report"]
+    out = []
+    if r.get("tofu") is not False:
+        out.append(f"Y7 the good preview reports tofu={r.get('tofu')!r}; a correct "
+                   f"render must say False, measured, not None")
+    m = r.get("tofu_measure") or {}
+    if not m.get("cjk_glyphs"):
+        out.append("Y7 the report carries no glyph count — report.docx is full of "
+                   "Chinese, so a measure that saw none did not run")
+    elif (m.get("cjk_inked_fraction") or 0) < 0.5:
+        out.append(f"Y7 the good preview scores {m.get('cjk_inked_fraction')} on a "
+                   f"page that renders correctly — the measure, not the page, is off")
+    return out
+
+
+@check("Y8", "office/tofu.py: the docx and xlsx copies carry the same thresholds and "
+             "the same API, and match the self-test's calibration")
+def y8_tofu_copies(ctx: dict) -> list[str]:
+    """Pure check, no LibreOffice needed (so it is not in SOFFICE_CHECKS). Same
+    reason as Y0: two copies, one contract, or the next edit fixes one skill and
+    not the other. The constants are the ones scripts/office-skills-selftest.py
+    calibrated (gotchas §10⑭); a copy that re-tunes them silently is drift.
+    """
+    c = ctx["tofu_copies"]
+    out = []
+    for name, info in c.items():
+        if info.get("missing"):
+            out.append(f"Y8 {name}/office/tofu.py is missing")
+    if out:
+        return out
+    docx, xlsx = c["docx"], c["xlsx"]
+    calibrated = {"TOFU_CENTER_INK": 0.05, "TOFU_MIN_FRACTION": 0.50, "TOFU_DPI": 200}
+    for k, v in calibrated.items():
+        if docx["constants"].get(k) != v:
+            out.append(f"Y8 docx {k}={docx['constants'].get(k)!r}, the self-test "
+                       f"calibrated {v!r}")
+    for k in ("constants", "api", "count", "describe"):
+        if docx[k] != xlsx[k]:
+            out.append(f"Y8 the two copies disagree on {k}: docx {docx[k]!r} vs xlsx "
+                       f"{xlsx[k]!r}")
+    for fn in ("check_tofu", "count_cjk", "describe"):
+        if fn not in docx["api"]:
+            out.append(f"Y8 docx/office/tofu.py has no {fn}()")
+    if docx["count"] != 4:
+        out.append(f"Y8 count_cjk counted {docx['count']} in a string with 4 CJK "
+                   f"characters")
+    if "3 of 40" not in (docx["describe"] or ""):
+        out.append(f"Y8 describe() does not carry the numbers: {docx['describe']!r}")
+    return out
+
+
+@check("Y9", "the tofu measure survives a page with /Rotate — and the rotation "
+             "handling is load-bearing, not decorative")
+def y9_rotated(ctx: dict) -> list[str]:
+    p = ctx["pdf"]
+    if p.get("skipped"):
+        return []
+    r = p.get("rotated") or {}
+    if r.get("skipped"):
+        note = f"Y9 rotated page: {r['skipped']}"
+        if note not in SKIPS:
+            SKIPS.append(note)
+        return []
+    out = []
+    if r.get("rotation") != 90:
+        out.append(f"Y9 the fixture reads back /Rotate {r.get('rotation')}, not 90 — "
+                   f"nothing here tests rotation")
+    if not r.get("glyphs"):
+        out.append("Y9 no CJK glyph was seen on the rotated page")
+    if r.get("tofu") is not False or (r.get("fraction") or 0) < 0.5:
+        out.append(f"Y9 a correctly rendered page scores {r.get('fraction')} once "
+                   f"rotated — the character boxes are being measured against the "
+                   f"wrong pixels (page space vs display space, gotchas §21⑨)")
+    if (r.get("mutant_fraction") or 0) >= 0.5:
+        out.append(f"Y9 with set_rotation made a no-op the page still scores "
+                   f"{r.get('mutant_fraction')} — the control arm is silent, so this "
+                   f"check would pass an implementation that ignores rotation")
     return out
 
 
@@ -5240,6 +5556,109 @@ def flaw_blank_render_handed_back(ctx, work):
     return ctx
 
 
+def flaw_tofu_handed_back(ctx, work):
+    """CONTROL: the shape the defect shipped in until 2026-09-16 — exit 0, file
+    written, no word about the boxes."""
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
+    p["tofu"]["refuse"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_tofu_refusal_says_nothing(ctx, work):
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
+    p["tofu"]["refuse"]["stderr"] = "error: the preview may have font issues"
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_tofu_allowed_in_silence(ctx, work):
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    if (p.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(p["tofu"]["skipped"])
+    p["tofu"]["allow"]["report"]["tofu"] = False
+    p["tofu"]["allow"]["report"].pop("tofu_warning", None)
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_tofu_never_measured(ctx, work):
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    p["report"]["tofu"] = None
+    p["report"].pop("tofu_measure", None)
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_tofu_threshold_removed(ctx, work):
+    """LIVE: re-run the REAL docx_pdf.py against a copy of the scripts whose
+    office/tofu.py has its threshold removed (TOFU_MIN_FRACTION = 0.0, so no
+    fraction is ever below it). The guard is then structurally gone — this is the
+    "take the criterion away" control, and the arm must go red."""
+    import shutil
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    t = p.get("tofu") or {}
+    if t.get("skipped"):
+        raise ControlUnavailable(t["skipped"])
+    dest = work / "patched-no-threshold"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(SKILL / "scripts", dest,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    mod = dest / "office" / "tofu.py"
+    src = mod.read_text(encoding="utf-8")
+    anchor = "TOFU_MIN_FRACTION = 0.50"
+    if src.count(anchor) != 1:
+        raise ControlUnavailable(f"anchor {anchor!r} matched {src.count(anchor)} times "
+                                 f"in office/tofu.py — the control did not apply")
+    mod.write_text(src.replace(anchor, "TOFU_MIN_FRACTION = 0.0"), encoding="utf-8")
+    refused = work / "tofu-no-threshold.pdf"
+    r = subprocess.run([PY, str(dest / "docx_pdf.py"), "--in", str(REPORT),
+                        "--out", str(refused)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=300, env=t["env"])
+    p["tofu"]["refuse"] = {"exit": r.returncode, "stderr": r.stderr.strip(),
+                           "wrote": refused.exists()}
+    ctx["pdf"] = p
+    return ctx
+
+
+def flaw_tofu_copy_drifts(ctx, work):
+    """CONTROL: the xlsx copy re-tunes one threshold on its own."""
+    c = copy.deepcopy(ctx["tofu_copies"])
+    if c.get("xlsx", {}).get("missing"):
+        return ctx
+    c["xlsx"]["constants"]["TOFU_MIN_FRACTION"] = 0.40
+    ctx["tofu_copies"] = c
+    return ctx
+
+
+def flaw_rotation_ignored(ctx, work):
+    """CONTROL: the measure the no-op arm produced becomes the shipped number."""
+    p = copy.deepcopy(ctx["pdf"])
+    if p.get("skipped"):
+        return ctx
+    if (p.get("rotated") or {}).get("skipped"):
+        raise ControlUnavailable(p["rotated"]["skipped"])
+    p["rotated"]["fraction"] = p["rotated"]["mutant_fraction"]
+    p["rotated"]["tofu"] = p["rotated"]["mutant_fraction"] < 0.5
+    ctx["pdf"] = p
+    return ctx
+
+
 def flaw_revisions_rendered_in_silence(ctx, work):
     p = copy.deepcopy(ctx["pdf"])
     if p.get("skipped"):
@@ -6706,6 +7125,15 @@ FLAWS = [
      {"Y2"}, ""),
     ("tracked-changes-rendered-in-silence", flaw_revisions_rendered_in_silence,
      {"Y3"}, ""),
+    ("tofu-render-handed-back-as-a-preview", flaw_tofu_handed_back, {"Y6"}, ""),
+    ("tofu-refusal-does-not-say-why", flaw_tofu_refusal_says_nothing, {"Y6"}, ""),
+    ("tofu-allowed-but-not-reported", flaw_tofu_allowed_in_silence, {"Y6"}, ""),
+    ("cjk-preview-never-measured", flaw_tofu_never_measured, {"Y7"}, ""),
+    ("LIVE: office/tofu.py with its threshold removed accepts the boxes",
+     flaw_tofu_threshold_removed, {"Y6"}, ""),
+    ("CONTROL: the xlsx copy of office/tofu.py re-tunes a threshold",
+     flaw_tofu_copy_drifts, {"Y8"}, ""),
+    ("rotated-page-measured-in-display-space", flaw_rotation_ignored, {"Y9"}, ""),
     ("cached-field-rendered-in-silence", flaw_cached_field_rendered_in_silence,
      {"Y3"}, ""),
 

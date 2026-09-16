@@ -14,7 +14,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   本机同一文档 26.2.5 vs 26.8.0 对照坐实；CI `office skills (macos-latest)` 自 09-08 cask 浮到 26.8 起 63/4 红。
   修 = `office/soffice.py::soffice_env()`（docx/xlsx 两份）+ `office-skills-selftest.py` 给子进程 `SAL_USE_VCLPLUGIN=osx`
   （仅 darwin，用户自设优先）。本机 26.8.0 全量自测 **67/67**、26.2.5 仍 18/18、`docx_pdf.py` 在 26.8 下 CJK 正常。
-  **未做（记档）**：`docx_pdf.py` 只查空白页不查豆腐块，下一次同类回归用户仍会拿到方块 PDF。
+  当时记档的缺口（只查空白页不查豆腐块）由下一条补上。
+- **docx/xlsx → PDF 豆腐块守卫：中文渲染成方块时拒绝交付，不再静默当成功（2026-09-16，gotchas §21⑧-ter）** ——
+  新增 `office/tofu.py`（docx/xlsx 两份拷贝、同契约）：pypdfium2 取前 3 张有中文的页，按 `get_charbox` 看字中心 44% 区域墨量
+  （沿用 L2 自测 D7 校准的 `0.05 / 0.50 / 200 DPI`，不重调），渲染前 `set_rotation(0)` 让页面坐标与像素同系（带 /Rotate 的页
+  实测正常 0.97、去掉这一步 0.00）。**只查文本层会漏一半**：PDFium 对 TrueType 回退字体的 `.notdef` 是**整个从文本页里丢掉**
+  （豆腐块 xlsx 文本层 CJK = 0，看起来就是「没中文可查」，且 PDFium 光栅画的是**空白**不是方框），只在页面对象里留下一个抽不出文字的
+  text object——两种签名都进分母；CJK 字体的行尾空格与之同签名，按字体过滤 + 只相信「源 CJK 数 − 文本层抽到的」那么多个
+  （1 个汉字 + 8 个空格的英文文档实测不误拒）。上界不能多算：docx 只数开关打开的页眉页脚、跳过 `mc:Fallback`、含脚注尾注；
+  xlsx 按打印区域 / 隐藏行列 / 页眉页脚 / 数字格式字面量数（独立 review 抓的三处多算 + 一处预算被无中文页吃光，均已修）。
+  `docx_pdf.py`（W17）/ `xlsx_pdf.py`（X13）：检出 ⇒ 删输出、退出 2，报错带数字（`only 0 of 229 CJK glyph(s) … have strokes`）
+  + 点名机器侧修法；`--allow-tofu` 对称于 `--allow-blank`，写出并报 `tofu: true` + `tofu_warning`；源文档无中文 ⇒ `tofu: false` + `tofu_note`
+  不量（零影响）；源有中文但一页都量不到 ⇒ `tofu: null` + note；缺 pypdfium2 ⇒ `tofu: null` 明说。
+  门禁：`test-docx-skill.py` 215→**222/0**（110 断言：Y6 真跑 svp 反向臂 + Y7 正向量到数 + Y8 两份拷贝同契约 + Y9 旋转页含
+  no-op 控制臂；含 **LIVE「拿掉阈值」mutant** 必红）· `test-xlsx-skill.py` 92→**96/0**（N13/N14 同款）· 反向臂靠 pdfminer
+  文本层做独立尺子（LibreOffice 把所有 `.notdef` 映成同一个码，读回来是「二二二二」），Windows 无法隐藏字体 ⇒ 跳过并点名。
+  真机：本机 26.8.0 `SAL_USE_VCLPLUGIN=svp` 四份中文报告 + 利润表全部拒绝（0%），正常渲染 0.97–0.99 通过。
+  `.builtin-version` → `7b67ecce7aa147c2`。
 
 ### Added
 

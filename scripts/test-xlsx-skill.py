@@ -28,6 +28,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,19 +102,110 @@ SCALE_ROWS = 2000                # comfortably past xlsxcommon.STDOUT_ITEM_LIMIT
 SKIPS: list[str] = []
 
 
-def run_script(name: str, *args: str) -> subprocess.CompletedProcess:
+class ControlUnavailable(Exception):
+    """This host cannot reproduce the defect — skip and SAY WHY. Not a failure (the
+    defect does not hold here, the guard is not broken) and not a pass either
+    (nothing was measured). Same rule as test-docx-skill.py."""
+
+
+def run_script(name: str, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run([PY, str(SKILL / "scripts" / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=300)
+                          errors="replace", timeout=300, env=env)
 
 
-def run_script_from(scripts, name: str, *args: str) -> subprocess.CompletedProcess:
+def run_script_from(scripts, name: str, *args: str,
+                    env: dict | None = None) -> subprocess.CompletedProcess:
     """Same call against an arbitrary copy of the scripts — for LIVE controls, which
     re-run the REAL entry point with the fix backed out instead of editing the numbers
     this file collected."""
     return subprocess.run([PY, str(Path(scripts) / name), *map(str, args)],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=300)
+                          errors="replace", timeout=300, env=env)
+
+
+# X13's tofu guard. The label the independent ruler looks for is one 利润表 holds
+# on every row of the fixture; under tofu the whole text layer reads back as one
+# character repeated ("营营营营…", measured 2026-09-16), so it cannot be found.
+TOFU_NEEDLE = "营业收入"
+
+
+def tofu_env(work: Path) -> tuple[dict | None, str]:
+    """An environment under which THIS host's LibreOffice cannot find a CJK font.
+    Same construction as test-docx-skill.py (macOS: svp backend, gotchas §21⑧-bis;
+    Linux: a fontconfig whose only directories are DejaVu / Liberation — an
+    allow-list, since a reject-list of CJK font paths missed one on CI; Windows: no
+    handle, skipped)."""
+    env = dict(os.environ)
+    if sys.platform == "darwin":
+        env["SAL_USE_VCLPLUGIN"] = "svp"
+        return env, "SAL_USE_VCLPLUGIN=svp"
+    if sys.platform.startswith("linux"):
+        conf, cache = work / "no-cjk-fonts.conf", work / "fc-cache"
+        cache.mkdir(exist_ok=True)
+        conf.write_text(f"""<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts/truetype/dejavu</dir>
+  <dir>/usr/share/fonts/truetype/liberation</dir>
+  <dir>/usr/share/fonts/truetype/liberation2</dir>
+  <cachedir>{cache.as_posix()}</cachedir>
+</fontconfig>
+""", encoding="utf-8")
+        env["FONTCONFIG_FILE"] = str(conf)
+        return env, "FONTCONFIG_FILE limited to DejaVu/Liberation"
+    return None, "no environment variable hides fonts from LibreOffice on this platform"
+
+
+def text_layer_lacks(pdf: Path, needle: str) -> bool:
+    """A ruler that is NOT office/tofu.py: pdfminer's reading of the text layer."""
+    import pdfplumber
+    with pdfplumber.open(str(pdf)) as doc:
+        text = "".join((page.extract_text() or "") for page in doc.pages)
+    return needle not in re.sub(r"\s+", "", text)
+
+
+def cjk_fontnames(pdf: Path) -> list[str]:
+    """Which fonts the CJK characters were drawn with — for the skip message, so
+    "this host still renders the Chinese" also says what beat the arm."""
+    import pdfplumber
+    names: set[str] = set()
+    with pdfplumber.open(str(pdf)) as doc:
+        for page in doc.pages:
+            for c in page.chars:
+                if any(0x4E00 <= ord(ch) <= 0x9FFF for ch in c.get("text", "")):
+                    names.add(c.get("fontname", "?"))
+    return sorted(names)[:6]
+
+
+def collect_tofu(work: Path, src: Path, good_pdf: Path) -> dict:
+    """The tofu guard's two arms under an environment that hides CJK fonts: the
+    plain call must exit 2 and write nothing; --allow-tofu must write and say so.
+    Both preconditions are measured with the independent ruler, and a host that
+    still renders the Chinese is skipped BY NAME, never counted as a pass."""
+    env, how = tofu_env(work)
+    if env is None:
+        return {"skipped": how}
+    if not good_pdf.is_file() or text_layer_lacks(good_pdf, TOFU_NEEDLE):
+        return {"skipped": f"the independent ruler cannot find {TOFU_NEEDLE!r} even "
+                           f"in the good preview, so it cannot tell tofu from fine"}
+    refuse_pdf, allow_pdf = work / "tofu-refused.pdf", work / "tofu-allowed.pdf"
+    r = run_script("xlsx_pdf.py", "--in", src, "--out", refuse_pdf, env=env)
+    a = run_script("xlsx_pdf.py", "--in", src, "--out", allow_pdf, "--allow-tofu",
+                   "--report", work / "tofu-allowed.json", env=env)
+    report = json.loads((work / "tofu-allowed.json").read_text(encoding="utf-8")) \
+        if (work / "tofu-allowed.json").exists() else {}
+    wrote = allow_pdf.is_file() and allow_pdf.stat().st_size > 0
+    really = text_layer_lacks(allow_pdf, TOFU_NEEDLE) if wrote else None
+    if really is False:
+        return {"skipped": f"LibreOffice on this host still renders the Chinese under "
+                           f"{how} (drawn with {cjk_fontnames(allow_pdf)}), so the "
+                           f"tofu arms have nothing to refuse"}
+    return {"how": how, "env": env, "independent_tofu": really,
+            "refuse": {"exit": r.returncode, "stderr": r.stderr.strip(),
+                       "wrote": refuse_pdf.exists()},
+            "allow": {"exit": a.returncode, "stderr": a.stderr.strip(),
+                      "wrote": wrote, "report": report}}
 
 
 def patched_scripts(work: Path, edits: list[tuple[str, str]], name: str) -> Path:
@@ -1079,6 +1172,7 @@ def collect(work: Path) -> dict:
         "blank_wrote": (work / "blank.pdf").exists(),
         "uncalc_warning": raw_report.get("warning"),
         "uncalc_count": raw_report.get("uncalculated_formulas"),
+        "tofu": collect_tofu(work, calc, pdf),
     }
 
     # --- X14 finance convention ------------------------------------------------
@@ -1678,6 +1772,67 @@ def n12_stale_images(ctx: dict) -> list[str]:
     if sorted(removed) != ["page-002.png", "page-009.png"]:
         out.append(f"N12 the report says it removed {removed}; deleting a user's "
                    f"files without listing them is the silent part of this")
+    return out
+
+
+@check("N13", "Chinese rendered as boxes is refused with the numbers, not handed "
+              "back as a preview; --allow-tofu writes it and says so")
+def n13_tofu(ctx: dict) -> list[str]:
+    """LibreOffice exits 0 and writes a valid PDF when no font on the machine covers
+    the CJK characters — every label becomes a hollow `.notdef` box and the numbers
+    beside them lose their meaning. The blank check passes a page of boxes (gotchas
+    §21⑧-bis). The arms run the REAL script under an environment that hides the
+    CJK fonts; whether that worked is measured with pdfminer, not with the module
+    under test.
+    """
+    t = ctx["render"].get("tofu") or {}
+    if t.get("skipped"):
+        note = f"N13 tofu guard: {t['skipped']}"
+        if note not in SKIPS:          # fired() runs this once per control arm
+            SKIPS.append(note)
+        return []
+    out = []
+    r = t["refuse"]
+    if r["exit"] != 2:
+        out.append(f"N13 rendering Chinese as boxes exited {r['exit']}; a preview of "
+                   f"boxes was handed back as a success")
+    if r["wrote"]:
+        out.append("N13 it refused and left the PDF on disk anyway")
+    if not re.search(r"only \d+ of \d+ CJK glyph", r["stderr"]):
+        out.append(f"N13 the refusal does not say what was measured, in numbers: "
+                   f"{r['stderr'][:160]!r}")
+    if "--allow-tofu" not in r["stderr"]:
+        out.append("N13 the refusal does not name the escape hatch")
+    a = t["allow"]
+    if a["exit"] != 0 or not a["wrote"]:
+        out.append(f"N13 --allow-tofu exited {a['exit']} / wrote={a['wrote']}; the "
+                   f"escape hatch does not open")
+    if a["report"].get("tofu") is not True:
+        out.append(f"N13 written under --allow-tofu, but the report says "
+                   f"tofu={a['report'].get('tofu')!r} — the caller cannot know")
+    if "tofu" not in (a["report"].get("tofu_warning") or ""):
+        out.append("N13 no tofu_warning sentence in the report for the agent to relay")
+    if t.get("independent_tofu") is not True and a["wrote"]:
+        out.append("N13 the independent ruler does not see tofu in the allowed "
+                   "output, so this arm measured nothing")
+    return out
+
+
+@check("N14", "a preview with Chinese in it is measured for boxes, and the report "
+              "says so")
+def n14_tofu_measured(ctx: dict) -> list[str]:
+    r = ctx["render"]["report"]
+    out = []
+    if r.get("tofu") is not False:
+        out.append(f"N14 the good preview reports tofu={r.get('tofu')!r}; a correct "
+                   f"render must say False, measured, not None")
+    m = r.get("tofu_measure") or {}
+    if not m.get("cjk_glyphs"):
+        out.append("N14 the report carries no glyph count — 利润表 is labelled in "
+                   "Chinese, so a measure that saw none did not run")
+    elif (m.get("cjk_inked_fraction") or 0) < 0.5:
+        out.append(f"N14 the good preview scores {m.get('cjk_inked_fraction')} on a "
+                   f"page that renders correctly — the measure, not the page, is off")
     return out
 
 
@@ -3131,6 +3286,55 @@ def flaw_blank_render_accepted(ctx, work):
     return ctx
 
 
+def flaw_tofu_handed_back(ctx, work):
+    """CONTROL: the shape the defect shipped in until 2026-09-16 — exit 0, file
+    written, no word about the boxes."""
+    r = copy.deepcopy(ctx["render"])
+    if (r.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(r["tofu"]["skipped"])
+    r["tofu"]["refuse"] = {"exit": 0, "stderr": "", "wrote": True}
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_tofu_allowed_in_silence(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    if (r.get("tofu") or {}).get("skipped"):
+        raise ControlUnavailable(r["tofu"]["skipped"])
+    r["tofu"]["allow"]["report"]["tofu"] = False
+    r["tofu"]["allow"]["report"].pop("tofu_warning", None)
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_tofu_never_measured(ctx, work):
+    r = copy.deepcopy(ctx["render"])
+    r["report"]["tofu"] = None
+    r["report"].pop("tofu_measure", None)
+    ctx["render"] = r
+    return ctx
+
+
+def flaw_tofu_threshold_removed(ctx, work):
+    """LIVE: re-run the REAL xlsx_pdf.py against a copy of the scripts whose
+    office/tofu.py has its threshold removed (TOFU_MIN_FRACTION = 0.0, so no
+    fraction is ever below it). The guard is then structurally gone — the "take the
+    criterion away" control — and the arm must go red."""
+    r = copy.deepcopy(ctx["render"])
+    t = r.get("tofu") or {}
+    if t.get("skipped"):
+        raise ControlUnavailable(t["skipped"])
+    scripts = patched_scripts(work, [("TOFU_MIN_FRACTION = 0.50",
+                                      "TOFU_MIN_FRACTION = 0.0")], "no-tofu-threshold")
+    refused = work / "tofu-no-threshold.pdf"
+    p = run_script_from(scripts, "xlsx_pdf.py", "--in", work / "calc.xlsx",
+                        "--out", refused, env=t["env"])
+    r["tofu"]["refuse"] = {"exit": p.returncode, "stderr": p.stderr.strip(),
+                           "wrote": refused.exists()}
+    ctx["render"] = r
+    return ctx
+
+
 def flaw_uncalculated_not_warned(ctx, work):
     r = copy.deepcopy(ctx["render"])
     r["uncalc_warning"] = None
@@ -3235,6 +3439,11 @@ FLAWS = [
     ("blank-render-handed-back-as-a-preview", flaw_blank_render_accepted, {"N6"}, ""),
     ("uncalculated-workbook-rendered-without-a-warning",
      flaw_uncalculated_not_warned, {"N7"}, ""),
+    ("tofu-render-handed-back-as-a-preview", flaw_tofu_handed_back, {"N13"}, ""),
+    ("tofu-allowed-but-not-reported", flaw_tofu_allowed_in_silence, {"N13"}, ""),
+    ("cjk-preview-never-measured", flaw_tofu_never_measured, {"N14"}, ""),
+    ("LIVE: office/tofu.py with its threshold removed accepts the boxes",
+     flaw_tofu_threshold_removed, {"N13"}, ""),
     ("finance-check-reports-nothing-on-an-ordinary-sheet",
      flaw_finance_check_has_no_teeth, {"N8"}, ""),
     ("finance-apply-leaves-violations", flaw_finance_apply_leaves_violations,
@@ -3377,7 +3586,15 @@ def main() -> int:
 
         matrix = []
         for name, mutate, expected, cascade in FLAWS:
-            ctx = mutate(copy.deepcopy(base), work)
+            try:
+                ctx = mutate(copy.deepcopy(base), work)
+            except ControlUnavailable as exc:
+                # A control this host cannot run is skipped and NAMED — never folded
+                # into the pass count, never quietly dropped (test-docx-skill.py's rule).
+                SKIPS.append(f"negative control {name!r}: {exc}")
+                results.append({"case": f"flaw: {name}", "expect": "SKIPPED",
+                                "ok": True, "detail": [str(exc)], "fired": []})
+                continue
             got = fired(ctx)
             unexpected = set(got) - expected
             missing = expected - set(got)

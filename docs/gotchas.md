@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-09-15 -->
+<!-- last-synced: 2026-09-16 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -687,7 +687,31 @@ conventions §26；其中**横跨多列的合并标题不算它第一列的宽�
 别按字体包方向查——CI `office skills (macos-latest)` 从 09-08 cask 浮到 26.8 起红了两周，第一反应是 runner 镜像。
 修 = 给子进程 `SAL_USE_VCLPLUGIN=osx`（强制 CoreText 后端；`FONTCONFIG_FILE` 指向系统字体目录也行但要建缓存），
 落在 `office/soffice.py::soffice_env()`（docx/xlsx 两份）+ 自测脚本，运行时 `sys.platform == "darwin"` 分支。
-**用户侧同样中招**：`docx_pdf.py`（W17，app 内 docx 预览唯一通道）只查空白页不查豆腐块，26.8 用户会拿到全是方块的 PDF 而技能报告成功。
+**用户侧同样中招**：`docx_pdf.py`（W17，app 内 docx 预览唯一通道）曾只查空白页不查豆腐块，26.8 用户会拿到全是方块的 PDF 而技能报告成功
+—— 已由 ⑧-ter 的守卫补上。
+
+**⑧-ter 用 PDFium 量豆腐块：只看文本层会把一半的豆腐块判成「没有中文」（2026-09-16 实测）。**
+`office/tofu.py`（docx/xlsx 两份拷贝）沿用 L2 D7 的判据（字符框中心 44% 区域墨量 > 0.05 算有笔画，有笔画比例 < 0.50 判豆腐块，200 DPI），
+但 PDFium 对 `.notdef` 有**两种**表现，取决于回退字体的类型：**Type1 回退**（标题的 FrankRuhlHofshi-Bold）字符还在文本页里、码点正确、
+渲染是空心框 ⇒ 中心墨量抓得到；**TrueType 回退**（正文的 Linux Libertine G）LibreOffice 的子集器给所有 notdef 同一个 code 0、
+没有 ToUnicode 条目 ⇒ **PDFium 直接把它们从 textpage 里丢掉**（`count_chars` 324 → 72；豆腐块 xlsx 的文本层 **CJK = 0**），
+只在页面对象里留下**一个 `FPDFTextObj_GetText` 抽不出任何文字、bbox 退化为 0、但字号 > 0 的 text object**（每个字一个），
+而且 **PDFium 光栅化对这一种画的是空白不是方框**（利润表的中文标签整列消失、数字还在；别的阅读器可能画方框）——
+所以「有没有墨」也量不到它。⇒ 判据分母必须 = 文本页里的 CJK 字符 **+** 这种空 text object，否则「全是方块」和「没有中文」在 textpage 视角是同一个东西。
+⚠️ **同一签名有一种噪声**：CJK 字体里的**行尾空格**也是「抽不出文字的 text object」（pdfminer 读到 `' '`，PDFium 什么都读不到），正常页每个行尾约一个；
+一份只有 1 个汉字 + 8 个这种空格的英文文档，直接算会得 1/9 ⇒ 误拒。两道防线：① **按字体**——空对象的字体若在本页画出过文本层里的 CJK 字
+（`FPDFText_GetFontInfo` ↔ `FPDFFont_GetBaseFontName`，pdfium 两边都去掉子集前缀），它就是空格不是缺字（回退字体从不在文本层里有 CJK 字，所以它的空对象全算）；
+拉丁字体里的行尾空格这一招认不出来，于是 ② 拿**源文档的 CJK 数**做上界：只相信 `源 CJK 数 − 文本层抽到的 CJK 数` 那么多个空对象
+（正常页差值为 0 ⇒ 全被忽略；豆腐块页文本层为 0 ⇒ 全算）。**上界因此绝不能多算**：docx 只数被引用且开关打开的页眉页脚
+（`first` 要 `<w:titlePg/>`、`even` 要 `<w:evenAndOddHeaders/>`，Word 常把关掉的 part 留在包里）、跳过 `mc:Fallback`（文本框存两份只画一份）、
+加上脚注尾注；xlsx 按 Calc 打印的范围数（打印区域、隐藏行列、页眉页脚、数字格式里的 `"元"`），这需要**非 read_only** 加载（read_only 没有 print_area / hidden / header）。
+渲染预算只花在**文本层里有 CJK 字**的页上，空对象在每一页都数（不渲染）——否则三页带项目符号的英文页会把预算吃光，第 4 页的中文根本没被量。
+同一份 PDF 用 pdfminer 读则是「二二二二……」（所有 notdef 映成同一个字）——**跨库比对就是这个坑的独立尺子**，门禁用它做反向臂的前提检查。
+⚠️ 两个附带坑：① `FPDFTextObj_GetText` 返回的长度是**字节数**（UTF-16LE，含结尾 NUL）——按字符数开缓冲会把结尾的 0 解码成 `\x00`，
+误以为「文本层里有 U+0000」（第一版就这么错的）；② `get_charbox` 是页面坐标、渲染是显示坐标，**带 /Rotate 的页两者不同系**，
+量前 `page.set_rotation(0)`（内存里改、不存盘）；实测旋转 90° 的正常页：处理后 0.97、不处理 0.00（⑨ 那族的 pypdfium2 版本）。
+⚠️ 守卫只在**源文档有中文**时跑（docx：body + 页眉页脚的 `w:t`；xlsx：要渲染的表的字符串格 + 表名）——
+空 text object 也可能是符号字体缺字形画的圆点（⓯），纯英文文档不该因此被拒。
 
 ---
 
