@@ -38,12 +38,21 @@ many have strokes in the middle?
 
 One kind of noise wears the second signature: a trailing SPACE drawn in a CJK font
 also comes out as an empty text object (pdfminer reads it as ' '; PDFium reads
-nothing), about one per line end on a correct page. It cannot be told from a notdef
-through PDFium alone, so the caller passes how many CJK characters the SOURCE holds
-and only as many empty objects are believed as the text page failed to account for
-(`expected - seen`). On a correct page that is zero and the spaces are ignored; on a
-tofu page the text page saw nothing and every empty object counts. A document
-with one Chinese character and five such spaces is therefore not refused.
+nothing), about one per line end on a correct page. Two defences, because neither
+alone is airtight: (1) an empty object is ignored when its FONT also draws a CJK
+character that did reach the text page on the same page — a font that demonstrably
+has the glyphs is not the one producing notdefs (the fallback font never has a CJK
+character in the text page, so its empties all count); (2) the caller passes how
+many CJK characters the SOURCE holds and only as many empty objects are believed as
+the text page failed to account for (`expected - seen`), which also keeps a bullet
+drawn from a glyphless symbol font (gotchas §21⓯) from being read as missing
+Chinese. A document with one Chinese character and eight such spaces measured 1/1
+with both in place, 1/9 with neither.
+
+The render budget (TOFU_PAGES) is spent only on pages that have a CJK character in
+the text page; empty text objects are counted on EVERY page without rendering, so
+a document whose Chinese starts on page 4 behind three bulleted Latin pages is
+still measured, and a document whose glyphs all vanished is caught wherever they are.
 
 Thresholds are the ones scripts/office-skills-selftest.py calibrated on
 2026-08-01 (gotchas §10⑭): real pages score 0.96-1.00, adversarial hollow-centre
@@ -90,13 +99,40 @@ def count_cjk(s: str) -> int:
     return sum(1 for c in s if is_cjk(ord(c)))
 
 
-def _empty_text_objects(page, textpage) -> int:
-    """Text objects that extract as nothing — the `.notdef`s (and CJK-font spaces).
+def _font_name(font) -> str:
+    import pypdfium2.raw as raw
+    fn = getattr(raw, "FPDFFont_GetBaseFontName", None) or raw.FPDFFont_GetFontName
+    n = fn(font, None, 0)
+    if n <= 1:
+        return ""
+    buf = ctypes.create_string_buffer(n)
+    fn(font, buf, n)
+    return buf.value.decode("utf-8", "replace")
+
+
+def _cjk_fonts(textpage, indices) -> set[str]:
+    """Names of the fonts that draw the text page's CJK characters."""
+    import pypdfium2.raw as raw
+    names: set[str] = set()
+    flags = ctypes.c_int()
+    for i in indices:
+        n = raw.FPDFText_GetFontInfo(textpage, i, None, 0, ctypes.byref(flags))
+        if n <= 1:
+            continue
+        buf = ctypes.create_string_buffer(n)
+        raw.FPDFText_GetFontInfo(textpage, i, buf, n, ctypes.byref(flags))
+        names.add(buf.value.decode("utf-8", "replace"))
+    return names
+
+
+def _empty_text_objects(page, textpage, cjk_fonts: set[str]) -> int:
+    """Text objects that extract as nothing — the `.notdef`s.
 
     `FPDFTextObj_GetText` reports a length in BYTES (UTF-16LE, terminator included),
     so 2 is the empty string. Their bounding box is degenerate too (PDFium derives it
     from the characters it knows about), so the font size is the "this object draws
-    a glyph" test — a size-0 text object puts nothing on the page.
+    a glyph" test — a size-0 text object puts nothing on the page. An empty object
+    in a font that draws real CJK characters on this page is a space, not a notdef.
     """
     import pypdfium2.raw as raw
     n = 0
@@ -106,8 +142,11 @@ def _empty_text_objects(page, textpage) -> int:
             continue
         if raw.FPDFTextObj_GetText(obj, textpage, None, 0) > 2:
             continue
-        if raw.FPDFTextObj_GetFontSize(obj, ctypes.byref(size)) and size.value > 0:
-            n += 1
+        if not (raw.FPDFTextObj_GetFontSize(obj, ctypes.byref(size)) and size.value > 0):
+            continue
+        if cjk_fonts and _font_name(raw.FPDFTextObj_GetFont(obj)) in cjk_fonts:
+            continue
+        n += 1
     return n
 
 
@@ -130,9 +169,10 @@ def page_glyphs(page) -> dict:
 def _measure_unrotated(page, raw) -> dict:
     textpage = page.get_textpage()
     try:
-        boxes = [textpage.get_charbox(i) for i in range(textpage.count_chars())
-                 if is_cjk(raw.FPDFText_GetUnicode(textpage, i))]
-        notdef = _empty_text_objects(page, textpage)
+        indices = [i for i in range(textpage.count_chars())
+                   if is_cjk(raw.FPDFText_GetUnicode(textpage, i))]
+        boxes = [textpage.get_charbox(i) for i in indices]
+        notdef = _empty_text_objects(page, textpage, _cjk_fonts(textpage, indices))
     finally:
         textpage.close()
     out = {"cjk": len(boxes), "notdef": notdef, "inked": 0}
@@ -163,48 +203,54 @@ def _measure_unrotated(page, raw) -> dict:
     return out
 
 
-def _cjk_in_text_layer(page) -> int:
-    """CJK characters PDFium extracts from one page — C-speed, no rendering."""
+def _scan_page(page) -> dict:
+    """The text-layer half of page_glyphs, without rendering: CJK characters PDFium
+    extracts and empty text objects. For the pages past the render budget."""
+    import pypdfium2.raw as raw
     textpage = page.get_textpage()
     try:
-        return len(_CJK_RE.findall(textpage.get_text_bounded()))
+        indices = [i for i in range(textpage.count_chars())
+                   if is_cjk(raw.FPDFText_GetUnicode(textpage, i))]
+        notdef = _empty_text_objects(page, textpage, _cjk_fonts(textpage, indices))
     finally:
         textpage.close()
+    return {"cjk": len(indices), "notdef": notdef}
 
 
 def check_tofu(doc, expected_cjk: int | None = None, max_pages: int = TOFU_PAGES) -> dict:
     """Tofu verdict for an open pypdfium2 document.
 
-    Renders and measures the first `max_pages` pages that carry any CJK glyph at
-    all (a Latin cover page is skipped, not counted as evidence); the text layer of
-    EVERY page is read (cheap) so the source's CJK count can be reconciled against
-    what PDFium sees. `expected_cjk` is that source count; None believes every
-    empty text object (only for callers that have no source to compare with).
+    Renders and measures the first `max_pages` pages that carry a CJK character in
+    the text page (a Latin cover page is skipped, not counted as evidence); every
+    page's text layer and empty text objects are read without rendering, so the
+    source's CJK count can be reconciled against what PDFium sees and glyphs that
+    vanished anywhere in the document are counted. `expected_cjk` is that source
+    count; None believes every empty text object the font test lets through (only
+    for callers that have no source to compare with).
 
-        cjk_glyphs           CJK glyphs measured: text-page ones + believed empties
+        cjk_glyphs           CJK glyphs judged: rendered text-page ones + believed empties
         cjk_inked            how many have strokes in the middle
         cjk_inked_fraction   cjk_inked / cjk_glyphs, or None when nothing was seen
         notdef_glyphs        empty text objects believed to be missing glyphs
-        empty_text_objects   empty text objects seen on the measured pages
+        empty_text_objects   empty text objects seen (whole document, font-filtered)
         cjk_in_text_layer    CJK characters PDFium extracts, whole document
-        pages_checked        1-based page numbers that were measured
-        tofu                 True / False, or None when no page held a CJK glyph
+        pages_checked        1-based page numbers that were rendered and measured
+        tofu                 True / False, or None when nothing was there to judge
     """
     cjk = inked = empties = in_text = 0
     checked: list[int] = []
     for i in range(len(doc)):
         page = doc[i]
         if len(checked) >= max_pages:
-            in_text += _cjk_in_text_layer(page)
-            continue
-        m = page_glyphs(page)
+            m = _scan_page(page)
+        else:
+            m = page_glyphs(page)
+            if m["cjk"]:
+                checked.append(i + 1)
+                cjk += m["cjk"]
+                inked += m["inked"]
         in_text += m["cjk"]
-        if not (m["cjk"] or m["notdef"]):
-            continue
-        checked.append(i + 1)
-        cjk += m["cjk"]
         empties += m["notdef"]
-        inked += m["inked"]
     unaccounted = empties if expected_cjk is None else max(0, expected_cjk - in_text)
     notdef = min(empties, unaccounted)
     total = cjk + notdef
@@ -219,10 +265,11 @@ def describe(t: dict) -> str:
     """The sentence that travels: what was measured, in numbers, so a relay cannot
     soften it into "the preview may have font issues"."""
     pct = f"{t['cjk_inked_fraction']:.0%}" if t["cjk_inked_fraction"] is not None else "0%"
-    pages = ", ".join(map(str, t["pages_checked"])) or "-"
+    where = (f"on page(s) {', '.join(map(str, t['pages_checked']))}" if t["pages_checked"]
+             else "in the document (none reached the text layer)")
     return (f"the Chinese text in this PDF did not render (tofu — hollow boxes or blank "
             f"where the characters should be): only {t['cjk_inked']} of "
-            f"{t['cjk_glyphs']} CJK glyph(s) on page(s) {pages} have strokes ({pct}, "
+            f"{t['cjk_glyphs']} CJK glyph(s) {where} have strokes ({pct}, "
             f"need {TOFU_MIN_FRACTION:.0%}). The machine running LibreOffice has no font "
             f"that covers these characters — Linux: install fonts-noto-cjk; Windows: a "
             f"CJK font such as SimSun or Microsoft YaHei; macOS with LibreOffice >= 26.8: "

@@ -77,14 +77,23 @@ def uncalculated(path: Path) -> int:
 
 
 def source_cjk(path: Path, sheet: str | None) -> int:
-    """CJK characters the PDF is expected to show: every text value on the sheets
-    being rendered, plus their names (LibreOffice prints the sheet name in the page
-    header by default). Zero means the tofu guard has nothing to look for and stays
-    out of the way of a workbook that has no Chinese in it.
+    """CJK characters the PDF is expected to show, counted the way Calc prints:
+    the sheets being rendered, only the rows and columns that are not hidden, only
+    the print area when one is defined, plus the page header/footer text and the
+    literal text of number formats (`0"元"` draws a 元 beside every number).
+    Zero means the tofu guard has nothing to look for and stays out of the way of a
+    workbook with no Chinese.
+
+    This number is also the CEILING on how many empty text objects the guard may
+    believe are missing glyphs, so it must not overcount — a notes block outside
+    the print area is exactly the kind of text Calc never draws. Hence the full
+    (not read-only) load: read-only sheets carry no print area, no hidden flags and
+    no header/footer.
     """
     import openpyxl
     from contextlib import closing
-    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    from openpyxl.utils import range_boundaries
+    book = openpyxl.load_workbook(path, data_only=True)
     total = 0
     with closing(book):
         for ws in book.worksheets:
@@ -92,9 +101,33 @@ def source_cjk(path: Path, sheet: str | None) -> int:
                 continue
             if not sheet and ws.sheet_state != "visible":
                 continue
-            total += count_cjk(ws.title)
-            total += sum(count_cjk(v) for row in ws.iter_rows(values_only=True)
-                         for v in row if isinstance(v, str))
+            for hf in (ws.oddHeader, ws.oddFooter, ws.evenHeader, ws.evenFooter,
+                       ws.firstHeader, ws.firstFooter):
+                for side in (hf.left, hf.center, hf.right):
+                    total += count_cjk(side.text or "")
+            areas = []
+            if ws.print_area:
+                for ref in (ws.print_area if isinstance(ws.print_area, (list, tuple))
+                            else [ws.print_area]):
+                    try:
+                        areas.append(range_boundaries(ref.split("!")[-1].replace("$", "")))
+                    except (ValueError, TypeError):
+                        areas = []
+                        break
+            hidden_cols = {name for name, d in ws.column_dimensions.items() if d.hidden}
+            hidden_rows = {idx for idx, d in ws.row_dimensions.items() if d.hidden}
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is None or cell.row in hidden_rows \
+                            or cell.column_letter in hidden_cols:
+                        continue
+                    if areas and not any(c0 <= cell.column <= c1 and r0 <= cell.row <= r1
+                                         for c0, r0, c1, r1 in areas):
+                        continue
+                    if isinstance(cell.value, str):
+                        total += count_cjk(cell.value)
+                    elif cell.number_format and cell.number_format != "General":
+                        total += count_cjk(cell.number_format)
     return total
 
 
@@ -282,6 +315,9 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int,
                     f"was nothing to measure — the Chinese may sit in a sheet name that this workbook's page header does not print, or cells LibreOffice did not lay out")
         else:
             out["tofu"] = False           # nothing Chinese to render, nothing to box
+            out["tofu_note"] = ("no CJK text on the rendered sheets (cells in the print "
+                                "area, headers/footers, number formats), so the tofu "
+                                "check had nothing to measure and did not run")
         if src is not None:
             out["columns_off_first_page"] = split_columns(doc, src, sheet)
         if src is not None:

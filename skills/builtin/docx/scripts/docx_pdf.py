@@ -129,21 +129,71 @@ def field_count(pkg) -> int:
     return total
 
 
-def source_cjk(pkg) -> int:
-    """CJK characters the PDF is expected to show: every <w:t> in the body and in
-    the headers and footers. Deleted text (<w:delText>) is left out — whether the
-    marks render is a setting in the file, and the tofu check must not fire because
-    a resolved revision is absent. Zero means the tofu guard has nothing to look
-    for and stays out of the way of a document that has no Chinese in it.
+MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+RELS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+SETTINGS = "word/settings.xml"
+
+
+def cjk_in_part(tree) -> int:
+    """CJK characters in a part's <w:t> runs, counting each drawn glyph ONCE.
+
+    A text box or shape is stored twice — <mc:Choice> (drawingML) and <mc:Fallback>
+    (VML) — and only one of them renders, so the Fallback subtree is skipped.
+    Counting both would double the expectation this number bounds, and an
+    overcount is what turns line-end spaces back into "missing glyphs".
     """
     total = 0
-    for name in pkg.names():
-        if not (name == DOCUMENT or name.startswith(("word/header", "word/footer"))):
-            continue
-        if not name.endswith(".xml"):
-            continue
-        total += sum(count_cjk(t.text or "") for t in pkg.tree(name).iter(q("t")))
+    for el in tree.iter(q("t")):
+        anc = el.getparent()
+        while anc is not None and anc.tag != MC_FALLBACK:
+            anc = anc.getparent()
+        if anc is None:
+            total += count_cjk(el.text or "")
     return total
+
+
+def rendered_header_parts(pkg) -> list[str]:
+    """Header/footer parts LibreOffice will actually lay out.
+
+    Word keeps `first` and `even` parts in the package whether or not they are
+    switched on, and a part that is present but off renders NOTHING (the switches:
+    <w:titlePg/> in the same sectPr, <w:evenAndOddHeaders/> in settings — see
+    docx_header.py). Only referenced, switched-on parts count.
+    """
+    root = pkg.tree(DOCUMENT)
+    even_on = pkg.has(SETTINGS) and \
+        pkg.tree(SETTINGS).find(q("evenAndOddHeaders")) is not None
+    rels = {r["id"]: r["resolved"]
+            for r in pkg.relationships(pkg.rels_part_of(DOCUMENT))}
+    parts: list[str] = []
+    for sect in root.iter(q("sectPr")):
+        first_on = sect.find(q("titlePg")) is not None
+        for ref in sect:
+            if ref.tag not in (q("headerReference"), q("footerReference")):
+                continue
+            kind = ref.get(q("type")) or "default"
+            if (kind == "first" and not first_on) or (kind == "even" and not even_on):
+                continue
+            part = rels.get(ref.get(f"{{{RELS_NS}}}id"))
+            if part and part not in parts and pkg.has(part):
+                parts.append(part)
+    return parts
+
+
+def source_cjk(pkg) -> int:
+    """CJK characters the PDF is expected to show: the body, footnotes and endnotes,
+    and the headers and footers that are switched on. Deleted text (<w:delText>) is
+    left out — whether the marks render is a setting in the file, and the tofu check
+    must not fire because a resolved revision is absent. Zero means the tofu guard
+    has nothing to look for and stays out of the way of a document with no Chinese.
+
+    This number is also the CEILING on how many empty text objects the guard may
+    believe are missing glyphs, so it must not overcount (see cjk_in_part and
+    rendered_header_parts); undercounting only makes the guard less sensitive.
+    """
+    parts = [DOCUMENT] + [n for n in ("word/footnotes.xml", "word/endnotes.xml")
+                          if pkg.has(n)] + rendered_header_parts(pkg)
+    return sum(cjk_in_part(pkg.tree(name)) for name in parts)
 
 
 def page_ink(page) -> float:
@@ -202,6 +252,9 @@ def inspect_pdf(pdf: Path, png_dir: Path | None, dpi: int, cjk_expected: int = 0
                     f"was nothing to measure — the Chinese may sit in hidden text or a part LibreOffice did not lay out")
         else:
             out["tofu"] = False           # nothing Chinese to render, nothing to box
+            out["tofu_note"] = ("no CJK text in the source (body, footnotes, active "
+                                "headers and footers), so the tofu check had nothing "
+                                "to measure and did not run")
         if png_dir is not None:
             png_dir.mkdir(parents=True, exist_ok=True)
             for i in range(len(doc)):

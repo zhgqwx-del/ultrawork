@@ -225,8 +225,8 @@ for p in doc.paragraphs:
 Windows 缺 SimSun 的机器今天就是这个结果）。所以 `docx_pdf.py` 逐字量：取最前面 3 张有中文的页，
 按字符框看**字的中间 44% 区域有没有笔画**（PDFium 对另一类缺字形画的是**空白**而不是方框，同样按缺字计）（方框只有边线、中间是白纸），有笔画的比例 **< 50%**
 ⇒ **删掉输出、退出 2**，报错原文带数字（`only 0 of 229 CJK glyph(s) … have strokes`）——
-**把这句原样转述给用户**，不要软化成「预览可能有字体问题」。报告里 `tofu: false` 是**量过的结论**、
-`tofu_measure` 是数字；源文档没有中文时 `tofu: false` 且不量（零影响）。确认方框可接受时加
+**把这句原样转述给用户**，不要软化成「预览可能有字体问题」。报告里 `tofu: false` + `tofu_measure` 是**量过的结论**；
+带 `tofu_note` 的 `false`/`null` 是「没东西可量」，不是量过没事；源文档没有中文时 `tofu: false` 且不量（零影响）。确认方框可接受时加
 `--allow-tofu`，会写出并在报告里给 `tofu: true` + `tofu_warning`。修法在机器不在文档：
 Linux 装 `fonts-noto-cjk`，Windows 装任一 CJK 字体，macOS 由技能自动给 soffice 传
 `SAL_USE_VCLPLUGIN=osx`（自己设了这个变量会覆盖它）。
