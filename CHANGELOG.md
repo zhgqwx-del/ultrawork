@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-09-16
+
 ### Fixed
 
 - **macOS + LibreOffice ≥ 26.8：docx/xlsx → PDF 中文全是豆腐块（2026-09-16，gotchas §21⑧-bis）** —— 26.8 的 `--headless`
