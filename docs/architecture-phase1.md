@@ -91,60 +91,67 @@ Core strategy: use OpenCode as a **headless server** (compiled binary, spawned a
 > 图中的 **①②③ 是「三个统一点」的编号**（沿用 [agent-os-target-architecture.md](./agent-os-target-architecture.md) §2：①渲染统一 / ②控制统一 / ③编排），**不是层号** —— ① 落在协议/进程层内部（ACP Sidecar 的 turn-shaper）。
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  产品 / UI 层                                                            │
-│    Desktop (Tauri 2 + React 19)                                          │
-│      Home「单 Agent | Team」出生锁定 · /session/:id · /orchestration     │
-│    Channel Gateway :4097   钉钉 / 微信 / 企微 / 飞书                     │
-└──────┬──────────────────────────────────────────────┬────────────────────┘
-       │ ① 每一轮对话：call(REST 语义) + subscribe(事件流)，按会话绑定派发
-       │                                              │ ② 编排入口：
-       │                                              │   /orchestration 页
-       │                                              │   Team 会话创建
-       │                                              │   delegate 回连
-       │                                              │   （HTTP+SSE :4099）
-       │                                              ▼
-       │        ┌─────────────────────────────────────────────────────────┐
-       │        │  ③ 编排层：@agent/orchestrator（core/orchestrator）     │
-       │        │    原语 spawn / await / steer / cancel + 治理护栏       │
-       │        │    pipeline DAG（Pipeline = Fan-out 同一执行器）        │
-       │        │    delegate（D-2 契约回卷）· worktree 隔离 · QueueOwner │
-       │        │    宿主进程 = ACP Sidecar :4099，故编排能扛 WebView 重载│
-       │        └───────────────────────────┬─────────────────────────────┘
-       │                                    │ 只消费 ② 层原语
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│  产品 / UI 层                                                                      │
+│    Desktop (Tauri 2 + React 19)                  Channel Gateway :4097             │
+│      Home「单 Agent | Team」出生锁定               钉钉 / 微信 / 企微 / 飞书 adapter │
+│      /session/:id · /orchestration                bridge.ts: new OpenCodeBackend() │
+│      sse-context.tsx: new Connector()             （不建 Connector，见最右侧箭头）  │
+└──────┬──────────────────────────────────────────────┬───────────────┬──────────────┘
+       │ ① 每一轮对话：call(REST 语义)                │ ② 编排入口：  │ ⚠ 绕过 ② 层
+       │   + subscribe(事件流)，按会话绑定派发         │   编排页       │   直连 :4096
+       │                                              │   Team 会话创建│   只借用
+       │                                              │   delegate 回连│   OpenCodeBackend
+       │                                              │  （HTTP+SSE    │   这个类，拿到
+       │                                              │    :4099）     │   统一 SSE
+       │                                              ▼               │   transport
+       │        ┌─────────────────────────────────────────────────────┐ │
+       │        │  ③ 编排层：@agent/orchestrator（core/orchestrator） │ │
+       │        │    原语 spawn / await / steer / cancel + 治理护栏   │ │
+       │        │    pipeline DAG（Pipeline = Fan-out 同一执行器）    │ │
+       │        │    delegate（D-2 契约回卷）· worktree · QueueOwner  │ │
+       │        │    宿主 = ACP Sidecar :4099，故能扛 WebView 重载    │ │
+       │        └───────────────────────────┬─────────────────────────┘ │
+       │                                    │ 只消费 ② 层原语            │
        │                                    │ （自持 per-workspace Connector）
-       ▼                                    ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  ② 控制统一层：@agent/connector（core/connector）           ADR-030      │
-│    AgentBackend 契约 = createSession / prompt / cancel / fetchHistory /  │
-│      getPlan / replyPermission / subscribeSession / subscribeGlobal      │
-│    BackendCapabilities 逐项声明门控（刻意非最小公约数，D-5）             │
-│    BindingStore 会话 ↔ agentId（"opencode:default" / "acp:claude"）      │
-│    sse-transport 一份 —— 三套 SSE 收敛于此                               │
-│                                                                          │
-│      ├─ OpenCodeBackend = ApiClient + 全局 /event 流                     │
-│      │                    （todo.updated → 统一 plan.updated）           │
-│      └─ ACPBackend      = :4099 REST + per-session SSE 引用计数池        │
-└──────┬───────────────────────────────────────────┬───────────────────────┘
-       │ REST/SSE :4096                            │ HTTP/SSE :4099
-       ▼                                           ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  协议 / 进程层                                                           │
-│    opencode sidecar :4096      vendor/opencode 编译的二进制              │
-│                                                                          │
-│    ACP Client Sidecar :4099    ① 渲染统一 turn-shaper：                  │
-│                                  ACP session/update → opencode 事件形状  │
-│                                + 进程生命周期 + per-agent 怪癖修复       │
-│                                + 编排层宿主（见 ③）                      │
-│        └─ ACP stdio JSON-RPC 子进程： claude · gemini · codex · …        │
-│                                                                          │
-│    Knowledge Sidecar :4098     本地 RAG + IMA，经 MCP 暴露给 agent       │
-│                                （不在控制链路上）                        │
-└──────────────────────────────────────────────────────────────────────────┘
-
-        ⚠ Gateway 是这条链路的例外：bridge.ts 直接 new OpenCodeBackend(...)，
-          没有 Connector、没有绑定派发 ⇒ IM 渠道会话只能跑 opencode。
+       ▼                                    ▼                           │
+┌─────────────────────────────────────────────────────────────────────┐ │
+│  ② 控制统一层：@agent/connector（core/connector）        ADR-030    │ │
+│    Connector = 后端注册表 + BindingStore 按会话派发 + 双流合并       │ │
+│    AgentBackend 契约 = createSession / prompt / cancel / fetchHistory│ │
+│      / getPlan / replyPermission / subscribeSession / subscribeGlobal│ │
+│    BackendCapabilities 逐项声明门控（刻意非最小公约数，D-5）        │ │
+│    BindingStore 会话 ↔ agentId（"opencode:default" / "acp:claude"） │ │
+│    sse-transport 一份 —— 三套 SSE 收敛于此                          │ │
+│                                                                     │ │
+│      ├─ OpenCodeBackend = ApiClient + 全局 /event 流                │ │
+│      │                    （todo.updated → 统一 plan.updated）      │ │
+│      └─ ACPBackend      = :4099 REST + per-session SSE 引用计数池   │ │
+└──────┬───────────────────────────────────────────┬──────────────────┘ │
+       │ REST/SSE :4096                            │ HTTP/SSE :4099      │ REST/SSE :4096
+       ▼                                           ▼                     ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│  协议 / 进程层（Tauri 启动时拉起的 4 个 sidecar，lib.rs 顺序：opencode 阻塞就绪 → │
+│                 其余三个后台线程并行）                                             │
+│                                                                                    │
+│    opencode-server :4096       vendor/opencode 编译的二进制                        │
+│                                ◄ Desktop 经 Connector 到达 · Gateway 直连到达      │
+│                                                                                    │
+│    acp-client :4099            ① 渲染统一 turn-shaper：                            │
+│                                  ACP session/update → opencode 事件形状            │
+│                                + 进程生命周期 + per-agent 怪癖修复                 │
+│                                + 编排层宿主（见 ③）+ Team 注册表                   │
+│        └─ ACP stdio JSON-RPC 子进程： claude · gemini · codex · qoder · hermes      │
+│                                                                                    │
+│    knowledge-sidecar :4098     本地 RAG + IMA，经 MCP 暴露给 agent                 │
+│                                （不在控制链路上，是 agent 主动去调它）             │
+│                                                                                    │
+│    channel-gateway :4097       进程上是 sidecar（Tauri 拉起、同一套 Basic auth），  │
+│                                角色上是 :4096 的客户端 ⇒ 画在产品层，这里只列进程   │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Gateway 是控制链路的例外（gotchas §4）**：`bridge.ts` 持有 `Map<workspace, OpenCodeBackend>`，从 `@agent/connector` 只 import `OpenCodeBackend` + `UNLIMITED_SSE_RETRY`——复用到的是 **sse-transport**，不是 **Connector 派发层**。没有 `BindingStore`、没有 `capabilities` 门控 ⇒ IM 渠道会话恒定跑 opencode。接入多 agent 的改法是把 `OpenCodeBackend` 换成 `Connector` 并 `registerBackend(ACPBackend)`，不是加 adapter。
 
 > **③ 编排层不直接说协议**：`orchestrator` 只 import `@agent/connector`，自己按 workspace 持有 Connector 实例（组合根 `acp-client/src/orchestration.ts`），调用箭头是**回指 ② 层**的——把它画在 :4099 里只表示「宿主进程是 ACP Sidecar」（这样编排能扛住 WebView reload），不表示它绕过统一层。
 
@@ -183,6 +190,18 @@ Team **不是并列的第二套 runtime**，而是「普通会话 + Leader 身�
 ```
 
 `/orchestration` 纯流水线页（Pipeline / Fan-out）走的是**同一个** `Orchestrator`，只是把入口从 delegate 工具换成 recipe 层（`pipeline.ts` 的 DAG 执行器）。
+
+### 三条控制路径对照
+
+> 「统一」只覆盖前两条。第三条是 IM 渠道，与 Desktop 单 Agent 的差别**不在协议层而在有没有经过 ② 层**。
+
+| 路径 | 入口 | 经 Connector？ | 能绑 ACP agent？ | 能开 Team？ | 代码位置 |
+|------|------|:---:|:---:|:---:|------|
+| Desktop 单 Agent | `sse-context.tsx` 建一个 `Connector`，注册 OpenCodeBackend + ACPBackend | ✅ | ✅ | — | `desktop/src/lib/sse-context.tsx` |
+| Desktop Team / Pipeline | :4099 orchestrator，自持 per-workspace `Connector` | ✅（二级） | ✅ | ✅ | `acp-client/src/orchestration.ts` |
+| IM 渠道 | `bridge.ts` 直接 `new OpenCodeBackend()` | ❌ | ❌ 恒 opencode | ❌ | `channel/gateway/src/bridge.ts` |
+
+两个连带后果：`OpenCodeBackend.prompt` 的 `orchestrator_*` deny 缺省是 connector 层给的，bridge 不走 connector 所以**自己再传一遍**（gotchas §9）；给渠道加多 agent 能力 = 换成 `Connector`，不是加 adapter（gotchas §4）。
 
 ### 分层边界的代码事实
 
