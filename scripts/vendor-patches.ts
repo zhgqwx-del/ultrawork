@@ -1,6 +1,6 @@
 /** Apply the tracked cumulative vendor patches before resolving dependencies. */
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
+import { existsSync, readdirSync, statSync } from "node:fs"
 import path from "node:path"
 
 export function ensureVendorPatches(rootDir: string): void {
@@ -8,11 +8,12 @@ export function ensureVendorPatches(rootDir: string): void {
   const canonical = path.join(patchDir, "vendor-opencode-config-fix.patch")
   if (!existsSync(canonical) || !statSync(canonical).isFile()) throw new Error(`Missing canonical vendor patch: ${canonical}. Restore the tracked patch before installing or building.`)
   const vendorDir = path.join(rootDir, "vendor", "opencode")
-  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: vendorDir, encoding: "utf8", windowsHide: true })
-  let isVendorWorktree = false
-  if (top.status === 0) {
-    try { isVendorWorktree = path.relative(realpathSync(vendorDir), realpathSync(top.stdout.replace(/\r?\n$/, ""))) === "" } catch { /* fail closed below */ }
-  }
+  // Ask Git whether cwd is a worktree root instead of comparing its absolute
+  // path with Bun's realpath: Windows may return an 8.3 alias in one and the
+  // long path in the other, even though both name the same directory.
+  const location = spawnSync("git", ["rev-parse", "--is-inside-work-tree", "--show-prefix"], { cwd: vendorDir, encoding: "utf8", windowsHide: true })
+  const [insideWorktree, prefix] = location.stdout?.split(/\r?\n/) ?? []
+  const isVendorWorktree = location.status === 0 && insideWorktree === "true" && prefix === ""
   // git apply called from a plain folder inside a parent repo can filter every
   // file away yet return success, even for --check and --reverse --check.
   if (!isVendorWorktree) throw new Error(`vendor/opencode must be its own initialized Git working tree: ${vendorDir}. Run git submodule update --init --recursive; a parent repository or source archive is insufficient.`)

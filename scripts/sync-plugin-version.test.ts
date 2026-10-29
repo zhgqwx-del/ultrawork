@@ -46,6 +46,9 @@ function fixture(version = "2.0.0") {
   for (const [file, content] of before) put(file, content)
   put("packages/opencode/package.json", JSON.stringify({ name: "fixture-opencode", version }))
   git(["init", "--quiet"])
+  // Keep this fixture's LF byte assertions independent of the user's/system's
+  // Git for Windows defaults when the production helper invokes git apply.
+  git(["config", "core.autocrlf", "false"])
   git(["add", "--", "."])
   git(["-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture"])
   for (const [file, content] of after) put(file, content)

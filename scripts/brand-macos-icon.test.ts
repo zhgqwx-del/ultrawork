@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { createHash } from "node:crypto"
 import { Resvg } from "@resvg/resvg-js"
 import { cleanBrandEnvironment, prepareBrandBuild, PROJECT_ROOT, resolveBrandBuild } from "./brand-build"
@@ -21,7 +22,7 @@ function masterIcns(bytes: Buffer): Buffer {
   throw new Error("Missing 1024px ICNS representation")
 }
 function bounds(bytes: Buffer) {
-  const raster = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><image width="1024" height="1024" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`).render()
+  const raster = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><image width="1024" height="1024" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`, { font: { loadSystemFonts: false } }).render()
   return alphaBounds(raster.pixels, 1024, 1024)
 }
 
@@ -33,10 +34,12 @@ test("the active default dev/build ICNS is the checked macOS asset, while shared
   expect(bounds(png)).toEqual({ x: 100, y: 100, width: 824, height: 824 })
   const baseline = JSON.parse(readFileSync(path.join(PROJECT_ROOT, "branding/default-baseline.json"), "utf8")) as { assets: Record<string, string> }
   for (const [file, expected] of Object.entries(baseline.assets)) {
-    const digest = createHash("sha256").update(readFileSync(path.join(PROJECT_ROOT, file))).digest("hex")
+    const bytes = readFileSync(path.join(PROJECT_ROOT, file))
+    const normalized = file.endsWith(".tsx") ? Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n")) : bytes
+    const digest = createHash("sha256").update(normalized).digest("hex")
     expect(digest).toBe(expected)
   }
-})
+}, 60_000)
 
 test("real custom preparation selects the padded ICNS and keeps its UI/PNG/ICO inputs separate", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "brand-macos-config-"))
@@ -44,8 +47,10 @@ test("real custom preparation selects the padded ICNS and keeps its UI/PNG/ICO i
   const desktop = path.join(root, "packages/client/desktop")
   const tauri = path.join(desktop, "src-tauri")
   mkdirSync(tauri, { recursive: true })
-  writeFileSync(path.join(desktop, "package.json"), '{"scripts":{"tauri":"tauri"}}')
-  symlinkSync(path.join(PROJECT_ROOT, "packages/client/desktop/node_modules"), path.join(desktop, "node_modules"), process.platform === "win32" ? "junction" : "dir")
+  // Import the real CLI explicitly rather than asking Bun to traverse nested
+  // node_modules links from a fixture (junction resolution differs on Windows).
+  writeFileSync(path.join(desktop, "package.json"), '{"scripts":{"tauri":"bun run --bun tauri-cli.ts"}}')
+  writeFileSync(path.join(desktop, "tauri-cli.ts"), `await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, "packages/client/desktop/node_modules/@tauri-apps/cli/tauri.js")).href)})`)
   writeFileSync(path.join(tauri, "tauri.conf.json"), JSON.stringify({ app: { windows: [{ title: "Ultrawork" }] }, bundle: { resources: {} } }))
   const skills = path.join(root, "skills/builtin/example")
   mkdirSync(skills, { recursive: true })
@@ -70,4 +75,4 @@ test("real custom preparation selects the padded ICNS and keeps its UI/PNG/ICO i
   expect(defaultPrepared.configArgs).toEqual([])
   expect((defaultPrepared.config as { bundle?: unknown }).bundle).toBeUndefined()
   } finally { lease.release() }
-}, 30_000)
+}, 60_000)

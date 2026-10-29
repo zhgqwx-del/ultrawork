@@ -93,6 +93,32 @@ export function canonicalizeIcns(bytes: Buffer): Buffer {
   return Buffer.concat([bytes.subarray(0, 8), ...[...chunks].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, chunk]) => chunk)])
 }
 
+/** PNG compression can differ between native Tauri builds. Compare every
+ * representation's decoded pixels while retaining exact legacy data checks.
+ */
+export function equivalentIcnsRepresentations(left: Buffer, right: Buffer): boolean {
+  const representations = (bytes: Buffer) => {
+    const canonical = canonicalizeIcns(bytes)
+    const result = new Map<string, Buffer>()
+    for (let offset = 8; offset < canonical.length;) {
+      const length = canonical.readUInt32BE(offset + 4)
+      const type = canonical.toString("ascii", offset, offset + 4)
+      const payload = canonical.subarray(offset + 8, offset + length)
+      if (payload.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+        const { width, height } = validatePng(payload, `ICNS ${type}`)
+        const raster = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="data:image/png;base64,${payload.toString("base64")}"/></svg>`, { font: { loadSystemFonts: false } }).render()
+        const dimensions = Buffer.alloc(8)
+        dimensions.writeUInt32BE(width, 0); dimensions.writeUInt32BE(height, 4)
+        result.set(type, Buffer.concat([Buffer.from([1]), dimensions, raster.pixels]))
+      } else result.set(type, Buffer.concat([Buffer.from([0]), payload]))
+      offset += length
+    }
+    return result
+  }
+  const a = representations(left), b = representations(right)
+  return a.size === b.size && [...a].every(([type, pixels]) => b.get(type)?.equals(pixels) === true)
+}
+
 /** Tauri's icon subcommand is cross-platform and never starts the application.
  * All PNG/ICO side products stay in a disposable directory; only ICNS is exported.
  */

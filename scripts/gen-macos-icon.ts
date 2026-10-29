@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { writeMacosIcon } from "./macos-icon"
+import { equivalentIcnsRepresentations, writeMacosIcon } from "./macos-icon"
 
 export const MACOS_ICON_PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 export const DEFAULT_MACOS_ICON_FILE = path.join("packages", "client", "desktop", "src-tauri", "icons", "icon-macos.icns")
@@ -16,7 +16,11 @@ export async function generateDefaultMacosIcon(check = false, root = MACOS_ICON_
   try {
     const generated = path.join(temporary, "icon-macos.icns")
     const metrics = await writeMacosIcon(input, generated, root)
-    if (!readFileSync(generated).equals(readFileSync(output))) throw new Error("Default macOS icon is stale; run bun run --bun scripts/gen-macos-icon.ts")
+    const actual = readFileSync(generated), expected = readFileSync(output)
+    // Keep the native macOS release asset byte-for-byte reproducible. Other
+    // hosts may use a different PNG encoder, but must preserve every pixel.
+    const equal = process.platform === "darwin" ? actual.equals(expected) : equivalentIcnsRepresentations(actual, expected)
+    if (!equal) throw new Error("Default macOS icon is stale; run bun run --bun scripts/gen-macos-icon.ts")
     return metrics
   } finally { rmSync(temporary, { recursive: true, force: true }) }
 }

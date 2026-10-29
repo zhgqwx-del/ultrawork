@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -46,6 +46,19 @@ function copyEntry(root: string) {
   copyFileSync(path.resolve(import.meta.dir, "../packages/core/brand/src/index.ts"), path.join(root, "packages/core/brand/src/index.ts"))
 }
 
+function expectBuildWitness(marker: string, root: string, brand: string, extra: string[]) {
+  const witness = JSON.parse(readFileSync(marker, "utf8"))
+  // Windows may expand an 8.3 TEMP path in the child process. Check filesystem
+  // identity rather than requiring the two names for that directory to match.
+  const expected = statSync(root), actual = statSync(witness.cwd)
+  expect({ dev: actual.dev, ino: actual.ino }).toEqual({ dev: expected.dev, ino: expected.ino })
+  if (brand === "mywork") {
+    expect(witness.args[0]).toBe("--brand")
+    expect(path.relative(witness.cwd, witness.args[1])).toBe(path.join("branding", "mywork", "brand.json"))
+    expect(witness.args.slice(2)).toEqual(extra)
+  } else expect(witness.args).toEqual(extra)
+}
+
 test("real CI entry forwards tag preset arguments and child exit status without running a build", () => {
   const root = directory(); copyEntry(root)
   const marker = path.join(root, "build-witness.json")
@@ -53,7 +66,7 @@ test("real CI entry forwards tag preset arguments and child exit status without 
   for (const brand of ["default", "mywork"]) {
     const child = spawnSync(process.execPath, [path.join(root, "scripts/release-ci.ts"), "--verbose"], { cwd: root, env: { ...process.env, ULTRAWORK_RELEASE_BRAND: brand, GITHUB_REF: tag, GITHUB_EVENT_NAME: "push" }, encoding: "utf8", timeout: 10_000 })
     expect(child.status, child.stderr).toBe(29)
-    expect(JSON.parse(readFileSync(marker, "utf8"))).toEqual({ cwd: root, args: brand === "mywork" ? ["--brand", path.join(root, "branding/mywork/brand.json"), "--verbose"] : ["--verbose"] })
+    expectBuildWitness(marker, root, brand, ["--verbose"])
     rmSync(marker)
   }
   const rejected = spawnSync(process.execPath, [path.join(root, "scripts/release-ci.ts"), "--unsigned"], { cwd: root, env: { ...process.env, ULTRAWORK_RELEASE_BRAND: "mywork", GITHUB_REF: tag, GITHUB_EVENT_NAME: "push" }, encoding: "utf8", timeout: 10_000 })
@@ -61,7 +74,7 @@ test("real CI entry forwards tag preset arguments and child exit status without 
   expect(existsSync(marker)).toBe(false)
   const manual = spawnSync(process.execPath, [path.join(root, "scripts/release-ci.ts"), "--unsigned"], { cwd: root, env: { ...process.env, ULTRAWORK_RELEASE_BRAND: "mywork", GITHUB_REF: tag, GITHUB_EVENT_NAME: "workflow_dispatch" }, encoding: "utf8", timeout: 10_000 })
   expect(manual.status, manual.stderr).toBe(29)
-  expect(JSON.parse(readFileSync(marker, "utf8")).args).toEqual(["--brand", path.join(root, "branding/mywork/brand.json"), "--unsigned"])
+  expectBuildWitness(marker, root, "mywork", ["--unsigned"])
   rmSync(marker)
   const matrix = spawnSync(process.execPath, [path.join(root, "scripts/release-ci.ts"), "--matrix"], { cwd: root, env: { ...process.env, GITHUB_EVENT_NAME: "push", ULTRAWORK_RELEASE_BRAND_INPUT: "all" }, encoding: "utf8", timeout: 10_000 })
   expect(matrix.status, matrix.stderr).toBe(0)

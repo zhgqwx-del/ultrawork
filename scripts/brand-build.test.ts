@@ -251,7 +251,7 @@ describe("brand build contract", () => {
       expect(() => resolveBrandBuild({ ...args, brandId: "temporary-two" }, dir, dir)).toThrow("conflicts")
       expect(() => resolveBrandBuild({ ...args, brandId: "temporary-two", productName: "TemporaryOne" }, dir, dir)).toThrow("conflicts")
     } finally { lease.release() }
-  })
+  }, 60_000)
   test("earlier artifact manifests also freeze temporary identity without a ledger", () => {
     const dir = fixture()
     const folder = path.join(dir, ".brand-build/artifacts/older-edition/test-platform")

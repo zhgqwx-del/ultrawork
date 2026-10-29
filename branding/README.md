@@ -24,3 +24,5 @@ MyWork 原图来自美柚官网标明的 App Store 产品（634896669），由 A
 macOS 应用/Dock 使用单独的 `icon-macos.icns`：按实心主体的 alpha 边界，将超过画布 824/1024 的图形缩小并居中；两预置在 1024px 中为 824px 主体、四边 100px 透明留白。已含适当留白的输入不重复缩小，SVG 保留字体解析。应用内 Logo、通用 PNG、Windows ICO、Linux 和托盘仍走各自原素材。默认专用资产由 `bun run --bun scripts/gen-macos-icon.ts` 生成，追加 `--check` 验证；旧 `icon.icns` 保留为原始模板，当前 Tauri 配置指向新 ICNS。自定义品牌自动派生对应 ICNS，算法内容纳入 stage digest，Cargo 跟踪最终图标变化。
 
 已有 MyWork dev 会话会保留启动时的品牌 overlay；修改图标后完整退出原开发会话，再运行 `./setup.sh --dev --brand branding/mywork/brand.json`。只刷新页面不能重新准备品牌配置。
+
+图标检查在 macOS 要求生成的 ICNS 与提交资产逐字节相同；Windows/Linux 的 Tauri PNG 压缩编码可不同，检查仍要求相同 chunk 集、各尺寸解码后的全部 RGBA 像素及 legacy 数据一致。纯 PNG 解码不扫描系统字体；文字 SVG 的比较须有实际可用字体，Linux CI 明确安装 Liberation Sans。

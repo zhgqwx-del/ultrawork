@@ -17,6 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- 修正首轮三平台 CI 揭示的 Windows 8.3 路径判断和测试夹具的 CRLF/链接差异；图标测试显式提供字体、对纯 PNG 关闭字体扫描并校验跨平台解码像素。Windows Tauri lib 测试通过专用 runner 补齐 Common Controls v6 manifest，正式应用的 manifest 和运行逻辑保持原样。
 - 修复 macOS Dock 应用图标底板铺满画布、比常见应用视觉偏大的问题：默认与定制品牌专用 ICNS 增加统一留白，两预置主体为 824/1024；保留 UI Logo、PNG/ICO、托盘和原图。新增确定性生成/重复留白保护/SVG 字体回归、开发二进制嵌入与包内图标校验，补齐 Cargo 图标依赖和品牌缓存失效。
 - 将 9 个仅供生命周期测试使用的 Rust 辅助函数限定为 `#[cfg(test)]`，消除正常 dev/build 的 dead_code 告警；保留全部测试和生产进程归属校验逻辑。
 - 冻结构建依赖：将 `ghostty-web` 固定回原锁提交完整 SHA，两个声明改动仍由现有 vendor 累计 patch 管理；统一 patch/冻结安装、清理 Bun 跳过锁/安装的环境覆盖，纳入依赖缓存指纹并自动重建损坏缓存。修正 Windows 交叉编译目标别名和 macOS 误签 PE/ELF；增加三平台真实 vendor 构建 CI 门禁。业务规则和子模块提交不变，验证边界见 `docs/testing.md` §16。

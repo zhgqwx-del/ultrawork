@@ -25,7 +25,7 @@ function fixture() {
   writeFileSync(stub, `import { appendFileSync } from "node:fs";
     appendFileSync(process.env.ULTRAWORK_SETUP_TEST_LOG!, JSON.stringify({ command: process.argv[2], args: process.argv.slice(3), cwd: process.cwd() }) + "\\n");
     if (process.argv[2] === "rustup") console.log("x86_64-apple-darwin");
-    if (process.argv[2] === "git" && process.argv.includes("--show-toplevel")) console.log(process.cwd());
+    if (process.argv[2] === "git" && process.argv.includes("--is-inside-work-tree")) process.stdout.write("true\\n\\n");
     if (process.argv[2] === "git" && process.argv.includes("--numstat")) process.stdout.write("1\\t1\\tx.txt\\0");
     process.exit(Number(process.env.ULTRAWORK_SETUP_TEST_EXIT || 0));`)
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`

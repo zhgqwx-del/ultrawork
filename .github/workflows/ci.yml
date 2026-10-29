@@ -54,6 +54,14 @@ jobs:
         with:
           bun-version: 1.3.12
       - run: bun install --frozen-lockfile
+      # The text-SVG icon regression compares Tauri and Resvg using a real
+      # installed face. Fresh Linux runners need not provide Arial or a
+      # generic sans-serif alias; do not accept a blank reference image.
+      - name: Install icon test font (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-liberation
       - name: Typecheck
         run: bun run --bun turbo run typecheck
       - name: Brand build, icon and setup contracts (including Windows)
@@ -411,4 +419,9 @@ jobs:
           done
       - name: cargo test (compiles + runs Rust unit tests)
         working-directory: packages/client/desktop/src-tauri
+        env:
+          # Tauri's app manifest is linked into the application, but upstream
+          # does not attach Common-Controls v6 to lib test harnesses (#13419).
+          # This runner patches only Cargo-selected debug/deps test executables.
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.os == 'Windows' && 'pwsh -NoProfile -NonInteractive -File ../../../../scripts/windows-rust-test-runner.ps1' || '' }}
         run: cargo test

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { Resvg } from "@resvg/resvg-js"
 import { DEFAULT_MACOS_ICON_FILE, generateDefaultMacosIcon, MACOS_ICON_PROJECT_ROOT } from "./gen-macos-icon"
-import { alphaBounds, canonicalizeIcns, MACOS_ICON_CONTENT_SIZE, normalizeMacosIcon, writeMacosIcon } from "./macos-icon"
+import { alphaBounds, canonicalizeIcns, equivalentIcnsRepresentations, MACOS_ICON_CONTENT_SIZE, normalizeMacosIcon, writeMacosIcon } from "./macos-icon"
 import { validatePng } from "./png-image"
 
 const root = MACOS_ICON_PROJECT_ROOT
@@ -16,7 +16,7 @@ const png = (body: string, size = 1024) => new Resvg(svg(body, size), { font: { 
 
 function decoded(bytes: Buffer) {
   const { width, height } = validatePng(bytes)
-  return new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`).render()
+  return new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`, { font: { loadSystemFonts: false } }).render()
 }
 function alpha(bytes: Buffer) {
   const raster = decoded(bytes)
@@ -99,12 +99,37 @@ test("normal shadows do not control plate size; translucent/blank artwork has ex
   expect(empty.png.equals(blank)).toBe(true)
 })
 
+test("ICNS semantic comparison ignores PNG encoding metadata while checking all pixels and legacy data", () => {
+  const archive = (image: Buffer, legacy = Buffer.from([1, 2, 3]), type = "ic10") => {
+    const representation = (name: string, data: Buffer) => {
+      const header = Buffer.alloc(8); header.write(name, "ascii"); header.writeUInt32BE(data.length + 8, 4)
+      return Buffer.concat([header, data])
+    }
+    const body = Buffer.concat([representation(type, image), representation("s8mk", legacy)])
+    const header = Buffer.alloc(8); header.write("icns", "ascii"); header.writeUInt32BE(body.length + 8, 4)
+    return Buffer.concat([header, body])
+  }
+  const image = png('<rect width="1" height="1" fill="red"/>', 1)
+  const metadata = Buffer.from("Comment\0different PNG encoding")
+  const chunkHeader = Buffer.alloc(8); chunkHeader.writeUInt32BE(metadata.length); chunkHeader.write("tEXt", 4, "ascii")
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(Bun.hash.crc32(Buffer.concat([chunkHeader.subarray(4), metadata])))
+  const annotated = Buffer.concat([image.subarray(0, 33), chunkHeader, metadata, crc, image.subarray(33)])
+  expect(archive(image).equals(archive(annotated))).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(annotated))).toBe(true)
+  expect(equivalentIcnsRepresentations(archive(image), archive(png('<rect width="1" height="1" fill="blue"/>', 1)))).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(png('<rect width="2" height="2" fill="red"/>', 2)))).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(image, Buffer.from([1, 2, 4])))).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(image, undefined, "ic09"))).toBe(false)
+})
+
 test("text SVGs supported by Tauri stay visible with normal font resolution in the new ICNS", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "uw-macos-text-icon-"))
   try {
     const input = path.join(directory, "text.svg")
     const reference = path.join(directory, "tauri-reference")
-    writeFileSync(input, svg('<text x="100" y="700" font-family="Arial,sans-serif" font-size="600">M</text>'))
+    // Arial is provided by macOS/Windows; the Linux CI fixture installs
+    // Liberation Sans. Keep both renderers on the same explicit font list.
+    writeFileSync(input, svg('<text x="100" y="700" font-family="Arial,Liberation Sans,DejaVu Sans,sans-serif" font-size="600">M</text>'))
     const child = Bun.spawn([process.execPath, "run", "--bun", "tauri", "icon", input, "--output", reference], {
       cwd: path.join(root, "packages", "client", "desktop"), stdout: "pipe", stderr: "pipe",
     })
@@ -169,7 +194,10 @@ test("ICNS generation is deterministic, fits every native representation, and ex
     for (const [name, before] of unchanged) expect(readFileSync(path.join(icons, name)).equals(before)).toBe(true)
     // This proves the checked-in default resource is generated from the same
     // pipeline dev and packaging will reference, rather than an unrelated image.
-    expect(readFileSync(path.join(root, DEFAULT_MACOS_ICON_FILE)).equals(first)).toBe(true)
+    const checked = readFileSync(path.join(root, DEFAULT_MACOS_ICON_FILE))
+    expect(process.platform === "darwin" ? checked.equals(first) : equivalentIcnsRepresentations(checked, first)).toBe(true)
+    expect(equivalentIcnsRepresentations(checked, first)).toBe(true)
+    expect(equivalentIcnsRepresentations(first, readFileSync(custom))).toBe(false)
     await generateDefaultMacosIcon(true, root)
     expect(canonicalizeIcns(first).equals(first)).toBe(true)
     const malformed = Buffer.from(first)

@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-09-16 -->
+<!-- last-synced: 2026-10-29 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -351,6 +351,9 @@
 ## 12. 跨平台（macOS / Windows / Linux，ADR-037，2026-06-27）
 
 > 正向模式见 `docs/conventions.md` §13。这里是**实测/分析确认的反向坑**。强制门禁 = `.github/workflows/ci.yml` 三平台矩阵。
+
+- **Windows 的 8.3 短路径与长路径可能指向同一个目录，Bun `realpathSync` 与 Git 的输出也不一定统一（2026-10-29，品牌 PR 首轮 CI）**：不要用两段绝对路径字符串相等来判断 vendor 是否为自身 Git 仓库根。`vendor-patches.ts` 改由该目录下的 `git rev-parse --is-inside-work-tree --show-prefix` 同时确认工作树与空前缀，继续拒绝嵌在父仓库中的普通源码目录。测试对临时目录的身份用文件系统信息核对；受控 Git fixture 自行设 `core.autocrlf=false`，生产 helper 保留用户 Git 行为。
+- **Tauri 的 Windows lib 测试程序可能缺少 Common Controls v6 manifest，编译成功却在执行首个测试前退出 `0xc0000139`**：新增 `tauri::test::mock_builder` 会让该上游问题显现，见 [tauri#13419](https://github.com/tauri-apps/tauri/issues/13419)。CI 通过 `windows-rust-test-runner.ps1` 只给 Cargo 明确传入的 `target/debug/deps` 测试程序补 v6 dependency，保留其余 manifest 与真实测试退出码。不能扫描执行任意 `deps` 文件、跳过 Windows 测试，或据此改正式应用的 manifest/CRT；正式发行不配置此 runner。
 
 - **进程销毁不等后台线程 ⇒ 「已升屏障」不代表「已清理干净」（ADR-055，2026-07-13）**：两条退出路径都在 `shutdown_sidecars()` 一返回就把进程干掉——信号路径 `std::process::exit(128+sig)`，`RunEvent::Exit` 返回后由 tao 终止。**没有任何东西会等后台线程把它欠下的清理做完**。所以一个卡在 `spawn_sidecar` 里的线程（子进程已 fork、尚未登记注册表）不是"晚了一步"，而是**即将连同它欠下的 `kill_pid` 一起被销毁**；那个子进程既不在被 `mem::take` 抽空的注册表里、也不在已被删除的 `ports.json` 里 ⇒ 下次启动的 `reap_orphaned_sidecars` 同样找不到它 ⇒ **永久孤儿**（动态端口下 `prepare_port` 也看不见）。**一个原子 bool 屏障只能定所有权，定不了时序**：必须用锁把「查屏障→spawn→登记」和「升屏障→抽空注册表」变成互斥的原子步骤（`SPAWN_LOCK`）。同理 `write_ports_json` 的屏障检查必须在 `PORTS_JSON_LOCK` **之内**、且 `remove_ports_json` 也要持同一把锁，否则一个刚就绪的 sidecar 会把已被删除的 `ports.json` **写回来**。
 - **超时常量之间要交叉核对，否则"兜底"会变成 bug 源（ADR-055）**：渲染端的启动门原设 20s，而 Rust 侧自己的最坏合法启动是 `MAX_START_ATTEMPTS(3) × 15s = 45s`（还没算首装的文件开销）⇒ 兜底会在**合法的慢启动**上触发、把 UI 渲染到一个尚未就绪的后端上，正好破坏它本该保护的不变量。同理前端 splash 的兜底必须**严格晚于**该门（否则会把 splash 从一个 React 还没渲染的空 `#root` 上摘掉 ⇒ **把白屏造回来**）。当前：门 90s < splash 兜底 120s。

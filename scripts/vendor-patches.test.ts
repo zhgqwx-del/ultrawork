@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { ensureVendorPatches } from "./vendor-patches"
@@ -39,6 +39,10 @@ function fixture() {
   const put = (file: string, value: string) => { const output = path.join(vendor, file); mkdirSync(path.dirname(output), { recursive: true }); writeFileSync(output, value) }
   for (const [file, value] of before) put(file, value)
   git(["init", "--quiet"])
+  // The production helper runs with the caller's normal Git environment.
+  // Pin the fixture repository itself before staging so CRLF defaults from
+  // Git for Windows cannot change the bytes this LF-based patch test asserts.
+  git(["config", "core.autocrlf", "false"])
   git(["add", "--", "."])
   git(["-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture"])
   for (const [file, value] of after) put(file, value)
@@ -75,6 +79,16 @@ test("a submodule/worktree-style .git file still identifies the correct vendor w
   const metadata = path.join(path.dirname(f.root), "separate Git metadata")
   renameSync(gitFile, metadata)
   writeFileSync(gitFile, `gitdir: ${path.relative(f.vendor, metadata).replaceAll("\\", "/")}\n`)
+  ensureVendorPatches(f.root)
+  for (const [file, value] of f.after) expect(readFileSync(path.join(f.vendor, file), "utf8")).toBe(value)
+})
+
+test("an aliased checkout applies to the same vendor worktree without comparing absolute path spellings", () => {
+  const f = fixture()
+  const alias = path.join(path.dirname(f.root), "checkout alias")
+  symlinkSync(f.root, alias, process.platform === "win32" ? "junction" : "dir")
+  ensureVendorPatches(alias)
+  for (const [file, value] of f.after) expect(readFileSync(path.join(f.vendor, file), "utf8")).toBe(value)
   ensureVendorPatches(f.root)
   for (const [file, value] of f.after) expect(readFileSync(path.join(f.vendor, file), "utf8")).toBe(value)
 })

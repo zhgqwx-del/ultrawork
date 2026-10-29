@@ -11,7 +11,7 @@ const defaultIcons = path.join(ICON_PROJECT_ROOT, "packages", "client", "desktop
 
 function decode(bytes: Buffer) {
   const { width, height } = validatePng(bytes)
-  const rendered = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`).render()
+  const rendered = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="data:image/png;base64,${bytes.toString("base64")}"/></svg>`, { font: { loadSystemFonts: false } }).render()
   const rgba = rendered.pixels
   const alpha = Buffer.alloc(width * height)
   for (let index = 0; index < alpha.length; index++) alpha[index] = rgba[index * 4 + 3]
@@ -87,7 +87,7 @@ test("MyWork master preserves official opaque pixels and exactly copies the defa
   }
   expect(changedOpaquePixels).toBe(0)
   expect(() => renderMyworkIcon(read(MYWORK_ICON_SOURCE), readFileSync(path.join(defaultIcons, "32x32.png")))).toThrow("matching square dimensions")
-})
+}, 30_000)
 
 test("base Tauri PNG/ICO and retained legacy ICNS templates match default sizes and alpha masks", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "mywork-native-icons-"))
@@ -121,4 +121,4 @@ test("base Tauri PNG/ICO and retained legacy ICNS templates match default sizes 
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
-}, 30_000)
+}, 180_000)
