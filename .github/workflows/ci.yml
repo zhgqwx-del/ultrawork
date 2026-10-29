@@ -65,7 +65,7 @@ jobs:
       - name: Typecheck
         run: bun run --bun turbo run typecheck
       - name: Brand build, icon and setup contracts (including Windows)
-        run: bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts scripts/release-ci.test.ts
+        run: bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts scripts/release-ci.test.ts scripts/linux-install-layout.test.ts
       - name: Preserve failed ICNS comparison evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -77,7 +77,7 @@ jobs:
       - name: Default macOS icon drift guard
         run: bun run --bun scripts/gen-macos-icon.ts --check
       - name: Typecheck vendor build automation
-        run: bun run --bun tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun --skipLibCheck scripts/vendor-dependencies.ts scripts/vendor-patches.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/setup.ts scripts/setup.test.ts scripts/build-opencode.ts scripts/sync-plugin-version.ts scripts/sync-plugin-version.test.ts scripts/macos-icon.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/gen-macos-icon.ts scripts/release-ci.ts scripts/release-ci.test.ts
+        run: bun run --bun tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun --skipLibCheck scripts/vendor-dependencies.ts scripts/vendor-patches.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/setup.ts scripts/setup.test.ts scripts/build-opencode.ts scripts/sync-plugin-version.ts scripts/sync-plugin-version.test.ts scripts/macos-icon.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/gen-macos-icon.ts scripts/release-ci.ts scripts/release-ci.test.ts scripts/linux-install-layout.ts scripts/linux-install-layout.test.ts
       - name: Brand identity and runtime contracts (including Windows)
         working-directory: packages/core/brand
         run: bun run --bun vitest run
