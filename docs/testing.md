@@ -836,6 +836,16 @@ Rust 测试覆盖路径派生、身份记录、租约与进程身份等宿主规
 
 2026-10-29 首次远端验收：PR #33 的提交 `c5a7b0adfe849155476dcaf3fdc9e6c813ff4936` 在 [CI run 40926729831](https://github.com/zhgqwx-del/ultrawork/actions/runs/40926729831) 完成 **16/16** 三平台门禁；合入 main 的 `19d98d56d9e55e9f6936b3c1f7949bc93c985b2f` 与该提交树一致。`v0.3.10` 的 [Release run 40929239588](https://github.com/zhgqwx-del/ultrawork/actions/runs/40929239588) 暴露两项阻断：两个 macOS 品牌完成 Universal 编译及签名操作后，Apple 自动公证返回 HTTP 403（必需协议缺失或过期），最终签名/票据校验未执行；Linux 检查器将没有 `./` 前缀的真实归档条目误判为缺文件。前者需要 Account Holder 核实协议状态，后者由后续 patch 版本修复并增加真实 `.deb` 门禁；不移动旧标签，不把该尝试记作已发布或公证通过。
 
+该次发布尝试的完整结果如下；publish 因构建失败被跳过，没有创建公开的半套安装包。对应 main 的 [CI run 40929071877](https://github.com/zhgqwx-del/ultrawork/actions/runs/40929071877) 在仅重跑 Windows L3 压力自检耗尽 runner 内存的任务后完成 **16/16**。
+
+| 平台 | Ultrawork | MyWork |
+|---|---|---|
+| macOS | Universal 编译、签名操作已执行；Apple 协议 403 阻断公证，最终签名/票据/DMG 验收未完成 | 同左 |
+| Windows x64 | MSI、在线 EXE、离线 EXE 均构建成功，离线 WebView2 检查通过；未配置发行签名 | 同左 |
+| Linux x64 | deb/rpm 已生成，随后布局检查器误判而失败，未导出通过校验的发行 artifact | 同左 |
+
+Linux 修复由 [PR #34](https://github.com/zhgqwx-del/ultrawork/pull/34) 合入 main 的 `209429770fa22033a2520fd1e4f67dbca710dbdf`：Debian 通过 `dpkg-deb --fsys-tarfile → GNU tar` 流式读取机器文件列表，RPM 保留权限模式与完整文件名；同时检查两侧退出码并限制诊断长度。提交 `a2e4c992be594e543e11444513d2d6f55808de32` 的 [CI run 40934056079](https://github.com/zhgqwx-del/ultrawork/actions/runs/40934056079) 完成 **16/16**，Linux 的六个真实 deb 正例与缺文件、跨品牌污染、损坏载荷三个负例全部通过；macOS/Windows 四项解析测试通过，三个 Linux 原生测试明确跳过。`v0.3.11` 版本已准备，正式 tag/完整发布和真实 RPM 验包仍待后续发布任务；Apple 协议状态须先由 Account Holder 核实，不能将编译及签名操作等同于公证成功。
+
 ### 本机验证边界快照（2026-10-29）
 
 下表记录发布 CI 启动前的本机验收结果；“未触发远端 CI”等内容描述取得该证据时的状态。后续 CI 与原生安装结果须关联具体 tag、提交和 run 单独追加，不能覆盖成这些本机测试已验证其他操作系统或正式签名。
