@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { Resvg } from "@resvg/resvg-js"
@@ -38,6 +38,42 @@ function chunks(bytes: Buffer) {
   }
   expect(offset).toBe(bytes.length)
   return result
+}
+
+function saveIcnsDifference(expected: Buffer, actual: Buffer) {
+  const output = path.join(root, ".brand-build", "verification", "icns-ci-diff", `${process.platform}-${process.arch}`)
+  mkdirSync(output, { recursive: true })
+  writeFileSync(path.join(output, "checked.icns"), expected)
+  writeFileSync(path.join(output, "generated.icns"), actual)
+  writeFileSync(path.join(output, "normalized-source.png"), normalizeMacosIcon(readFileSync(source), ".png").png)
+  writeFileSync(path.join(output, "source.png"), readFileSync(source))
+  const a = chunks(expected), b = chunks(actual)
+  const difference = (left: Uint8Array, right: Uint8Array, rgba: boolean) => {
+    let differentComponents = 0, maximumDelta = 0, differentAlphaComponents = 0, maximumAlphaDelta = 0
+    for (let index = 0; index < Math.min(left.length, right.length); index++) {
+      const delta = Math.abs(left[index]! - right[index]!)
+      if (!delta) continue
+      differentComponents++; maximumDelta = Math.max(maximumDelta, delta)
+      if (rgba && index % 4 === 3) { differentAlphaComponents++; maximumAlphaDelta = Math.max(maximumAlphaDelta, delta) }
+    }
+    return { leftComponents: left.length, rightComponents: right.length, differentComponents, maximumDelta, ...(rgba ? { differentAlphaComponents, maximumAlphaDelta } : {}) }
+  }
+  const representations = [...new Set([...a.keys(), ...b.keys()])].sort().map((type) => {
+    const left = a.get(type), right = b.get(type)
+    if (!left || !right) return { type, kind: "missing", expected: !!left, actual: !!right }
+    const png = (bytes: Buffer) => bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    if (png(left) && png(right)) {
+      writeFileSync(path.join(output, `checked-${type}.png`), left)
+      writeFileSync(path.join(output, `generated-${type}.png`), right)
+      const before = decoded(left), after = decoded(right)
+      return { type, kind: "png", encodedBytesEqual: left.equals(right), expectedDimensions: [before.width, before.height], actualDimensions: [after.width, after.height], ...difference(before.pixels, after.pixels, true) }
+    }
+    const alphaMask = type === "s8mk" || type === "l8mk"
+    return { type, kind: alphaMask ? "legacy-alpha-mask" : "legacy-encoded-rgb", encodedBytesEqual: left.equals(right), ...(alphaMask ? { dimensions: type === "s8mk" ? [16, 16] : [32, 32], alphaDifference: difference(left, right, false) } : { encodedDifference: difference(left, right, false) }) }
+  })
+  const report = { platform: process.platform, arch: process.arch, bun: Bun.version, expectedBytes: expected.length, actualBytes: actual.length, representations }
+  writeFileSync(path.join(output, "difference.json"), JSON.stringify(report, null, 2) + "\n")
+  console.error("ICNS cross-platform difference:", JSON.stringify(report, null, 2))
 }
 
 test("both brands have the same centered 824px macOS plate and preserve their original master", () => {
@@ -195,8 +231,11 @@ test("ICNS generation is deterministic, fits every native representation, and ex
     // This proves the checked-in default resource is generated from the same
     // pipeline dev and packaging will reference, rather than an unrelated image.
     const checked = readFileSync(path.join(root, DEFAULT_MACOS_ICON_FILE))
-    expect(process.platform === "darwin" ? checked.equals(first) : equivalentIcnsRepresentations(checked, first)).toBe(true)
-    expect(equivalentIcnsRepresentations(checked, first)).toBe(true)
+    const equivalent = equivalentIcnsRepresentations(checked, first)
+    const matches = process.platform === "darwin" ? checked.equals(first) : equivalent
+    if (!matches || !equivalent) saveIcnsDifference(checked, first)
+    expect(matches).toBe(true)
+    expect(equivalent).toBe(true)
     expect(equivalentIcnsRepresentations(first, readFileSync(custom))).toBe(false)
     await generateDefaultMacosIcon(true, root)
     expect(canonicalizeIcns(first).equals(first)).toBe(true)

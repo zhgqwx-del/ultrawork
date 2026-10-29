@@ -66,6 +66,14 @@ jobs:
         run: bun run --bun turbo run typecheck
       - name: Brand build, icon and setup contracts (including Windows)
         run: bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts scripts/release-ci.test.ts
+      - name: Preserve failed ICNS comparison evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icns-diagnostics-${{ matrix.os }}
+          path: .brand-build/verification/icns-ci-diff
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Default macOS icon drift guard
         run: bun run --bun scripts/gen-macos-icon.ts --check
       - name: Typecheck vendor build automation
