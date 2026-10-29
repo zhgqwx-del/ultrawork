@@ -25,4 +25,4 @@ macOS 应用/Dock 使用单独的 `icon-macos.icns`：按实心主体的 alpha �
 
 已有 MyWork dev 会话会保留启动时的品牌 overlay；修改图标后完整退出原开发会话，再运行 `./setup.sh --dev --brand branding/mywork/brand.json`。只刷新页面不能重新准备品牌配置。
 
-图标检查在 macOS 要求生成的 ICNS 与提交资产逐字节相同；Windows/Linux 的 Tauri PNG 压缩编码可不同，检查仍要求相同 chunk 集、各尺寸解码后的全部 RGBA 像素及 legacy 数据一致。纯 PNG 解码不扫描系统字体；文字 SVG 的比较须有实际可用字体，Linux CI 明确安装 Liberation Sans。
+图标检查在 macOS 要求生成的 ICNS 与提交资产逐字节相同，同一宿主重复生成也须字节一致。跨宿主检查要求相同 chunk 集、尺寸、所有 Alpha 与 legacy 数据；整份 ICNS 最多允许一个 RGB 分量相差 1，适配已由 Windows artifact 查实的 128px 重采样量化舍入，其余像素必须相同。纯 PNG 解码不扫描系统字体；文字 SVG 的比较须有实际可用字体，Linux CI 明确安装 Liberation Sans。

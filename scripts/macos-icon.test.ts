@@ -136,12 +136,12 @@ test("normal shadows do not control plate size; translucent/blank artwork has ex
 })
 
 test("ICNS semantic comparison ignores PNG encoding metadata while checking all pixels and legacy data", () => {
-  const archive = (image: Buffer, legacy = Buffer.from([1, 2, 3]), type = "ic10") => {
+  const archive = (image: Buffer, legacy = Buffer.from([1, 2, 3]), type = "ic10", secondImage?: Buffer) => {
     const representation = (name: string, data: Buffer) => {
       const header = Buffer.alloc(8); header.write(name, "ascii"); header.writeUInt32BE(data.length + 8, 4)
       return Buffer.concat([header, data])
     }
-    const body = Buffer.concat([representation(type, image), representation("s8mk", legacy)])
+    const body = Buffer.concat([representation(type, image), representation("s8mk", legacy), ...(secondImage ? [representation("ic09", secondImage)] : [])])
     const header = Buffer.alloc(8); header.write("icns", "ascii"); header.writeUInt32BE(body.length + 8, 4)
     return Buffer.concat([header, body])
   }
@@ -156,6 +156,24 @@ test("ICNS semantic comparison ignores PNG encoding metadata while checking all 
   expect(equivalentIcnsRepresentations(archive(image), archive(png('<rect width="2" height="2" fill="red"/>', 2)))).toBe(false)
   expect(equivalentIcnsRepresentations(archive(image), archive(image, Buffer.from([1, 2, 4])))).toBe(false)
   expect(equivalentIcnsRepresentations(archive(image), archive(image, undefined, "ic09"))).toBe(false)
+  const oneRgbLevel = png('<rect width="1" height="1" fill="#fe0000"/>', 1)
+  const crossHost = { allowSingleRgbRounding: true }
+  expect(equivalentIcnsRepresentations(archive(image), archive(oneRgbLevel))).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(oneRgbLevel), crossHost)).toBe(true)
+  expect(equivalentIcnsRepresentations(archive(oneRgbLevel), archive(image), crossHost)).toBe(true)
+  expect(equivalentIcnsRepresentations(archive(image), archive(png('<rect width="1" height="1" fill="#fd0000"/>', 1)), crossHost)).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(png('<rect width="1" height="1" fill="#fe0100"/>', 1)), crossHost)).toBe(false)
+  const opaqueBlack = png('<rect width="1" height="1" fill="black"/>', 1)
+  const fadedBlack = png('<rect width="1" height="1" fill="black" opacity="0.996"/>', 1)
+  expect([decoded(opaqueBlack).pixels[3], decoded(fadedBlack).pixels[3]]).toEqual([255, 254])
+  expect(equivalentIcnsRepresentations(archive(opaqueBlack), archive(fadedBlack), crossHost)).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(image, Buffer.from([1, 2, 4])), crossHost)).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image), archive(image, undefined, "ic09"), crossHost)).toBe(false)
+  const redGrid = png('<rect width="2" height="2" fill="red"/>', 2)
+  const roundedGrid = png('<rect width="2" height="2" fill="#fe0000"/>', 2)
+  expect(equivalentIcnsRepresentations(archive(image), archive(redGrid), crossHost)).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(redGrid), archive(roundedGrid), crossHost)).toBe(false)
+  expect(equivalentIcnsRepresentations(archive(image, undefined, "ic10", image), archive(oneRgbLevel, undefined, "ic10", oneRgbLevel), crossHost)).toBe(false)
 })
 
 test("text SVGs supported by Tauri stay visible with normal font resolution in the new ICNS", async () => {
@@ -231,7 +249,7 @@ test("ICNS generation is deterministic, fits every native representation, and ex
     // This proves the checked-in default resource is generated from the same
     // pipeline dev and packaging will reference, rather than an unrelated image.
     const checked = readFileSync(path.join(root, DEFAULT_MACOS_ICON_FILE))
-    const equivalent = equivalentIcnsRepresentations(checked, first)
+    const equivalent = equivalentIcnsRepresentations(checked, first, { allowSingleRgbRounding: process.platform !== "darwin" })
     const matches = process.platform === "darwin" ? checked.equals(first) : equivalent
     if (!matches || !equivalent) saveIcnsDifference(checked, first)
     expect(matches).toBe(true)

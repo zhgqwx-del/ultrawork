@@ -93,10 +93,11 @@ export function canonicalizeIcns(bytes: Buffer): Buffer {
   return Buffer.concat([bytes.subarray(0, 8), ...[...chunks].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, chunk]) => chunk)])
 }
 
-/** PNG compression can differ between native Tauri builds. Compare every
- * representation's decoded pixels while retaining exact legacy data checks.
+/** Compare decoded pixels while retaining exact legacy data checks. The
+ * explicit cross-host option permits one RGB component to round by one level
+ * across the entire ICNS; alpha, dimensions and all other data remain exact.
  */
-export function equivalentIcnsRepresentations(left: Buffer, right: Buffer): boolean {
+export function equivalentIcnsRepresentations(left: Buffer, right: Buffer, options: { allowSingleRgbRounding?: boolean } = {}): boolean {
   const representations = (bytes: Buffer) => {
     const canonical = canonicalizeIcns(bytes)
     const result = new Map<string, Buffer>()
@@ -116,7 +117,22 @@ export function equivalentIcnsRepresentations(left: Buffer, right: Buffer): bool
     return result
   }
   const a = representations(left), b = representations(right)
-  return a.size === b.size && [...a].every(([type, pixels]) => b.get(type)?.equals(pixels) === true)
+  let remainingRounding = options.allowSingleRgbRounding === true ? 1 : 0
+  return a.size === b.size && [...a].every(([type, pixels]) => {
+    const other = b.get(type)
+    if (!other || pixels.length !== other.length) return false
+    if (pixels.equals(other)) return true
+    // Each PNG comparison buffer starts with its format marker and dimensions.
+    // Legacy data and representation headers never receive a rounding budget.
+    if (!remainingRounding || pixels[0] !== 1 || !pixels.subarray(0, 9).equals(other.subarray(0, 9))) return false
+    for (let index = 9; index < pixels.length; index++) {
+      const delta = Math.abs(pixels[index]! - other[index]!)
+      if (!delta) continue
+      if (!remainingRounding || (index - 9) % 4 === 3 || delta !== 1) return false
+      remainingRounding--
+    }
+    return true
+  })
 }
 
 /** Tauri's icon subcommand is cross-platform and never starts the application.

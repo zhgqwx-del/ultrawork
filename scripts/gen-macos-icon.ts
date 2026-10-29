@@ -17,9 +17,10 @@ export async function generateDefaultMacosIcon(check = false, root = MACOS_ICON_
     const generated = path.join(temporary, "icon-macos.icns")
     const metrics = await writeMacosIcon(input, generated, root)
     const actual = readFileSync(generated), expected = readFileSync(output)
-    // Keep the native macOS release asset byte-for-byte reproducible. Other
-    // hosts may use a different PNG encoder, but must preserve every pixel.
-    const equal = process.platform === "darwin" ? actual.equals(expected) : equivalentIcnsRepresentations(actual, expected)
+    // Keep native macOS byte-for-byte reproducible. Cross-host quantization
+    // may round one RGB component by one level; alpha and every other pixel
+    // remain exact, with one shared budget for the complete archive.
+    const equal = process.platform === "darwin" ? actual.equals(expected) : equivalentIcnsRepresentations(actual, expected, { allowSingleRgbRounding: true })
     if (!equal) throw new Error("Default macOS icon is stale; run bun run --bun scripts/gen-macos-icon.ts")
     return metrics
   } finally { rmSync(temporary, { recursive: true, force: true }) }
