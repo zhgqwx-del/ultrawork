@@ -164,6 +164,7 @@ try {
         check_directory_exists: () => true, ensure_default_workspace: () => w,
         login_shell_path: () => "", scan_workspace_changes: () => [],
       }
+      ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
       // @ts-ignore
       window.__TAURI_INTERNALS__ = { invoke: async (cmd: string, a: any) => (handlers[cmd] ? handlers[cmd](a) : null), transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
       localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: p }))
@@ -278,6 +279,7 @@ try {
         check_directory_exists: () => true, ensure_default_workspace: () => w,
         login_shell_path: () => "", scan_workspace_changes: () => [],
       }
+      ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
       // @ts-ignore
       window.__TAURI_INTERNALS__ = { invoke: async (cmd: string, a: any) => (handlers[cmd] ? handlers[cmd](a) : null), transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
       localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: p }))

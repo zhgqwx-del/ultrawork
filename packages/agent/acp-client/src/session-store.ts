@@ -5,8 +5,8 @@
 // only restores the agent's own context lazily at the next prompt.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
+import { brandPaths, brandPathOverride } from "@agent/brand/node"
 import type { PersistedACPSession, UwSSEEvent, UwStoredMessage } from "./types.js"
 
 // Session history is data, not config: it lives next to opencode's brand-
@@ -14,9 +14,7 @@ import type { PersistedACPSession, UwSSEEvent, UwStoredMessage } from "./types.j
 // xdgData derivation. Read lazily so tests can point at a tmp dir after
 // module load.
 function dataDir(): string {
-  if (process.env.ACP_DATA_DIR) return process.env.ACP_DATA_DIR
-  const xdgData = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")
-  return join(xdgData, "ultrawork", "acp-sessions")
+  return brandPathOverride("ACP_DATA_DIR", join(brandPaths().dataRoot, "acp-sessions"))
 }
 
 function sessionPath(sessionId: string): string {

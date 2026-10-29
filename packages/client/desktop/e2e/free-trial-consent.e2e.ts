@@ -109,6 +109,7 @@ try {
         set_free_trial_consent: (a: any) => { localStorage.setItem("__e2e_consent", JSON.stringify({ consented: true, seededModel: a?.seededModel ?? undefined, seededSmallModel: a?.seededSmallModel ?? undefined })); return null },
         clear_free_trial_consent: () => { localStorage.setItem("__e2e_consent", JSON.stringify({ consented: false })); return null },
       }
+      ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
       // @ts-ignore
       window.__TAURI_INTERNALS__ = {
         invoke: async (c: string, a: any) => (handlers[c] ? handlers[c](a) : null),

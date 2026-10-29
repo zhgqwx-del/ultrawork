@@ -1,3 +1,5 @@
+import { initializeManagedBrandContext, sidecarPort } from "@agent/brand/node";
+
 import { ChannelManager } from "./channel-manager.js";
 import { Bridge } from "./bridge.js";
 import { createApp, type SidecarAuth } from "./gateway-server.js";
@@ -12,7 +14,9 @@ import { createFeishuAdapter, createFeishuQRProvider } from "./adapters/feishu/i
 // The Tauri host picks the port and injects it; the literal is the fallback for
 // a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
 // — with port 0 the kernel picks and only the server knows.
-const GATEWAY_PORT = Number(process.env.GATEWAY_PORT ?? 4097);
+initializeManagedBrandContext();
+
+const GATEWAY_PORT = sidecarPort("GATEWAY_PORT", 4097);
 
 /**
  * Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
@@ -31,6 +35,7 @@ function requireSidecarAuth(name: string): SidecarAuth {
 }
 
 async function main() {
+  const auth = requireSidecarAuth("channel-gateway");
   console.log("Channel Gateway starting...");
 
   const manager = new ChannelManager();
@@ -60,7 +65,7 @@ async function main() {
   qrRegistry.registerProvider(createWeComQRProvider());
   qrRegistry.registerProvider(createFeishuQRProvider());
 
-  const app = createApp(manager, qrRegistry, requireSidecarAuth("channel-gateway"), bridge);
+  const app = createApp(manager, qrRegistry, auth, bridge);
 
   const server = Bun.serve({
     hostname: "127.0.0.1",

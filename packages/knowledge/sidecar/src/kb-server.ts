@@ -1,3 +1,4 @@
+import { brandHealthIdentity } from "@agent/brand/node"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { basicAuth } from "hono/basic-auth"
@@ -98,7 +99,7 @@ export function createApp(deps: AppDeps, auth: SidecarAuth | null): Hono {
   }
 
   // Health check
-  app.get("/kb/health", (c) => c.json({ status: "ok" }))
+  app.get("/kb/health", (c) => c.json({ status: "ok", ...brandHealthIdentity() }))
 
   // ---------------------------------------------------------------------------
   // Unified sources API (ID-based + backward compat)

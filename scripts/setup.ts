@@ -2,22 +2,41 @@
 /**
  * Cross-platform one-click setup (macOS / Windows / Linux).
  *
- * Mirrors setup.sh but uses Bun APIs so it runs natively on Windows (no bash).
- * Usage: bun run scripts/setup.ts [--dev | --build] [--force-build]
+ * Shared implementation for `bun run setup` and the setup.sh compatibility entry.
+ * Usage: bun run scripts/setup.ts [--dev | --build] [--force-build] [brand options]
  *   --dev          : setup + start dev server (default)
  *   --build        : setup + build release package
  *   --force-build  : force-rebuild all sidecars (skip incremental cache)
  */
 import { $ } from "bun"
 import path from "node:path"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { absoluteBrandArgs, parseBrandArgs, resolveBrandBuild, validateArguments } from "./brand-build"
+import { acquireBuildLock } from "./build-lock"
+import { brandArtifactDirectory } from "./brand-artifacts"
+import { ensureVendorPatches } from "./vendor-patches"
+import { frozenInstallEnvironment } from "./vendor-dependencies"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const vendorDir = path.join(rootDir, "vendor", "opencode")
-const patchDir = path.join(rootDir, "patches")
 const binariesDir = path.join(rootDir, "packages", "client", "desktop", "src-tauri", "binaries")
 
-const argv = process.argv.slice(2)
+const inputArgs = process.argv.slice(2)
+const parsedBrand = parseBrandArgs(inputArgs)
+const resolvedBrandArgs = absoluteBrandArgs(parsedBrand.brand)
+validateArguments(parsedBrand.rest, ["--dev", "--build", "--force-build"])
+const brand = resolveBrandBuild(resolvedBrandArgs) // fail before downloads or dependency installation
+const argv = parsedBrand.rest
+if (argv.includes("--dev") && argv.includes("--build")) throw new Error("Choose --dev or --build")
+const rootLock = path.join(rootDir, "bun.lock")
+if (!existsSync(rootLock) || !readFileSync(rootLock, "utf8").trim()) throw new Error("Missing or empty root bun.lock. Restore the tracked lockfile before setup; frozen setup never creates one.")
+const lease = acquireBuildLock(rootDir)
+process.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
+process.on("exit", () => lease.release())
+const brandArgs = Object.entries(resolvedBrandArgs).flatMap(([key, value]) => {
+  const flag = ({ file: "--brand", brandId: "--brand-id", productName: "--name", icon: "--icon", uiLogo: "--ui-logo", trayIcon: "--tray-icon" } as Record<string, string>)[key]
+  return [flag, value]
+})
 const mode = argv.find((a) => a === "--dev" || a === "--build") ?? "--dev"
 const force = argv.includes("--force-build") ? "--force" : ""
 
@@ -48,42 +67,20 @@ console.log("[1/6] Prerequisites OK (bun, cargo)")
 // ── 2. Submodules ──────────────────────────────────────────────────
 if (!existsSync(path.join(vendorDir, "packages"))) {
   console.log("[2/6] Initializing git submodules...")
-  await $`git submodule update --init --recursive`
+  await $`git submodule update --init --recursive`.cwd(rootDir)
 } else {
   console.log("[2/6] Submodules already initialized")
 }
 
 // ── 3. Apply vendor patches ────────────────────────────────────────
-if (existsSync(patchDir)) {
-  console.log("[3/6] Applying vendor patches...")
-  const glob = new Bun.Glob("vendor-opencode-*.patch")
-  for (const name of glob.scanSync(patchDir)) {
-    const patch = path.join(patchDir, name)
-    // .quiet() suppresses git's noisy "patch failed" probe output (the patch is
-    // usually already applied — vendor/opencode ships as "modified content").
-    const fwd = await $`git -C ${vendorDir} apply --check ${patch}`.nothrow().quiet()
-    if (fwd.exitCode === 0) {
-      await $`git -C ${vendorDir} apply ${patch}`
-      console.log(`  Applied: ${name}`)
-    } else {
-      // Distinguish "already applied" (reverse-applies cleanly) from a real conflict.
-      const rev = await $`git -C ${vendorDir} apply --reverse --check ${patch}`.nothrow().quiet()
-      if (rev.exitCode === 0) {
-        console.log(`  Already applied: ${name}`)
-      } else {
-        console.log(`  ⚠️  Conflict — ${name} neither applies nor reverses cleanly (vendor may need re-patch)`)
-      }
-    }
-  }
-} else {
-  console.log("[3/6] No patches to apply")
-}
+console.log("[3/6] Applying vendor patches...")
+await ensureVendorPatches(rootDir)
 
 // ── 4. Dependencies ────────────────────────────────────────────────
 console.log("[4/6] Installing dependencies...")
-await $`bun install`.cwd(rootDir)
+await $`bun install --frozen-lockfile`.env(frozenInstallEnvironment()).cwd(rootDir)
 console.log("  Installing vendor/opencode dependencies...")
-await $`bun install`.cwd(vendorDir)
+await $`bun run --bun ${path.join(rootDir, "scripts/vendor-dependencies.ts")}`.cwd(rootDir)
 
 // ── 5. Sidecar binaries ────────────────────────────────────────────
 console.log("[5/6] Building sidecar binaries...")
@@ -100,55 +97,21 @@ for (const [label, script] of [
 }
 console.log("  Sidecar binaries ready in src-tauri/binaries/")
 
-// ── Clean stale dev instances (cross-platform 1420-port guard) ─────
-// The Rust reaper handles orphan sidecars on 4096-4099 at app startup, but
-// nothing guards the Vite port (1420): a previous dev instance still alive
-// makes `tauri dev` fail with "Port 1420 is already in use". Mirrors the
-// setup.sh guard for the Windows/Linux `bun run setup --dev` entry point.
-async function cleanupStaleDev(): Promise<void> {
-  const isWin = process.platform === "win32"
-  try {
-    let pids: string[] = []
-    if (isWin) {
-      // netstat: find the PID owning 127.0.0.1:1420 LISTENING
-      const out = await $`netstat -ano -p TCP`.quiet().nothrow().text()
-      pids = out.split(/\r?\n/)
-        .filter((l) => /:1420\s/.test(l) && /LISTENING/i.test(l))
-        .map((l) => l.trim().split(/\s+/).pop() ?? "")
-        .filter((p) => p && p !== "0")
-    } else {
-      if (!Bun.which("lsof")) return
-      const out = await $`lsof -nP -tiTCP:1420 -sTCP:LISTEN`.quiet().nothrow().text()
-      pids = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-    }
-    const unique = [...new Set(pids)]
-    if (unique.length === 0) return
-    console.log("  WARNING: a previous dev instance holds port 1420 — cleaning it up first:")
-    for (const pid of unique) {
-      console.log(`    killing pid ${pid}`)
-      if (isWin) await $`taskkill /F /PID ${pid} /T`.quiet().nothrow()
-      else await $`kill ${pid}`.quiet().nothrow()
-    }
-    await Bun.sleep(2000)
-  } catch {
-    // best-effort — never block startup on cleanup
-  }
-}
+// Port conflicts must never cause setup to kill another brand or a user process.
 
 // ── 6. Dev / Build ─────────────────────────────────────────────────
 if (mode === "--dev") {
-  await cleanupStaleDev()
   console.log("[6/6] Starting dev server...\n")
   console.log("  Frontend:  http://localhost:1420")
   console.log("  OpenCode:  http://localhost:4096")
   console.log("  Gateway:   http://localhost:4097")
   console.log("  Knowledge: http://localhost:4098")
   console.log("  ACP:       http://localhost:4099\n")
-  await $`bun run tauri:dev`.cwd(rootDir)
+  await $`bun run tauri:dev ${brandArgs}`.cwd(rootDir)
 } else if (mode === "--build") {
   console.log("[6/6] Building release package...")
-  await $`bun run tauri:build`.cwd(rootDir)
-  console.log("\nBuild complete! Check packages/client/desktop/src-tauri/target/release/bundle/")
+  await $`bun run tauri:build ${brandArgs}`.cwd(rootDir)
+  console.log(`\nBuild complete! Installers and manifest: ${brandArtifactDirectory(rootDir, brand.identity.brandId)}`)
 } else {
   console.log("[6/6] Setup complete!\n")
   console.log("Next steps:")

@@ -39,6 +39,12 @@ describe("sidecar-ports", () => {
       expect(sidecarPorts()).toEqual(DYNAMIC)
     })
 
+    it("rejects in strict native mode instead of connecting to preferred ports", async () => {
+      invoke.mockResolvedValue(null)
+      await expect(loadSidecarPorts(true)).rejects.toThrow("malformed")
+      expect(listen).not.toHaveBeenCalled()
+    })
+
     // Outside Tauri (vitest, e2e in a plain browser) `invoke` rejects. The gate in
     // main.tsx awaits this promise, so a rejection here would wedge the boot.
     it("falls back to the preferred ports instead of rejecting", async () => {

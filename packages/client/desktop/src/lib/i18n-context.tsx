@@ -3,6 +3,7 @@ import { useConfig } from "./config-context"
 import { en, zhHans, type Language } from "./i18n-translations"
 import { zhHant } from "./i18n-zh-hant.generated"
 import { syncTrayLabels } from "./tray-labels"
+import { brandTranslation } from "./brand"
 
 export type { Language }
 
@@ -41,7 +42,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         value = value.split(`{${k}}`).join(String(v))
       })
     }
-    return value
+    return brandTranslation(key, value)
   }, [language])
 
   // The tray menu lives in Rust and knows no language; keep it in step with the UI.

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { copyFileSync, mkdirSync, rmSync, rmdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { brandPaths, brandPathOverride } from "@agent/brand/node"
 import { runArtifactDir, type ArtifactInput } from "./artifacts"
 
 // Fan-out worktree isolation (ADR-031 D-4, decision 2026-06-12): each
@@ -32,9 +32,7 @@ export function isGitRepo(workspace: string): boolean {
 }
 
 export function worktreesRoot(): string {
-  if (process.env.ULTRAWORK_WORKTREES_DIR) return process.env.ULTRAWORK_WORKTREES_DIR
-  const xdgData = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")
-  return join(xdgData, "ultrawork", "worktrees")
+  return brandPathOverride("ULTRAWORK_WORKTREES_DIR", join(brandPaths().dataRoot, "worktrees"))
 }
 
 /** `git worktree add --detach` at the workspace's current HEAD. */

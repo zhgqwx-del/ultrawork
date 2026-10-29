@@ -8,13 +8,14 @@ import { FileWatcher } from "./watcher"
 import { registerAdapter } from "./adapters/registry"
 import { LocalFolderAdapter } from "./adapters/local-folder"
 import { IMAAdapter } from "./adapters/ima"
-import { homedir } from "node:os"
+import { brandPaths, initializeManagedBrandContext, sidecarPort } from "@agent/brand/node"
 import { join } from "node:path"
 
 // The Tauri host picks the port and injects it; the literal is the fallback for
 // a standalone run (tests, `bun run`). Read `server.port` afterwards, never this
 // — with port 0 the kernel picks and only the server knows.
-const KB_PORT = Number(process.env.KB_PORT ?? 4098)
+initializeManagedBrandContext()
+
 
 /**
  * Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
@@ -31,7 +32,7 @@ function requireSidecarAuth(name: string): SidecarAuth {
   return { username: process.env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode", password }
 }
 // os.homedir() resolves USERPROFILE on Windows and HOME on macOS/Linux.
-const DB_DIR = join(homedir(), ".ultrawork", "knowledge")
+const DB_DIR = join(brandPaths().appRoot, "knowledge")
 const DB_PATH = join(DB_DIR, "kb.db")
 
 async function ensureDir(dir: string) {
@@ -56,6 +57,8 @@ async function initCore() {
 }
 
 async function serve() {
+  const KB_PORT = sidecarPort("KB_PORT", 4098)
+  const auth = requireSidecarAuth("knowledge-sidecar")
   console.log("Knowledge Sidecar starting...")
 
   await ensureDir(DB_DIR)
@@ -65,7 +68,7 @@ async function serve() {
   // File watcher — auto re-index on changes
   const watcher = new FileWatcher()
 
-  const app = createApp({ indexer, search: retriever, store, watcher }, requireSidecarAuth("knowledge-sidecar"))
+  const app = createApp({ indexer, search: retriever, store, watcher }, auth)
 
   const server = Bun.serve({
     hostname: "127.0.0.1",

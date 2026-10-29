@@ -1,7 +1,13 @@
 // delegate-mcp shim core: HTTP forwarding + contract/error mapping (mock fetch).
 
 import { describe, it, expect } from "bun:test"
-import { callDelegate, callListAgents, shimDepsFromEnv, type FetchLike, type ShimDeps } from "../delegate-mcp.js"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { resolveIdentity } from "@agent/brand"
+import type { RuntimeBrandContext } from "@agent/brand/node"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import { callDelegate, callListAgents, createDelegateMcpServer, shimDepsFromEnv, type FetchLike, type ShimDeps } from "../delegate-mcp.js"
 import { delegateShimCommand } from "../acp-connection.js"
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -10,6 +16,40 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function deps(fetchImpl: FetchLike, extra: Partial<ShimDeps> = {}): ShimDeps {
   return { baseUrl: "http://127.0.0.1:4099", fetchImpl, ...extra }
+}
+
+/** In-memory registry with absolute fixture paths; never reads/writes a user's home. */
+function managedRegistry() {
+  const root = join(tmpdir(), "delegate-mcp-fixture")
+  const identity = resolveIdentity({ brandId: "mywork", productName: "MyWork" })
+  const appRoot = join(root, ".mywork")
+  const configRoot = join(root, "config", "mywork")
+  const context: RuntimeBrandContext = {
+    schemaVersion: 1, identity, instanceId: "test_instance",
+    appRoot, configRoot, dataRoot: join(root, "data", "mywork"),
+    cacheRoot: join(root, "cache", "mywork"), stateRoot: join(root, "state", "mywork"),
+    skillsRoot: join(configRoot, "skills"), portsRegistryPath: join(appRoot, "run", "ports.json"),
+  }
+  let registry: string | undefined
+  let reads = 0
+  const env = {
+    ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context),
+    ULTRAWORK_SIDECAR_PASSWORD: "fixture-only",
+  } as NodeJS.ProcessEnv
+  return {
+    context, env,
+    readFile(path: string) {
+      expect(path).toBe(context.portsRegistryPath)
+      reads++
+      if (registry === undefined) throw new Error("ENOENT: fixture ports registry is not ready")
+      return registry
+    },
+    ready(port: number) {
+      registry = JSON.stringify({ brandId: identity.brandId, instanceId: context.instanceId, acp: { port } })
+    },
+    setRegistry(value: string | undefined) { registry = value },
+    get reads() { return reads },
+  }
 }
 
 describe("delegate-mcp shim", () => {
@@ -44,10 +84,104 @@ describe("delegate-mcp shim", () => {
       ["no acp entry", registry(JSON.stringify({ opencode: { port: 4096 } }))],
       ["a non-numeric port", registry(JSON.stringify({ acp: { port: "51237" } }))],
       ["an out-of-range port", registry(JSON.stringify({ acp: { port: 0 } }))],
-    ])("falls back to 4099 on %s", (_label, readFile) => {
+    ])("preserves standalone fallback to 4099 on %s", (_label, readFile) => {
       expect(shimDepsFromEnv({} as NodeJS.ProcessEnv, readFile as (p: string) => string).baseUrl).toBe(
         "http://127.0.0.1:4099",
       )
+    })
+  })
+
+  describe("managed registry lifecycle", () => {
+    it("can construct a prewarmed MCP server before ACP is ready, then recover on the same deps", async () => {
+      const fixture = managedRegistry()
+      const shim = shimDepsFromEnv(fixture.env, fixture.readFile)
+      const server = createDelegateMcpServer(shim)
+      const client = new Client({ name: "fixture", version: "1" })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      let requests = 0
+      shim.fetchImpl = async () => { requests++; return jsonResponse({ agents: [{ id: "acp:ready" }] }) }
+      try {
+        await server.connect(serverTransport)
+        await client.connect(clientTransport)
+        expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(["delegate", "list_agents"])
+        expect(fixture.reads).toBe(0)
+        const pending = await callListAgents(shim, "/fixture")
+        expect(pending.isError).toBe(true)
+        expect(pending.content[0].text).toContain("registry is not ready")
+        expect(requests).toBe(0)
+        fixture.ready(51237)
+        const ready = await callListAgents(shim, "/fixture")
+        expect(ready.isError).toBeUndefined()
+        expect(JSON.parse(ready.content[0].text)).toEqual([{ id: "acp:ready" }])
+        expect(requests).toBe(1)
+      } finally {
+        await client.close()
+        await server.close()
+      }
+    })
+
+    it("uses the latest port for list_agents and delegate on one long-lived deps object", async () => {
+      const fixture = managedRegistry()
+      const requests: string[] = []
+      const start = (name: string) => Bun.serve({
+        hostname: "127.0.0.1", port: 0,
+        fetch(request) {
+          const path = new URL(request.url).pathname
+          requests.push(`${name}:${path}`)
+          return path === "/orchestration/agents"
+            ? jsonResponse({ agents: [{ id: name }] })
+            : jsonResponse({ result: { status: "completed", sessionId: name } })
+        },
+      })
+      const first = start("portA")
+      let second: ReturnType<typeof start> | undefined
+      const shim = shimDepsFromEnv(fixture.env, fixture.readFile)
+      try {
+        second = start("portB")
+        for (const [server, name] of [[first, "portA"], [second, "portB"]] as const) {
+          fixture.ready(server.port!)
+          const agents = await callListAgents(shim, "/fixture")
+          const delegated = await callDelegate(shim, { agentId: "fixture", task: "local fixture", cwd: "/fixture" })
+          expect(agents.isError).toBeUndefined()
+          expect(JSON.parse(agents.content[0].text)).toEqual([{ id: name }])
+          expect(delegated.isError).toBeUndefined()
+          expect(JSON.parse(delegated.content[0].text).sessionId).toBe(name)
+        }
+        expect(requests).toEqual([
+          "portA:/orchestration/agents", "portA:/orchestration/delegate",
+          "portB:/orchestration/agents", "portB:/orchestration/delegate",
+        ])
+      } finally {
+        await Promise.all([first.stop(true), second?.stop(true)])
+      }
+    })
+
+    it.each([
+      ["foreign brand", { brandId: "otherwork", instanceId: "test_instance", acp: { port: 51237 } }],
+      ["foreign instance", { brandId: "mywork", instanceId: "another_instance", acp: { port: 51237 } }],
+      ["invalid JSON", "not json{{"],
+      ["missing ACP entry", { brandId: "mywork", instanceId: "test_instance" }],
+      ["invalid ACP port", { brandId: "mywork", instanceId: "test_instance", acp: { port: 0 } }],
+      ["missing registry", undefined],
+    ])("returns tool errors and sends no requests for %s", async (_label, registry) => {
+      const fixture = managedRegistry()
+      fixture.setRegistry(typeof registry === "string" || registry === undefined ? registry : JSON.stringify(registry))
+      const shim = shimDepsFromEnv(fixture.env, fixture.readFile)
+      let requests = 0
+      shim.fetchImpl = async () => { requests++; throw new Error("must not send") }
+      expect((await callListAgents(shim, "/fixture")).isError).toBe(true)
+      expect((await callDelegate(shim, { agentId: "fixture", task: "t", cwd: "/fixture" })).isError).toBe(true)
+      expect(requests).toBe(0)
+    })
+
+    it("keeps an explicit sidecar port usable without reading an unready registry", async () => {
+      const fixture = managedRegistry()
+      const shim = shimDepsFromEnv({ ...fixture.env, ACP_CLIENT_PORT: "51238" }, fixture.readFile)
+      let url = ""
+      shim.fetchImpl = async (input) => { url = String(input); return jsonResponse({ agents: [] }) }
+      expect((await callListAgents(shim)).isError).toBeUndefined()
+      expect(url).toBe("http://127.0.0.1:51238/orchestration/agents")
+      expect(fixture.reads).toBe(0)
     })
   })
 

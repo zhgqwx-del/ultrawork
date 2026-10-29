@@ -42,6 +42,13 @@ describe("sidecar-auth", () => {
       expect(sidecarAuthHeaders()).toEqual({})
     })
 
+    it("rejects in strict native mode and clears a previous credential", async () => {
+      __setSidecarCredentialsForTest({ username: "opencode", password: "old" })
+      invoke.mockRejectedValue(new Error("Startup ownership is blocked"))
+      await expect(loadSidecarCredentials(true)).rejects.toThrow("Startup ownership")
+      expect(sidecarAuthHeaders()).toEqual({})
+    })
+
     it("never rejects — the startup gate awaits it", async () => {
       vi.spyOn(console, "warn").mockImplementation(() => {})
       invoke.mockRejectedValue(new Error("boom"))

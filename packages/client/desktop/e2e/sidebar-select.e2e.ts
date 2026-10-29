@@ -126,6 +126,7 @@ try {
       check_cli_connectors: () => [], "plugin:opener|open_url": () => null,
       "plugin:event|listen": () => 0, "plugin:event|unlisten": () => null,
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore — minimal Tauri IPC + event shim. get_sidecar_credentials feeds
     // the ConfigProvider its auth (without it the app can't reach opencode →
     // empty list); unregisterListener must exist or event-cleanup throws.

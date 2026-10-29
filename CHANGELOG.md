@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-10-29
+
+### Added
+
+- **独立品牌发行版（ADR-075）**：默认保持 Ultrawork；新增 MyWork＋美柚图标预置，支持配置文件与临时参数，构建独立名称、图标和安装身份。品牌数据、凭证、技能及 sidecar/MCP/agent 运行上下文按 namespace 隔离；同品牌正式/Dev 版使用数据租约互斥。
+- **品牌构建保护**：checkout 构建锁、不可变身份账本、独立图标/技能 staging 与 Cargo target、sidecar 协议/哈希校验，以及本次品牌安装包校验清单。Rust 最低版本提升至 1.89。实施与验收边界见 `docs/testing.md` §16；不代表全平台原生签名安装验收完成。
+- 品牌验收脚本覆盖真实 DMG/中文空格路径搬迁、包内 sidecar 的单 Agent/Team/Pipeline/重启、真实 OpenCode 本地 SSE 工具循环，以及 Chrome/WebKit 各 30 个启动场景；报告与外部服务/原生平台边界见 `docs/testing.md` §16。
+
+### Fixed
+
+- 修正首轮三平台 CI 揭示的 Windows 8.3 路径判断和测试夹具的 CRLF/链接差异；图标测试显式提供字体、对纯 PNG 关闭字体扫描并校验跨平台解码像素。Windows Tauri lib 测试通过专用 runner 补齐 Common Controls v6 manifest，正式应用的 manifest 和运行逻辑保持原样。
+- 修复 macOS Dock 应用图标底板铺满画布、比常见应用视觉偏大的问题：默认与定制品牌专用 ICNS 增加统一留白，两预置主体为 824/1024；保留 UI Logo、PNG/ICO、托盘和原图。新增确定性生成/重复留白保护/SVG 字体回归、开发二进制嵌入与包内图标校验，补齐 Cargo 图标依赖和品牌缓存失效。
+- 将 9 个仅供生命周期测试使用的 Rust 辅助函数限定为 `#[cfg(test)]`，消除正常 dev/build 的 dead_code 告警；保留全部测试和生产进程归属校验逻辑。
+- 冻结构建依赖：将 `ghostty-web` 固定回原锁提交完整 SHA，两个声明改动仍由现有 vendor 累计 patch 管理；统一 patch/冻结安装、清理 Bun 跳过锁/安装的环境覆盖，纳入依赖缓存指纹并自动重建损坏缓存。修正 Windows 交叉编译目标别名和 macOS 误签 PE/ELF；增加三平台真实 vendor 构建 CI 门禁。业务规则和子模块提交不变，验证边界见 `docs/testing.md` §16。
+- 修复版本同步脚本只重建三个文件、可能丢失其他累计 vendor 修复的问题；动态保留完整 patch 文件集合及新增/删除/二进制内容，使用临时 index，真实 index 和无关用户文件保持原样。
+- MyWork 图标按默认 Ultrawork 主图的 alpha 通道派生圆角；保留美柚官方原图，31 个原生 PNG/ICNS/ICO 表示逐像素核对透明轮廓。`setup.sh` 统一转发跨平台 setup，补齐品牌参数、外部调用目录和产物路径提示，移除按开发端口杀进程的旧逻辑。
+- macOS `release --unsigned` 改为 Tauri 在封装前完成 ad-hoc 签名，封装后只验证，修复先封装 DMG、后签外部 `.app` 导致容器内副本签名不一致的问题。
+- Linux 自定义发行的 sidecar 安装文件加 namespace 前缀，避免不同 deb/rpm 覆盖共享 `/usr/bin`；增加真实安装包内容检查。品牌身份校验同时拒绝 macOS 单实例 socket 归一后的冲突及 DMG 模板插值字符；release 运行时不再回落开发机源码目录查找缺失 sidecar。
+- 宿主集中 IPC ready 闸门与进程归属清理加固：修正 Windows 身份 JSON 编码、macOS GUI locale 下的中文路径探针、无法查询 OS identity 时的自有句柄回收、流关闭误作终止证明及正常 Unix 退出的 flush 顺序；默认/定制构建统一校验 sidecar metadata，OpenCode 版本探针隔离应用 home/XDG。验证证据与未测平台边界统一记录在 `docs/testing.md` §16。
+- 修复 OpenCode PATCH 写入 JSONC 后宿主重启未更新受管 MCP 环境的问题：严格支持注释、尾逗号与 BOM，配置读取失败在业务写入前阻断，保留用户字段。delegate MCP 改为每次工具调用解析当前品牌实例的端口，避免 stdio 预热早于 ACP 动态端口确定时长期连错服务；保留明确端口与 standalone 行为。Rust **185/185**、delegate **33/33**、品牌 integration **3/3**；最新重建包的 C locale/中文 HOME 原生 **9 项**及 Universal 包内单 Agent/Team 工具循环 **12 项**通过，平台与正式分发边界见 `docs/testing.md` §16。
+
 ## [0.3.9] - 2026-09-16
 
 ### Fixed

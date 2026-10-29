@@ -1,3 +1,4 @@
+import { opencodeBaseUrl } from "@agent/brand/node";
 import { OpenCodeBackend, UNLIMITED_SSE_RETRY, type Unsubscribe } from "@agent/connector";
 import type { ApiClient, MessagePart, QuestionInfo } from "@agent/api-client";
 import type { IncomingMessage } from "./types.js";
@@ -19,7 +20,7 @@ import { degradeMathToUnicode } from "./math-unicode.js";
 // gateway (tests, `bun run` against a hand-started opencode) working.
 // Lazy, same as the password: tests may set the env after importing this module.
 export function getOpencodeBaseUrl(): string {
-  return process.env.OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
+  return opencodeBaseUrl("http://127.0.0.1:4096");
 }
 
 // Password is injected by the Tauri host (lib.rs spawns channel-gateway with

@@ -1,0 +1,27 @@
+{
+  "sourcePage": "https://www.meiyou.com/meiyou",
+  "appStoreId": "634896669",
+  "metadataUrl": "https://itunes.apple.com/lookup?id=634896669&country=cn",
+  "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e1/c1/0f/e1c10f4c-62a6-2822-da46-afca90f535f8/AppIcon-Release-0-0-1x_U007epad-0-11-0-85-220.png/1024x1024bb.png",
+  "retrievedOn": "2026-10-29",
+  "dimensions": [
+    1024,
+    1024
+  ],
+  "sha256": "64c0311cf361f27e999190e5298f40c4b63013d614ada05787233d392570cd54",
+  "tray": "meiyou-tray.png is a monochrome alpha extraction of the pink petals, generated from this source with an SVG color matrix; no redrawn logo.",
+  "applicationIcon": {
+    "file": "meiyou-app-rounded.png",
+    "generator": "bun run --bun scripts/gen-mywork-icon.ts",
+    "sourceFile": "meiyou-app.png",
+    "sourceSha256": "64c0311cf361f27e999190e5298f40c4b63013d614ada05787233d392570cd54",
+    "alphaMaskFile": "design/logo/icon-1024.png",
+    "alphaMaskSha256": "57152b578b7192beeef7367f0f84d9dce363e35ecadd7a414817547a739a6ffd",
+    "dimensions": {
+      "width": 1024,
+      "height": 1024
+    },
+    "sha256": "7292736d8d9b64a2df838bd9cb0a4fbf01ca11fb3e06d6192a3e4579e026e63d",
+    "transformation": "Official image at its original size, clipped by the default Ultrawork master's alpha channel; no redraw, recolor, padding or rescaling. The default SVG radius is 112/512 (21.875%)."
+  }
+}

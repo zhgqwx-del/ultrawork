@@ -79,6 +79,7 @@ try {
       "plugin:event|listen": () => 0,
       "plugin:event|unlisten": () => null,
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore — minimal Tauri IPC + event shim. unregisterListener must exist
     // (the app's event subscriptions call it on cleanup; without it teardown
     // throws and pollutes the console-error gate this walkthrough relies on).

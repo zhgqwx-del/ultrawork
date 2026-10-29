@@ -1,4 +1,5 @@
 import { useId, type SVGProps } from "react"
+import { APP_BRAND, APP_LOGO } from "@/lib/brand"
 
 /**
  * Ultrawork logo mark — isometric crystal prism.
@@ -10,6 +11,10 @@ export function Logo(props: SVGProps<SVGSVGElement>) {
   const gl = `${uid}-gl`
   const gr = `${uid}-gr`
   const gref = `${uid}-gref`
+
+  if (APP_LOGO) {
+    return <svg viewBox="0 0 400 360" role="img" aria-label={APP_BRAND.productName} {...props}><image href={APP_LOGO} width="400" height="360" preserveAspectRatio="xMidYMid meet" /></svg>
+  }
 
   return (
     <svg

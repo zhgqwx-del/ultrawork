@@ -2,6 +2,18 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "path"
+import { readFileSync } from "node:fs"
+import { DEFAULT_BRAND, parseBrandIdentity } from "@agent/brand"
+
+const appBrand = process.env.ULTRAWORK_BRAND_JSON
+  ? parseBrandIdentity(JSON.parse(process.env.ULTRAWORK_BRAND_JSON))
+  : DEFAULT_BRAND
+const logoPath = process.env.ULTRAWORK_BRAND_UI_LOGO
+if (!appBrand.isDefault && !logoPath) throw new Error("Custom brand UI logo was not prepared")
+const logoData = logoPath
+  ? `data:${path.extname(logoPath).toLowerCase() === ".svg" ? "image/svg+xml" : "image/png"};base64,${readFileSync(logoPath).toString("base64")}`
+  : ""
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!))
 
 // Shared proxy target configs.
 // Ports are overridable so an e2e run can stand up its own sidecars on free ports instead
@@ -13,7 +25,16 @@ const gateway = { target: `http://localhost:${port("E2E_GATEWAY_PORT", 4097)}`, 
 const knowledge = { target: `http://localhost:${port("E2E_KNOWLEDGE_PORT", 4098)}`, changeOrigin: true }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), {
+    name: "ultrawork-brand-html",
+    transformIndexHtml(html) {
+      return html.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(appBrand.productName)}</title>`)
+    },
+  }],
+  define: {
+    __ULTRAWORK_BRAND__: JSON.stringify(appBrand),
+    __ULTRAWORK_BRAND_UI_LOGO__: JSON.stringify(logoData),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

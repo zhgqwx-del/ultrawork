@@ -16,8 +16,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
+import { brandPaths, runtimeBrandContext, type BrandEnv } from "@agent/brand/node"
 
 const KEEPALIVE_MS = 10_000
 
@@ -25,6 +24,7 @@ const KEEPALIVE_MS = 10_000
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>
 
 export interface ShimDeps {
+  /** May be an on-demand registry getter; only read inside a tool's error boundary. */
   baseUrl: string
   /** `Authorization: Basic ...`, absent when running without a host credential. */
   authHeader?: string
@@ -45,22 +45,29 @@ function withAuth(deps: ShimDeps, headers: Record<string, string> = {}): Record<
  * (the `orchestrator` MCP entry), there is no such env: opencode cannot be told
  * the ACP port at its own launch, because the ACP sidecar starts afterwards and
  * may still move to a different port. The registry is written after each sidecar
- * is healthy, so by the time a shim runs it holds the truth.
+ * is healthy. MCP can be prewarmed before ACP is ready, so read it on each tool
+ * call rather than caching a port for the lifetime of the stdio connection.
  *
  * Deliberately not read from opencode.json: that file is persisted and would go
  * stale across launches (discussions/029 §4.1 d).
  */
-export function acpPortFromPortsRegistry(readFile: (p: string) => string): number | undefined {
+export function acpPortFromPortsRegistry(
+  readFile: (p: string) => string,
+  env: BrandEnv = process.env,
+): number | undefined {
+  const context = runtimeBrandContext(env, readFile)
   try {
-    const home = homedir()
-    if (!home) return undefined
-    const parsed = JSON.parse(readFile(join(home, ".ultrawork", "run", "ports.json")))
+    const parsed = JSON.parse(readFile(context?.portsRegistryPath ?? brandPaths(env).portsRegistryPath))
+    if (context && (parsed?.brandId !== context.identity.brandId || parsed?.instanceId !== context.instanceId)) {
+      throw new Error("ACP ports registry does not belong to the current brand instance")
+    }
     const port = parsed?.acp?.port
-    return typeof port === "number" && Number.isInteger(port) && port > 0 && port < 65536
-      ? port
-      : undefined
-  } catch {
-    // No registry (standalone run, host not started yet) — fall through.
+    if (typeof port === "number" && Number.isInteger(port) && port > 0 && port < 65536) return port
+    if (context) throw new Error("Managed ACP ports registry has no valid ACP port")
+    return undefined
+  } catch (error) {
+    if (context) throw error
+    // Preserve the standalone default-port contract without a managed host.
     return undefined
   }
 }
@@ -70,19 +77,31 @@ export function shimDepsFromEnv(
   readFile: (p: string) => string = (p) => readFileSync(p, "utf8"),
 ): ShimDeps {
   // Env wins: the ACP sidecar knows its own port for certain.
+  const context = runtimeBrandContext(env, readFile)
   const fromEnv = env.ACP_CLIENT_PORT ? Number(env.ACP_CLIENT_PORT) : undefined
-  const port = fromEnv ?? acpPortFromPortsRegistry(readFile) ?? 4099
+  if (fromEnv !== undefined && (!Number.isInteger(fromEnv) || fromEnv <= 0 || fromEnv >= 65536)) {
+    throw new Error("ACP_CLIENT_PORT is invalid")
+  }
 
   // The ACP sidecar requires Basic auth. Whichever process spawned this shim — the
   // ACP sidecar itself or opencode — was given the credential by the Tauri host and
   // we inherit it. Absent (standalone run), send nothing and let the server 401.
   const password = env.ULTRAWORK_SIDECAR_PASSWORD
+  if (context && !password) throw new Error("Managed delegate MCP requires the host credential")
   const username = env.ULTRAWORK_SIDECAR_USERNAME ?? "opencode"
   const authHeader = password
     ? `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
     : undefined
 
-  return { baseUrl: `http://127.0.0.1:${port}`, authHeader }
+  return {
+    get baseUrl() {
+      // Managed registry errors never fall through to another host's preferred
+      // port. A later call can recover once this instance is ready.
+      const port = fromEnv ?? acpPortFromPortsRegistry(readFile, env) ?? 4099
+      return `http://127.0.0.1:${port}`
+    },
+    authHeader,
+  }
 }
 
 export interface ToolResultShape {
@@ -170,10 +189,11 @@ export async function callListAgents(deps: ShimDeps, cwd?: string): Promise<Tool
   const doFetch = deps.fetchImpl ?? fetch
   // Pass the workspace so the sidecar scopes the list to this Team's members
   // (018); omitting it returns the global list (general delegate case).
-  const url = cwd
-    ? `${deps.baseUrl}/orchestration/agents?workspace=${encodeURIComponent(cwd)}`
-    : `${deps.baseUrl}/orchestration/agents`
   try {
+    const baseUrl = deps.baseUrl
+    const url = cwd
+      ? `${baseUrl}/orchestration/agents?workspace=${encodeURIComponent(cwd)}`
+      : `${baseUrl}/orchestration/agents`
     const response = await doFetch(url, { headers: withAuth(deps) })
     const body = (await response.json().catch(() => null)) as { agents?: unknown[] } | null
     if (!response.ok || !body?.agents) {
@@ -248,7 +268,7 @@ export function createDelegateMcpServer(deps: ShimDeps): McpServer {
 
 export async function runDelegateMcp(): Promise<void> {
   const deps = shimDepsFromEnv()
-  console.error(`[delegate-mcp] starting stdio shim → ${deps.baseUrl}`)
+  console.error("[delegate-mcp] starting stdio shim (ACP route resolves on each tool call)")
   const server = createDelegateMcpServer(deps)
   await server.connect(new StdioServerTransport())
   console.error("[delegate-mcp] connected")

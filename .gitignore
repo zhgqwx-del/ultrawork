@@ -81,3 +81,6 @@ skills/builtin/*/examples/*/export/
 # ③ 20MB 与构建无关的二进制测试数据不该进版本库。
 # 默认落 ~/.cache/ultrawork/l3-corpus；CI 用 ULTRAWORK_L3_CORPUS 指到这里以便缓存。
 .l3-corpus/
+
+# Per-brand build staging, locks and Cargo caches (never user data)
+.brand-build/

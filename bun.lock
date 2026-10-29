@@ -26,6 +26,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@agent/api-client": "workspace:*",
+        "@agent/brand": "workspace:*",
         "@agent/connector": "workspace:*",
         "@agent/orchestrator": "workspace:*",
         "@agentclientprotocol/sdk": "^0.25.0",
@@ -43,6 +44,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@agent/api-client": "workspace:*",
+        "@agent/brand": "workspace:*",
         "@agent/connector": "workspace:*",
         "@larksuiteoapi/node-sdk": "^1.70.0",
         "@wecom/aibot-node-sdk": "^1.0.7",
@@ -58,9 +60,10 @@
     },
     "packages/client/desktop": {
       "name": "@agent/client-desktop",
-      "version": "0.3.3",
+      "version": "0.3.10",
       "dependencies": {
         "@agent/api-client": "workspace:*",
+        "@agent/brand": "workspace:*",
         "@agent/connector": "workspace:*",
         "@agent/orchestrator": "workspace:*",
         "@agent/server-manager": "workspace:*",
@@ -142,6 +145,15 @@
         "vitest": "^4.0.18",
       },
     },
+    "packages/core/brand": {
+      "name": "@agent/brand",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^22.13.9",
+        "typescript": "^5.8.2",
+        "vitest": "^4.0.18",
+      },
+    },
     "packages/core/connector": {
       "name": "@agent/connector",
       "version": "0.1.0",
@@ -158,6 +170,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@agent/api-client": "workspace:*",
+        "@agent/brand": "workspace:*",
         "@agent/connector": "workspace:*",
       },
       "devDependencies": {
@@ -180,6 +193,7 @@
       "name": "@agent/knowledge-sidecar",
       "version": "0.1.0",
       "dependencies": {
+        "@agent/brand": "workspace:*",
         "@modelcontextprotocol/sdk": "1.27.1",
         "hono": "^4.12.23",
         "jszip": "^3.10.1",
@@ -203,6 +217,8 @@
     "@agent/acp-client": ["@agent/acp-client@workspace:packages/agent/acp-client"],
 
     "@agent/api-client": ["@agent/api-client@workspace:packages/core/api-client"],
+
+    "@agent/brand": ["@agent/brand@workspace:packages/core/brand"],
 
     "@agent/channel-gateway": ["@agent/channel-gateway@workspace:packages/channel/gateway"],
 

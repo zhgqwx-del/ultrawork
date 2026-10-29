@@ -1,3 +1,5 @@
+import { initializeManagedBrandContext, sidecarPort } from "@agent/brand/node"
+
 // ACP Client Sidecar entry point (:4099).
 //
 // Subcommand dispatch runs BEFORE any server/manager construction:
@@ -14,7 +16,7 @@ async function startServer(): Promise<void> {
   const { teamRoutes } = await import("./team-routes.js")
   const { teamMembersForWorkspace } = await import("./team-store.js")
 
-  const ACP_PORT = Number(process.env.ACP_CLIENT_PORT ?? 4099)
+  const ACP_PORT = sidecarPort("ACP_CLIENT_PORT", 4099)
 
   // Inbound Basic auth credentials, injected by the Tauri host (ADR-028's
   // per-install random password). Fail fast rather than start unauthenticated:
@@ -77,6 +79,7 @@ async function startServer(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  initializeManagedBrandContext()
   if (process.argv[2] === "delegate-mcp") {
     const { runDelegateMcp } = await import("./delegate-mcp.js")
     await runDelegateMcp()

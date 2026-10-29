@@ -132,6 +132,7 @@ try {
       refresh_builtin_skills: async () => (await fetch(`${helperBase}/status`)).json(),
       remove_user_skill_override: async () => (await fetch(`${helperBase}/remove-override`)).json(),
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: pw }))

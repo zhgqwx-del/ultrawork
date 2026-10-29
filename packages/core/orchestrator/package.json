@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",
-    "@agent/connector": "workspace:*"
+    "@agent/connector": "workspace:*",
+    "@agent/brand": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

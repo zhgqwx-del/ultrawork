@@ -10,13 +10,11 @@
 // namespace — under an XDG-isolated sidecar they all move together instead of
 // some leaking back to the real ~/.config/ultrawork (gotchas §8/§11).
 
-import { homedir } from "node:os"
 import { join } from "node:path"
+import { brandPaths } from "@agent/brand/node"
 
 export function resolveConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  const xdg = env.XDG_CONFIG_HOME
-  const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config")
-  return join(base, "ultrawork")
+  return brandPaths(env).configRoot
 }
 
 export function configFile(name: string, env: NodeJS.ProcessEnv = process.env): string {

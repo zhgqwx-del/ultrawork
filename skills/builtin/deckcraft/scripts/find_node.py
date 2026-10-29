@@ -18,6 +18,7 @@ Import: from find_node import find_node
 from __future__ import annotations
 
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -35,7 +36,29 @@ MIN_MAJOR = 18
 
 
 def _embedded_node() -> Path:
-    base = Path.home() / ".ultrawork" / "node"
+    context_file = os.environ.get("ULTRAWORK_BRAND_CONTEXT_FILE")
+    raw = os.environ.get("ULTRAWORK_BRAND_CONTEXT")
+    context = None
+    if context_file:
+        with open(context_file, encoding="utf-8") as source:
+            context = json.load(source)
+    elif raw:
+        context = json.loads(raw)
+    if context is not None:
+        identity = context.get("identity", {})
+        root = Path(context.get("appRoot", ""))
+        namespace = identity.get("namespace", "")
+        if (context.get("schemaVersion") != 1 or not namespace
+                or not root.is_absolute() or root.name != "." + namespace):
+            raise RuntimeError("Invalid managed brand Node context")
+        override = os.environ.get("ULTRAWORK_APP_ROOT")
+        if override and Path(override) != root:
+            raise RuntimeError("ULTRAWORK_APP_ROOT conflicts with managed brand")
+    else:
+        if os.environ.get("ULTRAWORK_BRAND_MANAGED") == "1":
+            raise RuntimeError("Managed brand context is missing")
+        root = Path.home() / ".ultrawork"
+    base = root / "node"
     return base / "node.exe" if sys.platform.startswith("win") else base / "bin" / "node"
 
 

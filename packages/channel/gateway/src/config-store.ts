@@ -1,11 +1,10 @@
 import { readFile, writeFile, mkdir, chmod } from "fs/promises";
 import { dirname } from "path";
 import { join } from "path";
-import { homedir } from "os";
+import { brandPaths } from "@agent/brand/node";
 import type { ChannelConfig, ChannelsStore } from "./types.js";
 
-const CONFIG_DIR = join(homedir(), ".ultrawork");
-const CONFIG_PATH = join(CONFIG_DIR, "channels.json");
+const configPath = () => join(brandPaths().appRoot, "channels.json");
 
 /** Simple mutex to prevent read-modify-write races */
 let lock: Promise<void> = Promise.resolve();
@@ -17,7 +16,7 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function loadConfigs(): Promise<ChannelConfig[]> {
   try {
-    const raw = await readFile(CONFIG_PATH, "utf-8");
+    const raw = await readFile(configPath(), "utf-8");
     const store = JSON.parse(raw) as ChannelsStore;
     return store.channels ?? [];
   } catch {
@@ -26,11 +25,11 @@ export async function loadConfigs(): Promise<ChannelConfig[]> {
 }
 
 async function saveStore(store: ChannelsStore): Promise<void> {
-  await mkdir(dirname(CONFIG_PATH), { recursive: true });
+  await mkdir(dirname(configPath()), { recursive: true });
   // Owner-only (D2): the store holds channel secrets. `mode` only applies on
   // create, so chmod tightens files written before this policy existed.
-  await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), { encoding: "utf-8", mode: 0o600 });
-  await chmod(CONFIG_PATH, 0o600).catch(() => {});
+  await writeFile(configPath(), JSON.stringify(store, null, 2), { encoding: "utf-8", mode: 0o600 });
+  await chmod(configPath(), 0o600).catch(() => {});
 }
 
 export async function addConfig(config: ChannelConfig): Promise<void> {

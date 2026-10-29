@@ -42,6 +42,7 @@ Monorepo 结构：
 |----|------|------|------|
 | `@agent/api-client` | `packages/core/api-client` | ✅ 已实现 | OpenCode REST/SSE SDK |
 | `@agent/server-manager` | `packages/core/server-manager` | ✅ 已实现 | Sidecar 进程管理 |
+| `@agent/brand` | `packages/core/brand` | ✅ 实现已落地 | 默认/自定义品牌身份与受管上下文，构建与运行时隔离（ADR-075；原生发行验收见 testing §16） |
 | `@agent/client-desktop` | `packages/client/desktop` | ✅ 已实现 | Tauri 桌面应用 |
 | `@agent/connector` | `packages/core/connector` | ✅ 已实现 | 后端统一抽象层（OpenCode/ACP 双后端派发，ADR-030） |
 | `@agent/orchestrator` | `packages/core/orchestrator` | ✅ 已实现 | 多 agent 编排（spawn/delegate/Pipeline/Fan-out，ADR-031） |
@@ -220,6 +221,12 @@ Monorepo 结构：
 - [ ] 轻量 Reranker（cross-encoder 精排提升检索精度）
 - [ ] @知识库名 显式触发 + 在线文档爬取
 - [ ] Sidebar Knowledge Panel + Chat/Strict 双模式
+
+### 独立品牌发行版（ADR-075，2026-10-29）
+
+- [x] 默认保留 Ultrawork，配置文件/临时参数构建独立名称/图标/安装身份；首个 MyWork＋美柚图标预置。
+- [x] 品牌数据、sidecar/MCP/agent 上下文隔离，同品牌数据租约互斥与启动阻断。
+- 默认 macOS ARM64 与 MyWork Universal DMG 已按中文进程路径、JSONC 配置重启归一及 delegate 动态路由修复源码重建；包内 ad-hoc 签名、中文/空格客户路径搬迁、C locale/中文 HOME 原生双宿主 **9 项**及最新 Universal 包内真实 OpenCode/Agent/Team/Pipeline 工具循环 **12 项**通过。Rust **185** 项、delegate **33** 项、品牌 integration **3** 项、完整工作区 test **13 个任务**及 9 包 typecheck 通过；Chrome/WebKit 各 **30** 个品牌场景及主要业务页回归通过。Windows/Linux 原生构建安装、Intel Mac 运行、跨版本升级卸载、正式签名/公证与系统权限仍待验收，详见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075)。
 
 ## Phase 1 未实现功能（规划中）
 

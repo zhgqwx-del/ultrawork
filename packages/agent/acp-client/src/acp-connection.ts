@@ -27,6 +27,7 @@ import type {
 } from "@agentclientprotocol/sdk"
 import type { ACPAgentConfig, ACPAgentStatus, UwSSEEvent } from "./types.js"
 import { configFile } from "./config-paths.js"
+import { brandPaths, brandEnvironment, managedBrandArguments } from "@agent/brand/node"
 import { permissionPattern, resolvePermission } from "./permission-label.js"
 import { TurnShaper } from "./turn-shaper.js"
 
@@ -125,7 +126,7 @@ export function supportsMetaSystemPrompt(
 export function delegateShimCommand(execPath = process.execPath): string | undefined {
   const base = basename(execPath)
   if (!base.startsWith("bun")) return execPath
-  const copy = join(homedir(), ".ultrawork", "sidecars", "acp-client")
+  const copy = join(brandPaths().appRoot, "sidecars", process.platform === "win32" ? "acp-client.exe" : "acp-client")
   return existsSync(copy) ? copy : undefined
 }
 
@@ -230,7 +231,7 @@ export class ACPConnection {
     this.closing = false
 
     try {
-      const env: Record<string, string | undefined> = { ...process.env, ...this.config.env }
+      const env: Record<string, string | undefined> = { ...process.env, ...this.config.env, ...brandEnvironment() }
       env.PATH = augmentPath(env.PATH)
       applyGeminiQuirks(this.config, env)
       // Delegate MCP calls block for the whole child turn; Claude Code's MCP
@@ -522,9 +523,13 @@ export class ACPConnection {
   private hostMcpServers(cwd: string, orchestrate: boolean, ownerSessionId?: string): McpServer[] {
     const servers: McpServer[] = []
     if (this.config.knowledgeMcp) {
-      const sidecar = join(homedir(), ".ultrawork", "sidecars", "knowledge-sidecar")
+      const sidecar = join(brandPaths().appRoot, "sidecars", process.platform === "win32" ? "knowledge-sidecar.exe" : "knowledge-sidecar")
       if (existsSync(sidecar)) {
-        servers.push({ name: "knowledge-base", command: sidecar, args: ["mcp-stdio"], env: [] })
+        servers.push({
+          name: "knowledge-base", command: sidecar,
+          args: ["mcp-stdio", ...managedBrandArguments()],
+          env: Object.entries(brandEnvironment()).map(([name, value]) => ({ name, value })),
+        })
       } else {
         console.error(`[acp:${this.config.id}] knowledgeMcp enabled but ${sidecar} not found — skipping`)
       }
@@ -535,8 +540,9 @@ export class ACPConnection {
         servers.push({
           name: "orchestrator",
           command,
-          args: ["delegate-mcp"],
+          args: ["delegate-mcp", ...managedBrandArguments()],
           env: [
+            ...Object.entries(brandEnvironment()).map(([name, value]) => ({ name, value })),
             { name: "ACP_CLIENT_PORT", value: String(process.env.ACP_CLIENT_PORT ?? 4099) },
             // The shim authenticates back to this sidecar. This env list is passed
             // verbatim to the agent, which may not forward our own environment, so

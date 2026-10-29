@@ -49,11 +49,9 @@ pub fn ensure_webview_runtime() {
         let go_download = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
             .set_title("缺少 Microsoft Edge WebView2 运行时")
-            .set_description(concat!(
-                "Ultrawork 需要 Microsoft Edge WebView2 运行时才能显示界面，",
-                "但当前系统上没有找到它。\n\n",
-                "安装完成后重新启动 Ultrawork 即可，无需重启电脑。\n\n",
-                "现在前往下载页？",
+            .set_description(format!(
+                "{name} 需要 Microsoft Edge WebView2 运行时才能显示界面，但当前系统上没有找到它。\n\n安装完成后重新启动 {name} 即可，无需重启电脑。\n\n现在前往下载页？",
+                name = crate::brand::product_name(),
             ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .show()
