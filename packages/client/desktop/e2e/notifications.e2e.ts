@@ -105,6 +105,7 @@ const appHandlers = {
 };
 
 let cbId = 0;
+window.__ULTRAWORK_BROWSER_TEST__ = true
 window.__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
   transformCallback: (cb) => { const id = ++cbId; window["_" + id] = cb; return id },

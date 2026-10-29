@@ -1,3 +1,4 @@
+import { brandHealthIdentity } from "@agent/brand/node"
 // HTTP layer (:4099): REST control endpoints + per-session SSE stream.
 
 import { Hono } from "hono"
@@ -76,6 +77,7 @@ export function createServer(manager: ACPManager, auth: SidecarAuth | null): Hon
   app.get("/acp/health", (c) =>
     c.json({
       status: "ok",
+      ...brandHealthIdentity(),
       agents: manager.listAgents().map((a) => ({ id: a.id, status: a.status })),
     }),
   )

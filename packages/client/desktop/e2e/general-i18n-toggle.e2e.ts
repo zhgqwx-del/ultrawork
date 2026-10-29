@@ -50,7 +50,7 @@ try {
   console.log("=== start opencode + vite ===")
   spawn([OPENCODE, "serve", "--port", "4096"], { ...env, OPENCODE_SERVER_PASSWORD: PW, OPENCODE_APP_NAME: "ultrawork" })
   await poll("opencode", async () => (await fetch("http://127.0.0.1:4096/global/health", { headers: { authorization: auth } })).ok)
-  spawn([BUN, "run", "dev"], {}, DESKTOP)
+  spawn([BUN, "run", "--bun", join(DESKTOP, "node_modules", "vite", "bin", "vite.js")], {}, DESKTOP)
   await poll("vite", async () => (await fetch("http://localhost:1420/")).ok)
 
   console.log("=== chrome + tauri shim ===")
@@ -68,6 +68,7 @@ try {
       get_free_trial_consent: () => false,
       "plugin:opener|open_url": () => null,
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     // Seed ONLY on first load (addInitScript re-runs on reload; an unconditional

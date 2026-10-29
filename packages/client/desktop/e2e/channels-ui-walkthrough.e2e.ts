@@ -59,6 +59,7 @@ try {
       check_directory_exists: () => true, ensure_default_workspace: () => "/tmp/ws", login_shell_path: () => "",
       scan_workspace_changes: () => [], get_sidecar_credentials: () => ({ username: "opencode", password: "chan-ui-pw" }),
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: "chan-ui-pw" }))

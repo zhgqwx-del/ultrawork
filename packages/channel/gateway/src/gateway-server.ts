@@ -1,3 +1,4 @@
+import { brandHealthIdentity } from "@agent/brand/node"
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { basicAuth } from "hono/basic-auth";
@@ -103,7 +104,7 @@ export function createApp(
   // and the threshold arrives by env inheritance — "rotation never fired" and "the
   // env never reached the process" are otherwise indistinguishable.
   app.get("/channel/health", (c) =>
-    c.json({ status: "ok", idleRotateMs: getIdleRotateMs() }),
+    c.json({ status: "ok", idleRotateMs: getIdleRotateMs(), ...brandHealthIdentity() }),
   );
 
   // Channel-owned sessions, for the desktop sidebar's badge + unread dot. Must be

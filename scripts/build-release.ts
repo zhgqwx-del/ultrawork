@@ -1,12 +1,32 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
+import { parseBrandArgs, prepareBrandBuild, resolveBrandBuild, validateArguments } from "./brand-build"
+import { acquireBuildLock } from "./build-lock"
+import { exportBrandArtifacts } from "./brand-artifacts"
+import { macosSigningEnvironment, quarantineRemovalCommand } from "./macos-signing"
+import { verifySidecarsForTarget, writeSidecarMetadata } from "./sidecar-metadata"
+import { materializeBrandSidecars } from "./brand-sidecars"
+import { inspectLinuxInstallers } from "./linux-install-layout"
 
+const buildStartedAt = Date.now()
 const rootDir = path.resolve(import.meta.dir, "..")
 const tauriDir = path.join(rootDir, "packages/client/desktop/src-tauri")
 
 // ── CLI flags ──────────────────────────────────────────────────────
-const args = new Set(process.argv.slice(2))
+const parsedBrand = parseBrandArgs(process.argv.slice(2))
+validateArguments(parsedBrand.rest, ["--skip-sidecar", "--skip-notarize", "--verbose", "--native", "--unsigned", "--allow-bad-dmg-layout"])
+const selectedBrand = resolveBrandBuild(parsedBrand.brand)
+const lease = acquireBuildLock(rootDir)
+process.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
+process.on("exit", () => lease.release())
+const preparedBrand = await prepareBrandBuild(selectedBrand)
+preparedBrand.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
+for (const key of Object.keys(process.env)) {
+  if (!(key in preparedBrand.env)) delete process.env[key]
+}
+Object.assign(process.env, preparedBrand.env)
+const args = new Set(parsedBrand.rest)
 const skipSidecar = args.has("--skip-sidecar")
 const skipNotarize = args.has("--skip-notarize")
 const verbose = args.has("--verbose")
@@ -47,11 +67,6 @@ const allowBadDmgLayout = args.has("--allow-bad-dmg-layout")
   }
 }
 
-// ── Built-in skills zip (bundle.resources 携带物) ──────────────────
-// beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
-console.log("📦 Packing built-in skills zip...")
-await $`bun run --bun ${path.join(rootDir, "scripts/pack-builtin-skills.ts")}`
-
 // ── Resolve Tauri target triple ────────────────────────────────────
 const getCurrentTauriTarget = () => {
   if (process.platform === "darwin") {
@@ -72,6 +87,15 @@ const sidecarTargets = (() => {
   if (nativeOnly) return [getCurrentTauriTarget()]
   return ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 })()
+
+// A skipped compile is never permission to package old/unknown sidecars, even
+// for the default brand. Fail before resource packing, downloads or signing.
+if (skipSidecar) verifySidecarsForTarget(tauriTarget, rootDir)
+
+// ── Built-in skills zip (bundle.resources 携带物) ──────────────────
+// beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
+console.log("📦 Packing built-in skills zip...")
+await $`bun run --bun ${path.join(rootDir, "scripts/pack-builtin-skills.ts")}`
 
 // ── Windows: two NSIS installers + one MSI (discussions/030 D1/D2) ─
 //
@@ -197,11 +221,13 @@ if (!isMacOS) {
     await $`bun run ${path.join(rootDir, "scripts/build-knowledge.ts")} --target ${target}`.quiet(!verbose)
     await $`bun run ${path.join(rootDir, "scripts/build-acp.ts")} --target ${target}`.quiet(!verbose)
   }
-  const bundleDir = path.join(tauriDir, "target", target, "release/bundle")
+  const bundleDir = path.join(preparedBrand.targetDir, target, "release/bundle")
   const desktopDir = path.join(rootDir, "packages/client/desktop")
   const tauriBuild = (extra: string[]) =>
-    $`cd ${desktopDir} && bun run --bun tauri build --target ${target} ${extra}`.quiet(!verbose)
+    $`cd ${desktopDir} && bun run --bun tauri build --target ${target} ${preparedBrand.configArgs} ${extra}`.quiet(!verbose)
 
+  verifySidecarsForTarget(target, rootDir)
+  materializeBrandSidecars(preparedBrand, target)
   if (process.platform === "win32") {
     await buildWindowsInstallers(tauriBuild, path.join(bundleDir, "nsis"))
   } else {
@@ -213,12 +239,14 @@ if (!isMacOS) {
 
   console.log(`\n🎉 Release build complete! Installers under:`)
   console.log(`   ${bundleDir}`)
+  const linuxLayouts = inspectLinuxInstallers(selectedBrand.identity, target, bundleDir, buildStartedAt)
+  exportBrandArtifacts(preparedBrand, bundleDir, buildStartedAt, rootDir, { mode: "release", productName: selectedBrand.identity.productName, identifier: selectedBrand.identity.identifier, signing: "not-configured", target, ...(linuxLayouts.length ? { linuxLayouts } : {}) })
   process.exit(0)
 }
 
 // ── Environment checks (macOS only below) ─────────────────────────
 const signingIdentity = process.env.APPLE_SIGNING_IDENTITY
-if (!unsigned && !signingIdentity) {
+if (!unsigned && (!signingIdentity || signingIdentity === "-")) {
   console.error("❌ APPLE_SIGNING_IDENTITY is required (or pass --unsigned for ad-hoc build)")
   console.error("   Set it to your 'Developer ID Application: ...' identity")
   console.error("   List identities: security find-identity -v -p codesigning")
@@ -234,7 +262,7 @@ if (unsigned) {
   console.warn("⚠️  --unsigned: producing ad-hoc signed build")
   console.warn("   The .app will run on your machine but the DMG will fail Gatekeeper")
   console.warn("   on other Macs. End users must run:")
-  console.warn("     xattr -dr com.apple.quarantine /Applications/Ultrawork.app")
+  console.warn(`     ${quarantineRemovalCommand(`${selectedBrand.identity.productName} Dev`)}`)
 } else if (!skipNotarize && !canNotarize) {
   console.warn("⚠️  Notarization credentials missing (APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID)")
   console.warn("   Will sign only. Use --skip-notarize to suppress this warning.")
@@ -276,10 +304,13 @@ if (isMacOS && !nativeOnly && !skipSidecar) {
     await $`lipo -create ${arm} ${x64} -output ${universal}`
     // Re-sign: lipo doesn't preserve a usable signature on universal output.
     await $`codesign --remove-signature ${universal} 2>/dev/null; codesign -s - ${universal}`.nothrow()
+    writeSidecarMetadata(universal, "universal-apple-darwin", selectedBrand.digest)
     const size = Bun.file(universal).size / 1024 / 1024
     console.log(`   ${base}-universal-apple-darwin (${size.toFixed(1)} MB)`)
   }
 }
+
+verifySidecarsForTarget(tauriTarget, rootDir)
 
 // ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY when set) ──
 console.log("\n🔨 Running tauri build...")
@@ -298,9 +329,7 @@ console.log("\n🔨 Running tauri build...")
 // gets a release out; both are required, so no single flag silently ships a
 // name-sorted DMG.
 const tauriEnv = {
-  ...(unsigned
-    ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "APPLE_SIGNING_IDENTITY"))
-    : { ...process.env, APPLE_SIGNING_IDENTITY: signingIdentity! }),
+  ...macosSigningEnvironment(process.env, unsigned),
   TAURI_BUNDLER_DMG_IGNORE_CI: process.env.TAURI_BUNDLER_DMG_IGNORE_CI ?? "true",
 }
 
@@ -325,7 +354,7 @@ const tauriEnv = {
 // "com.ultrawork.desktop.dev" would silently stop matching the day the bundle id is
 // renamed (it already was renamed once, com.ultrawork.app → .desktop in 89b088b8) and
 // the isolation would quietly stop isolating anything.
-const tauriConf = await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()
+const tauriConf = { ...(await Bun.file(path.join(tauriDir, "tauri.conf.json")).json()), productName: selectedBrand.identity.productName, identifier: selectedBrand.identity.identifier }
 const unsignedIdentifier = `${tauriConf.identifier}.dev`
 // Rename the bundle too, not just its identifier. Two apps both called "Ultrawork"
 // in System Settings › Screen Recording is precisely the confusion this whole change
@@ -342,7 +371,7 @@ const identifierOverride = unsigned
       JSON.stringify({ identifier: unsignedIdentifier, productName: unsignedProductName }),
     ]
   : []
-await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget} ${identifierOverride}`
+await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tauri build --target ${tauriTarget} ${preparedBrand.configArgs} ${identifierOverride}`
   .env(tauriEnv)
   .quiet(!verbose)
 
@@ -351,7 +380,7 @@ await $`cd ${path.join(rootDir, "packages/client/desktop")} && bun run --bun tau
 // and never prunes older ones, so a bumped version in a dirty tree leaves
 // several here — and `dmgPath` feeds verification, notarization *and* staple.
 // Taking the first glob hit would happily verify and ship a stale DMG.
-const bundleDir = path.join(tauriDir, "target", tauriTarget, "release/bundle")
+const bundleDir = path.join(preparedBrand.targetDir, tauriTarget, "release/bundle")
 const appPath = path.join(bundleDir, "macos", `${productName}.app`)
 const dmgPrefix = `${productName}_${tauriConf.version}_`
 const dmgGlob = new Bun.Glob("*.dmg")
@@ -379,14 +408,14 @@ if (dmgPath) {
   }
 }
 
-// ── Step 3: Verify code signing (or ad-hoc sign for --unsigned) ───
+// ── Step 3: Verify the signature Tauri applied before bundling ───
 if (unsigned) {
-  console.log("\n🔏 Ad-hoc signing (no Dev ID)...")
-  await $`codesign --force --deep -s - ${appPath}`
+  console.log("\n🔏 Verifying ad-hoc signature applied before DMG bundling...")
+  await $`codesign --verify --deep --strict ${appPath}`
   if (dmgPath) {
-    // DMG itself can't be ad-hoc signed meaningfully — Gatekeeper will reject it for redistribution.
-    console.warn(`   Note: ${path.basename(dmgPath)} is unsigned. End users must run`)
-    console.warn(`   'xattr -dr com.apple.quarantine /Applications/Ultrawork.app' after install.`)
+    // Ad-hoc signatures provide integrity, not Developer ID trust for redistribution.
+    console.warn(`   Note: ${path.basename(dmgPath)} uses ad-hoc signing. End users must run`)
+    console.warn(`   ${quarantineRemovalCommand(productName)} after install.`)
   }
 } else {
   console.log("\n🔏 Verifying code signature...")
@@ -406,11 +435,11 @@ if (skipNotarize || !canNotarize) {
   if (!dmgPath) {
     // Need to zip the .app for notarization
     console.log("\n📤 Zipping .app for notarization...")
-    const zipPath = path.join(bundleDir, "Ultrawork.zip")
+    const zipPath = path.join(bundleDir, `${productName}.zip`)
     await $`ditto -c -k --sequesterRsrc --keepParent ${appPath} ${zipPath}`
   }
 
-  const submitTarget = dmgPath ?? path.join(bundleDir, "Ultrawork.zip")
+  const submitTarget = dmgPath ?? path.join(bundleDir, `${productName}.zip`)
 
   console.log(`\n📤 Submitting for notarization: ${path.basename(submitTarget)}`)
   console.log("   This may take several minutes...")
@@ -438,7 +467,7 @@ console.log()
 if (unsigned) {
   console.log("⚠️  Unsigned build — for local use or trusted-channel distribution only.")
   console.log("   End users must remove the quarantine attribute after install:")
-  console.log(`     xattr -dr com.apple.quarantine /Applications/Ultrawork.app`)
+  console.log(`     ${quarantineRemovalCommand(productName)}`)
 } else {
   console.log("Verify with:")
   console.log(`   codesign -dv --verbose=2 "${appPath}"`)
@@ -446,3 +475,5 @@ if (unsigned) {
     console.log(`   spctl --assess --type open --context context:primary-signature "${appPath}"`)
   }
 }
+
+exportBrandArtifacts(preparedBrand, bundleDir, buildStartedAt, rootDir, { mode: unsigned ? "unsigned-dev" : "release", productName, identifier: unsigned ? unsignedIdentifier : tauriConf.identifier, signing: unsigned ? "ad-hoc" : "developer-id", target: tauriTarget })

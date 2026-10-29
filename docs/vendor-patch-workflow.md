@@ -21,6 +21,7 @@
 | `config/paths.ts` | 跳过 `~/.opencode/` home 目录搜索 | ADR-020 |
 | `mcp/index.ts` | ① MCP 启动握手超时拆为 `CONNECT_TIMEOUT = 5s`（runtime tool 仍 30s）② MCP 工具 execute 把 `options.experimental_context.sessionID` 注入 `callTool` 的 `_meta.ultrawork_session`（委派归属，discussions/022） | ADR-028 / 022 |
 | `script/build.ts` | 新增 `--target=<os>-<arch>` 单目标过滤，支持跨编译 darwin-x64（Universal DMG） | ADR-028 |
+| `app/package.json` · `bun.lock` | 将 `ghostty-web` 声明固定到原锁提交完整 SHA `4af877d52b523754f113b87084b69835b752fb2c`；保留原 resolution、integrity 与其他依赖，避免浮动 `#main` 在构建时漂移 | ADR-075 构建补齐 |
 | `session/llm.ts` | ① `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态）② streamText `experimental_context:{sessionID}` 暴露给工具 execute（委派归属，discussions/022） | ADR-034 / 022 |
 | `session/prompt.ts` | 每 step `resolveTools` 后 fire `experimental.chat.tools.transform` 钩子（含 `usedToolIds`），供渐进式工具披露引擎改写工具表 | discussions/023 |
 | `plugin/src/index.ts` (`@opencode-ai/plugin`) | 新增 `experimental.chat.tools.transform` 钩子类型 | discussions/023 |
@@ -58,6 +59,8 @@ vim vendor/opencode/packages/opencode/src/...
 cd vendor/opencode && \
 git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
 git diff -- \
+  bun.lock \
+  packages/app/package.json \
   packages/opencode/src/config/config.ts \
   packages/opencode/src/config/paths.ts \
   packages/opencode/src/global/index.ts \
@@ -120,8 +123,21 @@ git add vendor/opencode patches/vendor-opencode-config-fix.patch
 
 | 入口 | 行为 |
 |------|------|
-| `setup.sh` 第 3 步 | 自动 apply `patches/vendor-opencode-*.patch`（`git apply --check` 幂等） |
-| `scripts/build-opencode.ts` | 编译前检测 sentinel，未 apply 则自动 apply（双重保障） |
+| `scripts/vendor-patches.ts`（setup、依赖安装、build 共用） | 检查独立 vendor Git 工作树与 canonical patch；全部文件先预检，再补齐尚未应用的文件，冲突时拒绝安装/构建，不重置用户文件 |
+| `scripts/vendor-dependencies.ts` | 先应用累计 patch，再执行 `bun install --frozen-lockfile --os=* --cpu=*`，拒绝缺失/空锁并检查依赖输入未变 |
+| `scripts/build-opencode.ts` | 共享 patch/冻结安装；上游构建传 `--skip-install`，避免再次非冻结安装。锁、workspace manifests、配置、依赖补丁和辅助模块均纳入缓存哈希；缓存命中也校验 metadata/二进制摘要 |
 | `scripts/sync-plugin-version.ts` | submodule 更新后运行，重新 apply + 更新版本 + 重新生成 patch |
 
-**其他人 clone 后只需 `./setup.sh` 即可**——submodule init + patch apply + build 全自动。
+**其他人 clone 后只需 `bun run setup`（三平台）或 `./setup.sh`（macOS / Linux）即可**——submodule init + patch apply + build 全自动。Shell 入口只转发到统一的 TypeScript 实现，品牌配置及临时参数原样传递；相对路径按调用者当前目录解析。例如：`./setup.sh --build --brand branding/mywork/brand.json`。
+
+版本同步从当前累计 patch 动态提取完整文件集合，使用临时 Git index 包含新增文件，校验新 patch 可反向应用后原子替换；不改真实 index，也不会把其他已暂存/未跟踪文件混入。新增 vendor 文件时仍须先按上面的完整流程把它纳入累计 patch；同步脚本不会自动收录任意新文件。即使插件版本未变，也会先补齐尚未应用的 manifest/lock pin。
+
+### 构建依赖与源码 patch 的边界
+
+ADR-075 品牌身份复用了既有 `OPENCODE_APP_NAME`，没有更换 submodule commit。后续依赖冻结补齐将两个各一行的 manifest/lock 声明改动纳入原有累计 patch；`ghostty-web` 保留 upstream 原锁的 `4af877d`，未带入构建期间出现的无关 `6e24d04` 升级。累计 patch 现覆盖 26 个文件。
+
+Bun 1.3.12 对 `ghostty-web#main` 仍会重新解析分支；仅恢复旧锁并加 frozen 会拒绝安装，因此须同时固定 manifest 和锁中的声明。setup、CI/release 和公共 sidecar 构建使用冻结入口；不要直接运行上游 vendor build 的默认安装流程。需要主动升级依赖时，显式修改并审阅 manifest/lock，再更新累计 patch。
+
+冻结子进程会清除 Bun 内部的 `BUN_CONFIG_SKIP_LOAD_LOCKFILE`、`BUN_CONFIG_SKIP_INSTALL_PACKAGES` 和 `BUN_CONFIG_SKIP_SAVE_LOCKFILE` 环境覆盖；前两项可分别绕过锁验证或跳过安装，不能只检查锁文件未变。检测安装或编译期间输入漂移时构建失败，不自动恢复文件或导出新缓存。依赖冻结不承诺版本时间、模型目录、签名或整个二进制逐字节相同。
+
+2026-10-29 已完成仓库外干净子仓库、空下载缓存、无 node_modules 的真实冻结安装（5067 包）及内嵌 Web UI/Intel sidecar 冷构建；同一锁下五目标 OpenCode 真实编译通过。Windows/Linux 原生安装与运行边界见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075)。

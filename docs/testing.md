@@ -16,6 +16,7 @@
 | UI 组件 (session) | `desktop/src/components/session/` | 组件测试 | ✅ 大部分 |
 | UI 组件 (layout) | `desktop/src/components/layout/` | 组件测试 | ⚠️ 部分 |
 | Pages | `desktop/src/pages/` | 集成测试 | ⚠️ 部分 |
+| Brand | `packages/core/brand` + `scripts/brand-build.test.ts` | 身份/构建契约、真实子进程与 Python 运行时路径测试 | ✅ 自动化；原生安装/签名另验，见 §16 |
 | Channel Gateway | `packages/channel/gateway/src` | 单元测试 | ✅ 完全（120+ cases：bridge / channel-manager / adapters） |
 | Knowledge Sidecar | `packages/knowledge/sidecar/src` | 单元测试 | ⚠️ 覆盖薄（当前仅 `doc-parser.test.ts`，见下方缺口提示） |
 | ACP Client Sidecar | `packages/agent/acp-client/src` | stdio e2e（`bun test src`，非 vitest） | ✅ 核心链路（mock ACP agent 确定性回放：turn 整形 / 权限 allow/reject/超时 deny + **W4b 持久化**——store reducer/roundtrip、session/load replay 抑制零外泄、manager 重启恢复、deleteSession，10 用例 92 断言）；另有真实 claude spike 脚本落盘 fixture → desktop `acp-turn-shaping.test.ts` 喂真实 `buildTurnModel` 断言（4 用例） |
@@ -717,3 +718,171 @@ case C 要点「加载更早消息」。**Chromium 一直好好的，WebKit 上�
 4. 正向臂 + 故障臂各一轮；读的是**模型看到的原始 stdout/stderr** 和它**写给用户的那段话**，两者之间的失真就是要验的东西。
 
 视觉/措辞判断留给人：产物面板里 PDF 看一眼、agent 回复能不能让不懂技术的用户明白「为什么没交付、修法在哪」。
+
+## 16. 独立品牌发行版的验证（ADR-075）
+
+身份与隔离决策见 [ADR-075](./decisions/075-independent-brand-releases.md)，构建命令和目录约定见 [build-and-deploy §0.6](./build-and-deploy.md#06-独立品牌发行版adr-075)。验证必须分别报告构建契约、运行时隔离、renderer 启动门禁、原生包与平台签名，不能用某一层的成功代替全部完成。
+
+### 自动化命令与覆盖
+
+以下命令从仓库根目录运行；Vitest/Bun 套件按包保持原有运行器。
+
+```bash
+# 配置/参数/图标、身份账本、构建租约、默认/定制 sidecar metadata、探针隔离与产物导出
+bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts
+bun run --bun scripts/verify-dmg-layout.ts --self-test
+
+# 可选真实 vendor Global 初始化验收：须先 checkout vendor 并准备其依赖
+ULTRAWORK_TEST_VENDOR_GLOBAL=1 bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts
+
+# 官方原图保留，圆角派生图与来源摘要可重复生成
+bun run --bun scripts/gen-mywork-icon.ts --check
+bun run --bun scripts/gen-macos-icon.ts --check
+
+# 纯身份、RuntimeContext、Bun/Python 真实子进程和同 HOME 多品牌持久化
+bun run --bun turbo run test --filter=@agent/brand
+
+# renderer：品牌文案、原生启动门禁、Blocked 页面、端口与凭证严格模式
+bun run --bun turbo run test --filter=@agent/client-desktop
+
+# 后端回归；ACP/Knowledge 使用 bun test，其余包使用各自 Vitest 脚本
+bun run --bun turbo run test --filter=@agent/acp-client --filter=@agent/channel-gateway --filter=@agent/knowledge-sidecar --filter=@agent/orchestrator
+
+# 完整工作区回归（含各包配置的前置构建/类型任务）
+bun run --bun turbo run test
+
+# delegate MCP：真实 HTTP 动态端口切换、预热与错误品牌 registry 零请求
+bun test packages/agent/acp-client/src/__tests__/delegate-mcp.test.ts
+
+bun run --bun turbo run typecheck
+cargo test --manifest-path packages/client/desktop/src-tauri/Cargo.toml
+
+# 已编译的本机四种 sidecar，各启动 Ultrawork/MyWork 一份；--keep 保留临时报告
+bun run --bun scripts/verify-brand-sidecars.ts --keep
+
+# 加入确定性 ACP Agent、Team 委托、Pipeline 与重启恢复
+bun run --bun scripts/verify-brand-sidecars.ts --agents --keep
+
+# 用本地 OpenAI-compatible SSE fixture 驱动真实 OpenCode 单 Agent/Team 工具循环
+bun run --bun scripts/verify-brand-sidecars.ts --models --keep
+
+# 真 Vite/React + Chrome，默认/MyWork × 三语 × 五类阻断/错误状态
+bun run --bun packages/client/desktop/e2e/brand-startup.e2e.ts
+
+# 正常 Ready 页面：默认/MyWork × 三语，Home/About 品牌、Solo/Team 切换与草稿保留
+# IPC/HTTP 为明确 fixture，严格启动身份/端口/凭证门禁仍真实执行
+bun run --bun packages/client/desktop/e2e/brand-ready.e2e.ts
+
+# 可选 WebKit 家族复验；测试引擎只下载到仓库忽略目录
+PLAYWRIGHT_BROWSERS_PATH=.brand-build/playwright bun run --bun node_modules/playwright-core/cli.js install webkit
+PLAYWRIGHT_BROWSERS_PATH=.brand-build/playwright E2E_ENGINE=webkit E2E_OUTPUT=.brand-build/verification/browser-brand-startup-webkit bun run --bun packages/client/desktop/e2e/brand-startup.e2e.ts
+PLAYWRIGHT_BROWSERS_PATH=.brand-build/playwright E2E_ENGINE=webkit E2E_OUTPUT=.brand-build/verification/browser-brand-ready-webkit bun run --bun packages/client/desktop/e2e/brand-ready.e2e.ts
+
+# 已导出 DMG 的 manifest；验证包内签名、安装身份与中文/空格路径搬迁
+bun run --bun scripts/verify-brand-macos-package.ts --manifest .brand-build/artifacts/mywork/darwin-arm64/manifest-darwin-arm64.json --output .brand-build/verification/macos-mywork-dmg.json --keep
+
+# 对搬迁后的真实包内 sidecar 复验；替换为上一命令报告 copiedApp 的路径
+bun run --bun scripts/verify-brand-sidecars.ts --binaries-dir '<copiedApp>/Contents/MacOS' --models --keep
+
+# macOS 原生宿主：独立临时 HOME/XDG、C locale，不授予系统权限
+# alternate 使用基础 identifier 的 MyWork.app，覆盖与 Dev 包的数据租约互斥
+bun run --bun scripts/verify-brand-native-macos.ts --default-app '<Ultrawork Dev.app>' --brand-app '<copiedApp>' --brand-alternate-app '<MyWork.app>' --output .brand-build/verification/native-hosts-final-macos.json
+
+# macOS 已安装默认构建→当前构建的数据前向读取；只执行显式 sidecar，不启动桌面宿主
+bun run --bun scripts/verify-brand-upgrade.ts --legacy-app '<installed Ultrawork.app>' --output .brand-build/verification/legacy-default-data-forward.json
+```
+
+上述前置环境变量命令为 macOS/Linux shell 形式；Windows 用 PowerShell `$env:PLAYWRIGHT_BROWSERS_PATH` / `$env:E2E_ENGINE` / `$env:ULTRAWORK_TEST_VENDOR_GLOBAL` 设置同名环境变量。macOS 包验证器仅在 macOS 使用，不能以其结果替代其他平台安装验收。
+
+品牌核心的 `runtime-integration.test.ts` 让 MyWork、第二品牌和默认 Ultrawork 在**同一个临时 HOME/USERPROFILE/XDG** 下运行真实 Bun 子进程，实际写入 ACP sessions、Gateway channels、Team registry、orchestrator runs、Knowledge SQLite 与 workspace 产物目录；旧默认数据只由默认品牌读到。另有 registry 品牌/instanceId 不符时拒绝使用 4099、受管缺上下文入口在初始化前退出，以及 Python 技能路径解析测试。它验证实际持久化实现；已编译 sidecar 联调由下一层单独负责。
+
+`mywork-icon.test.ts` 在临时目录执行真实 Tauri icon，核对 MyWork 与默认图标的全部 15 个原生 PNG、ICNS 的 8 个 PNG/2 个 legacy alpha，以及 ICO 的 6 档尺寸；共 31 个原生表示的 alpha 差异像素均为 0，同时检查官方原图的不透明像素未被重绘或改色。`setup.test.ts` 在临时 checkout 中以惰性 git/bun/cargo/rustup stub 验证外部调用目录、中文/空格参数、默认 dev、品牌参数与 force 转发、退出码及失败前不执行外部命令；不会启动真实应用或安装依赖。Shell 相关测试仅适用于 macOS/Linux，Windows 继续执行跨平台入口和品牌构建契约。
+
+上述原始模板保留不变，当前 macOS 应用图标另走 `macos-icon.test.ts`/`brand-macos-icon.test.ts`：真实 Tauri ICNS 的全部 PNG/legacy alpha 两品牌一致，1024px 主体为824px、边距100px；验证已留白/半透明/空图/非居中输入、重复处理不缩小、SVG文字与原Tauri对照、chunk排序确定性、仅导出ICNS不改PNG/ICO。真实自定义 prepare 在临时 checkout 内持有构建锁，核对配置和编译环境指向新 ICNS，UI仍用原snapshot，并验证默认回构不继承自定义overlay。`build.rs` 跟踪最终ICNS文件与环境变量；旧开发会话需完整退出重启，不能用WebView刷新替代。
+
+依赖冻结由 `vendor-dependencies.test.ts` 的真实离线 file 包验证全 OS/CPU 安装、stale manifest 拒绝、Bun skip 环境覆盖清理及锁不变；wrapper fixture 覆盖五目标参数、缓存输入变化、损坏 metadata/二进制自动重建和失败不导出新缓存。`vendor-patches.test.ts` 使用真实临时 Git，覆盖 clean/全部已应用/旧源码已应用但新 pin 未应用、冲突前零写、`.git` 文件型子仓库与错误父仓库拒绝。版本同步另验证完整累计文件集合和真实 Git index 不被改动。Windows 跳过 Unix shell wrapper fixture，但执行其余冻结与 patch 契约；真实 native 构建由新增三平台 `vendor-build` CI job 执行。
+
+`scripts/verify-brand-sidecars.ts` 使用已有的本机四种 native 二进制，在同一临时 HOME/XDG/workspace 下启动两个品牌共 8 个服务，分配独立动态端口且刻意使用**同一个密码**，避免把“密码不同”误当成数据隔离。基础模式校验所有服务错密码返回 401，通过真实 HTTP 写入/读取 OpenCode 全局配置与 session、Gateway 渠道、ACP agents、Knowledge 源，并检查配置/数据库落盘；写完 MyWork 后重读默认数据，停止默认四个服务后确认 MyWork 四个仍健康。
+
+`--agents` 进一步用确定性本地 ACP fixture 检查单 Agent 的 Knowledge MCP、Team Leader/Member 的 delegate MCP、成员委托权限、Pipeline/worktree/产物持久化，以及 ACP 重启后单 Agent/Team 绑定与已完成 Pipeline 的恢复。`--models` 包含这些检查，并通过 `brand-model-fixture.ts` 在 loopback 提供 OpenAI-compatible SSE，驱动**真实 OpenCode**单 Agent 回复和 Team 的 `list_agents → delegate → ACP Member → tool result → 最终回复` 循环；不是用假 OpenCode HTTP 替代后端。`--binaries-dir` 可将同一验收转向从 DMG 搬迁出来的真实 sidecar，覆盖包内二进制和带中文/空格路径。finally 回收本脚本拥有的子进程，`--keep` 只留报告和日志。不接外部付费模型、真实 IM、远程知识库或真实第三方 ACP 产品，不能把本地 fixture 的通过解释为这些外部服务均已验收。
+
+`verify-brand-upgrade.ts` 的范围是数据前向兼容，名称不表示已执行安装器升级。它只从显式指定的已安装默认 app 读取四种 sidecar 路径，在新建 HOME/XDG/workspace 下由旧构建写入 fixture，再由当前默认构建读取，最后检查 MyWork 不暴露这些默认记录。macOS `sandbox-exec` 独立拒绝临时根外写入，并先验证根内可写、根外写入失败的正负控制；不会启动已安装桌面宿主或复制真实用户数据。本轮旧/当前软件版本号均为 0.3.9，不能推导其他历史版本、降级或跨版本安装器兼容。
+
+Rust 测试覆盖路径派生、身份记录、租约与进程身份等宿主规则；renderer 测试覆盖 host/界面身份不一致、IPC 异常、端口或凭证无效时进入 Blocked，以及阻断态不挂业务 providers。既有业务浏览器 harness 使用仅开发模式生效的显式 `__ULTRAWORK_BROWSER_TEST__` 标记；品牌启动 E2E 刻意**不设置**此标记，以执行严格 native 门禁。真实 native IPC 出错不能自动退回浏览器默认端口。
+
+宿主复审后的完整 Rust 套件为 **185/185**（`.brand-build/verification/rust-jsonc-final-review.log`），macOS GUI/C locale 下中文进程路径的独立真实子进程回归也通过（`rust-macos-locale-review.log`）。新增负例及修复集中在：Windows PowerShell 进程身份 JSON 显式使用 UTF-8，避免客户中文路径受 OEM 代码页影响；macOS 内部 `ps` 查询固定 UTF-8 locale，避免 LaunchServices 缺省环境把路径转成 BSD `M-` 转义；拿不到 OS identity 时仍以真实 `CommandChild` 句柄回收自己启动的子进程；事件流关闭不是进程死亡证明，未收到终止确认不能提前删除 registry；正常 Unix 退出先 SIGTERM 等待 flush，强杀仅作超时兜底；旧 registry 的活 PID 无可信 identity 时阻断。IPC 在集中 ready 闸门只放行启动诊断所需入口，MockRuntime 使用真实 `copy_attachment_into_workspace` 验证 Blocked 不写入、Ready 才写入。macOS 上未执行 Windows 专属 PowerShell Unicode 分支，不能把本机通过数写成该 Windows 运行时行为已验收。
+
+补充复审发现并修复两处真实重启/时序缺陷。其一，OpenCode 的 PATCH 写出带尾逗号的 JSONC，宿主旧纯 JSON 读取会跳过受管 MCP 归一，导致旧端口/品牌 environment 残留。现支持注释、尾逗号和 BOM，保留字符串中的 URL、Windows 路径及注释标记，仍拒绝缺值、重复逗号、未闭合注释等无效输入；I/O 或解析失败须在业务初始化前阻断，不能把已有配置当空对象覆盖。Rust 新增解析、用户字段保留、重复启动与失败不改原文件的回归。原生 harness 增加真实 `PATCH /global/config → 写入旧受管 environment 的 JSONC → crash/restart → GET /mcp` 验收；修复前包体确实因 stale `ACP_CLIENT_PORT` 未清除而退出 1（`native-jsonc-negative-control.log`），最新包体则保留用户字段、移除旧受管 environment，并将 Knowledge/delegate MCP 均恢复到 connected，正向结果已纳入最终原生 9 项报告。
+
+其二，OpenCode 预热 stdio MCP 时 ACP 可能尚未确定动态端口，shim 不能在握手时把端口固定到整个连接生命周期。delegate/list_agents 现于每次工具调用读取当前品牌/instanceId registry，缺失或外来 registry 返回工具错误且不请求默认端口；由 ACP 直接注入的明确端口及无受管上下文的 standalone 行为保留。delegate 套件 **33/33、96 断言**（`delegate-lazy-registry-final.log`），含真实 HTTP 端口 A→B、外来 registry 零请求、预热握手不读取未就绪 registry；品牌真实子进程 integration **3/3**。两种 ACP 架构与三种 macOS 包已按最新源码重建，原生 **9 项**及最新 Universal 包内工具循环 **12 项**均复验通过；测试拥有的 native/MCP/sidecar 进程完成回收，随后只读进程检查未见残留。
+
+公共默认/定制构建入口都校验四个 sidecar 的 metadata；`--skip-sidecar` 不得放行缺失或旧协议的二进制。构建回归用真实入口子进程和 stub 下游 CLI 验证拒绝路径。OpenCode vendor build 的版本探针使用独立 `OPENCODE_TEST_HOME` 与四个 XDG 根，防止 import Global 时的初始化或缓存版本清理影响正在运行的用户程序。常规 CI 不依赖 vendor checkout 或其自身依赖目录，执行无 vendor 的真实子进程六路径/原 cache/version/canary 功能契约；真实 vendor Global import 为显式 opt-in 验收，设置 `ULTRAWORK_TEST_VENDOR_GLOBAL=1` 后缺少 vendor 或依赖会失败，不能静默跳过。
+
+品牌浏览器脚本使用真实 Vite、React 与浏览器引擎，覆盖默认/MyWork × 英文/简体/繁体 × namespace 已占用、错误品牌、损坏状态、无效端口、无效凭证共 30 个场景。它检查只读诊断、复制/重试/退出、名称与 Logo，确认没有业务 Provider、业务 IPC 或后台 HTTP 请求，并保存报告及截图。Vite 的 `/src/components/session/*.tsx` 是模块加载，不能误作 `/session` API；侦听路径须从根锚定。
+
+`brand-ready.e2e.ts` 补正常启动页面：每个引擎跑两品牌 × 三语共 6 条流程/30 个检查组，真实 React 渲染 Home/About、精确作用域内的默认棱镜或 MyWork 预置图字节、document title、Solo/Team 控件切换与往返草稿。它不设置浏览器宽松启动标记，使用明确 Ready IPC 与独立 loopback HTTP fixtures；拒绝未知 IPC、HTTP 写入、外部请求和浏览器错误。这里的 Solo/Team 是界面切换，真正工具循环由包内 sidecar `--models` 另验。Vite 直接由 Bun 执行 JS 入口，finally 回收自有进程。Playwright WebKit 仍不能代表原生 WKWebView 或系统权限已通过。
+
+所有品牌测试须自建临时 home 与 XDG 根；不得清理或写入开发者真实 `~/.ultrawork`、`~/.mywork` 或现有配置。Rust 测试必须由 `cargo test` 选择 harness，不能直接执行未确认身份的 `target/debug/deps` 文件。原生界面工具可能重新启动应用且不继承脚本的临时环境，隔离验收不以此类手动启动替代；需要 GUI 操作时使用专用测试账号或 VM。脚本中的 home/XDG 隔离只覆盖应用业务目录，不承诺系统 WebView、LaunchServices 或权限记录零写入。进程测试只能关闭自己启动且身份可验证的子进程。临时监听/连接受环境限制时须记录受阻层次，不能把超时写成通过；偏离隔离要求的工具操作应独立记录，不能纳入“隔离无副作用”通过证据。
+
+### 双品牌 Release CI 的验收
+
+`v*` tag 的 `release.yml` 必须构建默认 Ultrawork 与 MyWork 各自的 macOS/Windows/Linux 安装包；六个任务全部成功后，发布 job 才收集本次 run 的品牌/平台 artifact。workflow_dispatch 可选 `all`、`default` 或 `mywork`，仅提供验证 artifact，不自动创建 Release。
+
+每次发布保存 tag、提交 SHA、workflow run URL 和各品牌/平台的结果。发布 job 校验两品牌各三份 manifest，核对身份、release 模式及清单内安装包的大小和 SHA-256，拒绝缺包、额外文件和 GitHub Release 的同名安装包；只将清单核验后的安装包上传到同一个 Release。manifest 保留在品牌/平台 artifact 中，不能将扁平目录下的同名 manifest 混合发布。
+
+两个 macOS 品牌须分别确认 Universal 架构、Developer ID Authority、`Notarization approved ✓` 和 `stapler validate` 通过。正式 tag 不允许 `--unsigned`、跳过公证或布局检查等降级；`ALLOW_UNSIGNED_RELEASE` 只适用于显式 dispatch 的 `.dev` 验包。Windows/Linux 记录实际打包与签名状态，不能将 macOS 的签名结论扩展到其他平台。
+
+发布构建与客户机器验收分别记录：CI 打包或签名成功不能推导安装、升级、卸载、双品牌并行、真实账号业务和系统权限均已通过。补齐后在本节追加该 run 的实际结果，保留下面本机验收时的历史证据和环境限制；新 CI 尚未执行的项目不得提前写成通过。
+
+### 本机验证边界快照（2026-10-29）
+
+下表记录发布 CI 启动前的本机验收结果；“未触发远端 CI”等内容描述取得该证据时的状态。后续 CI 与原生安装结果须关联具体 tag、提交和 run 单独追加，不能覆盖成这些本机测试已验证其他操作系统或正式签名。
+
+| 项目 | 已掌握证据 | 尚未完成 |
+|---|---|---|
+| 品牌核心、构建与后端 | 完整工作区 test 的 **13 个任务全部成功**（9 包范围，含前置任务，`all-packages-final.log`）；品牌身份/上下文/真实子进程及后端套件通过。常规构建契约 **29 通过、1 显式跳过**，真实 vendor opt-in **30/30 通过**（`build-contracts-clean-ci.log`、`build-contracts-vendor-optin.log`），含 PNG 解码、默认兼容、签名、Linux 安装布局、macOS 单实例键冲突、默认 metadata 反例及探针隔离；DMG 布局 self-test **9/9** | Windows/Linux 本次 CI/native 证据需单独核对；本机解析器/fixture 测试不能冒充原生安装通过 |
+| 图标对齐与 setup 补充回归 | 构建、sidecar、图标、setup 四个脚本套件合并执行 **38/38、452 断言**（开启真实 vendor opt-in，`brand-icon-setup-vendor-final.log`）；默认图标/源码 patch 未改，官方原图摘要不变；31 个原生图标表示 alpha 差异像素为 0。最新圆角图 DMG 已重建，包内 ICNS 与当前 digest 的生成结果逐字节一致；报告 `packaged-mywork-rounded-icon.json` | Windows/Linux 图标 CI 结果待确认；setup 的 4 个 Unix stub 流程测试在 Windows 跳过，不等于 Windows 安装/setup 流程已实际通过 |
+| macOS Dock 留白修正 | 默认/MyWork 专用 ICNS 的主体均为 **824/1024**、居中边距100px。新增 helper/真实品牌prepare契约后，九套脚本共 **63/63、920断言**，Rust **185/185**、9包类型检查通过。真实 Cargo dev 二进制完成 **默认→MyWork→默认** 三次编译，每次均在Mach-O中找到当前带留白ICNS、未找到旧全幅默认ICNS（`macos-dev-icon-embedding.json`）；默认ARM64/MyWork Universal新DMG各 **7项**静态验包通过，按Info.plist读取的icon-macos.icns与当前预期文件逐字节相同（`macos-icon-{default,mywork}-dmg.json`） | dev二进制仅编译/检查，未启动当前用户应用；对比预览不是实时Dock截图。Windows/Linux原生运行边界不变，旧dev会话须退出重启以重新准备overlay |
+| 依赖冻结与 patch 维护补齐 | 冷缓存/无 node_modules/独立 vendor Git 子仓库的生产 helper 冻结安装 **5067 包通过**，锁 SHA-256 为 `ba3c1519e746a9ee89afd2df716c59aa8d9d1903b63cd0a871d3bced93843e5f` 且安装/编译后不变；原 `4af877d` 实际依赖链接恢复，10 个五目标所需 native optional 包存在；冷副本内嵌 Web UI/Intel sidecar 编译通过。七套构建/图标/setup/冻结/patch/sync 契约 **55/55、662 断言**（真实 vendor opt-in，`dependency-freeze-all-contracts-final.log`），9 包 typecheck、工作区 13 任务、Rust **185/185** 通过 | 五目标编译覆盖 macOS ARM64/Intel、Windows x64、Linux x64/ARM64，报告 `dependency-freeze-builds.json`；Windows/Linux 不可在本机执行，新增三平台真实 vendor-build CI 尚未触发 |
+| 冻结依赖后的最新 macOS 包 | 默认 ARM64/MyWork Universal DMG 均按冻结构建重打；布局、包内 ad-hoc deep/strict 签名、中文/空格路径搬迁、269 个文本资源无 checkout 依赖、五个 Mach-O 依赖检查通过（`dependency-freeze-{default,mywork}-dmg.json`）。最新包的原生双宿主 **9 项**与 Universal 包内真实单 Agent/Team/Pipeline/MCP/重启工具循环 **12 项**复验通过（`dependency-freeze-native-macos.json`、`dependency-freeze-sidecars-models.json`），自有进程完成回收 | 本机执行 ARM64；Intel 运行、正式签名/公证、系统权限和跨版本安装器升级仍未验收。原生互斥负例使用此前基础 identifier 的 MyWork.app，只验证其在数据租约前阻断 |
+| macOS ARM64 native sidecars | 8 个真实服务同 HOME/XDG/workspace、同密码并行；错密码 401，真实 HTTP/配置/数据库隔离，停默认后 MyWork 健康，finally 全回收。源码二进制及搬迁包内二进制均通过 | 不代表真实 IM/远程知识源或外部模型服务已通过 |
+| macOS 原生双宿主 | 最新修复包在独立临时中文/空格 HOME（`客户 Home`）与 XDG、`LC_ALL=C` 下完成 literal 中文路径、8 端口并行、重复 identifier、同 namespace Dev/基础身份互斥、崩溃/重启回收、JSONC 全局配置/受管 MCP 重启恢复及退出互不干扰，**9 项通过**；报告 `native-hosts-final-macos.json` 的 succeeded 为 true。新增 JSONC 检查在旧包上先真实检出缺陷（`native-jsonc-negative-control.log`），最新包保留用户字段、移除旧受管 environment，Knowledge/delegate 均 connected | 正式签名权限、托盘交互和跨版本升级不由此推导 |
+| 单 Agent / Team / Pipeline | 两品牌单 ACP＋Knowledge MCP、Leader/Member delegate、成员权限、Pipeline/worktree/产物持久化及 ACP 重启恢复通过；真实 OpenCode 由本地 SSE fixture 驱动单 Agent 与 Team 工具循环通过。最新 Universal 包内复跑 **12 项通过**，报告 `sidecars-models-universal-final.json`（ARM64 执行）；delegate 动态路由套件 **33/33、96 断言**，品牌 integration **3/3** | ACP Agent 和模型使用确定性本地 fixture，真实第三方产品、账号和模型质量另验 |
+| 旧默认构建的数据前向读取 | 已安装 0.3.9 的真实 sidecar 写入配置、会话、渠道、Agent、知识源 fixture，当前默认构建（同为 0.3.9）经五类 HTTP API 全部读回；同 HOME/workspace 下 MyWork 不暴露默认记录。独立文件写入沙箱正负控制通过，12 个进程全部退出且 cleanupErrors 为空；报告 `legacy-default-data-forward.json` | 只证明该已安装构建→当前构建的受测数据前向读取，不是跨版本安装器升级、降级或真实账号验收 |
+| Desktop / 类型检查 | Desktop **933** 项测试通过（`all-packages-final.log`），9 包 typecheck 全部通过（`typecheck-final.log`） | 不代表真 WebView 或完整安装链已验收 |
+| Rust 宿主复审 | 完整套件 **185/185**（`rust-jsonc-final-review.log`），含 JSONC 严格读取/受管 MCP 重启归一/读写失败不覆写、macOS C locale＋中文路径真实子进程、集中 IPC MockRuntime 真复制命令的阻断/允许对照、数据租约、进程身份及精确回收负例 | Windows 专属进程查询分支及 Windows/Linux 原生启动仍需对应 runner/主机 |
+| 品牌浏览器 E2E | Chrome **156.0.8078.74 30/30**、WebKit **26.5 30/30**；报告和截图分别在 `.brand-build/verification/browser-brand-startup/` 与 `browser-brand-startup-webkit/` | 浏览器 shim 不替代原生宿主/系统授权；本轮已消除先前超时与测试正则误判的阻塞 |
+| 依赖冻结后的浏览器补充验收 | Chrome **156.0.8078.74**、WebKit **26.5** 各 30 个严格阻断场景通过；正常 Ready 两品牌 × 三语各 **6 流程/30 检查组**通过，Home/About logo 精确作用域与当前素材字节核对，Solo/Team UI切换和草稿保留通过。冻结依赖 ARM sidecar 下 i18n 6 项、Settings 两引擎各 10 项通过；汇总 `dependency-freeze-browser-summary.json` | Ready 的 IPC/HTTP 是明确 fixture；不代表原生 WKWebView、真实模型/账号或系统权限已通过。真正工具循环由包内 sidecar 另验 |
+| 既有浏览器业务回归 | 国际化切换/持久化、真实 ACP 计划链路、设置三分区 Chrome/WebKit 走查均通过；`browser-i18n.log`、`browser-plan-acp.log`、`browser-settings-tabs*.log` | 设置/i18n 使用部分后台 fixture 或未启动 sidecar，日志的已知 offline 噪声按原套件边界处理；不宣称所有业务功能零错误 |
+| macOS `.app` 公共入口 | `APPLE_SIGNING_IDENTITY=-` 经公共 wrapper **默认 → MyWork → 默认** 三次 app-only 构建均返回 0；默认/MyWork 均通过 `codesign --verify --deep --strict` | 此行只验证包结构，native 生命周期另列；ad-hoc 完整性不等于 Developer ID 正式签名、公证或权限验收 |
+| macOS DMG / Universal | JSONC/动态路由修复后，默认 ARM64 DMG、基础 identifier 的 MyWork ARM64 app、MyWork Universal Dev DMG 均重建成功（`default-native-release-final.log`、`mywork-base-native-final.log`、`.brand-build/mywork/universal-release-final.log`）；真实布局 `app.x=180 < Applications.x=480`，导出 hash/大小匹配 manifest，包内 ad-hoc deep/strict 校验通过；MyWork 五个 Mach-O 均含 `x86_64 arm64`。最终报告 `macos-default-dmg.json`、`macos-mywork-universal-dmg.json` | Intel Mac 运行、Developer ID 正式签名、公证、Gatekeeper 和系统权限未验收 |
+| 客户路径可移植性 | 最新 DMG 复制到临时中文/空格客户目录后签名不变；269 个包内文本资源无 checkout 路径；5 个 Mach-O 只依赖相对或系统 dylib；搬迁后真实 sidecar 单 Agent/Team/重启循环通过；原生宿主还在中文/空格 HOME 下验证 JSONC/MCP 恢复 | 不承诺所有客户 OS/CPU/第三方运行时均满足，编译诊断中的源码字符串不等于运行依赖 |
+| MyWork Windows / Linux | 三平台代码分支和 CI 门禁已配置 | **native 打包、签名、安装、升级、卸载与共存未验收**；本机没有对应 OS/VM，也未触发远端 CI |
+
+此前（Dock留白修正前）连续构建的实际 Info.plist 核对为 `Ultrawork / com.ultrawork.desktop / ultrawork` 与 `MyWork / com.ultrawork.mywork / mywork`（名称 / identifier / 可执行文件）。当时默认 ICNS 的 SHA-256 与源码 `icons/icon.icns` 完全相同，且与 MyWork 不同；两包内技能 `.builtin-version` 也不同，证明品牌后回构未沿用自定义图标或技能包。报告在 `.brand-build/verification/packaged-apps-macos-arm64.json`（ignored）。此前另有 `MyWork Dev.app` 手工 ad-hoc 校验，它同样不属于正式签名验收。
+
+此前仅对齐两品牌圆角时另行重建 MyWork Universal Dev DMG（`.brand-build/mywork/universal-release-icon-aligned.log`），当时搬迁/签名/架构报告为 `macos-mywork-icon-aligned-dmg.json`。包内图标检查按 manifest 的品牌 digest 精确定位生成输入，而非取任意旧 staging；当时 ICNS 为 277157 字节，摘要见 `packaged-mywork-rounded-icon.json`。上述业务与原生生命周期代码未在此次图标/setup 补齐中改变，不把先前报告伪写成新包已重复执行全部场景。
+
+原生包内验证和后台扩展报告均放在忽略目录 `.brand-build/verification/`。此前 DMG 的 Finder `-1712` 和 Chrome 连接超时属于历史尝试，本轮已真实复验通过；没有通过关闭 DMG 布局校验来把失败转成成功。原生双宿主生命周期报告已取得，但不能把它等同于三平台全部原生验收或正式权限授权。本机检查为零个有效 Apple codesigning identity，且未配置公证凭证；正式签名、公证和系统权限不能用 ad-hoc `.dev` 包替代。通过上述测试不能证明所有客户环境或所有输入都不存在缺陷。
+
+本轮还以隔离探针环境尝试 `arch -x86_64 <Intel OpenCode> --version`，返回 `Bad CPU type in executable`，因此本机也无法用 Rosetta 补执行 Intel sidecar；报告 `dependency-freeze-rosetta-smoke.json`。工具路径探测未找到可用 Windows/Linux 虚拟机或容器 CLI，不能把已生成 PE/ELF 文件写成对应系统运行通过。
+
+### 发行包的原生场景验收
+
+以下场景需在对应系统补齐；Release CI 的构建结果不能替代其通过证据。
+
+在 macOS、Windows、Linux 各自宿主上构建并安装默认 Ultrawork 与 MyWork，核对程序名、应用/托盘图标、identifier/包名、快捷方式和实际路径。两个品牌同时运行时分别发送消息、写入渠道/知识库/历史，再重启确认隔离；同品牌 Dev/正式版应互斥。缺/坏上下文、旧 registry、错误身份标记或已被占用的数据租约应阻断且不启动业务。
+
+针对同品牌新旧版本验证升级保留自己的数据，卸载/重装不会修改另一品牌；对 Windows MSI/NSIS、Linux deb/rpm 逐项核对。macOS 的权限验收须使用已正式签名的品牌包，分别检查屏幕录制、通知、Gatekeeper、公证与 DMG 布局；ad-hoc `.dev` 包的结果不能作为正式包权限结论。
+
+### 需要人工配合的真机验收方法
+
+常规品牌界面、数据隔离和本地模型工具循环已有自动化，不要求再手点一遍代替测试。以下用于补齐正式发行、其他 OS 与真实账号边界；建议使用独立系统测试账号和新建工作区，分别安装默认与 MyWork 的正式签名包。
+
+1. 从系统启动器打开两个品牌，检查名称、圆角图标、About、托盘/菜单栏和三个语言。分别首次配置模型/外部 Agent，确认配置和历史不会出现在另一品牌。
+2. 单 Agent 在新工作区输入：`只在当前工作区新建 brand-single-smoke.txt，内容为 SINGLE_AGENT_OK。然后读取该文件，报告完整路径和内容。不要访问网络。` 检查正文、工具过程和产物预览，重启后确认记录与文件仍可读。
+3. 配置两名可用成员并选择 Team，输入：`请使用团队协作：成员 A 新建 team-a.txt，内容 TEAM_A_OK；成员 B 新建 team-b.txt，内容 TEAM_B_OK；Leader 读取两份文件，新建 team-summary.md 汇总完整路径和内容。仅在当前工作区操作，无需联网。` 检查成员状态、委托权限、文件和汇总，重启后确认 Team 绑定与历史仍在。
+4. 执行任务时关闭主窗口，确认托盘/菜单栏常驻、任务继续；从托盘恢复后再显式退出，确认另一个品牌仍正常。正式签名包中验证通知授权、后台通知与截图按钮：首次拒绝、再次授权、Esc 取消、成功添加附件；系统权限弹窗需要用户本人确认。
+5. 各品牌用更新版本安装器覆盖升级，再卸载/重装其中一个，确认自己的数据按预期保留、另一品牌文件/数据未变。Windows 分别验 MSI/NSIS，Linux 分别验 deb/rpm；未实际执行升级前不能写成通过。
+
+补齐这些边界需要对应 Windows/Linux/Intel Mac 测试环境、正式签名/公证配置，以及需要验证的真实模型/外部 Agent/渠道账号。凭证应放在本机或 CI 的安全配置中，不写入仓库或测试报告。

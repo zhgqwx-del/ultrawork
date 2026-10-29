@@ -1,0 +1,74 @@
+/** Pure identity contract shared by build tools, renderer and runtime adapters. */
+export interface BrandIdentity {
+  readonly schemaVersion: 1
+  readonly brandId: string
+  readonly productName: string
+  readonly identifier: string
+  readonly namespace: string
+  readonly isDefault: boolean
+  readonly mainBinaryName?: string
+}
+
+export const DEFAULT_BRAND: BrandIdentity = Object.freeze({
+  schemaVersion: 1,
+  brandId: "ultrawork",
+  productName: "Ultrawork",
+  identifier: "com.ultrawork.desktop",
+  namespace: "ultrawork",
+  isDefault: true,
+})
+
+const RESERVED = new Set(["ultrawork", "desktop", "opencode", "codex", "claude", "gemini", "qoder", "hermes"])
+const DEVICE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
+
+export function validateBrandId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length < 2 || value.length > 32 ||
+      !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value) || RESERVED.has(value) || DEVICE_NAME.test(value)) {
+    throw new Error("brandId must be a unique, non-reserved lowercase ASCII name (2–32 characters)")
+  }
+}
+
+export function validateProductName(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !value || value.length > 80 || value !== value.trim() ||
+      /[\u0000-\u001f<>:"/\\|?*]/.test(value) || /[. ]$/.test(value) || DEVICE_NAME.test(value)) {
+    throw new Error("productName must be a valid application filename (1–80 characters)")
+  }
+  if (["ultrawork", "ultrawork dev"].includes(value.normalize("NFKC").toLowerCase())) {
+    throw new Error("Custom productName conflicts with the default Ultrawork application")
+  }
+}
+
+export function resolveIdentity(config?: { schemaVersion?: unknown; brandId: unknown; productName: unknown }): BrandIdentity {
+  if (!config) return DEFAULT_BRAND
+  if (config.schemaVersion !== undefined && config.schemaVersion !== 1) throw new Error("Unsupported brand schemaVersion")
+  validateBrandId(config.brandId)
+  validateProductName(config.productName)
+  return Object.freeze({
+    schemaVersion: 1,
+    brandId: config.brandId,
+    productName: config.productName,
+    identifier: `com.ultrawork.${config.brandId}`,
+    namespace: config.brandId,
+    mainBinaryName: config.brandId,
+    isDefault: false,
+  })
+}
+
+/** Validate untrusted JSON without accepting arbitrary identifier/path overrides. */
+export function parseBrandIdentity(value: unknown): BrandIdentity {
+  if (typeof value !== "object" || value === null) throw new Error("Missing brand identity")
+  const item = value as Record<string, unknown>
+  const expected = item.brandId === DEFAULT_BRAND.brandId ? DEFAULT_BRAND : resolveIdentity({
+    schemaVersion: item.schemaVersion, brandId: item.brandId, productName: item.productName,
+  })
+  for (const key of ["schemaVersion", "brandId", "productName", "identifier", "namespace", "isDefault", "mainBinaryName"] as const) {
+    if (item[key] !== expected[key]) throw new Error(`Invalid brand identity field: ${key}`)
+  }
+  return expected
+}
+
+export function packageSlug(productName: string): string {
+  return productName.normalize("NFKC").replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2").replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "").toLowerCase()
+}

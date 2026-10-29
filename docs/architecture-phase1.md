@@ -11,6 +11,7 @@
 > | Desktop Client (Tauri) | ✅ 已实现 | React 19 + Vite 7 + Tailwind 4（原设计为 SolidJS，实际采用 React） |
 > | @agent/api-client | ✅ 已实现 | TypeScript SDK，REST + SSE |
 > | @agent/server-manager | ✅ 已实现 | Sidecar spawn + health check |
+> | @agent/brand | ✅ 已实现（2026-10-29） | 构建/renderer 共用纯身份 + Node/Bun 运行时上下文；Rust 宿主派生品牌路径、持有数据租约并下发 sidecar/MCP/agent。默认 Ultrawork，首个 MyWork 发行版；决策见 [ADR-075](./decisions/075-independent-brand-releases.md)，原生验收边界见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075) |
 > | @agent/channel-gateway | ✅ 已实现 | 独立 sidecar :4097, DingTalk Stream Mode + WeChat ilink, Bridge 会话桥接, Hono on Bun.serve, 配置持久化 `~/.ultrawork/channels.json` |
 > | @agent/knowledge-sidecar | ✅ 已实现 | 独立 sidecar :4098, 本地文件夹 RAG (TF-IDF + FTS5 + RRF) + 第三方平台 IMA adapter + MCP bridge, DB `~/.ultrawork/knowledge/kb.db`（ADR-026） |
 > | @agent/acp-client | ✅ 阶段1（claude/gemini/qoder 达标） | 独立 sidecar :4099 (Tauri 托管), ACP 驱动外部 agent（claude 经 `@agentclientprotocol/claude-agent-acp` 0.44〔token/cost 页脚 + thoughtLevel 思考力度〕；gemini 经 `--experimental-acp`、qoder 经 `qodercli --acp`，per-agent 怪癖修复见 gotchas §8）+ turn 整形成 opencode SSE 形状（复用 ADR-029 渲染器）+ 权限回环（permission-dock）+ 知识库 MCP opt-in；会话级绑定（一会话一 agent）；配置 `~/.config/ultrawork/agents.json`（Settings 预置模板一键填充）。会话历史持久化（W4b：整形消息落盘 `~/.local/share/ultrawork/acp-sessions/` + session/load 懒恢复 + replay 抑制）已实现。详见 ADR-027 + `agent-os-target-architecture.md` |

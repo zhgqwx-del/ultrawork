@@ -143,6 +143,7 @@ try {
         // plugin — see the note in use-screenshot.ts about the plugin's webview scope.
         open_screen_recording_settings: () => null,
       }
+      ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
       // @ts-ignore
       window.__TAURI_INTERNALS__ = {
         invoke: async (c: string, a: any) => {

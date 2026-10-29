@@ -3,15 +3,15 @@
 // and the future delegate MCP shim can reach it over HTTP.
 
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
+import { brandPaths, brandPathOverride, opencodeBaseUrl } from "@agent/brand/node"
 import { Connector, OpenCodeBackend, UNLIMITED_SSE_RETRY } from "@agent/connector"
 import { DelegateManager, Orchestrator, RunStore } from "@agent/orchestrator"
 import type { ACPManager } from "./acp-manager.js"
 import { InProcACPBackend } from "./inproc-acp-backend.js"
 import { getOpencodePassword } from "./opencode-credentials.js"
 
-const OPENCODE_BASE_URL = process.env.OPENCODE_BASE_URL ?? "http://localhost:4096"
+const OPENCODE_BASE_URL = opencodeBaseUrl("http://localhost:4096")
 
 /**
  * Hidden opencode parent sessions live under a non-workspace directory so the
@@ -19,9 +19,7 @@ const OPENCODE_BASE_URL = process.env.OPENCODE_BASE_URL ?? "http://localhost:409
  * them; their children are additionally excluded by parentID + roots:true.
  */
 function hiddenParentDir(): string {
-  if (process.env.ORCHESTRATOR_HIDDEN_DIR) return process.env.ORCHESTRATOR_HIDDEN_DIR
-  const xdgData = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")
-  return join(xdgData, "ultrawork", "orchestrator-hidden")
+  return brandPathOverride("ORCHESTRATOR_HIDDEN_DIR", join(brandPaths().dataRoot, "orchestrator-hidden"))
 }
 
 export interface OrchestrationHost {

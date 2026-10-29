@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
+import { writeSidecarMetadata } from "./sidecar-metadata"
 import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
@@ -8,7 +9,6 @@ const acpDir = path.join(rootDir, "packages/agent/acp-client")
 const tauriDir = path.join(rootDir, "packages/client/desktop/src-tauri")
 const tauriBinDir = path.join(tauriDir, "binaries")
 
-const ACP_PORT = 4099
 
 // Map Tauri target triple → bun --target value
 const BUN_TARGET_MAP: Record<string, { bunTarget: string; exe: boolean }> = {
@@ -60,11 +60,13 @@ const currentHash = await computeSourceHash(
   [
     path.join(acpDir, "package.json"),
     path.join(rootDir, "bun.lock"),
+    import.meta.path,
+    path.join(rootDir, "scripts/sidecar-metadata.ts"),
   ],
   await workspaceDepDirs(acpDir, rootDir),
 )
 
-if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {
+if (!force && await Bun.file(`${outFile}.metadata.json`).exists() && !await needsRebuild(hashFile, currentHash, outFile)) {
   const size = Bun.file(outFile).size / 1024 / 1024
   console.log(`ACP Client up-to-date, skipping build (${size.toFixed(1)} MB)`)
   process.exit(0)
@@ -87,20 +89,10 @@ if (process.platform === "darwin" && isMacOSTarget) {
 }
 
 await saveHash(hashFile, currentHash)
+writeSidecarMetadata(outFile, tauriTarget, currentHash)
 
-// Stale-process guard: Tauri's start_sidecar reuses any healthy process on
-// :4099 (prepare_port). The sources just changed, so a process left over from
-// a previous run (or a manual `bun run dev`) would serve OLD code — kill it so
-// the next app start spawns the freshly built binary. Skip-build runs don't
-// get here: an unchanged binary makes reuse harmless.
-if (tauriTarget === getCurrentTauriTarget() && process.platform !== "win32") {
-  const stale = await $`lsof -ti tcp:${ACP_PORT}`.nothrow().text()
-  const pids = stale.trim().split("\n").filter(Boolean)
-  if (pids.length > 0) {
-    await $`kill ${pids}`.nothrow()
-    console.log(`Killed stale ACP Client on :${ACP_PORT} (pid ${pids.join(", ")}) — rebuilt code takes over on next start`)
-  }
-}
+// Building must never kill a running application by port number.
+// The host owns restart and orphan reclamation with instance ownership checks.
 
 const size = Bun.file(outFile).size / 1024 / 1024
 console.log(`ACP Client ready: acp-client-${tauriTarget}${suffix} (${size.toFixed(1)} MB)`)

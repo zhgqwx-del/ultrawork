@@ -49,7 +49,7 @@ function isSidecarPorts(value: unknown): value is SidecarPorts {
  * outside Tauri — on any failure the preferred ports stay in effect, so the
  * startup gate in main.tsx can await this without ever wedging the boot.
  */
-export async function loadSidecarPorts(): Promise<SidecarPorts> {
+export async function loadSidecarPorts(strict = false): Promise<SidecarPorts> {
   try {
     const resolved = await invoke<unknown>("get_sidecar_ports")
     if (!isSidecarPorts(resolved)) {
@@ -57,6 +57,7 @@ export async function loadSidecarPorts(): Promise<SidecarPorts> {
     }
     ports = resolved
   } catch (err) {
+    if (strict) throw err
     console.warn("Falling back to preferred sidecar ports:", err)
     ports = PREFERRED_PORTS
   }

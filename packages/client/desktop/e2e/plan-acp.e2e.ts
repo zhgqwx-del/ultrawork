@@ -104,11 +104,15 @@ try {
   await poll("vite", async () => (await fetch("http://localhost:1420/")).ok)
   browser = await chromium.launch({ channel: "chrome", headless: true })
   const page = await browser.newPage()
-  page.on("pageerror", (e) => console.log("[pageerror]", e.message))
+  const pageErrors: string[] = []
+  page.on("pageerror", (e) => { pageErrors.push(e.message); console.log("[pageerror]", e.message) })
   await page.addInitScript(({ ws, pw }) => {
     const handlers: Record<string, (a: any) => any> = { check_directory_exists: () => true, ensure_default_workspace: () => ws, login_shell_path: () => "", scan_workspace_changes: () => [], get_sidecar_credentials: () => ({ username: "opencode", password: pw }) }
-    // @ts-ignore
-    window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
+    const fixtureWindow = window as any
+    fixtureWindow.__ULTRAWORK_BROWSER_TEST__ = true
+    fixtureWindow.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
+    // Tauri 2.10 event cleanup uses this native-injected registry in addition to invoke.
+    fixtureWindow.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
     localStorage.setItem("ultrawork-config", JSON.stringify({ apiBaseUrl: "", apiUsername: "opencode", apiPassword: pw }))
     localStorage.setItem("workspace_path", ws)
   }, { ws, pw: PW })
@@ -129,17 +133,20 @@ try {
   await page.waitForTimeout(3500)
 
   console.log("=== open right sidebar → assert Task Plan panel (ACP) ===")
-  await page.getByLabel(/Toggle right sidebar|切换右侧边栏/).click()
+  // planAutoReveal can already have opened it during snapshot hydration.
+  if (!(await page.getByText(/任务规划|Task Plan/, { exact: true }).isVisible())) {
+    await page.getByLabel(/Toggle right sidebar|切换右侧边栏/).click()
+  }
   await page.waitForTimeout(1500)
   const text = await page.locator("body").innerText()
   const stepsShown = EXPECTED.filter((s) => text.includes(s))
   const headerShown = /任务规划|Task Plan/.test(text)
   console.log(`[ui] steps shown ${stepsShown.length}/${EXPECTED.length} ${JSON.stringify(stepsShown)}, header=${headerShown}`)
 
-  const ok = stepsShown.length === EXPECTED.length && headerShown
+  const ok = stepsShown.length === EXPECTED.length && headerShown && pageErrors.length === 0
   verdict = ok
     ? "PASS ✅ — ACP plan rendered in the Task Plan panel via the real sidecar + connector + UI"
-    : `FAIL ❌ — steps=${stepsShown.length}/${EXPECTED.length} header=${headerShown}`
+    : `FAIL ❌ — steps=${stepsShown.length}/${EXPECTED.length} header=${headerShown} pageErrors=${JSON.stringify(pageErrors)}`
 } catch (e) { verdict = `ERROR: ${(e as Error).message}` }
 finally {
   console.log("\n=== VERDICT:", verdict, "===")

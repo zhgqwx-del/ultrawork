@@ -25,6 +25,7 @@ ACP Client Sidecar drives external coding agents (Claude Code, …) via ACP and 
 |---------|--------|-------------|
 | `@agent/api-client` | ✅ Done | OpenCode REST/SSE TypeScript client |
 | `@agent/server-manager` | ✅ Done | Process lifecycle management (spawn, health check, stop) |
+| `@agent/brand` | ✅ Implemented（ADR-075） | 纯身份契约（构建/renderer 共用）+ `./node` 受管运行时上下文、路径、环境与路由校验；原生发行验收边界见 testing §16 |
 | `@agent/client-desktop` | ✅ Done | Tauri desktop app (React 19 + Vite 7 + Tailwind 4) |
 | `@agent/channel-gateway` | ✅ Done | IM channel gateway (DingTalk Stream SDK + WeChat ilink + Hono on Bun.serve, sidecar :4097) |
 | `@agent/knowledge-sidecar` | ✅ Done | 本地 RAG 知识库 + 第三方平台 (IMA) adapter + MCP bridge, sidecar :4098 |
@@ -44,6 +45,7 @@ ultrawork/
 │   │       ├── tauri.conf.json  # Tauri config with externalBin
 │   │       └── binaries/        # Sidecar binaries (platform-specific)
 │   ├── core/
+│   │   ├── brand/src/           # Pure brand identity + Node/Bun runtime context
 │   │   ├── api-client/src/      # REST client for OpenCode API
 │   │   ├── connector/src/       # Control+event unification layer (backends/, sse-transport, binding-store)
 │   │   ├── orchestrator/src/    # Orchestration layer (primitives, pipeline, run-store; hosted by acp-client)
@@ -69,14 +71,15 @@ ultrawork/
 
 ```bash
 bun install              # Install dependencies
-bun run typecheck        # Type check all packages (6)
+bun run typecheck        # Type check all packages (9)
 bun run build:opencode   # Compile OpenCode sidecar binary
 bun run build:gateway    # Compile Gateway sidecar binary
 bun run build:knowledge  # Compile Knowledge sidecar binary
-bun run build:acp        # Compile ACP Client sidecar binary (kills stale :4099 on rebuild)
+bun run build:acp        # Compile ACP Client sidecar binary (does not kill a port owner)
 bun run tauri:dev        # Start desktop app in dev mode
 bun run tauri:build      # Build production desktop app
 bun run release          # Build Universal macOS DMG (dual-arch sidecars + lipo)
+bun run brand:inspect --brand branding/mywork/brand.json # Inspect an independent edition
 ```
 
 ## OpenCode API Reference
@@ -142,10 +145,13 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `src/lib/use-mcp-servers.ts` / `use-browser-mcp.ts` / `use-skills.ts`（含 `builtin` 分类 + `isBuiltinLocation`）/ `use-skill-deps.ts`（`check_skill_dependencies` invoke + `BUILTIN_DEP_MAP` 依赖 SSOT + `missingDeps`） / `use-builtin-shadow.ts`（`refresh_builtin_skills`/`remove_user_skill_override` invoke，内置遮蔽 fs 真相 + `changed` 协调契约）/ `use-channels.ts` / `use-knowledge-base.ts`
 - `src/lib/use-cli-connectors.ts` — 办公 CLI 连接器状态机（ADR-043）：五命令 invoke + generation 守卫 + 配置轮询（容忍瞬时 error/10min 超时显式报错）+ `refresh(id)` 按 id 清错；卡片 `CliConnectorCard`（connector prop 泛化）+ `OFFICE_CLI_CONNECTORS` 注册表在 Settings.tsx ServicesSection（「连接器」分区 MCP/办公 CLI 两组）
 - `src/lib/kb-client.ts` — **knowledge sidecar 的唯一 HTTP client**（ADR-045）：`kbFetch` / `kbEventsUrl`，自带 `knowledgeBaseUrl()` + `sidecarAuthHeaders()`。`add-source-dialog.tsx` 曾私藏第二份（硬编码 `:4098` + 无鉴权）导致加鉴权后添加知识源全线 401 —— **新增调用方一律复用它，不要另起 `fetch`**
-- `src/lib/sidecar-ports.ts` / `src/lib/sidecar-auth.ts` — **sidecar 端口与凭证的运行时解析（ADR-045）**：`main.tsx` 的启动 gate 在 `createRoot` 前一并 await，下游 `opencodeBaseUrl()`/`gatewayBaseUrl()`/`knowledgeBaseUrl()`/`acpBaseUrl()`/`sidecarAuthHeaders()` 全同步；两个 loader 永不 reject（校验返回值形状而非只 catch）。端口变更走 `sidecar-ports-changed` 事件 → `subscribeSidecarPorts` → SSEProvider 重建 connector
+- `src/lib/sidecar-ports.ts` / `src/lib/sidecar-auth.ts` — **sidecar 端口与凭证的运行时解析（ADR-045/075）**：`startup-gate.ts` 在业务 providers 挂载前一并 await；native 严格模式遇到无效 IPC 返回值会阻断，浏览器测试显式选择宽松模式。下游 URL/auth getter 全同步；端口变更走 `sidecar-ports-changed` → SSEProvider 重建 connector
+- `src/lib/brand.ts` / `startup-gate.ts` / `src/components/startup-blocked.tsx` — 编译期 APP_BRAND/图标与产品文案白名单；启动校验 Rust/renderer 身份，Blocked 不加载凭证/端口/workspace 或业务 providers（ADR-075）
 - `src/lib/path-utils.ts`（**跨平台路径工具，renderer 无 `node:path`**：`shortenPath`/`pathBasename`/`isAbsolutePath`，同吃 `/` 和 `\`；ADR-037）、`src/lib/platform.ts`（isMacOS）
 
 **Tauri 命令（`src-tauri/src/lib.rs`）**
+- **品牌宿主（ADR-075，`src-tauri/src/brand.rs`）**：编译身份 + home/XDG roots、身份标记与 OS 数据租约；`run/brand-context.json` 下发 sidecar/MCP/agent；`get_startup_status` + ready 写命令守卫；同品牌 Dev/正式版共用数据互斥，不同品牌独立。Rust ≥ 1.89
+- **OpenCode 全局配置（`lib.rs`）**：`parse_opencode_jsonc`/`read_opencode_json_at` 严格兼容 PATCH 写出的注释、尾逗号与 BOM；读/解析失败在业务初始化前阻断，不能退为空对象。`canonicalize_sidecar_mcp_paths`/`strip_persisted_sidecar_ports` 仅归一受管 MCP 命令、上下文与旧端口，保留用户配置，重启连通验收见 testing §16
 - **关窗口不退出 / 托盘（ADR-074，`src-tauri/src/background.rs`）**：`close_action(os, tray_ready, boot_failed)` 纯函数决定 Hide/Quit；`install_tray()` 在 `setup()` 试建一次（`catch_unwind`，Linux 缺库是 panic）；`restore_main_window()` 供 single-instance / macOS `Reopen` / 托盘共用；`set_tray_labels` 命令由 renderer `src/lib/tray-labels.ts`（`I18nProvider` 的 effect）推送应用语言文案。mac 菜单栏模板图 `icons/tray-template@2x.png`（占位）。真机门禁 `scripts/verify-close-to-background-macos.sh`（AX 驱动原生窗口，testing §14）。
 - **WebView2 首启自检（ADR-046，`src-tauri/src/webview_runtime.rs`）**：`ensure_webview_runtime()` 在 `main.rs` 里、`run()` 之前调用；`runtime_missing()` = `cfg!(target_os="windows") && tauri::webview_version().is_err()`（免 winreg），缺失弹 `rfd` 引导框到微软下载页再 `exit(1)`。Windows 装机走 `embedBootstrapper`（消除默认 `downloadBootstrapper` 的安装期明文 HTTP 下载执行）；`build-release.ts` 的 `buildWindowsInstallers()` 出双包（embed `-setup.exe` + `-offline-setup.exe`）+ MSI（embed 一种）。
 - `open_file_with_system` / `reveal_file_in_finder`（**走 `tauri-plugin-opener`**：内部 ShellExecute/open/xdg-open，跨平台且无 cmd 注入面，ADR-037）、`detect_chrome`（三平台分支 + Windows %LOCALAPPDATA%）、`get_sidecar_credentials`、`get_sidecar_ports`（运行时端口注册表，ADR-045）、`rich_path()`（补 PATH，用 `PATH_LIST_SEP`）
@@ -185,7 +191,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `delegate.ts` — DelegateManager（阻塞 delegate → D-2 契约 `{deliverable,sessionId,tokens,cost}`；长驻隐藏父 `[delegates]`；ring buffer 50）
 - `worktree.ts` — Fan-out worktree 隔离（create/remove/stageInputs/collectArtifact；`<xdgData>/ultrawork/worktrees/`）
 - `session-queue.ts`（QueueOwner 实现）, `task-registry.ts`（Semaphore 排队语义 + 任务跟踪）, `run-store.ts`（JSON 落盘 `~/.local/share/ultrawork/orchestrator-runs/`）
-- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `team-routes.ts`+`team-store.ts`（Team 会话注册表：leader/twin 以 ROOT 创建〔018 A-4〕+ ACP leader 注入回滚 + `team-sessions.json` 持久化）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
+- 宿主接线在 acp-client：`orchestration.ts`（组合根，per-workspace Connector + releaseConnector）, `orchestration-routes.ts`（9 端点）, `team-routes.ts`+`team-store.ts`（Team 会话注册表：leader/twin 以 ROOT 创建〔018 A-4〕+ ACP leader 注入回滚 + `team-sessions.json` 持久化）, `delegate-mcp.ts`（stdio shim：delegate/list_agents + progress keepalive；每次工具调用校验当前品牌/instanceId registry，预热握手不固定动态端口）, `inproc-acp-backend.ts`（直连 ACPManager，子会话恒 orchestrate:false）, `opencode-credentials.ts`
 - Desktop：`pages/Orchestration.tsx`（纯流水线页，018 A-3）+ `components/orchestration/pipeline-tab.tsx`（Pipeline|Fan-out 模板 + 步骤级 model）+ `lib/team-sessions-context.tsx`（018：per-workspace Team 注册表 context，徽标/补显/注入数据源 + ACP leader 加载即绑定）+ `lib/channel-sessions-context.tsx`（ADR-051：渠道会话注册表，喂侧边栏渠道徽标；gateway 不可达降级为空、badge-less 继续工作）+ `lib/use-unread.ts`（ADR-051：未读派生 + 冷启动地板 seedAt，模块级 store 而非 Provider）+ `components/session/team-header.tsx`（Team 成员条：头像组 + delegate SSE 实时活动环）+ `components/chat/team-member-select.tsx`/`agent-avatar.tsx`（成员卡片多选 / 首字母头像）+ `pages/OrchestrationRun.tsx`（依赖深度分层）+ `lib/orchestration-client.ts`（含 team sessions API）+ `lib/team-leader-prompt.ts`（Leader system 提示模板，017 §2.4）+ `lib/orchestrator-mcp.ts`（全局 MCP 静默 ensure，取代「编排模式」开关）+ `lib/use-child-session-history.ts`（懒加载语义共用）+ `components/chat/delegate-row.tsx`（delegate 卡片）+ `delegate-dock.tsx`（阻塞期权限）
 
 **ACP Client Sidecar（`packages/agent/acp-client/src/`）**
@@ -203,15 +209,25 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - `adapters/` — types.ts（KnowledgeAdapter 接口）, registry.ts, ima.ts, local-folder.ts
 
 **构建 / 打包 / CI（跨平台 mac/win/linux，ADR-037）**
+- `packages/core/brand/src/index.ts` / `node.ts` — 身份纯函数与受管 RuntimeContext SSOT；`brandPaths`/`brandEnvironment`/`managedBrandArguments`，显式受管错误不可回退默认路径/4099（ADR-075）
+- `branding/mywork/brand.json` + `identity.json` — 首个 MyWork/美柚图标预置与不可变发行身份；`scripts/brand-inspect.ts` 只读检查
+- `scripts/brand-build.ts` / `build-lock.ts` / `tauri-brand.ts` / `brand-artifacts.ts` / `sidecar-metadata.ts` — 配置与临时参数、图标/技能 staging、checkout 构建锁、身份账本、独立 target、当前品牌安装包 manifest 与默认/定制 sidecar 协议/哈希门禁。默认 Ultrawork；命令见 build-and-deploy §0.6
+- `scripts/build-probe-env.ts` — OpenCode vendor build/版本探针的临时应用 home/XDG，防止构建初始化或缓存清理触碰用户程序；保留工具链 HOME，finally 仅清理自建临时目录
+- `scripts/brand-sidecars.ts` / `linux-install-layout.ts` — Linux 自定义 externalBin 加 namespace 前缀，避免 `/usr/bin` 冲突；持锁 staging、真实 deb/rpm 安装清单校验及 manifest 记录（ADR-075）
 - `scripts/build-{opencode,gateway,knowledge,acp}.ts` — sidecar 编译（已支持全 target triple；产物 `<name>-<triple>[.exe]`，Tauri externalBin 自动解析；codesign/chmod 仅 darwin 守卫）
-- `scripts/build-release.ts` — 发布：macOS 走签名/公证/lipo；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包；开头显式跑 pack-builtin-skills（双保险）
+- `scripts/build-release.ts` + `macos-signing.ts` — 发布：macOS 走签名/公证/lipo，unsigned 由 Tauri 封装前 ad-hoc 签名；**非 macOS 走「构建 sidecar + `tauri build`」分支**出平台安装包；开头显式跑 pack-builtin-skills（双保险）
 - `scripts/verify-dmg-layout.ts` — 发布守卫：断言 DMG 安装窗口里 app 图标在 Applications 左边（解析 `.DS_Store` 的 Iloc 记录）；公证前跑；`--self-test` 版本跨平台、进 CI 合并门禁（gotchas §7）
+- `scripts/verify-brand-sidecars.ts` + `brand-model-fixture.ts` + `packages/agent/acp-client/scripts/brand-probe-acp-agent.ts` — 本机 native 双品牌 8 sidecar、同密码隔离；`--agents` 验单 ACP/Knowledge MCP、Team/delegate、Pipeline/worktree 与重启；`--models` 以本地 SSE 驱动真实 OpenCode 单 Agent/Team 工具循环；`--binaries-dir` 验搬迁包内程序；finally 回收，`--keep` 留证据（testing §16）
+- `scripts/verify-brand-macos-package.ts` — 真实导出 DMG 的 manifest/hash、plist、包内 deep/strict 签名、中文/空格客户路径搬迁及资源/dylib 运行依赖检查；不安装或启动 GUI
+- `scripts/verify-brand-native-macos.ts` — macOS 原生宿主独立生命周期 harness；执行状态以 testing §16 为准，不能由浏览器 shim 或 sidecar 通过推导
+- `scripts/verify-brand-upgrade.ts` — 已安装默认构建的 sidecar→当前默认构建的数据前向读取与 MyWork 隔离；macOS 独立文件写入沙箱，不启动桌面宿主、不使用真实用户数据；不等同安装器升级（testing §16）
+- `packages/client/desktop/e2e/brand-startup.e2e.ts` — Chrome/WebKit × 默认/MyWork × 三语启动门禁；不设置浏览器宽松标记，断言阻断态无业务 IPC/API/Provider，含只读诊断/重试/退出与截图
 - `scripts/fetch-l3-corpus.py` + `scripts/l3-corpus-manifest.json` — **L3 真实语料获取器**（059 §5 L3 / §六·补九）：清单进 git（repo + 钉死 commit + sha256 + 许可），**字节走缓存不入 git**（`~/.cache/ultrawork/l3-corpus/`，`ULTRAWORK_L3_CORPUS` 可覆盖；`<缓存根>/local/{docx,xlsx,pdf}/` 放本地私有语料，永不入 git 也不进 CI）。四个源全部 MIT/BSD 且**读 LICENSE 正文核过**；`--rebuild-manifest` 重钉。
 - `scripts/test-office-l3-corpus.py` — **L3 门禁**：全语料过 read→edit→validate 环，分开统计**崩溃 / 拒绝 / 损坏**三个率（崩溃 = 裸 traceback，**与退出码约定无关**，两代实现才可比）；「损坏」的定义直接 import L2 复用；输入门只做结构性判断且**不用被测技能站着的那个库**；基线臂从 git 取 `0a5b0987^` 的旧 doc-edit 到临时目录。`--selftest` 25 条正负控制，`--require-corpus` 让「语料缺失」判红。
 - `scripts/pack-builtin-skills.ts` — **内置技能构建期打包**（松散树→`skills-builtin.zip`+外置 sentinel，按内容 hash 惰性；fflate 保 unix exec bit；产物在 `src-tauri/resources/builtin-skills/`，gitignore、`.gitkeep` 保 `generate_context!` 编译；beforeDevCommand/beforeBuildCommand 自动跑，ADR-041）；e2e 侧共享 helper `packages/client/desktop/e2e/builtin-zip-helper.ts`
 - `scripts/setup.ts` — **跨平台一键 setup**（Bun API，替代只能 Unix 跑的 `setup.sh`）；`bun run setup`
 - `.github/workflows/ci.yml` — **跨平台强制门禁**：push/PR 三平台矩阵跑 `turbo typecheck`+`turbo test`+`cargo test`（rust job 在 windows-latest 上首次真编 `#[cfg(windows)]` 分支）
-- `.github/workflows/release.yml` — tag `v*` 触发三平台出安装包（dmg/msi/nsis/deb/rpm）+ 自动建 Release 页；**macOS 签名+公证已打通**（ADR-069：`Import Apple Developer ID certificate` 步骤把 `APPLE_CERTIFICATE` base64 .p12 导入一次性 keychain；6 个 `APPLE_*` secret；缺失则退回 unsigned）；guard job 校验 tag==tauri.conf 版本
+- `.github/workflows/release.yml` + `scripts/release-ci.ts` — tag `v*` 同版本构建默认 Ultrawork/MyWork × 三平台，六任务及产物 manifest 校验通过后统一建 Release；dispatch 可选 all/default/mywork，仅出验证 artifact。macOS tag 必须 Developer ID 签名+公证+staple，不能 unsigned 降级；6 个 `APPLE_*` secret 沿用 ADR-069，一次性 keychain 导入；guard 校验 tag==tauri.conf 版本。发布构建与原生安装/系统权限验收分开，见 testing §16
 - `packages/client/desktop/src-tauri/tauri.conf.json` — `bundle.targets:"all"`（Tauri 按平台产对应安装包）
 
 ## Key Documentation
@@ -221,7 +237,7 @@ GET  /file?path=           → File tree (relative paths + x-opencode-directory 
 - [docs/conventions.md](./docs/conventions.md) — Development conventions & patterns（正向模式）
 - [docs/gotchas.md](./docs/gotchas.md) — 踩坑清单（反向陷阱 + 上游非直觉契约，SSOT）
 - [docs/quality-gates.md](./docs/quality-gates.md) — 改动合入前的完成定义 / 质量门禁
-- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (74 ADRs, 001–074)
+- [docs/decisions/](./docs/decisions/) — Architecture Decision Records (75 ADRs, 001–075)
 - [docs/requirements.md](./docs/requirements.md) — Product requirements
 - [docs/archive/progress-raw.md](./docs/archive/progress-raw.md) — Detailed development history
 - [CHANGELOG.md](./CHANGELOG.md) — Version history

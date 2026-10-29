@@ -5,8 +5,8 @@
 // ACP session-store); this registry only carries Team metadata.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { brandPaths, brandPathOverride } from "@agent/brand/node"
 
 export interface TeamSessionEntry {
   /** The Leader's opencode session id (opencode leader) or its twin (ACP leader) — the desktop chat key. */
@@ -27,9 +27,7 @@ interface TeamSessionsFile {
 
 // Read lazily so tests can point at a tmp file after module load.
 function storePath(): string {
-  if (process.env.TEAM_SESSIONS_FILE) return process.env.TEAM_SESSIONS_FILE
-  const xdgData = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")
-  return join(xdgData, "ultrawork", "team-sessions.json")
+  return brandPathOverride("TEAM_SESSIONS_FILE", join(brandPaths().dataRoot, "team-sessions.json"))
 }
 
 export function loadTeamSessions(): TeamSessionEntry[] {

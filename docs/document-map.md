@@ -1,6 +1,6 @@
 # Ultrawork 文档地图
 
-> 全部文档约 95 个 Markdown 文件，按用途分五层：入口层、功能层、决策层、讨论层、归档层。
+> 团队文档按用途分五层：入口层、功能层、决策层、讨论层、归档层。
 > （计数为约数，非权威；准确性由 `scripts/check-docs.ts` 校验 ADR/路径等可机检项。）
 > **本文件不逐条罗列 decisions/discussions 文件名**——那两层的权威索引是各自目录的 `README.md`，此处只放层级说明 + 指针（罗列必然漂移）。
 
@@ -18,7 +18,7 @@ ultrawork/
 │   ├── getting-started.md             #   快速上手：依赖安装、Clone、启动、FAQ、AI 协作工作流
 │   ├── architecture-phase1.md         #   架构设计：Part I 已实现现状（系统架构图/模块职责/数据流）+ Part II 规划中设计草案
 │   ├── agent-os-target-architecture.md #  Agent OS 目标架构（开发起点，阶段1-3 已落地）：ADR-027/030/031 + discussions 011-014 收敛；§0 决策基线表 + 阶段0-4 路线图
-│   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台
+│   ├── build-and-deploy.md            #   构建部署：Sidecar 编译、Tauri 打包、签名、跨平台、独立品牌配置/参数与路径（ADR-075）
 │   ├── api-reference.md               #   API 参考：OpenCode Server 全部端点、请求/响应格式、认证
 │   ├── conventions.md                 #   开发规范：代码约定、状态管理模式、SSE 处理、组件模式（正向模式）
 │   ├── gotchas.md                      #   踩坑清单：OpenCode/MCP/Gateway/IMA/Tauri 反向陷阱 + 上游非直觉契约（SSOT，从 MEMORY 固化）
@@ -31,11 +31,11 @@ ultrawork/
 │   │
 │   ├── decisions/                     # ═══ 架构决策层 (ADR) ═══
 │   │   ├── README.md                  #   ADR 权威索引：模板说明 + 全部决策一览表（编号/标题/状态/日期）★ 找 ADR 从这里进
-│   │   └── 001..043                   #   ADR 正文（Tauri/Sidecar/消息渲染/知识库/ACP 多 agent/connector/orchestrator/内置技能/跨平台/软刷新/zip 分发/BYOK 搜索/办公 CLI 连接器等）
+│   │   └── 001..075                   #   ADR 正文（含独立品牌发行版的身份/路径/构建与运行时隔离）
 │   │
 │   ├── discussions/                   # ═══ 讨论层（探索/调研，提案可能演变为 ADR）═══
 │   │   ├── README.md                  #   讨论权威索引（区分「调研记录(权威参考)」vs「讨论中(待定提案)」vs「已落地」）★ 找讨论从这里进
-│   │   └── 001..025                   #   调研/方案正文（mobile-relay/sidecar-sharing/custom-provider/vendor-bump-perf/工具披露/会话一致性/plan 面板/ppt-master 等）
+│   │   └── 001..062                   #   调研/方案正文（含独立品牌发行版实施方案）
 │   │
 │   └── archive/                       # ═══ 历史归档层（README.md 是索引）═══
 │       ├── README.md                  #   归档索引：每个文件的归档原因 + 何时值得回看
@@ -120,8 +120,8 @@ design/product/feature-checklist.md (功能状态) → design/product/prototype/
 |------|------|--------|------|----------|
 | **入口层** | 根目录 | 4 | 所有人 | 每次任务结束 |
 | **功能层** | `docs/*.md` | 13 | 开发者 | 按需更新 |
-| **决策层** | `docs/decisions/` | 75 (README + 74 ADR) | 架构师/新成员 | 有重大决策时新增 |
-| **讨论层** | `docs/discussions/` | 61 (README + 60) | 架构师 | 探索阶段记录 |
+| **决策层** | `docs/decisions/` | 76 (README + 75 ADR) | 架构师/新成员 | 有重大决策时新增 |
+| **讨论层** | `docs/discussions/` | 62 (README + 61) | 架构师 | 探索阶段记录 |
 | **归档层** | `docs/archive/` | 14 | 考古/追溯 | 归档时可加 FROZEN 头，之后只追加不修改 |
 | **设计层** | `design/` | 4+ | 产品/设计 | 需求变更时 |
 | **AI 记忆** | auto-memory (本地) | 6 | Claude Code | 每次 session |

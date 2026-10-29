@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -43,13 +44,35 @@ class InstallError(Exception):
 
 
 def _codex_home() -> str:
-    # ultrawork: 解析 config 目录（与 src-tauri global_config_dir 对齐）
+    # ultrawork: host context controls app-managed skills, including custom brands.
+    context_file = os.environ.get("ULTRAWORK_BRAND_CONTEXT_FILE")
+    raw = os.environ.get("ULTRAWORK_BRAND_CONTEXT")
+    context = None
+    if context_file:
+        with open(context_file, encoding="utf-8") as source:
+            context = json.load(source)
+    elif raw:
+        context = json.loads(raw)
+    if context is not None:
+        identity = context.get("identity", {})
+        namespace = identity.get("namespace", "")
+        config = context.get("configRoot", "")
+        skills = context.get("skillsRoot", "")
+        if (context.get("schemaVersion") != 1 or not namespace
+                or os.path.basename(config) != namespace or not os.path.isabs(config)
+                or os.path.normpath(skills) != os.path.join(config, "skills")):
+            raise RuntimeError("Invalid managed brand skills context")
+        override = os.environ.get("ULTRAWORK_SKILLS_DIR")
+        if override and os.path.normpath(override) != os.path.normpath(skills):
+            raise RuntimeError("ULTRAWORK_SKILLS_DIR conflicts with managed brand")
+        return config
+    if os.environ.get("ULTRAWORK_BRAND_MANAGED") == "1":
+        raise RuntimeError("Managed brand context is missing")
     base = os.environ.get("ULTRAWORK_SKILLS_DIR")
     if base:
-        return os.path.dirname(base.rstrip("/"))
+        return os.path.dirname(os.path.normpath(base))
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
     return os.path.join(xdg, "ultrawork")
-
 
 def _tmp_root() -> str:
     base = os.path.join(tempfile.gettempdir(), "codex")

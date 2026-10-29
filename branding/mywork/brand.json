@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "brandId": "mywork",
+  "productName": "MyWork",
+  "icon": "./assets/meiyou-app-rounded.png",
+  "trayIcon": "./assets/meiyou-tray.png"
+}

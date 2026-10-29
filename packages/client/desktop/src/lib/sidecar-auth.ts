@@ -34,12 +34,14 @@ function isCredentials(value: unknown): value is SidecarCredentials {
  * Note the host answers `null` for an unknown command rather than throwing, so
  * validate the shape rather than trusting the absence of an exception.
  */
-export async function loadSidecarCredentials(): Promise<SidecarCredentials | null> {
+export async function loadSidecarCredentials(strict = false): Promise<SidecarCredentials | null> {
   try {
     const resolved = await invoke<unknown>("get_sidecar_credentials")
     credentials = isCredentials(resolved) ? resolved : null
     if (!credentials) throw new Error(`malformed get_sidecar_credentials response`)
   } catch (err) {
+    credentials = null
+    if (strict) throw err
     console.warn("No sidecar credentials; requests will be unauthenticated:", err)
     credentials = null
   }

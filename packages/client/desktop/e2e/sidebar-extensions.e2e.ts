@@ -101,6 +101,7 @@ try {
       check_cli_connectors: () => [], "plugin:opener|open_url": () => null,
       "plugin:event|listen": () => 0, "plugin:event|unlisten": () => null,
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore — minimal Tauri IPC + event shim (see sidebar-select.e2e.ts).
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => handlers[c] ? handlers[c](a) : null, transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     // @ts-ignore

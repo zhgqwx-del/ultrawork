@@ -28,8 +28,8 @@ import { fileURLToPath } from "node:url"
 import { JUNK, isGeneratedDir } from "./builtin-skills-exclude"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
-const BUILTIN_DIR = join(ROOT, "skills", "builtin")
-const OUT_DIR = join(ROOT, "packages/client/desktop/src-tauri/resources/builtin-skills")
+const BUILTIN_DIR = process.env.ULTRAWORK_BUILTIN_SKILLS_SOURCE || join(ROOT, "skills", "builtin")
+const OUT_DIR = process.env.ULTRAWORK_BUILTIN_SKILLS_OUTPUT || join(ROOT, "packages/client/desktop/src-tauri/resources/builtin-skills")
 const ZIP_PATH = join(OUT_DIR, "skills-builtin.zip")
 const SENTINEL_PATH = join(OUT_DIR, ".builtin-version")
 
@@ -40,6 +40,7 @@ if (!existsSync(join(BUILTIN_DIR, "README.md"))) {
 // ── 内容 hash：与 fetch-builtin-skills.ts 的 sentinel 算法逐字节一致 ──
 // （树未被手改时 == 提交在 git 的 skills/builtin/.builtin-version，便于对账）
 const hash = createHash("sha256")
+if (process.env.ULTRAWORK_BUILTIN_SKILLS_VERSION_SEED) hash.update(process.env.ULTRAWORK_BUILTIN_SKILLS_VERSION_SEED + "\0")
 const files: string[] = [] // 相对路径，zip 统一 '/' 分隔
 // 排除规则（JUNK 本地垃圾 + example 回归链现生成的 export/）由 builtin-skills-exclude.ts
 // 单一来源提供，与 fetch-builtin-skills.ts 的 sentinel walk 共享——保证对账不变式不靠人肉同步。

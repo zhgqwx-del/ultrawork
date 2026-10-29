@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
+import { runtimeBrandContext } from "@agent/brand/node"
 import type { RecipeStep } from "./types"
 
 // Artifact handoff contract (ADR-031 D-2/D-4): a step's deliverable is a FILE
@@ -8,7 +9,7 @@ import type { RecipeStep } from "./types"
 // agent's cwd-sandboxed file tools can write it without extra grants.
 
 export function runArtifactDir(workspace: string, runId: string): string {
-  return join(workspace, ".ultrawork", "runs", runId)
+  return join(workspace, `.${runtimeBrandContext()?.identity.namespace ?? "ultrawork"}`, "runs", runId)
 }
 
 export function artifactNameOf(step: RecipeStep): string {

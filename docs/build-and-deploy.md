@@ -1,6 +1,6 @@
 # Ultrawork 桌面应用打包指南
 
-<!-- last-synced: 2026-07-26 -->
+<!-- last-synced: 2026-10-29 -->
 
 > 目标平台：macOS (ARM64 / x86_64) · Windows (x64) · Linux (x64/ARM64)
 > 技术栈：Tauri 2 + React 19 + Vite 7 + OpenCode Sidecar (Bun compiled binary)
@@ -16,7 +16,7 @@
 
 | 平台 | 必装 |
 |---|---|
-| **全部** | **Bun**（bun.sh）、**Rust**（rustup / cargo）、**Git** |
+| **全部** | **Bun ≥ 1.3.12**（bun.sh）、**Rust ≥ 1.89**（rustup / cargo；品牌数据租约使用标准库文件锁）、**Git** |
 | **macOS** | Xcode CLT：`xcode-select --install`。Apple Silicon 要出 Universal 包另需 `rustup target add x86_64-apple-darwin`（`setup` 会自动加）。签名/公证细节见 §二–§三 |
 | **Windows** | ① **Visual Studio Build Tools 2022**（勾「使用 C++ 的桌面开发」——含 MSVC 链接器 + `rc.exe`，**winres 嵌图标必需，缺了打包失败**）② **WebView2 Runtime**（**最低支持 Win10 1803+**〔ADR-046 D3〕，Win10 1803+/Win11 内置；构建机需能访问微软 fwlink——`embedBootstrapper`/`offlineInstaller` 在构建期从微软拉 bootstrapper/runtime，**国内网络易触发 `WebView2 URL prefix mismatch`**，逃生口=预置安装器到 `%LOCALAPPDATA%\tauri`，见 gotchas §12）③ NSIS/WiX 由 Tauri 自动下载，无需手装 |
 | **Linux**（Debian/Ubuntu） | `sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libgtk-3-dev` |
@@ -61,8 +61,11 @@ bun run setup --build           # 任意平台：编 sidecar + tauri build（当
 |---|---|
 | `tauri:build` / `setup --build`（无 `--target`） | `packages/client/desktop/src-tauri/target/release/bundle/` |
 | `release`（带 `--target`，mac 为 `universal-apple-darwin`） | `…/target/<triple>/release/bundle/` |
+| 自定义品牌 | `.brand-build/<brandId>/target/` 下对应 `release/bundle/` 或 `<triple>/release/bundle/` |
 
 子目录：mac → `dmg/*.dmg`、`macos/*.app`；Windows → `nsis/*-setup.exe` + `nsis/*-offline-setup.exe` + `msi/*_en-US.msi`（ADR-046 双包 + MSI）；Linux → `deb/*.deb`、`rpm/*.rpm`（AppImage 暂跳过）。
+
+默认品牌若显式设置 `CARGO_TARGET_DIR`，输出根跟随该值。成功生成安装包后，公开入口还会将本次品牌产物与校验清单导出到 `.brand-build/artifacts/<brandId>/<platform>-<arch>/`；只构建 `.app`（`--bundles app`）时不导出安装包清单。
 
 ### 0.5 在其他平台验证打包（干净环境完备步骤）
 
@@ -87,7 +90,101 @@ cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-m
 #       （winres 只在链接期需要真 .res；cargo check 不链接）
 ```
 
-**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（三平台直接产 dmg / nsis〔含 offline〕/ msi / deb / rpm + 自动创建 GitHub Release 发布页；workflow_dispatch 仅出 artifact）。
+**最省心 = 让 CI 跑**（不用自己备三台机器）：push 触发 `.github/workflows/ci.yml`（三平台 typecheck+test+`cargo test`）；打 `v*` tag 触发 `release.yml`（默认 Ultrawork/MyWork × 三平台，六个任务产 dmg / nsis〔含 offline〕/ msi / deb / rpm，全部成功且清单校验通过后统一创建 GitHub Release；workflow_dispatch 可选 all/default/mywork，仅出验证 artifact）。
+
+### 0.6 独立品牌发行版（ADR-075）
+
+无品牌参数时仍编译默认 **Ultrawork**，即使本地自定义预置、账本或旧 manifest 损坏，也不影响默认入口；显式选择自定义品牌仍严格校验。需要 MyWork 时，从仓库根目录使用预置配置：
+
+```bash
+# 只读检查派生身份、包名与图标输入，不生成安装包或登记身份
+bun run brand:inspect --brand branding/mywork/brand.json
+
+# 首次准备依赖和四个 sidecar，然后构建当前架构安装包
+bun run setup --build --brand branding/mywork/brand.json
+
+# 已准备 sidecar 后的日常入口
+bun run tauri:dev --brand branding/mywork/brand.json
+bun run tauri:build --brand branding/mywork/brand.json
+
+# 发布级构建；macOS 默认 Universal，需要签名身份
+bun run release --brand branding/mywork/brand.json
+
+# macOS 本机开发验包：当前架构、ad-hoc 签名，显示为 MyWork Dev
+bun run release --brand branding/mywork/brand.json --native --unsigned
+```
+
+配置文件示例（素材路径相对配置文件；MyWork 的真实预置见 [brand.json](../branding/mywork/brand.json)）：
+
+```json
+{
+  "schemaVersion": 1,
+  "brandId": "mywork",
+  "productName": "MyWork",
+  "icon": "./assets/meiyou-app-rounded.png",
+  "trayIcon": "./assets/meiyou-tray.png"
+}
+```
+
+临时参数同样支持检查、setup、dev、build、release：
+
+```bash
+bun run brand:inspect --brand-id demo-work --name "DemoWork" --icon ./branding/mywork/assets/meiyou-app-rounded.png
+bun run setup --build --brand-id demo-work --name "DemoWork" --icon ./branding/mywork/assets/meiyou-app-rounded.png
+```
+
+| 输入 | 规则 |
+|---|---|
+| `--brand <file>` | JSON 配置；未知字段、错误 schema、缺少素材直接失败 |
+| `--brand-id <id>` | 2–32 位非保留的小写 ASCII 标识，字母开头、可用连字符分段；长期发行须显式固定。无配置且省略时，由 ASCII 名称派生 |
+| `--name <name>` | 覆盖 productName；当前发行构建只接受 ASCII 且须能派生合法 Linux 包名，例如 MyWork；拒绝 DMG 模板会插值的 `$` / `@`。不能与默认/其他品牌及其 Dev 名称冲突 |
+| `--icon <path>` | PNG 或 SVG 应用图标，必须正方形；构建生成 macOS/Windows/Linux 图标 |
+| `--ui-logo <path>` | 可选 PNG/SVG，默认使用应用图标 |
+| `--tray-icon <path>` | 可选透明 PNG；省略时生成名称首字母的托盘模板图 |
+
+临时参数优先于配置中的名称和素材，但不能覆盖配置已有的稳定 brandId。CLI 素材路径相对调用时的目录；只有名称或只有图标不构成完整自定义品牌。不要直接修改 `tauri.conf.json` 或源码 icons 作为品牌切换方式。
+
+`setup.sh`（macOS/Linux）原样转发到上述跨平台 setup 入口，品牌参数、参数顺序及相对路径语义一致，例如 `./setup.sh --build --brand branding/mywork/brand.json`。Windows 使用 `bun run setup`。setup 遇到开发端口占用时不再按端口杀进程，应先关闭自己拥有的开发实例。
+
+MyWork 保留美柚官方 1024px 原图，以默认 Ultrawork 主图的 alpha 通道生成 `meiyou-app-rounded.png`，两者圆角、透明边界和各原生尺寸一致。可用 `bun run --bun scripts/gen-mywork-icon.ts --check` 检查派生资产，或去掉 `--check` 重新生成；不同画面压缩后的文件字节数不要求相同。
+
+macOS Dock/Finder 另用专用 `icon-macos.icns`，两预置采用 1024px 画布、824px 主体和四边100px透明留白。默认资产通过 `bun run --bun scripts/gen-macos-icon.ts` 生成（`--check` 只读核验），自定义品牌在 staging 内自动生成；已适当留白的输入不重复缩小。通用 PNG/ICO、应用内 Logo 和托盘不受此 macOS 适配影响。dev 与安装包读取同一类 ICNS，Tauri dev 没有额外放大；Cargo 显式跟踪最终 ICNS 路径，算法内容也纳入品牌 digest。
+
+图标修复后需完整退出旧 dev 会话再重启：在原开发终端按 Ctrl+C；若应用仍驻留，则从应用/托盘菜单退出（关闭窗口只会隐藏），之后重新执行对应的 `./setup.sh --dev` 命令。已运行的品牌 wrapper 持有旧 overlay，刷新 WebView 不会重新准备图标；不要先清系统图标缓存或强杀 Dock。
+
+**身份与升级**：MyWork 固定为 `brandId/namespace/mainBinaryName = mywork`、`identifier = com.ultrawork.mywork`，Linux 包名为 `my-work`，Windows MSI upgradeCode 属于独立升级家族。默认保留 `com.ultrawork.desktop` 与既有主程序名。预置 `identity.json`、本地 `.brand-build/identity-ledger.json` 及成功构建的 manifest 会阻止同一 brandId 后续改名或碰撞其他品牌。首次准备临时构建即登记本地身份，即使后续编译失败也保留；`brand:inspect` 只读。正式发行应提交身份快照，不能靠清空 `.brand-build` 绕过已发布身份。
+
+身份校验还比较 macOS single-instance 插件把点/连接符归一后的 socket 键，避免看似不同的 identifier 实际互相聚焦。Linux 自定义包的四个 externalBin 在包内使用 namespace 前缀，例如 `mywork-opencode-server`，避免两个 deb/rpm 覆盖共享 `/usr/bin/opencode-server`；默认版及 macOS/Windows 保留内部原名。Linux 构建后用 `dpkg-deb`/`rpm` 读取真实安装文件清单，缺资源、漏前缀或覆盖默认目录均失败，检查结果写入 manifest；Linux 构建机须安装这两个工具。
+
+**构建互斥与缓存**：同一 checkout 的 setup/dev/build/release 共用 `.brand-build/build-lock.sqlite` 的 OS 锁，dev 持锁到退出；另一个会话会明确失败，并行构建须使用另一 checkout。自定义图标、Tauri overlay、技能物化目录和 Cargo target 放在 `.brand-build/<brandId>/`，不改写默认配置或源码图标。四个 sidecar 是共享内部组件，默认和定制公共入口都检查其 target、上下文协议与 SHA-256 metadata；`--skip-sidecar` 仅跳过编译，旧或被修改的二进制仍会拒绝打包，需重编 `build:opencode/gateway/knowledge/acp`。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建时初始化或清理用户缓存；工具链 HOME 保持原有语义。
+
+**依赖冻结**：setup 和 CI 使用根锁冻结安装；vendor 的统一入口为 `bun run --bun scripts/vendor-dependencies.ts`，先补齐累计 patch，再冻结安装所有 OS/CPU 的可选依赖。OpenCode 构建始终传上游已有 `--skip-install`，其缓存指纹覆盖 vendor 锁与全部 workspace manifests。缺锁、patch 冲突或安装失败须修复后重试，不能以普通安装绕过；损坏/过期 metadata 或被改写的二进制会自动重编。固定版本及补丁维护见 [vendor 工作流](./vendor-patch-workflow.md)。
+
+**运行目录**：三平台继续使用现有 home/XDG 约定；下表默认值以用户 home 为基准，Windows 的 `~` 同样指实际用户 home。每个品牌独立保存配置、凭证、历史、渠道与技能，不自动导入 Ultrawork 数据。
+
+| 根 | 默认 Ultrawork | MyWork | XDG 覆盖 |
+|---|---|---|---|
+| appRoot | `~/.ultrawork` | `~/.mywork` | 无 |
+| configRoot | `~/.config/ultrawork` | `~/.config/mywork` | `XDG_CONFIG_HOME/<namespace>` |
+| dataRoot | `~/.local/share/ultrawork` | `~/.local/share/mywork` | `XDG_DATA_HOME/<namespace>` |
+| cacheRoot | `~/.cache/ultrawork` | `~/.cache/mywork` | `XDG_CACHE_HOME/<namespace>` |
+| stateRoot | `~/.local/state/ultrawork` | `~/.local/state/mywork` | `XDG_STATE_HOME/<namespace>` |
+| skillsRoot | `~/.config/ultrawork/skills` | `~/.config/mywork/skills` | 跟随 configRoot |
+| 运行上下文/端口 | `~/.ultrawork/run/` | `~/.mywork/run/` | 跟随 appRoot |
+
+XDG 覆盖必须是绝对路径；默认 Ultrawork 显式设置空 `XDG_DATA_HOME` 会被阻断，需 unset 或指定绝对根，避免旧版本空值语义造成目录误接管。Rust 在任何业务初始化前校验目录身份并取得 `<appRoot>/.brand.lock` 租约；自定义品牌遇到无标记非空目录、错误标记、别名冲突或同品牌正在运行，会显示启动阻断页。不要删除身份标记来强制接管目录。品牌 Dev/正式版共用同品牌数据和租约，切换前须退出另一个实例。
+
+宿主读取 OpenCode PATCH 生成的 JSONC（注释、尾逗号、BOM）后更新受管 MCP 路径并清除旧品牌/端口 environment，保留其余用户字段；配置读取或解析失败会在业务写入前阻断，不能以空配置继续。delegate stdio MCP 在每次工具调用解析当前实例的动态 ACP 路由，预热握手不固定尚未就绪的端口。
+
+**签名与分发**：品牌资源在签名前生成，改名/换图标后重新走完整打包签名链。macOS 正式包仍需 Developer ID 签名、公证、staple 与 DMG 布局校验；证书可沿用同一发布主体，TCC/通知等权限要按品牌重新验收。`release --unsigned` 的 bundle identifier 加 `.dev`、名称加 ` Dev`，并由 Tauri 使用 `signingIdentity="-"` 在封装前进行 ad-hoc 签名，封装后只校验，避免外部 `.app` 与 DMG 内副本签名不一致。它不能作为正式签名验收。Windows 继续由已有 Tauri/CI 签名配置决定，本次未新增 Windows 签名服务；Linux 包/仓库签名也需按分发渠道配置。`v*` tag 同版本发布默认 Ultrawork 与 MyWork 的三平台安装包，macOS 两品牌均须正式签名/公证；workflow_dispatch 可选 `all`、`default` 或 `mywork`，仅出验证 artifact。
+
+tag 的六个构建任务使用独立的品牌/平台 artifact 与 manifest，发布 job 收齐后校验每份清单列出的文件大小和 SHA-256，并拒绝同名安装包，再将两品牌安装包附到同一个 Release。`ALLOW_UNSIGNED_RELEASE` 不允许正式 tag 绕过签名；只有显式 dispatch 验包可按该变量选择 `.dev` 产物。发布前须以本次 run 的签名、公证、staple 日志和最终产物为依据，不能只看旧版本已配置过 Secret 或某个 job 显示绿色。
+
+本次公共入口已完成默认 → MyWork → 默认的 macOS `.app` 连续构建。中文进程路径、JSONC 重启与 delegate 动态路由修复后，默认 ARM64 DMG、基础 identifier 的 MyWork ARM64 app 与 MyWork Universal Dev DMG 均已按最新源码重建和复验；MyWork 宿主及四个 sidecar 均包含 ARM64/x86_64，名称、identifier、可执行文件、图标、技能包和真实 DMG 布局已核对，包内 ad-hoc 完整性通过。将包复制到中文/空格客户路径后，签名保持有效；269 个包内文本资源未引用本 checkout，5 个 Mach-O 只依赖相对或系统 dylib；搬迁后的真实 sidecar 在 ARM64 上通过单 Agent/Team/Pipeline、重启恢复及真实 OpenCode 本地 SSE 工具循环 **12 项**。客户配置/数据根由该机器的 home/XDG 解析，不把编译机素材绝对路径当作运行输入；release 缺少包内 sidecar 会失败，源码目录 fallback 仅限 debug。
+
+Rust **185 项**、delegate **33 项**、品牌 integration **3 项**、全工作区 test **13 个任务**及 9 包 typecheck 均通过。Chrome/WebKit 各 **30** 个品牌启动场景及主要浏览器业务回归通过；最新 macOS 包的两个真实 Dev 宿主在独立中文/空格 HOME（`客户 Home`）与 XDG、C locale 中完成并行、同 identifier 重复启动、Dev/基础身份租约互斥、崩溃/重启回收、JSONC 全局配置/MCP 重启恢复及退出互不干扰 **9 项**。JSONC 检查先在旧包上真实检出 stale environment，最新包保留用户字段、清除旧受管环境，Knowledge/delegate MCP 均 connected。Windows/Linux 原生构建安装、Intel Mac 运行、跨版本升级卸载、Developer ID 正式签名/公证与真实系统授权仍需相应平台及凭证；本机没有有效 Apple 签名身份及公证配置，不能将本机 ad-hoc 或本地模型 fixture 的通过作为这些项目的证明。详细证据、复验命令及剩余项见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075)，架构取舍见 [ADR-075](./decisions/075-independent-brand-releases.md)。
+
+已安装默认构建与当前构建（版本号均为 0.3.9）的受测数据前向读取也已通过：仅在独立文件写入沙箱和临时 home 中由真实 sidecar 写入/读回配置、会话、渠道、Agent、知识源，MyWork 不暴露默认记录。此结果不代替跨版本安装器升级或降级；复验脚本及精确边界仍以 testing §16 为准。
 
 ---
 
@@ -96,7 +193,7 @@ cd packages/client/desktop/src-tauri && cargo check --target x86_64-pc-windows-m
 | 工具 | 最低版本 | 检查命令 |
 |------|---------|---------|
 | Bun | 1.3.x | `bun --version` |
-| Rust + Cargo | 1.70+ | `rustc --version && cargo --version` |
+| Rust + Cargo | 1.89+ | `rustc --version && cargo --version` |
 | Xcode CLI Tools | - | `xcode-select -p` |
 | Apple Developer 账号 | -（签名+公证可选，不签名分发参考 §5）| [developer.apple.com](https://developer.apple.com) |
 | Rust target `x86_64-apple-darwin` | Apple Silicon 主机必装 | `rustup target list --installed` |
@@ -175,7 +272,7 @@ xcrun notarytool store-credentials "ultrawork-notarize" \
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
+      "icons/icon-macos.icns",
       "icons/icon.ico"
     ],
     "externalBin": [
@@ -647,7 +744,7 @@ jobs:
 
 ## 九、CI/CD 自动打包（已落地 + macOS 签名）
 
-> 仓库已有可用的 `.github/workflows/release.yml`（tag `v*` 触发三平台出包 + 自动建 Release 页）。**macOS 签名+公证已打通**（ADR-069，v0.3.3 起）。下面是权威说明；本节末尾的 yaml 仅为历史示例，以真实文件为准。
+> 仓库使用 `.github/workflows/release.yml`：tag `v*` 为默认 Ultrawork/MyWork 各构建三平台安装包，全部成功及清单校验通过后统一创建 Release。既有 macOS 签名+公证链路自 v0.3.3 起打通（ADR-069）；每次两品牌发行仍需分别检查本次 run 的证据。下面是权威说明；本节末尾的 yaml 仅为历史示例，以真实文件为准。
 
 ### 9.1 macOS 签名：6 个仓库级 Secret
 
@@ -686,9 +783,9 @@ chmod 600 certificate.p12
 
 ### 9.3 CI 里如何用（release.yml `Import Apple Developer ID certificate` 步骤）
 
-`APPLE_CERTIFICATE` base64 解码 → `security create-keychain` 建一次性 keychain（随机密码）→ `security import` → **`security set-key-partition-list -S apple-tool:,apple:`**（放行 codesign 免交互取私钥，缺了会挂）→ 加入搜索列表。secret 缺失时 no-op、构建退回 `--unsigned`。
+`APPLE_CERTIFICATE` base64 解码 → `security create-keychain` 建一次性 keychain（随机密码）→ `security import` → **`security set-key-partition-list -S apple-tool:,apple:`**（放行 codesign 免交互取私钥，缺了会挂）→ 加入搜索列表。两个 macOS 品牌任务各自使用 runner 上的一次性 keychain。正式 tag 缺少签名材料或验证失败时终止发布；只有 workflow_dispatch 验包在显式 `ALLOW_UNSIGNED_RELEASE=true` 时可以走 `.dev` ad-hoc 路径，其产物不自动发布为 Release。
 
-⚠️ **验证是否真签了，查事实不查 job 颜色**（job 绿也可能是 unsigned 回退）：mac job 日志应有 `1 valid identities found` + `Notarization approved ✓` + `Stapled ✓`。详见 gotchas §7。
+⚠️ **验证是否真签了，查事实不查 job 颜色**：正式 tag 的两个 mac job 均须核对证书导入、Developer ID Authority、`Notarization approved ✓` 和 `stapler validate` 通过；发布前再核对本次安装包 manifest 的身份、大小和摘要。dispatch 的绿色 ad-hoc 验包不能替代正式签名结果。详见 gotchas §7。
 
 ### 9.4 历史示例（以真实 release.yml 为准）
 

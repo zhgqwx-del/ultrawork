@@ -6,9 +6,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod background;
+mod brand;
 mod webview_runtime;
 pub use webview_runtime::ensure_webview_runtime;
 
@@ -20,14 +20,17 @@ const OPENCODE_PORT: u16 = 4096;
 const GATEWAY_PORT: u16 = 4097;
 const KNOWLEDGE_PORT: u16 = 4098;
 const ACP_PORT: u16 = 4099;
-const OPENCODE_APP_NAME: &str = "ultrawork";
+const OPENCODE_APP_NAME: &str = env!("ULTRAWORK_COMPILED_NAMESPACE");
 
 // ── Sidecar process registry ─────────────────────────────────────────
 
 struct SidecarEntry {
     name: &'static str, // sidecar binary name — used to prove port ownership before killing
     port: u16,
-    pid: Option<u32>, // None when reusing an existing process (no spawn)
+    pid: Option<u32>, // None only in legacy registry test fixtures
+    identity: Option<brand::ProcessIdentity>,
+    child: Option<std::sync::Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>>,
+    exited: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 static SIDECAR_REGISTRY: Mutex<Vec<SidecarEntry>> = Mutex::new(Vec::new());
@@ -175,6 +178,140 @@ fn await_boot_ports_ready(timeout: Duration) {
     let _ = cvar.wait_timeout_while(ready, timeout, |ready| !*ready);
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupStatus {
+    state: &'static str,
+    brand: brand::Identity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paths: Option<brand::Paths>,
+}
+
+static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
+static BOOT_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn startup_status() -> StartupStatus {
+    let reason = STARTUP_ERROR.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    StartupStatus {
+        state: if reason.is_none() && boot_stage() == BOOT_STAGE_READY { "ready" } else { "blocked" },
+        brand: brand::identity().clone(),
+        reason: reason.or_else(|| (boot_stage() != BOOT_STAGE_READY).then(|| "Application startup did not complete. Close the application and retry.".into())),
+        paths: brand::resolve_paths().ok(),
+    }
+}
+
+fn block_startup(app: &tauri::AppHandle, reason: String) {
+    eprintln!("[startup] blocked ({}): {}", brand::identity().brand_id, reason);
+    *STARTUP_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+    set_boot_stage(app, BOOT_STAGE_FAILED);
+    signal_boot_ports_ready();
+}
+
+#[tauri::command]
+async fn get_startup_status() -> StartupStatus {
+    let _ = tauri::async_runtime::spawn_blocking(|| await_boot_ports_ready(BOOT_PORTS_WAIT)).await;
+    startup_status()
+}
+
+#[tauri::command]
+async fn retry_startup(app: tauri::AppHandle) -> StartupStatus {
+    if startup_status().state == "ready" { return startup_status(); }
+    if brand::owns_data() {
+        let mut status = startup_status();
+        status.reason = Some(format!("{} Close the application and restart to retry service initialization.", status.reason.unwrap_or_default()));
+        return status;
+    }
+    start_boot_coordinator(app);
+    get_startup_status().await
+}
+
+#[tauri::command]
+fn exit_startup_blocked(app: tauri::AppHandle) -> Result<(), String> {
+    if startup_status().state == "ready" { return Err("Application startup is not blocked".into()); }
+    app.exit(0);
+    Ok(())
+}
+
+fn require_ready() -> Result<(), String> {
+    if brand::owns_data() && startup_status().state == "ready" { Ok(()) }
+    else { Err("Application startup is blocked; app commands are unavailable until namespace and engine initialization succeed".into()) }
+}
+
+fn bootstrap_command(command: &str) -> bool {
+    matches!(command, "get_startup_status" | "retry_startup" | "exit_startup_blocked" | "get_boot_status" | "probe_log")
+}
+
+/// One gate covers every app IPC command, including commands added later.
+/// Tauri plugin IPC (events/windows/dialogs) uses its separate plugin dispatcher.
+fn guarded_app_handler<R: tauri::Runtime>(
+    dispatch: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+    ready: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if !bootstrap_command(invoke.message.command()) {
+            if let Err(error) = ready() {
+                invoke.resolver.reject(error);
+                return true;
+            }
+        }
+        dispatch(invoke)
+    }
+}
+
+#[cfg(test)]
+mod startup_ipc_guard_tests {
+    use super::*;
+
+    #[test]
+    fn blocked_ipc_rejects_a_real_attachment_write_and_ready_ipc_can_write() {
+        let root = std::env::temp_dir().join(format!("uw-ipc-guard-{}-{}", std::process::id(), now_millis()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.txt");
+        std::fs::write(&source, "fixture").unwrap();
+        for ready in [false, true] {
+            let app = tauri::test::mock_builder().invoke_handler(guarded_app_handler::<tauri::test::MockRuntime>(tauri::generate_handler![copy_attachment_into_workspace, get_boot_status], move || {
+                if ready { Ok(()) } else { Err("Application startup is blocked".into()) }
+            })).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+            let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+            let call = |command: &str, body: serde_json::Value| tauri::test::get_ipc_response(&webview, tauri::webview::InvokeRequest {
+                cmd: command.into(), callback: tauri::ipc::CallbackFn(0), error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(), body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(), invoke_key: tauri::test::INVOKE_KEY.into(),
+            });
+            assert!(call("get_boot_status", serde_json::json!({})).is_ok(), "bootstrap reads must stay usable");
+            let response = call("copy_attachment_into_workspace", serde_json::json!({"workspace":root,"sessionId":"guard_probe","src":source}));
+            let attachment = root.join(format!(".{}", OPENCODE_APP_NAME)).join("attachments").join("guard_probe").join("source.txt");
+            if ready {
+                assert!(response.is_ok(), "ready app commands must reach their normal implementation");
+                assert_eq!(std::fs::read_to_string(&attachment).unwrap(), "fixture");
+            } else {
+                assert!(response.is_err());
+                assert!(!attachment.exists(), "a blocked invoke must not create workspace data");
+                let blocked = call("ensure_default_workspace", serde_json::json!({})).unwrap_err();
+                assert!(format!("{blocked:?}").contains("startup is blocked"), "the guard must reject even before dispatch: {blocked:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+fn start_boot_coordinator(app: tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if BOOT_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() { return; }
+    *STARTUP_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    if let Ok(mut ready) = BOOT_PORTS_READY.0.lock() { *ready = false; }
+    set_boot_stage(&app, BOOT_STAGE_PREPARING);
+    std::thread::spawn(move || {
+        let boot = std::panic::AssertUnwindSafe(|| boot_sidecars(app.clone()));
+        if std::panic::catch_unwind(boot).is_err() {
+            block_startup(&app, "Startup coordinator failed. No other application's services were adopted.".into());
+        }
+        BOOT_RUNNING.store(false, Ordering::SeqCst);
+    });
+}
+
 // ── Sidecar port registry (runtime source of truth) ──────────────────
 //
 // Ports are decided once at startup and handed to every consumer from here:
@@ -280,9 +417,10 @@ fn ephemeral_port() -> Result<u16, String> {
 /// one would re-create the very stall this whole change removes. `spawn_blocking`
 /// parks the wait on a pool thread instead.
 #[tauri::command]
-async fn get_sidecar_ports() -> SidecarPorts {
+async fn get_sidecar_ports() -> Result<SidecarPorts, String> {
     let _ = tauri::async_runtime::spawn_blocking(|| await_boot_ports_ready(BOOT_PORTS_WAIT)).await;
-    sidecar_ports()
+    require_ready()?;
+    Ok(sidecar_ports())
 }
 
 /// Runtime-transient state, sibling of `~/.ultrawork/sidecars/`. Deliberately
@@ -388,10 +526,24 @@ fn write_ports_json() {
         Ok(reg) => reg.iter().map(|e| (e.name, e.pid)).collect(),
         Err(poisoned) => poisoned.into_inner().iter().map(|e| (e.name, e.pid)).collect(),
     };
-    let doc = ports_json_doc(&ports, |name| {
+    let mut doc = ports_json_doc(&ports, |name| {
         pids.iter().find(|(n, _)| *n == name).and_then(|(_, pid)| *pid)
     });
 
+    if let Some(ctx) = brand::context() {
+        doc["schemaVersion"] = serde_json::json!(2);
+        doc["brandId"] = serde_json::json!(ctx.identity.brand_id);
+        doc["identifier"] = serde_json::json!(ctx.actual_identifier);
+        doc["instanceId"] = serde_json::json!(ctx.instance_id);
+        doc["owner"] = serde_json::to_value(brand::process_identity(std::process::id())).unwrap_or(serde_json::Value::Null);
+        if let Ok(reg) = SIDECAR_REGISTRY.lock() {
+            for entry in reg.iter() {
+                if let Some((key, _)) = PORTS_JSON_SIDECARS.iter().find(|(_, name)| *name == entry.name) {
+                    doc[*key]["identity"] = serde_json::to_value(&entry.identity).unwrap_or(serde_json::Value::Null);
+                }
+            }
+        }
+    }
     let dir = run_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("[ports] failed to create {}: {}", dir.display(), e);
@@ -440,8 +592,9 @@ const PORTS_JSON_SIDECARS: &[(&str, &str)] = &[
     ("acp", "acp-client"),
 ];
 
-/// Pure core of `reap_orphaned_sidecars`: the (sidecar name, port) pairs recorded by
-/// the previous instance. Unparseable or out-of-range entries are skipped, never guessed.
+/// Legacy registry parser retained for malformed-record and port-reaper tests.
+/// Production recovery uses creation-verified process identities instead.
+#[cfg(test)]
 fn ports_json_listeners(doc: &serde_json::Value) -> Vec<(&'static str, u16)> {
     PORTS_JSON_SIDECARS
         .iter()
@@ -468,28 +621,64 @@ fn ports_json_listeners(doc: &serde_json::Value) -> Vec<(&'static str, u16)> {
 /// The file's mere existence is the signal: a clean exit removes it. Each kill is
 /// ownership-gated by `kill_port_listeners(.., Some(name))`, which spares anything it
 /// cannot prove is ours — a stranger may well have taken the recorded port since.
-fn reap_orphaned_sidecars() {
+fn reap_orphaned_sidecars() -> Result<(), String> {
+    let Some(ctx) = brand::context() else { return Ok(()) };
     let path = ports_json_path();
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return; // Clean exit removed it — nothing to reap.
-    };
-    println!("[ports] {} survived the previous run — reaping orphaned sidecars", path.display());
-
-    match serde_json::from_str::<serde_json::Value>(&content) {
-        Ok(doc) => {
-            reap_recorded_listeners(&doc, is_port_in_use, |name, port| kill_port_listeners(port, Some(name)));
-        }
-        Err(e) => eprintln!("[ports] {} is unreadable ({}) — cannot reap orphans", path.display(), e),
+    let Ok(content) = std::fs::read_to_string(&path) else { return Ok(()) };
+    let doc = serde_json::from_str::<serde_json::Value>(&content).map_err(|_| format!("{} is unreadable; no recorded process was touched", path.display()))?;
+    // A legacy registry with no live listener has already passed preflight.
+    if doc.get("schemaVersion").and_then(|v| v.as_u64()) != Some(2) { return Ok(()); }
+    if doc.get("brandId").and_then(|v| v.as_str()) != Some(ctx.identity.brand_id.as_str()) {
+        return Err("The runtime registry belongs to another brand; no process was touched".into());
     }
-    remove_ports_json();
+    let Some(owner) = doc.get("owner").and_then(|v| serde_json::from_value::<brand::ProcessIdentity>(v.clone()).ok()) else {
+        return Err("The previous runtime has no verifiable host identity; close its processes before restarting".into());
+    };
+    if brand::same_process(&owner) { return Err("Another live host owns this runtime registry".into()); }
+    for (key, _) in PORTS_JSON_SIDECARS {
+        let entry = &doc[*key];
+        let expected = entry.get("identity").and_then(|v| serde_json::from_value::<brand::ProcessIdentity>(v.clone()).ok());
+        let Some(expected) = expected else {
+            if let Some(pid) = entry.get("pid").and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok()) {
+                if brand::process_present(pid) != Some(false) { return Err(format!("Previous service PID {pid} has no verifiable creation identity. Close it before restarting; no process or data was changed.")); }
+            }
+            continue;
+        };
+        if brand::process_identity(expected.pid).is_none() && brand::process_present(expected.pid) != Some(false) {
+            return Err(format!("Cannot verify previous service PID {}; no process or data was changed", expected.pid));
+        }
+        if brand::same_process(&expected) && !terminate_verified_process(&expected) {
+            return Err(format!("Owned residual service {} could not be stopped; no files were replaced", expected.pid));
+        }
+    }
+    Ok(())
 }
 
-/// Pure core of `reap_orphaned_sidecars`: decide what to kill. Returns the sidecars
-/// it actually reclaimed.
+/// Old registries have no host creation identity. Do not adopt them, and do not
+/// let a newer brand silently compete with a visible legacy sidecar. This only
+/// detects already-running legacy processes; old binaries started later cannot
+/// be constrained by this application's lease.
+fn reject_active_legacy_registry(path: &std::path::Path) -> Result<(), String> {
+    let Ok(content) = std::fs::read_to_string(path) else { return Ok(()) };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else { return Ok(()) };
+    if doc.get("schemaVersion").and_then(|v| v.as_u64()) == Some(2) { return Ok(()); }
+    for (key, _) in PORTS_JSON_SIDECARS {
+        let Some(port) = doc.get(key).and_then(|v| v.get("port")).and_then(|v| v.as_u64()).and_then(|v| u16::try_from(v).ok()) else { continue };
+        let Some(pid) = doc.get(key).and_then(|v| v.get("pid")).and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok()) else { continue };
+        if listening_pids_on_port(port).contains(&pid) {
+            return Err(format!("An older application still owns a recorded service at {} (PID {}). Close or upgrade the older application before continuing; its data was not changed.", path.display(), pid));
+        }
+    }
+    Ok(())
+}
+
+/// Test-only port-reaper fixture; production recovery uses `reap_orphaned_sidecars`
+/// and creation-verified process identities. Returns the sidecars actually reclaimed.
 ///
 /// Never kills a port nobody is listening on, and `kill` is expected to be
 /// ownership-gated (`kill_port_listeners(.., Some(name))`) — the port a dead instance
 /// recorded may since have been taken by an unrelated program.
+#[cfg(test)]
 fn reap_recorded_listeners(
     doc: &serde_json::Value,
     in_use: impl Fn(u16) -> bool,
@@ -520,8 +709,12 @@ fn reap_recorded_listeners(
 /// dead naming ports we had just killed.
 fn remove_ports_json() {
     let _guard = PORTS_JSON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(ctx) = brand::context() else { return };
     let path = ports_json_path();
     if path.exists() {
+        let own = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .is_some_and(|doc| doc.get("instanceId").and_then(|v| v.as_str()) == Some(ctx.instance_id.as_str()));
+        if !own { return; }
         if let Err(e) = std::fs::remove_file(&path) {
             eprintln!("[ports] failed to remove {}: {}", path.display(), e);
         }
@@ -639,6 +832,8 @@ fn listening_pids_on_port(port: u16) -> Vec<u32> {
 ///   - bundled app: `opencode-server`
 ///   - `tauri dev` : `opencode-server-aarch64-apple-darwin` (target-triple suffix)
 /// and a trailing `.exe` on Windows.
+/// Used only by lifecycle test fixtures, never as production ownership evidence.
+#[cfg(test)]
 fn exe_matches_sidecar(exe: &str, name: &str) -> bool {
     let stem = exe.strip_suffix(".exe").unwrap_or(exe);
     stem == name || stem.starts_with(&format!("{}-", name))
@@ -649,6 +844,7 @@ fn exe_matches_sidecar(exe: &str, name: &str) -> bool {
 /// A no-match answers `INFO: No tasks are running which match ...` (localized,
 /// and never quoted), which yields `None` — the fail-closed answer. The memory
 /// column carries a comma (`"12,345 K"`), so split on the quote, not the comma.
+#[cfg(test)]
 fn parse_tasklist_image_name(stdout: &str) -> Option<String> {
     let first = stdout.lines().next()?.trim();
     let name = first.strip_prefix('"')?.split('"').next()?;
@@ -663,6 +859,7 @@ fn parse_tasklist_image_name(stdout: &str) -> Option<String> {
 /// fail to recognise our own process at the very moment we need to reclaim
 /// its port. (`exe_matches_sidecar` cannot rescue the bare-name shape: the
 /// suffix starts with a space, not the `-` a target-triple would bring.)
+#[cfg(test)]
 fn exe_name_from_proc_link(link: &str) -> Option<String> {
     let path = link.strip_suffix(" (deleted)").unwrap_or(link);
     let name = std::path::Path::new(path).file_name()?.to_string_lossy().into_owned();
@@ -682,6 +879,7 @@ fn exe_name_from_proc_link(link: &str) -> Option<String> {
 ///
 /// Unresolvable (dead pid, other user's process) answers `None` — callers must
 /// treat that as "not ours".
+#[cfg(test)]
 fn process_exe_name(pid: u32) -> Option<String> {
     if cfg!(target_os = "windows") {
         let output = sys_cmd("tasklist")
@@ -702,6 +900,7 @@ fn process_exe_name(pid: u32) -> Option<String> {
 
 /// True only when `pid` is provably one of *our* sidecar processes. Unresolvable
 /// PIDs answer `false` — we would rather leak a port than kill a stranger.
+#[cfg(test)]
 fn process_is_sidecar(pid: u32, name: &str) -> bool {
     process_exe_name(pid).is_some_and(|exe| exe_matches_sidecar(&exe, name))
 }
@@ -716,6 +915,20 @@ fn kill_pid(pid: u32) {
     }
 }
 
+fn terminate_verified_process(expected: &brand::ProcessIdentity) -> bool {
+    if !brand::same_process(expected) { return true; }
+    kill_pid(expected.pid);
+    let deadline = std::time::Instant::now() + Duration::from_millis(400);
+    while brand::same_process(expected) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if brand::same_process(expected) {
+        if cfg!(target_os = "windows") { kill_pid(expected.pid); }
+        else { sys_cmd("kill").args(["-KILL", &expected.pid.to_string()]).output().ok(); }
+    }
+    !brand::same_process(expected)
+}
+
 /// Kill the process(es) *listening* on `port`, returning how many were killed.
 ///
 /// `owner`:
@@ -724,6 +937,7 @@ fn kill_pid(pid: u32) {
 ///     to us, and reclaiming a port is never worth killing a bystander.
 ///   - `None` — ownership was already established by other means (the listener
 ///     answered *our* health endpoint), so skip the exe-name probe.
+#[cfg(test)]
 fn kill_port_listeners(port: u16, owner: Option<&str>) -> usize {
     let mut killed = 0;
     for pid in listening_pids_on_port(port) {
@@ -752,6 +966,7 @@ fn kill_port_listeners(port: u16, owner: Option<&str>) -> usize {
 
 /// Read a process's parent PID via `ps` (Unix). Orphan detection is a Unix
 /// concept (launchd reparenting), so this returns None on Windows.
+#[cfg(test)]
 fn process_ppid(pid: u32) -> Option<u32> {
     if cfg!(target_os = "windows") {
         return None;
@@ -772,6 +987,7 @@ fn process_ppid(pid: u32) -> Option<u32> {
 ///
 /// Windows has no launchd-style reparenting, so there is nothing to detect —
 /// a healthy listener is always treated as a live owner there.
+#[cfg(test)]
 fn port_listener_orphaned(port: u16) -> bool {
     if cfg!(target_os = "windows") {
         return false;
@@ -780,8 +996,14 @@ fn port_listener_orphaned(port: u16) -> bool {
 }
 
 /// Kill all registered sidecar processes on app exit.
-/// Two-phase: (1) SIGTERM by PID, (2) port-based fallback for survivors.
+/// Stop original child handles first, retry only creation-verified survivors,
+/// and retain the registry until every owned child has a confirmed exit.
 fn shutdown_sidecars() {
+    if !brand::owns_data() {
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+        signal_boot_ports_ready();
+        return;
+    }
     println!("[shutdown] Cleaning up sidecar processes...");
 
     // Raise the barrier and drain the registry as one step, under `SPAWN_LOCK`.
@@ -818,35 +1040,33 @@ fn shutdown_sidecars() {
         }
     }
 
-    // Phase 1: kill by PID
-    for entry in &entries {
-        if let Some(pid) = entry.pid {
-            println!("[shutdown] Killing sidecar pid {} (port {})", pid, entry.port);
-            kill_pid(pid);
-        }
-    }
+    // Browser MCP ancestry is still intact before terminating its sidecar parents.
+    kill_browser_mcp_processes();
+
+    // Preserve Unix SIGTERM/flush semantics when creation identity is available.
+    // An unknown OS probe uses only the original child handle, never a PID guess.
+    for entry in &entries { request_sidecar_stop(entry); }
 
     // Grace period for processes to terminate
     std::thread::sleep(Duration::from_millis(200));
 
-    // Phase 2: port-based fallback for survivors (covers reused entries, whose
-    // pid we never knew). Ownership-gated: between spawn and shutdown the port
-    // may have been taken over by an unrelated process, and a leaked port is
-    // cheaper than a killed bystander — the next launch's `prepare_port` heals it.
+    // Retry only the original child handle or a verified creation identity.
+    // Never infer ownership from a basename or port.
     for entry in &entries {
-        if is_port_in_use(entry.port) {
-            println!(
-                "[shutdown] Port {} still in use, force-killing by port",
-                entry.port
-            );
-            kill_port_listeners(entry.port, Some(entry.name));
+        if !sidecar_exit_confirmed(entry) {
+            if let Some(expected) = &entry.identity { let _ = terminate_verified_process(expected); }
+            if !sidecar_exit_confirmed(entry) {
+                if let Some(child) = &entry.child { let _ = kill_spawned_handle(child); }
+            }
         }
     }
-
-    // Also clean up browser MCP processes (Chrome/Playwright)
-    kill_browser_mcp_processes();
-
-    remove_ports_json();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while entries.iter().any(|entry| !sidecar_exit_confirmed(entry)) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let survivors = entries.iter().any(|entry| !sidecar_exit_confirmed(entry));
+    if !survivors { remove_ports_json(); }
+    else { eprintln!("[shutdown] Keeping the runtime registry for owned services whose exit is not confirmed"); }
 
     println!("[shutdown] Sidecar cleanup complete.");
 }
@@ -897,46 +1117,12 @@ fn install_signal_handlers() {}
 fn prepare_port(
     name: &str,
     port: u16,
-    health_path: &str,
-    health_auth: Option<&str>,
+    _health_path: &str,
+    _health_auth: Option<&str>,
 ) -> Result<bool, String> {
     if is_port_in_use(port) {
-        // Reuse only a healthy listener that is still owned by a live parent
-        // (a genuinely-running prior instance). A healthy *orphan* (ppid==1)
-        // is a leftover from a crashed/killed instance — reclaim it rather than
-        // bind to a possibly stale binary.
-        if check_health(port, health_path, health_auth) {
-            if port_listener_orphaned(port) {
-                println!(
-                    "Port {} healthy but owned by an orphan (prior instance died unclean), killing",
-                    port
-                );
-                // Ownership is already proven: it answered *our* health path.
-                kill_port_listeners(port, None);
-            } else {
-                return Ok(true); // reuse
-            }
-        } else {
-            // Occupied by something that does not answer our health endpoint.
-            // Reclaim it only if it is provably one of our own sidecars, hung
-            // or half-dead. Anything else is a stranger and stays untouched.
-            println!("Port {} occupied but unhealthy, checking ownership", port);
-            if kill_port_listeners(port, Some(name)) == 0 {
-                return Err(format!(
-                    "Port {} is in use by another application (not an Ultrawork {}). \
-                     Free that port and restart Ultrawork.",
-                    port, name
-                ));
-            }
-        }
-        if is_port_in_use(port) {
-            return Err(format!(
-                "Port {} is still in use after cleanup. Another application may be using it.",
-                port
-            ));
-        }
-    }
-    Ok(false)
+        Err(format!("Port {} is in use by another application; no verified ownership of the incumbent {}. The incumbent was left running.", port, name))
+    } else { Ok(false) }
 }
 
 /// A spawned sidecar, as the startup loop sees it.
@@ -946,6 +1132,179 @@ struct SpawnedSidecar {
     /// always a lost bind race) from "still booting" without waiting out the
     /// 15s health timeout.
     exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    child: std::sync::Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>,
+}
+
+fn kill_spawned_handle(child: &Mutex<Option<tauri_plugin_shell::process::CommandChild>>) -> Result<(), String> {
+    if let Some(child) = child.lock().map_err(|_| "Child handle lock is unavailable")?.take() {
+        child.kill().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn sidecar_exit_confirmed(entry: &SidecarEntry) -> bool {
+    entry.exited.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst)) || entry.pid.is_none()
+}
+
+fn request_sidecar_stop(entry: &SidecarEntry) {
+    if sidecar_exit_confirmed(entry) { return; }
+    if let Some(expected) = &entry.identity {
+        if brand::same_process(expected) {
+            println!("[shutdown] Signalling owned sidecar pid {} (port {})", expected.pid, entry.port);
+            kill_pid(expected.pid);
+            return;
+        }
+    }
+    if let Some(child) = &entry.child {
+        if let Err(error) = kill_spawned_handle(child) { eprintln!("[shutdown] Owned child {} could not be stopped: {error}", entry.name); }
+    }
+}
+
+fn stop_spawned_child(child: &SpawnedSidecar) -> bool {
+    if !child.exited.load(std::sync::atomic::Ordering::SeqCst) {
+        if let Err(error) = kill_spawned_handle(&child.child) { eprintln!("[sidecar] Failed to stop owned child {}: {error}", child.pid); }
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !child.exited.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    child.exited.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(test)]
+mod spawned_handle_tests {
+    use super::*;
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+    struct ChildCleanup(Arc<Mutex<Option<tauri_plugin_shell::process::CommandChild>>>);
+    impl Drop for ChildCleanup { fn drop(&mut self) { let _ = kill_spawned_handle(&self.0); } }
+
+    #[test]
+    fn exit_confirmation_never_treats_a_missing_identity_as_death() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let entry = SidecarEntry { name: "acp-client", port: 4099, pid: Some(123), identity: None, child: None, exited: Some(flag.clone()) };
+        assert!(!sidecar_exit_confirmed(&entry));
+        flag.store(true, Ordering::SeqCst);
+        assert!(sidecar_exit_confirmed(&entry));
+        let unknown = SidecarEntry { name: "acp-client", port: 4099, pid: Some(123), identity: None, child: None, exited: None };
+        assert!(!sidecar_exit_confirmed(&unknown));
+    }
+
+    #[test]
+    fn child_wait_probe() {
+        let Ok(root) = std::env::var("ULTRAWORK_HANDLE_PROBE_ROOT") else { return };
+        std::fs::write(PathBuf::from(root).join("ready"), "ready").unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    #[test]
+    fn a_real_child_handle_is_reaped_without_any_os_identity_probe() {
+        use tauri_plugin_shell::ShellExt;
+        let root = std::env::temp_dir().join(format!("uw-handle-test-{}-{}", std::process::id(), now_millis()));
+        std::fs::create_dir_all(&root).unwrap();
+        let app = tauri::test::mock_builder().plugin(tauri_plugin_shell::init())
+            .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        let (rx, handle) = app.shell().command(std::env::current_exe().unwrap())
+            .args(["--exact", "spawned_handle_tests::child_wait_probe", "--nocapture"])
+            .env("ULTRAWORK_HANDLE_PROBE_ROOT", root.to_string_lossy().to_string()).spawn().unwrap();
+        let pid = handle.pid();
+        let exited = watch_sidecar_exit_with("acp-client", rx, SidecarLog::open_in(root.clone(), "probe"));
+        let child = SpawnedSidecar { pid, exited: exited.clone(), child: Arc::new(Mutex::new(Some(handle))) };
+        let _cleanup = ChildCleanup(child.child.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !root.join("ready").exists() && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+        assert!(root.join("ready").exists(), "owned fixture did not start");
+        let entry = SidecarEntry { name: "acp-client", port: 4099, pid: Some(pid), identity: None, child: Some(child.child.clone()), exited: Some(exited) };
+        assert!(!sidecar_exit_confirmed(&entry));
+        assert!(stop_spawned_child(&child), "the original child handle must terminate it without a PID/name fallback");
+        assert!(sidecar_exit_confirmed(&entry));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn child_sigterm_probe() {
+        #[cfg(unix)]
+        if let Ok(root) = std::env::var("ULTRAWORK_SIGTERM_PROBE_ROOT") {
+            use signal_hook::{consts::SIGTERM, iterator::Signals};
+            let mut signals = Signals::new([SIGTERM]).unwrap();
+            let root = PathBuf::from(root);
+            std::fs::write(root.join("ready"), "ready").unwrap();
+            if signals.forever().next().is_some() { std::fs::write(root.join("flushed"), "cleanly flushed on SIGTERM").unwrap(); }
+        }
+    }
+
+    #[test]
+    fn a_verified_unix_child_can_flush_before_the_handle_fallback() {
+        #[cfg(unix)]
+        {
+            use tauri_plugin_shell::ShellExt;
+            let root = std::env::temp_dir().join(format!("uw-sigterm-test-{}-{}", std::process::id(), now_millis()));
+            std::fs::create_dir_all(&root).unwrap();
+            let app = tauri::test::mock_builder().plugin(tauri_plugin_shell::init())
+                .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+            let (rx, handle) = app.shell().command(std::env::current_exe().unwrap())
+                .args(["--exact", "spawned_handle_tests::child_sigterm_probe", "--nocapture"])
+                .env("ULTRAWORK_SIGTERM_PROBE_ROOT", root.to_string_lossy().to_string()).spawn().unwrap();
+            let pid = handle.pid();
+            let child = Arc::new(Mutex::new(Some(handle)));
+            let _cleanup = ChildCleanup(child.clone());
+            let exited = watch_sidecar_exit_with("acp-client", rx, SidecarLog::open_in(root.clone(), "probe"));
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !root.join("ready").exists() && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+            assert!(root.join("ready").exists(), "SIGTERM handler did not initialize");
+            let entry = SidecarEntry { name: "acp-client", port: 4099, pid: Some(pid), identity: Some(brand::process_identity(pid).expect("probe identity")), child: Some(child), exited: Some(exited) };
+            request_sidecar_stop(&entry);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !sidecar_exit_confirmed(&entry) && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+            assert!(sidecar_exit_confirmed(&entry), "verified child must have a graceful exit");
+            assert_eq!(std::fs::read_to_string(root.join("flushed")).unwrap(), "cleanly flushed on SIGTERM");
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+}
+
+const BUILD_ONLY_ENV_KEYS: &[&str] = &[
+    "ULTRAWORK_BUILD_LOCK_TOKEN", "ULTRAWORK_BUILD_BRAND_FILE", "ULTRAWORK_BRAND_JSON",
+    "ULTRAWORK_BRAND_UI_LOGO", "ULTRAWORK_BRAND_TRAY_ICON", "ULTRAWORK_BRAND_DIGEST",
+    "ULTRAWORK_BUILTIN_SKILLS_SOURCE", "ULTRAWORK_BUILTIN_SKILLS_OUTPUT",
+    "ULTRAWORK_BUILTIN_SKILLS_VERSION_SEED", "ULTRAWORK_BUILD_CONFIG_FILE", "ULTRAWORK_BUILD_TARGET_DIR",
+    "TAURI_CONFIG", "APPLE_SIGNING_IDENTITY", "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+    "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID", "APPLE_API_KEY", "APPLE_API_ISSUER", "APPLE_API_KEY_PATH",
+];
+
+fn runtime_parent_environment() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let build_target = std::env::var_os("ULTRAWORK_BUILD_TARGET_DIR");
+    std::env::vars_os().filter(|(key, value)| {
+        let key = key.to_string_lossy();
+        !BUILD_ONLY_ENV_KEYS.contains(&key.as_ref())
+            && !(key == "CARGO_TARGET_DIR" && build_target.as_ref() == Some(value))
+    }).collect()
+}
+
+fn packaged_sidecar_name_for(name: &str, namespace: &str, is_default: bool, linux: bool) -> String {
+    if linux && !is_default { format!("{namespace}-{name}") } else { name.into() }
+}
+
+/// Linux package managers install externalBin in shared /usr/bin; custom brands
+/// use their own binary names there. Logical roles and per-brand MCP copies stay stable.
+fn packaged_sidecar_name(name: &str) -> String {
+    let identity = brand::identity();
+    packaged_sidecar_name_for(name, &identity.namespace, identity.is_default, cfg!(target_os = "linux"))
+}
+
+#[cfg(test)]
+mod packaged_sidecar_tests {
+    use super::*;
+
+    #[test]
+    fn custom_linux_packages_own_distinct_sidecar_paths() {
+        for role in ["opencode-server", "channel-gateway", "knowledge-sidecar", "acp-client"] {
+            assert_eq!(packaged_sidecar_name_for(role, "ultrawork", true, true), role);
+            assert_eq!(packaged_sidecar_name_for(role, "mywork", false, true), format!("mywork-{role}"));
+            assert_ne!(packaged_sidecar_name_for(role, "mywork", false, true), packaged_sidecar_name_for(role, "secondwork", false, true));
+            assert_eq!(packaged_sidecar_name_for(role, "mywork", false, false), role, "macOS and Windows retain their app-local names");
+        }
+    }
 }
 
 /// Spawn a sidecar binary using ShellExt (works with App or AppHandle).
@@ -957,20 +1316,21 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
 ) -> Result<SpawnedSidecar, String> {
     let sidecar = shell_host
         .shell()
-        .sidecar(name)
+        .sidecar(packaged_sidecar_name(name))
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?;
 
-    let mut cmd = sidecar.args(args);
-    for (key, value) in env_vars {
-        cmd = cmd.env(key, value);
-    }
+    let mut actual_args = args.to_vec();
+    if name != "opencode-server" { actual_args.extend(brand::managed_args()?); }
+    let mut cmd = sidecar.args(actual_args).env_clear().envs(runtime_parent_environment());
+    for (key, value) in env_vars { cmd = cmd.env(key, value); }
+    for (key, value) in brand::runtime_env()? { cmd = cmd.env(key, value); }
 
     let (rx, child) = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", name, e))?;
     let pid = child.pid();
     // Dropping CommandChild does not kill the OS process — it continues running.
-    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx) })
+    Ok(SpawnedSidecar { pid, exited: watch_sidecar_exit(name, rx), child: std::sync::Arc::new(Mutex::new(Some(child))) })
 }
 
 // ── Sidecar log capture ────────────────────────────────────────────
@@ -986,16 +1346,7 @@ fn spawn_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry>>(
 /// Where the sidecars already keep their state (acp-sessions, orchestrator-runs).
 /// Mirrors the JS derivation in `acp-client/src/session-store.ts` so the logs sit
 /// beside the state they explain — same path on all three platforms.
-fn global_data_dir() -> PathBuf {
-    match std::env::var("XDG_DATA_HOME") {
-        Ok(val) if !val.is_empty() => PathBuf::from(val).join(OPENCODE_APP_NAME),
-        _ => dirs::home_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join(".local")
-            .join("share")
-            .join(OPENCODE_APP_NAME),
-    }
-}
+fn global_data_dir() -> PathBuf { brand::paths().data_root }
 
 fn sidecar_log_dir() -> PathBuf {
     global_data_dir().join("log").join("sidecar")
@@ -1185,11 +1536,10 @@ fn watch_sidecar_exit_with(
                 _ => {}
             }
         }
-        // The sender is gone (or we stopped caring): if we never saw Terminated,
-        // treat the stream ending as an exit so a caller waiting on the flag is
-        // not stuck believing the child is alive.
-        log.write("app", &format!("=== {} event stream ended ===", name));
-        flag.store(true, Ordering::SeqCst);
+        // An IO/wait error can close the channel while the OS child is still
+        // alive. Only Terminated is exit evidence; unknown status keeps its
+        // handle/registry so a retry cannot silently lose a running writer.
+        log.write("app", &format!("=== {} event stream ended; exit confirmed={} ===", name, flag.load(Ordering::SeqCst)));
     });
     exited
 }
@@ -1317,7 +1667,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
                     }
                     set_sidecar_port(name, port);
                     if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-                        reg.push(SidecarEntry { name, port, pid: None });
+                        reg.push(SidecarEntry { name, port, pid: None, identity: None, child: None, exited: None });
                     }
                     write_ports_json();
                     return Ok(());
@@ -1341,7 +1691,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
             publish_sidecar_port(shell_host, name, port);
             let child = spawn_sidecar(shell_host, name, &args_for(port), &env_for(port))?;
             if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-                reg.push(SidecarEntry { name, port, pid: Some(child.pid) });
+                reg.push(SidecarEntry { name, port, pid: Some(child.pid), identity: brand::process_identity(child.pid), child: Some(child.child.clone()), exited: Some(child.exited.clone()) });
             }
             child
         };
@@ -1350,6 +1700,15 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
 
         match await_sidecar_ready(port, health_path, health_auth, &child.exited, max_wait) {
             ReadyOutcome::Ready => {
+                // Shared passwords are allowed in tests; HTTP success alone is
+                // therefore not ownership. The listener must be our spawned PID.
+                if !listening_pids_on_port(port).contains(&child.pid) {
+                    if !stop_spawned_child(&child) { write_ports_json(); return Err(format!("Cannot confirm owned {} child {} has exited; its registry was retained", name, child.pid)); }
+                    if let Ok(mut reg) = SIDECAR_REGISTRY.lock() { drop_registry_entry(&mut reg, name, child.pid); }
+                    last_error = format!("{} health response belongs to another process on port {}", name, port);
+                    if fixed { return Err(last_error); }
+                    continue;
+                }
                 println!("{} ready on port {} (pid {})", name, port, child.pid);
                 write_ports_json();
                 return Ok(());
@@ -1358,7 +1717,7 @@ fn start_sidecar<T: tauri_plugin_shell::ShellExt<tauri::Wry> + tauri::Emitter<ta
                 // Drop the dead/hung child from the registry — otherwise it leaks as a
                 // zombie entry until app shutdown. Timeout also kills the process.
                 if outcome == ReadyOutcome::Timeout {
-                    kill_pid(child.pid);
+                    if !stop_spawned_child(&child) { write_ports_json(); return Err(format!("Cannot confirm owned {} child {} has exited; its registry was retained", name, child.pid)); }
                 }
                 if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
                     drop_registry_entry(&mut reg, name, child.pid);
@@ -1576,7 +1935,7 @@ fn copy_attachment_impl(workspace: &str, session_id: &str, src: &str) -> Result<
         return Err(format!("Workspace not found: {}", workspace));
     }
 
-    let dir = ws.join(".ultrawork").join("attachments").join(session_id);
+    let dir = ws.join(format!(".{}", OPENCODE_APP_NAME)).join("attachments").join(session_id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
 
     let name = src_path
@@ -1687,7 +2046,7 @@ mod screen_access {
 /// subdir (not bare `temp_dir`) is what makes `discard_temp_file`'s "only delete
 /// under here" guard meaningful.
 fn screenshot_temp_dir() -> PathBuf {
-    std::env::temp_dir().join("ultrawork-screenshots")
+    std::env::temp_dir().join(format!("{}-screenshots", OPENCODE_APP_NAME))
 }
 
 /// A fresh, unique PNG path under the screenshot temp dir. pid + a monotonic
@@ -2092,14 +2451,23 @@ fn build_provider_test_url(base_url: &str, protocol: &str) -> String {
 /// (taskkill / netstat / tasklist / powershell), so quitting the app used to
 /// strobe a row of console windows (discussions/037).
 ///
-/// On Unix the flag does not exist and this is a plain `Command::new`. On a Windows
+/// macOS `ps` probes use a fixed UTF-8 locale: LaunchServices often supplies no
+/// locale, and BSD ps otherwise escapes Unicode executable/command paths. This
+/// also keeps lstart output stable across GUI and terminal launches. Other
+/// commands, including external agents, retain the caller's locale.
+///
+/// On Unix the console flag does not exist. On a Windows
 /// *dev* build it does still apply — the child gets no console instead of inheriting
 /// the parent's — but nothing observable changes, because every child here has its
 /// stdio redirected, and CREATE_NO_WINDOW suppresses only the console *window*: the
 /// inherited stdin/stdout/stderr handles keep working.
 fn sys_cmd(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let program = program.as_ref();
     #[allow(unused_mut)]
     let mut cmd = Command::new(program); // allow-bare-command: the one sanctioned call
+    if cfg!(target_os = "macos") && (program == "ps" || program == "/bin/ps") {
+        cmd.env("LC_ALL", "en_US.UTF-8").env("LANG", "en_US.UTF-8");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -2315,15 +2683,12 @@ pub struct BrowserEnvInfo {
     mode: BrowserMode,
     /// MCP install directory
     mcp_dir: String,
+    chrome_profile: String,
 }
 
 // ── Paths ──────────────────────────────────────────────────────────
 
-fn ultrawork_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(".ultrawork")
-}
+fn ultrawork_dir() -> PathBuf { brand::paths().app_root }
 
 fn mcp_dir() -> PathBuf {
     ultrawork_dir().join("mcp")
@@ -3014,59 +3379,74 @@ fn detect_export_browser() -> Option<String> {
 
 // ── Browser process cleanup ────────────────────────────────────────
 
-/// Command-line fragments that identify a browser-MCP process: the MCP server
-/// itself, or a Chrome launched with our `chrome-profile` user-data-dir.
-///
-/// Used verbatim by the Windows WQL filter. The Unix path matches the same three
-/// server fragments via `pgrep -f` and locates the Chrome by the profile's full
-/// path instead, so it does not read this list.
-const BROWSER_MCP_NEEDLES: &[&str] =
-    &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp", "chrome-profile"];
-
-/// WQL `OR`-chain matching `CommandLine` against any of `needles`.
-///
-/// No LIKE-escaping: none of the needles contains `\`, `%`, `_` or `'` — the four
-/// characters that would need it. That is a property of the constants, not a
-/// guarantee about future ones, so `browser_mcp_needles_need_no_wql_escaping`
-/// asserts it and will fail the day someone adds a needle that does.
-fn browser_mcp_wql_filter(needles: &[&str]) -> String {
-    needles
-        .iter()
-        .map(|n| format!("CommandLine LIKE '%{}%'", n))
-        .collect::<Vec<_>>()
-        .join(" OR ")
+/// Enumerate command lines without interpolating user paths into shell/WQL.
+/// Namespace filtering happens in Rust, after the one process-table query.
+fn browser_mcp_enum_command() -> String {
+    brand::powershell_utf8("Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress")
 }
 
-/// PowerShell that **enumerates** browser-MCP PIDs, one per line. It kills nothing.
-///
-/// Two properties this command must keep — both are load-bearing, both are asserted
-/// by `enum_command_spawns_nothing_and_excludes_self`:
-///
-/// 1. **It spawns no child process.** PowerShell runs under CREATE_NO_WINDOW, i.e.
-///    with *no console of its own*, and a console-less parent that launches a console
-///    program gets it a freshly allocated — visible — console window. The old command
-///    piped into `ForEach-Object { taskkill … }`, so hiding PowerShell would merely
-///    have traded 4 PowerShell windows for one `taskkill` window per killed process
-///    (Chrome's helpers all carry `--user-data-dir=…\chrome-profile`, so that is
-///    potentially dozens). Enumerate here; kill from Rust, where `sys_cmd` sets the
-///    flag on the `taskkill` itself.
-///
-/// 2. **It excludes its own PID.** This command line *contains all four needles as
-///    literal text*, so powershell.exe's own `Win32_Process.CommandLine` matches the
-///    filter. The previous version therefore fed its own PID to `taskkill /F`, killing
-///    itself mid-pipeline and abandoning every PID not yet enumerated — WMI ordering
-///    decides how much of the cleanup ever ran. (Pre-existing: each of the old four
-///    passes self-matched on its own needle.)
-fn browser_mcp_enum_command() -> String {
-    format!(
-        "Get-CimInstance Win32_Process -Filter \"{}\" | \
-         Where-Object {{ $_.ProcessId -ne $PID }} | \
-         ForEach-Object {{ $_.ProcessId }}",
-        browser_mcp_wql_filter(BROWSER_MCP_NEEDLES)
-    )
+fn browser_command_owned(command: &str, mcp_root: &std::path::Path, profile: &std::path::Path) -> bool {
+    let normalize = |s: &str| if cfg!(target_os = "windows") { s.replace('\\', "/").to_lowercase() } else { s.to_string() };
+    let text = normalize(command);
+    let mcp = normalize(&mcp_root.to_string_lossy());
+    let profile = normalize(&profile.to_string_lossy());
+    let under_mcp = text.contains(&(mcp.trim_end_matches('/') .to_string() + "/"))
+        && ["chrome-devtools-mcp", "@playwright/mcp"].iter().any(|name| text.contains(name));
+    let own_profile = text.match_indices(&profile).any(|(at, _)| {
+        let end = at + profile.len();
+        text.get(end..).and_then(|tail| tail.chars().next()).is_none_or(|ch| ch.is_whitespace() || ch == '\'' || ch == '"')
+    });
+    under_mcp || own_profile
+}
+
+fn browser_process_role_owned(identity: &brand::ProcessIdentity, command: &str, mcp_root: &std::path::Path, profile: &std::path::Path) -> bool {
+    let filename = identity.executable.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let normalized = command.replace('\\', "/");
+    if matches!(filename.as_str(), "node" | "node.exe") {
+        if normalized.contains(" -e ") || normalized.contains(" --eval ") || normalized.contains(" --print ") || normalized.contains(" -p ") { return false; }
+        for suffix in ["playwright/node_modules/@playwright/mcp/cli.js", "chrome-devtools/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"] {
+            let entry = format!("{}/{}", mcp_root.to_string_lossy().replace('\\', "/").trim_end_matches('/'), suffix);
+            if let Some(at) = normalized.find(&entry) {
+                let prefix = normalized[..at].trim().trim_matches('"').trim();
+                let program = prefix.trim_end_matches('"');
+                let tail = &normalized[at + entry.len()..];
+                let boundary = tail.chars().next().is_none_or(|ch| ch.is_whitespace() || ch == '"');
+                if boundary && (program == "node" || program.ends_with("/node") || program.ends_with("/node.exe")) { return true; }
+            }
+        }
+        return false;
+    }
+    if ["google chrome", "chrome", "chrome.exe", "chromium", "chromium-browser", "msedge.exe", "microsoft edge"].contains(&filename.as_str()) {
+        let path = profile.to_string_lossy().replace('\\', "/");
+        return browser_command_owned(command, mcp_root, profile)
+            && [format!("--user-data-dir={path}"), format!("--user-data-dir=\"{path}\""), format!("--user-data-dir {path}"), format!("--user-data-dir \"{path}\"")].iter().any(|flag| normalized.contains(flag));
+    }
+    false
+}
+
+fn process_command_lines() -> Vec<(u32, String)> {
+    if cfg!(target_os = "windows") {
+        let Ok(output) = sys_cmd("powershell").args(["-NoProfile", "-NonInteractive", "-Command"]).arg(browser_mcp_enum_command()).output() else { return Vec::new() };
+        let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout) else { return Vec::new() };
+        return rows.into_iter().filter_map(|v| Some((v.get("ProcessId")?.as_u64()? as u32, v.get("CommandLine")?.as_str()?.to_string()))).collect();
+    }
+    if cfg!(target_os = "linux") {
+        return std::fs::read_dir("/proc").into_iter().flatten().filter_map(Result::ok).filter_map(|entry| {
+            let pid = entry.file_name().to_string_lossy().parse::<u32>().ok()?;
+            let bytes = std::fs::read(entry.path().join("cmdline")).ok()?;
+            Some((pid, String::from_utf8_lossy(&bytes).replace('\0', " ")))
+        }).collect();
+    }
+    let Ok(output) = sys_cmd("ps").args(["-axo", "pid=,command="]).output() else { return Vec::new() };
+    String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| {
+        let text = line.trim_start();
+        let split = text.find(char::is_whitespace)?;
+        Some((text[..split].parse().ok()?, text[split..].trim_start().to_string()))
+    }).collect()
 }
 
 /// PIDs from newline-separated stdout. Non-numeric lines (banners, warnings) drop out.
+#[cfg(test)]
 fn parse_pid_lines(stdout: &str) -> Vec<u32> {
     stdout
         .lines()
@@ -3090,53 +3470,37 @@ fn kill_process_tree(pid: u32) {
 /// or Playwright). Called before disconnect to prevent "session locked" errors.
 #[tauri::command]
 fn kill_browser_mcp_processes() {
-    if cfg!(target_os = "windows") {
-        // Windows has no pgrep, so command lines come from WMI. One scan for all four
-        // needles, not one each: `shutdown_sidecars` calls this on every quit, and
-        // `Get-CimInstance Win32_Process` with a `CommandLine` filter walks the whole
-        // process table (discussions/037).
-        let Ok(out) = sys_cmd("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &browser_mcp_enum_command()])
-            .output()
-        else {
-            return;
-        };
-        for pid in parse_pid_lines(&String::from_utf8_lossy(&out.stdout)) {
-            kill_process_tree(pid);
-        }
-        return;
+    if !brand::owns_data() { return; }
+    let graph = brand::current_processes();
+    let mut descendants = std::collections::HashSet::from([std::process::id()]);
+    loop {
+        let next = graph.iter().filter_map(|(pid, parent)| (parent.is_some_and(|p| descendants.contains(&p)) && !descendants.contains(pid)).then_some(*pid)).collect::<Vec<_>>();
+        if next.is_empty() { break; }
+        descendants.extend(next);
     }
-    // Kill chrome-devtools-mcp node processes and their Chrome children
-    for pattern in &["chrome-devtools-mcp", "playwright-mcp", "@playwright/mcp"] {
-        // Find node processes running the MCP server
-        if let Ok(output) = sys_cmd("pgrep").args(["-f", pattern]).output() {
-            let pids = String::from_utf8_lossy(&output.stdout);
-            for pid_str in pids.trim().lines() {
-                let pid = pid_str.trim();
-                if pid.is_empty() { continue; }
-                // Kill descendants first (Chrome processes)
-                if let Ok(children) = sys_cmd("pgrep").args(["-P", pid]).output() {
-                    for cpid in String::from_utf8_lossy(&children.stdout).trim().lines() {
-                        let cpid = cpid.trim();
-                        if !cpid.is_empty() {
-                            sys_cmd("kill").arg(cpid).output().ok();
-                        }
-                    }
-                }
-                // Then kill the MCP server process itself
-                sys_cmd("kill").arg(pid).output().ok();
-            }
-        }
-    }
-    // Also kill any Chrome launched with our user-data-dir
+    let root = mcp_dir();
     let profile = ultrawork_dir().join("chrome-profile");
-    if let Ok(output) = sys_cmd("pgrep").args(["-f", &profile.to_string_lossy()]).output() {
-        for pid in String::from_utf8_lossy(&output.stdout).trim().lines() {
-            let pid = pid.trim();
-            if !pid.is_empty() {
-                sys_cmd("kill").arg(pid).output().ok();
-            }
+    let mut selected = process_command_lines().into_iter()
+        .filter(|(pid, _)| *pid != std::process::id() && descendants.contains(pid))
+        .filter_map(|(pid, command)| {
+            let identity = brand::process_identity(pid)?;
+            browser_process_role_owned(&identity, &command, &root, &profile).then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    let mut parents = selected.iter().map(|p| p.pid).collect::<std::collections::HashSet<_>>();
+    loop {
+        let next = graph.iter().filter_map(|(pid, parent)| {
+            (parent.is_some_and(|p| parents.contains(&p)) && !parents.contains(pid)).then_some(*pid)
+        }).collect::<Vec<_>>();
+        if next.is_empty() { break; }
+        for pid in next {
+            parents.insert(pid);
+            if let Some(identity) = brand::process_identity(pid) { selected.push(identity); }
         }
+    }
+    // Descendants first. Every PID is checked again against its creation identity.
+    for identity in selected.into_iter().rev() {
+        if brand::same_process(&identity) { kill_process_tree(identity.pid); }
     }
 }
 
@@ -3307,6 +3671,7 @@ fn detect_browser_env() -> BrowserEnvInfo {
         devtools_installed,
         mode,
         mcp_dir: mcp_dir().to_string_lossy().to_string(),
+        chrome_profile: ultrawork_dir().join("chrome-profile").to_string_lossy().to_string(),
     }
 }
 
@@ -3316,14 +3681,7 @@ fn detect_browser_env() -> BrowserEnvInfo {
 // No workspace-level opencode.json is used for MCP configuration.
 // ---------------------------------------------------------------------------
 
-fn global_config_dir() -> PathBuf {
-    // Must match OpenCode's xdg-basedir: XDG_CONFIG_HOME or ~/.config (NOT ~/Library/Application Support on macOS)
-    // Uses OPENCODE_APP_NAME to isolate Ultrawork config from OpenCode CLI
-    match std::env::var("XDG_CONFIG_HOME") {
-        Ok(val) if !val.is_empty() => PathBuf::from(val).join(OPENCODE_APP_NAME),
-        _ => dirs::home_dir().unwrap().join(".config").join(OPENCODE_APP_NAME),
-    }
-}
+fn global_config_dir() -> PathBuf { brand::paths().config_root }
 
 fn global_opencode_json_path() -> PathBuf {
     global_config_dir().join("opencode.json")
@@ -3526,6 +3884,7 @@ fn load_or_create_sidecar_credentials() -> Result<SidecarCredentials, String> {
 /// waiting on the main thread.
 #[tauri::command]
 async fn get_sidecar_credentials() -> Result<SidecarCredentials, String> {
+    require_ready()?;
     tauri::async_runtime::spawn_blocking(load_or_create_sidecar_credentials)
         .await
         .map_err(|e| format!("credential lookup failed: {}", e))?
@@ -3572,17 +3931,19 @@ fn source_sidecar_path(name: &str) -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
-            let prod = dir.join(format!("{}{}", name, suffix));
+            let prod = dir.join(format!("{}{}", packaged_sidecar_name(name), suffix));
             if prod.exists() {
                 return Some(prod);
             }
         }
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(sidecar_binary_name(name));
-    if dev.exists() {
-        return Some(dev);
+    // A release must never rely on a developer's checkout being present. Tauri
+    // dev can still use its source binaries before the CLI copies them beside the host.
+    if cfg!(debug_assertions) {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(sidecar_binary_name(name));
+        if dev.exists() { return Some(dev); }
     }
     None
 }
@@ -6405,44 +6766,65 @@ fn get_sidecar_path(name: String) -> Result<String, String> {
     resolve_sidecar_path(&name)
 }
 
+const MANAGED_MCP_ENV_KEYS: &[&str] = &[
+    "ULTRAWORK_BRAND_CONTEXT", "ULTRAWORK_BRAND_CONTEXT_FILE", "ULTRAWORK_BRAND_MANAGED",
+    "ULTRAWORK_APP_ROOT", "ULTRAWORK_SKILLS_DIR", "OPENCODE_APP_NAME",
+    "ACP_CLIENT_PORT", "KB_PORT", "GATEWAY_PORT", "OPENCODE_BASE_URL",
+    "ULTRAWORK_SIDECAR_USERNAME", "ULTRAWORK_SIDECAR_PASSWORD", "OPENCODE_SERVER_PASSWORD",
+    "ACP_DATA_DIR", "TEAM_SESSIONS_FILE", "ORCHESTRATOR_DATA_DIR", "ULTRAWORK_WORKTREES_DIR",
+];
+
+/// Only the application's two MCP subcommands are managed. User-defined MCP
+/// servers keep their environment and commands untouched.
+fn normalize_managed_mcp_entry(
+    config: &mut serde_json::Value,
+    canonical: &std::collections::HashMap<&str, String>,
+    context_file: &std::path::Path,
+) -> bool {
+    let Some(object) = config.as_object_mut() else { return false };
+    let Some(command) = object.get("command").and_then(|v| v.as_array()) else { return false };
+    let Some(executable) = command.first().and_then(|v| v.as_str()) else { return false };
+    let basename = executable.rsplit(['/', '\\']).next().unwrap_or("");
+    let basename = basename.strip_suffix(".exe").unwrap_or(basename);
+    let known = [("knowledge-sidecar", "mcp-stdio"), ("acp-client", "delegate-mcp")];
+    let Some((name, subcommand)) = known.into_iter().find(|(name, sub)| {
+        (basename == *name || basename.starts_with(&format!("{name}-")))
+            && command.get(1).and_then(|v| v.as_str()) == Some(*sub)
+    }) else { return false };
+    let Some(path) = canonical.get(name) else { return false };
+    let mut rebuilt = vec![serde_json::Value::String(path.clone()), serde_json::Value::String(subcommand.into())];
+    let mut iter = command.iter().skip(2);
+    while let Some(arg) = iter.next() {
+        if arg.as_str() == Some("--brand-context") { let _ = iter.next(); }
+        else { rebuilt.push(arg.clone()); }
+    }
+    rebuilt.push(serde_json::Value::String("--brand-context".into()));
+    rebuilt.push(serde_json::Value::String(context_file.to_string_lossy().into_owned()));
+    object.insert("command".into(), serde_json::Value::Array(rebuilt));
+    if let Some(environment) = object.get_mut("environment").and_then(|v| v.as_object_mut()) {
+        for key in MANAGED_MCP_ENV_KEYS { environment.remove(*key); }
+        if environment.is_empty() { object.remove("environment"); }
+    }
+    true
+}
+
+fn managed_mcp_canonical_paths() -> std::collections::HashMap<&'static str, String> {
+    KNOWN_SIDECAR_NAMES.iter().map(|&name| (name, user_sidecar_path(name).to_string_lossy().into_owned())).collect()
+}
+
 /// Migrate any pre-existing MCP entries to the canonical ~/.ultrawork/sidecars/<name>
 /// path. Recognises both the dev-tree basename (`<name>-<target>`) and the
 /// production basename Tauri uses (`<name>`). Anything not recognisable as a
 /// managed sidecar is left alone.
-fn canonicalize_sidecar_mcp_paths() {
-    let mut canonical: std::collections::HashMap<&str, String> = Default::default();
-    for &sidecar in KNOWN_SIDECAR_NAMES {
-        canonical.insert(sidecar, user_sidecar_path(sidecar).to_string_lossy().to_string());
-    }
-
-    let result = modify_global_opencode_json(|root| {
-        let Some(mcp) = root.get_mut("mcp").and_then(|m| m.as_object_mut()) else {
-            return Ok(());
-        };
-        for (_name, cfg) in mcp.iter_mut() {
-            let Some(cmd) = cfg.get_mut("command").and_then(|c| c.as_array_mut()) else { continue };
-            let Some(first) = cmd.first_mut() else { continue };
-            let Some(current) = first.as_str() else { continue };
-
-            let basename = std::path::Path::new(current)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let matched: Option<&str> = KNOWN_SIDECAR_NAMES.iter()
-                .find(|&&s| basename == s || basename.starts_with(&format!("{}-", s)))
-                .copied();
-            let Some(name) = matched else { continue };
-            let Some(want) = canonical.get(name) else { continue };
-            if want == current { continue }
-
-            println!("[sidecar-mcp] migrate path: {} -> {}", current, want);
-            *first = serde_json::Value::String(want.clone());
+fn canonicalize_sidecar_mcp_paths() -> Result<(), String> {
+    let canonical = managed_mcp_canonical_paths();
+    let context_file = brand::context_file().ok_or("Managed MCP context is unavailable")?;
+    modify_global_opencode_json(|root| {
+        if let Some(mcp) = root.get_mut("mcp").and_then(|v| v.as_object_mut()) {
+            for cfg in mcp.values_mut() { normalize_managed_mcp_entry(cfg, &canonical, &context_file); }
         }
         Ok(())
-    });
-    if let Err(e) = result {
-        eprintln!("[sidecar-mcp] failed to update MCP paths: {}", e);
-    }
+    })
 }
 
 /// Port env vars that older builds baked into `opencode.json`'s MCP entries.
@@ -6482,34 +6864,111 @@ fn strip_persisted_ports_from(root: &mut serde_json::Value) -> usize {
 /// Remove baked-in ports from persisted MCP entries. The shim inherits the
 /// correct port from its opencode parent's env, so dropping the key is the fix
 /// (not rewriting it to today's value — that would just re-stale tomorrow).
-fn strip_persisted_sidecar_ports() {
-    let result = modify_global_opencode_json(|root| {
+fn strip_persisted_sidecar_ports() -> Result<(), String> {
+    modify_global_opencode_json(|root| {
         strip_persisted_ports_from(root);
         Ok(())
-    });
-    if let Err(e) = result {
-        eprintln!("[sidecar-mcp] failed to strip persisted ports: {}", e);
+    })
+}
+
+/// OpenCode writes JSONC (including trailing commas) when PATCH updates this
+/// file. Replace comments with whitespace, never text deletion: `1/*x*/2` must
+/// remain invalid rather than silently becoming `12`. Strings and their escapes
+/// are opaque, so URLs, Windows paths and literal comment markers survive.
+fn parse_opencode_jsonc(content: &str) -> Result<serde_json::Value, String> {
+    let source = content.as_bytes();
+    let mut json = source.to_vec();
+    let mut i = if source.starts_with(&[0xef, 0xbb, 0xbf]) {
+        json[..3].fill(b' ');
+        3
+    } else { 0 };
+    let mut in_string = false;
+    let mut escaped = false;
+    while i < source.len() {
+        let byte = source[i];
+        if in_string {
+            if escaped { escaped = false; }
+            else if byte == b'\\' { escaped = true; }
+            else if byte == b'"' { in_string = false; }
+            i += 1;
+        } else if byte == b'"' {
+            in_string = true;
+            i += 1;
+        } else if byte == b'/' && source.get(i + 1) == Some(&b'/') {
+            while i < source.len() && source[i] != b'\n' && source[i] != b'\r' {
+                json[i] = b' ';
+                i += 1;
+            }
+        } else if byte == b'/' && source.get(i + 1) == Some(&b'*') {
+            let start = i;
+            json[i..i + 2].fill(b' ');
+            i += 2;
+            while i + 1 < source.len() && !(source[i] == b'*' && source[i + 1] == b'/') {
+                if source[i] != b'\n' && source[i] != b'\r' { json[i] = b' '; }
+                i += 1;
+            }
+            if i + 1 >= source.len() {
+                return Err(format!("Unterminated JSONC block comment at byte {start}"));
+            }
+            json[i..i + 2].fill(b' ');
+            i += 2;
+        } else {
+            i += 1;
+        }
     }
+    if in_string { return Err("Unterminated JSONC string".into()); }
+
+    // Comments are now whitespace. Only a comma after a value may be trailing;
+    // retaining commas after openers/commas/colons lets serde reject `{,}`,
+    // `[1,,]` and similar malformed documents instead of repairing them.
+    in_string = false;
+    escaped = false;
+    let mut previous = None;
+    for i in 0..json.len() {
+        let byte = json[i];
+        if in_string {
+            if escaped { escaped = false; }
+            else if byte == b'\\' { escaped = true; }
+            else if byte == b'"' { in_string = false; previous = Some(byte); }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if !byte.is_ascii_whitespace() {
+            if byte == b',' && previous.is_some_and(|b| ![b'{', b'[', b',', b':'].contains(&b)) {
+                let next = json[i + 1..].iter().copied().find(|b| !b.is_ascii_whitespace());
+                if matches!(next, Some(b'}' | b']')) { json[i] = b' '; }
+            }
+            previous = Some(byte);
+        }
+    }
+    serde_json::from_slice(&json).map_err(|error| error.to_string())
+}
+
+fn read_opencode_json_at(path: &std::path::Path) -> Result<serde_json::Value, String> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(serde_json::json!({})),
+        Err(error) => return Err(format!("Failed to read {}: {error}", path.display())),
+    };
+    let root = parse_opencode_jsonc(&content)
+        .map_err(|error| format!("Invalid JSONC in {}: {error}", path.display()))?;
+    if !root.is_object() { return Err(format!("{} root is not an object", path.display())); }
+    Ok(root)
 }
 
 fn read_global_opencode_json() -> Result<serde_json::Value, String> {
-    let path = global_opencode_json_path();
-    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))
+    read_opencode_json_at(&global_opencode_json_path())
 }
 
 // Atomic write: serialize to a per-writer .tmp file, then rename over the target.
 // rename(2) is atomic on the same filesystem, so readers never see a partial file.
 // Including pid + nanos in the tmp filename means two writers (e.g. Ultrawork and
 // the OpenCode sidecar updating the same file) never clobber each other's tmp.
-fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
-    let dir = global_config_dir();
+fn write_opencode_json_at(path: &std::path::Path, root: &serde_json::Value) -> Result<(), String> {
+    let dir = path.parent().ok_or("Config file has no parent directory")?;
     if !dir.exists() {
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
     }
-    let path = global_opencode_json_path();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -6520,9 +6979,11 @@ fn write_global_opencode_json(root: &serde_json::Value) -> Result<(), String> {
         .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
     json.push('\n');
 
-    std::fs::write(&tmp_path, json)
-        .map_err(|e| format!("Failed to write {}: {}", tmp_path.display(), e))?;
-    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+    if let Err(error) = std::fs::write(&tmp_path, json) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to write {}: {error}", tmp_path.display()));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
         // Best-effort cleanup of the orphan tmp file
         let _ = std::fs::remove_file(&tmp_path);
         return Err(format!("Failed to rename {} -> {}: {}", tmp_path.display(), path.display(), e));
@@ -6541,9 +7002,16 @@ where
     F: FnOnce(&mut serde_json::Value) -> Result<(), String>,
 {
     let _guard = OPENCODE_JSON_LOCK.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
-    let mut root = read_global_opencode_json()?;
+    modify_opencode_json_at(&global_opencode_json_path(), modifier)
+}
+
+fn modify_opencode_json_at<F>(path: &std::path::Path, modifier: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_json::Value) -> Result<(), String>,
+{
+    let mut root = read_opencode_json_at(path)?;
     modifier(&mut root)?;
-    write_global_opencode_json(&root)
+    write_opencode_json_at(path, &root)
 }
 
 #[tauri::command]
@@ -6554,7 +7022,11 @@ fn read_mcp_config() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn write_mcp_config(name: String, config: serde_json::Value) -> Result<(), String> {
+fn write_mcp_config(name: String, mut config: serde_json::Value) -> Result<(), String> {
+    require_ready()?;
+    if let Some(context_file) = brand::context_file() {
+        normalize_managed_mcp_entry(&mut config, &managed_mcp_canonical_paths(), &context_file);
+    }
     modify_global_opencode_json(|root| {
         let obj = root.as_object_mut()
             .ok_or("opencode.json root is not an object")?;
@@ -6667,6 +7139,20 @@ fn probe_log(msg: String) {
 /// the event loop any more. Progress is narrated to the splash via `boot-progress`.
 fn boot_sidecars(app: tauri::AppHandle) {
     set_boot_stage(&app, BOOT_STAGE_PREPARING);
+    let preflight = (|| -> Result<(), String> {
+        let paths = brand::resolve_paths()?;
+        // Validate persisted JSONC before copying sidecars/skills or creating
+        // credentials. An unreadable config must never become an empty config.
+        read_opencode_json_at(&paths.config_root.join("opencode.json"))?;
+        reject_active_legacy_registry(&paths.ports_registry_path)?;
+        if !brand::identity().is_default {
+            if let Some(home) = dirs::home_dir() { reject_active_legacy_registry(&home.join(".ultrawork").join("run").join("ports.json"))?; }
+        }
+        brand::initialize(&app.config().identifier)?;
+        Ok(())
+    })();
+    if let Err(error) = preflight { block_startup(&app, error); return; }
+    if let Err(error) = reap_orphaned_sidecars() { block_startup(&app, error); return; }
 
     // Stage 1: copy bundled sidecars into ~/.ultrawork/sidecars/ so MCPs
     // and any external tooling can use a stable user-local path.
@@ -6684,17 +7170,18 @@ fn boot_sidecars(app: tauri::AppHandle) {
     // Stage 2: migrate any pre-existing MCP entries in opencode.json to
     // point at the canonical user-local path (handles dev → DMG and old
     // app-bundle paths in pre-existing configs).
-    canonicalize_sidecar_mcp_paths();
+    if let Err(error) = canonicalize_sidecar_mcp_paths() {
+        block_startup(&app, format!("Failed to normalize managed MCP context: {error}"));
+        return;
+    }
 
     // Stage 2b: drop ports that older builds baked into opencode.json.
     // Must run before opencode starts: it reads the file at boot, and a
     // stale mcp.environment port would override the one we inject.
-    strip_persisted_sidecar_ports();
-
-    // Stage 2c: a surviving ports.json means the previous instance died without
-    // cleaning up. Kill whatever of ours is still holding those ports before we
-    // pick new ones — `prepare_port` only looks at the preferred four.
-    reap_orphaned_sidecars();
+    if let Err(error) = strip_persisted_sidecar_ports() {
+        block_startup(&app, format!("Failed to strip persisted MCP ports: {error}"));
+        return;
+    }
 
     // Load (or first-time generate) the per-install sidecar credentials before
     // spawning any sidecar — Channel Gateway needs OPENCODE_SERVER_PASSWORD to
@@ -6702,22 +7189,7 @@ fn boot_sidecars(app: tauri::AppHandle) {
     let creds = match load_or_create_sidecar_credentials() {
         Ok(c) => c,
         Err(e) => {
-            // Tear the splash down *before* the modal, not after. `blocking_show`
-            // parks this thread until the user clicks OK, so anything after it is
-            // anything-after-the-user — and an error dialog stacked on top of a splash
-            // still animating "正在准备组件…" is a mixed message at best. Releasing the
-            // gate first also means the app is behind the dialog when it is dismissed,
-            // rather than a splash that then has to catch up.
-            signal_boot_ports_ready();
-            set_boot_stage(&app, BOOT_STAGE_FAILED);
-            app.dialog()
-                .message(format!(
-                    "Failed to initialize sidecar credentials:\n\n{}\n\nCheck permissions on ~/.config/ultrawork/",
-                    e
-                ))
-                .kind(MessageDialogKind::Error)
-                .title("Startup Error")
-                .blocking_show();
+            block_startup(&app, format!("Failed to initialize sidecar credentials: {e}"));
             return;
         }
     };
@@ -6768,41 +7240,17 @@ fn boot_sidecars(app: tauri::AppHandle) {
         },
     );
 
-    // Open the renderer's gate — opencode is healthy (or has definitively failed), and
-    // its port is final even on the failure path. Holding the gate until *health*, not
-    // merely until the port was chosen, is what preserves the invariant the whole app
-    // rests on: by the time a provider mounts and fetches, the backend answers.
-    //
-    // This costs nothing in wall-clock. The speed-up comes from the main thread being
-    // free at all: the webview now parses its 2.4MB bundle *while* opencode boots,
-    // instead of afterwards. Serial 2.5s becomes parallel ~1.5s — and the splash, which
-    // lives in index.html and needs neither, has been on screen the entire time.
-    signal_boot_ports_ready();
-
-    if let Err(e) = &engine_ok {
-        eprintln!("OpenCode Server startup failed: {}", e);
-        // Terminal stage before the modal — same reasoning as the credential path: the
-        // dialog blocks this thread until dismissed, and the splash must not still be
-        // claiming progress underneath it.
-        set_boot_stage(&app, BOOT_STAGE_FAILED);
-        // Now legitimately off the main thread. `blocking_show` marshals the dialog to
-        // the main thread and parks on a channel until it answers — so on the main
-        // thread, *before the event loop had started*, it could never be answered.
-        // This dialog did not merely fail to appear; it deadlocked the app.
-        app.dialog()
-            .message(format!(
-                "Failed to start OpenCode Server:\n\n{}\n\nThe application may not work correctly.",
-                e
-            ))
-            .kind(MessageDialogKind::Error)
-            .title("Startup Error")
-            .blocking_show();
-    } else {
-        // OpenCode is healthy — eagerly trigger MCP InstanceState init in
-        // the background so the first user prompt doesn't pay the per-MCP
-        // spawn/connect cost.
-        warm_opencode_mcp(sidecar_ports().opencode, auth_header.clone());
+    if let Err(error) = &engine_ok {
+        block_startup(&app, format!("Failed to start OpenCode Server: {error}"));
+        return;
     }
+    if let Err(error) = brand::restore_cache_identity() {
+        block_startup(&app, format!("Cannot record this brand's cache ownership: {error}"));
+        return;
+    }
+    set_boot_stage(&app, BOOT_STAGE_READY);
+    signal_boot_ports_ready();
+    warm_opencode_mcp(sidecar_ports().opencode, auth_header.clone());
 
     // opencode's port is settled now (even a failed start leaves the
     // registry consistent), so the two sidecars that call it can be told
@@ -6955,7 +7403,7 @@ pub fn run() {
             }
         })
         .on_menu_event(|app, event| background::on_menu_event(app, event.id().as_ref()))
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(guarded_app_handler::<tauri::Wry>(tauri::generate_handler![
             background::set_tray_labels,
             ensure_default_workspace,
             open_file_with_system,
@@ -6981,6 +7429,9 @@ pub fn run() {
             get_sidecar_credentials,
             get_sidecar_ports,
             get_boot_status,
+            get_startup_status,
+            retry_startup,
+            exit_startup_blocked,
             check_skill_dependencies,
             check_cli_connectors,
             install_office_cli,
@@ -7001,7 +7452,7 @@ pub fn run() {
             test_provider_connection,
             test_search_provider,
             probe_log,
-        ])
+        ], require_ready))
         .setup(|app| {
             // Stage 0 stays on the main thread: it is instantaneous, and the earlier
             // the handlers exist the smaller the window in which a Ctrl+C leaks sidecars.
@@ -7016,20 +7467,7 @@ pub fn run() {
             // unpaintable white window, which is exactly what the startup white
             // screen was (discussions/038). Returning immediately lets the webview
             // paint the splash while the coordinator does the work behind it.
-            let boot_app = app.handle().clone();
-            std::thread::spawn(move || {
-                // A panic in here would take the whole startup contract down with it:
-                // the renderer's gate would never open and the splash would never hear
-                // a terminal stage, so the user would stare at it until the 60s
-                // backstop. Degrade to "the app is up but the engine isn't" instead —
-                // the same state a failed opencode start already produces.
-                let boot = std::panic::AssertUnwindSafe(|| boot_sidecars(boot_app.clone()));
-                if std::panic::catch_unwind(boot).is_err() {
-                    eprintln!("[boot] coordinator panicked — releasing the renderer");
-                    signal_boot_ports_ready();
-                    set_boot_stage(&boot_app, BOOT_STAGE_FAILED);
-                }
-            });
+            start_boot_coordinator(app.handle().clone());
 
             Ok(())
         })
@@ -8313,7 +8751,7 @@ mod boot_gate_tests {
 
         // The spawner's half: register, then re-check. It must find the barrier up.
         if let Ok(mut reg) = SIDECAR_REGISTRY.lock() {
-            reg.push(SidecarEntry { name: "opencode-server", port: 65535, pid: Some(u32::MAX) });
+            reg.push(SidecarEntry { name: "opencode-server", port: 65535, pid: Some(u32::MAX), identity: None, child: None, exited: None });
         }
         assert!(
             shutting_down(),
@@ -8621,19 +9059,10 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn prepare_port_reclaims_our_own_hung_sidecar() {
-        // The positive path: a process that IS one of our sidecars (by exe name)
-        // but no longer answers its health endpoint must be killed and its port
-        // handed back. Without this, `prepare_port` would only ever be able to
-        // refuse — and a hung sidecar would wedge the app shut forever.
+    fn prepare_port_never_reclaims_a_same_named_sidecar_without_creation_identity() {
         let fake = spawn_fake_sidecar("knowledge-sidecar", PORT_RECLAIM);
-        let pid = fake.child.id();
-        assert!(process_is_sidecar(pid, "knowledge-sidecar"), "fake sidecar must be attributable");
-
-        let reused = prepare_port("knowledge-sidecar", fake.port, "/kb/health", None)
-            .expect("our own hung sidecar must be reclaimed, not reported as a conflict");
-        assert!(!reused, "a hung sidecar is not reusable");
-        assert!(!is_port_in_use(fake.port), "port must be free after reclaiming");
+        assert!(prepare_port("knowledge-sidecar", fake.port, "/kb/health", None).is_err());
+        assert!(is_port_in_use(fake.port), "same basename is not ownership evidence");
     }
 
     #[test]
@@ -8654,7 +9083,7 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn prepare_port_reuses_a_healthy_non_orphan_listener() {
+    fn prepare_port_does_not_reuse_a_healthy_listener_without_ownership() {
         // A prior instance's sidecar that is alive and healthy is reused, not killed.
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
         let port = listener.local_addr().unwrap().port();
@@ -8673,10 +9102,8 @@ mod lifecycle_tests {
             }
         });
 
-        let reused = prepare_port("knowledge-sidecar", port, "/kb/health", None)
-            .expect("a healthy listener must not be an error");
-        assert!(reused, "healthy non-orphan listener must be reused, not respawned");
-        assert!(is_port_in_use(port), "reuse must not kill the healthy listener");
+        assert!(prepare_port("knowledge-sidecar", port, "/kb/health", None).is_err());
+        assert!(is_port_in_use(port), "a healthy foreign listener must survive");
 
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = TcpStream::connect(("127.0.0.1", port)); // unblock accept()
@@ -9340,6 +9767,130 @@ mod provider_test_tests {
 mod sidecar_port_registry_tests {
     use super::*;
 
+    struct ConfigFixture(PathBuf);
+    impl ConfigFixture {
+        fn new() -> Self {
+            let mut random = [0u8; 8];
+            getrandom::getrandom(&mut random).unwrap();
+            let suffix = random.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            let root = std::env::temp_dir().join(format!("brand-jsonc-{}-{suffix}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+        fn config(&self) -> PathBuf { self.0.join("客户 配置").join("opencode.json") }
+    }
+    impl Drop for ConfigFixture {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    #[test]
+    fn jsonc_parser_preserves_urls_unicode_paths_escapes_and_string_markers() {
+        let content = concat!("\u{feff}", r###"{
+            // OpenCode's PATCH writer emits JSONC.
+            "url": "https://example.test/a//b?x=/*literal*/",
+            "path": "C:\\客户\\folder\\",
+            "escaped": "quoted: \" // literal \\",
+            "markers": ",] ,} /* not a comment */",
+            /* 注释 may span
+               lines without merging tokens. */
+            "nested": [true, {"value": 3,},],
+        } // EOF line comment"###);
+        let parsed = parse_opencode_jsonc(content).unwrap();
+        assert_eq!(parsed["url"], "https://example.test/a//b?x=/*literal*/");
+        assert_eq!(parsed["path"], "C:\\客户\\folder\\");
+        assert_eq!(parsed["escaped"], "quoted: \" // literal \\");
+        assert_eq!(parsed["markers"], ",] ,} /* not a comment */");
+        assert_eq!(parsed["nested"], serde_json::json!([true, {"value": 3}]));
+    }
+
+    #[test]
+    fn jsonc_parser_rejects_missing_values_unclosed_tokens_and_merged_literals() {
+        for content in [
+            "[,]", "[/* comment */,]", "[1,,]", "{,}", "{\"a\":,}",
+            "{\"a\":1,,}", "{\"a\":1/* comment */2}", "{\"a\":tru/*x*/e}",
+            "{/* unclosed", "{\"a\":\"unclosed}", "{\"a\":\"bad\\q\"}",
+            "{\"a\":1,", "// only a comment", "{\"a\": NaN}",
+        ] {
+            assert!(parse_opencode_jsonc(content).is_err(), "must reject {content:?}");
+        }
+    }
+
+    #[test]
+    fn jsonc_managed_mcp_restart_uses_current_context_and_preserves_user_fields() {
+        let fixture = ConfigFixture::new();
+        let path = fixture.config();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{
+            "$schema": "https://opencode.ai/config.json",
+            "username": "客户", // user-owned fields remain intact
+            "provider": {"custom": {"options": {"baseURL": "https://example.test/a//b",},},},
+            "mcp": {
+                "knowledge-base": {"type":"local", "command":["/old/knowledge-sidecar", "mcp-stdio", "--brand-context", "/old/context.json",],
+                    "environment":{"ULTRAWORK_BRAND_CONTEXT":"old-instance", "ULTRAWORK_BRAND_CONTEXT_FILE":"/old/context.json", "KEEP":"knowledge"},},
+                "orchestrator": {"type":"local", "command":["C:\\old\\acp-client.exe", "delegate-mcp",],
+                    "environment":{"ULTRAWORK_BRAND_CONTEXT":"old-instance", "ACP_CLIENT_PORT":"4099", "TEAM_SESSIONS_FILE":"/old/team.json", "KEEP":"delegate"},},
+                "custom": {"type":"local", "command":["node", "user-script.js"], "environment":{"USER_VALUE":"//keep/*me*/"},},
+            },
+        }"#).unwrap();
+        let before = read_opencode_json_at(&path).unwrap();
+        let context_file = fixture.0.join("run").join("brand-context.json");
+        std::fs::create_dir_all(context_file.parent().unwrap()).unwrap();
+        std::fs::write(&context_file, r#"{"instanceId":"current-instance"}"#).unwrap();
+        let canonical = std::collections::HashMap::from([
+            ("knowledge-sidecar", fixture.0.join("sidecars").join("knowledge-sidecar").to_string_lossy().into_owned()),
+            ("acp-client", fixture.0.join("sidecars").join("acp-client").to_string_lossy().into_owned()),
+        ]);
+        modify_opencode_json_at(&path, |root| {
+            for config in root["mcp"].as_object_mut().unwrap().values_mut() {
+                normalize_managed_mcp_entry(config, &canonical, &context_file);
+            }
+            strip_persisted_ports_from(root);
+            Ok(())
+        }).unwrap();
+        let after = read_opencode_json_at(&path).unwrap();
+        for key in ["$schema", "username", "provider"] { assert_eq!(after[key], before[key]); }
+        assert_eq!(after["mcp"]["custom"], before["mcp"]["custom"]);
+        for (entry, executable, subcommand, keep) in [
+            ("knowledge-base", "knowledge-sidecar", "mcp-stdio", "knowledge"),
+            ("orchestrator", "acp-client", "delegate-mcp", "delegate"),
+        ] {
+            assert_eq!(after["mcp"][entry]["command"], serde_json::json!([
+                canonical[executable], subcommand, "--brand-context", context_file,
+            ]));
+            assert_eq!(after["mcp"][entry]["environment"], serde_json::json!({"KEEP":keep}));
+        }
+        let current: serde_json::Value = serde_json::from_slice(&std::fs::read(&context_file).unwrap()).unwrap();
+        assert_eq!(current["instanceId"], "current-instance");
+        // A second startup reads the normalized file without losing user data.
+        modify_opencode_json_at(&path, |root| {
+            for config in root["mcp"].as_object_mut().unwrap().values_mut() {
+                normalize_managed_mcp_entry(config, &canonical, &context_file);
+            }
+            Ok(())
+        }).unwrap();
+        assert_eq!(read_opencode_json_at(&path).unwrap(), after);
+    }
+
+    #[test]
+    fn config_read_errors_and_invalid_jsonc_never_overwrite_existing_data() {
+        let fixture = ConfigFixture::new();
+        let path = fixture.config();
+        assert_eq!(read_opencode_json_at(&path).unwrap(), serde_json::json!({}));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for invalid in ["{/* unclosed", "{\"user\":,}", "[]", "null"] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(modify_opencode_json_at(&path, |_| panic!("must fail before mutation")).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(read_opencode_json_at(&path).is_err(), "a directory is not a missing config");
+        assert!(modify_opencode_json_at(&path, |_| panic!("must fail before mutation")).is_err());
+        assert!(write_opencode_json_at(&path, &serde_json::json!({"user":"keep"})).is_err());
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "failed rename cleans its temporary file");
+    }
+
     // ── ports.json mirror ────────────────────────────────────────────
 
     #[test]
@@ -9375,6 +9926,29 @@ mod sidecar_port_registry_tests {
         assert!(doc["gateway"]["pid"].is_null());
         assert!(doc["knowledge"]["pid"].is_null());
         assert!(doc["acp"]["pid"].is_null());
+    }
+
+    #[test]
+    fn managed_mcp_normalization_replaces_stale_context_and_preserves_custom_servers() {
+        let canonical = std::collections::HashMap::from([
+            ("acp-client", "/home/.mywork/sidecars/acp-client".to_string()),
+            ("knowledge-sidecar", "/home/.mywork/sidecars/knowledge-sidecar".to_string()),
+        ]);
+        let mut config = serde_json::json!({
+            "type": "local", "command": ["C:\\old\\acp-client.exe", "delegate-mcp", "--brand-context", "C:\\old.json"],
+            "environment": {"ULTRAWORK_BRAND_CONTEXT": "old", "OPENCODE_APP_NAME":"ultrawork", "ACP_CLIENT_PORT":"4099", "KEEP":"value"}
+        });
+        let context = std::path::Path::new("/home/.mywork/run/brand-context.json");
+        assert!(normalize_managed_mcp_entry(&mut config, &canonical, context));
+        assert_eq!(config["command"], serde_json::json!(["/home/.mywork/sidecars/acp-client", "delegate-mcp", "--brand-context", "/home/.mywork/run/brand-context.json"]));
+        assert_eq!(config["environment"], serde_json::json!({"KEEP":"value"}));
+        let once = config.clone();
+        normalize_managed_mcp_entry(&mut config, &canonical, context);
+        assert_eq!(config, once);
+        let mut custom = serde_json::json!({"command":["node","custom.js"],"environment":{"OPENCODE_APP_NAME":"user-choice"}});
+        let original = custom.clone();
+        assert!(!normalize_managed_mcp_entry(&mut custom, &canonical, context));
+        assert_eq!(custom, original);
     }
 
     #[test]
@@ -9807,7 +10381,7 @@ mod registry_cleanup_tests {
     use super::*;
 
     fn entry(name: &'static str, port: u16, pid: u32) -> SidecarEntry {
-        SidecarEntry { name, port, pid: Some(pid) }
+        SidecarEntry { name, port, pid: Some(pid), identity: None, child: None, exited: None }
     }
 
     #[test]
@@ -9839,7 +10413,7 @@ mod registry_cleanup_tests {
 
     #[test]
     fn ignores_reused_entries_which_have_no_pid_of_ours() {
-        let mut reg = vec![SidecarEntry { name: "acp-client", port: 4099, pid: None }];
+        let mut reg = vec![SidecarEntry { name: "acp-client", port: 4099, pid: None, identity: None, child: None, exited: None }];
         drop_registry_entry(&mut reg, "acp-client", 100);
         assert_eq!(reg.len(), 1);
     }
@@ -9962,14 +10536,27 @@ mod sidecar_exit_watch_tests {
         assert!(wait_for(&exited, true), "Terminated must flip the exit flag");
     }
 
-    /// The stream ending without Terminated (all senders dropped) also means the child
-    /// is gone; a watcher that kept reporting "alive" would hang the startup poll.
+    /// Closing an output channel, including after a wait/IO error, proves nothing
+    /// about the OS child. Such a child must retain its cleanup authority.
     #[test]
-    fn flags_exit_when_the_event_stream_ends() {
-        let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(1);
-        let exited = watch_sidecar_exit_with("channel-gateway", rx, log_into(&tmp_log_dir("stream-end")));
-        drop(tx);
-        assert!(wait_for(&exited, true), "stream end must flip the exit flag");
+    fn event_stream_close_or_error_never_confirms_a_child_exit() {
+        for error in [false, true] {
+            let dir = tmp_log_dir(if error { "stream-error" } else { "stream-end" });
+            let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(1);
+            let exited = watch_sidecar_exit_with("channel-gateway", rx, log_into(&dir));
+            if error { tauri::async_runtime::block_on(tx.send(CommandEvent::Error("wait failed".into()))).unwrap(); }
+            drop(tx);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                if std::fs::read_to_string(dir.join("sidecar.log")).unwrap_or_default().contains("event stream ended") { break; }
+                assert!(std::time::Instant::now() < deadline, "watcher did not observe channel close");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!exited.load(Ordering::SeqCst), "channel close is not process death");
+            let entry = SidecarEntry { name: "channel-gateway", port: 4097, pid: Some(123), identity: None, child: None, exited: Some(exited) };
+            assert!(!sidecar_exit_confirmed(&entry), "unknown child must retain its registry");
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     /// The negative direction: ordinary output must NOT be mistaken for an exit, or
@@ -10023,6 +10610,7 @@ mod sidecar_exit_watch_tests {
             }
         });
         assert!(!exited.load(Ordering::SeqCst));
+        tauri::async_runtime::block_on(tx.send(CommandEvent::Terminated(TerminatedPayload { code: Some(0), signal: None }))).unwrap();
         drop(tx);
         assert!(wait_for(&exited, true));
     }
@@ -10173,73 +10761,37 @@ mod console_window_tests {
         );
     }
 
-    /// `browser_mcp_wql_filter` interpolates the needles into a WQL `LIKE` pattern
-    /// without escaping. That is sound only while none of them contains a character
-    /// WQL treats specially. A needle with a `\` would silently mismatch — and the
-    /// only symptom would be an orphaned Chrome holding its profile lock.
     #[test]
-    fn browser_mcp_needles_need_no_wql_escaping() {
-        for n in BROWSER_MCP_NEEDLES {
-            for bad in ['\\', '%', '_', '\''] {
-                assert!(
-                    !n.contains(bad),
-                    "needle {:?} contains {:?}, which WQL LIKE treats specially — \
-                     escape it in browser_mcp_wql_filter before adding it",
-                    n,
-                    bad
-                );
-            }
-        }
+    fn browser_cleanup_requires_the_full_brand_path() {
+        let mcp = std::path::Path::new("/home/user/.mywork/mcp");
+        let profile = std::path::Path::new("/home/user/.mywork/chrome-profile");
+        assert!(browser_command_owned("node /home/user/.mywork/mcp/chrome-devtools/node_modules/chrome-devtools-mcp/index.js", mcp, profile));
+        assert!(browser_command_owned("chrome --user-data-dir=/home/user/.mywork/chrome-profile", mcp, profile));
+        assert!(!browser_command_owned("node /home/user/.ultrawork/mcp/chrome-devtools/node_modules/chrome-devtools-mcp/index.js", mcp, profile));
+        assert!(!browser_command_owned("chrome --user-data-dir=/home/user/.mywork/chrome-profile-other", mcp, profile));
+        assert!(!browser_command_owned("node /unrelated/node_modules/@playwright/mcp/cli.js", mcp, profile));
     }
 
-    /// One WMI scan for all needles, not one per needle: `shutdown_sidecars` calls
-    /// this on every quit, and each `Get-CimInstance Win32_Process` with a
-    /// `CommandLine` filter walks the whole process table.
-    ///
-    /// Pinned to the exact string because nothing else can check it: no test here
-    /// runs PowerShell, so a filter silently mangled into something WQL rejects
-    /// would still "pass" every other gate — and fail only as an orphaned Chrome
-    /// on a user's machine.
     #[test]
-    fn wql_filter_is_one_or_chain() {
-        assert_eq!(
-            browser_mcp_wql_filter(BROWSER_MCP_NEEDLES),
-            "CommandLine LIKE '%chrome-devtools-mcp%' OR \
-             CommandLine LIKE '%playwright-mcp%' OR \
-             CommandLine LIKE '%@playwright/mcp%' OR \
-             CommandLine LIKE '%chrome-profile%'"
-        );
+    fn browser_cleanup_rejects_unrelated_interpreters_and_eval_text() {
+        let mcp = std::path::Path::new("/home/user/.mywork/mcp");
+        let profile = std::path::Path::new("/home/user/.mywork/chrome-profile");
+        let process = |name: &str| brand::ProcessIdentity { pid: 123, executable: PathBuf::from(name), started_at: "one".into(), parent_pid: Some(1) };
+        let python = process("/bin/python3");
+        assert!(!browser_process_role_owned(&python, "python3 -c 'print(\"/home/user/.mywork/chrome-profile\")'", mcp, profile));
+        let node = process("/bin/node");
+        assert!(!browser_process_role_owned(&node, "node -e 'console.log(\"/home/user/.mywork/mcp/playwright/node_modules/@playwright/mcp/cli.js\")'", mcp, profile));
+        assert!(browser_process_role_owned(&node, "node /home/user/.mywork/mcp/playwright/node_modules/@playwright/mcp/cli.js", mcp, profile));
+        let chrome = process("/bin/Google Chrome");
+        assert!(browser_process_role_owned(&chrome, "Google Chrome --user-data-dir=/home/user/.mywork/chrome-profile", mcp, profile));
+        assert!(!browser_process_role_owned(&chrome, "Google Chrome --user-data-dir=/home/user/.ultrawork/chrome-profile", mcp, profile));
     }
 
-    /// The two properties of `browser_mcp_enum_command` that no other check can see,
-    /// and whose absence shows up only as bizarre behaviour on a user's Windows box:
-    /// a swarm of `taskkill` console windows on quit, and a cleanup that silently
-    /// abandons half its work. See the function's doc comment for the mechanisms.
     #[test]
-    fn enum_command_spawns_nothing_and_excludes_self() {
-        let cmd = browser_mcp_enum_command();
-
-        // 1. Nothing that launches a child process from a console-less PowerShell.
-        for spawner in ["taskkill", "Stop-Process", "Start-Process", "Invoke-Expression"] {
-            assert!(
-                !cmd.contains(spawner),
-                "`{spawner}` spawns a process from a PowerShell that has no console — \
-                 Windows would allocate a visible console window for each one. \
-                 Enumerate here and kill from Rust via `kill_process_tree`.\n{cmd}"
-            );
-        }
-
-        // 2. Self-exclusion: this very command line contains all four needles, so the
-        //    WQL filter matches the PowerShell running it.
-        assert!(
-            cmd.contains("$_.ProcessId -ne $PID"),
-            "without self-exclusion the enumeration returns its own PowerShell's PID, \
-             and the caller kills it\n{cmd}"
-        );
-
-        // The needles really are present in the command line — the premise of (2).
-        for n in BROWSER_MCP_NEEDLES {
-            assert!(cmd.contains(n), "{cmd}");
+    fn browser_enumerator_never_spawns_or_contains_brand_paths() {
+        let script = browser_mcp_enum_command();
+        for unsafe_text in ["taskkill", "Stop-Process", "Start-Process", "Invoke-Expression", "chrome-profile", "playwright"] {
+            assert!(!script.contains(unsafe_text), "enumeration unexpectedly contains {unsafe_text}");
         }
     }
 

@@ -138,6 +138,7 @@ try {
       check_cli_connectors: () => [], refresh_builtin_skills: () => ({}),
       "plugin:opener|open_url": () => null, "plugin:event|listen": () => 0, "plugin:event|unlisten": () => null,
     }
+    ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
     // @ts-ignore
     window.__TAURI_INTERNALS__ = { invoke: async (c: string, a: any) => (handlers[c] ? handlers[c](a) : null), transformCallback: (cb: any) => cb, metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } } }
     // @ts-ignore

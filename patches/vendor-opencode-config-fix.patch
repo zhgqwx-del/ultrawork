@@ -1804,3 +1804,29 @@ index 473cac8a9..046b00a52 100644
 +    output: { tools: Record<string, any> },
 +  ) => Promise<void>
  }
+diff --git a/bun.lock b/bun.lock
+index 1a16a37698..ec96d4c30c 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -51,7 +51,7 @@
+         "diff": "catalog:",
+         "effect": "catalog:",
+         "fuzzysort": "catalog:",
+-        "ghostty-web": "github:anomalyco/ghostty-web#main",
++        "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
+         "luxon": "catalog:",
+         "marked": "catalog:",
+         "marked-shiki": "catalog:",
+diff --git a/packages/app/package.json b/packages/app/package.json
+index d179e4a524..5594a2f170 100644
+--- a/packages/app/package.json
++++ b/packages/app/package.json
+@@ -61,7 +61,7 @@
+     "diff": "catalog:",
+     "effect": "catalog:",
+     "fuzzysort": "catalog:",
+-    "ghostty-web": "github:anomalyco/ghostty-web#main",
++    "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
+     "luxon": "catalog:",
+     "marked": "catalog:",
+     "marked-shiki": "catalog:",

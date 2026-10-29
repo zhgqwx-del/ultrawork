@@ -154,6 +154,7 @@ try {
         login_shell_path: () => "",
         scan_workspace_changes: () => w.__scanHits,
       }
+      w.__ULTRAWORK_BROWSER_TEST__ = true
       w.__TAURI_INTERNALS__ = {
         invoke: async (c: string, a: any) => {
           w.__invokes.push({ cmd: c, args: a })

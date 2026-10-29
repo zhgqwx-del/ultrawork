@@ -1,9 +1,9 @@
 import { readFile, writeFile, mkdir, rename, rm } from "fs/promises";
 import { join, dirname } from "path";
-import { homedir } from "os";
+import { brandPaths } from "@agent/brand/node";
 
 const defaultStorePath = () =>
-  join(homedir(), ".ultrawork", "session-map.json");
+  join(brandPaths().appRoot, "session-map.json");
 
 /**
  * One IM chat's binding to an OpenCode session, plus the metadata the desktop

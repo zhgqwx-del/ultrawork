@@ -135,6 +135,7 @@ try {
         login_shell_path: () => "",
         scan_workspace_changes: () => [],
       }
+      ;(window as any).__ULTRAWORK_BROWSER_TEST__ = true
       // @ts-ignore
       window.__TAURI_INTERNALS__ = {
         invoke: async (c: string, a: any) => (handlers[c] ? handlers[c](a) : null),

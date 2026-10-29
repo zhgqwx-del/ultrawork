@@ -87,10 +87,10 @@ pub struct TrayLabels {
 impl Default for TrayLabels {
     fn default() -> Self {
         Self {
-            open: "Open Ultrawork".into(),
-            quit: "Quit Ultrawork".into(),
-            tooltip: "Ultrawork".into(),
-            hint_title: "Ultrawork is still running".into(),
+            open: format!("Open {}", crate::brand::product_name()),
+            quit: format!("Quit {}", crate::brand::product_name()),
+            tooltip: crate::brand::product_name().into(),
+            hint_title: format!("{} is still running", crate::brand::product_name()),
             hint_body: "Closing the window keeps the agent and channels running. Use the tray icon to open or quit.".into(),
         }
     }
@@ -174,7 +174,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         // Menu-bar icons are alpha-only "template" images tinted by the system.
         // `tray-template@2x.png` is a grayscale cut of the app icon (placeholder until
         // a designed glyph exists); the colored icon as a template would be a blob.
-        let template = Image::from_bytes(include_bytes!("../icons/tray-template@2x.png"))?;
+        let template = Image::from_bytes(include_bytes!(env!("ULTRAWORK_COMPILED_TRAY_ICON")))?;
         builder = builder.icon(template).icon_as_template(true);
     } else if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
+import { writeSidecarMetadata } from "./sidecar-metadata"
 import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
@@ -57,11 +58,13 @@ const currentHash = await computeSourceHash(
   [
     path.join(knowledgeDir, "package.json"),
     path.join(rootDir, "bun.lock"),
+    import.meta.path,
+    path.join(rootDir, "scripts/sidecar-metadata.ts"),
   ],
   await workspaceDepDirs(knowledgeDir, rootDir),
 )
 
-if (!force && !await needsRebuild(hashFile, currentHash, outFile)) {
+if (!force && await Bun.file(`${outFile}.metadata.json`).exists() && !await needsRebuild(hashFile, currentHash, outFile)) {
   const size = Bun.file(outFile).size / 1024 / 1024
   console.log(`Knowledge Sidecar up-to-date, skipping build (${size.toFixed(1)} MB)`)
   process.exit(0)
@@ -86,6 +89,7 @@ if (process.platform === "darwin" && isMacOSTarget) {
 
 // Save hash after successful build
 await saveHash(hashFile, currentHash)
+writeSidecarMetadata(outFile, tauriTarget, currentHash)
 
 const size = Bun.file(outFile).size / 1024 / 1024
 console.log(`Knowledge Sidecar ready: knowledge-sidecar-${tauriTarget}${suffix} (${size.toFixed(1)} MB)`)

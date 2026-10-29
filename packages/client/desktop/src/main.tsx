@@ -11,8 +11,8 @@ import { SSEProvider } from "./lib/sse-context"
 import { AgentProvider } from "./lib/agent-context"
 import { DraftProvider } from "./lib/draft-context"
 import { router } from "./router"
-import { loadSidecarPorts } from "./lib/sidecar-ports"
-import { loadSidecarCredentials } from "./lib/sidecar-auth"
+import { openStartupGate } from "./lib/startup-gate"
+import { StartupBlocked } from "./components/startup-blocked"
 import { beginBootTracking, dismissSplashWhenReady } from "./lib/boot-splash"
 import "./index.css"
 
@@ -37,18 +37,17 @@ function ThemedToaster() {
 // stage texts unreachable (discussions/038).
 beginBootTracking()
 
-// Startup gate: sidecar ports AND credentials are resolved before the first
-// render, so every base-URL / auth-header helper downstream stays synchronous and
-// no provider has to model a "not known yet" state. Neither loader rejects —
-// outside Tauri they fall back — so this cannot wedge the boot.
-//
-// The host holds `get_sidecar_ports` until opencode is healthy, so this still gates the
-// first render on a live backend, exactly as it did when startup blocked the main
-// thread. What changed is that the main thread is now free while it waits, so the
-// webview parses its bundle *alongside* the engine boot instead of after it — and the
-// splash is on screen for all of it.
-Promise.all([loadSidecarPorts(), loadSidecarCredentials()]).then(() => {
-  ReactDOM.createRoot(document.getElementById("root")!).render(
+// Native ownership is checked before credential or port IPC and before mounting
+// any business provider. A blocked startup renders only the diagnostic screen;
+// browser fixtures explicitly opt into their existing standalone test context.
+openStartupGate().then((status) => {
+  const root = ReactDOM.createRoot(document.getElementById("root")!)
+  if (status.state === "blocked") {
+    root.render(<StartupBlocked status={status} />)
+    dismissSplashWhenReady()
+    return
+  }
+  root.render(
     <React.StrictMode>
       <ConfigProvider>
         <ThemeProvider>

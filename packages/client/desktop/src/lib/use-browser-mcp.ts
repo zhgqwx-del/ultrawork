@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { useApi } from "@/lib/use-api"
 import { useI18n } from "@/lib/i18n-context"
+import { APP_BRAND } from "@/lib/brand"
 
 export type BrowserMode = "playwright" | "devtools"
 
@@ -14,6 +15,7 @@ interface BrowserEnvInfo {
   playwright_installed: boolean
   devtools_installed: boolean
   mode: BrowserMode
+  chrome_profile?: string
   mcp_dir: string
 }
 
@@ -74,8 +76,11 @@ export function useBrowserMCP(): BrowserMCPState {
     : env?.devtools_installed ?? false
 
   const buildMcpCommand = useCallback((envInfo: BrowserEnvInfo, m: BrowserMode): string[] => {
-    // Tolerate Windows backslash separators in mcp_dir (…\.ultrawork\mcp).
-    const homeDir = envInfo.mcp_dir.replace(/[\\/]\.ultrawork[\\/]mcp$/, "")
+    // The host owns this path. Legacy default fixtures may derive it from
+    // the MCP directory, but a custom brand must never guess another root.
+    const legacyProfile = envInfo.mcp_dir.replace(/([\\/])mcp$/, "$1chrome-profile")
+    const profile = envInfo.chrome_profile ?? (APP_BRAND.isDefault && legacyProfile !== envInfo.mcp_dir ? legacyProfile : null)
+    if (m === "devtools" && !profile) throw new Error("The desktop host did not provide this brand's browser profile")
     if (m === "playwright") {
       const entry = `${envInfo.mcp_dir}/playwright/node_modules/@playwright/mcp/cli.js`
       const args = [envInfo.node_path, entry]
@@ -90,7 +95,7 @@ export function useBrowserMCP(): BrowserMCPState {
     return [
       envInfo.node_path,
       entry,
-      "--user-data-dir", `${homeDir}/.ultrawork/chrome-profile`,
+      "--user-data-dir", profile!,
     ]
   }, [])
 

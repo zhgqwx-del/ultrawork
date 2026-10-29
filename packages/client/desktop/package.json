@@ -1,6 +1,6 @@
 {
   "name": "@agent/client-desktop",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,8 +9,8 @@
     "lint": "eslint src",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "bun run --bun tauri dev",
-    "tauri:build": "bun run --bun tauri build",
+    "tauri:dev": "bun run --bun ../../../scripts/tauri-brand.ts dev",
+    "tauri:build": "bun run --bun ../../../scripts/tauri-brand.ts build",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:sidebar-channel": "bun run --bun e2e/sidebar-channel-ui.e2e.ts",
@@ -62,7 +62,8 @@
     "e2e:i18n-toggle": "bun run --bun e2e/general-i18n-toggle.e2e.ts",
     "e2e:html-preview": "bun run --bun e2e/html-preview-iframe.e2e.ts",
     "e2e:inline-image": "bun run --bun e2e/inline-image-render.e2e.ts",
-    "e2e:inline-image:webkit": "E2E_ENGINE=webkit bun run --bun e2e/inline-image-render.e2e.ts"
+    "e2e:inline-image:webkit": "E2E_ENGINE=webkit bun run --bun e2e/inline-image-render.e2e.ts",
+    "e2e:brand-startup": "bun run --bun e2e/brand-startup.e2e.ts"
   },
   "dependencies": {
     "@agent/api-client": "workspace:*",
@@ -120,7 +121,8 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
     "tailwindcss-animate": "^1.0.7",
-    "use-stick-to-bottom": "^1.1.6"
+    "use-stick-to-bottom": "^1.1.6",
+    "@agent/brand": "workspace:*"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",

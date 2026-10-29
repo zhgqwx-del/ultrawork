@@ -141,21 +141,45 @@ async function fetchSubdir(src: Source, into: string) {
 
 /** 把 skill-installer 的安装目标从 $CODEX_HOME 重定向到 ultrawork config 目录 */
 function applyInstallerPatches(dir: string) {
-  const CODEX_BODY = `    return os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))`
-  const UW_BODY = [
-    `    # ultrawork: 解析 config 目录（与 src-tauri global_config_dir 对齐）`,
-    `    base = os.environ.get("ULTRAWORK_SKILLS_DIR")`,
-    `    if base:`,
-    `        return os.path.dirname(base.rstrip("/"))`,
-    `    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")`,
-    `    return os.path.join(xdg, "ultrawork")`,
+  const installerHome = [
+    "def _codex_home() -> str:",
+    "    # ultrawork: host context controls app-managed skills, including custom brands.",
+    "    context_file = os.environ.get(\"ULTRAWORK_BRAND_CONTEXT_FILE\")",
+    "    raw = os.environ.get(\"ULTRAWORK_BRAND_CONTEXT\")",
+    "    context = None",
+    "    if context_file:",
+    "        with open(context_file, encoding=\"utf-8\") as source:",
+    "            context = json.load(source)",
+    "    elif raw:",
+    "        context = json.loads(raw)",
+    "    if context is not None:",
+    "        identity = context.get(\"identity\", {})",
+    "        namespace = identity.get(\"namespace\", \"\")",
+    "        config = context.get(\"configRoot\", \"\")",
+    "        skills = context.get(\"skillsRoot\", \"\")",
+    "        if (context.get(\"schemaVersion\") != 1 or not namespace",
+    "                or os.path.basename(config) != namespace or not os.path.isabs(config)",
+    "                or os.path.normpath(skills) != os.path.join(config, \"skills\")):",
+    "            raise RuntimeError(\"Invalid managed brand skills context\")",
+    "        override = os.environ.get(\"ULTRAWORK_SKILLS_DIR\")",
+    "        if override and os.path.normpath(override) != os.path.normpath(skills):",
+    "            raise RuntimeError(\"ULTRAWORK_SKILLS_DIR conflicts with managed brand\")",
+    "        return config",
+    "    if os.environ.get(\"ULTRAWORK_BRAND_MANAGED\") == \"1\":",
+    "        raise RuntimeError(\"Managed brand context is missing\")",
+    "    base = os.environ.get(\"ULTRAWORK_SKILLS_DIR\")",
+    "    if base:",
+    "        return os.path.dirname(os.path.normpath(base))",
+    "    xdg = os.environ.get(\"XDG_CONFIG_HOME\") or os.path.join(os.path.expanduser(\"~\"), \".config\")",
+    "    return os.path.join(xdg, \"ultrawork\")",
   ].join("\n")
 
   for (const f of ["scripts/install-skill-from-github.py", "scripts/list-skills.py"]) {
     const p = join(dir, f)
     if (!existsSync(p)) continue
     let s = readFileSync(p, "utf8")
-    s = s.replace(CODEX_BODY, UW_BODY)
+    s = s.replace(/def _codex_home\(\) -> str:[\s\S]*?(?=\n\ndef )/, installerHome)
+    if (!/^import json$/m.test(s)) s = s.replace("import os\n", "import os\nimport json\n")
     s = s.replace(/codex-skill-(install|list)/g, "ultrawork-skill-$1")
     s = s.replace(/\$CODEX_HOME\/skills/g, "~/.config/ultrawork/skills")
     s = s.replace(/~\/\.codex\/skills/g, "~/.config/ultrawork/skills")
@@ -255,14 +279,15 @@ async function main() {
   console.log(`内置技能目录: ${BUILTIN_DIR}`)
   // 可选按名过滤：`bun run scripts/fetch-builtin-skills.ts pdf` 只刷新指定技能，
   // 避免顺带把 pin 在 main 的其它技能拉到未审内容。缺省全量。sentinel 始终全目录重算。
-  const only = process.argv.slice(2)
+  const postPatch = process.argv.includes("--post-patch")
+  const only = process.argv.slice(2).filter((arg) => arg !== "--post-patch")
   const unknown = only.filter((n) => !SOURCES.some((s) => s.dest === n))
   if (unknown.length) throw new Error(`未知技能名: ${unknown.join(", ")}（可选: ${SOURCES.map((s) => s.dest).join(", ")}）`)
   const selected = only.length ? SOURCES.filter((s) => only.includes(s.dest)) : SOURCES
   for (const src of selected) {
     const into = join(BUILTIN_DIR, src.dest)
     process.stdout.write(`• ${src.dest} <- ${src.repo}/${src.subdir} ... `)
-    await fetchSubdir(src, into)
+    if (!postPatch) await fetchSubdir(src, into)
     if (src.dest === "skill-installer") applyInstallerPatches(into)
     if (src.dest === "markdown-exporter") applyExporterPatches(into)
     injectXRequires(into, X_REQUIRES[src.dest])

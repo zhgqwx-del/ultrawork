@@ -1,0 +1,8 @@
+{
+  "name": "@agent/brand",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./node": "./src/node.ts" },
+  "scripts": { "build": "tsc --build", "typecheck": "tsc --build", "test": "vitest run" },
+  "devDependencies": { "@types/node": "^22.13.9", "typescript": "^5.8.2", "vitest": "^4.0.18" }
+}

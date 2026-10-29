@@ -1,86 +1,88 @@
 #!/usr/bin/env bun
-/**
- * Syncs PINNED_PLUGIN_VERSION in vendor/opencode config.ts to match the
- * current vendor opencode version, then regenerates the patch file.
- *
- * The patch file covers ALL vendor modifications:
- *   - config.ts: PINNED_PLUGIN_VERSION + config.json→opencode.json fix +
- *                OPENCODE_APP_NAME (managed dir + endsWith filter)
- *   - paths.ts:  OPENCODE_APP_NAME (skip home dir search)
- *   - global/index.ts: OPENCODE_APP_NAME (app name configurable)
- *
- * Run after updating vendor/opencode submodule:
- *   bun run scripts/sync-plugin-version.ts
- */
-import { $ } from "bun"
-import path from "path"
+/** Update PINNED_PLUGIN_VERSION without dropping any cumulative vendor fixes. */
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { randomUUID } from "node:crypto"
+import { ensureVendorPatches } from "./vendor-patches"
 
-const rootDir = path.resolve(import.meta.dir, "..")
-const vendorDir = path.join(rootDir, "vendor/opencode")
-const opencodeDir = path.join(vendorDir, "packages/opencode")
-const configFile = path.join(opencodeDir, "src/config/config.ts")
-const patchFile = path.join(rootDir, "patches/vendor-opencode-config-fix.patch")
-
-// Files covered by the vendor patch
-const PATCHED_FILES = [
-  "packages/opencode/src/config/config.ts",
-  "packages/opencode/src/config/paths.ts",
-  "packages/opencode/src/global/index.ts",
-]
-
-// Read vendor opencode version
-const pkgJson = await Bun.file(path.join(opencodeDir, "package.json")).json()
-const newVersion: string = pkgJson.version
-if (!newVersion) {
-  console.error("❌ Could not read version from vendor/opencode/packages/opencode/package.json")
-  process.exit(1)
+function git(vendorDir: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}): string {
+  const result = spawnSync("git", args, {
+    cwd: vendorDir, encoding: "utf8", windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024, ...options,
+  })
+  if (result.status !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr || result.error || result.stdout}`)
+  return result.stdout
 }
 
-// Verify the version exists on npm
-console.log(`Checking @opencode-ai/plugin@${newVersion} on npm...`)
-const res = await fetch(`https://registry.npmjs.org/@opencode-ai/plugin/${newVersion}`)
-if (!res.ok) {
-  console.error(`❌ @opencode-ai/plugin@${newVersion} not found on npm (status ${res.status})`)
-  console.error(`   Check https://registry.npmjs.org/@opencode-ai/plugin for available versions`)
-  process.exit(1)
+function patchFiles(vendorDir: string, patch: string): string[] {
+  const rows = git(vendorDir, ["apply", "--numstat", "-z", "--", "-"], { input: patch }).split("\0").filter(Boolean)
+  const files = rows.map((row) => {
+    const match = /^(?:\d+|-)\t(?:\d+|-)\t(.+)$/s.exec(row)
+    if (!match) throw new Error("Unsupported rename or malformed path in cumulative vendor patch")
+    const file = match[1]!
+    const relative = path.relative(vendorDir, path.resolve(vendorDir, file))
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`Vendor patch path is outside its working tree: ${file}`)
+    return file
+  })
+  if (!files.length || new Set(files).size !== files.length) throw new Error("Cumulative vendor patch must contain a nonempty, unique file set")
+  return files
 }
-console.log(`✅ @opencode-ai/plugin@${newVersion} exists on npm`)
 
-// Read config.ts and find current pinned version.
-// If the patch hasn't been applied yet (e.g. after git submodule update --remote),
-// apply it first so all vendor fixes are present before we update the version.
-let src = await Bun.file(configFile).text()
-let match = src.match(/const PINNED_PLUGIN_VERSION = "([^"]+)"/)
-if (!match) {
-  console.log("PINNED_PLUGIN_VERSION not found — applying existing patch first...")
-  const applyResult = await $`cd ${vendorDir} && git apply ${patchFile}`.nothrow()
-  if (applyResult.exitCode !== 0) {
-    console.error("❌ Failed to apply patch. Check patches/vendor-opencode-config-fix.patch")
-    process.exit(1)
-  }
-  src = await Bun.file(configFile).text()
-  match = src.match(/const PINNED_PLUGIN_VERSION = "([^"]+)"/)
-  if (!match) {
-    console.error("❌ Could not find PINNED_PLUGIN_VERSION in config.ts even after applying patch")
-    process.exit(1)
+/** Use a disposable index so additions are included without staging user files. */
+export function regenerateVendorPatch(vendorDir: string, patchFile: string): string[] {
+  const files = patchFiles(vendorDir, readFileSync(patchFile, "utf8"))
+  const temporary = mkdtempSync(path.join(tmpdir(), "uw-vendor-patch-index-"))
+  const output = path.join(path.dirname(patchFile), `.${path.basename(patchFile)}.${randomUUID()}.tmp`)
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(temporary, "index") }
+  try {
+    git(vendorDir, ["read-tree", "HEAD"], { env })
+    const additions = files.filter((file) => {
+      const tracked = spawnSync("git", ["cat-file", "-e", `HEAD:${file}`], { cwd: vendorDir, env, encoding: "utf8", windowsHide: true, timeout: 10_000 })
+      if (tracked.status === 0) return false
+      if (!existsSync(path.join(vendorDir, file))) throw new Error(`Patched new file is missing: ${file}`)
+      return true
+    })
+    if (additions.length) git(vendorDir, ["add", "--intent-to-add", "--", ...additions.map((file) => `:(literal)${file}`)], { env })
+    const patch = git(vendorDir, ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "--", ...files.map((file) => `:(literal)${file}`)], { env })
+    const generated = patchFiles(vendorDir, patch)
+    if (JSON.stringify([...generated].sort()) !== JSON.stringify([...files].sort())) throw new Error("Regenerated vendor patch would drop a previously patched file; original patch was preserved")
+    git(vendorDir, ["apply", "--reverse", "--check", "--", "-"], { input: patch })
+    writeFileSync(output, patch)
+    renameSync(output, patchFile)
+    return generated
+  } finally {
+    rmSync(output, { force: true })
+    rmSync(temporary, { recursive: true, force: true })
   }
 }
-const currentVersion = match[1]
 
-if (currentVersion === newVersion) {
-  console.log(`ℹ️  PINNED_PLUGIN_VERSION is already ${newVersion}, nothing to do`)
-  process.exit(0)
+export async function syncPluginVersion(rootDir: string, options: { lookupPluginVersion?: (version: string) => Promise<boolean> } = {}): Promise<void> {
+  const vendorDir = path.join(rootDir, "vendor", "opencode")
+  const opencodeDir = path.join(vendorDir, "packages", "opencode")
+  const configFile = path.join(opencodeDir, "src", "config", "config.ts")
+  const patchFile = path.join(rootDir, "patches", "vendor-opencode-config-fix.patch")
+  ensureVendorPatches(rootDir)
+  const pkg = JSON.parse(readFileSync(path.join(opencodeDir, "package.json"), "utf8"))
+  const version = pkg.version
+  if (typeof version !== "string" || !version) throw new Error("Could not read the vendor OpenCode version")
+  console.log(`Checking @opencode-ai/plugin@${version} on npm...`)
+  const available = await (options.lookupPluginVersion ?? (async (value) => (await fetch(`https://registry.npmjs.org/@opencode-ai/plugin/${encodeURIComponent(value)}`)).ok))(version)
+  if (!available) throw new Error(`@opencode-ai/plugin@${version} was not found on npm; no version or patch was rewritten`)
+  const source = readFileSync(configFile, "utf8")
+  const match = source.match(/const PINNED_PLUGIN_VERSION = "([^"]+)"/)
+  if (!match) throw new Error("PINNED_PLUGIN_VERSION is missing after applying the cumulative vendor patch")
+  if (match[1] === version) {
+    console.log(`PINNED_PLUGIN_VERSION is already ${version}; cumulative vendor patches are applied`)
+    return
+  }
+  writeFileSync(configFile, source.replace(match[0], `const PINNED_PLUGIN_VERSION = "${version}"`))
+  const files = regenerateVendorPatch(vendorDir, patchFile)
+  console.log(`Updated PINNED_PLUGIN_VERSION: ${match[1]} → ${version}; preserved all ${files.length} patched files`)
+  console.log("Next: bun run build:opencode")
 }
 
-// Update config.ts
-const updated = src.replace(
-  `const PINNED_PLUGIN_VERSION = "${currentVersion}"`,
-  `const PINNED_PLUGIN_VERSION = "${newVersion}"`
-)
-await Bun.write(configFile, updated)
-console.log(`Updated PINNED_PLUGIN_VERSION: ${currentVersion} → ${newVersion}`)
-
-// Regenerate patch file (all patched vendor files)
-await $`cd ${vendorDir} && git diff -- ${PATCHED_FILES.join(" ")} > ${patchFile}`
-console.log(`✅ Patch file updated: patches/vendor-opencode-config-fix.patch`)
-console.log(`\nNext: rebuild the sidecar with: bun run build:opencode`)
+if (import.meta.main) {
+  if (process.argv.length !== 2) throw new Error("Usage: bun run --bun scripts/sync-plugin-version.ts")
+  await syncPluginVersion(path.resolve(import.meta.dir, ".."))
+}

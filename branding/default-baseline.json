@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "productName": "Ultrawork",
+  "identifier": "com.ultrawork.desktop",
+  "cargoBinary": "ultrawork",
+  "mainBinaryName": null,
+  "wixUpgradeCode": "7A7C1D26-332C-5C03-818C-2F87039B20DC",
+  "assets": {
+    "packages/client/desktop/src-tauri/icons/32x32.png": "7f69bdf8812d25ea91928322c8bb05584d379a4ab20e43410f0ed68b5001ee1f",
+    "packages/client/desktop/src-tauri/icons/128x128.png": "7bbab68a95ce61539772ce94a2cb5db865089f831fefddc9a40c19a26e215a47",
+    "packages/client/desktop/src-tauri/icons/128x128@2x.png": "3d634d0f64b6b67c355361056c2dfbc193c360e9904f8022482fd56e6f80a0e0",
+    "packages/client/desktop/src-tauri/icons/icon.icns": "9cde775ac85ace0b81e5a05c885321ee8d2243e7df9e9b9b5d0982092837231e",
+    "packages/client/desktop/src-tauri/icons/icon.ico": "d45910f104e614af6e47eb151eb26c7857dc9cf4e452db1f866b70fd99f22e54",
+    "packages/client/desktop/src-tauri/icons/tray-template@2x.png": "ed71b6004c03857454403c0a10f0f48241c16f6de23a49549b7436266ea968ae",
+    "packages/client/desktop/src/components/ui/logo.tsx": "48d9e8d0cb3210f21e39e79192e2ec8ec5b2df20b29cf5db976bbf08aa303a3f",
+    "packages/client/desktop/src-tauri/icons/icon-macos.icns": "82a6d75140e2baaac732baf92adee50b159f311205f6ed2a396566b63cbf1aa3"
+  }
+}

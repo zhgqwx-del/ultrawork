@@ -1,9 +1,10 @@
 [package]
 name = "ultrawork"
-version = "0.3.9"
+version = "0.3.10"
 description = "Desktop Agent"
 authors = ["Ultrawork Team"]
 edition = "2021"
+rust-version = "1.89"
 
 [lib]
 name = "ultrawork_lib"
@@ -14,7 +15,13 @@ name = "ultrawork"
 path = "src/main.rs"
 
 [build-dependencies]
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+# In-memory runtime for exercising real app IPC guards and shell child handles.
+# This enables existing Tauri test utilities; production features are unchanged.
+tauri = { version = "2", features = ["test"] }
 
 [dependencies]
 # tray-icon: close-to-background (discussions/061) needs a tray on Windows/Linux
