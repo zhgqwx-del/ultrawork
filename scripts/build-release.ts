@@ -239,7 +239,7 @@ if (!isMacOS) {
 
   console.log(`\n🎉 Release build complete! Installers under:`)
   console.log(`   ${bundleDir}`)
-  const linuxLayouts = inspectLinuxInstallers(selectedBrand.identity, target, bundleDir, buildStartedAt)
+  const linuxLayouts = await inspectLinuxInstallers(selectedBrand.identity, target, bundleDir, buildStartedAt)
   exportBrandArtifacts(preparedBrand, bundleDir, buildStartedAt, rootDir, { mode: "release", productName: selectedBrand.identity.productName, identifier: selectedBrand.identity.identifier, signing: "not-configured", target, ...(linuxLayouts.length ? { linuxLayouts } : {}) })
   process.exit(0)
 }
