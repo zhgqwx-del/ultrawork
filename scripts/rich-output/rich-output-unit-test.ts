@@ -70,14 +70,28 @@ try {
         assert.ok(!branded.split("\n")[0]!.match(/opencode|interactive CLI/i))
         const continuation = branded.slice(brandedNewline)
         if (["anthropic", "codex"].includes(family)) {
-          assert.ok(continuation.startsWith("\n\nYou help users with software engineering tasks. Use the instructions below"))
-          assert.equal(continuation.replace("\n\nYou help users with software engineering tasks.", "\n\nYou are an interactive CLI tool that helps users with software engineering tasks."), stock.slice(stockNewline))
+          assert.match(continuation, /^\n\r?\nYou help users with software engineering tasks\. Use the instructions below/)
+          assert.equal(continuation.replace("You help users with software engineering tasks.", "You are an interactive CLI tool that helps users with software engineering tasks."), stock.slice(stockNewline))
         } else assert.equal(continuation, stock.slice(stockNewline))
         // These continuations are behavioral policy within the first line.
         if (family === "beast") assert.ok(branded.includes("please keep going until the user’s query is completely resolved"))
         if (family === "gpt") assert.ok(branded.includes("You and the user share the same workspace and collaborate to achieve the user's goals."))
         if (["default", "trinity", "gemini"].includes(family)) assert.ok(branded.includes(stock.slice(stock.indexOf(". ") + 2, stockNewline)))
       })
+      // Exercise both checkout forms on every host. The original source can
+      // already be CRLF on Windows; canonicalize before constructing variants.
+      for (const eol of ["\n", "\r\n"]) {
+        check(`${identity.productName}/${family}: preserves ${eol === "\n" ? "LF" : "CRLF"} outside known identity sentences`, () => {
+          const variant = stock.replace(/\r\n/g, "\n").replace(/\n/g, eol)
+          const result = brandProviderPrompt(variant, identity.productName)
+          const rest = result.slice(result.indexOf("\n"))
+          const restored = ["anthropic", "codex"].includes(family)
+            ? rest.replace("You help users with software engineering tasks.", "You are an interactive CLI tool that helps users with software engineering tasks.")
+            : rest
+          assert.equal(restored, variant.slice(variant.indexOf("\n")))
+          assert.ok(result.includes(JSON.stringify(identity.productName)))
+        })
+      }
     }
     check(`${identity.productName}: arbitrary prompts and upstream source links are never replaced`, () => {
       for (const custom of [BASE, ROLE, "User quote: You are opencode, an agent - preserve this.", "You are OpenCode, a custom agent with an assigned role."]) {
