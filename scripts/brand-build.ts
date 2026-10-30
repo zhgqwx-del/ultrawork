@@ -1,6 +1,6 @@
 /** Build-only branding. Never imported by renderer or application sidecars. */
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { Resvg } from "@resvg/resvg-js"
 import { validatePng } from "./png-image"
@@ -302,16 +302,40 @@ export async function prepareBrandBuild(brand: ResolvedBrandBuild, rootDir = PRO
       else skillHash.update(name).update("\0").update(readFileSync(file)).update("\0")
     } }
     hashSkills(path.join(rootDir, "skills/builtin"))
-    const skillStage = path.join(rootDir, ".brand-build", brand.identity.brandId, "skills", skillHash.digest("hex"))
+    const sourceHash = skillHash.digest("hex")
+    const skillStage = path.join(rootDir, ".brand-build", brand.identity.brandId, "skills", sourceHash)
     const skillsSource = path.join(skillStage, "source")
-    if (!existsSync(skillsSource)) {
-      cpSync(path.join(rootDir, "skills/builtin"), skillsSource, { recursive: true })
-      const visit = (dir: string) => { for (const item of readdirSync(dir, { withFileTypes: true })) {
-        const file = path.join(dir, item.name)
-        if (item.isDirectory()) visit(file)
-        else if (item.isFile() && /\.md$/.test(item.name)) writeFileSync(file, brandSkillMarkdown(path.relative(skillsSource, file), readFileSync(file, "utf8"), brand.identity))
-      } }
-      visit(skillsSource)
+    // A directory alone may be left by an interrupted copy or Markdown pass.
+    // Keep completion outside source so it cannot become part of the skill ZIP.
+    const readyFile = path.join(skillStage, ".source-ready.json")
+    const readyText = JSON.stringify({ schemaVersion: 1, sourceHash }) + "\n"
+    const ready = (() => {
+      try {
+        return lstatSync(skillsSource).isDirectory() && lstatSync(readyFile).isFile() &&
+          readFileSync(readyFile, "utf8") === readyText
+      } catch { return false }
+    })()
+    if (!ready) {
+      mkdirSync(skillStage, { recursive: true })
+      // The checkout lease excludes other builders. Remove an unfinished tree
+      // before rename, which also works on Windows where the target must be absent.
+      rmSync(readyFile, { recursive: true, force: true })
+      rmSync(skillsSource, { recursive: true, force: true })
+      const temporary = mkdtempSync(path.join(skillStage, ".source-staging-"))
+      try {
+        const stagingSource = path.join(temporary, "source")
+        cpSync(path.join(rootDir, "skills/builtin"), stagingSource, { recursive: true })
+        const visit = (dir: string) => { for (const item of readdirSync(dir, { withFileTypes: true })) {
+          const file = path.join(dir, item.name)
+          if (item.isDirectory()) visit(file)
+          else if (item.isFile() && /\.md$/.test(item.name)) writeFileSync(file, brandSkillMarkdown(path.relative(stagingSource, file), readFileSync(file, "utf8"), brand.identity))
+        } }
+        visit(stagingSource)
+        renameSync(stagingSource, skillsSource)
+        const stagingReady = path.join(temporary, "ready.json")
+        writeFileSync(stagingReady, readyText)
+        renameSync(stagingReady, readyFile)
+      } finally { rmSync(temporary, { recursive: true, force: true }) }
     }
     const skillsOutput = path.join(skillStage, "bundle")
     mkdirSync(skillsOutput, { recursive: true })

@@ -60,7 +60,7 @@ ready 守卫在集中 IPC 入口执行，不能仅依赖 renderer 不挂载业�
 
 四个 sidecar 保持固定逻辑角色；Linux 的自定义发行包将安装文件名加 namespace 前缀（如 `mywork-opencode-server`），避免共享 `/usr/bin` 文件被两个 deb/rpm 占用。默认 Linux 及 macOS/Windows 保留内部原名。构建锁内物化 externalBin staging，宿主按平台/品牌解析相同名称；Linux 打包后再从真实 deb/rpm 读取安装清单，检查主程序、sidecar、资源路径及默认品牌冲突，并写入 manifest。不能只检查生成的配置就宣称包内无冲突。
 
-默认和定制公共入口在打包前都检查目标 triple、上下文协议和二进制 SHA-256 metadata。`--skip-sidecar` 只跳过编译，不能跳过兼容检查。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建副作用影响用户运行数据。只导出本次成功构建、属于当前品牌的安装包，并生成带身份、实际签名模式、大小与校验和的 manifest。release 运行时必须从安装包解析 sidecar；源码 checkout fallback 仅供 debug，不能掩盖客户包缺文件。构建机器的素材/staging 绝对路径不作为客户运行配置。
+默认和定制公共入口在打包前都检查目标 triple、上下文协议、二进制 SHA-256 和当前源码/依赖指纹。`--skip-sidecar` 只跳过编译，不能跳过兼容与新鲜度检查；校验复用各 builder 的 `--check`，不维护另一套 hash 规则。Universal 的来源由两架构已验证的 sourceHash 和二进制 SHA 派生，与品牌无关。品牌技能 source 通过临时树、原子发布及 source 外完成标记保证中断后不复用半成品。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建副作用影响用户运行数据。只导出本次成功构建、属于当前品牌的安装包，并生成带身份、实际签名模式、大小与校验和的 manifest。release 运行时必须从安装包解析 sidecar；源码 checkout fallback 仅供 debug，不能掩盖客户包缺文件。构建机器的素材/staging 绝对路径不作为客户运行配置。
 
 ### 6. 签名沿用平台流程，每个品牌单独验证
 

@@ -2,7 +2,7 @@
 import path from "node:path"
 import { acquireBuildLock } from "./build-lock"
 import { currentTarget, parseBrandArgs, prepareBrandBuild, PROJECT_ROOT, resolveBrandBuild, validateArguments } from "./brand-build"
-import { verifySidecarsForTarget } from "./sidecar-metadata"
+import { verifyFreshSidecarsForTarget } from "./sidecar-freshness"
 import { exportBrandArtifacts } from "./brand-artifacts"
 import { materializeBrandSidecars } from "./brand-sidecars"
 import { inspectLinuxInstallers } from "./linux-install-layout"
@@ -18,7 +18,7 @@ process.on("exit", () => lease.release())
 try {
   const at = parsed.rest.indexOf("--target")
   const target = at >= 0 ? parsed.rest[at + 1] : currentTarget()
-  verifySidecarsForTarget(target, PROJECT_ROOT)
+  await verifyFreshSidecarsForTarget(target, PROJECT_ROOT)
   const prepared = await prepareBrandBuild(brand)
   prepared.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
   materializeBrandSidecars(prepared, target)
@@ -41,7 +41,7 @@ try {
     const target = at >= 0 ? parsed.rest[at + 1] : undefined
     const bundleDir = path.join(prepared.targetDir, ...(target ? [target] : []), parsed.rest.includes("--debug") ? "debug" : "release", "bundle")
     const effectiveTarget = target ?? currentTarget()
-    const linuxLayouts = inspectLinuxInstallers(brand.identity, effectiveTarget, bundleDir, startedAt)
+    const linuxLayouts = await inspectLinuxInstallers(brand.identity, effectiveTarget, bundleDir, startedAt)
     exportBrandArtifacts(prepared, bundleDir, startedAt, PROJECT_ROOT, { mode: parsed.rest.includes("--debug") ? "debug" : "release", productName: brand.identity.productName, identifier: brand.identity.identifier, signing: "not-configured", target: effectiveTarget, ...(linuxLayouts.length ? { linuxLayouts } : {}) })
   }
   process.exitCode = result

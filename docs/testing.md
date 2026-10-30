@@ -816,7 +816,7 @@ Rust 测试覆盖路径派生、身份记录、租约与进程身份等宿主规
 
 其二，OpenCode 预热 stdio MCP 时 ACP 可能尚未确定动态端口，shim 不能在握手时把端口固定到整个连接生命周期。delegate/list_agents 现于每次工具调用读取当前品牌/instanceId registry，缺失或外来 registry 返回工具错误且不请求默认端口；由 ACP 直接注入的明确端口及无受管上下文的 standalone 行为保留。delegate 套件 **33/33、96 断言**（`delegate-lazy-registry-final.log`），含真实 HTTP 端口 A→B、外来 registry 零请求、预热握手不读取未就绪 registry；品牌真实子进程 integration **3/3**。两种 ACP 架构与三种 macOS 包已按最新源码重建，原生 **9 项**及最新 Universal 包内工具循环 **12 项**均复验通过；测试拥有的 native/MCP/sidecar 进程完成回收，随后只读进程检查未见残留。
 
-公共默认/定制构建入口都校验四个 sidecar 的 metadata；`--skip-sidecar` 不得放行缺失或旧协议的二进制。构建回归用真实入口子进程和 stub 下游 CLI 验证拒绝路径。OpenCode vendor build 的版本探针使用独立 `OPENCODE_TEST_HOME` 与四个 XDG 根，防止 import Global 时的初始化或缓存版本清理影响正在运行的用户程序。常规 CI 不依赖 vendor checkout 或其自身依赖目录，执行无 vendor 的真实子进程六路径/原 cache/version/canary 功能契约；真实 vendor Global import 为显式 opt-in 验收，设置 `ULTRAWORK_TEST_VENDOR_GLOBAL=1` 后缺少 vendor 或依赖会失败，不能静默跳过。
+公共默认/定制构建入口都校验四个 sidecar 的 metadata 与 builder 当前源码指纹；`--skip-sidecar` 不得放行缺失、旧协议或同协议旧逻辑的二进制。`scripts/sidecar-freshness.test.ts` 还使用复制的真实四个 builder 检查源码/依赖漂移、二进制与 metadata 篡改、纯读 `--check`、Universal 切片来源及两品牌公共入口前置拒绝；Linux 安装布局的异步校验必须完成后才能导出 artifact。OpenCode vendor build 的版本探针使用独立 `OPENCODE_TEST_HOME` 与四个 XDG 根，防止 import Global 时的初始化或缓存版本清理影响正在运行的用户程序。常规 CI 不依赖 vendor checkout 或其自身依赖目录，执行无 vendor 的真实子进程六路径/原 cache/version/canary 功能契约；真实 vendor Global import 为显式 opt-in 验收，设置 `ULTRAWORK_TEST_VENDOR_GLOBAL=1` 后缺少 vendor 或依赖会失败，不能静默跳过。
 
 品牌浏览器脚本使用真实 Vite、React 与浏览器引擎，覆盖默认/MyWork × 英文/简体/繁体 × namespace 已占用、错误品牌、损坏状态、无效端口、无效凭证共 30 个场景。它检查只读诊断、复制/重试/退出、名称与 Logo，确认没有业务 Provider、业务 IPC 或后台 HTTP 请求，并保存报告及截图。Vite 的 `/src/components/session/*.tsx` 是模块加载，不能误作 `/session` API；侦听路径须从根锚定。
 
@@ -905,6 +905,17 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 - 实际重打两品牌技能 ZIP 并解压核对钉钉路径、Windows 指引、中性宿主文案、原作者来源及 runtime helper，报告 `identity-pack-skills.json`。DOCX 全量行为回归 266 条结果、0 失败、5 项环境跳过；本机 bundled LibreOffice 需测试进程指定 `svp` 与临时 Fontconfig，5 项跳过是无法制造无中文字体环境的 tofu 负向控制，不能标成通过。报告 `identity-docx-selftest.json`。
 
 本地模型/ACP fixture 验证协议内容与工具流程，不证明在线模型每次自称正确，也不替代 Claude/Codex/Gemini 等真实第三方账号和 adapter 的抽样。prefix-only adapter 自行压缩历史后若丢弃首轮提示，ACP 协议没有统一的永久 system append 保证；支持 metadata 的 adapter 在 load 时重新追加。Windows/Linux 原生执行、安装/升级和签名发行仍须对应宿主或 CI 验证，不能用 macOS 本机测试替代。上述修复未自动变成已有 `v0.3.11` 安装包的内容，需另行发布版本。
+
+### 追加独立 review 与客户路径验收（2026-10-30）
+
+追加 review 找到并修复三项构建边界：品牌技能中断缓存可能被复用、同协议旧 sidecar 可经跳过编译打包、直接 Tauri Linux 安装布局检查未等待完成。业务模型路由、权限、Team 委派和运行数据格式没有改动。新增 staging 完成标记与原子发布；四 builder 的 `--check` 复用原有 hash 规则，公共入口在资源/签名前校验新鲜度；构建与打包脚本加入三平台严格类型检查。
+
+- 独立复跑身份 98/98、ACP 身份恢复 18/18；构建相关八套回归 71 通过、0 失败，4 项本机不具备 Linux 工具的场景按环境跳过，由对应 CI 执行。完整品牌构建 opt-in 套件 29/29、195 断言；完成标记不进入技能 ZIP。
+- 当前四个真实 sidecar 复制到源码目录外的中文/空格路径、全新 HOME 后，单 Agent、Team、Pipeline、重启及实际模型 system 身份 13 组通过。Chrome/WebKit 各重新通过两品牌三语 6 流程/30 检查。日志前缀均为 `.brand-build/verification/identity-recheck-`。
+- 实际构建默认与 MyWork 两个 ARM64 Dev DMG，后者使用新鲜 sidecar 的 `--skip-sidecar` 正向路径。两包均通过 7 项 DMG 哈希、包名/identifier、图标字节、深度签名、中文/空格搬迁、269 个包内文本无 checkout 引用、5 个 Mach-O 仅依赖系统或相对库检查。报告 `identity-recheck-package-default.json` / `identity-recheck-package-mywork.json`。
+- 两个搬迁后的真实 `.app` 在中文 HOME、C locale 下通过原生宿主 8 项启动/隔离/互斥及 MCP 重启检查；从两份 DMG 内实际 sidecar 分别跑两品牌工具循环，各 13 组通过，所有自建子进程已回收。报告 `identity-recheck-native-hosts.json`，日志 `identity-recheck-packaged-default-sidecars.log` / `identity-recheck-packaged-mywork-sidecars.log`。
+
+以上是 ad-hoc 签名的本机 ARM64 验收，不是 Developer ID、公证、Gatekeeper/权限或其它 OS 安装升级结论。跨 checkout 的已有二进制因原 hash 包含路径标签可能需要重编，这只影响构建缓存，客户运行不执行该构建门禁。真实模型和第三方 ACP、prefix 历史压缩边界仍同上节，不能承诺任何客户环境绝对无缺陷。
 
 ### 发行包的原生场景验收
 

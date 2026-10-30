@@ -1,6 +1,6 @@
 # Ultrawork 桌面应用打包指南
 
-<!-- last-synced: 2026-10-29 -->
+<!-- last-synced: 2026-10-30 -->
 
 > 目标平台：macOS (ARM64 / x86_64) · Windows (x64) · Linux (x64/ARM64)
 > 技术栈：Tauri 2 + React 19 + Vite 7 + OpenCode Sidecar (Bun compiled binary)
@@ -31,7 +31,7 @@
 | Windows | `bun run setup --dev`（Windows 无 bash，必须用这个跨平台入口 `scripts/setup.ts`） |
 
 **之后日常迭代**（sidecar 已编好）：`bun run tauri:dev`
-- 改了某个 sidecar 源码 → 单独重编 `bun run build:gateway`（/`build:knowledge`/`build:acp`）；`opencode` 随 `tauri:dev` 自动增量重编
+- 改了某个 sidecar 源码或其 workspace 依赖 → 单独重编对应的 `bun run build:opencode`、`bun run build:gateway`、`bun run build:knowledge` 或 `bun run build:acp`，或重新执行 `bun run setup --dev`；公共入口会拒绝过期二进制。
 - 改了 `vendor/opencode` → `bun run build:opencode`
 - 端口：Vite 1420 / OpenCode 4096 / Gateway 4097 / Knowledge 4098 / ACP 4099
 
@@ -156,7 +156,9 @@ macOS Dock/Finder 另用专用 `icon-macos.icns`，两预置采用 1024px 画布
 
 身份校验还比较 macOS single-instance 插件把点/连接符归一后的 socket 键，避免看似不同的 identifier 实际互相聚焦。Linux 自定义包的四个 externalBin 在包内使用 namespace 前缀，例如 `mywork-opencode-server`，避免两个 deb/rpm 覆盖共享 `/usr/bin/opencode-server`；默认版及 macOS/Windows 保留内部原名。Linux 构建后用 `dpkg-deb`/`rpm` 读取真实安装文件清单，缺资源、漏前缀或覆盖默认目录均失败，检查结果写入 manifest；Linux 构建机须安装这两个工具。
 
-**构建互斥与缓存**：同一 checkout 的 setup/dev/build/release 共用 `.brand-build/build-lock.sqlite` 的 OS 锁，dev 持锁到退出；另一个会话会明确失败，并行构建须使用另一 checkout。自定义图标、Tauri overlay、技能物化目录和 Cargo target 放在 `.brand-build/<brandId>/`，不改写默认配置或源码图标。四个 sidecar 是共享内部组件，默认和定制公共入口都检查其 target、上下文协议与 SHA-256 metadata；`--skip-sidecar` 仅跳过编译，旧或被修改的二进制仍会拒绝打包，需重编 `build:opencode/gateway/knowledge/acp`。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建时初始化或清理用户缓存；工具链 HOME 保持原有语义。
+**构建互斥与缓存**：同一 checkout 的 setup/dev/build/release 共用 `.brand-build/build-lock.sqlite` 的 OS 锁，dev 持锁到退出；另一个会话会明确失败，并行构建须使用另一 checkout。自定义图标、Tauri overlay、技能物化目录和 Cargo target 放在 `.brand-build/<brandId>/`，不改写默认配置或源码图标。技能先在临时目录完整复制和改写，再原子发布；source 外的完成标记匹配才复用，构建中断留下的半成品会重建。
+
+四个 sidecar 是共享内部组件。公共 dev/build/release 入口除 target、协议和二进制 SHA-256 外，还按各自 builder 的当前源码/依赖指纹校验新鲜度；`--skip-sidecar` 仅跳过编译，不能放行仍兼容协议但包含旧逻辑的二进制。可用 `bun run --bun scripts/build-acp.ts --check`（或其它 builder，支持 `--target <triple>`）只读检查，不编译或下载；过期时重编对应的 `build:opencode/gateway/knowledge/acp`。Universal 同时核验两架构及其合并来源，不能只凭旧 Universal metadata 打包。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建时初始化或清理用户缓存；工具链 HOME 保持原有语义。
 
 **依赖冻结**：setup 和 CI 使用根锁冻结安装；vendor 的统一入口为 `bun run --bun scripts/vendor-dependencies.ts`，先补齐累计 patch，再冻结安装所有 OS/CPU 的可选依赖。OpenCode 构建始终传上游已有 `--skip-install`，其缓存指纹覆盖 vendor 锁与全部 workspace manifests。缺锁、patch 冲突或安装失败须修复后重试，不能以普通安装绕过；损坏/过期 metadata 或被改写的二进制会自动重编。固定版本及补丁维护见 [vendor 工作流](./vendor-patch-workflow.md)。
 
@@ -353,7 +355,7 @@ bun run release -- --unsigned
 
 | flag | 作用 |
 |------|------|
-| `--skip-sidecar` | 跳过 sidecar 编译（dev 调试 Tauri/前端时省时间） |
+| `--skip-sidecar` | 跳过 sidecar 编译，仍检查当前源码新鲜度、协议和文件完整性；过期须先重编 |
 | `--skip-notarize` | 跳过公证（签名仍执行） |
 | `--native` | 只编译当前架构（不出 Universal）。CI 调试用 |
 | `--verbose` | 显示底层 tauri/cargo 输出 |

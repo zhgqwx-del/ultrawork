@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, utimesSync } from "node:fs"
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { deflateSync } from "node:zlib"
+import { unzipSync } from "fflate"
 import { validatePng } from "./png-image"
 import { DEFAULT_BRAND, parseBrandIdentity, resolveIdentity } from "../packages/core/brand/src/index"
 import { absoluteBrandArgs, brandSkillMarkdown, imageInfo, parseBrandArgs, resolveBrandBuild, validateArguments, wixUpgradeCode, PROJECT_ROOT, prepareBrandBuild } from "./brand-build"
@@ -19,6 +20,18 @@ function fixture() {
   const dir = mkdtempSync(path.join(tmpdir(), "ultrawork-brand-test-"))
   dirs.push(dir)
   copyFileSync(path.join(PROJECT_ROOT, "branding/mywork/assets/meiyou-app.png"), path.join(dir, "icon.png"))
+  return dir
+}
+function skillsFixture() {
+  const dir = fixture()
+  const desktop = path.join(dir, "packages/client/desktop")
+  mkdirSync(path.join(desktop, "src-tauri"), { recursive: true })
+  writeFileSync(path.join(desktop, "src-tauri/tauri.conf.json"), JSON.stringify({ productName: "Ultrawork", app: { windows: [{ title: "Ultrawork", width: 1200 }] }, bundle: { resources: { "resources/builtin-skills": "skills/builtin" } } }))
+  writeFileSync(path.join(desktop, "package.json"), JSON.stringify({ scripts: { tauri: "bun run --bun tauri-cli.ts" } }))
+  writeFileSync(path.join(desktop, "tauri-cli.ts"), `await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, "packages/client/desktop/node_modules/@tauri-apps/cli/tauri.js")).href)})`)
+  mkdirSync(path.join(dir, "skills/builtin/dingtalk-assistant"), { recursive: true })
+  writeFileSync(path.join(dir, "skills/builtin/README.md"), "Installed at ~/.config/ultrawork/skills; authored by ultrawork")
+  writeFileSync(path.join(dir, "skills/builtin/dingtalk-assistant/SKILL.md"), "<home>/.ultrawork/office-cli/skills/dws/SKILL.md")
   return dir
 }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -277,16 +290,7 @@ print(json.dumps(results))`
     expect(() => resolveBrandBuild({ brandId: "mywork", productName: "Renamed", icon })).toThrow("immutable")
   })
   test("a real temporary build registers identity and blocks later temporary collisions", async () => {
-    const dir = fixture()
-    const desktop = path.join(dir, "packages/client/desktop")
-    mkdirSync(path.join(desktop, "src-tauri"), { recursive: true })
-    writeFileSync(path.join(desktop, "src-tauri/tauri.conf.json"), JSON.stringify({ productName: "Ultrawork", app: { windows: [{ title: "Ultrawork", width: 1200 }] }, bundle: { resources: { "resources/builtin-skills": "skills/builtin" } } }))
-    writeFileSync(path.join(desktop, "package.json"), JSON.stringify({ scripts: { tauri: "bun run --bun tauri-cli.ts" } }))
-    writeFileSync(path.join(desktop, "tauri-cli.ts"), `await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, "packages/client/desktop/node_modules/@tauri-apps/cli/tauri.js")).href)})`)
-    mkdirSync(path.join(dir, "skills/builtin"), { recursive: true })
-    writeFileSync(path.join(dir, "skills/builtin/README.md"), "Installed at ~/.config/ultrawork/skills; authored by ultrawork")
-    mkdirSync(path.join(dir, "skills/builtin/dingtalk-assistant"))
-    writeFileSync(path.join(dir, "skills/builtin/dingtalk-assistant/SKILL.md"), "<home>/.ultrawork/office-cli/skills/dws/SKILL.md")
+    const dir = skillsFixture()
     const args = { brandId: "temporary-one", productName: "Temporary One", icon: path.join(dir, "icon.png") }
     const first = resolveBrandBuild(args, dir, dir)
     expect(() => readFileSync(path.join(dir, ".brand-build/identity-ledger.json"))).toThrow()
@@ -302,6 +306,51 @@ print(json.dumps(results))`
       expect(() => resolveBrandBuild({ ...args, productName: "Renamed Edition" }, dir, dir)).toThrow("immutable")
       expect(() => resolveBrandBuild({ ...args, brandId: "temporary-two" }, dir, dir)).toThrow("conflicts")
       expect(() => resolveBrandBuild({ ...args, brandId: "temporary-two", productName: "TemporaryOne" }, dir, dir)).toThrow("conflicts")
+    } finally { lease.release() }
+  }, 60_000)
+  test("skill staging rebuilds interrupted trees and publishes completion outside the ZIP", async () => {
+    const dir = skillsFixture()
+    const brand = resolveBrandBuild({ brandId: "recover-skills", productName: "Recover Skills", icon: path.join(dir, "icon.png") }, dir, dir)
+    const lease = acquireBuildLock(dir, {})
+    try {
+      const prepared = await prepareBrandBuild(brand, dir)
+      const source = prepared.env.ULTRAWORK_BUILTIN_SKILLS_SOURCE
+      const stage = path.dirname(source)
+      const ready = path.join(stage, ".source-ready.json")
+      const file = path.join(source, "dingtalk-assistant/SKILL.md")
+      const expected = "<home>/.recover-skills/office-cli/skills/dws/SKILL.md"
+      const check = () => {
+        expect(readFileSync(file, "utf8")).toBe(expected)
+        expect(readFileSync(path.join(source, "README.md"), "utf8")).toContain("authored by ultrawork")
+        expect(JSON.parse(readFileSync(ready, "utf8"))).toEqual({ schemaVersion: 1, sourceHash: path.basename(stage) })
+        expect(readdirSync(stage).filter((name) => name.startsWith(".source-staging-"))).toEqual([])
+      }
+      check()
+      // A crashed copy left README but had not reached the actual skill file.
+      rmSync(ready)
+      rmSync(file)
+      await prepareBrandBuild(brand, dir)
+      check()
+      // A complete copy was interrupted before product-path transformation.
+      rmSync(ready)
+      copyFileSync(path.join(dir, "skills/builtin/dingtalk-assistant/SKILL.md"), file)
+      await prepareBrandBuild(brand, dir)
+      check()
+      // A bad completion record must not promote an unfinished source tree.
+      writeFileSync(ready, "{}\n")
+      copyFileSync(path.join(dir, "skills/builtin/dingtalk-assistant/SKILL.md"), file)
+      await prepareBrandBuild(brand, dir)
+      check()
+      const old = new Date("2001-01-01T00:00:00Z")
+      utimesSync(file, old, old)
+      const before = statSync(file).mtimeMs
+      await prepareBrandBuild(brand, dir)
+      check()
+      expect(statSync(file).mtimeMs).toBe(before)
+      const packed = spawnSync(process.execPath, ["run", "--bun", path.join(PROJECT_ROOT, "scripts/pack-builtin-skills.ts")], { env: prepared.env, encoding: "utf8", timeout: 15_000 })
+      expect(packed.status, packed.stderr).toBe(0)
+      const entries = Object.keys(unzipSync(readFileSync(path.join(prepared.env.ULTRAWORK_BUILTIN_SKILLS_OUTPUT, "skills-builtin.zip")))).sort()
+      expect(entries).toEqual(["README.md", "dingtalk-assistant/SKILL.md"])
     } finally { lease.release() }
   }, 60_000)
   test("earlier artifact manifests also freeze temporary identity without a ledger", () => {
