@@ -45,12 +45,18 @@ sys.path.insert(0,sys.argv[1])
 from docxcommon import brand_product_name,DocxError
 for key in ('ULTRAWORK_BRAND_CONTEXT_FILE','ULTRAWORK_BRAND_MANAGED','OPENCODE_APP_NAME'): os.environ.pop(key,None)
 results=[]
-for identity in json.load(sys.stdin):
+# Bun sends UTF-8 bytes; Windows text stdin may otherwise decode as CP1252.
+for identity in json.loads(sys.stdin.buffer.read().decode('utf-8')):
  os.environ['ULTRAWORK_BRAND_CONTEXT']=json.dumps({'schemaVersion':1,'identity':identity,'instanceId':'brand-parity-01'})
  try: results.append([True,brand_product_name()])
  except DocxError: results.append([False,None])
 print(json.dumps(results))`
-    const result = spawnSync(pythonCommand, ["-c", script, path.join(PROJECT_ROOT, "skills/builtin/docx/scripts")], { input: JSON.stringify(cases), encoding: "utf8", timeout: 15_000 })
+    const result = spawnSync(pythonCommand, ["-c", script, path.join(PROJECT_ROOT, "skills/builtin/docx/scripts")], {
+      input: JSON.stringify(cases), encoding: "utf8", timeout: 15_000,
+      // Exercise the legacy Windows pipe encoding on every platform. The
+      // fixture decodes its binary input explicitly and emits ASCII JSON.
+      env: { ...process.env, PYTHONIOENCODING: "cp1252" },
+    })
     expect(result.status, result.error?.message || result.stderr).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual(expected)
   })
