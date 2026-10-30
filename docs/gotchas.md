@@ -150,6 +150,8 @@
 
 ## 6. Tauri / 桌面
 
+- **签名成功不代表 Apple 公证可用；HTTP 403 的必需协议缺失/过期须检查团队账号状态（2026-10-29）**：`v0.3.10` 两品牌已完成 Universal 编译并调用 Developer ID 签名，随后 Tauri 的自动公证因 required agreement 拒绝；更新协议是 [Account Holder 的职责](https://developer.apple.com/help/account/access/roles/)，不是重建证书或绕过公证。账号持有人处理后 `v0.3.11` 两品牌公证及 app/DMG staple 均通过。以实际 Developer ID Authority、`stapler validate` 与 Gatekeeper 结果为准，不将证书导入或签名日志当作完整发行验收。
+
 - **`setup()` 跑在事件循环启动之前，而窗口已经在屏幕上了 —— 在里面做任何慢活 = 白屏（ADR-055，2026-07-13，源码级确认）**：`tauri-2.10.3/src/app.rs:2370-2383` 先按 `tauri.conf.json` 创建窗口（未设 `visible:false` ⇒ **默认可见**），**之后**才调用户的 `setup()` 钩子；而整个流程发生在 `app.run()` 之前 ⇒ **runloop 还没转**。所以 `setup()` 里每一毫秒的同步工作，用户都是对着一个**画不出任何东西、且无响应**的空窗口在等。白屏不是"渲染慢"，是**根本没在渲染**。**推论一：`setup()` 里只放瞬时操作**（我们只留 `install_signal_handlers()`），其余一律丢进后台线程（`boot_sidecars()`）。**推论二：任何"在 setup 里加个 splash/loading"的想法都是死路**——主线程堵着，splash 同样画不出来；解阻塞与加 loading 是**一件事的两半**，不能只做后者。
 - **`blocking_show()` 在 `setup()` 里 = 永久死锁，不是"弹窗没弹出来"（ADR-055）**：`tauri-plugin-dialog` 的 `blocking_show` 内部是 `run_on_main_thread(闭包)` + `rx.recv()` 阻塞等回调（`lib.rs:68-77` / `desktop.rs:215-222`，原生对话框**永远在主线程构造**，满足 AppKit 契约）。在 `setup()` 里调它：`rx.recv()` 阻塞主线程 ⇒ 负责 `send` 的闭包被投递到**同一个尚未启动的事件循环** ⇒ 永远不会执行 ⇒ **app 冻死**。我们的「OpenCode 启动失败」弹窗曾长期处于这个状态。插件文档写的 "should **NOT** be used when running on the main thread context" 指的就是这个。**从后台线程调是安全的、也是唯一正确的**。
 - **`titleBarStyle: Overlay` 下 `data-tauri-drag-region` 不生效，但 Tauri 的拖拽脚本仍然三平台都注入**：见下方 Overlay 条目（React 侧要用 `startDragging()`）。注意**只有挂了该属性的元素本身**会响应，子元素不继承 —— 启动 splash 的进度条/文案节点必须各自挂一份，否则用户抓着唯一可见的那部分反而拖不动窗口。

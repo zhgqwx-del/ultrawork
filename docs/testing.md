@@ -844,7 +844,23 @@ Rust 测试覆盖路径派生、身份记录、租约与进程身份等宿主规
 | Windows x64 | MSI、在线 EXE、离线 EXE 均构建成功，离线 WebView2 检查通过；未配置发行签名 | 同左 |
 | Linux x64 | deb/rpm 已生成，随后布局检查器误判而失败，未导出通过校验的发行 artifact | 同左 |
 
-Linux 修复由 [PR #34](https://github.com/zhgqwx-del/ultrawork/pull/34) 合入 main 的 `209429770fa22033a2520fd1e4f67dbca710dbdf`：Debian 通过 `dpkg-deb --fsys-tarfile → GNU tar` 流式读取机器文件列表，RPM 保留权限模式与完整文件名；同时检查两侧退出码并限制诊断长度。提交 `a2e4c992be594e543e11444513d2d6f55808de32` 的 [CI run 40934056079](https://github.com/zhgqwx-del/ultrawork/actions/runs/40934056079) 完成 **16/16**，Linux 的六个真实 deb 正例与缺文件、跨品牌污染、损坏载荷三个负例全部通过；macOS/Windows 四项解析测试通过，三个 Linux 原生测试明确跳过。`v0.3.11` 版本已准备，正式 tag/完整发布和真实 RPM 验包仍待后续发布任务；Apple 协议状态须先由 Account Holder 核实，不能将编译及签名操作等同于公证成功。
+Linux 修复由 [PR #34](https://github.com/zhgqwx-del/ultrawork/pull/34) 合入 main 的 `209429770fa22033a2520fd1e4f67dbca710dbdf`：Debian 通过 `dpkg-deb --fsys-tarfile → GNU tar` 流式读取机器文件列表，RPM 保留权限模式与完整文件名；同时检查两侧退出码并限制诊断长度。提交 `a2e4c992be594e543e11444513d2d6f55808de32` 的 [CI run 40934056079](https://github.com/zhgqwx-del/ultrawork/actions/runs/40934056079) 完成 **16/16**，Linux 的六个真实 deb 正例与缺文件、跨品牌污染、损坏载荷三个负例全部通过；macOS/Windows 四项解析测试通过，三个 Linux 原生测试明确跳过。后续 `v0.3.11` 的正式发布验收结果如下；不能将首次尝试中的编译及签名操作等同于公证成功。
+
+### v0.3.11 正式发行验收（2026-10-29）
+
+Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 创建新标签 `v0.3.11`，旧标签保持不变。[该提交的源码 CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/40941185560) **16/16** 成功，[Release run 40986120666](https://github.com/zhgqwx-del/ultrawork/actions/runs/40986120666) **8/8** 成功（guard、六个构建、publish）；[正式 Release](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.11) 为非草稿、非预发布，两个品牌各六个、共 **12 个安装包**均已上传。发布前六份 manifest 的身份、大小、SHA-256 校验通过；本机随后下载全部产物独立复验，并逐个匹配 GitHub Release API 的文件名、大小与 digest（`release-v0.3.11-final-assets.json`）。
+
+| 平台 | 两品牌实际结果 |
+|---|---|
+| macOS | 两个 Universal DMG 均通过 Developer ID、代码签名、公证、app/DMG staple 与独立 validate；DMG 布局通过，应用在左、Applications 在右 |
+| Windows x64 | 每品牌 MSI、在线 EXE、离线 EXE 共三包构建通过，离线 WebView2 内容与大小检查通过；未配置发行签名 |
+| Linux x64 | 每品牌 deb/rpm 均构建通过，实际安装包主程序、带品牌前缀的 sidecar 与品牌资源路径检查通过；未配置发行签名 |
+
+下载的两个 macOS 包分别完成 **7 项静态验包**，包含 manifest/hash、Info.plist 身份、中文/空格路径搬迁、图标逐字节一致、资源与动态库依赖检查；五个二进制均有 ARM64/Intel 切片。另行确认 Developer ID Authority、Hardened Runtime、app/DMG 离线票据，Gatekeeper 均返回 `accepted / Notarized Developer ID`。报告：`release-0.3.11-{default,mywork}-{package,signed-macos}.json`。
+
+两个签名包的 sidecar 各完成 **12 项本地业务验收**：分别在两品牌 namespace 下验证八服务并行、同密码鉴权负例、数据隔离、单 ACP＋Knowledge MCP、Team Leader/Member 委托、成员权限、Pipeline/worktree/产物、ACP 重启恢复，以及真实 OpenCode 的本地 SSE 模型工具循环。整个 harness 使用新建 HOME/XDG/TMPDIR、禁用真实 Git 配置/模板/hooks/签名的 shim；额外文件写入沙箱仅放行本次临时根及 `/dev/null`，目录内可写/目录外拒绝及 loopback 正向控制通过。未启动桌面宿主、未使用真实外部账号；没有将这些 fixture 扩写为独立证明零外网连接。报告：`release-0.3.11-{default,mywork}-signed-sidecars.json`。测试脚本回收自有句柄后，只读快照中已记录的直接 PID、临时上下文根、复制包路径及 fixture 命令均无残留；此结论不扩展为全系统所有孙进程的普遍证明。
+
+正式发行与以上自动化验收已完成；下方历史快照仍保留取证时的未验状态。Windows/Linux 图形桌面安装、升级/卸载及双品牌并行，Intel macOS 实际运行、系统权限弹窗、真实 IM/模型/知识库/第三方 ACP 账号仍按本节原生场景步骤补验，不能用构建、静态签名或本地 fixture 代替。
 
 ### 本机验证边界快照（2026-10-29）
 
