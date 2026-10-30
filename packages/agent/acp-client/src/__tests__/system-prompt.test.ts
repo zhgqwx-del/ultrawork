@@ -311,7 +311,13 @@ describe("brand identity across ACP session lifecycles", () => {
       try {
         collectInto(manager, sid)
         await manager.createSession("mock", tmpdir(), sid)
-        await expect(manager.prompt(sid, "first")).rejects.toThrow("Internal error")
+        // Consume the real stdio rejection before synchronous assertions so
+        // the RPC is driven by an ordinary await on every platform.
+        let failure: unknown
+        try { await manager.prompt(sid, "first") } catch (error) { failure = error }
+        expect(failure).toBeInstanceOf(Error)
+        expect((failure as Error).message).toContain("Internal error")
+        expect((failure as { code: number }).code).toBe(-32603)
         expect(loadAllSessions()[0].hostIdentityPrompt).toBeUndefined()
         const events = collectInto(manager, sid)
         await manager.prompt(sid, "retry")
