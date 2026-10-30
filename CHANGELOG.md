@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-10-30
+
 ### Fixed
 
 - 补齐品牌自我介绍的语言契约：按当前问题及显式语言要求回答，不受工作区名称、工具说明或 Team 指令语言影响，也不随丰富输出开关关闭；增加同品牌旧会话身份契约升级回归。
