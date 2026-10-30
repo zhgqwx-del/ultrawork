@@ -389,6 +389,8 @@ jobs:
         run: bun run --bun scripts/rich-output/rich-output-unit-test.ts
       - name: Compile native OpenCode including its embedded Web UI
         run: bun run --bun scripts/build-opencode.ts --force
+      - name: Verify native OpenCode source freshness without rebuilding
+        run: bun run --bun scripts/build-opencode.ts --check
       - name: Compile Intel macOS target
         if: runner.os == 'macOS'
         run: bun run --bun scripts/build-opencode.ts --target x86_64-apple-darwin --force

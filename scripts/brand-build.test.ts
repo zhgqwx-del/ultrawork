@@ -347,8 +347,26 @@ print(json.dumps(results))`
       await prepareBrandBuild(brand, dir)
       check()
       expect(statSync(file).mtimeMs).toBe(before)
-      const packed = spawnSync(process.execPath, ["run", "--bun", path.join(PROJECT_ROOT, "scripts/pack-builtin-skills.ts")], { env: prepared.env, encoding: "utf8", timeout: 15_000 })
-      expect(packed.status, packed.stderr).toBe(0)
+      const packed = Bun.spawn([process.execPath, "run", "--bun", path.join(PROJECT_ROOT, "scripts/pack-builtin-skills.ts")], {
+        cwd: PROJECT_ROOT, env: prepared.env, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      })
+      let timedOut = false
+      const deadline = setTimeout(() => { timedOut = true; packed.kill("SIGKILL") }, 15_000)
+      try {
+        // Drain both pipes while awaiting exit, matching the real async pack
+        // invocation instead of blocking Bun's Windows subprocess scheduler.
+        const [code, stdout, stderr] = await Promise.all([
+          packed.exited, new Response(packed.stdout).text(), new Response(packed.stderr).text(),
+        ]).catch((error) => {
+          throw new Error(`Skill ZIP subprocess failed: ${JSON.stringify({ exitCode: packed.exitCode, signal: packed.signalCode, timedOut })}`, { cause: error })
+        })
+        const diagnostic = JSON.stringify({ code, signal: packed.signalCode, timedOut, stdout, stderr })
+        expect(timedOut, diagnostic).toBe(false)
+        expect(code, diagnostic).toBe(0)
+      } finally {
+        clearTimeout(deadline)
+        if (packed.exitCode === null) { packed.kill("SIGKILL"); await packed.exited }
+      }
       const entries = Object.keys(unzipSync(readFileSync(path.join(prepared.env.ULTRAWORK_BUILTIN_SKILLS_OUTPUT, "skills-builtin.zip")))).sort()
       expect(entries).toEqual(["README.md", "dingtalk-assistant/SKILL.md"])
     } finally { lease.release() }

@@ -910,7 +910,7 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 
 追加 review 找到并修复三项构建边界：品牌技能中断缓存可能被复用、同协议旧 sidecar 可经跳过编译打包、直接 Tauri Linux 安装布局检查未等待完成。业务模型路由、权限、Team 委派和运行数据格式没有改动。新增 staging 完成标记与原子发布；四 builder 的 `--check` 复用原有 hash 规则，公共入口在资源/签名前校验新鲜度；构建与打包脚本加入三平台严格类型检查。
 
-- 独立复跑身份 98/98、ACP 身份恢复 18/18；构建相关八套回归 71 通过、0 失败，4 项本机不具备 Linux 工具的场景按环境跳过，由对应 CI 执行。完整品牌构建 opt-in 套件 29/29、195 断言；完成标记不进入技能 ZIP。
+- 独立复跑身份 98/98、ACP 身份恢复 18/18；构建相关八套回归 71 通过、0 失败，4 项本机不具备 Linux 工具的场景按环境跳过，由对应 CI 执行。完整品牌构建 opt-in 套件 29/29；完成标记不进入技能 ZIP。Windows 回归使用异步子进程并发读取 stdout/stderr，入口多案例按实际调用量设置测试预算，保留每个子进程独立超时及错误诊断。
 - 当前四个真实 sidecar 复制到源码目录外的中文/空格路径、全新 HOME 后，单 Agent、Team、Pipeline、重启及实际模型 system 身份 13 组通过。Chrome/WebKit 各重新通过两品牌三语 6 流程/30 检查。日志前缀均为 `.brand-build/verification/identity-recheck-`。
 - 实际构建默认与 MyWork 两个 ARM64 Dev DMG，后者使用新鲜 sidecar 的 `--skip-sidecar` 正向路径。两包均通过 7 项 DMG 哈希、包名/identifier、图标字节、深度签名、中文/空格搬迁、269 个包内文本无 checkout 引用、5 个 Mach-O 仅依赖系统或相对库检查。报告 `identity-recheck-package-default.json` / `identity-recheck-package-mywork.json`。
 - 两个搬迁后的真实 `.app` 在中文 HOME、C locale 下通过原生宿主 8 项启动/隔离/互斥及 MCP 重启检查；从两份 DMG 内实际 sidecar 分别跑两品牌工具循环，各 13 组通过，所有自建子进程已回收。报告 `identity-recheck-native-hosts.json`，日志 `identity-recheck-packaged-default-sidecars.log` / `identity-recheck-packaged-mywork-sidecars.log`。

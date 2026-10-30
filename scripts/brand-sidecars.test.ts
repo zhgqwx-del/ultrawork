@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { DEFAULT_BRAND, resolveIdentity } from "../packages/core/brand/src/index"
@@ -17,7 +16,7 @@ const mywork = resolveIdentity({ brandId: "mywork", productName: "MyWork" })
 const second = resolveIdentity({ brandId: "secondwork", productName: "SecondWork" })
 
 describe("Linux branded sidecar packaging", () => {
-  test("actual default public build/dev/release entries reject incompatible skipped sidecars before Tauri or packing", () => {
+  test("actual default public build/dev/release entries reject incompatible skipped sidecars before Tauri or packing", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "default-sidecar-entry-")); temporary.push(root)
     const scripts = path.join(root, "scripts")
     const desktop = path.join(root, "packages/client/desktop")
@@ -50,6 +49,24 @@ describe("Linux branded sidecar packaging", () => {
       for (const role of SIDECAR_NAMES) { writeFileSync(binary(role), "fixture"); writeSidecarMetadata(binary(role), target, "fixture-source") }
     }
     const env = { ...process.env, GITHUB_REF_NAME: "", ULTRAWORK_BUILD_LOCK_TOKEN: "", ULTRAWORK_BUILD_TARGET_DIR: "", CARGO_TARGET_DIR: "" }
+    const run = async (script: string, args: string[]) => {
+      const child = Bun.spawn([process.execPath, "run", "--bun", path.join(scripts, script), ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe" })
+      let timedOut = false
+      const timeout = setTimeout(() => { timedOut = true; child.kill() }, 15_000)
+      try {
+        // Drain both pipes while the process runs, and await complete output
+        // before the next case mutates the shared fixture.
+        const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+        expect(timedOut, `${script} exceeded its 15s child budget: ${stderr}`).toBe(false)
+        expect(Number.isInteger(status)).toBe(true)
+        expect(child.exitCode).toBe(status)
+        expect(child.signalCode).toBeNull()
+        return { status, stdout, stderr }
+      } finally {
+        clearTimeout(timeout)
+        if (child.exitCode === null) { child.kill(); await child.exited }
+      }
+    }
     const calls = [["tauri-brand.ts", "build"], ["tauri-brand.ts", "dev"], ["build-release.ts", "--native", "--unsigned", "--skip-sidecar"]]
     copyFileSync(path.join(PROJECT_ROOT, "branding/mywork/assets/meiyou-app.png"), path.join(root, "icon.png"))
     const custom = ["--name", "MyWork", "--brand-id", "mywork", "--icon", path.join(root, "icon.png")]
@@ -58,7 +75,7 @@ describe("Linux branded sidecar packaging", () => {
       const metadata = `${binary("acp-client")}.metadata.json`
       if (invalid === "missing") rmSync(metadata)
       else { const data = JSON.parse(readFileSync(metadata, "utf8")); if (invalid === "protocol") data.brandContextProtocol = 0; else data.sourceHash = "old-source"; writeFileSync(metadata, JSON.stringify(data)) }
-      const result = spawnSync(process.execPath, ["run", "--bun", path.join(scripts, script), ...args, ...branding], { cwd: root, env, encoding: "utf8", timeout: 15_000 })
+      const result = await run(script, [...args, ...branding])
       expect(result.status, result.stderr).not.toBe(0)
       expect(result.stderr).toContain(invalid === "missing" ? "Missing sidecar metadata" : invalid === "protocol" ? "Incompatible or changed sidecar" : "Stale sidecar source")
       expect(existsSync(tauriMarker)).toBe(false)
@@ -67,7 +84,7 @@ describe("Linux branded sidecar packaging", () => {
     // A valid set reaches the downstream CLI stub, so the negative controls
     // above cannot pass merely because the copied entry point cannot execute.
     reset()
-    const valid = spawnSync(process.execPath, ["run", "--bun", path.join(scripts, "tauri-brand.ts"), "build"], { cwd: root, env, encoding: "utf8", timeout: 15_000 })
+    const valid = await run("tauri-brand.ts", ["build"])
     expect(valid.status, valid.stderr).toBe(37)
     expect(existsSync(tauriMarker)).toBe(true)
 
@@ -82,12 +99,12 @@ describe("Linux branded sidecar packaging", () => {
       writeFileSync(file, "linux-fixture")
       writeSidecarMetadata(file, linux, "fixture-source")
     }
-    const inspected = spawnSync(process.execPath, ["run", "--bun", path.join(scripts, "tauri-brand.ts"), "build", "--target", linux], { cwd: root, env, encoding: "utf8", timeout: 15_000 })
+    const inspected = await run("tauri-brand.ts", ["build", "--target", linux])
     expect(inspected.status).not.toBe(0)
     expect(inspected.stderr).toContain("fixture Linux layout rejected")
     expect(existsSync(inspectMarker)).toBe(true)
     expect(existsSync(exportMarker)).toBe(false)
-  })
+  }, 60_000)
 
   test("actual staged external binaries use distinct install basenames without changing the shared sources", () => {
     const root = mkdtempSync(path.join(tmpdir(), "linux-brand-sidecars-")); temporary.push(root)
