@@ -935,6 +935,8 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 
 Codex 的 MCP `request_permission` 可能只有 `execute/exec-UUID`，同一调用更早的通知才有 server/tool/arguments。显示解析现在只借用当前会话、当前轮次、同一 ID 且无冲突的信息：有意义的新标题、显式 kind 冲突、跨会话/跨轮次及封口后的旧缓存均不复用；无结构化证据的 opaque execute 显示中性 Tool Action。MCP 权限展示工具名和多行 JSON 参数，单 Agent、Team 子权限及 Pipeline 权限区均可换行滚动。授权 optionId、once/always/reject 映射、路由、超时和默认拒绝没有变化。若详情在权限 RPC 之后才到达，本实现不等待或猜测未来信息，也不重发授权事件。
 
+捕获新编 sidecar 的真实显示字段后，Chrome 重放实际主权限 Dock、DelegateDock 和完整 Pipeline 页：两品牌、捕获/长文本样本、320/440/1440 宽度共 36 场景/108 组检查/72 次 once/reject 点击通过。视觉检查发现并修复窄屏按钮挤压参数列的问题；修复后最窄参数列仍有 244px，长 JSON 可滚到底，HTML 样本作为纯文本显示。报告 `permission-display-browser-proof/report.json`。该重放只验证 UI 与回调，路由 ID 脱敏并由本地适配器记录；真实授权回环由下述 Codex 探针分别验证，不能合称为一次完整 GUI 授权测试。
+
 回归包括提示词 120 项、wire 4 项、品牌包 38 项、ACP 全量 181 项，以及真实 stdio 的授权前阻塞、三个原始 optionId 映射和真实 shell 不误归为 MCP。新权限合同和两个 renderer 权限套件纳入显式三平台 CI（Windows 既有全 workspace 跳过不再遗漏这些合同）。完整工作区 13 个测试任务与 9 个 typecheck 任务通过。
 
 真实测试分离身份和业务任务，固定轮数，不把文件完成回复必须带品牌作为产品契约，不重试至绿。两品牌 × 两轮共 28 条单 Agent、Leader、直接真实成员自然问句中 27 条通过，MyWork 一次回答仅为 `4`（未串品牌或泄露模型名），失败保留在 `identity-stability-headless-report.json`；两品牌的 4 组真实文件/委派业务任务均通过，内容精确且无简介污染。Chrome 两品牌各 6 项流程通过，包含真实问答、读写、历史、Leader/工具后自介和真实两子会话文件任务；浏览器 IPC 为显式适配，HTTP/模型/SSE 为真实服务。报告 `identity-stability-browser/report.json`。
