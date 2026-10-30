@@ -135,6 +135,7 @@ try {
       assert.ok(system.includes(VERBOSITY_OVERRIDE))
       assert.ok(system.indexOf(VERBOSITY_OVERRIDE) < system.indexOf(BRAND_GUIDANCE))
       assert.equal(system.filter((value) => value.includes("<identity>")).length, 1)
+      assert.ok(system.at(-1)?.includes("language of the latest user question"))
       assert.ok(system.at(-1)?.includes("does not add requirements to the user's task"))
       if (!identity.isDefault) assert.ok(!system.at(-1)?.includes('"Ultrawork"'))
     })
@@ -147,6 +148,7 @@ try {
     const disabled = await render(hooks, TERSE)
     check(`${identity.productName}: config kill switch disables richness, retains identity`, () => {
       assert.deepEqual(disabled, [TERSE, ROLE, identityGuidance(identity.productName)])
+      assert.ok(disabled.at(-1)?.includes("following any explicit language request in that question"))
     })
     for (const value of ["0", "false"]) {
       process.env.ULTRAWORK_RICH_OUTPUT = value

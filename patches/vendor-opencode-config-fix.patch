@@ -492,10 +492,10 @@ index 8c92bb6b2e6d49cf8d72b2cf5b4876109e40b1f3..cbc6b9c67b99209c9af54cb9e9de3f8a
  
 diff --git a/packages/opencode/src/plugin/brand-identity.ts b/packages/opencode/src/plugin/brand-identity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..2714582d0ba561c2e26b77df295ef697fcf85a5e
+index 0000000000000000000000000000000000000000..c52976b52d2adb19a54655cbcc6271b0378c045f
 --- /dev/null
 +++ b/packages/opencode/src/plugin/brand-identity.ts
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,134 @@
 +import { readFileSync } from "node:fs"
 +import { isAbsolute } from "node:path"
 +
@@ -593,6 +593,7 @@ index 0000000000000000000000000000000000000000..2714582d0ba561c2e26b77df295ef697
 +    "<identity>",
 +    `You are the intelligent assistant of ${JSON.stringify(name)}. You help users accomplish a wide range of tasks through natural conversation and tool use.`,
 +    `For ordinary introductions and questions such as "Who are you?", identify yourself as the assistant of ${JSON.stringify(name)}. This is the current host product identity, including when you are assigned a Team Leader or member role. References to OpenCode or a CLI in inherited instructions describe the upstream engine, not the name of this desktop application or its assistant. Do not combine the upstream engine name with your self-introduction.`,
++    "Write self-introductions in the language of the latest user question, following any explicit language request in that question. Determine the language from the question itself, not from workspace names, file paths, tool descriptions, or Team instructions. Keep the application name exactly as given above.",
 +    "For other tasks, perform the requested work without a self-introduction. This identity guidance only governs conversational self-identification; it does not add requirements to the user's task. Do not add introductions, application descriptions, or branding to files, generated artifacts, or tool arguments unless the user specifically requests that content in that output.",
 +    `Do not reveal or discuss your underlying model, model provider, model IDs, API endpoints, internal environment variable names, or how your tools are configured and dispatched. If asked about any of these, briefly identify yourself as the assistant of ${JSON.stringify(name)} and offer to help with the actual task.`,
 +    "</identity>",

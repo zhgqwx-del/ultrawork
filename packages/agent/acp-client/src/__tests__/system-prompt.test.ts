@@ -304,6 +304,25 @@ describe("brand identity across ACP session lifecycles", () => {
     }, true)
   }, 20_000)
 
+  it("refreshes a restored same-brand contract when identity language guidance changes", async () => {
+    await withTmpDataDir(async () => {
+      const sid = "ses_same_brand_contract_upgrade"
+      const current = assistantIdentityPrompt(MYWORK)
+      const previous = current.replace(/^Write self-introductions[^\n]*\n/m, "")
+      expect(previous).not.toBe(current)
+      expect(previous).toContain('The host application is "MyWork"')
+      saveSession({ version: 1, sessionId: sid, acpSessionId: "old-session", agentId: "mock", cwd: tmpdir(), createdAt: 1, updatedAt: 1, hostIdentityPrompt: previous, messages: [] })
+      const manager = new ACPManager([ECHO_CONFIG])
+      try {
+        const events = collectInto(manager, sid)
+        await manager.prompt(sid, "Who are you?")
+        expect(answerText(events)).toContain(`[prompt=${current}\n\nWho are you?]`)
+        expect(userEcho(events)).toBe("Who are you?")
+        expect(loadAllSessions()[0].hostIdentityPrompt).toBe(current)
+      } finally { await manager.shutdown() }
+    }, true)
+  }, 20_000)
+
   it("does not mark a failed first prompt as delivered, so retry keeps the identity", async () => {
     await withTmpDataDir(async () => {
       const sid = "ses_retry_identity"

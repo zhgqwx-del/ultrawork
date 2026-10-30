@@ -1,6 +1,6 @@
 # 质量门禁 / 完成定义 (Quality Gates)
 
-<!-- last-synced: 2026-06-27 -->
+<!-- last-synced: 2026-10-30 -->
 
 > 一页式 checklist：一处改动在"算完成 / 可合入 / 可收尾"之前必须满足的条件。
 > 背景：本项目主要由 AI（Claude Code）开发，没有人类的隐性"完成感"。显式门禁让每次改动有统一、可对照的标准，避免漏项。
@@ -27,7 +27,7 @@
 
 ## 2. 代码门禁
 
-- [ ] **TypeCheck 全绿**：`bun run --bun turbo run typecheck`（5/5 包）。
+- [ ] **TypeCheck 全绿**：`bun run --bun turbo run typecheck`（全部相关 workspace）。
       改了 `api-client` 类型须先在其中 `tsc --build` 再检查 client（见 `gotchas.md` §1）。
 - [ ] **相关包单测通过**：
       - Desktop：`cd packages/client/desktop && bun run --bun vitest run`

@@ -311,6 +311,8 @@
 - **`delegate.snapshot` 只重放 delegates，不重放待答的权限请求**（ADR-048 实测，2026-07-11）。新订阅者拿到的首帧里没有任何 pending permission，所以**任何持有该状态的组件一旦卸载重挂，那条权限行就永久消失** —— 子 agent 会一直阻塞到 sidecar 超时，界面上无任何线索。
   → 因此 `useDelegateRows` 必须挂在 **Session 级**（组件之上），`DelegateDock` 退化为纯渲染。布局变化（如全屏预览把 dock 从会话列 re-parent 到底部栏）在 React 里等于卸载 + 重建，state 放组件里必丢。
 
+- **Team Leader 的 Stop 不等于取消全部成员（2026-10-30 品牌验收复核，既有边界）**：会话页只执行 `connector.cancel(sessionId)`；`orchestration-routes.ts` 的公开 delegate 请求未把 HTTP 请求中断连接至成员的 AbortController，`DelegateManager` 也不按 `ownerSessionId` 级联取消。OpenCode MCP 的 `client.callTool` 尚未传入 abortSignal。因此成员可能继续到完成或自身超时（默认十分钟）。显式 `cancelTask` / Pipeline `cancelRun` 的通过证据不能用来证明根会话 Stop 会级联取消，单 Agent Stop 的浏览器验收也不能外推为 Team 取消通过。此语义不是品牌身份修复引入，调整需作为独立业务变更设计和验收。
+
 ## 10. 内置技能（built-in skills，`skills/builtin/` + Settings 技能页）
 
 - **Anthropic 官方 docx/pdf/pptx/xlsx 文档技能是专有许可、禁止再分发**（`anthropics/skills` 各目录 `LICENSE.txt`）——**不能打包进 ultrawork**。判定捷径：**LICENSE.txt 1467B ≈ 专有 / 11345B ≈ Apache-2.0**。故 PDF 用 OpenAI 的 Apache 版（`openai/skills/.curated/pdf`），Office 读改自写：docx/xlsx 见 059 S3/S4 的专用技能，.pptx 就地读改见 `pptx-edit`（原 `doc-edit`，059 S6 瘦身改名）；长尾格式转换用 `markdown-exporter`（md_exporter）。新增内置技能前**先核对该目录 LICENSE 是 Apache-2.0/MIT 等可再分发许可**。
