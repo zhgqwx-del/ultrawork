@@ -87,7 +87,10 @@ jobs:
       - name: Model wire identity assertion controls
         run: bun test scripts/brand-model-fixture.test.ts
       - name: ACP host identity and session restore contracts (including Windows)
-        run: bun test packages/agent/acp-client/src/__tests__/system-prompt.test.ts packages/agent/acp-client/src/__tests__/delegate-mcp.test.ts packages/agent/acp-client/src/__tests__/agents-config.test.ts
+        run: bun test packages/agent/acp-client/src/__tests__/system-prompt.test.ts packages/agent/acp-client/src/__tests__/delegate-mcp.test.ts packages/agent/acp-client/src/__tests__/agents-config.test.ts packages/agent/acp-client/src/__tests__/permission-label.test.ts packages/agent/acp-client/src/__tests__/permission-display.test.ts
+      - name: MCP approval display UI contracts (including Windows)
+        working-directory: packages/client/desktop
+        run: bun run --bun vitest run src/__tests__/components/chat/permission-dock.test.tsx src/__tests__/components/chat/delegate-dock-scope.test.tsx
       # zh-Hant dictionary is generated from zh-Hans at build time (ADR-058 D3).
       # Fail if someone edited the Simplified source without regenerating — runs
       # here (not the dep-free docs job) because it needs the opencc-js devDep,

@@ -68,7 +68,11 @@ try {
       check(`${identity.productName}/${family}: stock identity adapted, remaining provider policy unchanged`, () => {
         assert.ok(branded.startsWith(`You are the intelligent assistant of ${JSON.stringify(identity.productName)}, a desktop application.`))
         assert.ok(!branded.split("\n")[0]!.match(/opencode|interactive CLI/i))
-        assert.equal(branded.slice(brandedNewline), stock.slice(stockNewline))
+        const continuation = branded.slice(brandedNewline)
+        if (["anthropic", "codex"].includes(family)) {
+          assert.ok(continuation.startsWith("\n\nYou help users with software engineering tasks. Use the instructions below"))
+          assert.equal(continuation.replace("\n\nYou help users with software engineering tasks.", "\n\nYou are an interactive CLI tool that helps users with software engineering tasks."), stock.slice(stockNewline))
+        } else assert.equal(continuation, stock.slice(stockNewline))
         // These continuations are behavioral policy within the first line.
         if (family === "beast") assert.ok(branded.includes("please keep going until the user’s query is completely resolved"))
         if (family === "gpt") assert.ok(branded.includes("You and the user share the same workspace and collaborate to achieve the user's goals."))
@@ -81,6 +85,8 @@ try {
       }
       const stock = readFileSync(new URL("../../vendor/opencode/packages/opencode/src/session/prompt/anthropic.txt", import.meta.url), "utf8")
       assert.ok(brandProviderPrompt(stock, identity.productName).includes("https://github.com/anomalyco/opencode"))
+      const quote = "\nUser quotation: You are an interactive CLI tool that helps users with software engineering tasks."
+      assert.ok(brandProviderPrompt(stock + quote, identity.productName).endsWith(quote))
     })
   }
   check("provider prompt adaptation uses validated runtime identity and remains active with richness disabled", () => {
@@ -115,6 +121,7 @@ try {
       assert.ok(system.includes(VERBOSITY_OVERRIDE))
       assert.ok(system.indexOf(VERBOSITY_OVERRIDE) < system.indexOf(BRAND_GUIDANCE))
       assert.equal(system.filter((value) => value.includes("<identity>")).length, 1)
+      assert.ok(system.at(-1)?.includes("does not add requirements to the user's task"))
       if (!identity.isDefault) assert.ok(!system.at(-1)?.includes('"Ultrawork"'))
     })
     const regular = await render(hooks)

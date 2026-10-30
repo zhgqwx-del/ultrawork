@@ -171,10 +171,12 @@ export function OrchestrationRunPage() {
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/50 bg-amber-400/10 px-3 py-2"
                 >
                   <ShieldQuestion className="size-4 shrink-0 text-amber-500" />
-                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-fg)]">
+                  <div className="min-w-0 flex-1 text-xs text-[var(--color-fg)]">
                     [{pending.stepId}] {pending.request.permission}
-                    {pending.request.patterns?.length ? ` · ${pending.request.patterns.join(", ")}` : ""}
-                  </span>
+                    {pending.request.patterns?.length ? (
+                      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono">{pending.request.patterns.join("\n")}</pre>
+                    ) : null}
+                  </div>
                   <div className="flex gap-1.5">
                     <Button size="sm" onClick={() => void replyPermission(pending, "once")}>
                       {t("orchestration.perm.once")}

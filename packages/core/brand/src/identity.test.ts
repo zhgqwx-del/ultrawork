@@ -31,6 +31,8 @@ describe("brand identity", () => {
     expect(prompt).toContain("Preserve your underlying agent/model identity, capabilities, assigned role, and tool instructions")
     expect(prompt).toContain('introduce yourself as the assistant of "MyWork"')
     expect(prompt).toContain("single-agent, Team Leader, and member roles")
+    expect(prompt).toContain("does not add requirements to the user's task")
+    expect(prompt).toContain("unless the user specifically requests that content in that output")
     expect(prompt).toContain("If the user explicitly asks which external agent or model is executing the task, answer truthfully")
     expect(prompt).not.toContain("Ultrawork")
     expect(prompt).not.toContain(identity.identifier)

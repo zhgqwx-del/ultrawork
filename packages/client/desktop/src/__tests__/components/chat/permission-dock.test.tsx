@@ -97,4 +97,16 @@ describe("PermissionDock", () => {
     render(<PermissionDock request={unknownRequest} onReply={vi.fn()} />)
     expect(screen.getByText(/custom_perm/)).toBeInTheDocument()
   })
+
+  it("shows the MCP operation and exact argument text without interpreting markup or authorizing it", () => {
+    const onReply = vi.fn()
+    const pattern = 'mcp.orchestrator.delegate\n{\n  "cwd": "客户 workspace",\n  "task": "<script>untrusted()</script>"\n}'
+    const { container } = render(<PermissionDock request={{ ...mockRequest, permission: "mcp", patterns: [pattern] }} onReply={onReply} />)
+    expect(screen.getByText(/MCP Tool/)).toBeInTheDocument()
+    expect(container.querySelector("code")?.textContent).toBe(pattern)
+    expect(container.querySelector("script")).toBeNull()
+    expect(onReply).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText("Allow Once"))
+    expect(onReply).toHaveBeenCalledExactlyOnceWith("once")
+  })
 })

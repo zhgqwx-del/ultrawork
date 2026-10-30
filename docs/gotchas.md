@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-10-29 -->
+<!-- last-synced: 2026-10-30 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -247,6 +247,8 @@
 2. e2e 里要重定向 HOME，只能让**父进程 spawn 一个新进程**并在 spawn 时设 env（`channel-session-rotation.e2e.ts` 就是这么做的），并且加 **fail-closed 断言**：`homedir() !== tmp` 就拒绝运行，而不是继续往真实路径写。
 
 ## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
+
+- **Codex MCP 的权限帧可能只有 execute/exec-UUID，不能据此直接显示 Bash**（官方 codex-acp 2.5.0 真实链路，2026-10-30）：同一 `toolCallId` 更早的 `tool_call` / `tool_call_update` 才带 `title=mcp.server.tool` 和 `rawInput={server,tool,arguments}`。`request_permission` 在 drain 已到达通知后，由 `permissionDisplay` 从当前会话、当前轮次、同 ID 的快照恢复显示；新标题、显式 kind 冲突或 sealed 后缓存不借用。结构化 MCP 才显示 MCP，真实 command/backtick 仍为 Bash，无证据时中性 Tool Action；名称/参数只是展示，原 optionId 与授权回环不变。详情晚于权限 RPC 的适配器不等待猜测，不能为了截图直接批准未知操作。真实授权验收须分别覆盖 reject（零委派）和 once（实际委派），不可只依据旧 history 绕过错误权限显示。
 
 > 阶段1（ADR-027）实测坑点。SDK pin `@agentclientprotocol/sdk` 0.25.0；claude adapter = `@agentclientprotocol/claude-agent-acp`（0.44 实测；前身 `@zed-industries/claude-code-acp` 永久停在 0.16.2，已弃用）。
 

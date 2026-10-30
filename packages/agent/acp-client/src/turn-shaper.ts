@@ -120,6 +120,20 @@ export class TurnShaper {
     return this.tools.get(callId)?.part.tool
   }
 
+  /** Same-turn presentation context for sparse request_permission frames.
+   * Return a snapshot so displaying an approval cannot mutate tool execution. */
+  toolCall(callId: string): ToolCallUpdate | undefined {
+    if (this.sealed) return undefined
+    const entry = this.tools.get(callId)
+    if (!entry) return undefined
+    return {
+      toolCallId: callId,
+      kind: entry.part.tool as ToolCallUpdate["kind"],
+      title: entry.title,
+      rawInput: structuredClone(entry.part.state.input),
+    }
+  }
+
   handleUpdate(update: SessionUpdate): void {
     if (this.sealed) return
     switch (update.sessionUpdate) {

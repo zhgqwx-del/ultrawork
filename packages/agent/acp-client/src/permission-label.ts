@@ -43,6 +43,49 @@ function fromRawInput(rawInput: unknown): string | undefined {
   return undefined
 }
 
+interface McpCall {
+  server: string
+  tool: string
+  arguments: Record<string, unknown>
+}
+
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Codex exposes MCP through an execute call. Require its structured envelope;
+ * a title such as mcp.foo.bar is never enough to relabel an actual shell call. */
+function mcpCall(toolCall: ToolCallUpdate): McpCall | undefined {
+  const input = toolCall.rawInput
+  if (!object(input) || ["command", "cmd", "shell_command"].some((key) => key in input) ||
+      (toolCall.title && isBacktickWrapped(toolCall.title))) return undefined
+  const validName = (value: unknown): value is string => typeof value === "string" &&
+    value.length > 0 && value.length <= 200 && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value)
+  if (!validName(input.server) || !validName(input.tool) ||
+      (input.arguments !== undefined && !object(input.arguments))) return undefined
+  return { server: input.server, tool: input.tool, arguments: input.arguments ?? {} }
+}
+
+/** Recover only same-call information already received in session/update.
+ * A permission request's explicit input is authoritative; never spread the old
+ * envelope into new shell input. Null/missing fields are ACP sparse updates. */
+export function permissionToolCall(toolCall: ToolCallUpdate, known?: ToolCallUpdate): ToolCallUpdate {
+  if (!known || known.toolCallId !== toolCall.toolCallId) return toolCall
+  if (known.kind && toolCall.kind && known.kind !== "other" && toolCall.kind !== "other" && known.kind !== toolCall.kind) return toolCall
+  // A different meaningful title is new evidence, not a sparse placeholder.
+  // Do not make its approval display borrow a previous operation's envelope.
+  if (toolCall.title && toolCall.title !== toolCall.toolCallId && toolCall.title !== known.title) return toolCall
+  const title = toolCall.title && toolCall.title !== toolCall.toolCallId ? toolCall.title : known.title ?? toolCall.title
+  const isExplicitCommand = !!toolCall.title && isBacktickWrapped(toolCall.title)
+  return {
+    ...known,
+    ...toolCall,
+    kind: toolCall.kind && toolCall.kind !== "other" ? toolCall.kind : known.kind ?? toolCall.kind,
+    title,
+    rawInput: toolCall.rawInput ?? (isExplicitCommand ? undefined : known.rawInput),
+  }
+}
+
 /**
  * Resolve the permission label for a request_permission tool call.
  * Layers, most reliable first; "tool" is the neutral fallback (never guess bash):
@@ -53,6 +96,7 @@ function fromRawInput(rawInput: unknown): string | undefined {
  */
 export function resolvePermission(toolCall: ToolCallUpdate, shaperKind?: string): string {
   return (
+    (mcpCall(toolCall) ? "mcp" : undefined) ??
     fromKind(toolCall.kind) ??
     fromKind(shaperKind) ??
     fromRawInput(toolCall.rawInput) ??
@@ -63,6 +107,27 @@ export function resolvePermission(toolCall: ToolCallUpdate, shaperKind?: string)
 
 /** Pattern shown in the dock's <code> block — strip claude's backtick wrapping. */
 export function permissionPattern(toolCall: ToolCallUpdate): string {
+  const mcp = mcpCall(toolCall)
+  if (mcp) return `mcp.${mcp.server}.${mcp.tool}\n${JSON.stringify(mcp.arguments, null, 2)}`
+  if (object(toolCall.rawInput) && typeof toolCall.rawInput.command === "string" &&
+      (!toolCall.title || toolCall.title === toolCall.toolCallId || toolCall.title.startsWith("mcp."))) {
+    return toolCall.rawInput.command
+  }
   const raw = toolCall.title ?? toolCall.toolCallId
   return isBacktickWrapped(raw) ? raw.slice(1, -1) : raw
+}
+
+/** Presentation only: does not select, infer or change permission options. */
+export function permissionDisplay(toolCall: ToolCallUpdate, known?: ToolCallUpdate) {
+  const resolved = permissionToolCall(toolCall, known)
+  const mcp = mcpCall(resolved)
+  const opaqueExecute = resolved.kind === "execute" && (!resolved.title || resolved.title === resolved.toolCallId) &&
+    (resolved.rawInput == null || (object(resolved.rawInput) && Object.keys(resolved.rawInput).length === 0))
+  return {
+    // ACP execute also wraps MCP. Without any details, don't invent a shell
+    // command; the option IDs and authorization round trip remain unchanged.
+    permission: opaqueExecute ? "tool" : resolvePermission(resolved),
+    pattern: permissionPattern(resolved),
+    metadata: mcp ? { toolCallId: toolCall.toolCallId, mcp: { server: mcp.server, tool: mcp.tool, arguments: mcp.arguments } } : {},
+  }
 }

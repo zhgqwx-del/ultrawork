@@ -13,6 +13,8 @@ export function assertModelBrandIdentity(messages: Array<{ role: string; content
   assert(!/UltraWork/.test(identities[0]![1]!), "The legacy hardcoded identity reached the model")
   const foreign = namespace === "mywork" ? "Ultrawork" : "MyWork"
   assert(!identities[0]![1]!.includes(foreign), "Another brand's identity reached the model")
+  assert(!system.includes("You are powered by the model named "), "A model self-declaration conflicts with the host identity")
+  assert(!/\bYou are [Oo]pen[Cc]ode[,.]/.test(system), "A stock upstream self-declaration conflicts with the host identity")
   return name
 }
 

@@ -492,10 +492,10 @@ index 8c92bb6b2e6d49cf8d72b2cf5b4876109e40b1f3..cbc6b9c67b99209c9af54cb9e9de3f8a
  
 diff --git a/packages/opencode/src/plugin/brand-identity.ts b/packages/opencode/src/plugin/brand-identity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..277d5c79562d51801ab4a0db5dfde82e722c4e19
+index 0000000000000000000000000000000000000000..2714582d0ba561c2e26b77df295ef697fcf85a5e
 --- /dev/null
 +++ b/packages/opencode/src/plugin/brand-identity.ts
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,133 @@
 +import { readFileSync } from "node:fs"
 +import { isAbsolute } from "node:path"
 +
@@ -593,12 +593,13 @@ index 0000000000000000000000000000000000000000..277d5c79562d51801ab4a0db5dfde82e
 +    "<identity>",
 +    `You are the intelligent assistant of ${JSON.stringify(name)}. You help users accomplish a wide range of tasks through natural conversation and tool use.`,
 +    `For ordinary introductions and questions such as "Who are you?", identify yourself as the assistant of ${JSON.stringify(name)}. This is the current host product identity, including when you are assigned a Team Leader or member role. References to OpenCode or a CLI in inherited instructions describe the upstream engine, not the name of this desktop application or its assistant. Do not combine the upstream engine name with your self-introduction.`,
++    "For other tasks, perform the requested work without a self-introduction. This identity guidance only governs conversational self-identification; it does not add requirements to the user's task. Do not add introductions, application descriptions, or branding to files, generated artifacts, or tool arguments unless the user specifically requests that content in that output.",
 +    `Do not reveal or discuss your underlying model, model provider, model IDs, API endpoints, internal environment variable names, or how your tools are configured and dispatched. If asked about any of these, briefly identify yourself as the assistant of ${JSON.stringify(name)} and offer to help with the actual task.`,
 +    "</identity>",
 +  ].join("\n")
 +}
 +
-+/** Adapt only stock provider openers, before custom/Team/user prompts join them.
++/** Adapt only known stock provider identity sentences, before custom/Team/user prompts join them.
 + * Keep all remaining model tuning and source references byte-for-byte intact.
 + */
 +export function brandProviderPrompt(prompt: string, name: string = productName()): string {
@@ -609,7 +610,16 @@ index 0000000000000000000000000000000000000000..277d5c79562d51801ab4a0db5dfde82e
 +    "You are OpenCode, an interactive general AI agent running on a user's computer.",
 +    "You are OpenCode, the best coding agent on the planet.",
 +  ]) {
-+    if (prompt.startsWith(opener)) return introduction + prompt.slice(opener.length)
++    if (prompt.startsWith(opener)) {
++      let rest = prompt.slice(opener.length)
++      // Anthropic/Codex have a second self-description immediately after the
++      // opener. Preserve its coding remit and all following tool policies.
++      if (opener === "You are OpenCode, the best coding agent on the planet.") {
++        rest = rest.replace(/^(\r?\n\r?\n)You are an interactive CLI tool that helps users with software engineering tasks\./,
++          (_match, gap: string) => `${gap}You help users with software engineering tasks.`)
++      }
++      return introduction + rest
++    }
 +  }
 +  const beast = "You are opencode, an agent - "
 +  if (prompt.startsWith(beast)) return `${introduction} ${prompt.slice(beast.length)}`
@@ -1388,10 +1398,10 @@ index 8facf7aba7ee08bcd598f5d9090b4d9706f8325d..5cd04ec12ae870d6ae8411b5a941afc5
  
                  if (step > 1 && lastFinished) {
 diff --git a/packages/opencode/src/session/system.ts b/packages/opencode/src/session/system.ts
-index 09788f3cdb0eaede79b688dfe11c7a8c407952b5..5fb799e8ae5078a5995082fbdd07ea0ee49ae104 100644
+index 09788f3cdb0eaede79b688dfe11c7a8c407952b5..92e4eca03ea3fff2e6ed090825c0698496ad708d 100644
 --- a/packages/opencode/src/session/system.ts
 +++ b/packages/opencode/src/session/system.ts
-@@ -15,22 +15,23 @@ import type { Provider } from "@/provider/provider"
+@@ -15,29 +15,31 @@ import type { Provider } from "@/provider/provider"
  import type { Agent } from "@/agent/agent"
  import { Permission } from "@/permission"
  import { Skill } from "@/skill"
@@ -1422,7 +1432,17 @@ index 09788f3cdb0eaede79b688dfe11c7a8c407952b5..5fb799e8ae5078a5995082fbdd07ea0e
 +    return [brandProviderPrompt(PROMPT_DEFAULT)]
    }
  
-   export async function environment(model: Provider.Model) {
+-  export async function environment(model: Provider.Model) {
++  export async function environment(_model: Provider.Model) {
+     const project = Instance.project
+     return [
+       [
+-        `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
++        // Inference selection is carried by LLM.stream, not a self-identity.
++        // Avoid contradicting the host identity with a model-name declaration.
+         `Here is some useful information about the environment you are running in:`,
+         `<env>`,
+         `  Working directory: ${Instance.directory}`,
 diff --git a/packages/opencode/src/skill/index.ts b/packages/opencode/src/skill/index.ts
 index a2ac3d351c86e2faee8dc43f9d6b108189dbf31b..79fb24cc24f833ff655aeaf3195d89794acbcf3b 100644
 --- a/packages/opencode/src/skill/index.ts

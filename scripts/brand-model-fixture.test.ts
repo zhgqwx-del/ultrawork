@@ -16,4 +16,11 @@ describe("wire prompt brand assertions", () => {
       [{ role: "system", content: '<identity>"MyWork"</identity><identity>"MyWork"</identity>' }],
     ]) expect(() => assertModelBrandIdentity(messages, "mywork")).toThrow()
   })
+  test("rejects conflicting stock model/engine introductions on the actual system wire", () => {
+    const identity = '<identity>You are "MyWork", an intelligent assistant.</identity>'
+    for (const conflict of ["You are powered by the model named inference-model. The exact model ID is provider/inference-model", "You are opencode, an interactive CLI tool.", "You are OpenCode, the best coding agent on the planet."]) {
+      expect(() => assertModelBrandIdentity([{ role: "system", content: `${conflict}\n${identity}` }], "mywork")).toThrow()
+      expect(assertModelBrandIdentity([{ role: "system", content: identity }, { role: "user", content: conflict }], "mywork")).toBe("MyWork")
+    }
+  })
 })
