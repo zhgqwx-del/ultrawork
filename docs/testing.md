@@ -966,6 +966,17 @@ Codex 的 MCP `request_permission` 可能只有 `execute/exec-UUID`，同一调�
 
 **环境剩余项**：Windows/Linux/Intel Mac 的原生安装、升级、卸载、完整 GUI/系统权限，以及最新分支的正式 Developer ID 签名、公证与 Gatekeeper，仍需对应系统/发行环境。Chrome IPC 适配、ARM64 ad-hoc 包和三平台 CI 不能替代这些证据；未逐个验证的外部 Agent、渠道和客户账号也不作通过承诺。
 
+### v0.3.12 正式双品牌发行补充（2026-10-30）
+
+上节环境剩余项描述在线模型验收当时的状态。本次正式发行已补齐两个品牌的 macOS Developer ID 签名、公证及公开 DMG 静态验收，不覆盖安装后的系统权限或其它 OS 原生交互。
+
+- 发布源码为 main 合并提交 `1dbc6c1b03ad8de4a5c344d17e26e4c8aebac118`，tag 为 `v0.3.12`；[main 三平台 CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/41071866006) **16/16**、[Release CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/41073963883) **8/8** 成功。六个品牌/平台构建及六份 manifest 的身份、大小、SHA-256 门禁通过后，[同一 Release](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.12) 发布 **12 个安装包**。
+- 两个 macOS 作业的本次实际日志均记录公证批准、`.app` 与 DMG 的 staple 验证成功；未以旧版本日志或单纯 job 颜色代替。独立审计单次下载本次 Ultrawork/MyWork 两份 DMG，字节大小和 SHA-256 均与 GitHub 资产摘要一致。
+- 挂载源 `.app` 与经 `ditto` 搬迁至中文/空格目录的副本均通过 Developer ID deep/strict 验签及 staple；DMG staple、Gatekeeper `Notarized Developer ID` 通过。名称、identifier、版本 `0.3.12` 与当前图标匹配；两品牌各五个 Mach-O 均含 ARM64/Intel、使用同一 Team ID，动态库仅为系统或相对路径。未启动或安装应用，临时挂载/目录已清理。
+- 其余十个 Windows/Linux 安装包核对了公开资产摘要元数据及成功的发布清单门禁，**没有在本机下载运行**。Windows/Linux 未配置新的代码签名服务，不能称三平台安装器全部已签名。系统安装升级、Intel 实机运行、系统权限及未配置账号边界仍待对应环境；模型语言/历史异常、既有 Team Stop 边界也仍保留。
+
+本机独立报告在忽略目录 `release-v0.3.12/audit-41073963883-1793373571140/audit-report.json`（相对 `.brand-build/verification/`）；公开证据以本次 CI 与 Release 链接为准。
+
 ### 发行包的原生场景验收
 
 以下场景需在对应系统补齐；Release CI 的构建结果不能替代其通过证据。

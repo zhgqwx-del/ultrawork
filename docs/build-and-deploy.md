@@ -789,6 +789,8 @@ chmod 600 certificate.p12
 
 ⚠️ **验证是否真签了，查事实不查 job 颜色**：正式 tag 的两个 mac job 均须核对证书导入、Developer ID Authority、`Notarization approved ✓` 和 `stapler validate` 通过；发布前再核对本次安装包 manifest 的身份、大小和摘要。dispatch 的绿色 ad-hoc 验包不能替代正式签名结果。详见 gotchas §7。
 
+2026-10-30 的 `v0.3.12` 已在合并提交 `1dbc6c1b` 上完成两品牌正式发行：[main CI 16/16](https://github.com/zhgqwx-del/ultrawork/actions/runs/41071866006)、[Release CI 8/8](https://github.com/zhgqwx-del/ultrawork/actions/runs/41073963883)，[12 个安装包](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.12) 已发布。两个 macOS 作业的实际公证/staple 日志和公开下载 DMG 的摘要、Developer ID、Gatekeeper、Universal 架构、名称/图标均复核通过；不把它外推为所有系统的安装升级或权限验收。完整证据与剩余项见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075)。
+
 ### 9.4 历史示例（以真实 release.yml 为准）
 
 GitHub Actions 示例：
