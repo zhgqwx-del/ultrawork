@@ -1,5 +1,5 @@
 diff --git a/bun.lock b/bun.lock
-index 1a16a37698..ec96d4c30c 100644
+index 1a16a37698a4ca645694797c96cdcc7021b7a56a..ec96d4c30cda8ec8c3f6756a826d0bbb27a9e01c 100644
 --- a/bun.lock
 +++ b/bun.lock
 @@ -51,7 +51,7 @@
@@ -12,7 +12,7 @@ index 1a16a37698..ec96d4c30c 100644
          "marked": "catalog:",
          "marked-shiki": "catalog:",
 diff --git a/packages/app/package.json b/packages/app/package.json
-index d179e4a524..5594a2f170 100644
+index d179e4a52415e999cc6aa0bc2a7bb5aeaf5111b8..5594a2f17025f512ce7826b1fd0758dceed87a3f 100644
 --- a/packages/app/package.json
 +++ b/packages/app/package.json
 @@ -61,7 +61,7 @@
@@ -25,7 +25,7 @@ index d179e4a524..5594a2f170 100644
      "marked": "catalog:",
      "marked-shiki": "catalog:",
 diff --git a/packages/opencode/script/build.ts b/packages/opencode/script/build.ts
-index b104dd2677..a94791e3b6 100755
+index b104dd26774d31f2fe1c608f8dd3349c95ee8356..a94791e3b6719b1a24ce4a774cfe715f8e3230e7 100755
 --- a/packages/opencode/script/build.ts
 +++ b/packages/opencode/script/build.ts
 @@ -63,6 +63,10 @@ console.log(`Loaded ${migrations.length} migrations`)
@@ -54,7 +54,7 @@ index b104dd2677..a94791e3b6 100755
        if (item.os !== process.platform || item.arch !== process.arch) {
          return false
 diff --git a/packages/opencode/src/agent/agent.ts b/packages/opencode/src/agent/agent.ts
-index 0c6fe6ec91..71de4bf2d5 100644
+index 0c6fe6ec91c8c9867983079f973bdee2af6a26de..71de4bf2d54e9da6e64d595b2b6d4ea66c2cca89 100644
 --- a/packages/opencode/src/agent/agent.ts
 +++ b/packages/opencode/src/agent/agent.ts
 @@ -77,7 +77,7 @@ export namespace Agent {
@@ -67,7 +67,7 @@ index 0c6fe6ec91..71de4bf2d5 100644
            const cfg = yield* config.get()
            const skillDirs = yield* skill.dirs()
 diff --git a/packages/opencode/src/command/index.ts b/packages/opencode/src/command/index.ts
-index 088d7c5659..8c6841674d 100644
+index 088d7c56597502600199129212fecae4f7e37dd7..8c6841674d65d3d6fe1be0ac0562ba921eb56873 100644
 --- a/packages/opencode/src/command/index.ts
 +++ b/packages/opencode/src/command/index.ts
 @@ -165,7 +165,7 @@ export namespace Command {
@@ -80,7 +80,7 @@ index 088d7c5659..8c6841674d 100644
        const get = Effect.fn("Command.get")(function* (name: string) {
          const s = yield* InstanceState.get(state)
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28bc..acdfb209c1 100644
+index 850bcc28bcd9eb46fbf40ab1b71e81b977060568..acdfb209c16a3df983aa6c69610416b0d0877c8b 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
 @@ -60,13 +60,14 @@ export namespace Config {
@@ -279,7 +279,7 @@ index 850bcc28bc..acdfb209c1 100644
      return runPromise((svc) => svc.directories())
    }
 diff --git a/packages/opencode/src/config/paths.ts b/packages/opencode/src/config/paths.ts
-index 82ccf3945f..07bc9e5a3c 100644
+index 82ccf3945fcd558a053cc3ca8bacef2683effa0c..07bc9e5a3ccc8a1997e688906cc069246f996156 100644
 --- a/packages/opencode/src/config/paths.ts
 +++ b/packages/opencode/src/config/paths.ts
 @@ -24,13 +24,18 @@ export namespace ConfigPaths {
@@ -309,7 +309,7 @@ index 82ccf3945f..07bc9e5a3c 100644
      ]
    }
 diff --git a/packages/opencode/src/effect/instance-state.ts b/packages/opencode/src/effect/instance-state.ts
-index cc5901fb5e..45ed02617b 100644
+index cc5901fb5eac031a8a7c138959354fc0f1c9d7f6..45ed02617b12d5cb3515817371f4d890c63cdc1a 100644
 --- a/packages/opencode/src/effect/instance-state.ts
 +++ b/packages/opencode/src/effect/instance-state.ts
 @@ -3,6 +3,7 @@ import { Instance, type InstanceContext } from "@/project/instance"
@@ -363,7 +363,7 @@ index cc5901fb5e..45ed02617b 100644
        return yield* ScopedCache.get(self.cache, yield* directory)
 diff --git a/packages/opencode/src/effect/soft-invalidate-registry.ts b/packages/opencode/src/effect/soft-invalidate-registry.ts
 new file mode 100644
-index 0000000000..f66dc0a857
+index 0000000000000000000000000000000000000000..f66dc0a857f856461d1fea85a647ebdd3b868e73
 --- /dev/null
 +++ b/packages/opencode/src/effect/soft-invalidate-registry.ts
 @@ -0,0 +1,30 @@
@@ -398,7 +398,7 @@ index 0000000000..f66dc0a857
 +  return Promise.allSettled([...soft].map((invalidator) => invalidator(directory)))
 +}
 diff --git a/packages/opencode/src/format/index.ts b/packages/opencode/src/format/index.ts
-index c05c2bf454..4b85aaa6dc 100644
+index c05c2bf454fc76791fcd732d187166f2a3131666..4b85aaa6dc4cf03b86132c27973c5875545024f1 100644
 --- a/packages/opencode/src/format/index.ts
 +++ b/packages/opencode/src/format/index.ts
 @@ -39,7 +39,7 @@ export namespace Format {
@@ -411,7 +411,7 @@ index c05c2bf454..4b85aaa6dc 100644
            const commands: Record<string, string[] | false> = {}
            const formatters: Record<string, Formatter.Info> = {}
 diff --git a/packages/opencode/src/global/index.ts b/packages/opencode/src/global/index.ts
-index 869019e2ce..6509ec1baa 100644
+index 869019e2ce74276103c81fb6be1fe81426002b62..6509ec1baa7d2644bb3d553d2cff8f21130b75f1 100644
 --- a/packages/opencode/src/global/index.ts
 +++ b/packages/opencode/src/global/index.ts
 @@ -4,7 +4,7 @@ import path from "path"
@@ -424,7 +424,7 @@ index 869019e2ce..6509ec1baa 100644
  const data = path.join(xdgData!, app)
  const cache = path.join(xdgCache!, app)
 diff --git a/packages/opencode/src/mcp/index.ts b/packages/opencode/src/mcp/index.ts
-index 8c92bb6b2e..cbc6b9c67b 100644
+index 8c92bb6b2e6d49cf8d72b2cf5b4876109e40b1f3..cbc6b9c67b99209c9af54cb9e9de3f8a37b1c2a4 100644
 --- a/packages/opencode/src/mcp/index.ts
 +++ b/packages/opencode/src/mcp/index.ts
 @@ -33,6 +33,11 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -492,10 +492,10 @@ index 8c92bb6b2e..cbc6b9c67b 100644
  
 diff --git a/packages/opencode/src/plugin/brand-identity.ts b/packages/opencode/src/plugin/brand-identity.ts
 new file mode 100644
-index 0000000000..bd46f4d96f
+index 0000000000000000000000000000000000000000..277d5c79562d51801ab4a0db5dfde82e722c4e19
 --- /dev/null
 +++ b/packages/opencode/src/plugin/brand-identity.ts
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,123 @@
 +import { readFileSync } from "node:fs"
 +import { isAbsolute } from "node:path"
 +
@@ -592,12 +592,35 @@ index 0000000000..bd46f4d96f
 +  return [
 +    "<identity>",
 +    `You are the intelligent assistant of ${JSON.stringify(name)}. You help users accomplish a wide range of tasks through natural conversation and tool use.`,
++    `For ordinary introductions and questions such as "Who are you?", identify yourself as the assistant of ${JSON.stringify(name)}. This is the current host product identity, including when you are assigned a Team Leader or member role. References to OpenCode or a CLI in inherited instructions describe the upstream engine, not the name of this desktop application or its assistant. Do not combine the upstream engine name with your self-introduction.`,
 +    `Do not reveal or discuss your underlying model, model provider, model IDs, API endpoints, internal environment variable names, or how your tools are configured and dispatched. If asked about any of these, briefly identify yourself as the assistant of ${JSON.stringify(name)} and offer to help with the actual task.`,
 +    "</identity>",
 +  ].join("\n")
 +}
++
++/** Adapt only stock provider openers, before custom/Team/user prompts join them.
++ * Keep all remaining model tuning and source references byte-for-byte intact.
++ */
++export function brandProviderPrompt(prompt: string, name: string = productName()): string {
++  const introduction = `You are the intelligent assistant of ${JSON.stringify(name)}, a desktop application.`
++  for (const opener of [
++    "You are opencode, an interactive CLI tool that helps users with software engineering tasks.",
++    "You are opencode, an interactive CLI agent specializing in software engineering tasks.",
++    "You are OpenCode, an interactive general AI agent running on a user's computer.",
++    "You are OpenCode, the best coding agent on the planet.",
++  ]) {
++    if (prompt.startsWith(opener)) return introduction + prompt.slice(opener.length)
++  }
++  const beast = "You are opencode, an agent - "
++  if (prompt.startsWith(beast)) return `${introduction} ${prompt.slice(beast.length)}`
++  const gpt = "You are OpenCode, "
++  if (prompt.startsWith(`${gpt}You and the user share the same workspace`)) {
++    return `${introduction} ${prompt.slice(gpt.length)}`
++  }
++  return prompt
++}
 diff --git a/packages/opencode/src/plugin/index.ts b/packages/opencode/src/plugin/index.ts
-index fb60fa096e..77ef0fba76 100644
+index fb60fa096e882a35f385b674d63effc047fe4e73..77ef0fba761ec90020bf827ffd99c1a0febfc7f2 100644
 --- a/packages/opencode/src/plugin/index.ts
 +++ b/packages/opencode/src/plugin/index.ts
 @@ -5,6 +5,8 @@ import { Log } from "../util/log"
@@ -627,10 +650,10 @@ index fb60fa096e..77ef0fba76 100644
      return typeof value === "function"
 diff --git a/packages/opencode/src/plugin/rich-output.ts b/packages/opencode/src/plugin/rich-output.ts
 new file mode 100644
-index 0000000000..9662a98f90
+index 0000000000000000000000000000000000000000..fa7cca7fa2ef4d328c9820121867edd85a5e7e4c
 --- /dev/null
 +++ b/packages/opencode/src/plugin/rich-output.ts
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,112 @@
 +import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 +import { identityGuidance, productName } from "./brand-identity"
 +
@@ -650,7 +673,9 @@ index 0000000000..9662a98f90
 + *  - APPEND a branded identity plus model-agnostic guidance (language consistency,
 + *    adaptive output formatting, task-execution restraint, sensitive
 + *    info) to `output.system` — this PRESERVES each model's tuned base prompt
-+ *    instead of replacing it wholesale (the rejected env `agent.build.prompt`
++ *    instead of replacing it wholesale. SystemPrompt.provider adapts only the
++ *    stock first-line self-identity before custom/Team/user prompts are joined;
++ *    all other model tuning remains intact (the rejected env `agent.build.prompt`
 + *    approach discarded anthropic/gpt/beast tuning for every non-qwen model);
 + *  - additionally append a <verbosity_override> ONLY when the assembled system
 + *    already contains default.txt's terse signature — so Claude/GPT/Gemini,
@@ -743,7 +768,7 @@ index 0000000000..9662a98f90
 +}
 diff --git a/packages/opencode/src/plugin/tool-disclosure.ts b/packages/opencode/src/plugin/tool-disclosure.ts
 new file mode 100644
-index 0000000000..e825c73f89
+index 0000000000000000000000000000000000000000..e825c73f8949808a916c222a620b46bacac1b590
 --- /dev/null
 +++ b/packages/opencode/src/plugin/tool-disclosure.ts
 @@ -0,0 +1,250 @@
@@ -998,7 +1023,7 @@ index 0000000000..e825c73f89
 +  }
 +}
 diff --git a/packages/opencode/src/project/instance.ts b/packages/opencode/src/project/instance.ts
-index a0d6f2414a..c69ef6b077 100644
+index a0d6f2414a85b35793358963e3a1c7678eaed712..c69ef6b077caa5e592d37aeecf26fb249cf312dd 100644
 --- a/packages/opencode/src/project/instance.ts
 +++ b/packages/opencode/src/project/instance.ts
 @@ -1,5 +1,6 @@
@@ -1031,7 +1056,7 @@ index a0d6f2414a..c69ef6b077 100644
 +  },
  }
 diff --git a/packages/opencode/src/provider/auth.ts b/packages/opencode/src/provider/auth.ts
-index 38ef4b11f4..8cf0648268 100644
+index 38ef4b11f4db7fa4677a4057429de6cd4409f5bf..8cf06482689a5286c0f32477a13a6a63b1be5fe1 100644
 --- a/packages/opencode/src/provider/auth.ts
 +++ b/packages/opencode/src/provider/auth.ts
 @@ -116,7 +116,7 @@ export namespace ProviderAuth {
@@ -1044,7 +1069,7 @@ index 38ef4b11f4..8cf0648268 100644
            const plugins = yield* plugin.list()
            return {
 diff --git a/packages/opencode/src/provider/provider.ts b/packages/opencode/src/provider/provider.ts
-index afd69f9e70..3f5ff21893 100644
+index afd69f9e7072342e748d116768ee7523ddf35739..3f5ff21893792c811f11bc04748a72812a046343 100644
 --- a/packages/opencode/src/provider/provider.ts
 +++ b/packages/opencode/src/provider/provider.ts
 @@ -982,7 +982,7 @@ export namespace Provider {
@@ -1090,7 +1115,7 @@ index afd69f9e70..3f5ff21893 100644
                  options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
                  limit: {
 diff --git a/packages/opencode/src/server/routes/global.ts b/packages/opencode/src/server/routes/global.ts
-index 16b9e559f2..41e8fb3cd4 100644
+index 16b9e559f27fde78fec6d31e83435c1598db73a7..41e8fb3cd4b1bd20ed119bd5ef4fa9c2494c6175 100644
 --- a/packages/opencode/src/server/routes/global.ts
 +++ b/packages/opencode/src/server/routes/global.ts
 @@ -7,6 +7,7 @@ import { SyncEvent } from "@/sync"
@@ -1177,7 +1202,7 @@ index 16b9e559f2..41e8fb3cd4 100644
        "/dispose",
        describeRoute({
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
-index dc89db409e..505bc0a52f 100644
+index dc89db409e8790700e240052bfcab9a62033569a..505bc0a52f0cf49c28c3d68b8ca61b7532a0c2cb 100644
 --- a/packages/opencode/src/session/llm.ts
 +++ b/packages/opencode/src/session/llm.ts
 @@ -22,6 +22,128 @@ export namespace LLM {
@@ -1338,7 +1363,7 @@ index dc89db409e..505bc0a52f 100644
        maxOutputTokens,
        abortSignal: input.abort,
 diff --git a/packages/opencode/src/session/prompt.ts b/packages/opencode/src/session/prompt.ts
-index 8facf7aba7..5cd04ec12a 100644
+index 8facf7aba7ee08bcd598f5d9090b4d9706f8325d..5cd04ec12ae870d6ae8411b5a941afc5627e581a 100644
 --- a/packages/opencode/src/session/prompt.ts
 +++ b/packages/opencode/src/session/prompt.ts
 @@ -1476,6 +1476,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
@@ -1362,8 +1387,44 @@ index 8facf7aba7..5cd04ec12a 100644
                  if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
  
                  if (step > 1 && lastFinished) {
+diff --git a/packages/opencode/src/session/system.ts b/packages/opencode/src/session/system.ts
+index 09788f3cdb0eaede79b688dfe11c7a8c407952b5..5fb799e8ae5078a5995082fbdd07ea0ee49ae104 100644
+--- a/packages/opencode/src/session/system.ts
++++ b/packages/opencode/src/session/system.ts
+@@ -15,22 +15,23 @@ import type { Provider } from "@/provider/provider"
+ import type { Agent } from "@/agent/agent"
+ import { Permission } from "@/permission"
+ import { Skill } from "@/skill"
++import { brandProviderPrompt } from "../plugin/brand-identity"
+ 
+ export namespace SystemPrompt {
+   export function provider(model: Provider.Model) {
+     if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
+-      return [PROMPT_BEAST]
++      return [brandProviderPrompt(PROMPT_BEAST)]
+     if (model.api.id.includes("gpt")) {
+       if (model.api.id.includes("codex")) {
+-        return [PROMPT_CODEX]
++        return [brandProviderPrompt(PROMPT_CODEX)]
+       }
+-      return [PROMPT_GPT]
++      return [brandProviderPrompt(PROMPT_GPT)]
+     }
+-    if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
+-    if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
+-    if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
+-    if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
+-    return [PROMPT_DEFAULT]
++    if (model.api.id.includes("gemini-")) return [brandProviderPrompt(PROMPT_GEMINI)]
++    if (model.api.id.includes("claude")) return [brandProviderPrompt(PROMPT_ANTHROPIC)]
++    if (model.api.id.toLowerCase().includes("trinity")) return [brandProviderPrompt(PROMPT_TRINITY)]
++    if (model.api.id.toLowerCase().includes("kimi")) return [brandProviderPrompt(PROMPT_KIMI)]
++    return [brandProviderPrompt(PROMPT_DEFAULT)]
+   }
+ 
+   export async function environment(model: Provider.Model) {
 diff --git a/packages/opencode/src/skill/index.ts b/packages/opencode/src/skill/index.ts
-index a2ac3d351c..79fb24cc24 100644
+index a2ac3d351c86e2faee8dc43f9d6b108189dbf31b..79fb24cc24f833ff655aeaf3195d89794acbcf3b 100644
 --- a/packages/opencode/src/skill/index.ts
 +++ b/packages/opencode/src/skill/index.ts
 @@ -196,7 +196,7 @@ export namespace Skill {
@@ -1376,7 +1437,7 @@ index a2ac3d351c..79fb24cc24 100644
            const s: State = { skills: {}, dirs: new Set() }
            yield* loadSkills(s, config, discovery, bus, fsys, ctx.directory, ctx.worktree)
 diff --git a/packages/opencode/src/tool/registry.ts b/packages/opencode/src/tool/registry.ts
-index 1bb270716c..c1988e6a7c 100644
+index 1bb270716cb9e77c08c97a6d76dcbc778fe0b523..c1988e6a7c7d02569a2b5ebd3085ef3f753c66cc 100644
 --- a/packages/opencode/src/tool/registry.ts
 +++ b/packages/opencode/src/tool/registry.ts
 @@ -20,7 +20,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@ope
@@ -1426,7 +1487,7 @@ index 1bb270716c..c1988e6a7c 100644
            }
  
 diff --git a/packages/opencode/src/tool/websearch.ts b/packages/opencode/src/tool/websearch.ts
-index bf16428dfb..2d20c9a385 100644
+index bf16428dfb3c30a6f4e4e28644955dbec4949f83..2d20c9a3859716bd43855c2835a543f229c1838a 100644
 --- a/packages/opencode/src/tool/websearch.ts
 +++ b/packages/opencode/src/tool/websearch.ts
 @@ -2,39 +2,291 @@ import z from "zod"
@@ -1892,7 +1953,7 @@ index bf16428dfb..2d20c9a385 100644
      },
    }
 diff --git a/packages/opencode/src/tool/websearch.txt b/packages/opencode/src/tool/websearch.txt
-index 551c0f3b59..bc3b498c13 100644
+index 551c0f3b593b363f1314495d095d460890f367c5..bc3b498c13e63637c12a79b71d250d94b09b4877 100644
 --- a/packages/opencode/src/tool/websearch.txt
 +++ b/packages/opencode/src/tool/websearch.txt
 @@ -1,14 +1,12 @@
@@ -1918,7 +1979,7 @@ index 551c0f3b59..bc3b498c13 100644
  The current year is {{year}}. You MUST use this year when searching for recent information or current events
  - Example: If the current year is 2026 and the user asks for "latest AI news", search for "AI news 2026", NOT "AI news 2025"
 diff --git a/packages/plugin/src/index.ts b/packages/plugin/src/index.ts
-index 473cac8a9b..046b00a524 100644
+index 473cac8a9bffd993e668a9d22fe65ada4a86a314..046b00a52462ea951a8ef14520b4d302fc5ff959 100644
 --- a/packages/plugin/src/index.ts
 +++ b/packages/plugin/src/index.ts
 @@ -273,4 +273,14 @@ export interface Hooks {

@@ -2,12 +2,12 @@
 // Exercise the actual vendor hook and compare its identity adapter with the
 // host contract. No model account, host data directory or network is needed.
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Hooks, PluginInput } from "../../vendor/opencode/packages/plugin/src"
 import { DEFAULT_BRAND, parseBrandIdentity, resolveIdentity } from "../../packages/core/brand/src"
-import { identityGuidance, productName } from "../../vendor/opencode/packages/opencode/src/plugin/brand-identity"
+import { brandProviderPrompt, identityGuidance, productName } from "../../vendor/opencode/packages/opencode/src/plugin/brand-identity"
 import {
   RichOutputPlugin,
   BRAND_GUIDANCE,
@@ -59,6 +59,43 @@ function accepts(run: () => unknown): boolean {
 
 try {
   environment()
+  for (const identity of [DEFAULT_BRAND, resolveIdentity({ brandId: "mywork", productName: "MyWork" })]) {
+    for (const family of ["default", "anthropic", "gpt", "gemini", "beast", "kimi", "codex", "trinity"]) {
+      const stock = readFileSync(new URL(`../../vendor/opencode/packages/opencode/src/session/prompt/${family}.txt`, import.meta.url), "utf8")
+      const branded = brandProviderPrompt(stock, identity.productName)
+      const stockNewline = stock.indexOf("\n")
+      const brandedNewline = branded.indexOf("\n")
+      check(`${identity.productName}/${family}: stock identity adapted, remaining provider policy unchanged`, () => {
+        assert.ok(branded.startsWith(`You are the intelligent assistant of ${JSON.stringify(identity.productName)}, a desktop application.`))
+        assert.ok(!branded.split("\n")[0]!.match(/opencode|interactive CLI/i))
+        assert.equal(branded.slice(brandedNewline), stock.slice(stockNewline))
+        // These continuations are behavioral policy within the first line.
+        if (family === "beast") assert.ok(branded.includes("please keep going until the user’s query is completely resolved"))
+        if (family === "gpt") assert.ok(branded.includes("You and the user share the same workspace and collaborate to achieve the user's goals."))
+        if (["default", "trinity", "gemini"].includes(family)) assert.ok(branded.includes(stock.slice(stock.indexOf(". ") + 2, stockNewline)))
+      })
+    }
+    check(`${identity.productName}: arbitrary prompts and upstream source links are never replaced`, () => {
+      for (const custom of [BASE, ROLE, "User quote: You are opencode, an agent - preserve this.", "You are OpenCode, a custom agent with an assigned role."]) {
+        assert.equal(brandProviderPrompt(custom, identity.productName), custom)
+      }
+      const stock = readFileSync(new URL("../../vendor/opencode/packages/opencode/src/session/prompt/anthropic.txt", import.meta.url), "utf8")
+      assert.ok(brandProviderPrompt(stock, identity.productName).includes("https://github.com/anomalyco/opencode"))
+    })
+  }
+  check("provider prompt adaptation uses validated runtime identity and remains active with richness disabled", () => {
+    environment({ ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context(resolveIdentity({ brandId: "mywork", productName: "MyWork" }))), ULTRAWORK_RICH_OUTPUT: "0" })
+    assert.ok(brandProviderPrompt("You are OpenCode, the best coding agent on the planet.").includes('"MyWork"'))
+    environment({ ULTRAWORK_BRAND_MANAGED: "1" })
+    assert.throws(() => brandProviderPrompt("You are OpenCode, the best coding agent on the planet."), /context is missing/)
+    environment()
+  })
+  for (const name of ["研发 Work", "R&D's Work", "Dollar $& Work"]) {
+    check(`provider identity quotes literal product data: ${name}`, () => {
+      const original = "You are OpenCode, the best coding agent on the planet.\nPreserve $& and 'quoted' policies."
+      assert.equal(brandProviderPrompt(original, name), `You are the intelligent assistant of ${JSON.stringify(name)}, a desktop application.\nPreserve $& and 'quoted' policies.`)
+    })
+  }
   check("terse detection preserves per-model base selection", () => {
     assert.equal(baseIsTerse([TERSE]), true)
     assert.equal(baseIsTerse([BASE]), false)
@@ -72,6 +109,8 @@ try {
     check(`${identity.productName}: current identity appended and original base/Team role preserved`, () => {
       assert.equal(system.at(-1), identityGuidance(identity.productName))
       assert.ok(system.at(-1)?.includes(JSON.stringify(identity.productName)))
+      assert.ok(system.at(-1)?.includes('For ordinary introductions and questions such as "Who are you?"'))
+      assert.ok(system.at(-1)?.includes("upstream engine, not the name of this desktop application or its assistant"))
       assert.ok(system.includes(BRAND_GUIDANCE))
       assert.ok(system.includes(VERBOSITY_OVERRIDE))
       assert.ok(system.indexOf(VERBOSITY_OVERRIDE) < system.indexOf(BRAND_GUIDANCE))

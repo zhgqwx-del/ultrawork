@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- 修正真实在线模型自介仍可能采用 OpenCode 身份的提示冲突：仅适配八类预置模型基座的已知身份首句，保留其余策略、工具与来源信息；明确区分品牌宿主与外部 Agent 身份。
 - 防止品牌构建中断后复用未完成的技能 staging；增加当前源码与 sidecar 新鲜度门禁，直接 dev/build 及 `--skip-sidecar` 均拒绝旧逻辑二进制，Universal 核对两架构来源。补齐构建脚本严格类型检查及 Linux 安装布局异步校验等待。
 - 补齐独立品牌的模型身份：OpenCode 使用运行时产品名且与丰富输出开关解耦；ACP 单 Agent、Team 与 Pipeline 追加宿主身份并保留外部 Agent 角色，兼容旧会话与恢复失败重建。修复显式 `metaSystemPrompt` 配置在 API/持久化及普通编辑中丢失的问题，vendor 继续由累计 patch 管理。
 - 修正 MyWork 钉钉技能的裸目录与 `<home>` 路径指引，更新技能 staging 缓存；技能宿主说明中性化，DOCX 元信息及默认修订/批注作者跟随品牌、显式作者优先，保留版权及来源。增加跨语言名称校验、实际模型 wire prompt、ACP 生命周期和文档产物回归。

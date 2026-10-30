@@ -897,7 +897,7 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 
 ### 模型身份与技能内容补齐（2026-10-30）
 
-本轮修复以默认 `Ultrawork` 与品牌配置 `MyWork` 为验收对象，保持版权/来源、模型基座、Team 角色、权限及业务路由。vendor 累计 patch 增至 27 个文件，子模块提交不变；身份与丰富输出开关解耦。ACP 的显式 `metaSystemPrompt` 经 API/文件保留，普通编辑不清空，非法类型拒绝。
+本轮修复以默认 `Ultrawork` 与品牌配置 `MyWork` 为验收对象，保持版权/来源、模型策略、Team 角色、权限及业务路由。vendor 累计 patch 增至 28 个文件，子模块提交不变；stock provider 基座只适配已知首行自介，其余逐字保留，8 个家族及合法特殊产品名均有回归测试；身份与丰富输出开关解耦。ACP 的显式 `metaSystemPrompt` 经 API/文件保留，普通编辑不清空，非法类型拒绝。
 
 - 确定性提示词测试检查两品牌、自定义名称、开关组合、坏上下文阻断与原文保留；Python/JS 对 29 组名称及身份案例做真实跨语言对比。DOCX 品牌专测 44 项检查实际元信息、作者优先级及坏上下文。
 - 重编本机 ARM64 sidecar 后，`scripts/verify-brand-sidecars.ts --models --keep` 检查两品牌同时运行、数据/鉴权隔离、ACP 单 Agent、Team Leader/成员、Pipeline/worktree、metadata/prefix 身份与重启恢复。真实 OpenCode 对本地 OpenAI-compatible SSE fixture 发起单 Agent 与 Team 工具循环；fixture 校验**实际 HTTP system 提示中的品牌身份**，不能用预设回答代替该检查。汇总日志 `.brand-build/verification/identity-sidecars-models.log`，报告另存 `identity-sidecars-models.json`。
@@ -916,6 +916,18 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 - 两个搬迁后的真实 `.app` 在中文 HOME、C locale 下通过原生宿主 8 项启动/隔离/互斥及 MCP 重启检查；从两份 DMG 内实际 sidecar 分别跑两品牌工具循环，各 13 组通过，所有自建子进程已回收。报告 `identity-recheck-native-hosts.json`，日志 `identity-recheck-packaged-default-sidecars.log` / `identity-recheck-packaged-mywork-sidecars.log`。
 
 以上是 ad-hoc 签名的本机 ARM64 验收，不是 Developer ID、公证、Gatekeeper/权限或其它 OS 安装升级结论。跨 checkout 的已有二进制因原 hash 包含路径标签可能需要重编，这只影响构建缓存，客户运行不执行该构建门禁。真实模型和第三方 ACP、prefix 历史压缩边界仍同上节，不能承诺任何客户环境绝对无缺陷。
+
+### 追加真实在线模型与外部 ACP 抽样（2026-10-30）
+
+真实在线模型抽样发现，仅在 system 末尾追加品牌身份，仍可能被上游预置基座的 `You are opencode` 首句干扰。因此追加在 provider 选择阶段适配八类 stock prompt 的已知身份首句，其他策略/来源和用户、Team、自定义提示保持原文；累计 vendor patch 为 28 个文件，submodule 提交不变。提示词纯测试 120 项、品牌包 38 项及工作区 13 个测试任务通过，独立 review 未发现新增阻断缺陷。
+
+使用现有模型服务配置、隔离 HOME/XDG/中文工作区和当前四个原生 sidecar，实际调用 `qwen3.7-flash`，两品牌的中英文单 Agent、Team Leader 和两个独立 OpenCode 子会话共 12 条身份回答均命中正确品牌；单 Agent 和成员的真实文件写读均完成。报告 `.brand-build/verification/identity-live-headless-report.json` 保留完整结果：Ultrawork 两个子会话还主动附带底层模型名，因此严格的“不得披露模型名”检查仍失败，整套退出码为 1，不能写成全部通过。Team 的两个成员为同一 OpenCode backend 下的独立会话，不代表 UI 自定义 persona 的验收。
+
+真实外部 Agent 抽样使用官方 `codex-acp 2.5.0`、其配套 Codex 及当前 ACP sidecar；两品牌单 Agent 与 Team 的自然自介均通过，另行追问执行 Agent 时保留 Codex 身份。Team 成员收到逐字自然问句且无品牌提示，真实 delegate、ownerSessionId 与成员交付均核对。临时登录去除 refresh token，原始登录文件前后校验一致，运行结束删除临时凭证。结果分别保存为 `identity-real-acp-solo.json`、`identity-real-acp-team.json`。发现新桥接的 MCP 权限在当前 UI 被归类为 `bash/exec-UUID` 的显示瑕疵；本轮未改产品分类，测试仅在核对同一 tool call 的真实 `mcp.orchestrator.delegate`、成员 ID 和本轮工作区后精确允许，未笼统放行 shell。
+
+补充 Chrome + Vite 在线验收的入口在忽略目录 `identity-live-browser.ts`，报告/截图位于 `identity-live-browser/`。其 HTTP、SSE、模型及文件工具走当前真实 sidecar，只有 Tauri IPC 使用显式测试适配；Team 经真实 REST 创建后打开 UI，不能表述成已经覆盖 Home 的成员选择创建流程。验收还须等待新 user 对应的最终 assistant 正文以及 UI 的 SSE idle，不能用上一轮回复、工具步骤叙述或侧栏品牌名称代替模型回答。具体通过与失败以报告为准；首轮 harness 误判报告保留供追溯。
+
+上述测试不修改真实业务配置，不证明全部模型/第三方 adapter 的输出都确定，也不替代 Windows/Linux/Intel Mac 原生安装、正式签名、公证和系统权限验收。当前已发布安装包仍须新发行才包含这些修改。
 
 ### 发行包的原生场景验收
 

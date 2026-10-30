@@ -72,9 +72,9 @@ Windows 签名与 Linux 仓库/包分发签名维持现有流程边界；本次�
 
 ### 7. 模型身份与模型可读内容跟随品牌（2026-10-30 补齐）
 
-产品自称使用上下文中的 `identity.productName`，默认 `Ultrawork`。OpenCode 内置插件在每次 `system.transform` 追加身份，保留模型基座与 Team 角色；身份不随 `rich_output` 格式开关关闭。vendor 使用无工作区依赖的身份适配器，并用跨适配器契约测试保持校验一致；上下文缺失、损坏或冲突必须在实际 transform 阶段阻止请求，上游会吞掉插件初始化错误，不能只在初始化时报错。
+产品自称使用上下文中的 `identity.productName`，默认 `Ultrawork`。OpenCode 在 provider 选择时仅适配 8 个 stock 模型基座的已知首行自介，去除与宿主品牌冲突的 OpenCode/CLI 身份，其余基座策略与来源链接逐字保留；自定义/Team/用户系统提示不参与替换。内置插件在每次 `system.transform` 追加明确宿主身份，保留 Team 角色；身份不随 `rich_output` 格式开关关闭。vendor 使用无工作区依赖的身份适配器，并用跨适配器契约测试保持校验一致；上下文缺失、损坏或冲突必须在实际 transform 阶段阻止请求，上游会吞掉插件初始化错误，不能只在初始化时报错。
 
-ACP 在 manager 统一组合原有角色与宿主身份，追加到支持 `_meta.systemPrompt.append` 的 adapter；其它 adapter 通过既有 wire prefix 发送，用户回显不变。外部 Agent 保留自身身份、能力和工具指令。持久化可选身份送达标记，兼容旧会话，恢复失败重建时重新发送；`metaSystemPrompt` 显式布尔覆盖经 REST/文件往返保留，普通编辑省略字段时保留原设置。
+ACP 在 manager 统一组合原有角色与宿主身份，追加到支持 `_meta.systemPrompt.append` 的 adapter；其它 adapter 通过既有 wire prefix 发送，用户回显不变。普通自介使用宿主品牌；用户明确追问执行任务的外部 Agent/模型时，依其真实身份及披露策略说明，保留自身能力和工具指令。持久化可选身份送达标记，兼容旧会话，恢复失败重建时重新发送；`metaSystemPrompt` 显式布尔覆盖经 REST/文件往返保留，普通编辑省略字段时保留原设置。
 
 技能宿主能力说明使用中性文案；钉钉路由文档的具体安装路径在品牌 staging 中定向改写。DOCX 产物元信息及默认修订/批注作者读取已有上下文，显式作者优先，原文档创建者与版权/来源保留。Python 仅消费身份，不据此计算路径，env/file 不一致采用严格拒绝；名称校验与 JS 的空白、UTF-16 长度保持一致。历史聊天、引用、代码、技术标识及法律归属不做全局替换。
 
