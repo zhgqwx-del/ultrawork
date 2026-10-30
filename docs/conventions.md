@@ -555,7 +555,7 @@ const byTurn = attributeArtifactsToTurns({ messages, ordered /* SSOT，first-win
 
 ## 18. 给默认会话加通用系统提示：用 `system.transform` 追加，别用 `agent.prompt` 整替（ADR-064）
 
-想给默认会话统一加身份/输出风格/护栏时的**正向做法**：写（或扩展）一个 opencode 内置插件，钩 `experimental.chat.system.transform`，往 `output.system` **追加**品牌段——保留每个模型的基座提示，跨模型都受益且不降级。需要中和某个基座的措辞（如 default.txt 的极简子句）就子串探测后追加一段强优先级 override，别删基座。范例 `vendor/.../plugin/rich-output.ts`（默认 ON，`experimental.rich_output` kill switch）。
+想给默认会话统一加身份/输出风格/护栏时的**正向做法**：写（或扩展）一个 opencode 内置插件，钩 `experimental.chat.system.transform`，往 `output.system` **追加**品牌段——保留每个模型的基座提示，跨模型都受益且不降级。需要中和某个基座的措辞（如 default.txt 的极简子句）就子串探测后追加一段强优先级 override，别删基座。范例 `vendor/.../plugin/rich-output.ts`（丰富输出默认 ON，`experimental.rich_output` 只关闭格式规则，产品身份始终按 runtime context 追加，见 ADR-075 §7）。
 
 **反面**：`agent.<name>.prompt` / `OPENCODE_CONFIG_CONTENT` 整体替换 `provider()` 会丢掉非 qwen 模型的专属调优提示（BYOK 多 provider 下是真降级）。为什么、以及缓存/软护栏等契约，见 `docs/gotchas.md §16`（SSOT）。
 

@@ -106,6 +106,8 @@ export interface PersistedACPSession {
   orchestrate?: boolean
   /** Session system prompt — restored so session/load re-injects it via _meta. */
   systemPrompt?: string
+  /** Host identity last delivered to a prefix-only agent (older files receive it once). */
+  hostIdentityPrompt?: string
   messages: UwStoredMessage[]
   /** Latest task plan (ADR-038) — restored so switch-back after restart still shows it. */
   plan?: UwPlanStep[]

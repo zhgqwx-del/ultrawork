@@ -895,6 +895,17 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 
 本轮还以隔离探针环境尝试 `arch -x86_64 <Intel OpenCode> --version`，返回 `Bad CPU type in executable`，因此本机也无法用 Rosetta 补执行 Intel sidecar；报告 `dependency-freeze-rosetta-smoke.json`。工具路径探测未找到可用 Windows/Linux 虚拟机或容器 CLI，不能把已生成 PE/ELF 文件写成对应系统运行通过。
 
+### 模型身份与技能内容补齐（2026-10-30）
+
+本轮修复以默认 `Ultrawork` 与品牌配置 `MyWork` 为验收对象，保持版权/来源、模型基座、Team 角色、权限及业务路由。vendor 累计 patch 增至 27 个文件，子模块提交不变；身份与丰富输出开关解耦。ACP 的显式 `metaSystemPrompt` 经 API/文件保留，普通编辑不清空，非法类型拒绝。
+
+- 确定性提示词测试检查两品牌、自定义名称、开关组合、坏上下文阻断与原文保留；Python/JS 对 29 组名称及身份案例做真实跨语言对比。DOCX 品牌专测 44 项检查实际元信息、作者优先级及坏上下文。
+- 重编本机 ARM64 sidecar 后，`scripts/verify-brand-sidecars.ts --models --keep` 检查两品牌同时运行、数据/鉴权隔离、ACP 单 Agent、Team Leader/成员、Pipeline/worktree、metadata/prefix 身份与重启恢复。真实 OpenCode 对本地 OpenAI-compatible SSE fixture 发起单 Agent 与 Team 工具循环；fixture 校验**实际 HTTP system 提示中的品牌身份**，不能用预设回答代替该检查。汇总日志 `.brand-build/verification/identity-sidecars-models.log`，报告另存 `identity-sidecars-models.json`。
+- Chrome 156.0.8078.79 与 WebKit 26.5 各通过两品牌 × 三语的 6 条 Ready 流程 / 30 项 UI 检查，包含 Solo/Team 切换；IPC/HTTP 使用显式 fixture。报告与截图目录 `identity-browser-chrome/`、`identity-browser-webkit/`（均位于 `.brand-build/verification/`）。
+- 实际重打两品牌技能 ZIP 并解压核对钉钉路径、Windows 指引、中性宿主文案、原作者来源及 runtime helper，报告 `identity-pack-skills.json`。DOCX 全量行为回归 266 条结果、0 失败、5 项环境跳过；本机 bundled LibreOffice 需测试进程指定 `svp` 与临时 Fontconfig，5 项跳过是无法制造无中文字体环境的 tofu 负向控制，不能标成通过。报告 `identity-docx-selftest.json`。
+
+本地模型/ACP fixture 验证协议内容与工具流程，不证明在线模型每次自称正确，也不替代 Claude/Codex/Gemini 等真实第三方账号和 adapter 的抽样。prefix-only adapter 自行压缩历史后若丢弃首轮提示，ACP 协议没有统一的永久 system append 保证；支持 metadata 的 adapter 在 load 时重新追加。Windows/Linux 原生执行、安装/升级和签名发行仍须对应宿主或 CI 验证，不能用 macOS 本机测试替代。上述修复未自动变成已有 `v0.3.11` 安装包的内容，需另行发布版本。
+
 ### 发行包的原生场景验收
 
 以下场景需在对应系统补齐；Release CI 的构建结果不能替代其通过证据。

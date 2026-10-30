@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """X13 — render a workbook to PDF (and optionally to page images).
 
-This is not a nicety. **A .xlsx cannot be previewed inside ultrawork** — the
+This is not a nicety. **A .xlsx cannot be previewed inside the host app** — the
 artifact panel renders PDF and shows a binary info card for everything else — so
 converting to PDF is the only way a workbook this skill produced becomes something
 the user can actually look at without leaving the app (059 §7).

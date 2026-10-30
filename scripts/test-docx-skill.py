@@ -7387,11 +7387,167 @@ def fired(ctx: dict) -> dict[str, list[str]]:
     return out
 
 
+def brand_metadata_checks(work: Path) -> list[dict]:
+    """Read actual package XML, including CLI default/explicit review authors.
+
+    These subprocesses inherit no customer brand context, touch only the temporary
+    directory, and exercise the same Python entry points shipped in each edition.
+    """
+    from xml.etree import ElementTree as ET
+
+    context_keys = {"ULTRAWORK_BRAND_CONTEXT", "ULTRAWORK_BRAND_CONTEXT_FILE",
+                    "ULTRAWORK_BRAND_MANAGED", "OPENCODE_APP_NAME"}
+    base_env = {key: value for key, value in os.environ.items() if key not in context_keys}
+    memo = work / "brand.md"
+    memo.write_text("# Hello\n\nA short document.\n", encoding="utf-8")
+    results = []
+
+    def context(name="MyWork", namespace="mywork"):
+        identity = {"schemaVersion": 1, "brandId": namespace, "productName": name,
+                    "identifier": f"com.ultrawork.{namespace}", "namespace": namespace,
+                    "isDefault": False, "mainBinaryName": namespace}
+        if namespace == "ultrawork":
+            identity.update(identifier="com.ultrawork.desktop", isDefault=True)
+            del identity["mainBinaryName"]
+        config = work / "config" / namespace
+        app = work / ("." + namespace)
+        return {"schemaVersion": 1, "identity": identity, "instanceId": "brand-fixture-01",
+                "appRoot": str(app), "configRoot": str(config),
+                "dataRoot": str(work / "data" / namespace), "cacheRoot": str(work / "cache" / namespace),
+                "stateRoot": str(work / "state" / namespace), "skillsRoot": str(config / "skills"),
+                "portsRegistryPath": str(app / "run" / "ports.json")}
+
+    def invoke(script, *args, env=None):
+        return subprocess.run([PY, str(SKILL / "scripts" / script), *map(str, args)],
+                              env={**base_env, **(env or {})}, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=30)
+
+    def case(label, check):
+        try:
+            check()
+            results.append({"case": label, "expect": "brand metadata contract", "ok": True, "detail": []})
+        except Exception as error:
+            results.append({"case": label, "expect": "brand metadata contract", "ok": False,
+                            "detail": [str(error)]})
+
+    def text_of(file, part, tag):
+        with zipfile.ZipFile(file) as archive:
+            return ET.fromstring(archive.read(part)).findtext(".//{*}" + tag)
+
+    default_doc = work / "brand-default.docx"
+    for tag, name, env in [
+        ("standalone", "Ultrawork", {}),
+        ("default-context", "Ultrawork", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("Ultrawork", "ultrawork"))}),
+        ("mywork", "MyWork", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context())}),
+        ("xml-escape", "Research & Co", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("Research & Co", "research"))}),
+        ("js-non-whitespace", "A\u0085", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("A\u0085", "unicode"))}),
+        ("utf16-limit", "😀" * 40, {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("😀" * 40, "unicode"))}),
+    ]:
+        def check(tag=tag, name=name, env=env):
+            dest = default_doc if tag == "standalone" else work / f"brand-{tag}.docx"
+            result = invoke("docx_from_md.py", "--in", memo, "--out", dest, env=env)
+            assert result.returncode == 0, result.stderr
+            assert text_of(dest, "docProps/core.xml", "creator") == name
+            assert text_of(dest, "docProps/core.xml", "lastModifiedBy") == name
+            assert text_of(dest, "docProps/app.xml", "Application") == f"{name} docx skill"
+        case("document identity: " + tag, check)
+
+    managed = {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context()), "ULTRAWORK_BRAND_MANAGED": "1"}
+    context_file = work / "brand-context.json"
+    context_file.write_text(managed["ULTRAWORK_BRAND_CONTEXT"], encoding="utf-8")
+    for tag, env in [
+        ("context-file", {"ULTRAWORK_BRAND_CONTEXT_FILE": str(context_file)}),
+        ("matching-file-env", {**managed, "ULTRAWORK_BRAND_CONTEXT_FILE": str(context_file)}),
+        ("dev-identifier", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "actualIdentifier": "com.ultrawork.mywork.dev", "ownerPid": 123})}),
+        ("integer-json-number", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "schemaVersion": 1.0, "ownerPid": 123.0})}),
+    ]:
+        def check(tag=tag, env=env):
+            dest = work / f"brand-{tag}.docx"
+            result = invoke("docx_from_md.py", "--in", memo, "--out", dest, env=env)
+            assert result.returncode == 0, result.stderr
+            assert text_of(dest, "docProps/core.xml", "creator") == "MyWork"
+        case("document identity: " + tag, check)
+
+    bad_identity = context()
+    bad_identity["identity"]["namespace"] = "ultrawork"
+    for tag, env in [
+        ("missing-managed", {"ULTRAWORK_BRAND_MANAGED": "1"}),
+        ("invalid-json", {"ULTRAWORK_BRAND_CONTEXT": "{"}),
+        ("null-json", {"ULTRAWORK_BRAND_CONTEXT": "null"}),
+        ("null-env-with-valid-file", {"ULTRAWORK_BRAND_CONTEXT": "null", "ULTRAWORK_BRAND_CONTEXT_FILE": str(context_file)}),
+        ("inconsistent-identity", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(bad_identity)}),
+        ("schema-bool", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "schemaVersion": True})}),
+        ("missing-instance", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "instanceId": None})}),
+        ("short-instance", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "instanceId": "short"})}),
+        ("wrong-app-identifier", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "actualIdentifier": "com.ultrawork.desktop"})}),
+        ("bool-owner-pid", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "ownerPid": True})}),
+        ("zero-owner-pid", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "ownerPid": 0})}),
+        ("negative-owner-pid", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "ownerPid": -12})}),
+        ("fractional-owner-pid", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "ownerPid": 12.5})}),
+        ("nan-json", {"ULTRAWORK_BRAND_CONTEXT": json.dumps({**context(), "extra": float("nan")})}),
+        ("file-env-mismatch", {**managed, "ULTRAWORK_BRAND_CONTEXT": json.dumps(context("OtherWork")),
+                               "ULTRAWORK_BRAND_CONTEXT_FILE": str(context_file)}),
+        ("missing-file", {"ULTRAWORK_BRAND_CONTEXT_FILE": str(work / "missing-context.json")}),
+        ("relative-file", {"ULTRAWORK_BRAND_CONTEXT_FILE": "relative.json"}),
+        ("namespace-conflict", {**managed, "OPENCODE_APP_NAME": "ultrawork"}),
+        ("unsafe-name", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("<invalid>"))}),
+        ("js-trim-bom", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("A\ufeff"))}),
+        ("utf16-over-limit", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("😀" * 41))}),
+        ("trailing-newline-id", {"ULTRAWORK_BRAND_CONTEXT": json.dumps(context("MyWork", "mywork\n"))}),
+    ]:
+        def check(tag=tag, env=env):
+            dest = work / f"brand-rejected-{tag}.docx"
+            result = invoke("docx_from_md.py", "--in", memo, "--out", dest, env=env)
+            assert result.returncode == 2, result.stderr
+            assert "Invalid runtime brand context" in result.stderr
+            assert not dest.exists(), "invalid context wrote a document"
+        case("document identity rejected: " + tag, check)
+
+    later = work / "brand-later.docx"
+    later_md = work / "brand-later.md"
+    later_md.write_text("# Hello\n\nA changed document.\n", encoding="utf-8")
+    generated = invoke("docx_from_md.py", "--in", later_md, "--out", later)
+    assert generated.returncode == 0, generated.stderr
+    for brand, env in [("Ultrawork", {}), ("MyWork", managed)]:
+        for explicit in [False, True]:
+            expected = "Customer & Reviewer" if explicit else brand
+            extra = ["--author", expected] if explicit else []
+            for tool in ["revise", "comment", "diff"]:
+                def check(tool=tool, brand=brand, env=env, expected=expected, extra=extra, explicit=explicit):
+                    dest = work / f"brand-{tool}-{brand}-{explicit}.docx"
+                    if tool == "revise":
+                        args = ["--in", default_doc, "--out", dest, "--replace", "Hello=Updated"]
+                        part = "word/document.xml"
+                    elif tool == "comment":
+                        args = ["--in", default_doc, "--out", dest, "--add-on", "Hello", "--text", "Review note"]
+                        part = "word/comments.xml"
+                    else:
+                        args = ["--a", default_doc, "--b", later, "--redline", dest, "--strict"]
+                        part = "word/document.xml"
+                    result = invoke(f"docx_{tool}.py", *args, *extra, env=env)
+                    assert result.returncode == 0, result.stderr
+                    with zipfile.ZipFile(dest) as archive:
+                        authors = {el.get(W + "author") for el in ET.fromstring(archive.read(part)).iter()
+                                   if el.get(W + "author") is not None}
+                    assert authors == {expected}, f"authors: {authors!r}; wanted {expected!r}"
+                    # Editing a customer's file never rewrites its original creator.
+                    assert text_of(dest, "docProps/core.xml", "creator") == "Ultrawork"
+                case(f"review author: {brand}/{tool}/{'explicit' if explicit else 'default'}", check)
+    return results
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--brand-only", action="store_true", help="run only inherited brand metadata checks")
     args = ap.parse_args()
+
+    if args.brand_only:
+        with tempfile.TemporaryDirectory(prefix="docx-brand-test-") as td:
+            results = brand_metadata_checks(Path(td))
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return 1 if any(not result["ok"] for result in results) else 0
 
     for f in (REPORT, REVISED, UNORDERED, OUTLINE, FONTLESS, CHART):
         if not f.is_file():
@@ -7403,6 +7559,7 @@ def main() -> int:
     SKIPS.clear()
     with tempfile.TemporaryDirectory(prefix="docx-skill-test-") as td:
         work = Path(td)
+        results.extend(brand_metadata_checks(work))
         base = collect(work)
 
         clean = fired(base)

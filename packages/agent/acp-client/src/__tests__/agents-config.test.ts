@@ -2,7 +2,8 @@
 // package are rewritten on load (exact token match; explicit pins respected).
 
 import { describe, it, expect } from "bun:test"
-import { homedir } from "node:os"
+import { homedir, tmpdir } from "node:os"
+import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { migrateLegacyClaudeAdapter } from "../agents-config.js"
 import { configFile, resolveConfigDir } from "../config-paths.js"
@@ -96,5 +97,71 @@ describe("resolveConfigDir", () => {
       expect(configFile(name, env)).toBe(join("/tmp/xdg", "ultrawork", name))
     }
     expect(configFile("agents.json", {})).toBe(join(homedir(), ".config", "ultrawork", "agents.json"))
+  })
+})
+
+describe("metaSystemPrompt configuration roundtrip", () => {
+  it("retains true, false and automatic detection through REST, disk and reload", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "acp-config-roundtrip-"))
+    const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: dir }
+    for (const key of ["ULTRAWORK_BRAND_CONTEXT", "ULTRAWORK_BRAND_CONTEXT_FILE", "ULTRAWORK_BRAND_MANAGED", "OPENCODE_APP_NAME"]) delete env[key]
+    try {
+      // The registry captures its path at import. A fresh process guarantees
+      // all actual read/write operations resolve inside this fixture directory.
+      const script = `
+        import * as config from ${JSON.stringify(new URL("../agents-config.ts", import.meta.url).href)};
+        import { createServer } from ${JSON.stringify(new URL("../acp-server.ts", import.meta.url).href)};
+        import { readFileSync, writeFileSync } from "node:fs";
+        const app = createServer({
+          saveAgent: agent => config.saveAgentConfig(agent),
+          getAgentConfig: id => config.loadAgentConfigs().find(agent => agent.id === id),
+        }, null);
+        const records = [];
+        for (const value of [true, false, undefined]) {
+          const id = "custom-" + (value ?? "auto");
+          const response = await app.request("/acp/agents/" + id, {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ label: "Custom", command: "fixture-agent", metaSystemPrompt: value }),
+          });
+          const loaded = await app.request("/acp/agents/" + id + "/config");
+          const stored = JSON.parse(readFileSync(config.agentsConfigPath(), "utf8"));
+          const edited = await app.request("/acp/agents/" + id, {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ label: "Edited label", command: "fixture-agent" }),
+          });
+          records.push({ status: response.status,
+            disk: stored.agents[id].metaSystemPrompt ?? "auto",
+            reload: config.loadAgentConfigs().find(agent => agent.id === id).metaSystemPrompt ?? "auto",
+            api: (await loaded.json()).metaSystemPrompt ?? "auto",
+            edited: edited.status });
+        }
+        const invalid = [];
+        for (const value of ["false", 1, null]) {
+          const response = await app.request("/acp/agents/custom", {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ label: "Custom", command: "fixture-agent", metaSystemPrompt: value }),
+          });
+          invalid.push(response.status);
+        }
+        const rejected = [];
+        for (const value of ["false", 1, null]) {
+          writeFileSync(config.agentsConfigPath(), JSON.stringify({ agents: { bad: { label: "Bad", command: "fixture", metaSystemPrompt: value } } }));
+          try { config.loadAgentConfigs(); rejected.push(false); }
+          catch (error) { rejected.push(error.message.includes("metaSystemPrompt must be a boolean")); }
+        }
+        console.log(JSON.stringify({ path: config.agentsConfigPath(), records, invalid, rejected }));
+      `
+      const child = Bun.spawn([process.execPath, "--eval", script], { env, stdout: "pipe", stderr: "pipe" })
+      const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+      expect(stderr).toBe("")
+      expect(code).toBe(0)
+      const result = JSON.parse(stdout)
+      expect(result.path).toBe(join(dir, "ultrawork", "agents.json"))
+      expect(result.records).toEqual([true, false, "auto"].map(value => ({ status: 200, disk: value, reload: value, api: value, edited: 200 })))
+      expect(result.invalid).toEqual([400, 400, 400])
+      expect(result.rejected).toEqual([true, true, true])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

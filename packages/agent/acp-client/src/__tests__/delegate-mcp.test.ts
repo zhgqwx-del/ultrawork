@@ -281,6 +281,20 @@ describe("delegate-mcp shim", () => {
     const unreachable = await callDelegate(deps(down), { agentId: "a", task: "t", cwd: "/ws" })
     expect(unreachable.isError).toBe(true)
     expect(unreachable.content[0].text).toContain("unreachable")
+    expect(unreachable.content[0].text).toContain("the Ultrawork app must be running")
+  })
+
+  it("uses the validated host product name in model-visible connectivity guidance", async () => {
+    const fixture = managedRegistry()
+    fixture.ready(5001)
+    const shim = shimDepsFromEnv(fixture.env, fixture.readFile)
+    const result = await callDelegate(
+      { ...shim, fetchImpl: async () => { throw new Error("fixture offline") } },
+      { agentId: "a", task: "t", cwd: tmpdir() },
+    )
+    expect(result.isError).toBe(true)
+    expect(result.content[0].text).toContain("the MyWork app must be running")
+    expect(result.content[0].text).not.toContain("Ultrawork")
   })
 
   it("fires the keepalive while the HTTP call is pending and stops after", async () => {

@@ -1,6 +1,8 @@
 // Manager: agent connections registry + session routing + SSE fan-out.
 
 import type { StopReason } from "@agentclientprotocol/sdk"
+import { assistantIdentityPrompt } from "@agent/brand"
+import { runtimeBrandContext } from "@agent/brand/node"
 import { ACPConnection, supportsMetaSystemPrompt, type PermissionReply } from "./acp-connection.js"
 import { deleteAgentConfig, saveAgentConfig } from "./agents-config.js"
 import {
@@ -28,6 +30,8 @@ interface SessionEntry extends ACPSessionInfo {
   messages: UwStoredMessage[]
   /** Latest task plan (ADR-038), folded from plan.updated; served as a snapshot. */
   plan?: UwPlanStep[]
+  /** Identity last delivered to a prefix-only agent's live context. */
+  hostIdentityPrompt?: string
 }
 
 export class ACPManager {
@@ -40,6 +44,7 @@ export class ACPManager {
   /** Sessions with a prompt currently in flight — the source for the
    * snapshot-on-subscribe so busy survives an SSE reconnect / WebView reload. */
   private running = new Set<string>()
+  private readonly hostIdentityPrompt = assistantIdentityPrompt(runtimeBrandContext()?.identity)
 
   constructor(configs: ACPAgentConfig[]) {
     for (const config of configs) this.register(config)
@@ -56,6 +61,7 @@ export class ACPManager {
         // restore time, so enabling orchestratorMcp also covers old sessions.
         orchestrate: persisted.orchestrate,
         systemPrompt: persisted.systemPrompt,
+        hostIdentityPrompt: persisted.hostIdentityPrompt,
         messages: persisted.messages,
         plan: persisted.plan,
       })
@@ -117,7 +123,10 @@ export class ACPManager {
     // explicit false (InProcACPBackend) — the recursion guard.
     const orchestrate = opts?.orchestrate ?? conn.config.orchestratorMcp ?? false
     const systemPrompt = opts?.systemPrompt
-    const acpSessionId = await conn.newSession(cwd, clientSessionId, { orchestrate, systemPrompt })
+    const acpSessionId = await conn.newSession(cwd, clientSessionId, {
+      orchestrate,
+      systemPrompt: this.sessionSystemPrompt(systemPrompt),
+    })
     const sessionId = clientSessionId ?? acpSessionId
     const entry: SessionEntry = {
       sessionId,
@@ -147,17 +156,21 @@ export class ACPManager {
     this.emitStatus(sessionId, "busy")
     try {
       await this.restoreAgentSession(conn, entry)
-      // Fallback system-prompt delivery for agents without _meta.systemPrompt:
-      // prefix the FIRST prompt only (later turns already have it in context).
-      // Residual gap (accepted): a load-failure fresh session on such an agent
-      // restarts mid-history and never re-receives the prefix.
+      // Prefix-only agents retain this in their own context. A missing/stale
+      // marker also upgrades pre-brand sessions once, without rewriting history.
+      // A failed session/load clears the marker because its replacement is empty.
       const needsPrefix =
-        entry.systemPrompt && !supportsMetaSystemPrompt(conn.config) && entry.messages.length === 0
-      return await conn.prompt(
+        !supportsMetaSystemPrompt(conn.config) && entry.hostIdentityPrompt !== this.hostIdentityPrompt
+      const result = await conn.prompt(
         entry.acpSessionId,
         text,
-        needsPrefix ? { systemPrefix: entry.systemPrompt } : undefined,
+        needsPrefix ? { systemPrefix: this.sessionSystemPrompt(entry.systemPrompt) } : undefined,
       )
+      if (needsPrefix) {
+        entry.hostIdentityPrompt = this.hostIdentityPrompt
+        this.persist(entry)
+      }
+      return result
     } finally {
       this.emitStatus(sessionId, "idle")
     }
@@ -177,7 +190,7 @@ export class ACPManager {
     // Re-inject the delegate MCP across restarts; sessions persisted before
     // the flag existed inherit the agent-level default.
     const orchestrate = entry.orchestrate ?? conn.config.orchestratorMcp ?? false
-    const systemPrompt = entry.systemPrompt
+    const systemPrompt = this.sessionSystemPrompt(entry.systemPrompt)
     if (conn.agentCapabilities?.loadSession) {
       try {
         await conn.loadSession(entry.acpSessionId, entry.cwd, entry.sessionId, {
@@ -200,7 +213,12 @@ export class ACPManager {
       orchestrate,
       systemPrompt,
     })
+    entry.hostIdentityPrompt = undefined
     this.persist(entry)
+  }
+
+  private sessionSystemPrompt(rolePrompt?: string): string {
+    return rolePrompt ? `${rolePrompt}\n\n${this.hostIdentityPrompt}` : this.hostIdentityPrompt
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -363,6 +381,7 @@ export class ACPManager {
         updatedAt: Date.now(),
         orchestrate: entry.orchestrate,
         systemPrompt: entry.systemPrompt,
+        hostIdentityPrompt: entry.hostIdentityPrompt,
         messages: entry.messages,
         plan: entry.plan,
       })

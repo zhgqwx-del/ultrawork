@@ -28,7 +28,8 @@
 | `plugin/index.ts` | 注册内置插件 `ToolDisclosurePlugin` 进 `INTERNAL_PLUGINS` | discussions/023 |
 | `plugin/tool-disclosure.ts` (**新文件**) | 渐进式工具披露引擎：折叠低频工具→name-only 名录(system)+`tool_search`，按需提升为原生；静态名录/会话清理/grace 安全降级；由 `experimental.tool_disclosure` config flag 或 `ULTRAWORK_TOOL_DISCLOSURE` env 门控 | discussions/023 |
 | `config/config.ts` (追加) | experimental schema 增 `tool_disclosure` / `tool_disclosure_debug` | discussions/023 |
-| `plugin/rich-output.ts` (**新文件**) | 富文本输出提示：经 `experimental.chat.system.transform` **追加**品牌化自适应格式化指令到已组装 system prompt（保留每模型基座、不替换）；仅当基座含 default.txt 极简子句时额外追加 `<verbosity_override>` 中和；与 tool-disclosure 门控**解耦**、独立插件；`experimental.rich_output` config flag 或 `ULTRAWORK_RICH_OUTPUT` env 门控（默认 ON，kill switch） | discussions/048 |
+| `plugin/rich-output.ts` (**新文件**) | 经 `experimental.chat.system.transform` **追加**产品身份和自适应格式规则，保留模型基座；`experimental.rich_output` / `ULTRAWORK_RICH_OUTPUT` 仅控制格式规则，产品身份始终追加 | discussions/048 / ADR-075 |
+| `plugin/brand-identity.ts` (**新文件**) | 从既有 runtime context 验证并读取产品身份，默认 Ultrawork；无外层 workspace 依赖，受管缺失/冲突在实际 transform 阶段阻止模型请求 | ADR-075 |
 | `plugin/index.ts` (追加) | 注册 `RichOutputPlugin` 进 `INTERNAL_PLUGINS` | discussions/048 |
 | `config/config.ts` (追加) | experimental schema 增 `rich_output`（默认 ON，kill switch） | discussions/048 |
 | `effect/soft-invalidate-registry.ts` (**新文件**) | 与 disposer 平行的「软失效器」集合：`registerSoftInvalidator`/`softInvalidate(dir)`（返回 settled 结果供上层报失败） | ADR-039 |
@@ -57,7 +58,7 @@ vim vendor/opencode/packages/opencode/src/...
 #    ⚠️ 必须列全 patch 涉及的所有文件，漏掉任何一个都会在重新生成时丢失对应改动
 #    ⚠️ 新文件（如 tool-disclosure.ts）必须先 `git add -N` 才会出现在 git diff 里
 cd vendor/opencode && \
-git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
+git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/plugin/brand-identity.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
 git diff -- \
   bun.lock \
   packages/app/package.json \
@@ -70,6 +71,7 @@ git diff -- \
   packages/opencode/src/plugin/index.ts \
   packages/opencode/src/plugin/tool-disclosure.ts \
   packages/opencode/src/plugin/rich-output.ts \
+  packages/opencode/src/plugin/brand-identity.ts \
   packages/opencode/src/effect/soft-invalidate-registry.ts \
   packages/opencode/src/effect/instance-state.ts \
   packages/opencode/src/project/instance.ts \
@@ -86,7 +88,7 @@ git diff -- \
   packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \
   > ../../patches/vendor-opencode-config-fix.patch && \
-git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
+git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/plugin/brand-identity.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
 
 # 3. 如果再新增文件，在 git diff 命令中追加路径（新文件记得也 git add -N）
 # 4. 重编译 sidecar

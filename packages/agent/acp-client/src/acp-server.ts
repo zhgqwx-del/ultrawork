@@ -119,10 +119,14 @@ export function createServer(manager: ACPManager, auth: SidecarAuth | null): Hon
         knowledgeMcp?: boolean
         orchestratorMcp?: boolean
         thoughtLevel?: string
+        metaSystemPrompt?: boolean
       }>()
       .catch(() => null)
     if (!body?.label || !body?.command) {
       return c.json({ error: "label and command are required" }, 400)
+    }
+    if (body.metaSystemPrompt !== undefined && typeof body.metaSystemPrompt !== "boolean") {
+      return c.json({ error: "metaSystemPrompt must be a boolean" }, 400)
     }
     manager.saveAgent({
       id,
@@ -134,6 +138,7 @@ export function createServer(manager: ACPManager, auth: SidecarAuth | null): Hon
       knowledgeMcp: body.knowledgeMcp ?? false,
       orchestratorMcp: body.orchestratorMcp ?? false,
       thoughtLevel: body.thoughtLevel || undefined,
+      metaSystemPrompt: body.metaSystemPrompt ?? manager.getAgentConfig(id)?.metaSystemPrompt,
     })
     return c.json({ ok: true })
   })

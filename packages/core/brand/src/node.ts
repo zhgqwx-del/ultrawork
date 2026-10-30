@@ -36,7 +36,7 @@ export function parseRuntimeBrandContext(value: unknown): RuntimeBrandContext {
   const item = object(value)
   if (item.schemaVersion !== 1) throw new Error("Unsupported runtime brand context schema")
   const identity = parseBrandIdentity(item.identity)
-  if (typeof item.instanceId !== "string" || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.instanceId)) {
+  if (typeof item.instanceId !== "string" || item.instanceId !== item.instanceId.trim() || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.instanceId)) {
     throw new Error("Missing runtime brand instance identity")
   }
   const paths = {} as BrandPaths

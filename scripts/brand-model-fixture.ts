@@ -1,8 +1,24 @@
 /** Local OpenAI-compatible fixture: drives the real OpenCode tool loop offline. */
 import assert from "node:assert/strict"
 
+/** Inspect the wire prompt, not a fixture's generated answer. */
+export function assertModelBrandIdentity(messages: Array<{ role: string; content?: unknown }>, namespace: string): string {
+  assert(namespace === "ultrawork" || namespace === "mywork", "Unknown offline model namespace")
+  const name = namespace === "mywork" ? "MyWork" : "Ultrawork"
+  const system = messages.filter((message) => message.role === "system" || message.role === "developer")
+    .map((message) => typeof message.content === "string" ? message.content : JSON.stringify(message.content)).join("\n")
+  const identities = [...system.matchAll(/<identity>([\s\S]*?)<\/identity>/g)]
+  assert.equal(identities.length, 1, "The model must receive exactly one product identity block")
+  assert(identities[0]![1]!.includes(JSON.stringify(name)), `The model received the wrong ${name} identity`)
+  assert(!/UltraWork/.test(identities[0]![1]!), "The legacy hardcoded identity reached the model")
+  const foreign = namespace === "mywork" ? "Ultrawork" : "MyWork"
+  assert(!identities[0]![1]!.includes(foreign), "Another brand's identity reached the model")
+  return name
+}
+
 export function brandModelFixture(workspaceFor: (namespace: string) => string) {
-  const requests: Array<{ namespace: string; team: boolean; tools: string[]; toolResults: number; called?: string }> = []
+  const requests: Array<{ namespace: string; productName: string; team: boolean; tools: string[]; toolResults: number; called?: string }> = []
+  const failures: string[] = []
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0, idleTimeout: 0,
     async fetch(request) {
@@ -15,6 +31,7 @@ export function brandModelFixture(workspaceFor: (namespace: string) => string) {
           messages?: Array<{ role: string; content?: unknown; tool_calls?: Array<{ id: string; function: { name: string } }>; tool_call_id?: string }>
           tools?: Array<{ function: { name: string } }>
         }
+        const productName = assertModelBrandIdentity(body.messages ?? [], namespace)
         const teamPrompt = body.messages?.some((message) => message.role === "user" && JSON.stringify(message.content).includes("probe:opencode-team")) ?? false
         const results = body.messages?.filter((message) => message.role === "tool") ?? []
         const tools = body.tools?.map((tool) => tool.function.name) ?? []
@@ -35,7 +52,7 @@ export function brandModelFixture(workspaceFor: (namespace: string) => string) {
           assert(text.includes("completed") && text.includes(`brand_probe_${namespace}`), "OpenCode delegate result did not come from its brand's actual member")
           assert(!text.includes(`brand_probe_${namespace === "mywork" ? "ultrawork" : "mywork"}`), "OpenCode received the other brand's result")
         }
-        requests.push({ namespace, team, tools, toolResults: results.length, ...(call ? { called: call.name } : {}) })
+        requests.push({ namespace, productName, team, tools, toolResults: results.length, ...(call ? { called: call.name } : {}) })
         const frames = call ? [
           { choices: [{ index: 0, delta: { role: "assistant", content: null, tool_calls: [{ index: 0, id: `call_${results.length}`, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] }, finish_reason: null }] },
           { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
@@ -47,10 +64,11 @@ export function brandModelFixture(workspaceFor: (namespace: string) => string) {
           headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
         })
       } catch (error) {
+        failures.push(String(error))
         console.error(`Offline model fixture rejected a request: ${String(error)}`)
         return Response.json({ error: { message: String(error) } }, { status: 400 })
       }
     },
   })
-  return { server, requests }
+  return { server, requests, failures }
 }

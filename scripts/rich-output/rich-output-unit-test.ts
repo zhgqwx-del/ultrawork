@@ -1,10 +1,13 @@
-// Rich-output prompt plugin tests (discussions/048): the plugin appends branded
-// adaptive-formatting guidance to the assembled system prompt via
-// `experimental.chat.system.transform`, PRESERVING each model's base prompt
-// (never replacing it), and only neutralises default.txt's terse clauses when
-// they are actually present. Verifies: append behavior, base-preservation, the
-// terse-detection gate, and the config/env kill switch.
-// Run: bun run --bun scripts/rich-output/rich-output-unit-test.ts   (vendor patch applied)
+// Run: bun run --bun scripts/rich-output/rich-output-unit-test.ts
+// Exercise the actual vendor hook and compare its identity adapter with the
+// host contract. No model account, host data directory or network is needed.
+import assert from "node:assert/strict"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { Hooks, PluginInput } from "../../vendor/opencode/packages/plugin/src"
+import { DEFAULT_BRAND, parseBrandIdentity, resolveIdentity } from "../../packages/core/brand/src"
+import { identityGuidance, productName } from "../../vendor/opencode/packages/opencode/src/plugin/brand-identity"
 import {
   RichOutputPlugin,
   BRAND_GUIDANCE,
@@ -12,88 +15,169 @@ import {
   baseIsTerse,
 } from "../../vendor/opencode/packages/opencode/src/plugin/rich-output"
 
-let pass = 0,
-  fail = 0
-const ok = (name: string, cond: boolean) => (console.log(`  [${cond ? "PASS" : "FAIL"}] ${name}`), cond ? pass++ : fail++)
-
-// Real fragments of the two base prompts we care about.
-const DEFAULT_TXT_BASE =
-  "You should be concise, direct, and to the point.\nIMPORTANT: You should minimize output tokens as much as possible while maintaining helpfulness.\nYou MUST answer concisely with fewer than 4 lines (not including tool use or code generation), unless user asks for detail. One word answers are best."
-// A non-default base (e.g. anthropic.txt) never contains those terse clauses.
-const ANTHROPIC_LIKE_BASE =
-  "You are a helpful coding assistant. Use the available tools to accomplish the user's task. Prefer editing existing files over creating new ones."
-
-async function getTransform() {
-  const hooks = await RichOutputPlugin({} as any)
-  const fn = hooks["experimental.chat.system.transform"]
-  if (!fn) throw new Error("plugin did not register experimental.chat.system.transform")
-  return fn
-}
-const fakeInput = { sessionID: "s1", model: { api: { id: "qwen3.7-plus" } } } as any
-
-// --- baseIsTerse: detection is precise ---------------------------------------
-ok("baseIsTerse: default.txt signature → true", baseIsTerse([DEFAULT_TXT_BASE]) === true)
-ok("baseIsTerse: anthropic-like base → false", baseIsTerse([ANTHROPIC_LIKE_BASE]) === false)
-ok("baseIsTerse: empty → false", baseIsTerse([]) === false)
-
-// Ensure a clean enabled state (env must be unset; config default ON).
-delete process.env["ULTRAWORK_RICH_OUTPUT"]
-
-// --- enabled + terse base: override + brand appended, base preserved ---------
-{
-  const transform = await getTransform()
-  const output = { system: [DEFAULT_TXT_BASE] }
-  await transform(fakeInput, output)
-  ok("terse base: original base still present (preserved, not replaced)", output.system[0] === DEFAULT_TXT_BASE)
-  ok("terse base: VERBOSITY_OVERRIDE appended", output.system.includes(VERBOSITY_OVERRIDE))
-  ok("terse base: BRAND_GUIDANCE appended", output.system.includes(BRAND_GUIDANCE))
-  ok("terse base: override comes before brand guidance", output.system.indexOf(VERBOSITY_OVERRIDE) < output.system.indexOf(BRAND_GUIDANCE))
-  ok("brand guidance contains UltraWork identity", BRAND_GUIDANCE.includes("You are UltraWork"))
-  ok("brand guidance has language_consistency + output_format + task_execution + sensitive", ["<language_consistency>", "<output_format>", "<task_execution>", "<sensitive_information>"].every((t) => BRAND_GUIDANCE.includes(t)))
+let passed = 0
+function check(name: string, run: () => void) {
+  run()
+  console.log(`  [PASS] ${name}`)
+  passed++
 }
 
-// --- enabled + non-terse base: brand only, NO override, base untouched -------
-{
-  const transform = await getTransform()
-  const output = { system: [ANTHROPIC_LIKE_BASE] }
-  await transform(fakeInput, output)
-  ok("non-terse base: original base untouched", output.system[0] === ANTHROPIC_LIKE_BASE)
-  ok("non-terse base: BRAND_GUIDANCE appended", output.system.includes(BRAND_GUIDANCE))
-  ok("non-terse base: NO verbosity override (base has no terse clauses)", !output.system.includes(VERBOSITY_OVERRIDE))
+const TERSE = "You should minimize output tokens. Answer with fewer than 4 lines. One word answers are best."
+const BASE = "You are a helpful coding assistant. Use the available tools to accomplish the user's task."
+const ROLE = "You are a Team Leader. Delegate work to the assigned members using orchestrator_delegate."
+const KEYS = ["ULTRAWORK_RICH_OUTPUT", "ULTRAWORK_BRAND_CONTEXT", "ULTRAWORK_BRAND_CONTEXT_FILE", "ULTRAWORK_BRAND_MANAGED", "OPENCODE_APP_NAME"]
+const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]))
+const dir = mkdtempSync(join(tmpdir(), "ultrawork-prompt-test-"))
+type Transform = NonNullable<Hooks["experimental.chat.system.transform"]>
+const input = { sessionID: "brand-test", model: { api: { id: "fixture" } } } as Parameters<Transform>[0]
+const pluginInput = {} as PluginInput
+
+function environment(env: Record<string, string> = {}) {
+  for (const key of KEYS) delete process.env[key]
+  Object.assign(process.env, env)
 }
 
-// --- kill switch via config: experimental.rich_output === false --------------
-{
-  const hooks = await RichOutputPlugin({} as any)
-  await hooks["config"]!({ experimental: { rich_output: false } } as any)
-  const output = { system: [DEFAULT_TXT_BASE] }
-  await hooks["experimental.chat.system.transform"]!(fakeInput, output)
-  ok("config kill switch: nothing appended when rich_output:false", output.system.length === 1 && output.system[0] === DEFAULT_TXT_BASE)
-  // restore default-ON for subsequent tests
-  await hooks["config"]!({ experimental: {} } as any)
+function context(identity: unknown) {
+  return { schemaVersion: 1, identity, instanceId: "brand-test-instance" }
 }
 
-// --- kill switch via env: ULTRAWORK_RICH_OUTPUT=0 overrides config ON --------
-{
-  process.env["ULTRAWORK_RICH_OUTPUT"] = "0"
-  const transform = await getTransform()
-  const output = { system: [DEFAULT_TXT_BASE] }
-  await transform(fakeInput, output)
-  ok("env kill switch (=0): nothing appended even with config ON", output.system.length === 1)
-  delete process.env["ULTRAWORK_RICH_OUTPUT"]
+function transform(hooks: Hooks) {
+  assert.ok(hooks["experimental.chat.system.transform"])
+  return hooks["experimental.chat.system.transform"]
 }
 
-// --- env force-on: ULTRAWORK_RICH_OUTPUT=1 overrides config OFF --------------
-{
-  const hooks = await RichOutputPlugin({} as any)
-  await hooks["config"]!({ experimental: { rich_output: false } } as any) // config says OFF
-  process.env["ULTRAWORK_RICH_OUTPUT"] = "1" // env forces ON
-  const output = { system: [ANTHROPIC_LIKE_BASE] }
-  await hooks["experimental.chat.system.transform"]!(fakeInput, output)
-  ok("env force-on (=1): appends despite config OFF", output.system.includes(BRAND_GUIDANCE))
-  delete process.env["ULTRAWORK_RICH_OUTPUT"]
-  await hooks["config"]!({ experimental: {} } as any)
+async function render(hooks: Hooks, base = BASE) {
+  const output = { system: [base, ROLE] }
+  await transform(hooks)(input, output)
+  assert.deepEqual(output.system.slice(0, 2), [base, ROLE])
+  return output.system
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-if (fail > 0) process.exit(1)
+function accepts(run: () => unknown): boolean {
+  try { run(); return true } catch { return false }
+}
+
+try {
+  environment()
+  check("terse detection preserves per-model base selection", () => {
+    assert.equal(baseIsTerse([TERSE]), true)
+    assert.equal(baseIsTerse([BASE]), false)
+    assert.equal(baseIsTerse([]), false)
+  })
+
+  for (const identity of [DEFAULT_BRAND, resolveIdentity({ brandId: "mywork", productName: "MyWork" }), resolveIdentity({ brandId: "team-work", productName: "团队 Work" })]) {
+    environment({ ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context(identity)), OPENCODE_APP_NAME: identity.namespace })
+    const hooks = await RichOutputPlugin(pluginInput)
+    const system = await render(hooks, TERSE)
+    check(`${identity.productName}: current identity appended and original base/Team role preserved`, () => {
+      assert.equal(system.at(-1), identityGuidance(identity.productName))
+      assert.ok(system.at(-1)?.includes(JSON.stringify(identity.productName)))
+      assert.ok(system.includes(BRAND_GUIDANCE))
+      assert.ok(system.includes(VERBOSITY_OVERRIDE))
+      assert.ok(system.indexOf(VERBOSITY_OVERRIDE) < system.indexOf(BRAND_GUIDANCE))
+      assert.equal(system.filter((value) => value.includes("<identity>")).length, 1)
+      if (!identity.isDefault) assert.ok(!system.at(-1)?.includes('"Ultrawork"'))
+    })
+    const regular = await render(hooks)
+    check(`${identity.productName}: non-terse base does not gain verbosity override`, () => {
+      assert.ok(!regular.includes(VERBOSITY_OVERRIDE))
+      assert.ok(regular.includes(BRAND_GUIDANCE))
+    })
+    await hooks.config?.({ experimental: { rich_output: false } } as Parameters<NonNullable<Hooks["config"]>>[0])
+    const disabled = await render(hooks, TERSE)
+    check(`${identity.productName}: config kill switch disables richness, retains identity`, () => {
+      assert.deepEqual(disabled, [TERSE, ROLE, identityGuidance(identity.productName)])
+    })
+    for (const value of ["0", "false"]) {
+      process.env.ULTRAWORK_RICH_OUTPUT = value
+      const output = await render(await RichOutputPlugin(pluginInput), TERSE)
+      check(`${identity.productName}: env ${value} retains identity`, () => {
+        assert.deepEqual(output, [TERSE, ROLE, identityGuidance(identity.productName)])
+      })
+    }
+    process.env.ULTRAWORK_RICH_OUTPUT = "1"
+    const forced = await render(hooks)
+    check(`${identity.productName}: force-on overrides config`, () => assert.ok(forced.includes(BRAND_GUIDANCE)))
+    delete process.env.ULTRAWORK_RICH_OUTPUT
+    const independent = await render(await RichOutputPlugin(pluginInput))
+    check(`${identity.productName}: separate plugin instances have independent config`, () => assert.ok(independent.includes(BRAND_GUIDANCE)))
+  }
+
+  environment()
+  const standalone = await render(await RichOutputPlugin(pluginInput))
+  check("standalone defaults to canonical Ultrawork without reading a context file", () => {
+    assert.equal(productName({}, () => { throw new Error("Unexpected IO") }), "Ultrawork")
+    assert.equal(standalone.at(-1), identityGuidance("Ultrawork"))
+    assert.equal(productName({ OPENCODE_APP_NAME: "mywork" }), "Ultrawork")
+    assert.ok(!BRAND_GUIDANCE.includes("<identity>"))
+    for (const tag of ["language_consistency", "output_format", "task_execution", "sensitive_information"]) {
+      assert.ok(BRAND_GUIDANCE.includes(`<${tag}>`))
+    }
+  })
+
+  const brand = resolveIdentity({ brandId: "mywork", productName: "MyWork" })
+  const file = join(dir, "context.json")
+  const json = JSON.stringify(context(brand))
+  writeFileSync(file, json)
+  check("file-only and matching file/env contexts use the selected product name", () => {
+    assert.equal(productName({ ULTRAWORK_BRAND_CONTEXT_FILE: file }), "MyWork")
+    assert.equal(productName({ ULTRAWORK_BRAND_CONTEXT_FILE: file, ULTRAWORK_BRAND_CONTEXT: json }), "MyWork")
+  })
+
+  for (const [name, env] of [
+    ["managed context missing", { ULTRAWORK_BRAND_MANAGED: "1" }],
+    ["malformed JSON", { ULTRAWORK_BRAND_CONTEXT: "{" }],
+    ["schema mismatch", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), schemaVersion: 2 }) }],
+    ["invalid identity name", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context({ ...brand, productName: "wrong\nname" })) }],
+    ["conflicting identity namespace", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context({ ...brand, namespace: "ultrawork" })) }],
+    ["invalid actual identifier", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), actualIdentifier: DEFAULT_BRAND.identifier }) }],
+    ["invalid owner PID", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), ownerPid: 0 }) }],
+    ["missing instance", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), instanceId: "" }) }],
+    ["newline instance", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), instanceId: "brand-test-instance\n" }) }],
+    ["CRLF instance", { ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), instanceId: "brand-test-instance\r\n" }) }],
+    ["wrong namespace environment", { ULTRAWORK_BRAND_CONTEXT: json, OPENCODE_APP_NAME: "ultrawork" }],
+    ["relative file", { ULTRAWORK_BRAND_CONTEXT_FILE: "context.json" }],
+    ["missing file", { ULTRAWORK_BRAND_CONTEXT_FILE: join(dir, "missing.json") }],
+    ["conflicting file identity", { ULTRAWORK_BRAND_CONTEXT_FILE: file, ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context(DEFAULT_BRAND)) }],
+    ["conflicting file instance", { ULTRAWORK_BRAND_CONTEXT_FILE: file, ULTRAWORK_BRAND_CONTEXT: JSON.stringify({ ...context(brand), instanceId: "other-instance" }) }],
+  ] as [string, Record<string, string>][]) {
+    for (const value of ["0", "1"]) {
+      environment({ ...env, ULTRAWORK_RICH_OUTPUT: value })
+      const hooks = await RichOutputPlugin(pluginInput)
+      await assert.rejects(() => render(hooks))
+      check(`${name}: transform blocks request with richness ${value}`, () => {})
+    }
+  }
+
+  environment({ ULTRAWORK_BRAND_CONTEXT: json })
+  const quoted = "A user's quoted product is UltraWork; keep ~/.ultrawork and ULTRAWORK_* technical identifiers unchanged."
+  const preserved = await render(await RichOutputPlugin(pluginInput), quoted)
+  check("identity append never rewrites quoted brands, technical identifiers or paths", () => assert.equal(preserved[0], quoted))
+
+  const identities: unknown[] = [DEFAULT_BRAND, brand]
+  for (const key of Object.keys(brand)) {
+    identities.push({ ...brand, [key]: undefined }, { ...brand, [key]: "wrong" })
+  }
+  for (const name of ["MyWork", "My Work", "团队 Work", "O'Brien", "Ultrawork", "Ｕｌｔｒａｗｏｒｋ", "Ultrawork Dev", " ", "x\ny", "a/b", "CON", "bad.", "a".repeat(81)]) {
+    identities.push({ ...brand, productName: name })
+  }
+  for (const id of ["desktop", "opencode", "codex", "claude", "gemini", "qoder", "hermes", "con", "x", "bad_thing", "my-work", "mywork\n", "mywork\r\n", "a".repeat(33)]) {
+    identities.push({ ...brand, brandId: id, namespace: id, identifier: `com.ultrawork.${id}`, mainBinaryName: id })
+  }
+  for (let index = 0; index < identities.length; index++) {
+    const identity = identities[index]
+    check(`identity contract parity ${index + 1}`, () => {
+      assert.equal(
+        accepts(() => productName({ ULTRAWORK_BRAND_CONTEXT: JSON.stringify(context(identity)) })),
+        accepts(() => parseBrandIdentity(identity)),
+      )
+    })
+  }
+  console.log(`\n${passed} passed, 0 failed`)
+} finally {
+  environment()
+  for (const [key, value] of Object.entries(saved)) {
+    if (value !== undefined) process.env[key] = value
+  }
+  rmSync(dir, { recursive: true, force: true })
+}

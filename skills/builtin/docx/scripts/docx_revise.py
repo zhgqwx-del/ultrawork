@@ -38,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
+from docxcommon import (DOCUMENT, brand_product_name, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run, save_checked, text_parts)
 from office import document as doc  # noqa: E402
 from office import revision as rev  # noqa: E402
@@ -114,7 +114,7 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--in", dest="src", required=True, type=Path)
     ap.add_argument("--out", type=Path)
-    ap.add_argument("--author", default="ultrawork")
+    ap.add_argument("--author", help="revision author; defaults to the host product name")
     ap.add_argument("--date", default=DEFAULT_DATE,
                     help="ISO 8601; fixed by default so output is reproducible")
     ap.add_argument("--replace", action="append", default=[], metavar="OLD=NEW")
@@ -175,6 +175,8 @@ def main() -> int:
         report: dict = {"in": args.src.name, "out": str(args.out)}
 
         if making:
+            if args.author is None:
+                args.author = brand_product_name()
             counter = [next_revision_id(root)]
 
             def next_id() -> int:

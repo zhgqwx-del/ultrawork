@@ -1,5 +1,31 @@
+diff --git a/bun.lock b/bun.lock
+index 1a16a37698..ec96d4c30c 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -51,7 +51,7 @@
+         "diff": "catalog:",
+         "effect": "catalog:",
+         "fuzzysort": "catalog:",
+-        "ghostty-web": "github:anomalyco/ghostty-web#main",
++        "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
+         "luxon": "catalog:",
+         "marked": "catalog:",
+         "marked-shiki": "catalog:",
+diff --git a/packages/app/package.json b/packages/app/package.json
+index d179e4a524..5594a2f170 100644
+--- a/packages/app/package.json
++++ b/packages/app/package.json
+@@ -61,7 +61,7 @@
+     "diff": "catalog:",
+     "effect": "catalog:",
+     "fuzzysort": "catalog:",
+-    "ghostty-web": "github:anomalyco/ghostty-web#main",
++    "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
+     "luxon": "catalog:",
+     "marked": "catalog:",
+     "marked-shiki": "catalog:",
 diff --git a/packages/opencode/script/build.ts b/packages/opencode/script/build.ts
-index b104dd267..a94791e3b 100755
+index b104dd2677..a94791e3b6 100755
 --- a/packages/opencode/script/build.ts
 +++ b/packages/opencode/script/build.ts
 @@ -63,6 +63,10 @@ console.log(`Loaded ${migrations.length} migrations`)
@@ -28,7 +54,7 @@ index b104dd267..a94791e3b 100755
        if (item.os !== process.platform || item.arch !== process.arch) {
          return false
 diff --git a/packages/opencode/src/agent/agent.ts b/packages/opencode/src/agent/agent.ts
-index 0c6fe6ec9..71de4bf2d 100644
+index 0c6fe6ec91..71de4bf2d5 100644
 --- a/packages/opencode/src/agent/agent.ts
 +++ b/packages/opencode/src/agent/agent.ts
 @@ -77,7 +77,7 @@ export namespace Agent {
@@ -41,7 +67,7 @@ index 0c6fe6ec9..71de4bf2d 100644
            const cfg = yield* config.get()
            const skillDirs = yield* skill.dirs()
 diff --git a/packages/opencode/src/command/index.ts b/packages/opencode/src/command/index.ts
-index 088d7c565..8c6841674 100644
+index 088d7c5659..8c6841674d 100644
 --- a/packages/opencode/src/command/index.ts
 +++ b/packages/opencode/src/command/index.ts
 @@ -165,7 +165,7 @@ export namespace Command {
@@ -54,7 +80,7 @@ index 088d7c565..8c6841674 100644
        const get = Effect.fn("Command.get")(function* (name: string) {
          const s = yield* InstanceState.get(state)
 diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
-index 850bcc28b..acdfb209c 100644
+index 850bcc28bc..acdfb209c1 100644
 --- a/packages/opencode/src/config/config.ts
 +++ b/packages/opencode/src/config/config.ts
 @@ -60,13 +60,14 @@ export namespace Config {
@@ -253,7 +279,7 @@ index 850bcc28b..acdfb209c 100644
      return runPromise((svc) => svc.directories())
    }
 diff --git a/packages/opencode/src/config/paths.ts b/packages/opencode/src/config/paths.ts
-index 82ccf3945..07bc9e5a3 100644
+index 82ccf3945f..07bc9e5a3c 100644
 --- a/packages/opencode/src/config/paths.ts
 +++ b/packages/opencode/src/config/paths.ts
 @@ -24,13 +24,18 @@ export namespace ConfigPaths {
@@ -283,7 +309,7 @@ index 82ccf3945..07bc9e5a3 100644
      ]
    }
 diff --git a/packages/opencode/src/effect/instance-state.ts b/packages/opencode/src/effect/instance-state.ts
-index cc5901fb5..45ed02617 100644
+index cc5901fb5e..45ed02617b 100644
 --- a/packages/opencode/src/effect/instance-state.ts
 +++ b/packages/opencode/src/effect/instance-state.ts
 @@ -3,6 +3,7 @@ import { Instance, type InstanceContext } from "@/project/instance"
@@ -337,7 +363,7 @@ index cc5901fb5..45ed02617 100644
        return yield* ScopedCache.get(self.cache, yield* directory)
 diff --git a/packages/opencode/src/effect/soft-invalidate-registry.ts b/packages/opencode/src/effect/soft-invalidate-registry.ts
 new file mode 100644
-index 000000000..f66dc0a85
+index 0000000000..f66dc0a857
 --- /dev/null
 +++ b/packages/opencode/src/effect/soft-invalidate-registry.ts
 @@ -0,0 +1,30 @@
@@ -372,7 +398,7 @@ index 000000000..f66dc0a85
 +  return Promise.allSettled([...soft].map((invalidator) => invalidator(directory)))
 +}
 diff --git a/packages/opencode/src/format/index.ts b/packages/opencode/src/format/index.ts
-index c05c2bf45..4b85aaa6d 100644
+index c05c2bf454..4b85aaa6dc 100644
 --- a/packages/opencode/src/format/index.ts
 +++ b/packages/opencode/src/format/index.ts
 @@ -39,7 +39,7 @@ export namespace Format {
@@ -385,7 +411,7 @@ index c05c2bf45..4b85aaa6d 100644
            const commands: Record<string, string[] | false> = {}
            const formatters: Record<string, Formatter.Info> = {}
 diff --git a/packages/opencode/src/global/index.ts b/packages/opencode/src/global/index.ts
-index 869019e2c..6509ec1ba 100644
+index 869019e2ce..6509ec1baa 100644
 --- a/packages/opencode/src/global/index.ts
 +++ b/packages/opencode/src/global/index.ts
 @@ -4,7 +4,7 @@ import path from "path"
@@ -398,7 +424,7 @@ index 869019e2c..6509ec1ba 100644
  const data = path.join(xdgData!, app)
  const cache = path.join(xdgCache!, app)
 diff --git a/packages/opencode/src/mcp/index.ts b/packages/opencode/src/mcp/index.ts
-index 8c92bb6b2..cbc6b9c67 100644
+index 8c92bb6b2e..cbc6b9c67b 100644
 --- a/packages/opencode/src/mcp/index.ts
 +++ b/packages/opencode/src/mcp/index.ts
 @@ -33,6 +33,11 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -464,8 +490,114 @@ index 8c92bb6b2..cbc6b9c67 100644
          return result
        })
  
+diff --git a/packages/opencode/src/plugin/brand-identity.ts b/packages/opencode/src/plugin/brand-identity.ts
+new file mode 100644
+index 0000000000..bd46f4d96f
+--- /dev/null
++++ b/packages/opencode/src/plugin/brand-identity.ts
+@@ -0,0 +1,100 @@
++import { readFileSync } from "node:fs"
++import { isAbsolute } from "node:path"
++
++// This adapter intentionally has no dependency on the host's workspace. Keep
++// its validation aligned with @agent/brand (covered by the host contract test).
++const DEFAULT = {
++  schemaVersion: 1,
++  brandId: "ultrawork",
++  productName: "Ultrawork",
++  identifier: "com.ultrawork.desktop",
++  namespace: "ultrawork",
++  isDefault: true,
++}
++const RESERVED = new Set(["ultrawork", "desktop", "opencode", "codex", "claude", "gemini", "qoder", "hermes"])
++const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
++
++function object(value: unknown): Record<string, unknown> {
++  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid runtime brand context")
++  return value as Record<string, unknown>
++}
++
++function identity(value: unknown) {
++  const item = object(value)
++  const id = item.brandId
++  const name = item.productName
++  if (id !== DEFAULT.brandId) {
++    if (typeof id !== "string" || id.length < 2 || id.length > 32 || id !== id.trim() ||
++        !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(id) || RESERVED.has(id) || DEVICE.test(id)) {
++      throw new Error("Invalid runtime brand ID")
++    }
++    if (typeof name !== "string" || !name || name.length > 80 || name !== name.trim() ||
++        /[\u0000-\u001f<>:"/\\|?*]/.test(name) || /[. ]$/.test(name) || DEVICE.test(name) ||
++        ["ultrawork", "ultrawork dev"].includes(name.normalize("NFKC").toLowerCase())) {
++      throw new Error("Invalid runtime product name")
++    }
++  }
++  const expected = id === DEFAULT.brandId ? DEFAULT : {
++    schemaVersion: 1,
++    brandId: id,
++    productName: name,
++    identifier: `com.ultrawork.${id}`,
++    namespace: id,
++    mainBinaryName: id,
++    isDefault: false,
++  }
++  for (const key of ["schemaVersion", "brandId", "productName", "identifier", "namespace", "mainBinaryName", "isDefault"] as const) {
++    if (item[key] !== expected[key as keyof typeof expected]) throw new Error(`Invalid brand identity field: ${key}`)
++  }
++  return expected as typeof DEFAULT & { mainBinaryName?: string }
++}
++
++function context(value: unknown) {
++  const item = object(value)
++  if (item.schemaVersion !== 1) throw new Error("Unsupported runtime brand context schema")
++  const brand = identity(item.identity)
++  if (typeof item.instanceId !== "string" || item.instanceId !== item.instanceId.trim() || !/^[a-zA-Z0-9_-]{8,128}$/.test(item.instanceId)) {
++    throw new Error("Missing runtime brand instance identity")
++  }
++  if (item.actualIdentifier !== undefined && item.actualIdentifier !== brand.identifier &&
++      item.actualIdentifier !== `${brand.identifier}.dev`) throw new Error("Invalid runtime application identifier")
++  if (item.ownerPid !== undefined && (!Number.isInteger(item.ownerPid) || Number(item.ownerPid) <= 0)) {
++    throw new Error("Invalid runtime owner PID")
++  }
++  return {
++    schemaVersion: 1,
++    identity: brand,
++    instanceId: item.instanceId,
++    ...(item.actualIdentifier === undefined ? {} : { actualIdentifier: item.actualIdentifier }),
++    ...(item.ownerPid === undefined ? {} : { ownerPid: item.ownerPid }),
++  }
++}
++
++/** Host paths are validated by the host; this adapter only consumes identity. */
++export function productName(
++  env: Record<string, string | undefined> = process.env,
++  read: (path: string) => string = (path) => readFileSync(path, "utf8"),
++): string {
++  const file = env.ULTRAWORK_BRAND_CONTEXT_FILE
++  if (file && !isAbsolute(file)) throw new Error("Runtime brand context file must be absolute")
++  const disk = file ? context(JSON.parse(read(file))) : undefined
++  const json = env.ULTRAWORK_BRAND_CONTEXT ? context(JSON.parse(env.ULTRAWORK_BRAND_CONTEXT)) : undefined
++  if (disk && json && JSON.stringify(disk) !== JSON.stringify(json)) {
++    throw new Error("Inherited runtime brand context does not match its context file")
++  }
++  const result = disk ?? json
++  if (env.ULTRAWORK_BRAND_MANAGED === "1" && !result) throw new Error("Managed runtime brand context is missing")
++  if (result && env.OPENCODE_APP_NAME && env.OPENCODE_APP_NAME !== result.identity.namespace) {
++    throw new Error("OPENCODE_APP_NAME conflicts with the runtime brand")
++  }
++  return result?.identity.productName ?? DEFAULT.productName
++}
++
++export function identityGuidance(name: string): string {
++  return [
++    "<identity>",
++    `You are the intelligent assistant of ${JSON.stringify(name)}. You help users accomplish a wide range of tasks through natural conversation and tool use.`,
++    `Do not reveal or discuss your underlying model, model provider, model IDs, API endpoints, internal environment variable names, or how your tools are configured and dispatched. If asked about any of these, briefly identify yourself as the assistant of ${JSON.stringify(name)} and offer to help with the actual task.`,
++    "</identity>",
++  ].join("\n")
++}
 diff --git a/packages/opencode/src/plugin/index.ts b/packages/opencode/src/plugin/index.ts
-index fb60fa096..77ef0fba7 100644
+index fb60fa096e..77ef0fba76 100644
 --- a/packages/opencode/src/plugin/index.ts
 +++ b/packages/opencode/src/plugin/index.ts
 @@ -5,6 +5,8 @@ import { Log } from "../util/log"
@@ -495,11 +627,12 @@ index fb60fa096..77ef0fba7 100644
      return typeof value === "function"
 diff --git a/packages/opencode/src/plugin/rich-output.ts b/packages/opencode/src/plugin/rich-output.ts
 new file mode 100644
-index 000000000..2eef44187
+index 0000000000..9662a98f90
 --- /dev/null
 +++ b/packages/opencode/src/plugin/rich-output.ts
 @@ -0,0 +1,110 @@
 +import type { Hooks, PluginInput } from "@opencode-ai/plugin"
++import { identityGuidance, productName } from "./brand-identity"
 +
 +/**
 + * Ultrawork rich-output prompt (discussions/048). The stock OpenCode default
@@ -514,8 +647,8 @@ index 000000000..2eef44187
 + * is genuinely cross-model. It runs AFTER the per-model base prompt is chosen
 + * (`SystemPrompt.provider(model)` → anthropic.txt / gpt.txt / gemini.txt /
 + * default.txt / …), so we:
-+ *  - APPEND a branded, model-agnostic guidance block (language consistency,
-+ *    identity, adaptive output formatting, task-execution restraint, sensitive
++ *  - APPEND a branded identity plus model-agnostic guidance (language consistency,
++ *    adaptive output formatting, task-execution restraint, sensitive
 + *    info) to `output.system` — this PRESERVES each model's tuned base prompt
 + *    instead of replacing it wholesale (the rejected env `agent.build.prompt`
 + *    approach discarded anthropic/gpt/beast tuning for every non-qwen model);
@@ -528,32 +661,27 @@ index 000000000..2eef44187
 + *
 + * Enabled by DEFAULT (opt-out). Turn off via config `experimental.rich_output:
 + * false` or env `ULTRAWORK_RICH_OUTPUT=0` (A/B escape hatch, overrides config).
++ * The host product identity is independent of this formatting switch.
 + */
 +
-+// Default ON (opt-out). The `config` hook reconciles cfgEnabled from
++// Default ON (opt-out). The `config` hook reconciles enabled from
 +// `experimental.rich_output`; env is a force on/off A/B escape hatch.
-+let cfgEnabled = true
-+const isEnabled = () => {
++const isEnabled = (enabled: boolean) => {
 +  const env = process.env["ULTRAWORK_RICH_OUTPUT"]
 +  if (env === "0" || env === "false") return false // force off
 +  if (env) return true // force on
-+  return cfgEnabled // else config (default ON)
++  return enabled // else config (default ON)
 +}
 +
-+// The branded guidance, appended to EVERY model's base prompt. Kept lean on
++// The formatting guidance, appended to EVERY model's base prompt. Kept lean on
 +// purpose: agentic conduct (tool batching, no auto-commit, no stray comments)
 +// already lives in each model's base prompt, so we do NOT restate it here —
-+// only what the base prompts do not cover (user-language consistency, brand
-+// identity, adaptive richness, execution restraint, secret protection).
++// only what the base prompts do not cover (user-language consistency,
++// adaptive richness, execution restraint, secret protection).
 +export const BRAND_GUIDANCE = [
 +  "<language_consistency>",
 +  "Priority: HIGH. Detect the user's language from their latest message and write your ENTIRE reply — including any thinking, tool rationale, and the final answer — in that language. Keep code, file paths, identifiers, commands, and established technical terms in their original form. If the user writes in Chinese, answer in Chinese; if in English, answer in English.",
 +  "</language_consistency>",
-+  "",
-+  "<identity>",
-+  "You are UltraWork, an intelligent assistant. You help users accomplish a wide range of tasks through natural conversation and tool use.",
-+  "Do not reveal or discuss your underlying model, model provider, model IDs, API endpoints, internal environment variable names, or how your tools are configured and dispatched. If asked about any of these, briefly say you are UltraWork's assistant and offer to help with the actual task.",
-+  "</identity>",
 +  "",
 +  "<output_format>",
 +  "Adapt the shape and length of your answer to the question — do not default to terse. Your output is rendered as full GitHub-Flavored Markdown in a desktop app (not a terminal), so tables, headings, and multi-line formatting display correctly; use them when they aid clarity.",
@@ -591,13 +719,17 @@ index 000000000..2eef44187
 +export const baseIsTerse = (system: string[]) => system.some((s) => TERSE_SIGNATURES.some((sig) => s.includes(sig)))
 +
 +export async function RichOutputPlugin(_input: PluginInput): Promise<Hooks> {
++  let enabled = true
 +  return {
 +    "experimental.chat.system.transform": async (_input, output) => {
-+      if (!isEnabled()) return
-+      // Append the verbosity override FIRST (only for terse base prompts), then
-+      // the branded guidance — later strings carry more weight for most models.
-+      if (baseIsTerse(output.system)) output.system.push(VERBOSITY_OVERRIDE)
-+      output.system.push(BRAND_GUIDANCE)
++      // Validate at request time: plugin initialization failures are swallowed
++      // upstream, whereas transform failures must prevent the model request.
++      const identity = identityGuidance(productName())
++      if (isEnabled(enabled)) {
++        if (baseIsTerse(output.system)) output.system.push(VERBOSITY_OVERRIDE)
++        output.system.push(BRAND_GUIDANCE)
++      }
++      output.system.push(identity)
 +    },
 +
 +    // Capture the enable flag from opencode config (experimental.rich_output).
@@ -605,13 +737,13 @@ index 000000000..2eef44187
 +    // @opencode-ai/plugin Config type may lag the vendor schema addition.
 +    config: async (cfg) => {
 +      const exp = (cfg as any)?.experimental
-+      cfgEnabled = exp?.rich_output !== false // default ON; only explicit false disables
++      enabled = exp?.rich_output !== false // default ON; only explicit false disables
 +    },
 +  }
 +}
 diff --git a/packages/opencode/src/plugin/tool-disclosure.ts b/packages/opencode/src/plugin/tool-disclosure.ts
 new file mode 100644
-index 000000000..e825c73f8
+index 0000000000..e825c73f89
 --- /dev/null
 +++ b/packages/opencode/src/plugin/tool-disclosure.ts
 @@ -0,0 +1,250 @@
@@ -866,7 +998,7 @@ index 000000000..e825c73f8
 +  }
 +}
 diff --git a/packages/opencode/src/project/instance.ts b/packages/opencode/src/project/instance.ts
-index a0d6f2414..c69ef6b07 100644
+index a0d6f2414a..c69ef6b077 100644
 --- a/packages/opencode/src/project/instance.ts
 +++ b/packages/opencode/src/project/instance.ts
 @@ -1,5 +1,6 @@
@@ -899,7 +1031,7 @@ index a0d6f2414..c69ef6b07 100644
 +  },
  }
 diff --git a/packages/opencode/src/provider/auth.ts b/packages/opencode/src/provider/auth.ts
-index 38ef4b11f..8cf064826 100644
+index 38ef4b11f4..8cf0648268 100644
 --- a/packages/opencode/src/provider/auth.ts
 +++ b/packages/opencode/src/provider/auth.ts
 @@ -116,7 +116,7 @@ export namespace ProviderAuth {
@@ -912,7 +1044,7 @@ index 38ef4b11f..8cf064826 100644
            const plugins = yield* plugin.list()
            return {
 diff --git a/packages/opencode/src/provider/provider.ts b/packages/opencode/src/provider/provider.ts
-index afd69f9e7..3f5ff2189 100644
+index afd69f9e70..3f5ff21893 100644
 --- a/packages/opencode/src/provider/provider.ts
 +++ b/packages/opencode/src/provider/provider.ts
 @@ -982,7 +982,7 @@ export namespace Provider {
@@ -958,7 +1090,7 @@ index afd69f9e7..3f5ff2189 100644
                  options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
                  limit: {
 diff --git a/packages/opencode/src/server/routes/global.ts b/packages/opencode/src/server/routes/global.ts
-index 16b9e559f..41e8fb3cd 100644
+index 16b9e559f2..41e8fb3cd4 100644
 --- a/packages/opencode/src/server/routes/global.ts
 +++ b/packages/opencode/src/server/routes/global.ts
 @@ -7,6 +7,7 @@ import { SyncEvent } from "@/sync"
@@ -1045,7 +1177,7 @@ index 16b9e559f..41e8fb3cd 100644
        "/dispose",
        describeRoute({
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
-index dc89db409..505bc0a52 100644
+index dc89db409e..505bc0a52f 100644
 --- a/packages/opencode/src/session/llm.ts
 +++ b/packages/opencode/src/session/llm.ts
 @@ -22,6 +22,128 @@ export namespace LLM {
@@ -1206,7 +1338,7 @@ index dc89db409..505bc0a52 100644
        maxOutputTokens,
        abortSignal: input.abort,
 diff --git a/packages/opencode/src/session/prompt.ts b/packages/opencode/src/session/prompt.ts
-index 8facf7aba..5cd04ec12 100644
+index 8facf7aba7..5cd04ec12a 100644
 --- a/packages/opencode/src/session/prompt.ts
 +++ b/packages/opencode/src/session/prompt.ts
 @@ -1476,6 +1476,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
@@ -1231,7 +1363,7 @@ index 8facf7aba..5cd04ec12 100644
  
                  if (step > 1 && lastFinished) {
 diff --git a/packages/opencode/src/skill/index.ts b/packages/opencode/src/skill/index.ts
-index a2ac3d351..79fb24cc2 100644
+index a2ac3d351c..79fb24cc24 100644
 --- a/packages/opencode/src/skill/index.ts
 +++ b/packages/opencode/src/skill/index.ts
 @@ -196,7 +196,7 @@ export namespace Skill {
@@ -1244,7 +1376,7 @@ index a2ac3d351..79fb24cc2 100644
            const s: State = { skills: {}, dirs: new Set() }
            yield* loadSkills(s, config, discovery, bus, fsys, ctx.directory, ctx.worktree)
 diff --git a/packages/opencode/src/tool/registry.ts b/packages/opencode/src/tool/registry.ts
-index 1bb270716..c1988e6a7 100644
+index 1bb270716c..c1988e6a7c 100644
 --- a/packages/opencode/src/tool/registry.ts
 +++ b/packages/opencode/src/tool/registry.ts
 @@ -20,7 +20,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@ope
@@ -1294,7 +1426,7 @@ index 1bb270716..c1988e6a7 100644
            }
  
 diff --git a/packages/opencode/src/tool/websearch.ts b/packages/opencode/src/tool/websearch.ts
-index bf16428df..2d20c9a38 100644
+index bf16428dfb..2d20c9a385 100644
 --- a/packages/opencode/src/tool/websearch.ts
 +++ b/packages/opencode/src/tool/websearch.ts
 @@ -2,39 +2,291 @@ import z from "zod"
@@ -1760,7 +1892,7 @@ index bf16428df..2d20c9a38 100644
      },
    }
 diff --git a/packages/opencode/src/tool/websearch.txt b/packages/opencode/src/tool/websearch.txt
-index 551c0f3b5..bc3b498c1 100644
+index 551c0f3b59..bc3b498c13 100644
 --- a/packages/opencode/src/tool/websearch.txt
 +++ b/packages/opencode/src/tool/websearch.txt
 @@ -1,14 +1,12 @@
@@ -1786,7 +1918,7 @@ index 551c0f3b5..bc3b498c1 100644
  The current year is {{year}}. You MUST use this year when searching for recent information or current events
  - Example: If the current year is 2026 and the user asks for "latest AI news", search for "AI news 2026", NOT "AI news 2025"
 diff --git a/packages/plugin/src/index.ts b/packages/plugin/src/index.ts
-index 473cac8a9..046b00a52 100644
+index 473cac8a9b..046b00a524 100644
 --- a/packages/plugin/src/index.ts
 +++ b/packages/plugin/src/index.ts
 @@ -273,4 +273,14 @@ export interface Hooks {
@@ -1804,29 +1936,3 @@ index 473cac8a9..046b00a52 100644
 +    output: { tools: Record<string, any> },
 +  ) => Promise<void>
  }
-diff --git a/bun.lock b/bun.lock
-index 1a16a37698..ec96d4c30c 100644
---- a/bun.lock
-+++ b/bun.lock
-@@ -51,7 +51,7 @@
-         "diff": "catalog:",
-         "effect": "catalog:",
-         "fuzzysort": "catalog:",
--        "ghostty-web": "github:anomalyco/ghostty-web#main",
-+        "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
-         "luxon": "catalog:",
-         "marked": "catalog:",
-         "marked-shiki": "catalog:",
-diff --git a/packages/app/package.json b/packages/app/package.json
-index d179e4a524..5594a2f170 100644
---- a/packages/app/package.json
-+++ b/packages/app/package.json
-@@ -61,7 +61,7 @@
-     "diff": "catalog:",
-     "effect": "catalog:",
-     "fuzzysort": "catalog:",
--    "ghostty-web": "github:anomalyco/ghostty-web#main",
-+    "ghostty-web": "github:anomalyco/ghostty-web#4af877d52b523754f113b87084b69835b752fb2c",
-     "luxon": "catalog:",
-     "marked": "catalog:",
-     "marked-shiki": "catalog:",

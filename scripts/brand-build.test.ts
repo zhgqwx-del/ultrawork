@@ -6,8 +6,8 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { deflateSync } from "node:zlib"
 import { validatePng } from "./png-image"
-import { resolveIdentity } from "../packages/core/brand/src/index"
-import { absoluteBrandArgs, imageInfo, parseBrandArgs, resolveBrandBuild, validateArguments, wixUpgradeCode, PROJECT_ROOT, prepareBrandBuild } from "./brand-build"
+import { DEFAULT_BRAND, parseBrandIdentity, resolveIdentity } from "../packages/core/brand/src/index"
+import { absoluteBrandArgs, brandSkillMarkdown, imageInfo, parseBrandArgs, resolveBrandBuild, validateArguments, wixUpgradeCode, PROJECT_ROOT, prepareBrandBuild } from "./brand-build"
 import { exportBrandArtifacts } from "./brand-artifacts"
 import { macosSigningEnvironment, quarantineRemovalCommand } from "./macos-signing"
 import { acquireBuildLock } from "./build-lock"
@@ -27,8 +27,49 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 // upstream Global acceptance additionally needs the vendor submodule/runtime;
 // opt in explicitly so a clean runner reports a skip, never a false pass.
 const vendorGlobalAcceptance = process.env.ULTRAWORK_TEST_VENDOR_GLOBAL === "1" ? test : test.skip
+const pythonCommand = process.platform === "win32" ? "python" : "python3"
 
 describe("brand build contract", () => {
+  test("Python metadata identity matches the shared JS contract (requires Python)", () => {
+    const cases = [
+      DEFAULT_BRAND,
+      ...["MyWork", "Research & Co", "A\u0085", "A\ufeff", "\u0085A", "\ufeffA", "😀".repeat(40), "😀".repeat(41),
+        "A\u00a0", "A\u2007", "A\u202f", "A\u180e", "A\n", "A\r", "A\u2028", "A\u2029", " Ｕｌｔｒａｗｏｒｋ ", "COM1", "con.app", "Safe Work"]
+        .map((productName) => ({ schemaVersion: 1, brandId: "identity-test", productName, identifier: "com.ultrawork.identity-test", namespace: "identity-test", mainBinaryName: "identity-test", isDefault: false })),
+      ...["identity-test\n", "identity-test\r", "identity-test\u2028", "identity-test ", "con", "claude", "my_work", "ok-2"]
+        .map((brandId) => ({ schemaVersion: 1, brandId, productName: "Test Work", identifier: `com.ultrawork.${brandId}`, namespace: brandId, mainBinaryName: brandId, isDefault: false })),
+    ]
+    const expected = cases.map((identity) => { try { return [true, parseBrandIdentity(identity).productName] } catch { return [false, null] } })
+    const script = `import json,os,sys
+sys.path.insert(0,sys.argv[1])
+from docxcommon import brand_product_name,DocxError
+for key in ('ULTRAWORK_BRAND_CONTEXT_FILE','ULTRAWORK_BRAND_MANAGED','OPENCODE_APP_NAME'): os.environ.pop(key,None)
+results=[]
+for identity in json.load(sys.stdin):
+ os.environ['ULTRAWORK_BRAND_CONTEXT']=json.dumps({'schemaVersion':1,'identity':identity,'instanceId':'brand-parity-01'})
+ try: results.append([True,brand_product_name()])
+ except DocxError: results.append([False,None])
+print(json.dumps(results))`
+    const result = spawnSync(pythonCommand, ["-c", script, path.join(PROJECT_ROOT, "skills/builtin/docx/scripts")], { input: JSON.stringify(cases), encoding: "utf8", timeout: 15_000 })
+    expect(result.status, result.error?.message || result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual(expected)
+  })
+  test("DingTalk instructions use their own brand documents and preserve source attribution", () => {
+    const relative = path.join("dingtalk-assistant", "SKILL.md")
+    const source = readFileSync(path.join(PROJECT_ROOT, "skills/builtin", relative), "utf8")
+    const attribution = "\nCopyright Ultrawork Team; source repository: ultrawork.\n"
+    const mywork = resolveIdentity({ brandId: "mywork", productName: "MyWork" })
+    const result = brandSkillMarkdown(relative, source + attribution, mywork)
+    expect(source).toContain("<home>/.ultrawork/office-cli/skills/dws/SKILL.md")
+    for (const form of ["`.mywork/office-cli/skills/dws/", "<home>/.mywork/office-cli/skills/dws/SKILL.md", "~/.mywork/..."]) expect(result).toContain(form)
+    expect(result).not.toContain(".ultrawork/office-cli/skills/dws")
+    expect(result).toContain("%USERPROFILE%")
+    expect(result.endsWith(attribution)).toBe(true)
+    expect(brandSkillMarkdown(relative, source, DEFAULT_BRAND)).toBe(source)
+    // A historical path in somebody else's source note is not a host instruction.
+    const sourceNote = "From ultrawork: <home>/.ultrawork/office-cli/skills/dws/SKILL.md"
+    expect(brandSkillMarkdown(path.join("other", "ORIGIN.md"), sourceNote, mywork)).toBe(sourceNote)
+  })
   test("build probe isolation preserves caller environment and removes only its own temporary root", () => {
     const parent = Object.freeze({ HOME: "/toolchain-home", USERPROFILE: "C:\\toolchain-home", XDG_CACHE_HOME: "/customer-cache", OPENCODE_TEST_HOME: "/customer-home", KEEP: "fixture" })
     const probe = createBuildProbeEnvironment(parent)
@@ -237,13 +278,18 @@ describe("brand build contract", () => {
     writeFileSync(path.join(desktop, "package.json"), JSON.stringify({ scripts: { tauri: "bun run --bun tauri-cli.ts" } }))
     writeFileSync(path.join(desktop, "tauri-cli.ts"), `await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, "packages/client/desktop/node_modules/@tauri-apps/cli/tauri.js")).href)})`)
     mkdirSync(path.join(dir, "skills/builtin"), { recursive: true })
-    writeFileSync(path.join(dir, "skills/builtin/README.md"), "Installed at ~/.config/ultrawork/skills")
+    writeFileSync(path.join(dir, "skills/builtin/README.md"), "Installed at ~/.config/ultrawork/skills; authored by ultrawork")
+    mkdirSync(path.join(dir, "skills/builtin/dingtalk-assistant"))
+    writeFileSync(path.join(dir, "skills/builtin/dingtalk-assistant/SKILL.md"), "<home>/.ultrawork/office-cli/skills/dws/SKILL.md")
     const args = { brandId: "temporary-one", productName: "Temporary One", icon: path.join(dir, "icon.png") }
     const first = resolveBrandBuild(args, dir, dir)
     expect(() => readFileSync(path.join(dir, ".brand-build/identity-ledger.json"))).toThrow()
     const lease = acquireBuildLock(dir, {})
     try {
-      await prepareBrandBuild(first, dir)
+      const prepared = await prepareBrandBuild(first, dir)
+      const skillSource = prepared.env.ULTRAWORK_BUILTIN_SKILLS_SOURCE
+      expect(readFileSync(path.join(skillSource, "README.md"), "utf8")).toBe("Installed at ~/.config/temporary-one/skills; authored by ultrawork")
+      expect(readFileSync(path.join(skillSource, "dingtalk-assistant/SKILL.md"), "utf8")).toBe("<home>/.temporary-one/office-cli/skills/dws/SKILL.md")
       const ledger = readFileSync(path.join(dir, ".brand-build/identity-ledger.json"), "utf8")
       expect(ledger).toContain("temporary-one")
       expect(ledger).not.toContain(dir)

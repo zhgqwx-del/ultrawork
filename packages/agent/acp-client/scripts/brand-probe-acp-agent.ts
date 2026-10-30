@@ -7,11 +7,21 @@ import { randomUUID } from "node:crypto"
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, type McpServer } from "@agentclientprotocol/sdk"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { assistantIdentityPrompt, parseBrandIdentity } from "@agent/brand"
 
 const context = JSON.parse(process.env.ULTRAWORK_BRAND_CONTEXT ?? "null")
 assert(context?.identity?.brandId, "The probe agent lost its managed brand")
 assert.equal(process.env.OPENCODE_APP_NAME, context.identity.namespace)
-const sessions = new Map<string, { cwd: string; servers: McpServer[] }>()
+const identity = parseBrandIdentity(context.identity)
+const hostIdentity = assistantIdentityPrompt(identity)
+const sessions = new Map<string, { cwd: string; servers: McpServer[]; receivedIdentity: boolean; restored: boolean }>()
+
+function metaIdentity(meta: Record<string, unknown> | null | undefined): boolean {
+  const prompt = (meta?.systemPrompt as { append?: unknown } | undefined)?.append
+  if (prompt === undefined) return false
+  assert(typeof prompt === "string" && prompt.includes(hostIdentity), "ACP session metadata lost its product identity")
+  return true
+}
 const output = new WritableStream<Uint8Array>({
   write: (chunk) => new Promise<void>((yes, no) => process.stdout.write(chunk, (error) => error ? no(error) : yes())),
 })
@@ -47,21 +57,30 @@ new AgentSideConnection((conn) => ({
   async authenticate() { return {} },
   async newSession(params) {
     const id = `brand-probe-${randomUUID()}`
-    sessions.set(id, { cwd: params.cwd, servers: params.mcpServers })
-    record({ event: "session", sessionId: id, cwd: params.cwd, mcp: params.mcpServers.map((server) => ({
+    const receivedIdentity = metaIdentity(params._meta)
+    sessions.set(id, { cwd: params.cwd, servers: params.mcpServers, receivedIdentity, restored: false })
+    record({ event: "session", sessionId: id, cwd: params.cwd, metaProductName: receivedIdentity ? identity.productName : undefined, mcp: params.mcpServers.map((server) => ({
       name: server.name, ...("command" in server ? { command: server.command, args: server.args } : {}),
     })) })
     return { sessionId: id }
   },
   async loadSession(params) {
-    sessions.set(params.sessionId, { cwd: params.cwd, servers: params.mcpServers })
-    record({ event: "restored", sessionId: params.sessionId, cwd: params.cwd })
+    const receivedIdentity = metaIdentity(params._meta)
+    sessions.set(params.sessionId, { cwd: params.cwd, servers: params.mcpServers, receivedIdentity, restored: true })
+    record({ event: "restored", sessionId: params.sessionId, cwd: params.cwd, metaProductName: receivedIdentity ? identity.productName : undefined })
     return {}
   },
   async prompt(params) {
     const session = sessions.get(params.sessionId)
     assert(session, "Unknown fixture session")
     const prompt = params.prompt.filter((part) => part.type === "text").map((part) => "text" in part ? part.text : "").join("\n")
+    const hasPrefix = prompt.includes("<host_application_identity>")
+    if (hasPrefix) {
+      assert(prompt.includes(hostIdentity), "ACP wire prompt received the wrong product identity")
+      assert(!session.receivedIdentity, "ACP duplicated identity across metadata and message prefix")
+      session.receivedIdentity = true
+    }
+    if (!session.restored) assert(session.receivedIdentity, "A new ACP session did not receive the host product identity")
     const evidence: Record<string, unknown> = { brandId: context.identity.brandId, namespace: process.env.OPENCODE_APP_NAME }
     const knowledge = session.servers.find((server) => server.name === "knowledge-base")
     if (knowledge) {
@@ -89,7 +108,8 @@ new AgentSideConnection((conn) => ({
       writeFileSync(artifact, JSON.stringify(evidence) + "\n")
       record({ event: "artifact", artifact, cwd: session.cwd })
     }
-    record({ event: "turn", sessionId: params.sessionId, delegated: !!evidence.delegated, knowledge: !!knowledge })
+    record({ event: "turn", sessionId: params.sessionId, delegated: !!evidence.delegated, knowledge: !!knowledge,
+      productName: session.receivedIdentity ? identity.productName : undefined, prefixed: hasPrefix })
     await conn.sessionUpdate({ sessionId: params.sessionId, update: {
       sessionUpdate: "agent_message_chunk", content: { type: "text", text: JSON.stringify(evidence) },
     } })

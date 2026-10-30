@@ -82,7 +82,7 @@ const samePassword = randomBytes(32).toString("hex")
 const auth = `Basic ${Buffer.from(`opencode:${samePassword}`).toString("base64")}`
 const reservations: Reservation[] = []
 const instances: Instance[] = []
-const agentState = new Map<Instance, { single: string; team: string; run: string }>()
+const agentState = new Map<Instance, { single: string; meta: string; team: string; run: string }>()
 const checks: string[] = []
 let modelFixture: ReturnType<typeof brandModelFixture> | undefined
 let succeeded = false
@@ -290,13 +290,14 @@ async function verifyAgents(instance: Instance, foreign: Instance) {
   mkdirSync(sidecarCopies, { recursive: true })
   copyFileSync(binaries.knowledge, join(sidecarCopies, `knowledge-sidecar${process.platform === "win32" ? ".exe" : ""}`))
   const fixture = join(repo, "packages", "agent", "acp-client", "scripts", "brand-probe-acp-agent.ts")
-  for (const role of ["single", "leader", "member"] as const) {
+  for (const role of ["single", "single-meta", "leader", "member"] as const) {
     await request(instance, "acp", `/acp/agents/brand-${role}`, "PUT", {
       label: `${ns}-${role}`, command: process.execPath, args: ["run", "--bun", fixture],
       // Deliberately stale user fields must not override the host context.
       env: { OPENCODE_APP_NAME: "wrongbrand", ACP_CLIENT_PORT: "1", ULTRAWORK_BRAND_CONTEXT: "invalid",
         BRAND_PROBE_LOG: probeLog, BRAND_PROBE_ROLE: role },
       knowledgeMcp: true, orchestratorMcp: true,
+      ...(role === "single-meta" ? { metaSystemPrompt: true } : {}),
     })
   }
   const single = await request(instance, "acp", "/acp/session", "POST", {
@@ -305,6 +306,10 @@ async function verifyAgents(instance: Instance, foreign: Instance) {
   await request(instance, "acp", `/acp/session/${single.sessionId}/prompt`, "POST", { text: "probe:single-answer" })
   const singleHistory = JSON.stringify(await request(instance, "acp", `/acp/session/${single.sessionId}/messages`))
   assert(singleHistory.includes(instance.marker) && !singleHistory.includes(foreign.marker), "Single Agent Knowledge MCP crossed brands")
+  const meta = await request(instance, "acp", "/acp/session", "POST", {
+    agentId: "brand-single-meta", cwd: instance.workspace, orchestrate: false,
+  })
+  await request(instance, "acp", `/acp/session/${meta.sessionId}/prompt`, "POST", { text: "probe:single-meta" })
   const team = await request(instance, "acp", "/orchestration/team/sessions", "POST", {
     workspace: instance.workspace, leaderAgentId: "acp:brand-leader", members: ["acp:brand-member"],
   })
@@ -341,9 +346,13 @@ async function verifyAgents(instance: Instance, foreign: Instance) {
   const evidence = readFileSync(probeLog, "utf8").trim().split("\n").map((line) => JSON.parse(line))
   assert(evidence.every((entry) => entry.brandId === ns))
   assert(evidence.some((entry) => entry.event === "turn" && entry.role === "leader" && entry.delegated))
+  for (const role of ["single", "single-meta", "leader", "member"]) {
+    assert(evidence.some((entry) => entry.event === "turn" && entry.role === role && entry.productName === instance.context.identity.productName), `ACP ${role} did not receive its host identity`)
+  }
+  assert(evidence.some((entry) => entry.event === "session" && entry.role === "single-meta" && entry.metaProductName === instance.context.identity.productName), "ACP metadata identity was not delivered through the explicit adapter configuration")
   assert(evidence.some((entry) => entry.event === "session" && entry.role === "member" && !entry.mcp.some((server: { name: string }) => server.name === "orchestrator")), "Delegate child received recursive orchestration tools")
   assert(evidence.some((entry) => entry.event === "artifact" && entry.cwd.startsWith(join(instance.context.dataRoot, "worktrees"))), "Worktree did not use this brand's data root")
-  agentState.set(instance, { single: single.sessionId, team: team.session.id, run: run.id })
+  agentState.set(instance, { single: single.sessionId, meta: meta.sessionId, team: team.session.id, run: run.id })
   pass(`${instance.context.identity.productName}: single ACP + Knowledge MCP, Team leader/member delegate MCP, member guard, Pipeline/worktree/artifact persistence`)
 }
 
@@ -359,11 +368,14 @@ async function verifyAgentRestart(instance: Instance, foreign: Instance) {
   const sessions = JSON.stringify(await request(instance, "acp", "/acp/sessions"))
   assert(sessions.includes(previous.single) && sessions.includes(previous.team), "Single/Team ACP bindings did not survive restart")
   await request(instance, "acp", `/acp/session/${previous.single}/prompt`, "POST", { text: "probe:restored-single" })
+  await request(instance, "acp", `/acp/session/${previous.meta}/prompt`, "POST", { text: "probe:restored-meta" })
   await request(instance, "acp", `/acp/session/${previous.team}/prompt`, "POST", { text: "probe:leader-delegate" })
   const history = JSON.stringify(await request(instance, "acp", `/acp/session/${previous.team}/messages`))
   assert(history.includes(instance.marker) && !history.includes(foreign.marker))
   const delegates = (await request(instance, "acp", "/orchestration/delegates")).delegates
   assert(delegates.some((entry: { status: string; ownerSessionId: string }) => entry.status === "completed" && entry.ownerSessionId === previous.team), "Restored leader lost delegate ownership")
+  const evidence = readFileSync(join(root, `${instance.context.identity.namespace}-agents.jsonl`), "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  assert(evidence.some((entry) => entry.event === "restored" && entry.role === "single-meta" && entry.metaProductName === instance.context.identity.productName), "ACP session/load lost its appended host identity")
   pass(`${instance.context.identity.productName}: ACP restart restores single/Team bindings, completed Pipeline and functional leader/member MCP delegation`)
 }
 
@@ -442,6 +454,12 @@ try {
     if (models) {
       await verifyOpenCodeModels(first, second)
       await verifyOpenCodeModels(second, first)
+      assert.deepEqual(modelFixture!.failures, [], "The offline model rejected one or more actual wire prompts")
+      for (const instance of instances) {
+        const seen = modelFixture!.requests.filter((entry) => entry.namespace === instance.context.identity.namespace)
+        assert(seen.length > 0 && seen.every((entry) => entry.productName === instance.context.identity.productName))
+      }
+      pass("Both brands: every real OpenCode model request carries exactly its own canonical product identity")
     }
   }
 
@@ -457,7 +475,7 @@ try {
   writeFileSync(join(root, "report.json"), JSON.stringify(report, null, 2))
   succeeded = true
 } catch (error) {
-  console.error(`Brand sidecar verification failed: ${String(error)}`)
+  console.error(`Brand sidecar verification failed: ${error instanceof Error ? error.stack : String(error)}`)
   for (const instance of instances) for (const owned of instance.children) {
     console.error(`--- ${owned.brand}/${owned.role} pid=${owned.child.pid} ---\n${owned.log.slice(-5000)}`)
   }

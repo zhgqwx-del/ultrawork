@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DEFAULT_BRAND, packageSlug, parseBrandIdentity, resolveIdentity, validateBrandId } from "./index"
+import { assistantIdentityPrompt, DEFAULT_BRAND, packageSlug, parseBrandIdentity, resolveIdentity, validateBrandId } from "./index"
 
 describe("brand identity", () => {
   it("preserves the existing default identity without a binary rename", () => {
@@ -11,7 +11,7 @@ describe("brand identity", () => {
     expect(packageSlug("MyWork")).toBe("my-work")
     expect(packageSlug("My Work")).toBe("my-work")
   })
-  it.each(["ultrawork", "desktop", "opencode", "codex", "../foo", "a/b", "AName", "a", "con", "com1", "a--b", "a-", "foo.bar"])("rejects unsafe/reserved namespace %s", (id) => {
+  it.each(["ultrawork", "desktop", "opencode", "codex", "../foo", "a/b", "AName", "a", "con", "com1", "a--b", "a-", "foo.bar", "mywork\n", "mywork\r\n"])("rejects unsafe/reserved namespace %s", (id) => {
     expect(() => validateBrandId(id)).toThrow()
   })
   it.each(["Ultrawork", "Ultrawork Dev", " bad", "bad.", "bad/name", "bad\\name", "con", "a\u0000b"])("rejects unsafe/conflicting product %s", (productName) => {
@@ -22,5 +22,20 @@ describe("brand identity", () => {
     expect(() => parseBrandIdentity({ ...identity, namespace: "ultrawork" })).toThrow()
     expect(() => parseBrandIdentity({ ...identity, identifier: "com.ultrawork.desktop" })).toThrow()
     expect(() => parseBrandIdentity({ ...DEFAULT_BRAND, productName: "MyWork" })).toThrow()
+  })
+  it("uses the canonical product name for the host without replacing the external agent identity", () => {
+    expect(assistantIdentityPrompt()).toContain('The host application is "Ultrawork"')
+    const identity = resolveIdentity({ brandId: "mywork", productName: "MyWork" })
+    const prompt = assistantIdentityPrompt(identity)
+    expect(prompt).toContain('The host application is "MyWork"')
+    expect(prompt).toContain("Preserve your underlying agent/model identity, capabilities, assigned role, and tool instructions")
+    expect(prompt).not.toContain("Ultrawork")
+    expect(prompt).not.toContain(identity.identifier)
+    expect(assistantIdentityPrompt(identity)).toBe(prompt)
+  })
+  it("validates identity before constructing host guidance and quotes product data", () => {
+    const identity = resolveIdentity({ brandId: "research", productName: "R&D's Work" })
+    expect(assistantIdentityPrompt(identity)).toContain(JSON.stringify(identity.productName))
+    expect(() => assistantIdentityPrompt({ ...identity, namespace: "other" })).toThrow()
   })
 })

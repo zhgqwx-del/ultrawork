@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- 补齐独立品牌的模型身份：OpenCode 使用运行时产品名且与丰富输出开关解耦；ACP 单 Agent、Team 与 Pipeline 追加宿主身份并保留外部 Agent 角色，兼容旧会话与恢复失败重建。修复显式 `metaSystemPrompt` 配置在 API/持久化及普通编辑中丢失的问题，vendor 继续由累计 patch 管理。
+- 修正 MyWork 钉钉技能的裸目录与 `<home>` 路径指引，更新技能 staging 缓存；技能宿主说明中性化，DOCX 元信息及默认修订/批注作者跟随品牌、显式作者优先，保留版权及来源。增加跨语言名称校验、实际模型 wire prompt、ACP 生命周期和文档产物回归。
+
 ## [0.3.11] - 2026-10-29
 
 ### Added
