@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """W17 — render a document to PDF (and optionally to page images).
 
-This is not a nicety. **A .docx cannot be previewed inside ultrawork** — the
+This is not a nicety. **A .docx cannot be previewed inside the host app** — the
 artifact panel renders PDF and shows a binary info card for everything else — so
 converting to PDF is the only way a document this skill produced becomes something
 the user can actually look at without leaving the app (059 §7).

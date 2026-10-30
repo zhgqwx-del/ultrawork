@@ -54,6 +54,9 @@ jobs:
         with:
           bun-version: 1.3.12
       - run: bun install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       # The text-SVG icon regression compares Tauri and Resvg using a real
       # installed face. Fresh Linux runners need not provide Arial or a
       # generic sans-serif alias; do not accept a blank reference image.
@@ -65,7 +68,7 @@ jobs:
       - name: Typecheck
         run: bun run --bun turbo run typecheck
       - name: Brand build, icon and setup contracts (including Windows)
-        run: bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts scripts/release-ci.test.ts scripts/linux-install-layout.test.ts
+        run: bun test scripts/brand-build.test.ts scripts/brand-sidecars.test.ts scripts/sidecar-freshness.test.ts scripts/mywork-icon.test.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/setup.test.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/sync-plugin-version.test.ts scripts/release-ci.test.ts scripts/linux-install-layout.test.ts
       - name: Preserve failed ICNS comparison evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -76,11 +79,18 @@ jobs:
           if-no-files-found: ignore
       - name: Default macOS icon drift guard
         run: bun run --bun scripts/gen-macos-icon.ts --check
-      - name: Typecheck vendor build automation
-        run: bun run --bun tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun --skipLibCheck scripts/vendor-dependencies.ts scripts/vendor-patches.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/setup.ts scripts/setup.test.ts scripts/build-opencode.ts scripts/sync-plugin-version.ts scripts/sync-plugin-version.test.ts scripts/macos-icon.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/gen-macos-icon.ts scripts/release-ci.ts scripts/release-ci.test.ts scripts/linux-install-layout.ts scripts/linux-install-layout.test.ts
+      - name: Typecheck build and packaging automation
+        run: bun run --bun tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun --skipLibCheck scripts/vendor-dependencies.ts scripts/vendor-patches.ts scripts/vendor-dependencies.test.ts scripts/vendor-patches.test.ts scripts/setup.ts scripts/setup.test.ts scripts/build-opencode.ts scripts/build-acp.ts scripts/build-gateway.ts scripts/build-knowledge.ts scripts/sidecar-freshness.ts scripts/sidecar-freshness.test.ts scripts/tauri-brand.ts scripts/build-release.ts scripts/sync-plugin-version.ts scripts/sync-plugin-version.test.ts scripts/macos-icon.ts scripts/macos-icon.test.ts scripts/brand-macos-icon.test.ts scripts/gen-macos-icon.ts scripts/release-ci.ts scripts/release-ci.test.ts scripts/linux-install-layout.ts scripts/linux-install-layout.test.ts
       - name: Brand identity and runtime contracts (including Windows)
         working-directory: packages/core/brand
         run: bun run --bun vitest run
+      - name: Model wire identity assertion controls
+        run: bun test scripts/brand-model-fixture.test.ts
+      - name: ACP host identity and session restore contracts (including Windows)
+        run: bun test packages/agent/acp-client/src/__tests__/system-prompt.test.ts packages/agent/acp-client/src/__tests__/delegate-mcp.test.ts packages/agent/acp-client/src/__tests__/agents-config.test.ts packages/agent/acp-client/src/__tests__/permission-label.test.ts packages/agent/acp-client/src/__tests__/permission-display.test.ts
+      - name: MCP approval display UI contracts (including Windows)
+        working-directory: packages/client/desktop
+        run: bun run --bun vitest run src/__tests__/components/chat/permission-dock.test.tsx src/__tests__/components/chat/delegate-dock-scope.test.tsx
       # zh-Hant dictionary is generated from zh-Hans at build time (ADR-058 D3).
       # Fail if someone edited the Simplified source without regenerating — runs
       # here (not the dep-free docs job) because it needs the opencc-js devDep,
@@ -378,8 +388,12 @@ jobs:
       # this job must also catch failures masked by a developer's warm cache.
       - name: Apply vendor patches and install frozen dependencies
         run: bun run --bun scripts/vendor-dependencies.ts
+      - name: Brand model identity and rich-output contracts
+        run: bun run --bun scripts/rich-output/rich-output-unit-test.ts
       - name: Compile native OpenCode including its embedded Web UI
         run: bun run --bun scripts/build-opencode.ts --force
+      - name: Verify native OpenCode source freshness without rebuilding
+        run: bun run --bun scripts/build-opencode.ts --check
       - name: Compile Intel macOS target
         if: runner.os == 'macOS'
         run: bun run --bun scripts/build-opencode.ts --target x86_64-apple-darwin --force

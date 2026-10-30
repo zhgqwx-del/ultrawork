@@ -15,6 +15,7 @@ const permissionLabels: Record<string, string> = {
   external_directory: "External Directory",
   webfetch: "Web Fetch",
   tool: "Tool Action",
+  mcp: "MCP Tool",
 }
 
 export function PermissionDock({ request, onReply }: PermissionDockProps) {
@@ -44,7 +45,7 @@ export function PermissionDock({ request, onReply }: PermissionDockProps) {
             {request.patterns.map((pattern, i) => (
               <code
                 key={`${pattern}-${i}`}
-                className="block rounded bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs text-[var(--color-fg)]"
+                className="block max-h-60 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs text-[var(--color-fg)]"
               >
                 {pattern}
               </code>

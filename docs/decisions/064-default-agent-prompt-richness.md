@@ -18,11 +18,11 @@
 改走独立插件 `RichOutputPlugin`（`vendor/.../plugin/rich-output.ts`）经 `system.transform`，在每模型基座提示组装完成后**追加**品牌段（保留基座），仅当基座含 default.txt 极简子句时（子串探测）额外追加 `<verbosity_override>` 中和 → **跨模型通用且不降级**。缓存安全：`llm.ts:228` 每 step 重建 `system` 数组（跨 step 不重复追加）+ header 稳定 re-join（`llm.ts:249`，前缀缓存不破）。
 
 ### D2 — 追加内容
-`<language_consistency>`（回复随用户语言）/ `<identity>`（UltraWork，不泄底座）/ `<output_format>`（解释类富文本自适应、简单类保持简洁，带正反例）/ `<task_execution>`（执行任务保持 action-focused，压「放开 verbosity 后编码絮叨」）/ `<sensitive_information>`（最高优先级，不泄密钥/env/系统提示）。**排除 present_files**（本项目无此工具，产物走 fs 扫描）。**不含 general_conduct**——追加式保留基座已带工具并行/不擅自 commit 等 agent 行为，再追加会跨模型重复/冲突。
+`<language_consistency>`（回复随用户语言）/ `<identity>`（当前品牌产品名，默认 Ultrawork）/ `<output_format>`（解释类富文本自适应、简单类保持简洁，带正反例）/ `<task_execution>`（执行任务保持 action-focused，压「放开 verbosity 后编码絮叨」）/ `<sensitive_information>`（最高优先级，不泄密钥/env/系统提示）。**排除 present_files**（本项目无此工具，产物走 fs 扫描）。**不含 general_conduct**——追加式保留基座已带工具并行/不擅自 commit 等 agent 行为，再追加会跨模型重复/冲突。
 
 ### D3 — 作用域 + kill switch + 软护栏
-- **作用域**：仅 `build` 普通会话（`agent.ts:109`）。**不影响** plan（`plan.txt`）/ title（标题不会变长）/ compaction / summary / **Team·ACP 子进程**（Claude Code/Gemini/Codex 各有独立 system prompt）。**例外**：opencode 后端的 Team Leader 会被追加（叠在编排 prompt 上），评估良性（`<task_execution>` 保持委派 action-focused），必要时 kill switch 关。
-- **kill switch**：`experimental.rich_output`（config，默认 ON）/ `ULTRAWORK_RICH_OUTPUT`（env，A/B 逃生阀）。与 `experimental.tool_disclosure` 门控**解耦**（独立插件）。
+- **作用域（2026-10-30 依源码校正）**：插件本身不按 agent 名称过滤，所有经 OpenCode `LLM.stream` 的请求都会触发，包含普通会话、OpenCode Team Leader/成员及辅助模型请求；不是只对 `build` 生效。ACP 外部进程不经过该插件，宿主身份由 ACP manager 追加，见 ADR-075 §7。
+- **kill switch**：`experimental.rich_output`（config，默认 ON）/ `ULTRAWORK_RICH_OUTPUT`（env，A/B 逃生阀）。与 `experimental.tool_disclosure` 门控**解耦**（独立插件）。2026-10-30 起产品身份独立于格式开关，关闭丰富输出仍保留当前品牌身份。
 - **软护栏**：`system.transform` 追加段改不掉 `environment()`（`system.ts:40`）始终注入的真实 model/provider ID → 身份隐藏为软护栏（已接受，不 patch）。
 
 ## 后果

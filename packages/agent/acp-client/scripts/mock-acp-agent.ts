@@ -29,6 +29,7 @@ const sessionEffort = new Map<string, string>()
 // without a side channel. Off by default — shaping tests assert exact chunks.
 const ECHO_PROMPT = process.env.MOCK_ACP_ECHO_PROMPT === "1"
 const sessionMetaSystem = new Map<string, string>()
+let promptFailures = 0
 
 function recordMetaSystemPrompt(sessionId: string, _meta: unknown): void {
   const meta = _meta as { systemPrompt?: { append?: unknown } | string } | undefined
@@ -64,7 +65,7 @@ new AgentSideConnection(
     async initialize() {
       return {
         protocolVersion: PROTOCOL_VERSION,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: { loadSession: process.env.MOCK_ACP_NO_LOAD !== "1" },
       }
     },
     async authenticate() {
@@ -85,6 +86,7 @@ new AgentSideConnection(
     // real agents stream history during session/load. The sidecar must
     // suppress all of it (history renders from its own store).
     async loadSession(params) {
+      if (process.env.MOCK_ACP_FAIL_LOAD === "1") throw new Error("Fixture session/load failure")
       recordMetaSystemPrompt(params.sessionId, params._meta)
       const send = (update: SessionUpdate) =>
         conn.sessionUpdate({ sessionId: params.sessionId, update })
@@ -102,6 +104,9 @@ new AgentSideConnection(
       return { configOptions: configOptionsFor(params.sessionId) }
     },
     async prompt(params) {
+      if (process.env.MOCK_ACP_FAIL_FIRST_PROMPT === "1" && promptFailures++ === 0) {
+        throw new Error("Fixture first prompt failure")
+      }
       const send = (update: SessionUpdate) =>
         conn.sessionUpdate({ sessionId: params.sessionId, update })
 

@@ -1,6 +1,6 @@
 /** Build-only branding. Never imported by renderer or application sidecars. */
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { Resvg } from "@resvg/resvg-js"
 import { validatePng } from "./png-image"
@@ -231,6 +231,19 @@ export function cleanBrandEnvironment(env: NodeJS.ProcessEnv = process.env): Rec
   return Object.fromEntries(Object.entries(env).filter(([key, value]) => value !== undefined && !(key === "CARGO_TARGET_DIR" && env.ULTRAWORK_BUILD_TARGET_DIR) && !["ULTRAWORK_BUILD_BRAND_FILE", "ULTRAWORK_BRAND_JSON", "ULTRAWORK_BRAND_UI_LOGO", "ULTRAWORK_BRAND_TRAY_ICON", "ULTRAWORK_BRAND_MACOS_ICON", "ULTRAWORK_BRAND_DIGEST", "ULTRAWORK_BUILTIN_SKILLS_SOURCE", "ULTRAWORK_BUILTIN_SKILLS_OUTPUT", "ULTRAWORK_BUILTIN_SKILLS_VERSION_SEED", "ULTRAWORK_BUILD_CONFIG_FILE", "ULTRAWORK_BUILD_TARGET_DIR"].includes(key))) as Record<string, string>
 }
 
+/** Only installed-path instructions are branded; author/source attribution stays intact. */
+export function brandSkillMarkdown(relativeFile: string, text: string, identity: BrandIdentity): string {
+  if (identity.isDefault) return text
+  let result = text.replaceAll("~/.config/ultrawork", `~/.config/${identity.namespace}`)
+    .replaceAll("~/.ultrawork", `~/.${identity.namespace}`)
+  if (relativeFile.split(path.sep).join("/") === "dingtalk-assistant/SKILL.md") {
+    // This router also documents <home>/.ultrawork and a bare .ultrawork path.
+    // Scope the substitution to its concrete installed-document prefix.
+    result = result.replaceAll(".ultrawork/office-cli/skills/dws", `.${identity.namespace}/office-cli/skills/dws`)
+  }
+  return result
+}
+
 export async function prepareBrandBuild(brand: ResolvedBrandBuild, rootDir = PROJECT_ROOT): Promise<PreparedBrandBuild> {
   const tauriDir = path.join(rootDir, "packages/client/desktop/src-tauri")
   registerPreparedIdentity(brand, rootDir)
@@ -278,7 +291,7 @@ export async function prepareBrandBuild(brand: ResolvedBrandBuild, rootDir = PRO
       writeFileSync(file, tray)
       env.ULTRAWORK_BRAND_TRAY_ICON = file
     }
-    const skillSeed = createHash("sha256").update("brand-skills-v1").update(readFileSync(import.meta.path)).update(brand.identity.namespace).digest("hex")
+    const skillSeed = createHash("sha256").update("brand-skills-v2").update(readFileSync(import.meta.path)).update(brand.identity.namespace).digest("hex")
     const skillHash = createHash("sha256").update(skillSeed)
     const hashSkills = (dir: string, rel = "") => { for (const item of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       if (item.name === ".builtin-version" || JUNK.has(item.name)) continue
@@ -289,16 +302,40 @@ export async function prepareBrandBuild(brand: ResolvedBrandBuild, rootDir = PRO
       else skillHash.update(name).update("\0").update(readFileSync(file)).update("\0")
     } }
     hashSkills(path.join(rootDir, "skills/builtin"))
-    const skillStage = path.join(rootDir, ".brand-build", brand.identity.brandId, "skills", skillHash.digest("hex"))
+    const sourceHash = skillHash.digest("hex")
+    const skillStage = path.join(rootDir, ".brand-build", brand.identity.brandId, "skills", sourceHash)
     const skillsSource = path.join(skillStage, "source")
-    if (!existsSync(skillsSource)) {
-      cpSync(path.join(rootDir, "skills/builtin"), skillsSource, { recursive: true })
-      const visit = (dir: string) => { for (const item of readdirSync(dir, { withFileTypes: true })) {
-        const file = path.join(dir, item.name)
-        if (item.isDirectory()) visit(file)
-        else if (item.isFile() && /\.md$/.test(item.name)) writeFileSync(file, readFileSync(file, "utf8").replaceAll("~/.config/ultrawork", `~/.config/${brand.identity.namespace}`).replaceAll("~/.ultrawork", `~/.${brand.identity.namespace}`))
-      } }
-      visit(skillsSource)
+    // A directory alone may be left by an interrupted copy or Markdown pass.
+    // Keep completion outside source so it cannot become part of the skill ZIP.
+    const readyFile = path.join(skillStage, ".source-ready.json")
+    const readyText = JSON.stringify({ schemaVersion: 1, sourceHash }) + "\n"
+    const ready = (() => {
+      try {
+        return lstatSync(skillsSource).isDirectory() && lstatSync(readyFile).isFile() &&
+          readFileSync(readyFile, "utf8") === readyText
+      } catch { return false }
+    })()
+    if (!ready) {
+      mkdirSync(skillStage, { recursive: true })
+      // The checkout lease excludes other builders. Remove an unfinished tree
+      // before rename, which also works on Windows where the target must be absent.
+      rmSync(readyFile, { recursive: true, force: true })
+      rmSync(skillsSource, { recursive: true, force: true })
+      const temporary = mkdtempSync(path.join(skillStage, ".source-staging-"))
+      try {
+        const stagingSource = path.join(temporary, "source")
+        cpSync(path.join(rootDir, "skills/builtin"), stagingSource, { recursive: true })
+        const visit = (dir: string) => { for (const item of readdirSync(dir, { withFileTypes: true })) {
+          const file = path.join(dir, item.name)
+          if (item.isDirectory()) visit(file)
+          else if (item.isFile() && /\.md$/.test(item.name)) writeFileSync(file, brandSkillMarkdown(path.relative(stagingSource, file), readFileSync(file, "utf8"), brand.identity))
+        } }
+        visit(stagingSource)
+        renameSync(stagingSource, skillsSource)
+        const stagingReady = path.join(temporary, "ready.json")
+        writeFileSync(stagingReady, readyText)
+        renameSync(stagingReady, readyFile)
+      } finally { rmSync(temporary, { recursive: true, force: true }) }
     }
     const skillsOutput = path.join(skillStage, "bundle")
     mkdirSync(skillsOutput, { recursive: true })

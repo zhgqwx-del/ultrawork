@@ -87,17 +87,23 @@ export function loadAgentConfigs(): ACPAgentConfig[] {
       console.error(`[acp] Failed to write default ${CONFIG_PATH}:`, err)
     }
   }
-  return Object.entries(file.agents ?? {}).map(([id, cfg]) => ({
-    id,
-    label: cfg.label ?? id,
-    description: cfg.description,
-    command: cfg.command,
-    args: cfg.args ?? [],
-    env: cfg.env,
-    knowledgeMcp: cfg.knowledgeMcp ?? false,
-    orchestratorMcp: cfg.orchestratorMcp ?? false,
-    thoughtLevel: cfg.thoughtLevel,
-  }))
+  return Object.entries(file.agents ?? {}).map(([id, cfg]) => {
+    if (cfg.metaSystemPrompt !== undefined && typeof cfg.metaSystemPrompt !== "boolean") {
+      throw new Error(`Agent ${id}: metaSystemPrompt must be a boolean`)
+    }
+    return {
+      id,
+      label: cfg.label ?? id,
+      description: cfg.description,
+      command: cfg.command,
+      args: cfg.args ?? [],
+      env: cfg.env,
+      knowledgeMcp: cfg.knowledgeMcp ?? false,
+      orchestratorMcp: cfg.orchestratorMcp ?? false,
+      thoughtLevel: cfg.thoughtLevel,
+      metaSystemPrompt: cfg.metaSystemPrompt,
+    }
+  })
 }
 
 export function agentsConfigPath(): string {
@@ -130,6 +136,7 @@ export function saveAgentConfig(config: ACPAgentConfig): void {
     knowledgeMcp: config.knowledgeMcp || undefined,
     orchestratorMcp: config.orchestratorMcp || undefined,
     thoughtLevel: config.thoughtLevel || undefined,
+    metaSystemPrompt: config.metaSystemPrompt,
   }
   writeFile(file)
 }

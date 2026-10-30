@@ -51,6 +51,9 @@ describe("runtime brand isolation", () => {
   it("does not downgrade malformed or missing managed context to the default brand", () => {
     const { context, file } = fixture()
     expect(() => runtimeBrandContext({ ULTRAWORK_BRAND_MANAGED: "1" })).toThrow("missing")
+    for (const instanceId of ["test_instance_123\n", "test_instance_123\r\n"]) {
+      expect(() => parseRuntimeBrandContext({ ...context, instanceId })).toThrow("instance")
+    }
     expect(() => initializeManagedBrandContext(["sidecar", "--brand-context", file + ".missing"], {})).toThrow()
     expect(() => parseRuntimeBrandContext({ ...context, appRoot: join(context.appRoot, "..", ".ultrawork") })).toThrow("brand")
     expect(() => parseRuntimeBrandContext({ ...context, skillsRoot: join(context.configRoot, "..", "ultrawork", "skills") })).toThrow("derived")

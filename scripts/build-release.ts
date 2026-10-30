@@ -5,7 +5,8 @@ import { parseBrandArgs, prepareBrandBuild, resolveBrandBuild, validateArguments
 import { acquireBuildLock } from "./build-lock"
 import { exportBrandArtifacts } from "./brand-artifacts"
 import { macosSigningEnvironment, quarantineRemovalCommand } from "./macos-signing"
-import { verifySidecarsForTarget, writeSidecarMetadata } from "./sidecar-metadata"
+import { SIDECAR_NAMES, writeSidecarMetadata } from "./sidecar-metadata"
+import { universalSidecarSourceHash, verifyFreshSidecarsForTarget } from "./sidecar-freshness"
 import { materializeBrandSidecars } from "./brand-sidecars"
 import { inspectLinuxInstallers } from "./linux-install-layout"
 
@@ -20,12 +21,6 @@ const selectedBrand = resolveBrandBuild(parsedBrand.brand)
 const lease = acquireBuildLock(rootDir)
 process.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
 process.on("exit", () => lease.release())
-const preparedBrand = await prepareBrandBuild(selectedBrand)
-preparedBrand.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
-for (const key of Object.keys(process.env)) {
-  if (!(key in preparedBrand.env)) delete process.env[key]
-}
-Object.assign(process.env, preparedBrand.env)
 const args = new Set(parsedBrand.rest)
 const skipSidecar = args.has("--skip-sidecar")
 const skipNotarize = args.has("--skip-notarize")
@@ -90,7 +85,14 @@ const sidecarTargets = (() => {
 
 // A skipped compile is never permission to package old/unknown sidecars, even
 // for the default brand. Fail before resource packing, downloads or signing.
-if (skipSidecar) verifySidecarsForTarget(tauriTarget, rootDir)
+if (skipSidecar) await verifyFreshSidecarsForTarget(tauriTarget, rootDir)
+
+const preparedBrand = await prepareBrandBuild(selectedBrand)
+preparedBrand.env.ULTRAWORK_BUILD_LOCK_TOKEN = lease.token
+for (const key of Object.keys(process.env)) {
+  if (!(key in preparedBrand.env)) delete process.env[key]
+}
+Object.assign(process.env, preparedBrand.env)
 
 // ── Built-in skills zip (bundle.resources 携带物) ──────────────────
 // beforeBuildCommand 也会跑，这里显式再跑一次是双保险 + 日志可见；hash 未变时瞬时跳过。
@@ -226,7 +228,7 @@ if (!isMacOS) {
   const tauriBuild = (extra: string[]) =>
     $`cd ${desktopDir} && bun run --bun tauri build --target ${target} ${preparedBrand.configArgs} ${extra}`.quiet(!verbose)
 
-  verifySidecarsForTarget(target, rootDir)
+  await verifyFreshSidecarsForTarget(target, rootDir)
   materializeBrandSidecars(preparedBrand, target)
   if (process.platform === "win32") {
     await buildWindowsInstallers(tauriBuild, path.join(bundleDir, "nsis"))
@@ -295,22 +297,21 @@ if (skipSidecar) {
 // per-arch files automatically. Produce the merged binary ourselves.
 if (isMacOS && !nativeOnly && !skipSidecar) {
   const binariesDir = path.join(rootDir, "packages/client/desktop/src-tauri/binaries")
-  const SIDECAR_BASES = ["opencode-server", "channel-gateway", "knowledge-sidecar", "acp-client"]
   console.log("\n🪢 Creating universal sidecar binaries via lipo...")
-  for (const base of SIDECAR_BASES) {
+  for (const base of SIDECAR_NAMES) {
     const arm = path.join(binariesDir, `${base}-aarch64-apple-darwin`)
     const x64 = path.join(binariesDir, `${base}-x86_64-apple-darwin`)
     const universal = path.join(binariesDir, `${base}-universal-apple-darwin`)
     await $`lipo -create ${arm} ${x64} -output ${universal}`
     // Re-sign: lipo doesn't preserve a usable signature on universal output.
     await $`codesign --remove-signature ${universal} 2>/dev/null; codesign -s - ${universal}`.nothrow()
-    writeSidecarMetadata(universal, "universal-apple-darwin", selectedBrand.digest)
+    writeSidecarMetadata(universal, "universal-apple-darwin", universalSidecarSourceHash(base, rootDir))
     const size = Bun.file(universal).size / 1024 / 1024
     console.log(`   ${base}-universal-apple-darwin (${size.toFixed(1)} MB)`)
   }
 }
 
-verifySidecarsForTarget(tauriTarget, rootDir)
+await verifyFreshSidecarsForTarget(tauriTarget, rootDir)
 
 // ── Step 2: Tauri build (auto-signs via APPLE_SIGNING_IDENTITY when set) ──
 console.log("\n🔨 Running tauri build...")

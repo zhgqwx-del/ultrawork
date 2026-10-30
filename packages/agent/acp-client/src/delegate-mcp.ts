@@ -17,6 +17,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { readFileSync } from "node:fs"
 import { brandPaths, runtimeBrandContext, type BrandEnv } from "@agent/brand/node"
+import { DEFAULT_BRAND } from "@agent/brand"
 
 const KEEPALIVE_MS = 10_000
 
@@ -30,6 +31,8 @@ export interface ShimDeps {
   authHeader?: string
   fetchImpl?: FetchLike
   keepaliveMs?: number
+  /** Display name resolved from the validated host context. */
+  productName?: string
 }
 
 /** Merge the shim's auth header (if any) into a request's headers. */
@@ -101,6 +104,7 @@ export function shimDepsFromEnv(
       return `http://127.0.0.1:${port}`
     },
     authHeader,
+    productName: context?.identity.productName ?? DEFAULT_BRAND.productName,
   }
 }
 
@@ -176,7 +180,7 @@ export async function callDelegate(
   } catch (err) {
     return textResult(
       `orchestrator sidecar unreachable (${err instanceof Error ? err.message : String(err)}) — ` +
-        "the Ultrawork app must be running.",
+        `the ${deps.productName ?? DEFAULT_BRAND.productName} app must be running.`,
       true,
     )
   } finally {

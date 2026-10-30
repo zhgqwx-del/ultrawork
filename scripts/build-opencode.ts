@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
-import { verifySidecarMetadata, writeSidecarMetadata } from "./sidecar-metadata"
-import { needsRebuild, saveHash } from "./build-hash"
+import { verifySidecarFreshness, writeSidecarMetadata } from "./sidecar-metadata"
+import { saveHash } from "./build-hash"
+import { readdirSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { createBuildProbeEnvironment } from "./build-probe-env"
 import { captureVendorDependencies, installVendorDependencies } from "./vendor-dependencies"
 import { ensureVendorPatches } from "./vendor-patches"
@@ -47,19 +49,33 @@ if (!targetInfo) {
   process.exit(1)
 }
 
-console.log(`Building OpenCode sidecar for target: ${tauriTarget}`)
+const force = process.argv.includes("--force")
+const check = process.argv.includes("--check")
+if (check && force) throw new Error("--check cannot be combined with --force")
+console.log(`${check ? "Checking" : "Building"} OpenCode sidecar for target: ${tauriTarget}`)
 
 // Check the complete cumulative patch, including dependency pins added after
 // an earlier source patch was applied. A single source sentinel cannot do this.
 const vendorDir = path.join(rootDir, "vendor/opencode")
 const patchFile = path.join(rootDir, "patches/vendor-opencode-config-fix.patch")
-ensureVendorPatches(rootDir)
+if (check) {
+  // Unlike a build, --check must not apply patches or install dependencies.
+  // A clean/uninitialized checkout needs the normal build path first.
+  const patchDir = path.join(rootDir, "patches")
+  const patches = readdirSync(patchDir).filter((file) => /^vendor-opencode-.*\.patch$/.test(file)).sort()
+  if (!patches.includes("vendor-opencode-config-fix.patch")) throw new Error("Missing canonical vendor patch; rebuild sidecars after restoring it")
+  const location = spawnSync("git", ["rev-parse", "--is-inside-work-tree", "--show-prefix"], { cwd: vendorDir, encoding: "utf8", windowsHide: true })
+  const [inside, prefix] = location.stdout?.split(/\r?\n/) ?? []
+  if (location.status !== 0 || inside !== "true" || prefix !== "") throw new Error("vendor/opencode must be an initialized Git working tree before checking sidecar freshness")
+  for (const patch of patches) {
+    const result = spawnSync("git", ["apply", "--reverse", "--check", "--", path.join(patchDir, patch)], { cwd: vendorDir, encoding: "utf8", windowsHide: true })
+    if (result.status !== 0) throw new Error(`Vendor patch is not fully applied: ${patch}. Run the normal sidecar build before packaging.`)
+  }
+} else ensureVendorPatches(rootDir)
 
 const binaryName = `opencode-${targetInfo.bunTarget}`
 const binarySuffix = targetInfo.exe ? ".exe" : ""
 const binaryPath = path.join(opencodeDir, `dist/${binaryName}/bin/opencode${binarySuffix}`)
-
-const force = process.argv.includes("--force")
 
 // Incremental build: hash submodule commit + patch file to detect changes.
 // This avoids re-hashing the entire vendor source tree (which is large).
@@ -88,16 +104,16 @@ const computeOpencodeHash = async () => {
 const currentHash = await computeOpencodeHash()
 
 let validCache = false
-if (!force && !await needsRebuild(hashFilePath, currentHash, targetPath)) {
-  try {
-    verifySidecarMetadata(targetPath, tauriTarget)
-    validCache = (await Bun.file(`${targetPath}.metadata.json`).json()).sourceHash === currentHash
-  } catch { /* Missing, interrupted or altered outputs are rebuilt. */ }
+try {
+  verifySidecarFreshness(targetPath, tauriTarget, currentHash, hashFilePath)
+  validCache = true
+} catch (error) {
+  if (check) throw error
 }
-if (validCache) {
+if (check || (!force && validCache)) {
   dependencyState.assertUnchanged("incremental build validation")
   const size = Bun.file(targetPath).size / 1024 / 1024
-  console.log(`OpenCode sidecar up-to-date, skipping build (${size.toFixed(1)} MB)`)
+  console.log(`OpenCode sidecar ${check ? "freshness verified" : "up-to-date, skipping build"} (${size.toFixed(1)} MB)`)
   process.exit(0)
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import path from "path"
-import { writeSidecarMetadata } from "./sidecar-metadata"
-import { computeSourceHash, needsRebuild, saveHash, workspaceDepDirs } from "./build-hash"
+import { verifySidecarFreshness, writeSidecarMetadata } from "./sidecar-metadata"
+import { computeSourceHash, saveHash, workspaceDepDirs } from "./build-hash"
 
 const rootDir = path.resolve(import.meta.dir, "..")
 const acpDir = path.join(rootDir, "packages/agent/acp-client")
@@ -44,8 +44,8 @@ if (!targetInfo) {
 
 const suffix = targetInfo.exe ? ".exe" : ""
 const force = process.argv.includes("--force")
-
-await $`mkdir -p ${tauriBinDir}`
+const check = process.argv.includes("--check")
+if (check && force) throw new Error("--check cannot be combined with --force")
 
 const outFile = path.join(tauriBinDir, `acp-client-${tauriTarget}${suffix}`)
 const hashFile = path.join(tauriBinDir, `.acp-client-${tauriTarget}.hash`)
@@ -66,11 +66,20 @@ const currentHash = await computeSourceHash(
   await workspaceDepDirs(acpDir, rootDir),
 )
 
-if (!force && await Bun.file(`${outFile}.metadata.json`).exists() && !await needsRebuild(hashFile, currentHash, outFile)) {
+let validCache = false
+try {
+  verifySidecarFreshness(outFile, tauriTarget, currentHash, hashFile)
+  validCache = true
+} catch (error) {
+  if (check) throw error
+}
+if (check || (!force && validCache)) {
   const size = Bun.file(outFile).size / 1024 / 1024
-  console.log(`ACP Client up-to-date, skipping build (${size.toFixed(1)} MB)`)
+  console.log(`ACP Client ${check ? "freshness verified" : "up-to-date, skipping build"} (${size.toFixed(1)} MB)`)
   process.exit(0)
 }
+
+await $`mkdir -p ${tauriBinDir}`
 
 console.log(`Building ACP Client for target: ${tauriTarget}`)
 

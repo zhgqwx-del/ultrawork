@@ -816,7 +816,7 @@ Rust 测试覆盖路径派生、身份记录、租约与进程身份等宿主规
 
 其二，OpenCode 预热 stdio MCP 时 ACP 可能尚未确定动态端口，shim 不能在握手时把端口固定到整个连接生命周期。delegate/list_agents 现于每次工具调用读取当前品牌/instanceId registry，缺失或外来 registry 返回工具错误且不请求默认端口；由 ACP 直接注入的明确端口及无受管上下文的 standalone 行为保留。delegate 套件 **33/33、96 断言**（`delegate-lazy-registry-final.log`），含真实 HTTP 端口 A→B、外来 registry 零请求、预热握手不读取未就绪 registry；品牌真实子进程 integration **3/3**。两种 ACP 架构与三种 macOS 包已按最新源码重建，原生 **9 项**及最新 Universal 包内工具循环 **12 项**均复验通过；测试拥有的 native/MCP/sidecar 进程完成回收，随后只读进程检查未见残留。
 
-公共默认/定制构建入口都校验四个 sidecar 的 metadata；`--skip-sidecar` 不得放行缺失或旧协议的二进制。构建回归用真实入口子进程和 stub 下游 CLI 验证拒绝路径。OpenCode vendor build 的版本探针使用独立 `OPENCODE_TEST_HOME` 与四个 XDG 根，防止 import Global 时的初始化或缓存版本清理影响正在运行的用户程序。常规 CI 不依赖 vendor checkout 或其自身依赖目录，执行无 vendor 的真实子进程六路径/原 cache/version/canary 功能契约；真实 vendor Global import 为显式 opt-in 验收，设置 `ULTRAWORK_TEST_VENDOR_GLOBAL=1` 后缺少 vendor 或依赖会失败，不能静默跳过。
+公共默认/定制构建入口都校验四个 sidecar 的 metadata 与 builder 当前源码指纹；`--skip-sidecar` 不得放行缺失、旧协议或同协议旧逻辑的二进制。`scripts/sidecar-freshness.test.ts` 还使用复制的真实四个 builder 检查源码/依赖漂移、二进制与 metadata 篡改、纯读 `--check`、Universal 切片来源及两品牌公共入口前置拒绝；Linux 安装布局的异步校验必须完成后才能导出 artifact。OpenCode vendor build 的版本探针使用独立 `OPENCODE_TEST_HOME` 与四个 XDG 根，防止 import Global 时的初始化或缓存版本清理影响正在运行的用户程序。常规 CI 不依赖 vendor checkout 或其自身依赖目录，执行无 vendor 的真实子进程六路径/原 cache/version/canary 功能契约；真实 vendor Global import 为显式 opt-in 验收，设置 `ULTRAWORK_TEST_VENDOR_GLOBAL=1` 后缺少 vendor 或依赖会失败，不能静默跳过。
 
 品牌浏览器脚本使用真实 Vite、React 与浏览器引擎，覆盖默认/MyWork × 英文/简体/繁体 × namespace 已占用、错误品牌、损坏状态、无效端口、无效凭证共 30 个场景。它检查只读诊断、复制/重试/退出、名称与 Logo，确认没有业务 Provider、业务 IPC 或后台 HTTP 请求，并保存报告及截图。Vite 的 `/src/components/session/*.tsx` 是模块加载，不能误作 `/session` API；侦听路径须从根锚定。
 
@@ -894,6 +894,77 @@ Account Holder 处理协议后，以 `07cdda9502471862c36bea3996b2287b63295aa6` 
 原生包内验证和后台扩展报告均放在忽略目录 `.brand-build/verification/`。此前 DMG 的 Finder `-1712` 和 Chrome 连接超时属于历史尝试，本轮已真实复验通过；没有通过关闭 DMG 布局校验来把失败转成成功。原生双宿主生命周期报告已取得，但不能把它等同于三平台全部原生验收或正式权限授权。本机检查为零个有效 Apple codesigning identity，且未配置公证凭证；正式签名、公证和系统权限不能用 ad-hoc `.dev` 包替代。通过上述测试不能证明所有客户环境或所有输入都不存在缺陷。
 
 本轮还以隔离探针环境尝试 `arch -x86_64 <Intel OpenCode> --version`，返回 `Bad CPU type in executable`，因此本机也无法用 Rosetta 补执行 Intel sidecar；报告 `dependency-freeze-rosetta-smoke.json`。工具路径探测未找到可用 Windows/Linux 虚拟机或容器 CLI，不能把已生成 PE/ELF 文件写成对应系统运行通过。
+
+### 模型身份与技能内容补齐（2026-10-30）
+
+本轮修复以默认 `Ultrawork` 与品牌配置 `MyWork` 为验收对象，保持版权/来源、模型策略、Team 角色、权限及业务路由。vendor 累计 patch 增至 28 个文件，子模块提交不变；stock provider 基座只适配已知身份句，其余逐字保留，8 个家族及合法特殊产品名均有回归测试；身份与丰富输出开关解耦。ACP 的显式 `metaSystemPrompt` 经 API/文件保留，普通编辑不清空，非法类型拒绝。
+
+- 确定性提示词测试检查两品牌、自定义名称、开关组合、坏上下文阻断与原文保留；Python/JS 对 29 组名称及身份案例做真实跨语言对比。DOCX 品牌专测 44 项检查实际元信息、作者优先级及坏上下文。
+- 重编本机 ARM64 sidecar 后，`scripts/verify-brand-sidecars.ts --models --keep` 检查两品牌同时运行、数据/鉴权隔离、ACP 单 Agent、Team Leader/成员、Pipeline/worktree、metadata/prefix 身份与重启恢复。真实 OpenCode 对本地 OpenAI-compatible SSE fixture 发起单 Agent 与 Team 工具循环；fixture 校验**实际 HTTP system 提示中的品牌身份**，不能用预设回答代替该检查。汇总日志 `.brand-build/verification/identity-sidecars-models.log`，报告另存 `identity-sidecars-models.json`。
+- Chrome 156.0.8078.79 与 WebKit 26.5 各通过两品牌 × 三语的 6 条 Ready 流程 / 30 项 UI 检查，包含 Solo/Team 切换；IPC/HTTP 使用显式 fixture。报告与截图目录 `identity-browser-chrome/`、`identity-browser-webkit/`（均位于 `.brand-build/verification/`）。
+- 实际重打两品牌技能 ZIP 并解压核对钉钉路径、Windows 指引、中性宿主文案、原作者来源及 runtime helper，报告 `identity-pack-skills.json`。DOCX 全量行为回归 266 条结果、0 失败、5 项环境跳过；本机 bundled LibreOffice 需测试进程指定 `svp` 与临时 Fontconfig，5 项跳过是无法制造无中文字体环境的 tofu 负向控制，不能标成通过。报告 `identity-docx-selftest.json`。
+
+本地模型/ACP fixture 验证协议内容与工具流程，不证明在线模型每次自称正确，也不替代 Claude/Codex/Gemini 等真实第三方账号和 adapter 的抽样。prefix-only adapter 自行压缩历史后若丢弃首轮提示，ACP 协议没有统一的永久 system append 保证；支持 metadata 的 adapter 在 load 时重新追加。Windows/Linux 原生执行、安装/升级和签名发行仍须对应宿主或 CI 验证，不能用 macOS 本机测试替代。上述修复未自动变成已有 `v0.3.11` 安装包的内容，需另行发布版本。
+
+### 追加独立 review 与客户路径验收（2026-10-30）
+
+追加 review 找到并修复三项构建边界：品牌技能中断缓存可能被复用、同协议旧 sidecar 可经跳过编译打包、直接 Tauri Linux 安装布局检查未等待完成。业务模型路由、权限、Team 委派和运行数据格式没有改动。新增 staging 完成标记与原子发布；四 builder 的 `--check` 复用原有 hash 规则，公共入口在资源/签名前校验新鲜度；构建与打包脚本加入三平台严格类型检查。
+
+- 独立复跑身份 98/98、ACP 身份恢复 18/18；构建相关八套回归 71 通过、0 失败，4 项本机不具备 Linux 工具的场景按环境跳过，由对应 CI 执行。完整品牌构建 opt-in 套件 29/29；完成标记不进入技能 ZIP。Windows 回归使用异步子进程并发读取 stdout/stderr，入口多案例按实际调用量设置测试预算，保留每个子进程独立超时及错误诊断。
+- 当前四个真实 sidecar 复制到源码目录外的中文/空格路径、全新 HOME 后，单 Agent、Team、Pipeline、重启及实际模型 system 身份 13 组通过。Chrome/WebKit 各重新通过两品牌三语 6 流程/30 检查。日志前缀均为 `.brand-build/verification/identity-recheck-`。
+- 实际构建默认与 MyWork 两个 ARM64 Dev DMG，后者使用新鲜 sidecar 的 `--skip-sidecar` 正向路径。两包均通过 7 项 DMG 哈希、包名/identifier、图标字节、深度签名、中文/空格搬迁、269 个包内文本无 checkout 引用、5 个 Mach-O 仅依赖系统或相对库检查。报告 `identity-recheck-package-default.json` / `identity-recheck-package-mywork.json`。
+- 两个搬迁后的真实 `.app` 在中文 HOME、C locale 下通过原生宿主 8 项启动/隔离/互斥及 MCP 重启检查；从两份 DMG 内实际 sidecar 分别跑两品牌工具循环，各 13 组通过，所有自建子进程已回收。报告 `identity-recheck-native-hosts.json`，日志 `identity-recheck-packaged-default-sidecars.log` / `identity-recheck-packaged-mywork-sidecars.log`。
+
+以上是 ad-hoc 签名的本机 ARM64 验收，不是 Developer ID、公证、Gatekeeper/权限或其它 OS 安装升级结论。跨 checkout 的已有二进制因原 hash 包含路径标签可能需要重编，这只影响构建缓存，客户运行不执行该构建门禁。真实模型和第三方 ACP、prefix 历史压缩边界仍同上节，不能承诺任何客户环境绝对无缺陷。
+
+### 追加真实在线模型与外部 ACP 抽样（2026-10-30）
+
+真实在线模型抽样发现，仅在 system 末尾追加品牌身份，仍可能被上游预置基座的 `You are opencode` 首句干扰。因此追加在 provider 选择阶段适配八类 stock prompt 的已知身份首句，其他策略/来源和用户、Team、自定义提示保持原文；累计 vendor patch 为 28 个文件，submodule 提交不变。提示词纯测试 120 项、品牌包 38 项及工作区 13 个测试任务通过，独立 review 未发现新增阻断缺陷。
+
+使用现有模型服务配置、隔离 HOME/XDG/中文工作区和当前四个原生 sidecar，实际调用 `qwen3.7-flash`，两品牌的中英文单 Agent、Team Leader 和两个独立 OpenCode 子会话共 12 条身份回答均命中正确品牌；单 Agent 和成员的真实文件写读均完成。报告 `.brand-build/verification/identity-live-headless-report.json` 保留完整结果：Ultrawork 两个子会话还主动附带底层模型名，因此严格的“不得披露模型名”检查仍失败，整套退出码为 1，不能写成全部通过。Team 的两个成员为同一 OpenCode backend 下的独立会话，不代表 UI 自定义 persona 的验收。
+
+真实外部 Agent 抽样使用官方 `codex-acp 2.5.0`、其配套 Codex 及当前 ACP sidecar；两品牌单 Agent 与 Team 的自然自介均通过，另行追问执行 Agent 时保留 Codex 身份。Team 成员收到逐字自然问句且无品牌提示，真实 delegate、ownerSessionId 与成员交付均核对。临时登录去除 refresh token，原始登录文件前后校验一致，运行结束删除临时凭证。结果分别保存为 `identity-real-acp-solo.json`、`identity-real-acp-team.json`。发现新桥接的 MCP 权限在当前 UI 被归类为 `bash/exec-UUID` 的显示瑕疵；本轮未改产品分类，测试仅在核对同一 tool call 的真实 `mcp.orchestrator.delegate`、成员 ID 和本轮工作区后精确允许，未笼统放行 shell。
+
+补充 Chrome + Vite 在线验收的入口在忽略目录 `identity-live-browser.ts`，报告/截图位于 `identity-live-browser/`。其 HTTP、SSE、模型及文件工具走当前真实 sidecar，只有 Tauri IPC 使用显式测试适配；Team 经真实 REST 创建后打开 UI，不能表述成已经覆盖 Home 的成员选择创建流程。验收还须等待新 user 对应的最终 assistant 正文以及 UI 的 SSE idle，不能用上一轮回复、工具步骤叙述或侧栏品牌名称代替模型回答。具体通过与失败以报告为准；首轮 harness 误判报告保留供追溯。
+
+上述测试不修改真实业务配置，不证明全部模型/第三方 adapter 的输出都确定，也不替代 Windows/Linux/Intel Mac 原生安装、正式签名、公证和系统权限验收。当前已发布安装包仍须新发行才包含这些修改。
+
+### 身份稳定性与 Codex MCP 授权显示收敛（2026-10-30）
+
+移除系统环境中主动声明 `You are powered by ... exact model ID ...` 的冲突句，实际模型选择仍沿用既有请求参数、Agent 配置和默认配置。Anthropic/Codex 的第二句 stock CLI 自称定向适配为中性编码职责；其余编辑、工具和来源信息保留。宿主身份指导限定为自我描述，不给普通任务、文件和工具参数增加简介。独立 review 以 32 组基座、LF/CRLF 和特殊品牌名验证非目标正文保持完整。
+
+Codex 的 MCP `request_permission` 可能只有 `execute/exec-UUID`，同一调用更早的通知才有 server/tool/arguments。显示解析现在只借用当前会话、当前轮次、同一 ID 且无冲突的信息：有意义的新标题、显式 kind 冲突、跨会话/跨轮次及封口后的旧缓存均不复用；无结构化证据的 opaque execute 显示中性 Tool Action。MCP 权限展示工具名和多行 JSON 参数，单 Agent、Team 子权限及 Pipeline 权限区均可换行滚动。授权 optionId、once/always/reject 映射、路由、超时和默认拒绝没有变化。若详情在权限 RPC 之后才到达，本实现不等待或猜测未来信息，也不重发授权事件。
+
+捕获新编 sidecar 的真实显示字段后，Chrome 重放实际主权限 Dock、DelegateDock 和完整 Pipeline 页：两品牌、捕获/长文本样本、320/440/1440 宽度共 36 场景/108 组检查/72 次 once/reject 点击通过。视觉检查发现并修复窄屏按钮挤压参数列的问题；修复后最窄参数列仍有 244px，长 JSON 可滚到底，HTML 样本作为纯文本显示。报告 `permission-display-browser-proof/report.json`。该重放只验证 UI 与回调，路由 ID 脱敏并由本地适配器记录；真实授权回环由下述 Codex 探针分别验证，不能合称为一次完整 GUI 授权测试。
+
+回归包括提示词 152 项、wire 4 项、品牌包 38 项、ACP 全量 181 项，以及真实 stdio 的授权前阻塞、三个原始 optionId 映射和真实 shell 不误归为 MCP。Windows CI 识别并修正新增断言的 LF 假设，固定增加八类基座 × 两品牌 × LF/CRLF 的 32 项逐字正文保留检查；生产适配本就支持两种换行。新权限合同和两个 renderer 权限套件纳入显式三平台 CI（Windows 既有全 workspace 跳过不再遗漏这些合同）。完整工作区 13 个测试任务与 9 个 typecheck 任务通过。
+
+真实测试分离身份和业务任务，固定轮数，不把文件完成回复必须带品牌作为产品契约，不重试至绿。两品牌 × 两轮共 28 条单 Agent、Leader、直接真实成员自然问句中 27 条通过，MyWork 一次回答仅为 `4`（未串品牌或泄露模型名），失败保留在 `identity-stability-headless-report.json`；两品牌的 4 组真实文件/委派业务任务均通过，内容精确且无简介污染。Chrome 两品牌各 6 项流程通过，包含真实问答、读写、历史、Leader/工具后自介和真实两子会话文件任务；浏览器 IPC 为显式适配，HTTP/模型/SSE 为真实服务。报告 `identity-stability-browser/report.json`。
+
+真实 Codex ACP 的两品牌单 Agent、Team 拒绝、Team 仅此次允许分别通过；权限必须从实际 SSE 显示的 `mcp`、工具名、JSON 与 metadata 核对范围，不再靠旧工具历史补偿错误显示。拒绝案例未产生 delegate，允许案例才真实执行；原登录文件校验未变，临时凭证不含 refresh token 且运行后删除。报告 `identity-stability-acp-solo.json`、`identity-stability-acp-team-reject.json`、`identity-stability-acp-team-once.json`。另行固定 8 次 wire 诊断均正确，检查了实际 system 品牌/无冲突声明、上游内容增量和最终 API 正文一致；未记录凭证或真实 endpoint，报告 `identity-stability-wire-diagnostic.json`。该轮未复现 `4`，原异常缺少 wire 证据，不能确定归因为服务端或软件整形；不能把新 8 次正确作为抹去原失败的依据。捕获真实事件后的 Chrome 权限显示报告位于同一忽略验收目录；这些结果与环境边界须分别陈述，不能宣称任意模型始终遵循所有指令。
+
+上轮浏览器“漏自介”的实际 delegate task 没有转交自介要求，不能归因于成员丢失品牌上下文；另一次文件混入简介是 Leader 把子任务改成了“在文件中介绍软件”。原始报告仍保留，新测试以无品牌提示的独立身份问题及中性文件标记避免跨层误判。以上软件合同和真实协议验收不替代后续正式签名、系统授权弹窗及其他 OS 的原生安装升级验收。
+
+### `.env` 默认模型的最终综合验收（2026-10-30）
+
+按用户要求停止百炼控制台登录，仅将仓库根 `.env` 作为数据读取，使用其中的 `qwen3.8-max`、地址及密钥；不回退读取用户应用的模型配置。真实凭证只存在父进程代理内存，子进程使用随机本地凭证。所有 HOME/XDG/工作区均隔离，`.env` 前后摘要一致，临时报告与目录的密钥/服务地址扫描通过，自建服务与临时凭证已清理。报告保存在忽略目录 `.brand-build/verification/`。
+
+本轮唯一追加的生产行为是自介语言提示：依当前问题及显式语言要求回答，不以工作区名称、路径、工具说明或 Team 指令判断语言；OpenCode 与 ACP 共用同一含义，丰富输出关闭时仍生效。真实 stdio 回归确认同品牌旧 ACP 会话恢复时也会升级身份契约。没有改写模型回答、固定回复模板、调整模型选择/温度或改变权限与业务路由。累计 vendor patch 仍为 28 个文件，upstream 子模块提交不变。
+
+| 验收 | 结果与边界 |
+|---|---|
+| 本地回归 | 9 个 typecheck 任务、13 个完整 workspace test 任务通过；Desktop **934/934**、ACP **182/182**、品牌包 **38/38**、提示词 **152/152**、wire 控制 **4/4**，Rust **185/185**。Rust 首次沙箱内执行因本地端口/进程查询权限失败，原日志保留；同一离线命令获准在本机重跑后通过。日志前缀 `identity-env-final-` |
+| Headless 品牌身份 | 两品牌的 16 条核心与 8 条工具后/重启后自介共 **24/24 品牌正确**，没有串名或主动披露内部模型/引擎；两品牌 Solo 精确文件写读、真实 Leader → MCP → 两个 OpenCode 成员会话执行及文件无自介污染通过。自然英文检查仍有 **7 项失败**，没有重试至绿；显式要求 `Reply in English` 的后续探针通过 |
+| 四服务重启与读取控制 | 四个实际 sidecar PID 均变化；两品牌各 4 个会话历史、3 个文件及 Team 注册表恢复通过。原报告两条重启读取失败源于 harness 在同一业务会话发送 `tools:{"*":false}`，OpenCode 按原契约持久化为 deny；原脚本和失败报告保留。独立控制使用生产式 `orchestrator_*` 限制，重启后由测试进程写入未告知模型的新 UUID，真实 read 工具及回答均得到新值，**2/2 通过**，不是复述历史 |
+| Chrome + Vite | 实际 Chrome **156.0.8078.79**、当前四个原生 sidecar、真实 HTTP/SSE/模型/工具；只有 Tauri IPC 为显式测试适配。两品牌共 **20 项核心检查通过**：名称/图标、Solo 品牌、文件读写、历史重载、真实 Team 双成员任务、工具后身份及 Solo 流中止/恢复。语言观察 **8/10 通过、2 项失败**；原 Stop 定位器歧义以独立唯一 composer 按钮控制补验，两品牌 `/abort` 均为 200、恢复 idle 后可继续回答。Team 由真实 REST 创建后进入 UI，不代表 Home 成员选择全流程或 Team 级联取消 |
+| 真实权限回环 | 两品牌 × 单 Agent/真实 Team 成员 × reject/once 共 **8/8 通过**、16 次上游请求；拒绝未生成文件，允许后实际写读精确内容。Team 的 owner/session/member 及 `delegate.permission` 转发、原 `/permission/:id/reply` 回路均核对。此轨经公开 delegate API 触发成员；Leader 自主 MCP 委派由 headless/浏览器轨另证，不合称为同一 GUI 授权测试 |
+| 模型请求与输出归因 | 主 headless 68 次上游调用，加独立读取控制 4 次；浏览器 46 次（含中止补验），权限 16 次。主轨显式 `enable_thinking:false`、输出上限 1200、温度未指定，不冒充客户原配置完整复刻。另固定两问省略 thinking 覆盖的对照共 4 次调用，wire 确认字段未发送、只保存推理增量计数而不保存推理正文；两品牌均答对品牌，但 Ultrawork 仍答中文、MyWork 答英文，故不能把语言问题全部归因于该覆盖 |
+
+组合索引分别为 `identity-env-comprehensive-harness-findings.json`、`identity-env-browser-acceptance-index.json` 和 `identity-env-permission-report.json`；它们引用原始报告与补充控制，没有把含失败的原报告改成全绿。浏览器未见 pageerror/未知 IPC；SSE 控制台中断与页面导航时间一致，另有一次初始 404 未保存资源地址，不能宣称控制台零错误。前轮真实 Codex ACP 的单 Agent/Team、MCP 展示及 once/reject 结果仍按前节范围保留；本轮 `.env` 模型不等于外部 Codex 也使用该模型。
+
+**非环境剩余项**：自然英文提问仍偶发中文回复（wire 证实上游响应与 API/界面一致），不能保证模型始终服从语言指令；此前 `qwen3.7-flash` 一次回复 `4` 的原始失败仍未定位，后续固定 8 次及 64 次 wire 抽样未复现不构成抹去失败的理由；Team Leader 的 Stop 只取消当前会话，未保证级联取消全部在途 delegate，成员可能继续到完成或自身超时，该链路相对 main 未变，见 gotchas §9。本轮不扩大范围修改该业务语义。
+
+**环境剩余项**：Windows/Linux/Intel Mac 的原生安装、升级、卸载、完整 GUI/系统权限，以及最新分支的正式 Developer ID 签名、公证与 Gatekeeper，仍需对应系统/发行环境。Chrome IPC 适配、ARM64 ad-hoc 包和三平台 CI 不能替代这些证据；未逐个验证的外部 Agent、渠道和客户账号也不作通过承诺。
 
 ### 发行包的原生场景验收
 

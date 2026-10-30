@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-10-29 -->
+<!-- last-synced: 2026-10-30 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -248,6 +248,8 @@
 
 ## 8. ACP / 外部 Agent（:4099，`@agent/acp-client`）
 
+- **Codex MCP 的权限帧可能只有 execute/exec-UUID，不能据此直接显示 Bash**（官方 codex-acp 2.5.0 真实链路，2026-10-30）：同一 `toolCallId` 更早的 `tool_call` / `tool_call_update` 才带 `title=mcp.server.tool` 和 `rawInput={server,tool,arguments}`。`request_permission` 在 drain 已到达通知后，由 `permissionDisplay` 从当前会话、当前轮次、同 ID 的快照恢复显示；新标题、显式 kind 冲突或 sealed 后缓存不借用。结构化 MCP 才显示 MCP，真实 command/backtick 仍为 Bash，无证据时中性 Tool Action；名称/参数只是展示，原 optionId 与授权回环不变。详情晚于权限 RPC 的适配器不等待猜测，不能为了截图直接批准未知操作。真实授权验收须分别覆盖 reject（零委派）和 once（实际委派），不可只依据旧 history 绕过错误权限显示。
+
 > 阶段1（ADR-027）实测坑点。SDK pin `@agentclientprotocol/sdk` 0.25.0；claude adapter = `@agentclientprotocol/claude-agent-acp`（0.44 实测；前身 `@zed-industries/claude-code-acp` 永久停在 0.16.2，已弃用）。
 
 - **turn 整形契约（最核心）**：`buildTurnModel` 把「最后一条不含 tool part 的 message」当答案（`assistant-turn.tsx:53`），`isTerminal` 要求 `info.finish && !== "tool-calls"`（`message-list.tsx:110`）。sidecar 必须：工具步骤发过程 message（封板 `finish:"tool-calls"`）、最终文本发独立纯 text message（`finish:"stop"`）、**每个 part 先 `message.part.updated` 建好类型再发 delta**（前端 delta 对未知 part 直接丢弃且新建硬编码 text）。
@@ -308,6 +310,8 @@
 
 - **`delegate.snapshot` 只重放 delegates，不重放待答的权限请求**（ADR-048 实测，2026-07-11）。新订阅者拿到的首帧里没有任何 pending permission，所以**任何持有该状态的组件一旦卸载重挂，那条权限行就永久消失** —— 子 agent 会一直阻塞到 sidecar 超时，界面上无任何线索。
   → 因此 `useDelegateRows` 必须挂在 **Session 级**（组件之上），`DelegateDock` 退化为纯渲染。布局变化（如全屏预览把 dock 从会话列 re-parent 到底部栏）在 React 里等于卸载 + 重建，state 放组件里必丢。
+
+- **Team Leader 的 Stop 不等于取消全部成员（2026-10-30 品牌验收复核，既有边界）**：会话页只执行 `connector.cancel(sessionId)`；`orchestration-routes.ts` 的公开 delegate 请求未把 HTTP 请求中断连接至成员的 AbortController，`DelegateManager` 也不按 `ownerSessionId` 级联取消。OpenCode MCP 的 `client.callTool` 尚未传入 abortSignal。因此成员可能继续到完成或自身超时（默认十分钟）。显式 `cancelTask` / Pipeline `cancelRun` 的通过证据不能用来证明根会话 Stop 会级联取消，单 Agent Stop 的浏览器验收也不能外推为 Team 取消通过。此语义不是品牌身份修复引入，调整需作为独立业务变更设计和验收。
 
 ## 10. 内置技能（built-in skills，`skills/builtin/` + Settings 技能页）
 

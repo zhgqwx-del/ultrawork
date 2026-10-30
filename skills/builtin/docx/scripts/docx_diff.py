@@ -59,7 +59,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from docxcommon import (DOCUMENT, clip, emit, ensure_distinct, fail,  # noqa: E402
+from docxcommon import (DOCUMENT, brand_product_name, clip, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run, save_checked, text_parts)
 from office import document as doc  # noqa: E402
 from office import revision as rev  # noqa: E402
@@ -458,7 +458,7 @@ def main() -> int:
                     help="the later document")
     ap.add_argument("--redline", type=Path,
                     help="write the differences into A as tracked changes")
-    ap.add_argument("--author", default="ultrawork")
+    ap.add_argument("--author", help="redline author; defaults to the host product name")
     ap.add_argument("--date", default=DEFAULT_DATE,
                     help="ISO 8601; fixed by default so output is reproducible")
     ap.add_argument("--strict", action="store_true",
@@ -481,7 +481,8 @@ def main() -> int:
                        for el in a.tree(name).iter()
                        for v in [el.get(q("id"))]
                        if v is not None and v.lstrip("-").isdigit()), default=100)
-        diff = Diff(args.author, args.date, highest)
+        author = args.author if args.author is not None else brand_product_name()
+        diff = Diff(author, args.date, highest)
 
         roots = {}
         for name in text_parts(a):

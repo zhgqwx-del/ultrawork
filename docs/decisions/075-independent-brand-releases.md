@@ -60,7 +60,7 @@ ready 守卫在集中 IPC 入口执行，不能仅依赖 renderer 不挂载业�
 
 四个 sidecar 保持固定逻辑角色；Linux 的自定义发行包将安装文件名加 namespace 前缀（如 `mywork-opencode-server`），避免共享 `/usr/bin` 文件被两个 deb/rpm 占用。默认 Linux 及 macOS/Windows 保留内部原名。构建锁内物化 externalBin staging，宿主按平台/品牌解析相同名称；Linux 打包后再从真实 deb/rpm 读取安装清单，检查主程序、sidecar、资源路径及默认品牌冲突，并写入 manifest。不能只检查生成的配置就宣称包内无冲突。
 
-默认和定制公共入口在打包前都检查目标 triple、上下文协议和二进制 SHA-256 metadata。`--skip-sidecar` 只跳过编译，不能跳过兼容检查。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建副作用影响用户运行数据。只导出本次成功构建、属于当前品牌的安装包，并生成带身份、实际签名模式、大小与校验和的 manifest。release 运行时必须从安装包解析 sidecar；源码 checkout fallback 仅供 debug，不能掩盖客户包缺文件。构建机器的素材/staging 绝对路径不作为客户运行配置。
+默认和定制公共入口在打包前都检查目标 triple、上下文协议、二进制 SHA-256 和当前源码/依赖指纹。`--skip-sidecar` 只跳过编译，不能跳过兼容与新鲜度检查；校验复用各 builder 的 `--check`，不维护另一套 hash 规则。Universal 的来源由两架构已验证的 sourceHash 和二进制 SHA 派生，与品牌无关。品牌技能 source 通过临时树、原子发布及 source 外完成标记保证中断后不复用半成品。OpenCode vendor build 的版本探针使用独立应用 home/XDG，避免构建副作用影响用户运行数据。只导出本次成功构建、属于当前品牌的安装包，并生成带身份、实际签名模式、大小与校验和的 manifest。release 运行时必须从安装包解析 sidecar；源码 checkout fallback 仅供 debug，不能掩盖客户包缺文件。构建机器的素材/staging 绝对路径不作为客户运行配置。
 
 ### 6. 签名沿用平台流程，每个品牌单独验证
 
@@ -69,6 +69,16 @@ ready 守卫在集中 IPC 入口执行，不能仅依赖 renderer 不挂载业�
 Windows 签名与 Linux 仓库/包分发签名维持现有流程边界；本次没有新增证书签发或签名服务。CI `v*` tag 按同一版本同时构建默认 Ultrawork 与 MyWork 的三平台安装包，六个构建任务全部成功后才发布到同一个 GitHub Release。品牌/平台 artifact 与 manifest 独立收集，发布前逐项校验 manifest 列出的文件大小和 SHA-256，并拒绝同名安装包；不能用宽泛 glob 混入旧产物。
 
 正式 tag 的两个 macOS 品牌均须通过 Developer ID、公证与 staple 验证，不能以 `ALLOW_UNSIGNED_RELEASE` 降级为 ad-hoc 正式发布。workflow_dispatch 可选择 `all`、`default` 或 `mywork`，仅上传验证 artifact；显式 unsigned 验包仍使用独立 `.dev` 身份。实现配置、本机单测、发布构建与三平台原生安装/升级/卸载是不同验收层次，状态分别记录。
+
+### 7. 模型身份与模型可读内容跟随品牌（2026-10-30 补齐）
+
+身份契约始终包含自介语言规则：当前问题中的显式语言要求优先，不依据工作区名称、文件路径、工具描述或 Team 指令推断语言，产品名保持原文。此规则独立于丰富输出开关；提示契约与模型实际遵从情况分开验收，结果见 testing §16。
+
+产品自称使用上下文中的 `identity.productName`，默认 `Ultrawork`。OpenCode 在 provider 选择时仅适配 8 个 stock 模型基座的已知身份句（包括 Anthropic/Codex 的第二句 CLI 自称），去除与宿主品牌冲突的 OpenCode/CLI 身份，其余基座策略与来源链接逐字保留；自定义/Team/用户系统提示不参与替换。系统环境不再主动宣称推理模型名，实际模型选择仍由既有配置和请求参数决定。内置插件在每次 `system.transform` 追加明确宿主身份，保留 Team 角色；身份不随 `rich_output` 格式开关关闭，只用于自我描述，不给普通任务、文件或工具参数附加简介。vendor 使用无工作区依赖的身份适配器，并用跨适配器契约测试保持校验一致；上下文缺失、损坏或冲突必须在实际 transform 阶段阻止请求，上游会吞掉插件初始化错误，不能只在初始化时报错。
+
+ACP 在 manager 统一组合原有角色与宿主身份，追加到支持 `_meta.systemPrompt.append` 的 adapter；其它 adapter 通过既有 wire prefix 发送，用户回显不变。普通自介使用宿主品牌；用户明确追问执行任务的外部 Agent/模型时，依其真实身份及披露策略说明，保留自身能力和工具指令。持久化可选身份送达标记，兼容旧会话，恢复失败重建时重新发送；`metaSystemPrompt` 显式布尔覆盖经 REST/文件往返保留，普通编辑省略字段时保留原设置。
+
+技能宿主能力说明使用中性文案；钉钉路由文档的具体安装路径在品牌 staging 中定向改写。DOCX 产物元信息及默认修订/批注作者读取已有上下文，显式作者优先，原文档创建者与版权/来源保留。Python 仅消费身份，不据此计算路径，env/file 不一致采用严格拒绝；名称校验与 JS 的空白、UTF-16 长度保持一致。历史聊天、引用、代码、技术标识及法律归属不做全局替换。
 
 ## 考虑过的替代方案
 

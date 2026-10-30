@@ -33,10 +33,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from docxcommon import (DOCUMENT, clip, emit, ensure_distinct, fail,  # noqa: E402
+from docxcommon import (DOCUMENT, brand_product_name, clip, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run, save_checked)
 from office import document as doc  # noqa: E402
 from office import markdown as md  # noqa: E402
@@ -77,6 +78,7 @@ def blank_package() -> Package:
     generator this skill can offer.
     """
     o = WML
+    product = escape(brand_product_name())
     parts = {
         "[Content_Types].xml": DECL + (
             f'<Types xmlns="{CT_NS}">'
@@ -151,13 +153,13 @@ def blank_package() -> Package:
             '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/'
             '2006/metadata/core-properties" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            "<dc:creator>ultrawork</dc:creator>"
-            "<cp:lastModifiedBy>ultrawork</cp:lastModifiedBy>"
+            f"<dc:creator>{product}</dc:creator>"
+            f"<cp:lastModifiedBy>{product}</cp:lastModifiedBy>"
             "</cp:coreProperties>").encode(),
         "docProps/app.xml": DECL + (
             '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/'
             '2006/extended-properties">'
-            "<Application>ultrawork docx skill</Application>"
+            f"<Application>{product} docx skill</Application>"
             "<DocSecurity>0</DocSecurity></Properties>").encode(),
     }
     return Package(dict(parts), list(parts))

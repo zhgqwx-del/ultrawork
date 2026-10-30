@@ -24,11 +24,13 @@
 | `app/package.json` · `bun.lock` | 将 `ghostty-web` 声明固定到原锁提交完整 SHA `4af877d52b523754f113b87084b69835b752fb2c`；保留原 resolution、integrity 与其他依赖，避免浮动 `#main` 在构建时漂移 | ADR-075 构建补齐 |
 | `session/llm.ts` | ① `idleGuard`：LLM 流式工具感知两级 idle 超时（首字前 90s/后 30s，`Set<toolCallId>` 豁免工具执行，触发 abort+plain Error 落 error 终态）② streamText `experimental_context:{sessionID}` 暴露给工具 execute（委派归属，discussions/022） | ADR-034 / 022 |
 | `session/prompt.ts` | 每 step `resolveTools` 后 fire `experimental.chat.tools.transform` 钩子（含 `usedToolIds`），供渐进式工具披露引擎改写工具表 | discussions/023 |
+| `session/system.ts` | 适配 8 个 stock provider 基座的已知身份句；移除与宿主身份冲突的模型名自我声明（实际模型路由不变）；在拼接自定义/Team/用户系统提示前处理，保留其余模型策略与来源链接 | ADR-075 |
 | `plugin/src/index.ts` (`@opencode-ai/plugin`) | 新增 `experimental.chat.tools.transform` 钩子类型 | discussions/023 |
 | `plugin/index.ts` | 注册内置插件 `ToolDisclosurePlugin` 进 `INTERNAL_PLUGINS` | discussions/023 |
 | `plugin/tool-disclosure.ts` (**新文件**) | 渐进式工具披露引擎：折叠低频工具→name-only 名录(system)+`tool_search`，按需提升为原生；静态名录/会话清理/grace 安全降级；由 `experimental.tool_disclosure` config flag 或 `ULTRAWORK_TOOL_DISCLOSURE` env 门控 | discussions/023 |
 | `config/config.ts` (追加) | experimental schema 增 `tool_disclosure` / `tool_disclosure_debug` | discussions/023 |
-| `plugin/rich-output.ts` (**新文件**) | 富文本输出提示：经 `experimental.chat.system.transform` **追加**品牌化自适应格式化指令到已组装 system prompt（保留每模型基座、不替换）；仅当基座含 default.txt 极简子句时额外追加 `<verbosity_override>` 中和；与 tool-disclosure 门控**解耦**、独立插件；`experimental.rich_output` config flag 或 `ULTRAWORK_RICH_OUTPUT` env 门控（默认 ON，kill switch） | discussions/048 |
+| `plugin/rich-output.ts` (**新文件**) | 经 `experimental.chat.system.transform` **追加**产品身份和自适应格式规则；模型基座仅在 provider 选择时适配已知身份句，其余策略保留；`experimental.rich_output` / `ULTRAWORK_RICH_OUTPUT` 仅控制格式规则，产品身份始终追加且不扩展用户任务 | discussions/048 / ADR-075 |
+| `plugin/brand-identity.ts` (**新文件**) | 从既有 runtime context 验证并读取产品身份，默认 Ultrawork；无外层 workspace 依赖，受管缺失/冲突在实际 transform 阶段阻止模型请求 | ADR-075 |
 | `plugin/index.ts` (追加) | 注册 `RichOutputPlugin` 进 `INTERNAL_PLUGINS` | discussions/048 |
 | `config/config.ts` (追加) | experimental schema 增 `rich_output`（默认 ON，kill switch） | discussions/048 |
 | `effect/soft-invalidate-registry.ts` (**新文件**) | 与 disposer 平行的「软失效器」集合：`registerSoftInvalidator`/`softInvalidate(dir)`（返回 settled 结果供上层报失败） | ADR-039 |
@@ -57,7 +59,7 @@ vim vendor/opencode/packages/opencode/src/...
 #    ⚠️ 必须列全 patch 涉及的所有文件，漏掉任何一个都会在重新生成时丢失对应改动
 #    ⚠️ 新文件（如 tool-disclosure.ts）必须先 `git add -N` 才会出现在 git diff 里
 cd vendor/opencode && \
-git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
+git add -N packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/plugin/brand-identity.ts packages/opencode/src/effect/soft-invalidate-registry.ts && \
 git diff -- \
   bun.lock \
   packages/app/package.json \
@@ -66,10 +68,12 @@ git diff -- \
   packages/opencode/src/global/index.ts \
   packages/opencode/src/mcp/index.ts \
   packages/opencode/src/session/llm.ts \
+  packages/opencode/src/session/system.ts \
   packages/opencode/src/session/prompt.ts \
   packages/opencode/src/plugin/index.ts \
   packages/opencode/src/plugin/tool-disclosure.ts \
   packages/opencode/src/plugin/rich-output.ts \
+  packages/opencode/src/plugin/brand-identity.ts \
   packages/opencode/src/effect/soft-invalidate-registry.ts \
   packages/opencode/src/effect/instance-state.ts \
   packages/opencode/src/project/instance.ts \
@@ -86,7 +90,7 @@ git diff -- \
   packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \
   > ../../patches/vendor-opencode-config-fix.patch && \
-git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
+git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/plugin/brand-identity.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
 
 # 3. 如果再新增文件，在 git diff 命令中追加路径（新文件记得也 git add -N）
 # 4. 重编译 sidecar
@@ -134,7 +138,7 @@ git add vendor/opencode patches/vendor-opencode-config-fix.patch
 
 ### 构建依赖与源码 patch 的边界
 
-ADR-075 品牌身份复用了既有 `OPENCODE_APP_NAME`，没有更换 submodule commit。后续依赖冻结补齐将两个各一行的 manifest/lock 声明改动纳入原有累计 patch；`ghostty-web` 保留 upstream 原锁的 `4af877d`，未带入构建期间出现的无关 `6e24d04` 升级。累计 patch 现覆盖 26 个文件。
+ADR-075 品牌身份复用了既有 `OPENCODE_APP_NAME`，没有更换 submodule commit。后续依赖冻结补齐将两个各一行的 manifest/lock 声明改动纳入原有累计 patch；`ghostty-web` 保留 upstream 原锁的 `4af877d`，未带入构建期间出现的无关 `6e24d04` 升级。累计 patch 现覆盖 28 个文件（包含身份适配器与 stock provider 自介适配）。
 
 Bun 1.3.12 对 `ghostty-web#main` 仍会重新解析分支；仅恢复旧锁并加 frozen 会拒绝安装，因此须同时固定 manifest 和锁中的声明。setup、CI/release 和公共 sidecar 构建使用冻结入口；不要直接运行上游 vendor build 的默认安装流程。需要主动升级依赖时，显式修改并审阅 manifest/lock，再更新累计 patch。
 

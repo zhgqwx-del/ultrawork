@@ -28,7 +28,7 @@ import type {
 import type { ACPAgentConfig, ACPAgentStatus, UwSSEEvent } from "./types.js"
 import { configFile } from "./config-paths.js"
 import { brandPaths, brandEnvironment, managedBrandArguments } from "@agent/brand/node"
-import { permissionPattern, resolvePermission } from "./permission-label.js"
+import { permissionDisplay } from "./permission-label.js"
 import { TurnShaper } from "./turn-shaper.js"
 
 // Generous: a bunx-launched adapter may download its package on first run.
@@ -723,12 +723,12 @@ export class ACPConnection {
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         const emitSessionId = this.emitIds.get(params.sessionId) ?? params.sessionId
         const id = `acp_perm_${emitSessionId}_${this.permSeq++}`
-        // Drain queued tool_call frames first: the claude adapter omits kind
-        // here, and the shaper lookup below needs the frame that carried it.
+        // Drain queued frames first. Some agents omit kind; Codex's MCP
+        // permission frame omits the structured input/title and only carries
+        // execute + an opaque exec ID. The same tool_call already has them.
         await this.updateChain.catch(() => {})
-        const shaperKind = this.shapers.get(params.sessionId)?.toolKind(params.toolCall.toolCallId)
-        const permission = resolvePermission(params.toolCall, shaperKind)
-        const pattern = permissionPattern(params.toolCall)
+        const known = this.shapers.get(params.sessionId)?.toolCall(params.toolCall.toolCallId)
+        const { permission, pattern, metadata } = permissionDisplay(params.toolCall, known)
 
         return new Promise<RequestPermissionResponse>((resolve) => {
           const timer = setTimeout(() => this.resolvePermission(id, "reject"), permissionTimeoutMs())
@@ -746,7 +746,7 @@ export class ACPConnection {
               sessionID: emitSessionId,
               permission,
               patterns: pattern ? [pattern] : [],
-              metadata: {},
+              metadata,
               always: [],
             },
           })

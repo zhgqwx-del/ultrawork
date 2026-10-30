@@ -265,7 +265,7 @@ python3 scripts/xlsx_convert.py --from data.csv --out new.xlsx --autofit
 
 ## 转 PDF：产物在应用内可见的唯一通道
 
-**xlsx 在 ultrawork 里没法预览** —— 产物面板能渲染 PDF，其余一律只给一张二进制信息卡。
+**xlsx 在当前应用里没法预览** —— 产物面板能渲染 PDF，其余一律只给一张二进制信息卡。
 
 ```bash
 python3 scripts/xlsx_pdf.py --in book.xlsx --out 输出/book.pdf --png 输出/pages --dpi 150

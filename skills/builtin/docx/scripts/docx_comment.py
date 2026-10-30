@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from docxcommon import (DOCUMENT, emit, ensure_distinct, fail,  # noqa: E402
+from docxcommon import (DOCUMENT, brand_product_name, emit, ensure_distinct, fail,  # noqa: E402
                         open_document, run, save_checked)
 from office import document as doc  # noqa: E402
 from office.package import Package  # noqa: E402
@@ -185,7 +185,7 @@ def main() -> int:
     ap.add_argument("--add-on", metavar="PHRASE",
                     help="the text in the body the comment is about")
     ap.add_argument("--text", help="the comment itself")
-    ap.add_argument("--author", default="ultrawork")
+    ap.add_argument("--author", help="comment author; defaults to the host product name")
     ap.add_argument("--initials")
     ap.add_argument("--date", default=DEFAULT_DATE)
     ap.add_argument("--delete", action="append", default=[], metavar="ID")
@@ -211,6 +211,8 @@ def main() -> int:
         before = dict(pkg.parts)
         report: dict = {"in": args.src.name, "out": str(args.out)}
         if args.add_on:
+            if args.author is None:
+                args.author = brand_product_name()
             report["added"] = add_comment(pkg, args.add_on, args.text, args.author,
                                           args.date, args.initials)
         if args.delete:

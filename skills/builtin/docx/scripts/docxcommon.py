@@ -8,6 +8,8 @@ a failure that prints a traceback instead of a sentence, a report that dumps a
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -50,6 +52,91 @@ def text_parts(pkg) -> list[str]:
 
 class DocxError(Exception):
     """A condition the caller can act on: no such style, bad range, no LibreOffice."""
+
+
+def brand_product_name() -> str:
+    """Presentation identity from the inherited host context; no IO for standalone use.
+
+    This only reads identity, never computes or creates application data paths.
+    Keep its identity checks aligned with @agent/brand's parseBrandIdentity.
+    """
+    try:
+        def reject_constant(_value):
+            raise ValueError("invalid JSON number")
+
+        raw = os.environ.get("ULTRAWORK_BRAND_CONTEXT")
+        file = os.environ.get("ULTRAWORK_BRAND_CONTEXT_FILE")
+        inline = json.loads(raw, parse_constant=reject_constant) if raw else None
+        stored = None
+        if file:
+            source = Path(file)
+            if not source.is_absolute():
+                raise ValueError("context file must be absolute")
+            stored = json.loads(source.read_text(encoding="utf-8"), parse_constant=reject_constant)
+        if (raw and not isinstance(inline, dict)) or (file and not isinstance(stored, dict)):
+            raise ValueError("context must be an object")
+        if stored is not None and inline is not None and stored != inline:
+            raise ValueError("context file and environment do not match")
+        context = stored if stored is not None else inline
+        if context is None:
+            if raw or file or os.environ.get("ULTRAWORK_BRAND_MANAGED") == "1":
+                raise ValueError("managed context is missing")
+            return "Ultrawork"
+        if (not isinstance(context, dict) or type(context.get("schemaVersion")) not in (int, float)
+                or context["schemaVersion"] != 1):
+            raise ValueError("unsupported context schema")
+        identity = context.get("identity")
+        if not isinstance(identity, dict):
+            raise ValueError("missing identity")
+        brand_id, name = identity.get("brandId"), identity.get("productName")
+        expected = {"schemaVersion": 1, "brandId": "ultrawork", "productName": "Ultrawork",
+                    "identifier": "com.ultrawork.desktop", "namespace": "ultrawork", "isDefault": True}
+        if brand_id != "ultrawork":
+            reserved = {"desktop", "opencode", "codex", "claude", "gemini", "qoder", "hermes"}
+            device = r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)"
+            if (not isinstance(brand_id, str) or not 2 <= len(brand_id) <= 32
+                    or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", brand_id)
+                    or brand_id in reserved or re.match(device, brand_id, re.I)):
+                raise ValueError("invalid brand ID")
+            # JS String.trim() and String.length have different Unicode semantics
+            # from Python's strip()/len(): match the shared identity contract.
+            js_whitespace = ("\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680"
+                             "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+                             "\u2028\u2029\u202f\u205f\u3000\ufeff")
+            if (not isinstance(name, str) or not 1 <= len(name.encode("utf-16-le", "surrogatepass")) // 2 <= 80
+                    or name != name.strip(js_whitespace)
+                    or re.search(r'[\x00-\x1f<>:"/\\|?*]', name) or name.endswith((".", " "))
+                    or re.match(device, name, re.I)
+                    or unicodedata.normalize("NFKC", name).lower() in {"ultrawork", "ultrawork dev"}):
+                raise ValueError("invalid product name")
+            expected = {"schemaVersion": 1, "brandId": brand_id, "productName": name,
+                        "identifier": f"com.ultrawork.{brand_id}", "namespace": brand_id,
+                        "isDefault": False, "mainBinaryName": brand_id}
+        def same_field(key, value):
+            actual = identity.get(key)
+            if key == "schemaVersion":
+                return type(actual) in (int, float) and actual == value
+            return type(actual) is type(value) and actual == value
+
+        if (not all(same_field(key, value) for key, value in expected.items())
+                or (brand_id == "ultrawork" and "mainBinaryName" in identity)):
+            raise ValueError("inconsistent identity")
+        instance = context.get("instanceId")
+        if not isinstance(instance, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{8,128}", instance):
+            raise ValueError("missing instance identity")
+        if ("actualIdentifier" in context
+                and context["actualIdentifier"] not in (identity["identifier"], identity["identifier"] + ".dev")):
+            raise ValueError("invalid application identifier")
+        if "ownerPid" in context:
+            owner = context["ownerPid"]
+            if type(owner) not in (int, float) or not owner > 0 or owner % 1 != 0:
+                raise ValueError("invalid owner PID")
+        namespace = os.environ.get("OPENCODE_APP_NAME")
+        if namespace and namespace != identity["namespace"]:
+            raise ValueError("OPENCODE_APP_NAME conflicts with identity")
+        return identity["productName"]
+    except (OSError, ValueError, TypeError) as error:
+        raise DocxError("Invalid runtime brand context for document metadata") from error
 
 
 def fail(message: str):
