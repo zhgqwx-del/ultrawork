@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- 左侧栏品牌名称下方靠右显示应用版本号，使用适配明暗主题的浅色小字；复用关于页版本常量，折叠时隐藏，保持顶部高度及点击、拖拽行为。
+
 ## [0.3.13] - 2026-11-04
 
 ### Fixed
