@@ -46,6 +46,8 @@
 | `server/routes/global.ts`（追加） | `GET /global/auth/:authId/status` 只读 key 存在性端点（永不回显 secret） | ADR-042 |
 | `plugin/tool-disclosure.ts`（追加） | `websearch` 从 COLLAPSE 移入 EAGER（BYOK 门控保证注册即用户已配置） | ADR-042 |
 | `provider/provider.ts`（追加） | config 扩展循环两处上游合并缺陷修复：`interleaved` 补 `existingModel` 回落（部分模型覆写不再破坏 reasoning_content 解析）+ cost 重建补 `experimentalOver200K`（分层计价不丢） | ADR-042 |
+| `session/retry.ts` · `session/processor.ts` · `session/llm.ts`（追加） | 精确免费访问限制终态；实际免费 Zen 请求最多 2 次 session 重试、30 秒等待预算，禁用免费请求的 SDK 内部重试；免费错误由拥有运行权的 Runner 在 cleanup/持久化后发布唯一 idle，避免新回退请求被旧 Runner 吞掉；付费普通路径保持原样 | ADR-057 可靠性复核 |
+| `test/session/{retry,llm,processor-effect}.test.ts` | 免费限制、SDK 单次调用及真实本地 HTTP processor 终态回归 | ADR-057 可靠性复核 |
 
 ## 修改 vendor/opencode 的完整流程
 
@@ -68,6 +70,8 @@ git diff -- \
   packages/opencode/src/global/index.ts \
   packages/opencode/src/mcp/index.ts \
   packages/opencode/src/session/llm.ts \
+  packages/opencode/src/session/retry.ts \
+  packages/opencode/src/session/processor.ts \
   packages/opencode/src/session/system.ts \
   packages/opencode/src/session/prompt.ts \
   packages/opencode/src/plugin/index.ts \
@@ -89,6 +93,9 @@ git diff -- \
   packages/opencode/src/server/routes/global.ts \
   packages/plugin/src/index.ts \
   packages/opencode/script/build.ts \
+  packages/opencode/test/session/retry.test.ts \
+  packages/opencode/test/session/llm.test.ts \
+  packages/opencode/test/session/processor-effect.test.ts \
   > ../../patches/vendor-opencode-config-fix.patch && \
 git reset -q packages/opencode/src/plugin/tool-disclosure.ts packages/opencode/src/plugin/rich-output.ts packages/opencode/src/plugin/brand-identity.ts packages/opencode/src/effect/soft-invalidate-registry.ts   # 取消 intent-to-add，保持 submodule index 干净
 
@@ -138,7 +145,7 @@ git add vendor/opencode patches/vendor-opencode-config-fix.patch
 
 ### 构建依赖与源码 patch 的边界
 
-ADR-075 品牌身份复用了既有 `OPENCODE_APP_NAME`，没有更换 submodule commit。后续依赖冻结补齐将两个各一行的 manifest/lock 声明改动纳入原有累计 patch；`ghostty-web` 保留 upstream 原锁的 `4af877d`，未带入构建期间出现的无关 `6e24d04` 升级。累计 patch 现覆盖 28 个文件（包含身份适配器与 stock provider 自介适配）。
+ADR-075 品牌身份复用了既有 `OPENCODE_APP_NAME`，没有更换 submodule commit。后续依赖冻结补齐将两个各一行的 manifest/lock 声明改动纳入原有累计 patch；`ghostty-web` 保留 upstream 原锁的 `4af877d`，未带入构建期间出现的无关 `6e24d04` 升级。累计 patch 现覆盖 33 个文件（包含身份适配器与 stock provider 自介适配）。
 
 Bun 1.3.12 对 `ghostty-web#main` 仍会重新解析分支；仅恢复旧锁并加 frozen 会拒绝安装，因此须同时固定 manifest 和锁中的声明。setup、CI/release 和公共 sidecar 构建使用冻结入口；不要直接运行上游 vendor build 的默认安装流程。需要主动升级依赖时，显式修改并审阅 manifest/lock，再更新累计 patch。
 

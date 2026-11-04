@@ -63,7 +63,7 @@ function Harness() {
 }
 
 function zenFreeProviders() {
-  return [{ id: "opencode", name: "OpenCode Zen", connected: ["big-pickle"], models: [{ id: "big-pickle", name: "Big Pickle", cost: { input: 0 } }] }]
+  return [{ id: "opencode", name: "OpenCode Zen", connected: ["big-pickle"], models: [{ id: "big-pickle", name: "Big Pickle", cost: { input: 0, output: 0 }, capabilities: { toolcall: true } }] }]
 }
 
 async function renderProvider() {
@@ -214,5 +214,76 @@ describe("ModelProvider revoke (with protection)", () => {
     // Only the still-ours small_model is cleared; the user's model is untouched.
     await waitFor(() => expect(h.patchGlobalConfig).toHaveBeenCalledWith({ small_model: "" }))
     expect(h.patchGlobalConfig).not.toHaveBeenCalledWith(expect.objectContaining({ model: "" }))
+  })
+})
+
+
+describe("ModelProvider per-turn fallback", () => {
+  function candidate(id: string, input = 0) {
+    return { id, name: id, cost: { input, output: 0 }, capabilities: { toolcall: true } }
+  }
+  function providers(...models: ReturnType<typeof candidate>[]) {
+    return [{ id: "opencode", name: "OpenCode Zen", connected: models.map((m) => m.id), models }]
+  }
+  async function capture(consented = true, seededModel = "opencode/big-pickle") {
+    h.invoke.mockImplementation((cmd: string) => cmd === "get_free_trial_consent" ? Promise.resolve({ consented, seededModel }) : Promise.resolve(undefined))
+    let context: ReturnType<typeof useModel> | undefined
+    function Capture() { context = useModel(); return null }
+    render(<ModelProvider><Capture /></ModelProvider>)
+    await act(async () => { await Promise.resolve() })
+    return () => context!
+  }
+
+  it("chooses from the failed request rather than the global selection, without config writes", async () => {
+    h.getConfig.mockResolvedValue({ model: "anthropic/claude-sonnet-5" })
+    h.getProviders.mockResolvedValue(providers(candidate("big-pickle"), candidate("mimo-v2.6-flash-free")))
+    const context = await capture()
+    let next: string | null = null
+    await act(async () => { next = await context().advanceFreeTrialModel("opencode/big-pickle", ["opencode/big-pickle"]) })
+    expect(next).toBe("opencode/mimo-v2.6-flash-free")
+    expect(context().getCurrentModel()).toBe("anthropic/claude-sonnet-5")
+    expect(h.patchGlobalConfig).not.toHaveBeenCalled()
+    expect(h.patchConfig).not.toHaveBeenCalled()
+    expect(h.invoke.mock.calls.map((args) => args[0])).toEqual(["get_free_trial_consent"])
+  })
+
+  it("can replace a previously seeded model removed from the refreshed catalog", async () => {
+    h.getProviders.mockResolvedValue(providers(candidate("mimo-v2.6-flash-free")))
+    const context = await capture()
+    expect(await context().advanceFreeTrialModel("opencode/big-pickle", ["opencode/big-pickle"])).toBe("opencode/mimo-v2.6-flash-free")
+    expect(await context().advanceFreeTrialModel("opencode/mimo-v2.6-flash-free", ["opencode/big-pickle", "opencode/mimo-v2.6-flash-free"])).toBeNull()
+    expect(context().freeTrialConsent).toBe(true)
+    expect(h.patchGlobalConfig).not.toHaveBeenCalled()
+  })
+
+  it("does not switch a paid or unrecognized model into the free tier", async () => {
+    h.getProviders.mockResolvedValue(providers(candidate("big-pickle", 1), candidate("mimo-v2.6-flash-free")))
+    const context = await capture()
+    expect(await context().advanceFreeTrialModel("opencode/big-pickle")).toBeNull()
+    expect(await context().advanceFreeTrialModel("opencode/unknown")).toBeNull()
+    expect(await context().advanceFreeTrialModel("anthropic/claude-sonnet-5")).toBeNull()
+  })
+
+  it("requires consent before selecting another free model", async () => {
+    const context = await capture(false)
+    expect(await context().advanceFreeTrialModel("opencode/big-pickle")).toBeNull()
+    expect(h.getProviders).not.toHaveBeenCalled()
+  })
+
+  it("does not return a pending candidate after consent is revoked", async () => {
+    let resolveProviders!: (value: ReturnType<typeof providers>) => void
+    h.getProviders.mockReturnValue(new Promise((resolve) => { resolveProviders = resolve }))
+    const context = await capture()
+    const pending = context().advanceFreeTrialModel("opencode/big-pickle")
+    await act(async () => { await context().revokeFreeTrial() })
+    resolveProviders(providers(candidate("big-pickle"), candidate("mimo-v2.6-flash-free")))
+    expect(await pending).toBeNull()
+  })
+
+  it("keeps the selection getter live when a caller holds its previous render", async () => {
+    const context = await capture()
+    const getModel = context().getCurrentModel
+    await act(async () => { await context().setModel("opencode/big-pickle") })
+    expect(getModel()).toBe("opencode/big-pickle")
   })
 })

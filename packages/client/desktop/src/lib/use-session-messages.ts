@@ -6,13 +6,12 @@ import { useI18n } from "@/lib/i18n-context"
 import { forgetLocallyPrompted, markLocallyPrompted } from "@/lib/notifications/notify-registry"
 import { useModelOptional } from "@/lib/model-context"
 import { classifyZenError, isZenModelId } from "@/lib/free-model"
+import { beginPromptAttempt, getPromptAttempt, forgetPromptAttempt, observePromptAttemptEvent, observePromptAttemptSnapshot, type PromptAttempt } from "@/lib/prompt-attempt"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { PromptAttachment, SSEEvent } from "@agent/connector"
 
-// Belt-and-braces cap on transparent free-trial fallbacks per session mount (ADR-057 P4): the
-// natural terminator is candidate exhaustion (advanceFreeTrialModel → null), but this bounds a
-// pathological loop if a working model's turns were ever misclassified as auth failures.
-const MAX_FREE_TRIAL_FALLBACKS = 6
+// Total candidate attempts per user turn, including the initial model (ADR-057).
+const MAX_FREE_TRIAL_ATTEMPTS = 3
 
 // --- History window constants ---
 const TURN_INIT = 15           // Initial turns to render on session load
@@ -171,6 +170,7 @@ export function mergeSnapshotInPlace(
  * stream, but ACP history is already current so its cache isn't needed.
  */
 export function applyMessageEventToCache(event: SSEEvent): void {
+  observePromptAttemptEvent(event)
   const props = event.properties as Record<string, any>
   const part = props.part
   const sid: string | undefined = part?.sessionID ?? props.sessionID ?? props.info?.sessionID
@@ -231,6 +231,7 @@ export function registerMessageCacheSession(sessionId: string): void {
 }
 export function forgetMessageCacheSession(sessionId: string): void {
   messageCache.delete(sessionId)
+  forgetPromptAttempt(sessionId)
 }
 
 interface UseSessionMessagesOptions {
@@ -263,12 +264,13 @@ export function useSessionMessages(
   // Optional: absent in isolated unit tests (no ModelProvider) → free-trial fallback simply off.
   const modelCtx = useModelOptional()
   const freeTrialConsent = modelCtx?.freeTrialConsent ?? false
-  const modelCtxCurrent = modelCtx?.currentModel ?? ""
   const advanceFreeTrialModel = modelCtx?.advanceFreeTrialModel ?? (async () => null)
 
   // Backend behavior differences are capability-declared (ADR-030 D-5);
   // the connector dispatches every call by the session's agent binding.
   const capabilities = connector.capabilitiesOf(sessionId)
+  const modelCapabilityRef = useRef(capabilities.model)
+  modelCapabilityRef.current = capabilities.model
 
   // --- Core message state ---
   const [messages, setMessages] = useState<SendMessageResponse[]>([])
@@ -278,6 +280,8 @@ export function useSessionMessages(
   const [stopped, setStopped] = useState(false)
   const [stoppedAtMessageId, setStoppedAtMessageId] = useState<string | null>(null)
   const [toolCompletionCount, setToolCompletionCount] = useState(0)
+  const [retry, setRetry] = useState<{ attempt: number; message: string; next: number }>()
+  const [pendingFallback, setPendingFallback] = useState<{ attempt: PromptAttempt; model: string; selection?: string }>()
 
   // --- History window state ---
   const [turnStart, setTurnStart] = useState(0)
@@ -308,17 +312,24 @@ export function useSessionMessages(
   // --- Free-trial fallback state (ADR-057 P4), read/written synchronously in SSE callbacks ---
   const freeTrialConsentRef = useRef(freeTrialConsent)
   freeTrialConsentRef.current = freeTrialConsent
-  const modelCtxCurrentRef = useRef(modelCtxCurrent)
-  modelCtxCurrentRef.current = modelCtxCurrent
   const advanceFreeTrialModelRef = useRef(advanceFreeTrialModel)
   advanceFreeTrialModelRef.current = advanceFreeTrialModel
-  // The last user-sent turn (text + attachments), so a fallback can resend it on the next idle.
-  const lastUserSendRef = useRef<{ text: string; attachments?: PromptAttachment[] } | null>(null)
-  // Model to resend with, staged by session.error and fired by the next session idle.
-  const freeTrialResendModelRef = useRef<string | null>(null)
-  const freeTrialFallbackCountRef = useRef(0)
-  // Distinguishes our own fallback resend from a genuine user send (which resets the counter).
-  const isFallbackResendRef = useRef(false)
+  const attemptRef = useRef<PromptAttempt | undefined>(undefined)
+  const generationRef = useRef(0)
+  const selectionRef = useRef(modelCtx?.currentModel)
+  selectionRef.current = modelCtx?.currentModel
+  useEffect(() => () => { generationRef.current += 1 }, [sessionId])
+  const previousSelectionRef = useRef(modelCtx?.currentModel)
+  useEffect(() => {
+    const previous = previousSelectionRef.current
+    previousSelectionRef.current = modelCtx?.currentModel
+    if (previous !== undefined && previous !== modelCtx?.currentModel) {
+      generationRef.current += 1
+      setPendingFallback(undefined)
+      if (sessionId) forgetPromptAttempt(sessionId, attemptRef.current)
+      attemptRef.current = undefined
+    }
+  }, [modelCtx?.currentModel, sessionId])
   // Home→Session optimistic-send safety timer. Fires once if the navigated send
   // never produces a turn; MUST be cancelled the moment real SSE activity proves
   // the turn is live, otherwise it force-clears `sending` mid-turn at 8s and any
@@ -364,6 +375,10 @@ export function useSessionMessages(
     setHistoryLoading(false)
     frozenMessageIdsRef.current = new Set()
     prefetchUntilRef.current = 0
+    attemptRef.current = getPromptAttempt(sessionId)
+    generationRef.current += 1
+    setPendingFallback(undefined)
+    setRetry(undefined)
 
     const isSendingFromNav = !!opts?.initialSending
     setSending(isSendingFromNav)
@@ -422,6 +437,7 @@ export function useSessionMessages(
       .then((result) => {
         if (!cancelled) {
           const msgs = result.messages
+          observePromptAttemptSnapshot(sessionId, msgs)
           // Only consult the cache while the turn is in flight (busy). Idle
           // sessions trust the snapshot fully, so a revert can't be undone and
           // paginated history can't be reordered.
@@ -579,6 +595,7 @@ export function useSessionMessages(
         if (msgId && frozenMessageIdsRef.current.has(msgId)) return
       }
 
+      observePromptAttemptEvent(event)
       switch (event.type) {
         case "message.part.updated": {
           const { part } = event.properties
@@ -678,18 +695,24 @@ export function useSessionMessages(
           const { info } = event.properties
           if (info.sessionID !== sessionId) break
           setStreamingMessageId(null)
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.info.id === info.id ? { ...m, info: { ...m.info, ...info } } : m
-            )
-          )
+          setMessages((prev) => {
+            if (info.role === "assistant" && info.error && !prev.some((m) => m.info.id === info.id)) {
+              return [...prev, { info, parts: [] }]
+            }
+            return prev.map((m) => m.info.id === info.id ? { ...m, info: { ...m.info, ...info } } : m)
+          })
           // A "tool-calls" finish ends only the current STEP, not the turn —
           // opencode's tool-calling loop continues with another assistant
           // message. Clearing `sending` here would drop sessionActive between
           // steps, making the turn briefly render as done (green check +
           // collapsed flow + footer) during the gap before the next step
           // streams. Only a terminal finish (stop/length/…) ends the turn.
-          if (info.role === "assistant" && info.finish && info.finish !== "tool-calls") {
+          if (info.role === "assistant" && info.finish && info.finish !== "tool-calls" &&
+            !attemptRef.current?.excludedIds.has(info.id) &&
+            (!attemptRef.current?.userMessageId || !info.parentID || info.parentID === attemptRef.current.userMessageId)) {
+            if (sessionId) forgetPromptAttempt(sessionId, attemptRef.current)
+            attemptRef.current = undefined
+            setRetry(undefined)
             setSending(false)
             // Backends without session.status events (ACP) signal idle via
             // the terminal finish — clear the sidebar activity marker here.
@@ -772,38 +795,75 @@ export function useSessionMessages(
         }
 
         case "session.error": {
-          const { sessionID: errSid, error } = event.properties as { sessionID?: string; error?: { name?: string; data?: { message?: string } } }
+          const { sessionID: errSid, error } = event.properties as { sessionID?: string; error?: { name?: string; message?: string; data?: { message?: string } } | string }
           if ((!errSid || errSid === sessionId) && error) {
-            const msg = error.data?.message || error.name || t("error.unknown")
-            // Free-trial model failure (ADR-057 P4): replace the raw gateway error with actionable
-            // guidance, and transparently fall back to the next free candidate on an auth failure.
-            if (freeTrialConsentRef.current && isZenModelId(modelCtxCurrentRef.current)) {
-              const kind = classifyZenError(error.data?.message || error.name)
+            const msg = typeof error === "string" ? error : error.data?.message || error.message || error.name || t("error.unknown")
+            if (!capabilities.sessionStatus) {
+              // ACP errors can precede any assistant message, so there is no
+              // terminal finish to clear a Home handoff's local sending state.
+              // Home owns the blocking prompt promise; this hook only receives
+              // its per-session error. The independent global lifecycle still
+              // owns the busy lock until the backend actually publishes idle.
+              if (navSafetyTimerRef.current) {
+                clearTimeout(navSafetyTimerRef.current)
+                navSafetyTimerRef.current = null
+              }
+              sendingRef.current = false
+              setSending(false)
+              setStreamingMessageId(null)
+              setRetry(undefined)
+              if (!capabilities.globalEvents && sessionId) markSessionIdle(sessionId)
+            }
+            const attempt = attemptRef.current
+            const model = attempt?.options.model
+            if (capabilities.model && model && isZenModelId(model)) {
+              const kind = classifyZenError(error)
               if (kind === "quota") {
-                // The shared anonymous allowance is spent — a different free model won't help.
                 toast.error(t("freeTrial.quotaExceeded"))
+                generationRef.current += 1
+                setPendingFallback(undefined)
+                if (sessionId) forgetPromptAttempt(sessionId, attempt)
+                attemptRef.current = undefined
                 break
               }
-              if (kind === "auth") {
-                if (freeTrialFallbackCountRef.current >= MAX_FREE_TRIAL_FALLBACKS) {
+              if (freeTrialConsentRef.current && (kind === "auth" || kind === "unavailable") && attempt && !attempt.hasOutput && !stoppedRef.current) {
+                if (attempt.resolving) break
+                if (attempt.attemptedModels.length >= MAX_FREE_TRIAL_ATTEMPTS) {
                   toast.error(t("freeTrial.unavailable"))
+                  if (sessionId) forgetPromptAttempt(sessionId, attempt)
+                  attemptRef.current = undefined
                   break
                 }
-                freeTrialFallbackCountRef.current += 1
-                advanceFreeTrialModelRef.current().then((next) => {
-                  if (idRef.current !== sessionId) return
+                attempt.resolving = true
+                const generation = generationRef.current
+                const selection = selectionRef.current
+                advanceFreeTrialModelRef.current(model, attempt.attemptedModels).then((next) => {
+                  if (generationRef.current !== generation || idRef.current !== sessionId || stoppedRef.current ||
+                    attemptRef.current !== attempt || attempt.hasOutput || selectionRef.current !== selection ||
+                    !freeTrialConsentRef.current || !modelCapabilityRef.current) return
                   if (!next) {
+                    attempt.resolving = false
+                    if (sessionId) forgetPromptAttempt(sessionId, attempt)
+                    attemptRef.current = undefined
                     toast.error(t("freeTrial.unavailable"))
                     return
                   }
-                  // Resend on the NEXT idle: sending is still true here, so an immediate resend
-                  // would be swallowed by sendMessage's busy guard.
-                  freeTrialResendModelRef.current = next
+                  // State makes either ordering (idle first / candidate first) observable.
+                  setPendingFallback({ attempt, model: next, selection })
                   toast.message(t("freeTrial.switching"))
+                }).catch(() => {
+                  if (generationRef.current === generation && attemptRef.current === attempt) {
+                    attempt.resolving = false
+                    attemptRef.current = undefined
+                    if (sessionId) forgetPromptAttempt(sessionId, attempt)
+                    toast.error(t("freeTrial.unavailable"))
+                  }
                 })
                 break
               }
             }
+            if (sessionId) forgetPromptAttempt(sessionId, attempt)
+            attemptRef.current = undefined
             toast.error(msg)
           }
           break
@@ -823,8 +883,12 @@ export function useSessionMessages(
         }
 
         case "session.status": {
-          const { sessionID: statusSid, status } = event.properties as { sessionID: string; status: { type: string } }
+          const { sessionID: statusSid, status } = event.properties as { sessionID: string; status: { type: string; attempt?: number; message?: string; next?: number } }
+          if (statusSid === sessionId && status.type === "retry") {
+            setRetry({ attempt: status.attempt ?? 1, message: status.message ?? "", next: status.next ?? Date.now() })
+          }
           if (statusSid === sessionId && status.type === "idle") {
+            setRetry(undefined)
             sendingRef.current = false
             setSending(false)
             markSessionIdle(statusSid)
@@ -837,7 +901,7 @@ export function useSessionMessages(
         }
       }
     },
-    [sessionId, updateSession, markSessionIdle, getEventSessionID, capabilities.sessionStatus]
+    [sessionId, updateSession, markSessionIdle, getEventSessionID, capabilities.sessionStatus, capabilities.model, capabilities.globalEvents]
   )
 
   // Dispatched by binding: opencode filters the global stream; ACP merges the
@@ -922,6 +986,7 @@ export function useSessionMessages(
       .fetchHistory(sessionId, { limit: INITIAL_PAGE_SIZE })
       .then((result) => {
         if (cancelled || idRef.current !== sessionId) return
+        observePromptAttemptSnapshot(sessionId, result.messages)
         // In-place merge, NOT a re-seed: see mergeSnapshotInPlace. The paginated
         // window (turnStart/cursor/hasMore) is deliberately left alone — EXCEPT
         // when the initial load never succeeded, where there is no window to
@@ -946,6 +1011,11 @@ export function useSessionMessages(
 
   // --- Actions ---
   const stopGeneration = useCallback(() => {
+    generationRef.current += 1
+    if (sessionId) forgetPromptAttempt(sessionId, attemptRef.current)
+    attemptRef.current = undefined
+    setPendingFallback(undefined)
+    setRetry(undefined)
     setStopped(true)
     stoppedRef.current = true
     setStreamingMessageId(null)
@@ -953,13 +1023,11 @@ export function useSessionMessages(
     if (sessionId) markSessionIdle(sessionId)
 
     const currentMsgs = messagesRef.current
-    if (currentMsgs.length === 0) return
-
     const lastMsg = currentMsgs[currentMsgs.length - 1]
     const frozenIds = new Set<string>()
-    let stoppedId = lastMsg.info.id
+    let stoppedId = lastMsg?.info.id ?? null
 
-    if (stoppedId.startsWith("temp-")) {
+    if (stoppedId?.startsWith("temp-")) {
       const stableId = `stopped-${Date.now()}`
       setMessages((prev) =>
         prev.map((m) =>
@@ -1025,15 +1093,19 @@ export function useSessionMessages(
     // app-level busy check a second prompt could slip past the UI's disabled
     // state and collide with the in-flight turn (discussions/022).
     if (!sessionId || !hasContent || sending || sendingRef.current || activeIdsRef.current.has(sessionId)) return
-    // Remember this turn so a free-trial fallback can resend it (ADR-057 P4). A genuine user send
-    // (not our own resend) resets the fallback counter and cancels any pending stale resend.
-    lastUserSendRef.current = { text, attachments }
-    if (isFallbackResendRef.current) {
-      isFallbackResendRef.current = false
-    } else {
-      freeTrialFallbackCountRef.current = 0
-      freeTrialResendModelRef.current = null
-    }
+    generationRef.current += 1
+    setPendingFallback(undefined)
+    setRetry(undefined)
+    const opts = optionsRef.current
+    const directory = opts?.directory ?? sessions.find((s) => s.id === sessionId)?.directory
+    const attempt = beginPromptAttempt(sessionId, text.trim(), {
+      model: model || undefined,
+      directory,
+      system: opts?.promptOptions?.system,
+      tools: opts?.promptOptions?.tools,
+      attachments,
+    })
+    attemptRef.current = attempt
     sendingRef.current = true
     markSessionActive(sessionId)
     // The desktop user started this turn ⇒ they are owed a notification when it ends.
@@ -1077,7 +1149,9 @@ export function useSessionMessages(
 
     const handleSendError = (err: unknown) => {
       console.error("Failed to send message:", err)
+      forgetPromptAttempt(sessionId, attempt)
       if (idRef.current !== sessionId) return
+      if (attemptRef.current === attempt) attemptRef.current = undefined
       sendingRef.current = false
       setSending(false)
       markSessionIdle(sessionId)
@@ -1096,34 +1170,50 @@ export function useSessionMessages(
     // Dispatched by binding. ACP backends lazily ensure the agent-side
     // session (cwd = session workspace) before prompting; turn completion is
     // signaled by the shaped message.updated finish event over SSE.
-    const opts = optionsRef.current
-    const directory = opts?.directory ?? sessions.find((s) => s.id === sessionId)?.directory
     connector
-      .prompt(sessionId, userMessage, {
-        model: model || undefined,
-        directory,
-        system: opts?.promptOptions?.system,
-        tools: opts?.promptOptions?.tools,
-        attachments,
-      })
+      .prompt(sessionId, attempt.text, attempt.options)
       .catch(handleSendError)
   }, [sessionId, sending, connector, markSessionActive, markSessionIdle, t, sessions])
 
-  // Deferred free-trial fallback resend (ADR-057 P4). Staged by the session.error auth branch
-  // (freeTrialResendModelRef), fired HERE rather than inline in the idle handler: an effect keyed
-  // on `sending` runs after setSending(false)/markSessionIdle have flushed, so sendMessage's busy
-  // guard (`sending` closure + activeIdsRef) is clear and the resend actually dispatches. Firing it
-  // inline (same synchronous SSE tick) is swallowed by that guard. sendMessage is a dep, so this
-  // closure always holds the freshest one (with `sending === false`).
+  // Reuse the complete materialised request. Candidate readiness and backend idle
+  // may arrive in either order; claiming state synchronously prevents a double send.
   useEffect(() => {
-    if (sending) return
-    const model = freeTrialResendModelRef.current
-    const last = lastUserSendRef.current
-    if (!model || !last) return
-    freeTrialResendModelRef.current = null
-    isFallbackResendRef.current = true
-    sendMessage(last.text, model, last.attachments)
-  }, [sending, sendMessage])
+    if (!pendingFallback || loading || sending || sendingRef.current || !sessionId || activeIdsRef.current.has(sessionId)) return
+    const { attempt, model, selection } = pendingFallback
+    setPendingFallback(undefined)
+    if (!capabilities.model) {
+      forgetPromptAttempt(sessionId, attempt)
+      if (attemptRef.current === attempt) attemptRef.current = undefined
+      return
+    }
+    if (initialLoadFailedRef.current) {
+      forgetPromptAttempt(sessionId, attempt)
+      if (attemptRef.current === attempt) attemptRef.current = undefined
+      toast.error(t("freeTrial.unavailable"))
+      return
+    }
+    if (attemptRef.current !== attempt || !attempt.resolving || attempt.hasOutput || stoppedRef.current ||
+      selectionRef.current !== selection || !freeTrialConsentRef.current) return
+    attempt.resolving = false
+    if (attempt.attemptedModels.includes(model)) return
+    attempt.attemptedModels.push(model)
+    attempt.options = { ...attempt.options, model }
+    attempt.userMessageId = undefined
+    sendingRef.current = true
+    setSending(true)
+    markSessionActive(sessionId)
+    markLocallyPrompted(sessionId)
+    connector.prompt(sessionId, attempt.text, attempt.options).catch(() => {
+      if (idRef.current !== sessionId || attemptRef.current !== attempt) return
+      forgetPromptAttempt(sessionId, attempt)
+      attemptRef.current = undefined
+      sendingRef.current = false
+      setSending(false)
+      markSessionIdle(sessionId)
+      forgetLocallyPrompted(sessionId)
+      toast.error(t("error.sendMessage"))
+    })
+  }, [pendingFallback, loading, sending, activeSessionIds, sessionId, connector, markSessionActive, markSessionIdle, t, capabilities.model])
 
   return {
     messages: displayMessages,
@@ -1134,6 +1224,7 @@ export function useSessionMessages(
     stopped,
     stoppedAtMessageId,
     toolCompletionCount,
+    retry,
     // History window
     turnStart,
     hasMore,

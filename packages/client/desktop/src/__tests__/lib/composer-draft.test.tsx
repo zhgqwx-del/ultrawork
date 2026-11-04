@@ -25,9 +25,9 @@ let acpAvailable = false
 let materializeResult: { attachments: unknown[]; noteText: string } = { attachments: [], noteText: "" }
 
 vi.mock("@/lib/sessions-context", () => ({ useSessionsContext: () => ({ createSession }) }))
-vi.mock("@/lib/sse-context", () => ({ useConnector: () => ({ prompt: promptSpy }) }))
+vi.mock("@/lib/sse-context", () => ({ useConnector: () => ({ prompt: promptSpy, capabilitiesOf: () => ({ model: true }) }) }))
 vi.mock("@/lib/model-context", () => ({
-  useModel: () => ({ currentModel: "openai/gpt-5", setModel: vi.fn(), maybeOfferFreeTrial: vi.fn(async () => false) }),
+  useModel: () => ({ currentModel: "openai/gpt-5", getCurrentModel: () => "openai/gpt-5", setModel: vi.fn(), maybeOfferFreeTrial: vi.fn(async () => false) }),
 }))
 vi.mock("@/lib/agent-context", () => ({
   useAgents: () => ({ agents, acpAvailable, bindSessionAgent: vi.fn() }),

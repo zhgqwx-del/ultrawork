@@ -146,9 +146,9 @@ export async function createTeamSession(opts: {
   return (await expectOk<{ session: TeamSessionEntry }>(res)).session
 }
 
-export async function listTeamSessions(workspace?: string): Promise<TeamSessionEntry[]> {
+export async function listTeamSessions(workspace?: string, signal?: AbortSignal): Promise<TeamSessionEntry[]> {
   const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""
-  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`, { headers: sidecarAuthHeaders() })
+  const res = await fetch(`${acpBaseUrl()}/orchestration/team/sessions${query}`, { headers: sidecarAuthHeaders(), signal })
   return (await expectOk<{ sessions: TeamSessionEntry[] }>(res)).sessions
 }
 

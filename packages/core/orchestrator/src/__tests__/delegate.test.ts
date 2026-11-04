@@ -65,6 +65,104 @@ describe("DelegateManager", () => {
     return { opencode, acp, connector, orchestrator, delegates }
   }
 
+  function ownerMessage(model?: string, sessionID = "owner"): SendMessageResponse {
+    const message = assistantMessage("delegating")
+    return {
+      ...message,
+      info: {
+        ...message.info,
+        sessionID,
+        providerID: model?.split("/")[0],
+        modelID: model?.split("/").slice(1).join("/"),
+      },
+    }
+  }
+
+  function buildModelDelegate(histories: Record<string, SendMessageResponse[]> = {}) {
+    const host = build({
+      opencode: {
+        onPrompt: (sid, _text, emit) => {
+          emit(finishEvent(sid))
+          emit(idleEvent(sid))
+        },
+      },
+    })
+    host.opencode.capabilities.model = true
+    host.opencode.fetchHistory = vi.fn(async (sid: string) => ({ messages: histories[sid] ?? [], hasMore: false }))
+    return host
+  }
+
+  describe("default OpenCode member model inheritance", () => {
+    it("passes the latest owner assistant's actual fallback model to the child prompt", async () => {
+      const { opencode, delegates } = buildModelDelegate({ owner: [
+        ownerMessage("opencode/failed-default"),
+        ownerMessage("opencode/working-candidate"),
+        { info: { id: "user", sessionID: "owner", role: "user", time: { created: 2 } }, parts: [] },
+      ] })
+      await delegates.delegate({ agentId: "opencode:default", task: "t", workspace, ownerSessionId: "owner" })
+      expect(opencode.prompt).toHaveBeenCalledWith(expect.any(String), "t", expect.objectContaining({
+        model: "opencode/working-candidate",
+      }))
+    })
+
+    it.each([
+      { agentId: "opencode:default", model: "openai/explicit", backend: "opencode" },
+      { agentId: "opencode:reviewer", model: undefined, backend: "opencode" },
+      { agentId: "acp:claude", model: undefined, backend: "acp" },
+    ] as const)("preserves explicit routing for $agentId ($model)", async ({ agentId, model, backend }) => {
+      const host = buildModelDelegate({ owner: [ownerMessage("opencode/working-candidate")] })
+      await host.delegates.delegate({ agentId, task: "t", workspace, ownerSessionId: "owner", model })
+      expect(host.opencode.fetchHistory).not.toHaveBeenCalledWith("owner")
+      expect(host[backend].prompt).toHaveBeenCalledWith(
+        expect.any(String), "t", expect.objectContaining({ model }),
+      )
+    })
+
+    it("keeps the existing default without an owner", async () => {
+      const { opencode, delegates } = buildModelDelegate()
+      await delegates.delegate({ agentId: "opencode:default", task: "t", workspace })
+      expect(opencode.prompt).toHaveBeenCalledWith(expect.any(String), "t", expect.objectContaining({ model: undefined }))
+    })
+
+    it("does not inherit the model of an ACP-bound owner", async () => {
+      const { opencode, acp, connector, delegates } = buildModelDelegate({ owner: [ownerMessage("opencode/stale-model")] })
+      connector.bindings.bind("owner", "acp:claude")
+      await delegates.delegate({ agentId: "opencode:default", task: "t", workspace, ownerSessionId: "owner" })
+      expect(opencode.fetchHistory).not.toHaveBeenCalledWith("owner")
+      expect(acp.fetchHistory).not.toHaveBeenCalled()
+      expect(opencode.prompt).toHaveBeenCalledWith(expect.any(String), "t", expect.objectContaining({ model: undefined }))
+    })
+
+    it.each(["empty", "latest-missing-model", "read-failure"])("keeps the existing default for %s owner history", async (kind) => {
+      const { opencode, delegates } = buildModelDelegate({ owner: kind === "latest-missing-model"
+        ? [ownerMessage("opencode/old-model"), ownerMessage()]
+        : [] })
+      if (kind === "read-failure") {
+        opencode.fetchHistory = vi.fn(async (sid: string) => {
+          if (sid === "owner") throw new Error("history unavailable")
+          return { messages: [], hasMore: false }
+        })
+      }
+      await delegates.delegate({ agentId: "opencode:default", task: "t", workspace, ownerSessionId: "owner" })
+      expect(opencode.prompt).toHaveBeenCalledWith(expect.any(String), "t", expect.objectContaining({ model: undefined }))
+    })
+
+    it("keeps simultaneous teams in one workspace on their own models without changing unrelated delegates", async () => {
+      const { opencode, delegates } = buildModelDelegate({
+        teamA: [ownerMessage("opencode/model-a", "teamA")],
+        teamB: [ownerMessage("openai/model-b", "teamB")],
+      })
+      await Promise.all([
+        delegates.delegate({ agentId: "opencode:default", task: "team A", workspace, ownerSessionId: "teamA" }),
+        delegates.delegate({ agentId: "opencode:default", task: "team B", workspace, ownerSessionId: "teamB" }),
+      ])
+      await delegates.delegate({ agentId: "opencode:default", task: "unrelated", workspace })
+      for (const [task, model] of [["team A", "opencode/model-a"], ["team B", "openai/model-b"], ["unrelated", undefined]]) {
+        expect(opencode.prompt).toHaveBeenCalledWith(expect.any(String), task, expect.objectContaining({ model }))
+      }
+    })
+  })
+
   it("returns the D-2 contract: last assistant text + summed tokens/cost", async () => {
     const { acp, delegates } = build({})
     acp.fetchHistory = vi.fn(async () => ({

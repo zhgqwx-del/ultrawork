@@ -9,6 +9,8 @@ import { CopyButton } from "./copy-button"
 import { useI18n } from "@/lib/i18n-context"
 import { formatDateTime } from "@/lib/format-time"
 import { samePath } from "@/lib/turn-artifacts"
+import { modelErrorMessage } from "@/lib/model-error-message"
+import { classifyZenError } from "@/lib/free-model"
 
 /** Stable identity so the `turnArtifacts` memo doesn't churn on every render. */
 const EMPTY_ARTIFACTS: Artifact[] = []
@@ -229,6 +231,12 @@ export const AssistantTurn = memo(function AssistantTurn({
   // state. Duration/token math still uses the raw flag (values, not appearance).
   const streaming = useStableStreaming(isStreaming)
   const model = useMemo(() => buildTurnModel(messages, isStreaming), [messages, isStreaming])
+  const failure = [...messages].reverse().find((m) => m.info.error)
+  const errorText = failure
+    ? modelErrorMessage(failure.info.error, t, language, failure.info.time.completed ?? failure.info.time.created, failure.info.providerID)
+    : model.errorText
+  const kind = failure ? classifyZenError(failure.info.error) : undefined
+  const canConfigure = kind === "unavailable" || (kind === "quota" && failure?.info.providerID === "opencode")
 
   // A `file`/`patch` part in the answer already renders its own FileBlock/PatchBlock
   // right above the cards. Showing the same file twice, adjacent, is worse than not
@@ -335,12 +343,21 @@ export const AssistantTurn = memo(function AssistantTurn({
         <TurnArtifacts artifacts={turnArtifacts} onArtifactClick={onArtifactClick} />
       )}
 
-      {!streaming && model.errorText && (
+      {!streaming && errorText && (
         <div className="mt-1 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-400">
           <XCircle className="mt-0.5 size-3.5 shrink-0" />
           <div className="min-w-0">
             <span className="font-medium">{t("message.turnError")}</span>
-            <span className="ml-1 break-words whitespace-pre-wrap">{model.errorText}</span>
+            <span className="ml-1 break-words whitespace-pre-wrap">{errorText}</span>
+            {canConfigure && (
+              <button
+                type="button"
+                className="mt-2 block underline underline-offset-2"
+                onClick={() => { void import("@/router").then(({ router }) => router.navigate("/settings", { state: { section: "models" } })) }}
+              >
+                {t("freeTrial.configureModels")}
+              </button>
+            )}
           </div>
         </div>
       )}

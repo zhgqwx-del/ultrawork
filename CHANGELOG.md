@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复原生重启时 ACP 尚未就绪导致 Team 永久丢失协作身份：注册表自动恢复、失败退避、请求超时取消并保护工作区及创建/删除竞态；类型未知时按钮与实际发送入口均暂缓，避免旧 Team 静默变为单 Agent。新增真实打包 macOS 应用的同意、错误终态、单 Agent／Team 回退及重启验收。
+
+- 免费 Zen 访问限制及时结束并在消息区显示原因及上游建议时间，仅免费请求采用有界重试；修复首页首发、附件/团队指令、跨页面输出屏障及异步顺序下的自动回退，防止执行后重复发送。免费错误完成持久化和 cleanup 后再 idle，默认 Team 成员继承 Leader 本轮实际模型；ACP 首发鉴权失败正确结束发送态。候选过滤弃用/非零价格/无工具能力模型，三语提示、三平台回归及真实 sidecar + Chrome/WebKit 验收同步补齐；OpenCode 继续使用原固定提交。
+
 ## [0.3.12] - 2026-10-30
 
 ### Fixed

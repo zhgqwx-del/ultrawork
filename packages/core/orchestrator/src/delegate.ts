@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import type { Connector, ConnectorEvent, Unsubscribe } from "@agent/connector"
-import { parseAgentId } from "@agent/connector"
+import { OPENCODE_DEFAULT_AGENT_ID, parseAgentId } from "@agent/connector"
 import type { SendMessageResponse } from "@agent/api-client"
 import type { Orchestrator } from "./orchestrator"
 import type { TaskStatus } from "./types"
@@ -171,7 +171,7 @@ export class DelegateManager {
         agentId: req.agentId,
         task: req.task,
         workspace,
-        model: req.model,
+        model: await this.delegateModel(req, workspace),
         timeoutMs: req.timeoutMs,
         parentSessionId,
         title: `[delegate] ${req.task.slice(0, TITLE_MAX)}`,
@@ -228,6 +228,22 @@ export class DelegateManager {
   }
 
   // --- internals ---
+
+  /** Default OpenCode members follow the issuing turn's actual model, including local fallback. */
+  private async delegateModel(req: DelegateRequest, workspace: string): Promise<string | undefined> {
+    if (req.model !== undefined || req.agentId !== OPENCODE_DEFAULT_AGENT_ID || !req.ownerSessionId) return req.model
+    const connector = this.deps.connectorFor(workspace)
+    if (!connector.capabilitiesOf(req.ownerSessionId).model) return undefined
+    try {
+      const { messages } = await connector.fetchHistory(req.ownerSessionId)
+      // Never revive an older model when the latest assistant lacks routing metadata.
+      const info = [...messages].reverse().find((message) => message.info.role === "assistant")?.info
+      if (!info?.providerID?.trim() || !info.modelID?.trim()) return undefined
+      return `${info.providerID}/${info.modelID}`
+    } catch {
+      return undefined
+    }
+  }
 
   /**
    * The deliverable is the final assistant text (D-2): walk history from the

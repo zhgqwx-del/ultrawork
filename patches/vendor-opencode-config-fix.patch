@@ -1213,10 +1213,16 @@ index 16b9e559f27fde78fec6d31e83435c1598db73a7..41e8fb3cd4b1bd20ed119bd5ef4fa9c2
        "/dispose",
        describeRoute({
 diff --git a/packages/opencode/src/session/llm.ts b/packages/opencode/src/session/llm.ts
-index dc89db409e8790700e240052bfcab9a62033569a..505bc0a52f0cf49c28c3d68b8ca61b7532a0c2cb 100644
+index dc89db409e8790700e240052bfcab9a62033569a..41889324789e6615ebaf8fddfdd7bbc6b051009d 100644
 --- a/packages/opencode/src/session/llm.ts
 +++ b/packages/opencode/src/session/llm.ts
-@@ -22,6 +22,128 @@ export namespace LLM {
+@@ -17,11 +17,134 @@ import { Flag } from "@/flag/flag"
+ import { Permission } from "@/permission"
+ import { Auth } from "@/auth"
+ import { Installation } from "@/installation"
++import { SessionRetry } from "./retry"
+ 
+ export namespace LLM {
    const log = Log.create({ service: "llm" })
    export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
  
@@ -1345,7 +1351,7 @@ index dc89db409e8790700e240052bfcab9a62033569a..505bc0a52f0cf49c28c3d68b8ca61b75
    export type StreamInput = {
      user: MessageV2.User
      sessionID: string
-@@ -63,8 +185,13 @@ export namespace LLM {
+@@ -63,8 +186,13 @@ export namespace LLM {
  
                  const result = yield* Effect.promise(() => LLM.stream({ ...input, abort: ctrl.signal }))
  
@@ -1361,7 +1367,7 @@ index dc89db409e8790700e240052bfcab9a62033569a..505bc0a52f0cf49c28c3d68b8ca61b75
                  )
                }),
              ),
-@@ -289,6 +416,11 @@ export namespace LLM {
+@@ -289,6 +417,11 @@ export namespace LLM {
        providerOptions: ProviderTransform.providerOptions(input.model, params.options),
        activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
        tools,
@@ -1373,6 +1379,41 @@ index dc89db409e8790700e240052bfcab9a62033569a..505bc0a52f0cf49c28c3d68b8ca61b75
        toolChoice: input.toolChoice,
        maxOutputTokens,
        abortSignal: input.abort,
+@@ -306,7 +439,9 @@ export namespace LLM {
+         ...input.model.headers,
+         ...headers,
+       },
+-      maxRetries: input.retries ?? 0,
++      // SessionRetry owns the bounded free-model retry policy. In particular,
++      // title generation must not start its own retries with a day-long hint.
++      maxRetries: SessionRetry.free(input.model) ? 0 : (input.retries ?? 0),
+       messages,
+       model: wrapLanguageModel({
+         model: language,
+diff --git a/packages/opencode/src/session/processor.ts b/packages/opencode/src/session/processor.ts
+index 146c73f2771226f4b5319ce1d81a8b27c453b8dd..a56913e85bf54f66f1b4f627d2e78166f7117881 100644
+--- a/packages/opencode/src/session/processor.ts
++++ b/packages/opencode/src/session/processor.ts
+@@ -426,7 +426,10 @@ export namespace SessionProcessor {
+             sessionID: ctx.assistantMessage.sessionID,
+             error: ctx.assistantMessage.error,
+           })
+-          yield* status.set(ctx.sessionID, { type: "idle" })
++          // A free-model fallback may arrive immediately after idle. The owning
++          // Runner must release the session first, after cleanup has persisted
++          // the failed assistant; otherwise ensureRunning joins this failed run.
++          if (!SessionRetry.free(ctx.model)) yield* status.set(ctx.sessionID, { type: "idle" })
+         })
+ 
+         const abort = Effect.fn("SessionProcessor.abort")(() =>
+@@ -467,6 +470,7 @@ export namespace SessionProcessor {
+               Effect.retry(
+                 SessionRetry.policy({
+                   parse,
++                  free: SessionRetry.free(streamInput.model),
+                   set: (info) =>
+                     status.set(ctx.sessionID, {
+                       type: "retry",
 diff --git a/packages/opencode/src/session/prompt.ts b/packages/opencode/src/session/prompt.ts
 index 8facf7aba7ee08bcd598f5d9090b4d9706f8325d..5cd04ec12ae870d6ae8411b5a941afc5627e581a 100644
 --- a/packages/opencode/src/session/prompt.ts
@@ -1398,6 +1439,65 @@ index 8facf7aba7ee08bcd598f5d9090b4d9706f8325d..5cd04ec12ae870d6ae8411b5a941afc5
                  if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
  
                  if (step > 1 && lastFinished) {
+diff --git a/packages/opencode/src/session/retry.ts b/packages/opencode/src/session/retry.ts
+index ec1116da0bb411426caf6d3445d6abea5dcd1d9d..66f2d965d11adf9b3a4152d2fdd7cb9906d17a21 100644
+--- a/packages/opencode/src/session/retry.ts
++++ b/packages/opencode/src/session/retry.ts
+@@ -10,6 +10,12 @@ export namespace SessionRetry {
+   export const RETRY_BACKOFF_FACTOR = 2
+   export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds
+   export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for setTimeout
++  export const FREE_RETRIES = 2
++  export const FREE_WAIT = 30_000
++
++  export function free(model: { providerID: string; cost: { input: number; output: number } }) {
++    return model.providerID === "opencode" && model.cost.input === 0 && model.cost.output === 0
++  }
+ 
+   function cap(ms: number) {
+     return Math.min(ms, RETRY_MAX_DELAY)
+@@ -52,9 +58,18 @@ export namespace SessionRetry {
+     // context overflow errors should not be retried
+     if (MessageV2.ContextOverflowError.isInstance(error)) return undefined
+     if (MessageV2.APIError.isInstance(error)) {
++      // These describe an allowance or client eligibility restriction, not a
++      // transient rate limit. Retrying at the next daily boundary may still fail.
++      const body = iife(() => {
++        try {
++          return JSON.parse(error.data.responseBody ?? "")
++        } catch {
++          return undefined
++        }
++      })
++      const type = body?.error?.type ?? body?.type
++      if (type === "FreeUsageLimitError" || type === "FreeTierError") return undefined
+       if (!error.data.isRetryable) return undefined
+-      if (error.data.responseBody?.includes("FreeUsageLimitError"))
+-        return `Free usage exceeded, subscribe to Go https://opencode.ai/go`
+       return error.data.message.includes("Overloaded") ? "Provider is overloaded" : error.data.message
+     }
+ 
+@@ -88,14 +103,19 @@ export namespace SessionRetry {
+   export function policy(opts: {
+     parse: (error: unknown) => Err
+     set: (input: { attempt: number; message: string; next: number }) => Effect.Effect<void>
++    free?: boolean
+   }) {
+     return Schedule.fromStepWithMetadata(
+       Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
+         const error = opts.parse(meta.input)
+         const message = retryable(error)
+         if (!message) return Cause.done(meta.attempt)
++        const wait = delay(meta.attempt, MessageV2.APIError.isInstance(error) ? error : undefined)
++        // Leave the provider's retry hint intact. If it exceeds the foreground
++        // budget, finish this turn instead of retrying earlier than requested.
++        if (opts.free && (meta.attempt > FREE_RETRIES || meta.elapsed + wait > FREE_WAIT))
++          return Cause.done(meta.attempt)
+         return Effect.gen(function* () {
+-          const wait = delay(meta.attempt, MessageV2.APIError.isInstance(error) ? error : undefined)
+           const now = yield* Clock.currentTimeMillis
+           yield* opts.set({ attempt: meta.attempt, message, next: now + wait })
+           return [meta.attempt, Duration.millis(wait)] as [number, Duration.Duration]
 diff --git a/packages/opencode/src/session/system.ts b/packages/opencode/src/session/system.ts
 index 09788f3cdb0eaede79b688dfe11c7a8c407952b5..92e4eca03ea3fff2e6ed090825c0698496ad708d 100644
 --- a/packages/opencode/src/session/system.ts
@@ -1999,6 +2099,356 @@ index 551c0f3b593b363f1314495d095d460890f367c5..bc3b498c13e63637c12a79b71d250d94
  
  The current year is {{year}}. You MUST use this year when searching for recent information or current events
  - Example: If the current year is 2026 and the user asks for "latest AI news", search for "AI news 2026", NOT "AI news 2025"
+diff --git a/packages/opencode/test/session/llm.test.ts b/packages/opencode/test/session/llm.test.ts
+index bb81aa681c9f57f6d3b6ec7a6c75bb6824944136..3ba6a31a5df1e349740d432334d91ae6505c9b98 100644
+--- a/packages/opencode/test/session/llm.test.ts
++++ b/packages/opencode/test/session/llm.test.ts
+@@ -283,6 +283,77 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
+ }
+ 
+ describe("session.llm.stream", () => {
++  test.each([0, 1])("keeps SDK retries out of free title requests (input price %s)", async (price) => {
++    const server = state.server
++    if (!server) throw new Error("Server not initialized")
++    const request = waitRequest(
++      "/chat/completions",
++      Response.json(
++        { error: { type: "server_error", message: "Temporarily busy" } },
++        { status: 429, headers: { "retry-after-ms": "0" } },
++      ),
++    )
++    waitRequest(
++      "/chat/completions",
++      new Response(createChatStream("Recovered"), { headers: { "Content-Type": "text/event-stream" } }),
++    )
++    await using tmp = await tmpdir({
++      config: {
++        enabled_providers: ["opencode"],
++        provider: {
++          opencode: {
++            npm: "@ai-sdk/openai-compatible",
++            options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` },
++            models: {
++              "retry-test": {
++                name: "Retry Test",
++                cost: { input: price, output: 0 },
++                limit: { context: 4096, output: 128 },
++              },
++            },
++          },
++        },
++      },
++    })
++    await Instance.provide({
++      directory: tmp.path,
++      fn: async () => {
++        const model = await Provider.getModel(ProviderID.make("opencode"), ModelID.make("retry-test"))
++        const sessionID = SessionID.make("session-free-retry")
++        const agent = {
++          name: "title",
++          mode: "subagent",
++          options: {},
++          permission: [],
++        } satisfies Agent.Info
++        const stream = await LLM.stream({
++          user: {
++            id: MessageID.make("user-free-retry"),
++            sessionID,
++            role: "user",
++            time: { created: Date.now() },
++            agent: agent.name,
++            model: { providerID: model.providerID, modelID: model.id },
++          },
++          sessionID,
++          model,
++          agent,
++          small: true,
++          retries: 2,
++          system: [],
++          abort: new AbortController().signal,
++          messages: [{ role: "user", content: "Generate a title" }],
++          tools: {},
++        })
++        const events: LLM.Event[] = []
++        for await (const event of stream.fullStream) events.push(event)
++        await request
++        expect(state.queue).toHaveLength(price === 0 ? 1 : 0)
++        expect(events.some((event) => event.type === "error")).toBe(price === 0)
++      },
++    })
++  })
++
+   test("sends temperature, tokens, and reasoning options for openai-compatible models", async () => {
+     const server = state.server
+     if (!server) {
+diff --git a/packages/opencode/test/session/processor-effect.test.ts b/packages/opencode/test/session/processor-effect.test.ts
+index 0fc25c1a6b41bbeafcbac592f8ce55170ee44bce..773a36e6e0510e877a7a85678e121238aeb62a85 100644
+--- a/packages/opencode/test/session/processor-effect.test.ts
++++ b/packages/opencode/test/session/processor-effect.test.ts
+@@ -501,6 +501,85 @@ it.live("session.processor effect tests publish retry status updates", () =>
+   ),
+ )
+ 
++for (const item of [
++  { name: "free allowance restriction", status: 429, type: "FreeUsageLimitError", calls: 1, states: [] },
++  { name: "free client restriction", status: 403, type: "FreeTierError", calls: 1, states: [] },
++  { name: "free transient retry limit", status: 503, type: "server_error", calls: 3, states: [1, 2] },
++]) {
++  it.live(`session.processor terminates ${item.name}`, () =>
++    provideTmpdirServer(
++      ({ dir, llm }) =>
++        Effect.gen(function* () {
++          const { processors, session, provider } = yield* boot()
++          const bus = yield* Bus.Service
++          for (let index = 0; index < item.calls; index++) {
++            yield* llm.error(item.status, { error: { type: item.type, message: "Request refused" } })
++          }
++          // A fourth request would succeed if the free budget were accidentally ignored.
++          yield* llm.text("unexpected retry")
++
++          const chat = yield* session.create({})
++          const parent = yield* user(chat.id, "free retry")
++          const original = yield* assistant(chat.id, parent.id, path.resolve(dir))
++          const mdl = yield* provider.getModel(ProviderID.make("opencode"), ref.modelID)
++          const msg = { ...original, providerID: mdl.providerID, modelID: mdl.id }
++          const states: number[] = []
++          let idles = 0
++          const errors: unknown[] = []
++          const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
++            if (evt.properties.sessionID === chat.id && evt.properties.status.type === "idle") idles += 1
++            if (evt.properties.sessionID === chat.id && evt.properties.status.type === "retry")
++              states.push(evt.properties.status.attempt)
++          })
++          const unlisten = yield* bus.subscribeCallback(Session.Event.Error, (evt) => {
++            if (evt.properties.sessionID === chat.id) errors.push(evt.properties.error)
++          })
++          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
++          const value = yield* handle.process({
++            user: {
++              id: parent.id,
++              sessionID: chat.id,
++              role: "user",
++              time: parent.time,
++              agent: parent.agent,
++              model: { providerID: mdl.providerID, modelID: mdl.id },
++            } satisfies MessageV2.User,
++            sessionID: chat.id,
++            model: mdl,
++            agent: agent(),
++            system: [],
++            messages: [{ role: "user", content: "free retry" }],
++            tools: {},
++          })
++          off()
++          unlisten()
++          expect(value).toBe("stop")
++          expect(yield* llm.calls).toBe(item.calls)
++          expect(states).toStrictEqual(item.states)
++          expect(errors).toHaveLength(1)
++          expect(handle.message.error?.name).toBe("APIError")
++          // The standalone processor must not advertise Runner availability.
++          expect(idles).toBe(0)
++          expect(handle.message.time.completed).toBeDefined()
++        }),
++      {
++        git: true,
++        config: (url) => ({
++          enabled_providers: ["opencode"],
++          provider: {
++            opencode: {
++              npm: "@ai-sdk/openai-compatible",
++              models: cfg.provider.test.models,
++              options: { apiKey: "test-key", baseURL: url },
++            },
++          },
++        }),
++      },
++    ),
++    15_000,
++  )
++}
++
+ it.live("session.processor effect tests compact on structured context overflow", () =>
+   provideTmpdirServer(
+     ({ dir, llm }) =>
+diff --git a/packages/opencode/test/session/retry.test.ts b/packages/opencode/test/session/retry.test.ts
+index dfeb7e9a40c48acec96ae2456b60ea606386fb3c..ca74763a8846bd3cf42ee6d0ddc5d920fad803bd 100644
+--- a/packages/opencode/test/session/retry.test.ts
++++ b/packages/opencode/test/session/retry.test.ts
+@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
+ import type { NamedError } from "@opencode-ai/util/error"
+ import { APICallError } from "ai"
+ import { setTimeout as sleep } from "node:timers/promises"
+-import { Effect, Schedule } from "effect"
++import { Duration, Effect, Exit, Schedule } from "effect"
+ import { SessionRetry } from "../../src/session/retry"
+ import { MessageV2 } from "../../src/session/message-v2"
+ import { ProviderID } from "../../src/provider/schema"
+@@ -119,6 +119,41 @@ describe("session.retry.delay", () => {
+ })
+ 
+ describe("session.retry.retryable", () => {
++  test("does not retry structured free allowance or client restrictions", () => {
++    for (const body of [
++      { error: { type: "FreeUsageLimitError", message: "Rate limit exceeded." } },
++      { type: "FreeUsageLimitError", message: "Free usage limit reached." },
++      { error: { type: "FreeTierError", message: "Only available in OpenCode." } },
++    ]) {
++      const error = new MessageV2.APIError({
++        message: "Too Many Requests",
++        isRetryable: true,
++        statusCode: 429,
++        responseHeaders: { "retry-after": "69553" },
++        responseBody: JSON.stringify(body),
++      }).toObject() as MessageV2.APIError
++      expect(SessionRetry.retryable(error)).toBeUndefined()
++      expect(error.data.responseHeaders?.["retry-after"]).toBe("69553")
++      expect(error.data.responseBody).toBe(JSON.stringify(body))
++    }
++  })
++
++  test("keeps ordinary rate limits and unrelated errors retryable", () => {
++    for (const body of [
++      { error: { type: "server_error", message: "Rate limit exceeded." } },
++      { error: { type: "GoUsageLimitError", message: "Go usage limit reached." } },
++      { error: { type: "server_error", message: "Example type: FreeUsageLimitError" } },
++    ]) {
++      const error = new MessageV2.APIError({
++        message: "Too Many Requests",
++        isRetryable: true,
++        statusCode: 429,
++        responseBody: JSON.stringify(body),
++      }).toObject() as MessageV2.APIError
++      expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
++    }
++  })
++
+   test("maps too_many_requests json messages", () => {
+     const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
+     expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+@@ -167,6 +202,122 @@ describe("session.retry.retryable", () => {
+   })
+ })
+ 
++describe("session.retry.free", () => {
++  test("limits only confirmed free OpenCode requests", () => {
++    expect(SessionRetry.free({ providerID: "opencode", cost: { input: 0, output: 0 } })).toBe(true)
++    expect(SessionRetry.free({ providerID: "opencode", cost: { input: 0, output: 1 } })).toBe(false)
++    expect(SessionRetry.free({ providerID: "opencode", cost: { input: 1, output: 0 } })).toBe(false)
++    expect(SessionRetry.free({ providerID: "opencode-go", cost: { input: 0, output: 0 } })).toBe(false)
++    expect(SessionRetry.free({ providerID: "other", cost: { input: 0, output: 0 } })).toBe(false)
++  })
++
++  test("ends a free turn without publishing retry status for a day-long hint", async () => {
++    const updates: unknown[] = []
++    const result = await Effect.runPromise(
++      Effect.gen(function* () {
++        const step = yield* Schedule.toStep(
++          SessionRetry.policy({
++            free: true,
++            parse: (error) => error as MessageV2.APIError,
++            set: (info) => Effect.sync(() => void updates.push(info)),
++          }),
++        )
++        return yield* Effect.exit(step(1000, apiError({ "retry-after": "69553" })))
++      }),
++    )
++    expect(Exit.isFailure(result)).toBe(true)
++    expect(updates).toHaveLength(0)
++  })
++
++  test("ends a restricted free turn without a retry status", async () => {
++    const updates: unknown[] = []
++    const error = new MessageV2.APIError({
++      message: "Too Many Requests",
++      isRetryable: true,
++      statusCode: 429,
++      responseHeaders: { "retry-after": "69553" },
++      responseBody: JSON.stringify({ error: { type: "FreeUsageLimitError" } }),
++    }).toObject() as MessageV2.APIError
++    const result = await Effect.runPromise(
++      Effect.gen(function* () {
++        const step = yield* Schedule.toStep(
++          SessionRetry.policy({
++            free: true,
++            parse: (error) => error as MessageV2.APIError,
++            set: (info) => Effect.sync(() => void updates.push(info)),
++          }),
++        )
++        return yield* Effect.exit(step(1000, error))
++      }),
++    )
++    expect(Exit.isFailure(result)).toBe(true)
++    expect(updates).toHaveLength(0)
++  })
++
++  test("allows two free retries and then preserves the terminal error", async () => {
++    let calls = 0
++    const updates: unknown[] = []
++    const error = apiError({ "retry-after-ms": "0" })
++    const result = await Effect.runPromise(
++      Effect.flip(
++        Effect.retry(
++          Effect.suspend(() => {
++            calls += 1
++            return Effect.fail(error)
++          }),
++          SessionRetry.policy({
++            free: true,
++            parse: (error) => error as MessageV2.APIError,
++            set: (info) => Effect.sync(() => void updates.push(info)),
++          }),
++        ),
++      ),
++    )
++    expect(calls).toBe(3)
++    expect(updates).toHaveLength(2)
++    expect(result).toBe(error)
++  })
++
++  test("respects the accumulated free waiting budget", async () => {
++    const updates: unknown[] = []
++    const result = await Effect.runPromise(
++      Effect.gen(function* () {
++        const step = yield* Schedule.toStep(
++          SessionRetry.policy({
++            free: true,
++            parse: (error) => error as MessageV2.APIError,
++            set: (info) => Effect.sync(() => void updates.push(info)),
++          }),
++        )
++        const first = yield* step(1000, apiError({ "retry-after": "20" }))
++        expect(Duration.toMillis(first[1])).toBe(20_000)
++        return yield* Effect.exit(step(21_000, apiError({ "retry-after": "20" })))
++      }),
++    )
++    expect(Exit.isFailure(result)).toBe(true)
++    expect(updates).toHaveLength(1)
++  })
++
++  test("preserves other providers' long hints and retry policy", async () => {
++    const updates: unknown[] = []
++    await Effect.runPromise(
++      Effect.gen(function* () {
++        const step = yield* Schedule.toStep(
++          SessionRetry.policy({
++            parse: (error) => error as MessageV2.APIError,
++            set: (info) => Effect.sync(() => void updates.push(info)),
++          }),
++        )
++        for (let index = 0; index < 4; index++) {
++          const result = yield* step(index * 69_553_000, apiError({ "retry-after": "69553" }))
++          expect(Duration.toMillis(result[1])).toBe(69_553_000)
++        }
++      }),
++    )
++    expect(updates).toHaveLength(4)
++  })
++})
++
+ describe("session.message-v2.fromError", () => {
+   test.concurrent(
+     "converts ECONNRESET socket errors to retryable APIError",
 diff --git a/packages/plugin/src/index.ts b/packages/plugin/src/index.ts
 index 473cac8a9bffd993e668a9d22fe65ada4a86a314..046b00a52462ea951a8ef14520b4d302fc5ff959 100644
 --- a/packages/plugin/src/index.ts

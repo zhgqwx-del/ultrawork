@@ -184,7 +184,17 @@ export interface MessageInfo {
   // loose: opencode uses `{ name, data: { message, ... } }`, others may use a
   // plain string. (Data already passes through getMessages untouched; this just
   // types it so the renderer can treat an errored turn as terminal.)
-  error?: { name?: string; data?: { message?: string }; message?: string } | string
+  error?: {
+    name?: string
+    data?: {
+      message?: string
+      statusCode?: number
+      responseBody?: string
+      responseHeaders?: Record<string, string>
+      isRetryable?: boolean
+    }
+    message?: string
+  } | string
   id: string
   sessionID: string
 }
@@ -259,6 +269,7 @@ export interface ModelModalities {
 export interface ProviderModel {
   id: string
   name: string
+  status?: "alpha" | "beta" | "deprecated" | "active"
   /**
    * Was previously typed `input?: string[]` — the server actually sends an object of
    * per-modality booleans, so `capabilities.input.includes("image")` type-checked and

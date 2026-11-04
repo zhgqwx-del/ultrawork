@@ -1,6 +1,6 @@
 # 踩坑清单 (Gotchas)
 
-<!-- last-synced: 2026-10-30 -->
+<!-- last-synced: 2026-11-04 -->
 
 > 本文件是 Ultrawork 开发中**实测确认的坑点与非显然契约**的权威清单（SSOT）。
 > 与 [`conventions.md`](./conventions.md) 的分工：conventions = "应该怎么做"（正向模式）；gotchas = "别踩什么"（反向陷阱 + 上游/平台的非直觉行为）。
@@ -10,6 +10,9 @@
 ---
 
 ## 1. OpenCode API 类型契约（与直觉不符）
+
+- **免费模型目录不等于在线可用；idle 必须属于释放后的运行权（ADR-057 可靠性复核）**：Zen 可匿名列出免费模型，但上游仍可能返回结构化 `FreeUsageLimitError` / `FreeTierError`；不能据此无限重试或承诺建议时间后必恢复。processor 在 cleanup/持久化前先报 idle，会让立即到达的下一候选加入尚未退出的旧 Runner，出现请求被吞。免费错误现由拥有运行权的 Runner 在 cleanup 后发布唯一 idle，黑盒回归同时检查持久化先于 idle。规则与官方对照见 [ADR-057](decisions/057-default-free-zen-model-trial.md)，复跑见 testing §17。
+- **OpenCode 已就绪不代表 Team 注册表已可读**：原生宿主在 renderer 启动后继续拉起 ACP，首次 Team GET 可早于服务就绪。失败后永久退空会让持久化 Team 丢失 Leader 指令，连带按 Solo 发送。Team 快照必须区分“尚未获得权威结果”和“权威空表”，失败可恢复且保留已知快照，工作区/端口变化取消迟到请求；类型未知时 UI 禁用与实际发送入口须同时门控。仅 sidecar API 健康、磁盘记录存在不足以证明原生 UI 恢复，真实 `.app` 重启验收见 testing §17。
 
 调用 OpenCode API / 处理 SSE 时，以下字段结构是**实测确认**的，与命名直觉不同。端点完整清单见 [`api-reference.md`](./api-reference.md)。
 
