@@ -791,6 +791,8 @@ chmod 600 certificate.p12
 
 2026-10-30 的 `v0.3.12` 已在合并提交 `1dbc6c1b` 上完成两品牌正式发行：[main CI 16/16](https://github.com/zhgqwx-del/ultrawork/actions/runs/41071866006)、[Release CI 8/8](https://github.com/zhgqwx-del/ultrawork/actions/runs/41073963883)，[12 个安装包](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.12) 已发布。两个 macOS 作业的实际公证/staple 日志和公开下载 DMG 的摘要、Developer ID、Gatekeeper、Universal 架构、名称/图标均复核通过；不把它外推为所有系统的安装升级或权限验收。完整证据与剩余项见 [testing §16](./testing.md#16-独立品牌发行版的验证adr-075)。
 
+2026-11-04 的 `v0.3.13` 已在合并提交 `a4be187b` 上沿用同一链路完成双品牌发行：[发布提交 main CI 16/16](https://github.com/zhgqwx-del/ultrawork/actions/runs/41800402118)、[Release CI 8/8](https://github.com/zhgqwx-del/ultrawork/actions/runs/41800705407)、[12 个公开安装包](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.13)。两份公开 DMG 的摘要、版本、Developer ID/预期 Team、app/DMG staple、app Gatekeeper、五个 Universal 二进制及中文/空格路径搬迁均独立复核通过。Windows/Linux 沿用现有未配置证书签名的安装包流程；客户机安装和系统权限仍为独立验收范围。完整记录见 [testing §17](./testing.md#17-免费模型错误与回退验证adr-057)。
+
 ### 9.4 历史示例（以真实 release.yml 为准）
 
 GitHub Actions 示例：

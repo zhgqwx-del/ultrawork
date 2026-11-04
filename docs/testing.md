@@ -1041,3 +1041,14 @@ bun run --bun scripts/verify-free-zen-native-macos.ts --app '<FreeZenCheck.app>'
 这轮原生走查确实发现并修复了 Team 首次注册表请求早于 ACP 就绪的问题，新增失败恢复/超时/工作区切换/快捷发送负控；不能把“磁盘有 Team 记录”或“sidecar API 健康”当作原生 UI 身份已恢复。
 
 Windows/Linux 原生 CI 接线已补齐，尚未运行远端矩阵。已重建并运行独立 ad-hoc macOS 测试 `.app`；正式品牌 DMG、Developer ID 签名/公证、系统权限及其他 OS 原生安装升级仍需对应发行环境，不由该测试包替代。上游模型使用本地 fixture，不证明外部 Zen 免费资格已恢复。
+
+### v0.3.13 正式双品牌发行补验（2026-11-04）
+
+上段是本机测试阶段的边界；本次正式发行已补齐远端三平台 CI 和双品牌 macOS 正式签名包验收。修复经 [PR #36](https://github.com/zhgqwx-del/ultrawork/pull/36) 合入发布提交 `a4be187b454bcaf33ab3ae32279202501e7e18de`，应用版本七处同步为 `0.3.13`，OpenCode 子模块仍固定原提交。
+
+- [PR CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/41798283667) 和 [发布提交的 main CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/41800402118) 均 **16/16**；含三平台显式免费回退/Team 水合回归、Rust 及真正编译 sidecar 的本地故障验证。
+- [Release CI](https://github.com/zhgqwx-del/ultrawork/actions/runs/41800705407) **8/8**：两品牌 × 三平台六个构建、tag/version 门禁和统一发布全部成功。[v0.3.13](https://github.com/zhgqwx-del/ultrawork/releases/tag/v0.3.13) 发布 **12 个安装包**，每品牌各有 Universal DMG、Windows 常规/离线 EXE 与 MSI、Linux deb/rpm。
+- 两个 macOS job 的实际日志分别确认有效签名身份导入、公证批准、Developer ID 及 app/DMG staple 验证成功。另从公开 Release 下载两份 DMG：字节大小和 SHA256 与 GitHub 公布摘要一致，名称/identifier/`0.3.13` 版本正确；挂载副本及 `ditto` 搬迁到中文/空格路径后的副本均通过 deep/strict、Developer ID、同一预期公开 Team ID、app Gatekeeper 与 app/DMG staple。五个 Mach-O 均有 ARM64/Intel 切片，仅相对或系统动态库依赖；资源无构建机 checkout 路径。
+- 验收工件：`.brand-build/verification/v0.3.13/` 下的 `pr-ci.json`、`main-ci.json`、`release-ci.json`、`macos-signing/receipt.json`、`published-macos/report.json`。公开包检查使用明确标注的 GitHub API 派生清单，不将它冒充 CI 原清单；CI 发布任务另行校验六份原清单的文件大小、摘要和重名。
+
+签名公证覆盖 macOS；Windows/Linux 未配置对应证书签名。此次公开包只读验包、未安装或启动，不据此声称客户机安装/升级、系统授权、Intel 真机执行或外部免费模型资格已经验收。
