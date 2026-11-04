@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-11-04
+
 ### Fixed
 
 - 修复原生重启时 ACP 尚未就绪导致 Team 永久丢失协作身份：注册表自动恢复、失败退避、请求超时取消并保护工作区及创建/删除竞态；类型未知时按钮与实际发送入口均暂缓，避免旧 Team 静默变为单 Agent。新增真实打包 macOS 应用的同意、错误终态、单 Agent／Team 回退及重启验收。
