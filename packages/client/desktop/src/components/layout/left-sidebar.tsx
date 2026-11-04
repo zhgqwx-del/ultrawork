@@ -41,6 +41,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { SettingsPopover } from "@/components/settings/settings-popover"
 import { useFavorites } from "@/lib/use-favorites"
 import { useI18n } from "@/lib/i18n-context"
+import { APP_VERSION } from "@/lib/app-version"
 import { formatDateOnly } from "@/lib/format-time"
 import { useTeamSessions, type TeamSessionEntry } from "@/lib/team-sessions-context"
 import { useChannelSessions, type ChannelSessionEntry } from "@/lib/channel-sessions-context"
@@ -310,8 +311,13 @@ export function LeftSidebar() {
                 className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
               >
                 <Logo className="size-8" />
-                <span className="text-sm font-semibold tracking-wide text-[var(--sidebar-fg)]">
-                  {t("brand.name")}
+                <span className="flex flex-col items-end">
+                  <span className="text-sm font-semibold leading-4 tracking-wide text-[var(--sidebar-fg)]">
+                    {t("brand.name")}
+                  </span>
+                  <span className="mt-0.5 whitespace-nowrap text-[11px] font-normal leading-3 text-[var(--sidebar-fg-muted)]">
+                    v{APP_VERSION}
+                  </span>
                 </span>
               </button>
             </div>
