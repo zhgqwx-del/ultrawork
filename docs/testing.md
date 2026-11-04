@@ -996,3 +996,48 @@ Codex 的 MCP `request_permission` 可能只有 `execute/exec-UUID`，同一调�
 5. 各品牌用更新版本安装器覆盖升级，再卸载/重装其中一个，确认自己的数据按预期保留、另一品牌文件/数据未变。Windows 分别验 MSI/NSIS，Linux 分别验 deb/rpm；未实际执行升级前不能写成通过。
 
 补齐这些边界需要对应 Windows/Linux/Intel Mac 测试环境、正式签名/公证配置，以及需要验证的真实模型/外部 Agent/渠道账号。凭证应放在本机或 CI 的安全配置中，不写入仓库或测试报告。
+
+
+## 17. 免费模型错误与回退验证（ADR-057）
+
+- 前端纯逻辑、ModelProvider、消息 hook 的在途请求/竞态，以及真实 AssistantTurn 错误卡片：
+  `cd packages/client/desktop && bun run --bun vitest run src/__tests__/lib/free-model.test.ts src/__tests__/lib/model-context.test.tsx src/__tests__/lib/use-session-messages-freetrial-fallback.test.ts src/__tests__/components/chat/free-model-error-rendering.test.tsx`。
+  CI 显式在 macOS、Windows、Linux 运行该集合，避免 Windows 全量 TS 测试跳过规则遗漏本次回归。
+- 后端：vendor 的 `test/session/retry.test.ts`、`llm.test.ts`、`processor-effect.test.ts` 覆盖免费限制终态、SDK 单次调用、两次重试与等待预算、付费路径；需 vendor 冻结依赖及本地 loopback。
+- `bun run --bun scripts/verify-free-zen-errors.ts`：本地 HTTP fixture + 真正已编译 sidecar。全隔离数据、动态端口，验证免费限制仅一次请求后 `error + idle`、模型不可用不重试、普通瞬时错误有界重试；不依赖 Zen 免费资格，不触碰真实应用端口或数据。
+- `bun run --bun scripts/build-acp.ts` 后运行 `bun run --bun packages/client/desktop/e2e/free-model-reliability.e2e.ts`，再用 `E2E_ENGINE=webkit` 复跑（Windows PowerShell 使用 `$env:E2E_ENGINE = "webkit"`）。需本机 Chrome 或 `CHROME_PATH`、已安装的 Playwright WebKit。测试驱动真实 Vite/React、OpenCode/ACP 编译产物、注册表、delegate MCP 和成员子会话；仅上游模型及 Tauri IPC 为测试适配，数据/品牌上下文/端口均隔离。报告、二进制摘要、wire 请求及截图落 `.brand-build/verification/free-model-browser/<engine>/`。
+- `bun run --bun scripts/verify-free-zen.ts --sidecar <binary> --official <official-binary> --model big-pickle`：联网真实比较原生发行版与项目 sidecar；官方包应先从官方渠道下载并验证摘要。脚本不会安装全局 CLI、伪造请求头或读取用户 Key，输出实际成功/失败与终结耗时。仅适用于显式允许联网的按需验收，不作为离线 CI 必过条件。
+- 2026-11-02 对照结果见 [ADR-057 复核](decisions/057-default-free-zen-model-trial.md#2026-11-02-可靠性复核与修复)。当前网络下官方 v2 同样被拒，故“正确报错且及时结束”与“线上免费可用”分别记录，不能将前者判作后者通过。
+
+平台边界：本机实跑 macOS ARM64；Windows/Linux 原生执行由三平台 CI 及对应发行环境验收，跨平台源码或本机测试通过不能代替原生运行。
+
+
+2026-11-02 首轮本机结果：桌面 979/979、Rust lib 185/185、9 包 typecheck 通过；vendor 重试 28/28、LLM 16/16、新增 processor 3/3 通过。受影响 vendor 三套全量 57/58，唯一原有工具 cleanup 用例在撤销本次业务变更的隔离副本仍同样 30 秒超时，属于已核实基线问题。真实线上限制从旧包 40 秒未结束变为修复后约 3.8 秒结束。
+
+2026-11-03 系统复核增加以下判据：
+
+- 桌面全量 **1012/1012**（含 Team provider 14 项、真实 Session/provider 整合 3 项），API client **80/80**、Connector **95/95**、Orchestrator **84/84**、ACP **182/182**、Rust lib **185/185**；9 包 typecheck、诊断/E2E 脚本严格类型检查、Vite 构建通过。vendor 重试 **28/28**、LLM **16/16**、新增 processor **3/3** 通过；三套全量仍只有上述已确认基线 cleanup 超时（57/58），未把它计为通过。
+- 编译 sidecar 四种本地 HTTP 故障都检查请求次数、错误持久化先于唯一 idle；旧产物的过早 idle 负控失败，新产物通过。将新产物移到 checkout 外的中文/空格安装路径、在外部 cwd 运行也通过。
+- OpenCode 和 ACP 五个目标（macOS ARM64/Intel、Windows x64、Linux x64/ARM64）均完成交叉编译及 freshness 检查。固定提交的全新目录中累计 patch 可完整应用，33 个文件与当前 vendor 逐字节一致。构建通过不等于 Windows/Linux 原生安装运行通过。
+- 前端故障注入覆盖后台输出、REST 补拉、慢水合、历史读取失败、旧用户/assistant metadata 迟到以及 ACP 后端切换。浏览器以最终正文/错误卡片、持久化历史和 composer 无 spinner 为判据；单独等待 idle 不能证明 UI 已正常结束。
+- Team 必须验证真正的 MCP→orchestrator→独立成员会话→持久化工具结果→Leader 汇总；且 Leader 回退后成员也要在未显式覆盖模型时使用本轮模型。仅检查 Team 的 system/tools 原样转发不足以证明成员调用正确。
+- Chrome 156.0.8078.80 / WebKit 26.5 各 **8/8 通过**：免费限制及刷新后错误卡、单 Agent 首发/续发回退、附件保留、停止、已有输出禁止重发、Team 首发/续发、真实成员委托、无输出 ACP 鉴权失败。Leader 实际请求 `big-pickle` 失败后切到 `mimo-v2.6-flash-free`，成员唯一请求同一候选并回卷成功；ACP 仅一次实际 prompt、零 Zen 请求及零候选查询。全部场景最终 DOM spinner 为 0，无 pageerror 或外部网络请求。原生 IPC 为测试适配，上游为本地 fixture，不代表外部模型账户已可用。
+- 新 OpenCode/ACP 二进制同时复制到 checkout 外的中文/空格安装目录，从外部工作目录重跑真实 Team 浏览器闭环通过（`free-model-browser/relocated-chrome/report.json`）；包含实际 delegate MCP 子进程，未借用仓库内 sidecar 路径。
+
+### macOS 原生窗口补验
+
+`scripts/verify-free-zen-native-macos.ts` 是原生测试 supervisor：启动真正的 `.app` 和四个包内 sidecar，提供确定性本地 LLM、隔离临时 HOME/XDG、记录实际请求/SSE/持久化数据；窗口由 CUA 的原生 Accessibility 自动操作，不注入 Tauri IPC 或替换 WKWebView。普通终端单独运行 supervisor 时需人工操作窗口。
+
+```bash
+# 独立测试品牌；不覆盖已安装的 Ultrawork/MyWork
+APPLE_SIGNING_IDENTITY=- bun run --bun scripts/tauri-brand.ts build --brand-id freezen-check --name FreeZenCheck --icon branding/mywork/assets/meiyou-app-rounded.png --bundles app --target aarch64-apple-darwin
+bun run --bun scripts/verify-free-zen-native-macos.ts --app '<FreeZenCheck.app>' --output .brand-build/verification/free-model-native/final
+```
+
+先等 `NATIVE READY`，核对窗口工作区与输出的临时 workspace 一致，再操作：首次发送 `NATIVE_FREE_QUOTA` 并启用试用；新单 Agent 会话发送 `NATIVE_FREE_FALLBACK`，续发同标记；新 Team 发送 `NATIVE_FREE_TEAM`。这些标记仅对本地 fixture 有含义。stdin 支持 `check quota`、`check fallback`、`check team`、`restart`、`finish`；也可用输出目录中 0600 的 `status.json` 内本地控制接口。`restart` 在同一 HOME/fixture 下重新启动，`finish` 核验后回收本脚本拥有的进程。不要在 READY 前通过 bundle ID 自动启动应用，否则 LaunchServices 会使用不同的环境；不要预建未含可信 identity 的品牌数据目录，须由真实 Rust 首次初始化。
+
+本轮最终包在 checkout 外的中文/空格安装路径运行，**8 项原生 GUI 检查通过**：真实同意门与零预发送、免费限制及输入恢复、模型配置入口、单 Agent 首发、单 Agent 续发、真实 Team 成员委托、重启后 Team 身份/交付物恢复、重启后免费错误/建议时间保留。测试的主程序 SHA256 与最终构建一致，报告为 `.brand-build/verification/free-model-native/final/{report,gui-observations}.json`。只读原始重启失败证据保留于 `gui-positive/gui-observations.json`，修复前后不可混计；最终完整浏览器回归另存 `free-model-browser/native-review-final/{chrome,webkit}/report.json`，两引擎仍各 8/8。
+
+这轮原生走查确实发现并修复了 Team 首次注册表请求早于 ACP 就绪的问题，新增失败恢复/超时/工作区切换/快捷发送负控；不能把“磁盘有 Team 记录”或“sidecar API 健康”当作原生 UI 身份已恢复。
+
+Windows/Linux 原生 CI 接线已补齐，尚未运行远端矩阵。已重建并运行独立 ad-hoc macOS 测试 `.app`；正式品牌 DMG、Developer ID 签名/公证、系统权限及其他 OS 原生安装升级仍需对应发行环境，不由该测试包替代。上游模型使用本地 fixture，不证明外部 Zen 免费资格已恢复。

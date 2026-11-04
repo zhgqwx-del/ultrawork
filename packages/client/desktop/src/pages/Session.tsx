@@ -35,6 +35,7 @@ import { RightSidebarSection } from "@/components/session/right-sidebar-section"
 import { UnreadBadge } from "@/components/ui/unread-badge"
 import type { Artifact } from "@/components/session"
 import { useI18n } from "@/lib/i18n-context"
+import { formatDateTime } from "@/lib/format-time"
 import { useMarkReadWhileOpen } from "@/lib/use-unread"
 import type { Attachment } from "@/lib/attachments"
 import { sessionDraftKey, useDraftBucket, useDraftDispatch } from "@/lib/draft-context"
@@ -44,8 +45,8 @@ export function SessionPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const { sessions, activeSessionIds } = useSessionsContext()
-  const { t } = useI18n()
-  const { currentModel, setModel, maybeOfferFreeTrial } = useModel()
+  const { t, language } = useI18n()
+  const { currentModel, getCurrentModel, setModel, maybeOfferFreeTrial } = useModel()
   const { rightOpen, toggleRight, setRightOpen, previewMode, openPreview, closePreview, togglePreviewMaximized } = useSidebar()
   const { workspacePath } = useWorkspace()
   const { config } = useConfig()
@@ -74,9 +75,10 @@ export function SessionPage() {
   useMarkReadWhileOpen(id, session?.time.updated)
 
   // Team session (018 统一交互): identity comes from the sidecar registry.
-  const { entryOf } = useTeamSessions()
+  const { entryOf, loading: teamLoading } = useTeamSessions()
   const { agents, getSessionAgentId } = useAgents()
   const teamEntry = entryOf(id)
+  const waitingForSessionType = teamLoading && !teamEntry
   // Whether THIS session can own delegates (→ render the DelegateDock). opencode
   // single-agent sessions deny `orchestrator_*` (can't delegate); only Team
   // Leaders do. ACP sessions can delegate when their agent has orchestratorMcp on
@@ -120,6 +122,7 @@ export function SessionPage() {
     stopped,
     stoppedAtMessageId,
     toolCompletionCount,
+    retry,
     turnStart,
     hasMore,
     historyLoading,
@@ -285,6 +288,9 @@ export function SessionPage() {
   }, [rightOpen, toggleRight])
 
   const handleSend = async () => {
+    // A cold ACP registry read may still be restoring this persisted Team.
+    // Guard shortcuts as well as the button before choosing system/tools.
+    if (waitingForSessionType) return
     // An attachment with no text is a legitimate turn ("look at this screenshot").
     if (!id || (!input.trim() && attach.items.length === 0)) return
     // `checking` matters as much as `blocker`: the gate awaits a 4 MB GET /provider, and
@@ -317,7 +323,7 @@ export function SessionPage() {
         toast.error(t("attachment.nothingToSend"))
         return
       }
-      sendMessage(text, currentModel, attachments)
+      sendMessage(text, supportsModel ? getCurrentModel() : undefined, attachments)
       // Consumed by a real turn — drop the whole bucket. Sits after the early return above,
       // so a turn that materialised nothing keeps the user's input. attach.clear() first:
       // this page is NOT unmounted after a send, so the hook's cap bookkeeping would keep
@@ -480,14 +486,20 @@ export function SessionPage() {
       {!pendingQuestion && !pendingPermission && (
         <div className="relative flex shrink-0 justify-center">
           <div className="w-full max-w-[860px] px-4 py-3">
+            {retry && (
+              <div role="status" className="mb-2 rounded-md border border-orange-500/30 px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+                <span>{t("message.retrying", { attempt: retry.attempt })} {retry.message}</span>
+                {formatDateTime(retry.next, language) && <span className="ml-1">{t("freeTrial.retryAt", { time: formatDateTime(retry.next, language)! })}</span>}
+              </div>
+            )}
             <ChatInput
               value={input}
               onChange={setInput}
               onSend={handleSend}
               attachments={attachmentSlot}
               onStop={stopGeneration}
-              placeholder={t("placeholder.reply")}
-              disabled={isAgentActive || preparing}
+              placeholder={t(waitingForSessionType ? "session.restoringType" : "placeholder.reply")}
+              disabled={isAgentActive || preparing || waitingForSessionType}
               loading={isAgentActive || preparing}
               variant="reply"
               // Team session → the leader is the receiving backend; otherwise the

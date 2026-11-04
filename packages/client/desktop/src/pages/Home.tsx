@@ -6,6 +6,7 @@ import { useSessionsContext } from "@/lib/sessions-context"
 import { commandsAvailableFor } from "@/lib/command-menu"
 import { useConnector } from "@/lib/sse-context"
 import { useModel } from "@/lib/model-context"
+import { beginPromptAttempt, forgetPromptAttempt } from "@/lib/prompt-attempt"
 import { useAttachments } from "@/lib/use-attachments"
 import type { Attachment } from "@/lib/attachments"
 import {
@@ -67,7 +68,7 @@ export function HomePage() {
   const { agents, acpAvailable, bindSessionAgent } = useAgents()
   const connector = useConnector()
   const { t } = useI18n()
-  const { currentModel, setModel, maybeOfferFreeTrial } = useModel()
+  const { currentModel, getCurrentModel, setModel, maybeOfferFreeTrial } = useModel()
 
   // --- Draft-backed composer state ---------------------------------------------------
   // Every setter below is stable (`patchDraft` is frozen for the app's lifetime), so
@@ -230,6 +231,11 @@ export function HomePage() {
       clearDraft(HOME_DRAFT_KEY)
       // Navigate immediately for instant UX; the prompt call is fire-and-forget.
       // Session.tsx has a safety timeout to reset sending if no SSE events arrive.
+      const attempt = beginPromptAttempt(session.id, prompt, {
+        model: connector.capabilitiesOf(session.id).model ? getCurrentModel() || undefined : undefined,
+        directory: session.directory,
+        attachments,
+      })
       navigate(`/session/${session.id}`, { state: { sending: true, messageText: text } })
       // A new session's FIRST turn is started here, not through the composer's
       // sendMessage — so the notification allowlist has to be told here too, or the
@@ -238,12 +244,9 @@ export function HomePage() {
       // Dispatched by the binding frozen above (ACP backends lazily create the
       // agent-side session in the workspace directory before prompting).
       connector
-        .prompt(session.id, prompt, {
-          model: currentModel || undefined,
-          directory: session.directory,
-          attachments,
-        })
+        .prompt(session.id, attempt.text, attempt.options)
         .catch((err) => {
+          forgetPromptAttempt(session.id, attempt)
           console.error("Failed to send message:", err)
           // No turn ever ran, so no idle will ever arrive to consume the entry — it would
           // sit there and arm a false "completed" on the next idle this session sees.
@@ -294,22 +297,19 @@ export function HomePage() {
       addEntry(entry)
       if (!isOpencodeLeader) bindSessionAgent(entry.id, agentId)
       clearDraft(HOME_DRAFT_KEY)
+      const attempt = beginPromptAttempt(entry.id, text, isOpencodeLeader
+        ? { model: getCurrentModel() || undefined, directory: workspacePath, system: systemPrompt, tools: { task: false } }
+        : { directory: workspacePath })
       navigate(`/session/${entry.id}`, { state: { sending: true, messageText: text } })
       markLocallyPrompted(entry.id)
       connector
         .prompt(
           entry.id,
-          text,
-          isOpencodeLeader
-            ? {
-                model: currentModel || undefined,
-                directory: workspacePath,
-                system: systemPrompt,
-                tools: { task: false },
-              }
-            : { directory: workspacePath },
+          attempt.text,
+          attempt.options,
         )
         .catch((err) => {
+          forgetPromptAttempt(entry.id, attempt)
           console.error("Failed to send message:", err)
           forgetLocallyPrompted(entry.id)
           toast.error(t("error.sendMessage"))

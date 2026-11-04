@@ -7,6 +7,8 @@
 
 ## 背景
 
+> **2026-11-02 可靠性复核**：匿名免费访问目前可能被上游按客户端资格限制，`FreeUsageLimitError` 不等于个人额度确已耗尽，`Retry-After` 也不保证届时恢复。下文保留最初决策与验收历史，当前错误处理和回退规则以文末复核为准。
+
 全新电脑首次安装后，应用没有被选中的默认模型：`currentModel` 初始为空，全局 `opencode.json` 不存在 ⇒ 模型选择器显示 "no model"，用户必须先进设置页配 provider + API key 才能对话。零门槛体验缺失。
 
 诉求：把默认设成 OpenCode Zen 的**免费**模型，做到开箱即用。
@@ -157,3 +159,41 @@ opencode 给 `opencode` provider 的标题模型默认优先级是 `["gpt-5-nano
 - [x] 跨平台：逻辑全平台无关（TS + 本地 config 读写，无 unix-only/硬编码路径）；Rust consent 用 `path.parent()` 无平台分支；CI 三平台兜底。
 - [x] **macOS 真机验收通过（2026-07-15，`tauri dev` + 临时 XDG 模拟首次安装，真 Rust/真 WKWebView/真 sidecar/真 Zen）**：① fresh install 发消息**弹卡片** ✓；② 点启用 → **真 Rust 写 `free-trial-consent.json`**（`consented:true` + `seededModel/seededSmallModel=opencode/big-pickle`，camelCase 正确）+ **真 opencode.json seed** `model`+`small_model=opencode/big-pickle` + **真 Zen 回复** marker ✓；③ 选择器「免费」徽标 ✓；④ 撤销 → **真 Rust 清 consent**（`consented:false`）+ **带保护清 model**（`model/small_model`→空串，因仍等于 seed 值）✓。**验证坑（血泪）**：opencode **向上目录树合并 opencode.json**，dev 机三处泄漏 model（仓库根 / desktop 包 / 工作区），首次安装须用**无 opencode.json 的干净工作区**；macOS WKWebView localStorage **按 bundle 存、不随 XDG 变**，旧 sidecar 密码残留致首连 401（清 `ultrawork-config` 重取即好）。剩 ④ 透明回退真 401（难构造）+ 打包 `.app` 与 Windows/Linux 未上真机。
 - [x] ~~小 UX 欠账：「用自己的 Key」未跳设置页~~ → 已补：跳转 设置 → 模型 tab。
+
+
+## 2026-11-02 可靠性复核与修复
+
+在 macOS ARM64 同一网络下，使用官方原版与已安装 MyWork sidecar 的隔离新会话，仅发送 `Reply OK.`，不读取真实凭证、工程或历史，不伪造客户端头。官方 v1 归档校验 GitHub SHA256，官方 v2 平台包校验 npm SHA512。
+
+| 版本 | Big Pickle | MiMo-V2.6-Flash-Free |
+|---|---|---|
+| 官方 GitHub v1.19.5 | 免费访问限制，40 秒仍在等待，由诊断终止 | 未重复测试 |
+| 官方 npm v2.2.5 | 429，约 1.58 秒结束 | 429，约 1.35 秒结束 |
+| 安装版 MyWork `0.0.0--202610301445` | 429，40 秒仍在等待，由诊断终止 | 同左 |
+
+官方 v2 返回 `provider.free-limit`，保留建议重试延迟；项目旧版将其当作可重试 APIError。因此此次修复负责及时终止、解释错误和安全回退，不能承诺恢复上游免费资格。依据：[官方集成范围](https://opencode.ai/v2/docs/console/harnesses/)、[同类客户端限制](https://github.com/anomalyco/opencode/issues/58995)、[上游结构化免费限制修复](https://github.com/anomalyco/opencode/pull/57146)。
+
+当前规则：
+
+- 后端按结构化 `FreeUsageLimitError` / `FreeTierError` 终结，不等待日界线继续重试。仅实际请求为 `opencode` 且输入/输出均免费时，其他瞬时故障最多重试 2 次、总重试等待预算 30 秒；免费模型的 SDK 内部重试关闭，防止两层重试叠加。其他供应商及付费模型的普通重试保持原行为。
+- 前端分类读取完整 APIError 的状态、正文和响应头。长重试时间只标为“上游建议”，不承诺恢复；终态错误保留在消息区域，临时重试展示原因与时间。
+- 候选同时要求输入/输出零价格、明确支持工具、未弃用。偏好序随当前官方清单调整，仍非白名单或探活结果；普通参数 400 不触发模型回退。
+- `auth` / 明确 `unavailable` 只在已同意试用、尚无模型输出/工具调用时回退，同一轮总计最多尝试 3 个不同免费模型。免费访问限制立即停止，不轮换免费池。
+- Home 与 Session 共用在途请求记录，保存实际文本、物化附件、目录、Team system/tools；候选就绪与 idle 顺序无关，重发只消费一次。停止、切会话、改模型及新轮次使旧异步结果失效。
+- 回退根据本轮失败模型和尝试历史选择候选，不修改全局模型或清除同意状态，避免并发会话互相干扰。候选耗尽时保留明确失败提示及模型配置入口。
+
+复跑：`scripts/verify-free-zen.ts` 比较原生二进制的实际调用，`scripts/verify-free-zen-errors.ts` 用本地上游 fixture 验证真实 sidecar 的错误终态与重试预算。具体命令、离线/平台边界见 [testing §17](../testing.md#17-免费模型错误与回退验证adr-057)。
+
+### 2026-11-03 系统复核补充
+
+OpenCode 子模块继续固定在 `8e9e79d2769f0f944fa9da9add032e46348eb850`；官方新版本仅临时下载对照。所有 vendor 修复仍通过累计 patch 管理，不更新子模块指针或依赖锁。
+
+- **Runner 终态所有权**：processor 原先先报 idle 再 cleanup，下一候选请求可能加入尚未退出的旧 Runner。免费请求现在由 Runner 在持久化失败消息、完成 cleanup 后发布唯一 idle；编译产物黑盒断言消息已落盘后才允许 idle，旧产物负控可复现失败。
+- **完整的输出屏障**：全局 SSE 在未挂载 Session 时也记录工具/正文；首次水合及重连快照补齐漏掉的输出。候选就绪仍须等历史水合完成，读取失败则停止自动重发。停止、改模型、切后端、新用户消息以及旧轮迟到 metadata 都不能重新开启或清掉当前轮的屏障。
+- **协议能力门控与错误终态**：ACP 会话忽略全局 OpenCode 模型选择，ACP 鉴权错误不进入 Zen 候选回退。ACP 在产生 assistant 前失败时也必须清本地 sending；全局忙锁仍等后端实际 idle，避免 Home 首发永久转圈或提前接受新消息。
+- **Team 模型继承**：未显式覆盖模型的默认 OpenCode 成员，从该次委托 owner 的最新 assistant 读取实际 provider/model，避免 Leader 回退后成员选回失效全局默认。显式 override、自定义 persona、ACP 目标/已绑定 ACP owner 不继承；读取失败或最新 assistant 缺模型保留原默认，不向更老轮次寻找。按 owner 隔离，同工作区并发 Team 不互相影响；不改变全局配置。
+- **错误解释隔离**：结构化类型优先于文本中的错误名；其他供应商错误不显示为 OpenCode 免费访问限制。目录清单中的 `ProviderModelNotFoundError` 与上游明确模型不可用走同一分类。
+
+可复用浏览器验收新增 `packages/client/desktop/e2e/free-model-reliability.e2e.ts`：Vite/React + Chrome/WebKit + 真实编译 sidecar、ACP 注册表及 delegate MCP；上游 LLM 使用可控 HTTP fixture，原生 IPC 使用显式测试适配。以真实消息、SSE、历史持久化、实际 DOM 终态为判据，不能据此宣称外部 Zen 免费资格、Windows/Linux 原生窗口或新安装包已验收。
+
+随后原生 macOS 补验使用独立 `FreeZenCheck.app`、真实 WKWebView/Rust IPC/四种包内 sidecar，CUA 驱动实际窗口；仅模型为本地 fixture。原生重启负控额外发现 Team 注册表首次请求早于 ACP 就绪，失败后前端永久丢失 Team 身份。现复用 ACP 可用性及端口变化恢复，失败退避、10 秒真实取消；保留已知快照并隔离工作区/迟到响应。首次权威清单未知时，既有会话的按钮及实际发送入口暂缓发送，避免丢失 Leader 指令；成功加载过的 Solo 与本地已识别新 Team 不受短暂后台失联影响。原版 provider 及移除发送 guard 的隔离负控均失败，修复后真实原生重启恢复通过。操作、报告与发行边界见 testing §17。

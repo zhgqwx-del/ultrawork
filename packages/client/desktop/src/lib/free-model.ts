@@ -5,13 +5,13 @@
  * auto-loads its free models with an anonymous `apiKey: "public"` when the user has no key
  * (`vendor/.../provider/provider.ts:178-198` strips paid models, keeps `cost.input === 0`).
  * So on a fresh install `GET /provider` already lists these free models as *connected* — we
- * just need to pick one to seed as the default (after explicit consent; see model-context).
+ * can pick a candidate to seed as the default (after explicit consent; see model-context).
  *
  * Two hard facts drive the design here:
  *  1. "Listed" ≠ "anonymously usable": the connected free set is a *superset* of what the
  *     live gateway actually serves anonymously (e.g. `mimo-v2.5-free` is listed but 401s;
  *     `gpt-5-nano` too). So we never trust a single id — we return an *ordered candidate
- *     list* and let the caller fall back on the first real 401 (ADR-057 P4).
+ *     list* and let the caller handle actual authentication/availability failures (ADR-057 P4).
  *  2. The free set drifts (models.dev refreshes at runtime; models get deprecated/rotated).
  *     So the preference list is only an *ordering hint*, never a whitelist: any connected
  *     free model not in the preference list is still appended as a lower-priority candidate.
@@ -25,17 +25,16 @@ import type { Provider, ProviderModel } from "@agent/api-client"
 export const OPENCODE_ZEN_PROVIDER_ID = "opencode"
 
 /**
- * Preferred free Zen models, best-first. Every entry was empirically confirmed on the live
- * gateway (2026-07-15, docs/discussions/040) to (a) run anonymously with `apiKey:"public"`
- * and (b) support tool calling — the hard prerequisite for an agent app. Ordering is a hint,
- * not a whitelist: unknown connected free models are still tried after these.
+ * Preferred free Zen models, best-first, aligned with the current official catalog.
+ * This is a sorting hint, not proof of anonymous access or a whitelist. Unknown connected
+ * free models are still candidates; actual requests determine their availability.
  */
 export const FREE_MODEL_PREFERENCE: readonly string[] = [
   "big-pickle",
-  "deepseek-v4-flash-free",
-  "nemotron-3-ultra-free",
-  "north-mini-code-free",
-  "hy3-free",
+  "mimo-v2.6-flash-free",
+  "deepseek-v4.1-flash-free",
+  "nemotron-3.5-lightning-free",
+  "glm-5.3-flash-free",
 ]
 
 export interface FreeCandidate {
@@ -45,14 +44,14 @@ export interface FreeCandidate {
 }
 
 /**
- * A model counts as a free Zen candidate only when its input cost is exactly 0. This matters
+ * A model counts as free only when both input and output costs are exactly 0. This matters
  * in the *has-key* case: once the user adds an OpenCode key, the `opencode` provider's
  * `connected` list also includes paid models — we must never seed one of those as a "free
  * trial". A missing `cost` is treated as "not confirmed free" and excluded (conservative:
  * better to skip than to silently seed a billable model).
  */
 export function isFreeZenModel(model: ProviderModel | undefined): boolean {
-  return model?.cost?.input === 0
+  return model?.cost?.input === 0 && model.cost.output === 0
 }
 
 /**
@@ -65,10 +64,11 @@ export function orderedFreeCandidates(providers: Provider[]): FreeCandidate[] {
   const zen = providers.find((p) => p.id === OPENCODE_ZEN_PROVIDER_ID)
   if (!zen) return []
 
-  // Only connected models that are actually confirmed free (cost.input === 0).
-  const freeConnected = zen.connected.filter((modelId) =>
-    isFreeZenModel(zen.models.find((m) => m.id === modelId)),
-  )
+  // Agent candidates must also have confirmed tool support and remain in the active catalog.
+  const freeConnected = [...new Set(zen.connected)].filter((modelId) => {
+    const model = zen.models.find((m) => m.id === modelId)
+    return isFreeZenModel(model) && model?.status !== "deprecated" && model?.capabilities?.toolcall === true
+  })
 
   const inPreference = FREE_MODEL_PREFERENCE.filter((id) => freeConnected.includes(id))
   const rest = freeConnected.filter((id) => !FREE_MODEL_PREFERENCE.includes(id))
@@ -125,32 +125,83 @@ export function isZenModelId(modelId: string): boolean {
   return modelId.startsWith(`${OPENCODE_ZEN_PROVIDER_ID}/`)
 }
 
-export type ZenErrorKind = "quota" | "auth" | "other"
+export type ZenErrorKind = "quota" | "auth" | "unavailable" | "other"
 
-/**
- * Classify a Zen gateway error message from a `session.error` event (ADR-057 P4). Drives the
- * fallback/guidance branch:
- *  - `quota` → free allowance exhausted (`FreeUsageLimitError`): guide to key/upgrade, no fallback.
- *  - `auth`  → the seeded free model is not anonymously usable (401 / missing key / no provider):
- *              advance to the next candidate.
- *  - `other` → unrelated error: leave existing handling untouched.
- */
-export function classifyZenError(message: string | undefined): ZenErrorKind {
-  const m = (message ?? "").toLowerCase()
-  if (/freeusagelimiterror|free usage exceeded|usage exceeded|quota/.test(m)) return "quota"
-  if (/missing api key|autherror|unauthorized|\b401\b|no provider available/.test(m)) return "auth"
-  return "other"
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function errorData(error: unknown) {
+  const outer = record(error)
+  const data = record(outer?.data) ?? outer
+  let body: unknown = data?.responseBody
+  if (typeof body === "string") {
+    try { body = JSON.parse(body) } catch { /* The original message remains available. */ }
+  }
+  const parsed = record(body)
+  const remote = record(parsed?.error) ?? parsed ?? record(outer?.error)
+  const text = [error, outer?.name, outer?.message, data?.message, data?.type, remote?.type, remote?.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase()
+  const status = data?.statusCode ?? outer?.status
+  return { text, status, type: typeof remote?.type === "string" ? remote.type : undefined, headers: record(data?.responseHeaders) }
 }
 
 /**
- * The next free candidate to try after `currentModelId` fails, or `null` when the list is
- * exhausted. `currentModelId` is the full `provider/model` id (e.g. `opencode/big-pickle`); an
- * unknown/absent current id starts from the top.
+ * Read the structured APIError, including the gateway's JSON responseBody. The display message
+ * alone can be just "Too Many Requests", while the body identifies a free-access restriction.
+ * `quota` covers that restriction as well as allowance limits; it never promises a reset time.
+ * Ordinary transient 429s and parameter/context errors stay `other` rather than changing models.
  */
-export function nextFreeCandidate(providers: Provider[], currentModelId: string): FreeCandidate | null {
+export function classifyZenError(error: unknown): ZenErrorKind {
+  const { text, status, type } = errorData(error)
+  if (type === "FreeUsageLimitError" || type === "FreeTierError" ||
+    (!type && /freeusagelimiterror|freetiererror|free usage (?:exceeded|limit)|free[- ]tier (?:limit|restrict)/.test(text))) return "quota"
+  if (/providermodelnotfounderror|model[ _-](?:not[ _-]found|unavailable)|model (?:is |was )?(?:unavailable|not available|not found)|unknown model/.test(text)) return "unavailable"
+  if (status === 401 || /missing api key|autherror|unauthorized|\b401\b|no provider available/.test(text)) return "auth"
+  return "other"
+}
+
+/** Suggested retry time from the server, not a guarantee that free access will resume. */
+export function zenRetryAt(error: unknown, nowMs = Date.now()): number | undefined {
+  const { headers } = errorData(error)
+  if (!headers) return undefined
+  const values = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
+  const milliseconds = values.get("retry-after-ms")
+  const seconds = values.get("retry-after")
+  const numeric = (value: unknown) => {
+    if (typeof value !== "string" || !value.trim()) return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
+  }
+  const ms = numeric(milliseconds)
+  if (ms !== undefined) return nowMs + ms
+  const sec = numeric(seconds)
+  if (sec !== undefined) return nowMs + sec * 1000
+  if (typeof seconds !== "string") return undefined
+  const timestamp = Date.parse(seconds)
+  return Number.isFinite(timestamp) && timestamp >= nowMs ? timestamp : undefined
+}
+
+/**
+ * Pick a connected free model that this turn has not attempted. A caller passing its full
+ * attempt history is safe against catalog reordering/removal; the two-argument form retains
+ * the historical "next after current" behavior.
+ */
+export function nextFreeCandidate(
+  providers: Provider[],
+  currentModelId: string,
+  attemptedModels?: readonly string[],
+): FreeCandidate | null {
   const candidates = orderedFreeCandidates(providers)
-  if (candidates.length === 0) return null
+  if (attemptedModels) {
+    const attempted = new Set([...attemptedModels, currentModelId])
+    return candidates.find((candidate) => !attempted.has(`${candidate.providerID}/${candidate.modelID}`)) ?? null
+  }
   const currentModel = currentModelId.split("/").slice(1).join("/")
-  const idx = candidates.findIndex((c) => c.modelID === currentModel)
+  const idx = candidates.findIndex((candidate) => candidate.modelID === currentModel)
   return candidates[idx + 1] ?? null
 }

@@ -1,163 +1,205 @@
 #!/usr/bin/env bun
 /**
- * Diagnostic for the free OpenCode Zen "trial" default model (ADR-057 / discussions/040).
- *
- * Turns the one-off empirical probes behind ADR-057 into a re-runnable check. Run it after any
- * `vendor/opencode` bump (the free set drifts, models get deprecated) to confirm the trial still
- * works before shipping. NOT wired into CI — it needs the built sidecar and live network to the
- * Zen gateway; it's an on-demand check, like `scripts/verify-windows-runtime.ps1`.
+ * Anonymous free-model diagnostic through each binary's native CLI, with no real user data.
  *
  *   bun run --bun scripts/verify-free-zen.ts
+ *   bun run --bun scripts/verify-free-zen.ts --sidecar <packaged-binary> --official <official-binary>
+ *   bun run --bun scripts/verify-free-zen.ts --model big-pickle --model mimo-v2.6-flash-free
  *
- * It verifies, in order:
- *   A. Fresh install (empty config) → the sidecar's GET /provider lists `opencode` free models.
- *   B. The live Zen gateway still serves the preference-list models anonymously (apiKey "public")
- *      with tool-calling — the exact property orderedFreeCandidates()/P1 relies on.
- *   C. The first preference model (what P3 seeds) actually works anonymously.
- *
- * Exit code 0 = all good; non-zero = a property the trial depends on has regressed.
+ * A promptly reported free restriction is a handled failure, NOT proof of free availability.
+ * Exit 0 means each run either answered or terminated with a structured free-limit error;
+ * timeouts, launch failures and unrelated errors exit 1. Live network is required, not CI.
+ * Official v2 uses --standalone so its managed background service is never started.
  */
-
-import { spawn } from "node:child_process"
-import { mkdtempSync } from "node:fs"
+import { spawn, spawnSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
-// Keep in sync with FREE_MODEL_PREFERENCE in
-// packages/client/desktop/src/lib/free-model.ts (single source of truth for the app).
-const FREE_MODEL_PREFERENCE = [
-  "big-pickle",
-  "deepseek-v4-flash-free",
-  "nemotron-3-ultra-free",
-  "north-mini-code-free",
-  "hy3-free",
-]
-
-const ZEN_BASE = "https://opencode.ai/zen/v1"
-const APP_NAME = "ultrawork"
-
-function sidecarBinary(): string {
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64"
-  return join(
-    import.meta.dir,
-    "..",
-    "packages/client/desktop/src-tauri/binaries",
-    `opencode-server-${arch}-apple-darwin`,
-  )
+function nativeBinary(): string {
+  const { platform, arch } = process
+  if (arch !== "arm64" && arch !== "x64") throw new Error(`Unsupported architecture: ${arch}`)
+  const cpu = arch === "arm64" ? "aarch64" : "x86_64"
+  const target = platform === "darwin" ? `${cpu}-apple-darwin`
+    : platform === "linux" ? `${cpu}-unknown-linux-gnu`
+      : platform === "win32" && arch === "x64" ? "x86_64-pc-windows-msvc" : undefined
+  if (!target) throw new Error(`Unsupported platform: ${platform}/${arch}; provide --sidecar explicitly`)
+  return join(import.meta.dir, "..", "packages", "client", "desktop", "src-tauri", "binaries",
+    `opencode-server-${target}${platform === "win32" ? ".exe" : ""}`)
 }
 
-async function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/global/health`, { signal: AbortSignal.timeout(2000) })
-      if (r.ok) return true
-    } catch { /* not up yet */ }
-    await new Promise((r) => setTimeout(r, 500))
+const args = process.argv.slice(2)
+if (args.includes("--help")) {
+  console.log("Usage: bun run --bun scripts/verify-free-zen.ts [--sidecar path] [--official path] [--model id ...]")
+  process.exit(0)
+}
+let sidecar: string | undefined
+let official: string | undefined
+const models: string[] = []
+for (let i = 0; i < args.length; i++) {
+  const flag = args[i]
+  const value = args[++i]
+  if (!["--sidecar", "--official", "--model"].includes(flag) || !value || value.startsWith("--")) {
+    throw new Error(`Expected --sidecar/--official path or --model id; received ${flag}`)
   }
-  return false
+  if (flag === "--sidecar") sidecar = resolve(value)
+  if (flag === "--official") official = resolve(value)
+  if (flag === "--model") {
+    const id = value.replace(/^opencode\//, "")
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw new Error(`Invalid model ID: ${value}`)
+    models.push(id)
+  }
+}
+if (!models.length) models.push("big-pickle")
+const binaries = [{ label: "sidecar", binary: sidecar ?? nativeBinary() }]
+if (official) binaries.push({ label: "official", binary: official })
+const root = realpathSync(mkdtempSync(join(tmpdir(), "uw-free-zen-")))
+console.log(`Isolated diagnostic files: ${root}`)
+let interrupted = false
+let stopCurrent: (() => void) | undefined
+function interrupt() { interrupted = true; stopCurrent?.() }
+process.on("SIGINT", interrupt)
+process.on("SIGTERM", interrupt)
+
+/** Preserve transport/runtime necessities, never model keys, app context, or user config. */
+function environment(directory: string, model: string): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    "path", "pathext", "systemroot", "windir", "comspec", "systemdrive", "lang", "lc_all", "tz",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy", "ssl_cert_file", "ssl_cert_dir", "node_extra_ca_certs",
+  ])
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => allowed.has(key.toLowerCase())))
+  const home = join(directory, "home")
+  const temporary = join(directory, "tmp")
+  mkdirSync(home, { recursive: true })
+  mkdirSync(temporary, { recursive: true })
+  return {
+    ...env,
+    HOME: home,
+    USERPROFILE: home,
+    TMPDIR: temporary,
+    TMP: temporary,
+    TEMP: temporary,
+    OPENCODE_TEST_HOME: home,
+    OPENCODE_TEST_MANAGED_CONFIG_DIR: join(directory, "managed-config"),
+    XDG_CONFIG_HOME: join(directory, "config"),
+    XDG_DATA_HOME: join(directory, "data"),
+    XDG_CACHE_HOME: join(directory, "cache"),
+    XDG_STATE_HOME: join(directory, "state"),
+    OPENCODE_DISABLE_AUTOUPDATE: "1",
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_CLAUDE_CODE: "1",
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      model: `opencode/${model}`, small_model: `opencode/${model}`, permission: "deny", share: "disabled",
+    }),
+  }
 }
 
-/** A minimal anonymous chat completion with a tool, mirroring what an agent turn needs. */
-async function probeAnonymous(model: string): Promise<{ ok: boolean; toolcall: boolean; note: string }> {
-  try {
-    const res = await fetch(`${ZEN_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: "Bearer public", "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // Generous cap: some free models emit a reasoning preamble before the tool call, and a
-        // too-small budget truncates the response before `tool_calls` appears (false negative).
-        model,
-        max_tokens: 128,
-        messages: [{ role: "user", content: "What is the weather in Paris? Use the tool." }],
-        tools: [{
-          type: "function",
-          function: {
-            name: "get_weather",
-            description: "get weather",
-            parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
-          },
-        }],
-      }),
-      signal: AbortSignal.timeout(40000),
+interface ProcessResult {
+  code: number | null
+  timedOut: boolean
+  elapsedMs: number
+  stdout: string
+  stderr: string
+  launchError?: string
+}
+
+function run(binary: string, argv: string[], env: NodeJS.ProcessEnv, cwd: string, timeoutMs: number): Promise<ProcessResult> {
+  return new Promise((done) => {
+    const started = Date.now()
+    let stdout = ""
+    let stderr = ""
+    let timedOut = false
+    let launchError: string | undefined
+    let force: ReturnType<typeof setTimeout> | undefined
+    const child = spawn(binary, argv, {
+      cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+      // On Unix this group contains only our diagnostic process and its private workers.
+      detached: process.platform !== "win32",
     })
-    const body = await res.text()
-    if (!res.ok) {
-      const m = body.match(/"message":"([^"]*)"/)
-      return { ok: false, toolcall: false, note: `HTTP ${res.status} ${m?.[1] ?? ""}`.trim() }
+    child.stdout.on("data", (data) => { stdout = (stdout + data.toString()).slice(-2_000_000) })
+    child.stderr.on("data", (data) => { stderr = (stderr + data.toString()).slice(-2_000_000) })
+    function stop(signal: "SIGTERM" | "SIGKILL") {
+      if (!child.pid) return
+      try {
+        if (process.platform === "win32") {
+          // Only the live PID returned by our spawn, including its private worker tree.
+          if (child.exitCode !== null || child.signalCode !== null) return
+          const cleanup = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+            windowsHide: true, stdio: "ignore", timeout: 3000,
+          })
+          if (cleanup.status !== 0) child.kill(signal)
+        } else process.kill(-child.pid, signal)
+      } catch { /* Already exited; never discover or kill a process by its port. */ }
     }
-    const toolcall = /"tool_calls"|"finish_reason":"tool_calls"|get_weather/.test(body)
-    return { ok: true, toolcall, note: "cost 0" }
-  } catch (e) {
-    return { ok: false, toolcall: false, note: String(e instanceof Error ? e.message : e) }
+    const cancel = () => {
+      stop("SIGTERM")
+      force = setTimeout(() => stop("SIGKILL"), 1500)
+    }
+    stopCurrent = cancel
+    const timer = setTimeout(() => { timedOut = true; cancel() }, timeoutMs)
+    child.once("error", (error) => { launchError = error.message })
+    child.once("close", (code) => {
+      clearTimeout(timer)
+      clearTimeout(force)
+      if (stopCurrent === cancel) stopCurrent = undefined
+      if (process.platform !== "win32") stop("SIGTERM")
+      done({ code, timedOut, elapsedMs: Date.now() - started, stdout, stderr, ...(launchError ? { launchError } : {}) })
+    })
+  })
+}
+
+function jsonEvents(stdout: string): Array<Record<string, any>> {
+  const events: Array<Record<string, any>> = []
+  for (const line of stdout.split(/\r?\n/)) {
+    try {
+      const event = JSON.parse(line)
+      if (event && typeof event === "object" && !Array.isArray(event)) events.push(event)
+    } catch { /* Native CLI banners/migration progress are retained in stdout.log. */ }
+  }
+  return events
+}
+
+const results: Array<Record<string, unknown>> = []
+for (const { label, binary } of binaries) {
+  for (const model of [...new Set(models)]) {
+    if (interrupted) break
+    const directory = join(root, `${label}-${model}`)
+    const cwd = join(directory, "workspace")
+    mkdirSync(cwd, { recursive: true })
+    const env = environment(directory, model)
+    const versionResult = await run(binary, ["--version"], env, cwd, 10_000)
+    const version = versionResult.stdout.trim()
+    let result: Record<string, unknown>
+    if (versionResult.code !== 0 || versionResult.timedOut || !version) {
+      result = { label, binary, model, outcome: "launch-error", ...versionResult }
+    } else {
+      const v2 = /(?:^|\bv)2\./.test(version)
+      const argv = ["--print-logs", "run", ...(v2 ? ["--standalone"] : []), "--format", "json", "--model", `opencode/${model}`, "Reply OK."]
+      const execution = await run(binary, argv, env, cwd, 40_000)
+      writeFileSync(join(directory, "stdout.log"), execution.stdout)
+      writeFileSync(join(directory, "stderr.log"), execution.stderr)
+      const events = jsonEvents(execution.stdout)
+      const errors = events.filter((event) => event.type === "error").map((event) => event.error)
+      const error = errors.at(-1)
+      const reply = events.filter((event) => event.type === "text")
+        .map((event) => event.part?.text ?? event.text ?? "").join("\n").trim()
+      const freeLimit = error && /FreeUsageLimitError|FreeTierError|provider\.free-limit/i.test(JSON.stringify(error))
+      const outcome = execution.launchError ? "launch-error" : execution.timedOut ? "timeout"
+        : freeLimit ? "free-limit" : error ? "error" : execution.code === 0 && reply ? "reply" : "error"
+      result = {
+        label, binary, version, model, outcome, elapsedMs: execution.elapsedMs, exitCode: execution.code,
+        ...(reply ? { reply } : {}), ...(error ? { error } : {}),
+        ...(execution.launchError ? { launchError: execution.launchError } : {}), logs: directory,
+      }
+    }
+    results.push(result)
+    console.log(JSON.stringify(result))
+    writeFileSync(join(root, "report.json"), JSON.stringify(results, null, 2))
   }
 }
-
-let failures = 0
-const fail = (msg: string) => { console.error(`  ✗ ${msg}`); failures++ }
-const pass = (msg: string) => console.log(`  ✓ ${msg}`)
-
-// ── A. Fresh-install sidecar lists opencode free models ──────────────────────
-console.log("A. Fresh-install /provider lists opencode free models")
-const bin = sidecarBinary()
-const port = 47000 + Math.floor((Date.now() % 1000))
-const freshHome = mkdtempSync(join(tmpdir(), "uw-verify-zen-"))
-const child = spawn(bin, ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
-  env: { ...process.env, HOME: freshHome, XDG_CONFIG_HOME: join(freshHome, ".config"), OPENCODE_APP_NAME: APP_NAME },
-  stdio: "ignore",
-})
-
-let connectedFree: string[] = []
-try {
-  if (!(await waitForHealth(port, 30000))) {
-    fail("sidecar did not become healthy in 30s")
-  } else {
-    const res = await fetch(`http://127.0.0.1:${port}/provider`, { signal: AbortSignal.timeout(10000) })
-    const data = (await res.json()) as { all?: Array<{ id: string; models?: Record<string, { cost?: { input?: number } }> }>; connected?: string[] }
-    const opencodeConnected = (data.connected ?? []).includes("opencode")
-    if (!opencodeConnected) fail("`opencode` is not in the connected provider set")
-    else pass("`opencode` provider auto-connected without a key")
-    const oc = (data.all ?? []).find((p) => p.id === "opencode")
-    connectedFree = Object.entries(oc?.models ?? {}).filter(([, m]) => m.cost?.input === 0).map(([id]) => id)
-    if (connectedFree.length === 0) fail("no free (cost.input===0) opencode models listed")
-    else pass(`${connectedFree.length} free opencode models listed: ${connectedFree.join(", ")}`)
-  }
-} finally {
-  child.kill("SIGKILL")
-}
-
-// ── B. Live gateway still serves the preference list anonymously with tools ──
-console.log("\nB. Live Zen gateway anonymous availability (preference list)")
-const results: Record<string, { ok: boolean; toolcall: boolean; note: string }> = {}
-for (const model of FREE_MODEL_PREFERENCE) {
-  const r = await probeAnonymous(model)
-  results[model] = r
-  const label = r.ok && r.toolcall ? "✓" : r.ok ? "~" : "✗"
-  console.log(`  ${label} ${model.padEnd(26)} ${r.ok ? "usable" : "unusable"}${r.toolcall ? " + tools" : ""}  ${r.note}`)
-}
-const anyUsable = FREE_MODEL_PREFERENCE.some((m) => results[m]?.ok && results[m]?.toolcall)
-if (!anyUsable) fail("no preference-list model is anonymously usable with tools — the trial is broken")
-else pass("at least one preference-list model is anonymously usable with tools")
-
-// ── C. The first-seeded model works ──────────────────────────────────────────
-console.log("\nC. First-preference model (what P3 seeds first)")
-const first = FREE_MODEL_PREFERENCE[0]
-if (results[first]?.ok && results[first]?.toolcall) {
-  pass(`${first} works anonymously with tools`)
-} else {
-  // Not fatal on its own (fallback covers it), but worth flagging loudly.
-  console.warn(`  ! ${first} is NOT usable — P3 will fall back on first send. Consider reordering FREE_MODEL_PREFERENCE.`)
-}
-
-// Cross-check: is the app's preference list still represented in the sidecar's free set?
-if (connectedFree.length > 0) {
-  const missing = FREE_MODEL_PREFERENCE.filter((m) => !connectedFree.includes(m))
-  if (missing.length === FREE_MODEL_PREFERENCE.length) {
-    fail("NONE of the preference list appears in the sidecar's connected free set — list is stale")
-  } else if (missing.length > 0) {
-    console.warn(`  ! preference models not in current free set (drifted/deprecated?): ${missing.join(", ")}`)
-  }
-}
-
-console.log(failures === 0 ? "\n✅ Free Zen trial verification passed." : `\n❌ ${failures} check(s) failed.`)
-process.exit(failures === 0 ? 0 : 1)
+console.log("A free-limit result verifies prompt termination only; it does not mean free access is available.")
+process.off("SIGINT", interrupt)
+process.off("SIGTERM", interrupt)
+process.exitCode = !interrupted && results.every((result) => result.outcome === "reply" || result.outcome === "free-limit") ? 0 : 1

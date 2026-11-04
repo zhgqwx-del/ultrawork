@@ -1,6 +1,6 @@
 # 开发规范
 
-<!-- last-synced: 2026-08-23 -->
+<!-- last-synced: 2026-11-04 -->
 
 项目开发过程中确立的约定与模式，供团队成员参考。
 
@@ -93,6 +93,10 @@ useEffect(() => { if (!isSettingsPath(loc.pathname)) lastMainPathRef.current = l
 - **e2e 坑**：`page.goto` 全量重载会重置 SPA 状态，故造"来源页"必须靠真实 SPA 点击导航（发 prompt 造真 session 再点），不能 goto。见 `e2e/settings-collapse-return.e2e.ts`。
 
 ## 3. SSE 事件处理
+
+### 会话类型的权威水合
+
+会话身份由 sidecar 注册表派生时，区分“尚未成功加载”与“成功加载的空表”；不能把一次连接失败解释为不存在 Team。当前工作区首次权威结果未知时，既有会话的实际发送入口和 composer 同时暂缓发送；本地已识别的新 Team 可继续。成功加载过后，短暂失联保留已知快照，失败退避重取，成功即停止；请求须有超时及卸载/工作区/端口变化的取消保护。不要仅禁用按钮而遗漏快捷发送路径。实现及原生复现见 `team-sessions-context.tsx` 与 testing §17。
 
 ### 后端调用一律经 @agent/connector（阶段2 起，ADR-030）
 会话流（prompt/cancel/fetchHistory/replyPermission/deleteSession/订阅）调 `useConnector()` 的统一面——connector 按会话绑定派发到 OpenCodeBackend/ACPBackend，**新代码不要直连 api-client 或裸 fetch :4099**。backend-specific 面（providers/mcp/skills/file/config）仍经 `useApi()`（= connector 持有的同一 ApiClient，签名未变）。后端行为差异用 `connector.capabilitiesOf(sessionId)` 门控（revert/model/questions/sessionStatus…），不要写 `isACP` 之类的 kind 判断。

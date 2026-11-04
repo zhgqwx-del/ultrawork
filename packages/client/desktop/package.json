@@ -1,6 +1,6 @@
 {
   "name": "@agent/client-desktop",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -59,6 +59,7 @@
     "e2e:attachments": "bun run --bun e2e/attachments-composer.e2e.ts",
     "e2e:shot-perm": "bun run --bun e2e/screenshot-permission-guidance.e2e.ts",
     "e2e:free-trial": "bun run --bun e2e/free-trial-consent.e2e.ts",
+    "e2e:free-reliability": "bun run --bun e2e/free-model-reliability.e2e.ts",
     "e2e:i18n-toggle": "bun run --bun e2e/general-i18n-toggle.e2e.ts",
     "e2e:html-preview": "bun run --bun e2e/html-preview-iframe.e2e.ts",
     "e2e:inline-image": "bun run --bun e2e/inline-image-render.e2e.ts",

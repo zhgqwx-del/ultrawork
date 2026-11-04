@@ -3,13 +3,15 @@ import { toast } from "sonner"
 import { useApi } from "./use-api"
 import { useI18n } from "./i18n-context"
 import type { OpenCodeConfig, Provider } from "@agent/api-client"
-import { orderedFreeCandidates, shouldOfferFreeTrial, nextFreeCandidate } from "./free-model"
+import { orderedFreeCandidates, shouldOfferFreeTrial, nextFreeCandidate, isFreeZenModel, isZenModelId } from "./free-model"
 import { enableFreeTrial as runEnableFreeTrial, revokeFreeTrial as runRevokeFreeTrial } from "./free-trial"
 import { makeFreeTrialDeps, getConsent } from "./free-trial-store"
 import { FreeTrialConsentDialog } from "@/components/chat/free-trial-consent-dialog"
 
 interface ModelContextValue {
   currentModel: string
+  /** Latest selection for post-consent sends whose retry closure predates the state update. */
+  getCurrentModel: () => string
   setModel: (model: string) => Promise<void>
   /** Whether the user has opted into the free OpenCode Zen trial default (ADR-057). */
   freeTrialConsent: boolean
@@ -24,11 +26,11 @@ interface ModelContextValue {
    */
   maybeOfferFreeTrial: (retry: () => void) => Promise<boolean>
   /**
-   * A seeded free model failed to authenticate (ADR-057 P4). Re-seed the NEXT free candidate and
-   * return its `provider/model` id, or `null` when the list is exhausted (caller should guide the
-   * user to configure their own key). No-op returning `null` if the free trial isn't active.
+   * Choose a free candidate for this request, without changing the global selection or consent.
+   * The failed model and attempt history belong to the caller's turn, not whichever conversation
+   * most recently changed the global model. Returns null if the trial is inactive/exhausted.
    */
-  advanceFreeTrialModel: () => Promise<string | null>
+  advanceFreeTrialModel: (failedModel: string, attemptedModels?: readonly string[]) => Promise<string | null>
 }
 
 const ModelContext = createContext<ModelContextValue | undefined>(undefined)
@@ -48,6 +50,8 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   currentModelRef.current = currentModel
   const freeTrialConsentRef = useRef(freeTrialConsent)
   freeTrialConsentRef.current = freeTrialConsent
+  // Keep the provenance of known free models when a catalog refresh removes a failed model.
+  const knownFreeModelsRef = useRef(new Set<string>())
   const api = useApi()
   const { t } = useI18n()
 
@@ -60,10 +64,16 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => { /* ignore — server may not be ready */ })
     getConsent()
-      .then((c) => { if (!cancelled) setFreeTrialConsent(c.consented) })
+      .then((c) => {
+        if (cancelled) return
+        if (c.consented && c.seededModel && isZenModelId(c.seededModel)) knownFreeModelsRef.current.add(c.seededModel)
+        setFreeTrialConsent(c.consented)
+      })
       .catch(() => { /* stub host / missing command → treat as not consented */ })
     return () => { cancelled = true }
   }, [api])
+
+  const getCurrentModel = useCallback(() => currentModelRef.current, [])
 
   const setModel = useCallback(async (model: string) => {
     try {
@@ -113,6 +123,7 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     try {
       const providers = await api.getProviders()
       const candidates = orderedFreeCandidates(providers)
+      for (const candidate of candidates) knownFreeModelsRef.current.add(`${candidate.providerID}/${candidate.modelID}`)
       if (candidates.length === 0) {
         // No usable free model (channel closed / all stripped). Guide to key (P4 stub).
         toast.error(t("freeTrial.unavailable"))
@@ -142,26 +153,24 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [api, t])
 
-  const advanceFreeTrialModel = useCallback(async (): Promise<string | null> => {
-    // Refs, not state: this is called from the SSE handler, which holds a stale render's closure.
-    if (!freeTrialConsentRef.current) return null
+  const advanceFreeTrialModel = useCallback(async (
+    failedModel: string,
+    attemptedModels: readonly string[] = [],
+  ): Promise<string | null> => {
+    if (!freeTrialConsentRef.current || !isZenModelId(failedModel)) return null
     try {
       const providers = await api.getProviders()
-      const next = nextFreeCandidate(providers, currentModelRef.current)
-      if (!next) {
-        // Exhausted every free candidate — clear the dead seed so the user isn't left with a
-        // selected-but-unusable model, and revert to the privacy-off default.
-        await runRevokeFreeTrial(makeFreeTrialDeps(api))
-        freeTrialConsentRef.current = false
-        currentModelRef.current = ""
-        setFreeTrialConsent(false)
-        setCurrentModel("")
-        return null
+      if (!freeTrialConsentRef.current) return null
+      const zen = providers.find((provider) => provider.id === "opencode")
+      const failed = zen?.models.find((model) => `opencode/${model.id}` === failedModel)
+      // A model whose current price is paid must never trigger a silent switch to the free tier.
+      if (failed && !isFreeZenModel(failed)) return null
+      for (const model of zen?.models ?? []) {
+        if (isFreeZenModel(model)) knownFreeModelsRef.current.add(`opencode/${model.id}`)
       }
-      const seeded = await runEnableFreeTrial(makeFreeTrialDeps(api), next)
-      currentModelRef.current = seeded
-      setCurrentModel(seeded)
-      return seeded
+      if (!knownFreeModelsRef.current.has(failedModel)) return null
+      const next = nextFreeCandidate(providers, failedModel, attemptedModels)
+      return next ? `${next.providerID}/${next.modelID}` : null
     } catch {
       return null
     }
@@ -180,8 +189,8 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo(() => ({
-    currentModel, setModel, freeTrialConsent, revokeFreeTrial, maybeOfferFreeTrial, advanceFreeTrialModel,
-  }), [currentModel, setModel, freeTrialConsent, revokeFreeTrial, maybeOfferFreeTrial, advanceFreeTrialModel])
+    currentModel, getCurrentModel, setModel, freeTrialConsent, revokeFreeTrial, maybeOfferFreeTrial, advanceFreeTrialModel,
+  }), [currentModel, getCurrentModel, setModel, freeTrialConsent, revokeFreeTrial, maybeOfferFreeTrial, advanceFreeTrialModel])
 
   return (
     <ModelContext.Provider value={value}>
