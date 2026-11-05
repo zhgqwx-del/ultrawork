@@ -60,7 +60,7 @@
     },
     "packages/client/desktop": {
       "name": "@agent/client-desktop",
-      "version": "0.3.14",
+      "version": "0.3.15",
       "dependencies": {
         "@agent/api-client": "workspace:*",
         "@agent/brand": "workspace:*",

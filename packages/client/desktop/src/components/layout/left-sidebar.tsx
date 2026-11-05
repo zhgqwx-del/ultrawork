@@ -311,11 +311,11 @@ export function LeftSidebar() {
                 className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
               >
                 <Logo className="size-8" />
-                <span className="flex flex-col items-end">
+                <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
                   <span className="text-sm font-semibold leading-4 tracking-wide text-[var(--sidebar-fg)]">
                     {t("brand.name")}
                   </span>
-                  <span className="mt-0.5 whitespace-nowrap text-[11px] font-normal leading-3 text-[var(--sidebar-fg-muted)]">
+                  <span className="text-[9px] font-normal leading-3 text-[var(--sidebar-fg-muted)]">
                     v{APP_VERSION}
                   </span>
                 </span>
