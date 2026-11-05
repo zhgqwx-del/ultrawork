@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-11-05
+
 ### Fixed
 
 - 修正左侧栏版本号位置：在品牌名称右侧偏下同一行显示，使用 9px 浅灰小字并保持文字基线对齐；适配明暗主题和悬停状态，保持顶部高度、折叠隐藏、点击及拖拽行为。
