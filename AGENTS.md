@@ -2,6 +2,8 @@
 
 > **跨平台是硬约束**：所有新代码默认须 macOS / Windows / Linux 三平台兼容（规则见 `CLAUDE.md` §通用约定 + `docs/conventions.md §13`，门禁 = `.github/workflows/ci.yml`，背景 ADR-037）。
 
+涉及需求、设计、实现或验收的变更，从 [STDD/SDD 项目入口](docs/stdd/project.md) 查找现行规格和在途变更，再按 [研发工作流](docs/stdd/workflows.md) 开工。
+
 ## Project Overview
 
 Ultrawork is a desktop-grade AI agent built on OpenCode's server capabilities.
