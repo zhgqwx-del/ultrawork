@@ -2,6 +2,8 @@
 
 AI Agent 桌面客户端，基于 Tauri 2 + React 19 构建，后端集成 [OpenCode](https://github.com/anomalyco/opencode) 作为 AI Agent 引擎。
 
+参与需求、设计、实现或验收，从 [STDD/SDD 项目入口](docs/stdd/project.md) 查看当前变更与协作流程。
+
 ## 架构概览
 
 ```

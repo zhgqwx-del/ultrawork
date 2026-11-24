@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- 接入 STDD/SDD 研发协作流程，补齐需求、设计、研发和测试的交接模板，并在文档 CI 中校验现行规格的需求与验收场景。
+
 ## [0.3.15] - 2026-11-05
 
 ### Fixed
