@@ -23,10 +23,14 @@ $target = if ($env:CARGO_TARGET_DIR) {
     (Resolve-Path -LiteralPath (Join-Path $tauri 'target')).ProviderPath
 }
 $targetPrefix = $target.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+$legacyHarness = $file.Directory.Name -eq 'deps' -and $file.Directory.Parent.Name -eq 'debug'
+# Cargo 1.100 also puts the harness in the matching build unit's output.
+$relative = [IO.Path]::GetRelativePath($target, $exe).Replace('\', '/')
+$unitHarness = $relative -match '\A(?:x86_64-pc-windows-msvc/)?debug/build/ultrawork/([0-9a-f]+)/out/ultrawork(?:_lib)?-\1\.exe\z'
 if ($file.PSIsContainer -or $file.Name -notmatch '^ultrawork(?:_lib)?-[0-9a-f]+\.exe$' -or
-    $file.Directory.Name -ne 'deps' -or $file.Directory.Parent.Name -ne 'debug' -or
+    (-not $legacyHarness -and -not $unitHarness) -or
     -not $exe.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing a non-test executable. Cargo must supply an Ultrawork debug/deps test harness: $exe"
+    throw "Refusing a non-test executable. Cargo must supply an Ultrawork debug test harness: $exe"
 }
 
 $mt = (Get-Command mt.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source

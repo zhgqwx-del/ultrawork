@@ -465,6 +465,6 @@ jobs:
         env:
           # Tauri's app manifest is linked into the application, but upstream
           # does not attach Common-Controls v6 to lib test harnesses (#13419).
-          # This runner patches only Cargo-selected debug/deps test executables.
+          # This runner patches only Cargo-selected Ultrawork debug test harnesses.
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.os == 'Windows' && 'pwsh -NoProfile -NonInteractive -File ../../../../scripts/windows-rust-test-runner.ps1' || '' }}
         run: cargo test
